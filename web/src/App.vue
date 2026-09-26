@@ -2390,10 +2390,10 @@ watch(() => inlineOverflowTabs.value.length, () => {
 // ResizeObserver may not fire when CSS zoom on <html> changes, so we
 // must explicitly re-measure to recalculate overflow layout.
 // Use requestAnimationFrame to ensure browser has reflowed after the zoom change.
-// uiScaleAuto is watched too: toggling it changes the applied factor without
-// touching uiScale (and on Electron the zoom is applied natively, where no
+// Both the slider and the "auto fit" button write uiScale, so watching it alone
+// covers every writer (on Electron the zoom is applied natively, where no
 // ResizeObserver fires at all).
-watch([() => localConfig.uiScale, () => localConfig.uiScaleAuto], () => {
+watch([() => localConfig.uiScale], () => {
   requestAnimationFrame(() => {
     startDockResize()
     // Also update --dock-height CSS variable for fixed-position elements

@@ -82,46 +82,43 @@ describe('computeAutoUIScale', () => {
 })
 
 describe('resolveUIScale', () => {
-  it('ignores the manual value entirely when auto is on', () => {
-    // The manual slider is disabled in the UI while auto is on, so a stale
-    // manual value must not leak into the applied factor.
-    expect(resolveUIScale(true, 1.5, 2160)).toBe(2)
-    expect(resolveUIScale(true, 0.8, 1080)).toBe(1)
+  it('returns the stored value unchanged', () => {
+    // The scale is a plain stored setting now — there is no screen input at
+    // all, which is the whole point: nothing can re-derive it behind the user.
+    expect(resolveUIScale(1.25)).toBe(1.25)
+    expect(resolveUIScale(0.8)).toBe(0.8)
+    expect(resolveUIScale(2)).toBe(2)
+    expect(resolveUIScale(1)).toBe(1)
   })
 
-  it('uses the manual value when auto is off', () => {
-    expect(resolveUIScale(false, 1.25, 2160)).toBe(1.25)
-    expect(resolveUIScale(false, 0.8, 1080)).toBe(0.8)
+  it('clamps a stored value to the supported range', () => {
+    // A corrupt/legacy stored value must not escape the bounds the CSS-zoom
+    // applier accepts.
+    expect(resolveUIScale(99)).toBe(2)
+    expect(resolveUIScale(0.01)).toBe(0.5)
   })
 
-  it('clamps a manual value to the supported range', () => {
-    // Auto is off, so the screen height is irrelevant — but a corrupt stored
-    // value still must not escape the bounds the CSS-zoom applier accepts.
-    expect(resolveUIScale(false, 99, 1080)).toBe(2)
-    expect(resolveUIScale(false, 0.01, 1080)).toBe(0.5)
-  })
-
-  it('snaps an off-grid manual value so the slider can represent it', () => {
+  it('snaps an off-grid stored value so the slider can represent it', () => {
     // A legacy/hand-edited value that is not a whole step would render its
-    // thumb on the nearest step while the label showed the raw number, so both
-    // paths must snap. 0.82 → 0.8, 1.33 → 1.35.
-    expect(resolveUIScale(false, 0.82, 1080)).toBe(0.8)
-    expect(resolveUIScale(false, 1.33, 1080)).toBe(1.35)
-    expect(resolveUIScale(false, 1.02, 1080)).toBe(1)
+    // thumb on the nearest step while the label showed the raw number. 0.82 →
+    // 0.8, 1.33 → 1.35.
+    expect(resolveUIScale(0.82)).toBe(0.8)
+    expect(resolveUIScale(1.33)).toBe(1.35)
+    expect(resolveUIScale(1.02)).toBe(1)
   })
 
-  it('always returns a manual value representable on the slider step grid', () => {
+  it('always returns a value representable on the slider step grid', () => {
     for (let m = 0.5; m <= 2; m += 0.01) {
-      const f = resolveUIScale(false, m, 1080)
+      const f = resolveUIScale(m)
       const steps = f / UI_SCALE_STEP
       expect(Math.abs(steps - Math.round(steps))).toBeLessThan(1e-9)
     }
   })
 
-  it('falls back to 1 for an unusable manual value', () => {
-    expect(resolveUIScale(false, NaN, 1080)).toBe(1)
-    expect(resolveUIScale(false, 0, 1080)).toBe(1)
-    expect(resolveUIScale(false, -2, 1080)).toBe(1)
+  it('falls back to 1 for an unusable stored value', () => {
+    expect(resolveUIScale(NaN)).toBe(1)
+    expect(resolveUIScale(0)).toBe(1)
+    expect(resolveUIScale(-2)).toBe(1)
   })
 })
 

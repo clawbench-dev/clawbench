@@ -1,10 +1,16 @@
 /**
- * Automatic UI scaling for high-resolution screens.
+ * UI scale math for high-resolution screens.
  *
  * The layout is designed against a 1080p reference (1920×1080): a larger
  * screen would otherwise render the same pixel sizes across more physical
- * space, making everything look small. So the UI is scaled up on screens
- * taller than the reference.
+ * space, making everything look small. `computeAutoUIScale` derives a factor
+ * that compensates, and the settings "auto fit" button applies it ONCE by
+ * storing the result as the user's scale.
+ *
+ * Nothing here runs on startup any more. The applied factor is the stored
+ * `uiScale` value (`resolveUIScale`), so it cannot change on its own — the
+ * previous design recomputed from the screen on every applier call, which made
+ * the UI jump.
  *
  * `screenHeight` is read from `window.screen.height`, which is supposed to be
  * in CSS pixels (DIP) — NOT the physical panel resolution. On Windows, macOS
@@ -36,21 +42,24 @@ export const UI_SCALE_BASE_HEIGHT = 1080
 export const UI_SCALE_MAX = 2
 
 /**
- * Never shrink automatically. The request was explicitly "only scale up for
- * higher resolutions" — a 768p laptop keeps factor 1.0 rather than being
- * squeezed to 0.71, which would make text too small to read comfortably.
+ * Floor for the computed factor. The request was explicitly "only scale up for
+ * higher resolutions" — a 768p laptop gets 1.0 rather than being squeezed to
+ * 0.71, which would make text too small to read comfortably. Only
+ * `computeAutoUIScale` (the auto-fit button) honours this; the manual slider
+ * may go lower on purpose.
  */
 export const UI_SCALE_MIN = 1
 
 /**
  * Granularity of the manual scale slider, in factor units (5%).
  *
- * The auto factor is snapped to this grid so it is always REPRESENTABLE on
- * that slider. A `<input type=range>` silently snaps an off-grid value to the
- * nearest step: 1.33 (1440p) lands on the 1.35 step, so the thumb would sit at
- * 135% while the label read "133%" — the two disagreeing is exactly the bug
- * this prevents. Keeping the step here (and using it for the slider's own
- * `step` in settingsFieldMap) means the grid has a single source of truth.
+ * Both the auto-fit result and any stored value are snapped to this grid so
+ * they are always REPRESENTABLE on that slider. A `<input type=range>`
+ * silently snaps an off-grid value to the nearest step: 1.33 (1440p) lands on
+ * the 1.35 step, so the thumb would sit at 135% while the label read "133%" —
+ * the two disagreeing is exactly the bug this prevents. Keeping the step here
+ * (and using it for the slider's own `step` in settingsFieldMap) means the
+ * grid has a single source of truth.
  */
 export const UI_SCALE_STEP = 0.05
 
@@ -93,25 +102,23 @@ export function computeAutoUIScale(
 }
 
 /**
- * The factor actually in effect, given the user's auto/manual preference.
+ * The factor actually in effect: the stored value, clamped to sane bounds.
  *
- * Auto ON  → derived from the screen, manual value ignored.
- * Auto OFF → the manual slider value, clamped to the same sane bounds.
+ * There is deliberately no screen input. The scale is a plain stored value
+ * now — the settings "auto fit" button computes one ONCE from the screen and
+ * writes it to `uiScale` (see `autoFitUIScale`). Deriving it from the screen
+ * on every startup/applier call is what used to make the UI jump, so this
+ * function must stay screen-independent; narrowing the signature is the guard
+ * that stops the dependency from creeping back in.
  *
  * Kept pure so both the settings UI (which displays the effective value) and
  * the applier (which applies it) derive it the same way and cannot drift.
  */
-export function resolveUIScale(
-  auto: boolean,
-  manual: number,
-  screenHeight: number,
-): number {
-  if (auto) return computeAutoUIScale(screenHeight)
+export function resolveUIScale(manual: number): number {
   const n = Number(manual)
   if (!Number.isFinite(n) || n <= 0) return 1
-  // Snap for the same reason as the auto path: a value stored off the grid
-  // (e.g. a legacy 0.82) would otherwise be displayed as 82% while the slider
-  // rendered its thumb on the 0.8 step.
+  // Snap so a value stored off the grid (e.g. a legacy 0.82) is not displayed
+  // as 82% while the slider renders its thumb on the 0.8 step.
   const bounded = Math.min(Math.max(n, 0.5), UI_SCALE_MAX)
   return Math.min(Math.max(snapToScaleStep(bounded), 0.5), UI_SCALE_MAX)
 }

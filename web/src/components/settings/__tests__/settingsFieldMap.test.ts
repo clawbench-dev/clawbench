@@ -166,34 +166,44 @@ describe('settingsFieldMap', () => {
     expect(map['recent_projects.max_count']).toBeTruthy()
   })
 
-  it('appearance exposes an auto-scale switch ahead of the manual scale slider', () => {
+  it('appearance exposes an auto-fit action ahead of the manual scale slider', () => {
     const entries = categoryItems['appearance']
-    const autoEntry = entries.find(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    const autoEntry = entries.find(e => e.type === 'item' && e.spec.key === 'uiScaleAutoFit')
     expect(autoEntry).toBeDefined()
-    if (autoEntry!.type !== 'item') throw new Error('expected item entry for uiScaleAuto')
-    expect(autoEntry.spec.type).toBe('switch')
+    if (autoEntry!.type !== 'item') throw new Error('expected item entry for uiScaleAutoFit')
+    // Must be a one-shot action, NOT a switch: a switch re-derived the factor
+    // on every applier call, which made the UI jump.
+    expect(autoEntry.spec.type).toBe('action')
     expect(autoEntry.spec.source).toBe('local')
-    // Android is excluded from auto scaling, so the switch is hidden there.
+    // Android layouts are already density-adapted, so the button is hidden.
     expect(autoEntry.spec.hideInAndroidApp).toBe(true)
     expect(autoEntry.spec.sectionHeader).toBe('settings.items.appearanceDisplaySection')
 
-    const autoIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    const autoIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScaleAutoFit')
     const sliderIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScale')
     expect(autoIdx).toBeGreaterThanOrEqual(0)
     expect(sliderIdx).toBeGreaterThan(autoIdx)
   })
 
-  it('disables the manual scale slider unless auto-scale is off', () => {
+  it('keeps the manual scale slider always enabled', () => {
     const entries = categoryItems['appearance']
     const slider = entries.find(e => e.type === 'item' && e.spec.key === 'uiScale')
     expect(slider).toBeDefined()
     if (slider!.type !== 'item') throw new Error('expected item entry for uiScale')
-    // Inverted on purpose: disableUnless fires when the condition is UNMET, so
-    // `uiScaleAuto === false` means "disabled while auto is ON".
-    expect(slider.spec.disableUnless).toEqual({ key: 'uiScaleAuto', value: false })
+    // The slider used to be disabled while the auto switch was on. The auto-fit
+    // button writes into the slider, so it must never be gated on a key that no
+    // longer exists (disableUnless would read `undefined` and disable it
+    // permanently).
+    expect(slider.spec.disableUnless).toBeUndefined()
     expect(slider.spec.min).toBe(0.8)
     expect(slider.spec.max).toBe(1.5)
     expect(slider.spec.defaultValue).toBe(1)
+  })
+
+  it('has no uiScaleAuto switch left anywhere', () => {
+    const all = Object.values(categoryItems).flat()
+    const stale = all.find(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    expect(stale).toBeUndefined()
   })
 
   it('the scale slider step grid matches UI_SCALE_STEP and is anchored at min', () => {
@@ -681,3 +691,4 @@ describe('auto-continue settings', () => {
     expect(map['chat.auto_continue_max_retries']).toBe('settings.items.chatAutoContinueMaxRetries')
   })
 })
+

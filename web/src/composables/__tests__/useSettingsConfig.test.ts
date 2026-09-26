@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, toFixedCSS, getZoomedViewport, applyFirstRunThemeDefaults, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, applyUIScale, getUIScale, getEffectiveUIScale, applyEffectiveUIScale, autoFitUIScale, toFixedCSS, getZoomedViewport, applyFirstRunThemeDefaults, localConfig, applyStoredTheme, syncThemeFromSystem, startSystemThemeWatcher } from '@/composables/useSettingsConfig'
 
 // Mock api.ts
 vi.mock('@/utils/api', () => ({
@@ -977,7 +977,6 @@ describe('useSettingsConfig', () => {
 
     beforeEach(() => {
       localConfig.uiScale = 1
-      localConfig.uiScaleAuto = true
       document.documentElement.style.zoom = ''
     })
 
@@ -986,55 +985,39 @@ describe('useSettingsConfig', () => {
       setNative(originalNative)
       document.documentElement.style.zoom = ''
       localStorage.removeItem('clawbench-settings-uiScale')
-      localStorage.removeItem('clawbench-settings-uiScaleAuto')
     })
 
-    it('derives the factor from the screen height when auto is on', () => {
-      setScreenHeight(2160)
-      expect(getEffectiveUIScale()).toBe(2)
-      setScreenHeight(1440)
-      expect(getEffectiveUIScale()).toBe(1.35)
-      setScreenHeight(1080)
-      expect(getEffectiveUIScale()).toBe(1)
-    })
-
-    it('ignores the manual value while auto is on', () => {
-      setScreenHeight(2160)
-      localConfig.uiScale = 0.8
-      // Auto governs; the stale manual value must not leak through.
-      expect(getEffectiveUIScale()).toBe(2)
-    })
-
-    it('uses the manual value once auto is turned off', () => {
-      setScreenHeight(2160)
-      localConfig.uiScaleAuto = false
+    it('returns the stored value regardless of the screen height', () => {
+      // The regression this pins: the applied factor used to be derived from
+      // the screen on every call, so a 4K screen would override whatever the
+      // user had chosen. Now the screen must not influence it at all.
       localConfig.uiScale = 1.25
+      setScreenHeight(2160)
+      expect(getEffectiveUIScale()).toBe(1.25)
+      setScreenHeight(1080)
+      expect(getEffectiveUIScale()).toBe(1.25)
+      setScreenHeight(4320)
       expect(getEffectiveUIScale()).toBe(1.25)
     })
 
-    it('does not auto-scale in the Android shell', () => {
-      // Android is excluded even though the switch is hidden there — a tall
-      // tablet viewport must not silently get a desktop-derived factor.
+    it('returns the stored value on every host, including Android', () => {
+      // Android was excluded from the old auto derivation; with no derivation
+      // left, the stored value simply applies everywhere.
+      localConfig.uiScale = 1.35
       setScreenHeight(2160)
       setNative({ isNativeApp: () => true, isDesktopApp: () => false })
-      expect(getEffectiveUIScale()).toBe(1)
-    })
-
-    it('still auto-scales in the Electron shell', () => {
-      setScreenHeight(2160)
-      setNative({ isNativeApp: () => true, isDesktopApp: () => true })
-      expect(getEffectiveUIScale()).toBe(2)
+      expect(getEffectiveUIScale()).toBe(1.35)
     })
 
     it('applies CSS zoom in the browser', () => {
-      setScreenHeight(2160)
+      localConfig.uiScale = 2
       setNative(undefined)
       applyEffectiveUIScale()
       expect(document.documentElement.style.zoom).toBe('2')
     })
 
     it('routes to native setZoomFactor on Electron and clears CSS zoom', () => {
-      setScreenHeight(2160)
+      localConfig.uiScale = 2
       const setZoomFactor = vi.fn()
       setNative({ setZoomFactor })
       // A CSS zoom left by a previous session must not compound with native zoom.
@@ -1047,7 +1030,7 @@ describe('useSettingsConfig', () => {
     })
 
     it('falls back to CSS zoom when native zoom throws', () => {
-      setScreenHeight(1440)
+      localConfig.uiScale = 1.35
       setNative({
         setZoomFactor: () => {
           throw new Error('refused')
@@ -1060,7 +1043,7 @@ describe('useSettingsConfig', () => {
     })
 
     it('clears CSS zoom on Electron when the factor is 1', () => {
-      setScreenHeight(1080)
+      localConfig.uiScale = 1
       const setZoomFactor = vi.fn()
       setNative({ setZoomFactor })
       document.documentElement.style.zoom = '1.5'
@@ -1072,54 +1055,90 @@ describe('useSettingsConfig', () => {
     })
   })
 
-  // ── uiScale side effect ──
-
-  describe('uiScale side effect', () => {
+  describe('autoFitUIScale', () => {
     const originalScreen = window.screen
+
+    /** Report a screen height in CSS pixels (dpr 1 so normalization is a no-op). */
+    function setScreenHeight(h: number) {
+      Object.defineProperty(window, 'screen', { value: { height: h }, configurable: true })
+      Object.defineProperty(window, 'devicePixelRatio', { value: 1, configurable: true })
+      Object.defineProperty(window, 'outerHeight', { value: 800, configurable: true })
+      Object.defineProperty(window, 'innerHeight', { value: 700, configurable: true })
+    }
+
+    beforeEach(() => {
+      localConfig.uiScale = 1
+      document.documentElement.style.zoom = ''
+    })
 
     afterEach(() => {
       Object.defineProperty(window, 'screen', { value: originalScreen, configurable: true })
       document.documentElement.style.zoom = ''
       localStorage.removeItem('clawbench-settings-uiScale')
-      localStorage.removeItem('clawbench-settings-uiScaleAuto')
-      localConfig.uiScale = 1
-      localConfig.uiScaleAuto = true
     })
 
-    it('setLocalConfig for uiScale applies CSS zoom when auto is off', () => {
-      Object.defineProperty(window, 'screen', { value: { height: 1080 }, configurable: true })
+    it('computes the factor from the current screen and stores it', () => {
+      setScreenHeight(2160)
+      const factor = autoFitUIScale()
+
+      expect(factor).toBe(2)
+      // Stored, not just returned: this is what makes the result stable and
+      // lets the slider show/tweak it afterwards.
+      expect(localConfig.uiScale).toBe(2)
+      expect(localStorage.getItem('clawbench-settings-uiScale')).toBe('2')
+    })
+
+    it('applies the fitted factor immediately', () => {
+      setScreenHeight(1440)
+      autoFitUIScale()
+      expect(document.documentElement.style.zoom).toBe('1.35')
+    })
+
+    it('is a no-op factor of 1 on a 1080p screen', () => {
+      setScreenHeight(1080)
+      expect(autoFitUIScale()).toBe(1)
+      expect(localConfig.uiScale).toBe(1)
+    })
+
+    it('overwrites a previously chosen manual value', () => {
+      // The button is an explicit request to re-fit, so it must win over a
+      // stale stored value (unlike the old switch, which ignored the slider).
+      localConfig.uiScale = 0.8
+      setScreenHeight(2160)
+      expect(autoFitUIScale()).toBe(2)
+      expect(localConfig.uiScale).toBe(2)
+    })
+
+    it('does not shrink below 1 on a low-resolution screen', () => {
+      setScreenHeight(768)
+      expect(autoFitUIScale()).toBe(1)
+    })
+  })
+
+  // ── uiScale side effect ──
+
+  describe('uiScale side effect', () => {
+    afterEach(() => {
+      document.documentElement.style.zoom = ''
+      localStorage.removeItem('clawbench-settings-uiScale')
+      localConfig.uiScale = 1
+    })
+
+    it('setLocalConfig for uiScale applies CSS zoom', () => {
       const { setLocalConfig } = useSettingsConfig()
-      localConfig.uiScaleAuto = false
 
       setLocalConfig('uiScale', 1.5)
 
       expect(document.documentElement.style.zoom).toBe('1.5')
     })
 
-    it('setLocalConfig for uiScale is overridden by the auto factor while auto is on', () => {
-      Object.defineProperty(window, 'screen', { value: { height: 2160 }, configurable: true })
+    it('setLocalConfig for uiScale clears CSS zoom at 1', () => {
+      document.documentElement.style.zoom = '1.5'
       const { setLocalConfig } = useSettingsConfig()
-      localConfig.uiScaleAuto = true
 
-      setLocalConfig('uiScale', 0.8)
+      setLocalConfig('uiScale', 1)
 
-      // Auto governs, so the manual value must not change the applied zoom.
-      expect(document.documentElement.style.zoom).toBe('2')
-    })
-
-    it('setLocalConfig for uiScaleAuto re-applies the effective factor', () => {
-      Object.defineProperty(window, 'screen', { value: { height: 2160 }, configurable: true })
-      const { setLocalConfig } = useSettingsConfig()
-      localConfig.uiScaleAuto = false
-      localConfig.uiScale = 1.25
-
-      setLocalConfig('uiScaleAuto', true)
-
-      expect(document.documentElement.style.zoom).toBe('2')
-
-      setLocalConfig('uiScaleAuto', false)
-
-      expect(document.documentElement.style.zoom).toBe('1.25')
+      expect(document.documentElement.style.zoom).toBe('')
     })
   })
 

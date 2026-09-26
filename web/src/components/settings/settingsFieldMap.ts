@@ -203,8 +203,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.uiScaleAuto', descriptionKey: 'settings.items.uiScaleAutoDesc', key: 'uiScaleAuto', type: 'switch', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', disableUnless: { key: 'uiScaleAuto', value: false }, sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    // One-shot auto fit, deliberately NOT a switch: the scale is a stored value
+    // now, and the button only computes it when clicked. An always-on switch
+    // re-derived the factor on every applier call, which made the UI jump.
+    // Hidden on Android, whose layout is already density-adapted by the WebView.
+    { type: 'item', spec: { labelKey: 'settings.items.uiScaleAutoFit', descriptionKey: 'settings.items.uiScaleAutoFitDesc', key: 'uiScaleAutoFit', type: 'action', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fontMono', descriptionKey: 'settings.items.fontMonoDesc', key: 'fontMono', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(true) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},
