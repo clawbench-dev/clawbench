@@ -213,10 +213,23 @@ function resolveAgainstProjectRoot(path: string, projectRoot: string): ResolveRe
 function shouldRejectPath(path: string): boolean {
     // Note: backslash is NOT rejected — it is the Windows path separator
     // (e.g. E:\git\...). Only glob wildcards and shell chars are rejected.
-    if (/[*?[\]<>]/.test(path) || path.includes('**')) return true
+    if (hasGlobChars(path)) return true
     if (/^https?:\/\//i.test(path)) return true
     if (/\$/.test(path)) return true
     return false
+}
+
+/**
+ * True when a path is a glob pattern rather than a real file path.
+ *
+ * Mirrors the backend's `containsGlobChars` (internal/handler/file.go), which
+ * short-circuits such paths to `'none'` in `/api/file/batch-exists` WITHOUT
+ * touching the filesystem. Keeping the two in sync matters: a mismatch would
+ * either annotate a link the server can never resolve, or leave a real file
+ * unannotated.
+ */
+function hasGlobChars(path: string): boolean {
+    return /[*?[\]<>]/.test(path) || path.includes('**')
 }
 
 /**
@@ -503,6 +516,36 @@ export function annotateFilePaths(
     return { html: doc.body.innerHTML, detectedPaths }
 }
 
+/** Class marking a path the app knows cannot be opened (missing / glob). */
+export const INERT_PATH_CLASS = 'chat-file-path-inert'
+
+/**
+ * Make a local `<a>` link visibly non-navigable while keeping its text.
+ *
+ * Used for two cases that share the same defect: a glob pattern (never a real
+ * file) and a path verified as missing. Both used to render as an ordinary
+ * link that either silently did nothing or toasted "File not found" on click,
+ * with no visual difference from a working link.
+ *
+ * The `href` is removed so the browser cannot navigate (a `file:` URL from a
+ * web context fails anyway, and a relative one would 404 against the site
+ * root); the anchor degrades to an inert inline element. The original href is
+ * stashed in `data-inert-href` for diagnostics — nothing reads it to navigate.
+ * `data-path-type="none"` participates in the same contract as verified paths,
+ * so the click interceptors (which only act on `file`/`dir`) ignore it.
+ */
+function markInertLink(a: Element, title: string): void {
+    const href = a.getAttribute('href')
+    if (href) {
+        a.setAttribute('data-inert-href', href)
+        a.removeAttribute('href')
+    }
+    a.classList.add(INERT_PATH_CLASS)
+    a.setAttribute('data-path-type', 'none')
+    a.setAttribute('title', title)
+    a.setAttribute('aria-disabled', 'true')
+}
+
 /**
  * Annotate file paths inside an already-parsed Document, mutating it in place.
  *
@@ -525,6 +568,14 @@ export function annotateFilePathsIn(
         if (/^(https?:|\/\/|mailto:|tel:|#)/i.test(href)) continue
         const parsed = parseFileUri(href)
         if (!parsed.path) continue
+        // A glob pattern (`src/*.go`, `**/*.ts`) is a pattern, not a file, so
+        // the backend short-circuits it to 'none' and it can never be opened.
+        // Left alone it renders as an ordinary-looking dead link with no hint;
+        // mark it non-navigable so the inertness is visible and explained.
+        if (hasGlobChars(parsed.path)) {
+            markInertLink(a, gt('file.toast.globPattern'))
+            continue
+        }
         const resolved = (isAbsolutePath(parsed.path) || !baseDir)
             ? resolveFilePath(parsed.path, projectRoot, homeDir)
             : resolveRelativePath(parsed.path, baseDir)
@@ -826,22 +877,45 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         }
         if (swapped) continue
 
-        // No fallback available — remove annotation
+        // No fallback available — the path is verified missing. Mark it
+        // visibly instead of stripping every trace of the annotation.
+        //
+        // Stripping was the old behavior and produced the issue #501 symptom:
+        // a <span> unwrapped to bare text, and an <a> / <code> kept its element
+        // and (for <a>) its href but lost the class — so a dead link still
+        // looked and clicked like a live one, only toasting "File not found".
+        // A visible "missing" chip with a tooltip explains the state up front,
+        // and the user can still read (and copy) the path.
+        //
+        // The annotation class is deliberately KEPT: it is what gives the path
+        // its chip look, so a missing path still reads as "this was a file
+        // reference", just muted. `data-file-path` is kept too, so a later
+        // re-verification pass (see ContentBlocks.reverifyAnnotations) can
+        // re-mark it after a list remount rebuilds the DOM from cached HTML —
+        // `data-path-type="none"` is what tells the click interceptors (which
+        // only act on `file`/`dir`) to leave it alone.
         containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"]`).forEach(btn => {
             btn.remove()
         })
         containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"], .code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
-            if (el.tagName === 'A' || el.tagName === 'CODE') {
-                // Keep the element but drop its file-open affordances.
-                el.classList.remove('chat-file-path', 'code-file-path')
-                el.removeAttribute('data-file-path')
-                el.removeAttribute('data-fallback-path')
-                el.removeAttribute('data-external')
-                el.removeAttribute('data-line-start')
-                el.removeAttribute('data-line-end')
-                el.removeAttribute('data-line-ranges')
-            } else {
-                el.replaceWith(...el.childNodes)
+            el.classList.add(INERT_PATH_CLASS)
+            el.setAttribute('data-path-type', 'none')
+            el.setAttribute('title', gt('file.toast.fileRemoved'))
+            el.removeAttribute('data-fallback-path')
+            el.removeAttribute('data-external')
+            el.removeAttribute('data-line-start')
+            el.removeAttribute('data-line-end')
+            el.removeAttribute('data-line-ranges')
+            // An <a> must not stay navigable: it would 404 against the site
+            // root (relative href) or fail in the web context (file:). Keep the
+            // element and its text so the path remains readable.
+            if (el.tagName === 'A') {
+                const href = el.getAttribute('href')
+                if (href) {
+                    el.setAttribute('data-inert-href', href)
+                    el.removeAttribute('href')
+                }
+                el.setAttribute('aria-disabled', 'true')
             }
         })
     }

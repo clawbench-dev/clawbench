@@ -46,6 +46,10 @@ export default {
   imageBlock: {
     view: 'View image',
     openFile: 'Open file',
+    // Shown in place of an <img> whose local file could not be loaded (a 404
+    // from /api/fs/raw|thumb), so a missing file reads as a labelled gap
+    // instead of a silent broken-image glyph (issue #501).
+    loadFailed: 'Image failed to load',
   },
   tableBlock: {
     label: 'Table',
@@ -1397,6 +1401,10 @@ export default {
       dirLoadFailed: 'Directory not found or inaccessible',
       dirRemoved: 'The current directory may have been removed',
       fileNotFound: 'File not found',
+      // Tooltip for a local link whose path contains glob wildcards (`src/*.go`,
+      // `**/*.ts`). It is a pattern, not a file, so it can never be opened —
+      // marking it explains why the link is inert (issue #501).
+      globPattern: 'This is a glob pattern, not a file path',
       fileNotFoundReturned: 'File no longer exists; returned to the origin page',
       fileRemoved: 'File does not exist; it may have been removed',
       externalFile: 'This file is outside the project directory',

@@ -224,6 +224,54 @@
     max-height: 200px;
 }
 
+/* ─── Missing local media: labelled placeholder ──────────────────────────
+   A local image that 404s is swapped for `.local-media-missing` by
+   localMediaFallback.ts. The <img> stays in the DOM (hidden) so the fallback
+   is reversible when the file later appears; this keeps the frame's height
+   stable by giving the placeholder its own box rather than collapsing to 0. */
+.image-block-wrapper .lightbox-img-wrap img.local-media-hidden {
+    display: none;
+}
+
+.local-media-missing {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1);
+    min-width: 160px;
+    padding: var(--space-5) var(--space-6);
+    color: var(--text-muted, #999);
+    background: color-mix(in srgb, var(--text-muted, #999) 8%, transparent);
+    font-size: var(--font-size-sm);
+    line-height: 1.4;
+    text-align: center;
+}
+
+.local-media-missing-icon {
+    font-size: 20px;
+    opacity: var(--opacity-soft);
+}
+
+.local-media-missing-text {
+    opacity: var(--opacity-soft);
+}
+
+/* File name, when one could be derived from the src. Monospace + break-all so
+   a long path does not force the figure wider than the reading column. */
+.local-media-missing-name {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    word-break: break-all;
+    opacity: var(--opacity-muted);
+}
+
+/* A missing image cannot be viewed / attached / opened, so hide the figure's
+   floating toolbar — the buttons would open a lightbox onto nothing. */
+.image-block-wrapper.image-block-missing > .image-block-header {
+    display: none;
+}
+
 /* ─── Table row modal: cell figures are header-stripped (tableRowExpand)
        before entering the modal; flatten them to plain thumbnails. ───────── */
 .table-row-value .image-block-wrapper {

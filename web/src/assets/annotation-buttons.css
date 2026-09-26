@@ -26,6 +26,31 @@
   color: var(--text-primary, #333);
 }
 
+/* ── Inert path (verified missing / glob pattern) ──
+   A path the app knows cannot be opened. It keeps its text so the reader can
+   still see and copy it, but is visibly NOT a link: muted, dashed underline,
+   and `cursor: help` so the tooltip explaining why is discoverable.
+   The selectors are intentionally specific (`a.chat-file-path-inert`, plus a
+   plain `.chat-file-path-inert`) because a local <a> also matches the generic
+   link rules in markdown-common.css — and those come later in the cascade for
+   some surfaces, so a low-specificity rule would lose to the accent colour. */
+a.chat-file-path-inert,
+.chat-file-path-inert,
+.code-file-path.chat-file-path-inert {
+  color: var(--text-muted, #999) !important;
+  text-decoration: none;
+  border-bottom: 1px dashed color-mix(in srgb, var(--text-muted, #999) 60%, transparent);
+  cursor: help;
+  background: none;
+}
+
+a.chat-file-path-inert:hover,
+.chat-file-path-inert:hover {
+  color: var(--text-muted, #999) !important;
+  text-decoration: none;
+  background: color-mix(in srgb, var(--text-muted, #999) 10%, transparent);
+}
+
 /* ── File open button ── */
 
 .chat-file-open-btn {

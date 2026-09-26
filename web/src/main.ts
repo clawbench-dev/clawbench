@@ -18,12 +18,19 @@ import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
 import { registerPwaServiceWorker } from './utils/pwaServiceWorker.ts'
 import { createSingleTabGuard } from './composables/useSingleTab.ts'
 import SingleTabBlocked from './components/common/SingleTabBlocked.vue'
+import { installLocalMediaFallback } from './utils/localMediaFallback.ts'
 
 configureMarkedRenderer()
 
 // Observe every /api/* response for a 401 (expired session cookie). When armed
 // by App.vue after auth succeeds, a 401 redirects to /login.
 installAuthRedirectInterceptor()
+
+// Replace a locally-served image that 404s with a labelled placeholder instead
+// of the browser's silent broken-image glyph. Local images are rewritten to
+// /api/fs/* with no existence check, so a missing file previously left an
+// unexplained gap (issue #501). Document-level capture listener, installed once.
+installLocalMediaFallback()
 
 // ── Single-tab gate ─────────────────────────────────────────────────────────
 // Only one tab may run the app. The server keys a client's WebSocket

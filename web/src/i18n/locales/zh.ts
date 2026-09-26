@@ -46,6 +46,9 @@ export default {
   imageBlock: {
     view: '放大查看',
     openFile: '打开文件',
+    // 本地图片文件加载失败（/api/fs/raw|thumb 返回 404）时就地展示，避免只留一个
+    // 无提示的裂图占位（issue #501）。
+    loadFailed: '图片加载失败',
   },
   tableBlock: {
     label: '表格',
@@ -1400,6 +1403,9 @@ export default {
       dirLoadFailed: '目录不存在或无法访问',
       dirRemoved: '当前目录已被移除',
       fileNotFound: '文件不存在',
+      // 路径含通配符（`src/*.go`、`**/*.ts`）时的提示：它是模式而非文件，
+      // 无法打开，标注出来说明链接为何不可点（issue #501）。
+      globPattern: '这是通配符模式，不是文件路径',
       fileNotFoundReturned: '文件已不存在，已返回来源页面',
       fileRemoved: '文件不存在，可能已被移除',
       externalFile: '此文件位于项目目录之外',
