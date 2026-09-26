@@ -10,6 +10,18 @@ on:
       - 'docs/**'
       - '**/*.md'
   workflow_dispatch:
+    inputs:
+      # Only consumed by the `android-e2e` job. Underscored (not `android-e2e-tier`)
+      # so it is addressable with dot notation in expressions; a hyphenated name
+      # forces bracket notation (`github.event.inputs['android-e2e-tier']`).
+      # Named `android_e2e_tier` rather than `tier` because this repo already uses
+      # "Tier 1 / Tier 2" for the *coverage* gates, which mean something unrelated
+      # (baseline drift vs. changed lines).
+      android_e2e_tier:
+        description: 'Android E2E harness tier (all = Tier 1 then Tier 2)'
+        type: choice
+        options: ['all', '1', '2']
+        default: 'all'
 
 jobs:
   golangci-lint:
@@ -447,3 +459,241 @@ jobs:
           name: playwright-results
           path: test-results/
           retention-days: 7
+
+  # --------------------------------------------------------------------------
+  # Android E2E harness (android-e2e/) — emulator + Appium + a real runtime.
+  #
+  # Gated exactly like the Playwright `e2e` job above: it is expensive (a 9.1 GB
+  # emulator image plus a ~6 min boot and suite) and must not run on every push.
+  #
+  # DELIBERATELY `continue-on-error: true`, again matching `e2e`: the harness is
+  # new to CI, so it reports red without blocking merges until it has proven
+  # stable here. Flip this to `false` once it has a green streak — that is a
+  # one-line change, and until then the job's result is advisory.
+  #
+  # Why a job in this file rather than a separate workflow: it reuses the same
+  # trigger block (`push`/`pull_request` with paths-ignore + `workflow_dispatch`),
+  # the same checkout/java/go action versions, and the same `run-e2e` label gate
+  # as the Playwright job. A second file would duplicate that surface and need
+  # its own `paths-ignore` tuning to avoid running on docs-only pushes.
+  # --------------------------------------------------------------------------
+  android-e2e:
+    name: E2E Tests (Android emulator)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    continue-on-error: true
+    # A hang must fail rather than burn the 6-hour default. Budget from the
+    # harness's own measured costs: image pull ~6 min (2.65 GB compressed),
+    # APK build ~2-4 min, emulator boot ~2-4 min, Tier 1 ~3.5 min, Tier 2 ~6 min.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report disk space (before)
+        # The emulator image is 9.14 GB uncompressed and this job also builds an
+        # APK; a runner that cannot fit both fails late and confusingly. Logged
+        # before and after the reclamation below so the headroom is visible.
+        run: df -h / /tmp
+
+      - name: Reclaim disk space
+        # ubuntu-latest has ~14 GB free on `/`. Budget: base image ~9.2 GB +
+        # emulator container layer (~2-3 GB, the AVD/userdata) + Gradle/APK
+        # (~1-2 GB). That does not fit without reclaiming.
+        #
+        # RECONCILING THE SDK: `/usr/local/lib/android/sdk` is where the runner's
+        # preinstalled SDK lives, and this job does need an Android SDK — so the
+        # tree is NOT deleted wholesale. Only the subdirectories this build never
+        # touches are removed: the NDK, system images, the host emulator, sources
+        # and cmake. Those dominate the tree (~6-8 GB) while `platforms`,
+        # `build-tools`, `platform-tools` and `cmdline-tools` (a few hundred MB)
+        # are kept, so android-actions/setup-android@v3 below reuses the existing
+        # install instead of re-downloading one. Deleting the whole tree would
+        # free slightly more but throw away exactly the thing the job needs.
+        run: |
+          set -x
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/boost \
+            /usr/local/lib/android/sdk/ndk \
+            /usr/local/lib/android/sdk/system-images \
+            /usr/local/lib/android/sdk/emulator \
+            /usr/local/lib/android/sdk/sources \
+            /usr/local/lib/android/sdk/cmake \
+            /usr/local/lib/android/sdk/extras
+          sudo apt-get clean
+          df -h / /tmp
+
+      - name: Enable KVM
+        # GitHub-hosted ubuntu runners are themselves VMs and expose a KVM
+        # device, but /dev/kvm starts non-writable for the runner user. This
+        # udev rule sets MODE=0666 so the unprivileged `docker run --device
+        # /dev/kvm` works. The rule + reload is the standard incantation.
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Verify KVM is present and usable
+        # Distinct step so a KVM problem is attributable rather than surfacing
+        # as a 15-minute "emulator did not boot". `-w` is the plain check (the
+        # node must be writable); the authoritative `emulator -accel-check` needs
+        # the 9 GB image, so it is repeated in its own step after the pull.
+        run: |
+          set -euo pipefail
+          ls -l /dev/kvm
+          if [ ! -w /dev/kvm ]; then
+            echo "::error::/dev/kvm is not writable — the Enable KVM step did not take effect"
+            exit 1
+          fi
+          echo "/dev/kvm is writable"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - uses: actions/setup-go@v5
+        with:
+          # Tier 2 compiles the real server binary from this worktree
+          # (android-e2e/scripts/prepare-assets.sh --with-server), so the Go
+          # toolchain must be on PATH. Same version as every other job here.
+          go-version: '1.25'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          # The action's default is 'tools platform-tools'. cmdline-tools 16.0
+          # (which the action itself installs) no longer ships the legacy
+          # 'tools' package, so installing it fails with
+          # "Failed to find package 'tools'" and aborts the whole job.
+          # platform-tools is the only one we actually need on PATH.
+          packages: 'platform-tools'
+
+      - name: Install Android SDK components
+        # Must match android/app/build.gradle, which sets `compileSdk 36`.
+        # build-tools 34.0.0 is what the rest of CI pins; the platform is what
+        # actually matters for compilation, and it is 36 here — installing
+        # android-34 (as the other Android jobs do) would fail the build.
+        run: sdkmanager "platforms;android-36" "build-tools;34.0.0"
+
+      - name: Fetch version tags only
+        # The debug APK's versionName comes from `git describe`, which needs the
+        # tags. actions/checkout's default depth=1 fetch does not bring tags
+        # pointing outside the fetched slice, so fetch them explicitly (same
+        # refspec as the build-android job above).
+        run: git fetch --depth=1 --no-tags origin '+refs/tags/v*:refs/tags/v*'
+
+      - name: Build debug APK
+        # Same command as the build-android job above, and the same one the
+        # harness runs locally. Building it here (rather than letting run.sh do
+        # it) gives this step its own attribution and lets the staging step
+        # below see output-metadata.json. Quoted (unlike build-android) so
+        # actionlint's shellcheck pass stays clean.
+        #
+        # AGP 8.2 needs JDK 17. `setup-java` puts it on PATH as the default, so
+        # the gradle invocation picks it up; run.sh is also passed --skip-build
+        # below, so its own JDK17 resolution (a dev-container path) is unused.
+        working-directory: android
+        run: |
+          VERSION_CODE=$("$GITHUB_WORKSPACE/scripts/lib/version-code.sh" --tag-only)
+          VERSION_NAME=$(git describe --tags --always 2>/dev/null || echo "dev")
+          ./gradlew assembleDebug -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME"
+
+      - name: Stage harness assets
+        # `--with-server` unconditionally, INCLUDING for Tier 1. Reason: run.sh
+        # does a bare `compose build` (android-e2e/scripts/run.sh:112), which
+        # builds every service — and Dockerfile.server hard-COPYs
+        # assets/clawbench-server. For Tier 1 run.sh only runs
+        # `prepare-assets.sh` *without* --with-server, so on a fresh checkout
+        # (assets/ is gitignored) that COPY fails and the whole run dies before
+        # the emulator even starts. Locally this is masked by a stale
+        # clawbench-server left in assets/ by a previous Tier 2 run.
+        #
+        # Staging it here for every tier costs one Go link (~10-20 s) and makes
+        # all three tier choices work on a clean checkout. The correct fix is in
+        # the harness (build only the selected tier's services, or make the
+        # server image tolerate a missing binary); until that lands this is the
+        # CI-side workaround, and it touches no harness file.
+        run: ./android-e2e/scripts/prepare-assets.sh --with-server
+
+      - name: Pull emulator image
+        # Plain `docker pull`, NOT android-e2e/scripts/pull-image.sh. That script
+        # exists only because *this repo's dev container* talks to a host daemon
+        # whose proxy resets every external HTTPS CONNECT; on a GitHub runner the
+        # daemon has direct egress, so the ordinary pull is simpler and lets the
+        # Docker layer cache do its job. Do not swap in the script here.
+        #
+        # run.sh calls pull-image.sh itself and it will no-op when the image is
+        # already present (docker image inspect succeeds), so pre-pulling here
+        # both warms the cache and keeps the timing/attribution in this step.
+        run: |
+          df -h /
+          time docker pull budtmo/docker-android:emulator_9.0
+          docker image inspect budtmo/docker-android:emulator_9.0 >/dev/null
+          df -h /
+
+      - name: Verify KVM acceleration with the pulled image
+        # The authoritative KVM check — but `emulator -accel-check` is NOT
+        # fail-fast: measured, with /dev/kvm absent it prints
+        #   accel: 8  /dev/kvm is not found: VT disabled in BIOS ...
+        # and still EXITS 0. So the status cannot be trusted; the success text
+        # ("KVM (version N) is installed and usable.") must be asserted.
+        #
+        # Must run as root (`-u root`): budtmo's startup chowns /dev/kvm to uid
+        # 1300, so as the default user this reports "This user doesn't have
+        # permissions to use KVM" even on a perfectly good host.
+        run: |
+          set -euo pipefail
+          out="$(docker run --rm --device /dev/kvm -u root --entrypoint sh \
+            budtmo/docker-android:emulator_9.0 -c 'emulator -accel-check' 2>&1 || true)"
+          printf '%s\n' "$out"
+          if ! printf '%s\n' "$out" | grep -q 'is installed and usable'; then
+            echo "::error::KVM acceleration is not usable — the emulator would fall back to software emulation"
+            exit 1
+          fi
+          echo "KVM acceleration verified"
+
+      - name: Run Android E2E harness
+        # run.sh brings the emulator up, waits for sys.boot_completed, disables
+        # the soft IME, runs the wdio suite for the selected tier, and tears
+        # everything down. `--skip-build` reuses the APK built above.
+        #
+        # Bind mounts: the harness deliberately uses `docker build` + `docker cp`
+        # rather than compose `volumes:` bind mounts. That works both here and in
+        # the dev container, so it is left exactly as-is.
+        env:
+          # workflow_dispatch input (default 'all'); a PR run has no inputs, so
+          # fall back to 'all'. run.sh accepts --all/--tier1/--tier2.
+          E2E_TIER_INPUT: ${{ github.event.inputs.android_e2e_tier || 'all' }}
+        run: |
+          set -euo pipefail
+          case "$E2E_TIER_INPUT" in
+            all)    TIER_FLAG=--all ;;
+            1)      TIER_FLAG=--tier1 ;;
+            2)      TIER_FLAG=--tier2 ;;
+            *) echo "::error::unknown android_e2e_tier '$E2E_TIER_INPUT'"; exit 2 ;;
+          esac
+          echo "running: android-e2e/scripts/run.sh $TIER_FLAG --skip-build"
+          ./android-e2e/scripts/run.sh "$TIER_FLAG" --skip-build
+
+      - name: Show harness artifacts
+        if: always()
+        run: |
+          echo "--- android-e2e/artifacts ---"
+          ls -la android-e2e/artifacts || true
+
+      - name: Upload failure artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          # Failure screenshots / page source / context lists written by
+          # wdio.conf.mjs. artifacts/ is cleared at the start of every run, so
+          # anything here belongs to this run. `if-no-files-found: ignore` keeps
+          # a green run (which writes none) from failing this step.
+          name: android-e2e-artifacts
+          path: android-e2e/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
