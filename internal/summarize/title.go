@@ -96,23 +96,56 @@ func buildTitlePayload(userMessages []string) string {
 // joinUserMessages concatenates the non-empty user messages, capped at
 // maxTitlePayloadRunes runes. Kept separate from buildTitlePayload so the
 // cap/join behavior is testable without the framing markers.
+//
+// When the combined text exceeds the cap it is NOT a plain head-truncation: the
+// LAST message is always kept, with the opening messages filling whatever room
+// is left. This matters for fork / continue-from-execution sessions, whose
+// copied history means the message that describes the NEW branch is the last
+// one — dropping it would title the session from the history it inherited
+// instead of from what the user actually came to do. A head-only cut silently
+// did exactly that once the inherited history exceeded the cap.
 func joinUserMessages(userMessages []string) string {
-	var b strings.Builder
+	parts := make([]string, 0, len(userMessages))
 	for _, m := range userMessages {
-		m = strings.TrimSpace(m)
-		if m == "" {
-			continue
+		if m = strings.TrimSpace(m); m != "" {
+			parts = append(parts, m)
 		}
-		if b.Len() > 0 {
-			b.WriteString("\n")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	joined := strings.Join(parts, "\n")
+	if len([]rune(joined)) <= maxTitlePayloadRunes {
+		return joined
+	}
+	// The last message alone can exceed the cap — then it is the whole payload.
+	lastRunes := []rune(parts[len(parts)-1])
+	if len(lastRunes) >= maxTitlePayloadRunes {
+		return string(lastRunes[:maxTitlePayloadRunes])
+	}
+	// Reserve room for the last message plus the joiner, then fill the head.
+	// headBudget is what the head parts (and the newlines between them) may use.
+	separator := "\n"
+	headBudget := maxTitlePayloadRunes - len(lastRunes) - len([]rune(separator))
+	var head []string
+	used := 0
+	for _, p := range parts[:len(parts)-1] {
+		pRunes := []rune(p)
+		// A separator is needed only once the head already has a part.
+		need := len(pRunes)
+		if len(head) > 0 {
+			need += len(separator)
 		}
-		b.WriteString(m)
+		if used+need > headBudget {
+			break
+		}
+		head = append(head, p)
+		used += need
 	}
-	joined := strings.TrimSpace(b.String())
-	if runes := []rune(joined); len(runes) > maxTitlePayloadRunes {
-		joined = string(runes[:maxTitlePayloadRunes])
+	if len(head) == 0 {
+		return string(lastRunes)
 	}
-	return joined
+	return strings.Join(head, separator) + separator + string(lastRunes)
 }
 
 // sanitizeSessionTitle turns the model's raw output into a single-line title:

@@ -619,6 +619,7 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 
 	// Use transaction under write mutex to ensure data consistency
 	var msgID int64
+	var titled bool
 	tx, txErr := WriteBegin()
 	if txErr != nil {
 		return 0, txErr
@@ -626,13 +627,21 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	defer writeMu.Unlock()
 	defer tx.Rollback()
 
-	msgID, txErr = insertChatMessageTx(tx, projectPath, backend, sessionID, role, content, files, streamingInt, fallbackTitle)
+	msgID, titled, txErr = insertChatMessageTx(tx, projectPath, backend, sessionID, role, content, files, streamingInt, fallbackTitle)
 	if txErr != nil {
 		return 0, txErr
 	}
 
 	if txErr := tx.Commit(); txErr != nil {
 		return 0, txErr
+	}
+
+	// Schedule the AI rename AFTER the commit: the local title is already
+	// durable, so the background call reads a consistent history, and a failure
+	// there cannot roll back the user's message. Only the message that earned
+	// the local title triggers it.
+	if titled {
+		ScheduleAutoRename(sessionID, ExtractPlainText(content))
 	}
 
 	slog.Info("chat: persisted message",
@@ -726,8 +735,10 @@ func UpdateChatQuoteNote(sessionID string, messageID int64, quoteID, note string
 // session touches (updated_at refresh and first-user-message title generation)
 // inside the caller's transaction.
 //
-// It returns the LastInsertId (msgID). The caller owns Commit/Rollback.
-func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle string) (int64, error) {
+// It returns the LastInsertId (msgID) and whether this call wrote the session's
+// local title (titled), so the caller can schedule the AI rename for exactly the
+// message that earned the title. The caller owns Commit/Rollback.
+func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle string) (int64, bool, error) {
 	var filesJSON string
 	if len(files) > 0 {
 		data, _ := json.Marshal(files)
@@ -739,21 +750,25 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 		projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
 	)
 	if txErr != nil {
-		return 0, txErr
+		return 0, false, txErr
 	}
 
 	// Update session's updated_at timestamp
 	if _, txErr = tx.Exec("UPDATE chat_sessions SET updated_at = CURRENT_TIMESTAMP WHERE id = ?", sessionID); txErr != nil {
-		return 0, txErr
+		return 0, false, txErr
 	}
 
+	titled := false
 	if role == "user" {
-		if err := maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle); err != nil {
-			return 0, err
+		var err error
+		titled, err = maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle)
+		if err != nil {
+			return 0, false, err
 		}
 	}
 
-	return result.LastInsertId()
+	msgID, err := result.LastInsertId()
+	return msgID, titled, err
 }
 
 // Session title sources, ordered by priority (higher rank wins). The stored
@@ -809,7 +824,12 @@ func titleSourceRank(source string) int {
 // The deliberate-title paths (task, continue-from-execution, ACP import) all
 // write 'custom', so broadening the gate to "any message while placeholder"
 // cannot clobber them.
-func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
+//
+// The returned bool reports whether a title was actually written by THIS call.
+// Callers use it to decide whether to schedule the AI rename (service.
+// session_auto_title.go): the AI layer must only run for the same one message
+// that earned the local title, not on every message of the session.
+func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []model.FileEntry, fallbackTitle string) (bool, error) {
 	var source string
 	columnMissing := false
 	// Best-effort read. A missing column means a minimal test schema; anything
@@ -831,11 +851,11 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		if txErr := tx.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&count); txErr != nil || count != 1 {
 			// A read failure here means "cannot prove this is the first message",
 			// so skip titling rather than risk clobbering a locked title.
-			return nil //nolint:nilerr // best-effort title; a failed count read must not fail the message insert
+			return false, nil //nolint:nilerr // best-effort title; a failed count read must not fail the message insert
 		}
 	} else if titleSourceRank(source) >= titleSourceRank(TitleSourceAuto) {
 		// Already auto-titled or deliberately named — never clobber.
-		return nil
+		return false, nil
 	}
 	title := ExtractPlainText(content)
 	if title == "" && len(files) > 0 {
@@ -848,26 +868,30 @@ func maybeAutoTitleSessionTx(tx *sql.Tx, sessionID, content string, files []mode
 		title = string(runes[:50]) + "..."
 	}
 	if _, err := tx.Exec("UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ?", title, TitleSourceAuto, sessionID); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return true, nil
 }
 
 // applyAutoTitle sets the session title from a user message outside a
 // transaction. Used by the enqueue path, which persists into queued_messages
 // (not chat_history) and therefore cannot use maybeAutoTitleSessionTx's
 // chat_history count fallback: it wraps the same logic in its own transaction.
-func applyAutoTitle(sessionID, content string, files []model.FileEntry, fallbackTitle string) error {
+//
+// It returns whether the title was written, so the caller can schedule the AI
+// rename for exactly this message.
+func applyAutoTitle(sessionID, content string, files []model.FileEntry, fallbackTitle string) (bool, error) {
 	tx, err := WriteBegin()
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer writeMu.Unlock()
 	defer tx.Rollback()
-	if err := maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle); err != nil {
-		return err
+	titled, err := maybeAutoTitleSessionTx(tx, sessionID, content, files, fallbackTitle)
+	if err != nil {
+		return false, err
 	}
-	return tx.Commit()
+	return titled, tx.Commit()
 }
 
 // titleFromFileEntries builds a session title from file entries by extracting

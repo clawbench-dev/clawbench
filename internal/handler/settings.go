@@ -48,6 +48,7 @@ var hotReloadFields = map[string]bool{
 	"chat.fork_context_budget":          true,
 	"chat.auto_continue_enabled":        true,
 	"chat.auto_continue_max_retries":    true,
+	"chat.auto_rename_enabled":          true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -247,6 +248,7 @@ type configChat struct {
 	ForkContextBudget        int  `json:"fork_context_budget"`
 	AutoContinueEnabled      bool `json:"auto_continue_enabled"`
 	AutoContinueMaxRetries   int  `json:"auto_continue_max_retries"`
+	AutoRenameEnabled        bool `json:"auto_rename_enabled"`
 }
 
 type configSession struct {
@@ -574,6 +576,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.fork_context_budget":          true,
 	"chat.auto_continue_enabled":        true,
 	"chat.auto_continue_max_retries":    true,
+	"chat.auto_rename_enabled":          true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -725,6 +728,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			ForkContextBudget:        cfg.Chat.ForkContextBudget,
 			AutoContinueEnabled:      cfg.Chat.AutoContinueEnabled,
 			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
+			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -1406,6 +1410,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := chat["auto_continue_max_retries"].(float64); ok {
 			cfg.Chat.AutoContinueMaxRetries = int(v)
 		}
+		if v, ok := chat["auto_rename_enabled"].(bool); ok {
+			cfg.Chat.AutoRenameEnabled = v
+		}
 	}
 
 	if session, ok := patch["session"].(map[string]any); ok {
@@ -1711,6 +1718,7 @@ func applyHotReloadGlobals() {
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

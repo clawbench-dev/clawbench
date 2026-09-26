@@ -97,6 +97,12 @@ type Config struct {
 		// turn. -1 means unlimited (still capped internally), 0 disables the
 		// retries without turning the feature off. (default: 3)
 		AutoContinueMaxRetries int `yaml:"auto_continue_max_retries"`
+		// AutoRenameEnabled replaces a session's local title with an AI summary
+		// of its user messages, at the same moment the local title is written
+		// (first message, or first message after a fork/continue). Falls back to
+		// the local title when the shared ai_summary model is unconfigured or
+		// the call fails. (default: false)
+		AutoRenameEnabled bool `yaml:"auto_rename_enabled"`
 	} `yaml:"chat"`
 	Session struct {
 		MaxCount                int  `yaml:"max_count"`                 // Maximum number of chat sessions per project (default: 15)
@@ -368,6 +374,9 @@ var (
 	// abnormal-termination auto-resume. Read by internal/service at turn end.
 	ChatAutoContinueEnabled    bool
 	ChatAutoContinueMaxRetries int
+	// ChatAutoRenameEnabled switches on the AI summary rename of a session at
+	// the moment its local title is written. Read by internal/service.
+	ChatAutoRenameEnabled bool
 
 	// Session limits (set from config, with defaults)
 	SessionMaxCount int // Default: 15

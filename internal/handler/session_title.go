@@ -3,13 +3,10 @@ package handler
 import (
 	"context"
 	"net/http"
-	"strings"
 	"time"
 
 	"clawbench/internal/middleware"
-	"clawbench/internal/model"
 	"clawbench/internal/service"
-	"clawbench/internal/summarize"
 )
 
 // ServeGenerateSessionTitle handles POST /api/ai/session/generate-title?session_id=...
@@ -17,6 +14,11 @@ import (
 // shared AI summary model (ai_summary.*). The title is returned for the user to
 // confirm — it is NOT persisted here; the client saves it through the normal
 // rename endpoint so an auto-generated title stays an explicit user choice.
+//
+// This is the MANUAL entry point. It shares its whole implementation with the
+// automatic rename path (service.GenerateSessionTitleFromMessages) so the two
+// cannot drift; this handler only owns the HTTP concerns (method, ownership,
+// error mapping).
 func ServeGenerateSessionTitle(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
@@ -38,44 +40,24 @@ func ServeGenerateSessionTitle(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The summary model is user-configured; without it there is nothing to call.
-	if model.ConfigInstance.AISummary.API.BaseURL == "" {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SummaryModelNotConfigured")
-		return
-	}
-	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
-	if summarizer == nil {
+	if service.ConfigSummaryModelMissing() {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SummaryModelNotConfigured")
 		return
 	}
 
-	messages, err := service.GetMessagesBySessionID(sessionID)
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
-		return
-	}
-	userMessages := make([]string, 0, len(messages))
-	for _, m := range messages {
-		if m.Role != "user" {
-			continue
-		}
-		if text := strings.TrimSpace(service.ExtractPlainText(m.Content)); text != "" {
-			userMessages = append(userMessages, text)
-		}
-	}
-	if len(userMessages) == 0 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoUserMessagesToSummarize")
-		return
-	}
-
-	language := model.ConfigInstance.Language
-	if language == "" {
-		language = model.DefaultLanguage
-	}
+	// The LLM call is bounded server-side; the client timeout is raised to
+	// match so a slow model does not surface as a false failure.
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
-	title, err := summarize.GenerateSessionTitle(ctx, summarizer, userMessages, language)
+	title, err := service.GenerateSessionTitleFromMessages(ctx, sessionID, "")
 	if err != nil {
+		// "No user messages" is a client-side condition (nothing to summarize),
+		// not a server fault — report it as such so the UI can explain why.
+		if service.IsNoUserMessagesError(err) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "NoUserMessagesToSummarize")
+			return
+		}
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "GenerateTitleFailed")
 		return
 	}

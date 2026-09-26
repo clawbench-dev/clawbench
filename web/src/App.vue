@@ -996,6 +996,21 @@ function switchTab(tab: string, force = false) {
 interface OpenSessionDetail { sessionId?: string; projectPath?: string }
 interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
 
+/**
+ * Handle clawbench-session-title-update: a session's title changed outside the
+ * rename flow (the automatic AI rename). If it is the session currently open,
+ * adopt the new title and refresh the session list so its row matches. Other
+ * sessions need no local update — the list reload covers them.
+ */
+function handleSessionTitleUpdate(e: Event) {
+  const detail = (e as CustomEvent<{ session_id?: string; title?: string }>).detail
+  if (!detail?.session_id || !detail.title) return
+  if (detail.session_id === sessionIdentity.currentSessionId.value) {
+    sessionIdentity.currentSessionTitle.value = detail.title
+  }
+  store.state.sessionListVersion++
+}
+
 /** Handle clawbench-open-session event from Android push notification tap */
 function handleOpenSession(e: Event) {
   const detail = (e as CustomEvent<OpenSessionDetail>).detail
@@ -1795,6 +1810,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
+  window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
       const resolved = (e as CustomEvent<string>).detail
@@ -3444,6 +3460,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
+    window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()

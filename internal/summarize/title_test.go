@@ -148,12 +148,15 @@ func TestSanitizeSessionTitle_Truncates(t *testing.T) {
 }
 
 // buildTitlePayload must cap the excerpt by runes (not bytes), so a CJK-heavy
-// session cannot blow past the limit or split a multi-byte character.
+// session cannot blow past the limit or split a multi-byte character. The cap
+// keeps the head AND the final message, so the total stays within budget while
+// the newest message survives.
 func TestBuildTitlePayload_CapsByRunes(t *testing.T) {
-	payload := buildTitlePayload([]string{strings.Repeat("字", maxTitlePayloadRunes+500)})
-	excerpt := joinUserMessages([]string{strings.Repeat("字", maxTitlePayloadRunes+500)})
-	if n := len([]rune(excerpt)); n != maxTitlePayloadRunes {
-		t.Fatalf("expected %d runes, got %d", maxTitlePayloadRunes, n)
+	long := strings.Repeat("字", maxTitlePayloadRunes+500)
+	payload := buildTitlePayload([]string{long})
+	excerpt := joinUserMessages([]string{long})
+	if n := len([]rune(excerpt)); n > maxTitlePayloadRunes {
+		t.Fatalf("excerpt must not exceed %d runes, got %d", maxTitlePayloadRunes, n)
 	}
 	// The framing markers and trailer are added around the capped excerpt.
 	if !strings.Contains(payload, excerpt) {
@@ -161,6 +164,42 @@ func TestBuildTitlePayload_CapsByRunes(t *testing.T) {
 	}
 	if !strings.Contains(payload, titleExcerptBegin) || !strings.Contains(payload, titleExcerptEnd) {
 		t.Fatalf("expected excerpt delimiters, got: %q", payload)
+	}
+}
+
+// A single message longer than the cap cannot be kept whole; it is truncated.
+func TestJoinUserMessages_SingleOverlongMessageTruncated(t *testing.T) {
+	got := joinUserMessages([]string{strings.Repeat("字", maxTitlePayloadRunes+100)})
+	if n := len([]rune(got)); n != maxTitlePayloadRunes {
+		t.Fatalf("expected %d runes, got %d", maxTitlePayloadRunes, n)
+	}
+}
+
+// The newest message must survive truncation: a fork/continue session inherits
+// a long copied history, and the last message is the one describing the new
+// branch. A head-only cut would title the branch from the inherited history.
+func TestJoinUserMessages_KeepsLastMessageWhenOverCap(t *testing.T) {
+	head := strings.Repeat("旧", maxTitlePayloadRunes)
+	last := "新的分支问题"
+	got := joinUserMessages([]string{head, last})
+	if n := len([]rune(got)); n > maxTitlePayloadRunes {
+		t.Fatalf("result must not exceed %d runes, got %d", maxTitlePayloadRunes, n)
+	}
+	if !strings.HasSuffix(got, last) {
+		t.Fatalf("last message must be preserved, got: %q", got)
+	}
+}
+
+// Even when the LAST message alone exceeds the cap, it (not the head) is what
+// gets truncated — the head is dropped entirely so the newest intent leads.
+func TestJoinUserMessages_LastMessageWinsWhenItselfOverCap(t *testing.T) {
+	last := strings.Repeat("新", maxTitlePayloadRunes+50)
+	got := joinUserMessages([]string{"旧消息", last})
+	if n := len([]rune(got)); n != maxTitlePayloadRunes {
+		t.Fatalf("expected %d runes, got %d", maxTitlePayloadRunes, n)
+	}
+	if got != string([]rune(last)[:maxTitlePayloadRunes]) {
+		t.Fatal("the over-cap last message must be the retained content")
 	}
 }
 

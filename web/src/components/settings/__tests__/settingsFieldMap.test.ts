@@ -353,8 +353,26 @@ describe('settingsFieldMap', () => {
     expect(cfg.hasConnectivityTest).toBe(true)
   })
 
-  // ── Summarization (语音摘要) ──
+  // ── Auto rename (自动命名) ──
 
+  it('chat category exposes the auto-rename toggle with an AI-summary jump', () => {
+    const items = categoryItems.chat
+    const toggle = items.find(e => e.type === 'item' && e.spec.key === 'chat.auto_rename_enabled')
+    expect(toggle).toBeDefined()
+    const toggleSpec = (toggle as { type: 'item'; spec: ItemSpec }).spec
+    expect(toggleSpec.type).toBe('switch')
+    expect(toggleSpec.source).toBe('server')
+
+    // The jump to the shared AI summary panel is offered only when the toggle
+    // is on — the feature has nothing to call without that model.
+    const jump = items.find(e => e.type === 'item' && e.spec.key === 'navigateAiSummaryForRename')
+    expect(jump).toBeDefined()
+    const jumpSpec = (jump as { type: 'item'; spec: ItemSpec }).spec
+    expect(jumpSpec.navigateTo).toBe('aiSummary')
+    expect(jumpSpec.disableUnless).toEqual({ key: 'chat.auto_rename_enabled', value: true })
+  })
+
+  // ── Summarization (语音摘要) ──
   it('tts category exposes voice summary type as an immediate item', () => {
     const items = categoryItems.tts
     const ttsBackend = items.find(e => e.type === 'item' && e.spec.key === 'summarize.tts_backend')
