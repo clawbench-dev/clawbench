@@ -3850,6 +3850,15 @@ onUnmounted(() => {
     color: var(--accent-color);
 }
 
+/* Larger glyphs on the vertical dock. The rail stays 48px and the buttons stay
+   34px (the active indicator and DOCK_STEP are pinned to that geometry), so the
+   extra icon size comes out of the button's own padding rather than the dock
+   footprint. Scoped under .wide-dock to outrank the base .dock-btn svg rule. */
+.wide-dock .dock-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
 .bottom-dock {
     display: flex;
     align-items: center;
