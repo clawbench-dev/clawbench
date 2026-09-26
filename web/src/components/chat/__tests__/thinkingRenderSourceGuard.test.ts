@@ -51,25 +51,43 @@ describe('thinking render paths share one source (source guard)', () => {
     const marker = '} else if (block.type === \'thinking\') {'
     const start = src.indexOf(marker)
     expect(start, 'the thinking branch of flushBlockHtml must still exist').toBeGreaterThan(-1)
-    // Take the branch body up to the next branch/loop boundary.
-    const branch = src.slice(start, start + 1200)
+    // Take the branch body up to the next branch/loop boundary. Wide enough to
+    // cover the long explanatory comment plus the render call.
+    const branch = src.slice(start, start + 2000)
 
+    // Capture the variable the branch assigns from thinkingSource(block), then
+    // require the render call to use THAT variable. Pinning the literal call
+    // shape is not enough: an intermediate variable
+    // (`const src = thinkingSource(block); ... renderMarkdownHtml(block.text)`)
+    // would satisfy a mere "contains thinkingSource(block)" check while still
+    // dropping the prefix.
+    const assign = branch.match(/const\s+(\w+)\s*=\s*thinkingSource\(block\)/)
     expect(
-      branch,
+      assign,
       'flushBlockHtml must derive the thinking source from thinkingSource(block)',
-    ).toContain('thinkingSource(block)')
+    ).not.toBeNull()
+    const srcVar = assign![1]
 
     expect(
       branch,
-      'flushBlockHtml must render the shared source — rendering block.text drops the lazy-loaded prefix and makes the block flash',
-    ).not.toMatch(/renderMarkdownHtml\(\s*block\.text\s*,/)
+      `flushBlockHtml must render the shared source (${srcVar}), not block.text — ` +
+      'rendering block.text drops the lazy-loaded prefix and makes the block flash',
+    ).toMatch(new RegExp(`renderMarkdownHtml\\(\\s*${srcVar}\\s*,`))
+
+    // And the stale/naive forms must be gone entirely.
+    expect(branch, 'must not render block.text directly').not.toMatch(/renderMarkdownHtml\(\s*block\.text\s*,/)
   })
 
   it('getThinkingHtml renders the shared thinking source', () => {
     const start = src.indexOf('function getThinkingHtml(')
     expect(start, 'getThinkingHtml must still exist').toBeGreaterThan(-1)
     const fn = src.slice(start, start + 900)
-    expect(fn, 'getThinkingHtml must go through thinkingSource(block)').toContain('thinkingSource(block)')
+    const assign = fn.match(/const\s+(\w+)\s*=\s*thinkingSource\(block\)/)
+    expect(assign, 'getThinkingHtml must go through thinkingSource(block)').not.toBeNull()
+    expect(
+      fn,
+      `getThinkingHtml must render the shared source (${assign![1]})`,
+    ).toMatch(new RegExp(`getThinkingTextHtml\\(\\s*${assign![1]}\\s*,`))
   })
 
   it('thinkingSource stitches the cached prefix onto the live deltas', () => {

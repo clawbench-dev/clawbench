@@ -88,4 +88,24 @@ describe('useThinkingContent', () => {
     clearThinkingCache()
     expect(cachedText('th_1')).toBeUndefined()
   })
+
+  it('does not repopulate the cache from a request in flight across a clear', async () => {
+    // content_reset deletes the message's chat_thinking rows, so a request that
+    // was already in flight must not write its result afterwards — that would
+    // resurrect exactly the reasoning that was just discarded.
+    let resolveFetch: (v: unknown) => void
+    const fetchMock = vi.fn().mockImplementation(
+      () => new Promise((resolve) => { resolveFetch = resolve }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { loadThinking, cachedText, clearThinkingCache } = useThinkingContent()
+    const p = loadThinking('th_1', 42)
+    // The clear lands while the fetch is still pending.
+    clearThinkingCache()
+    resolveFetch!({ ok: true, json: async () => ({ think_id: 'th_1', text: 'stale' }) })
+
+    await expect(p).resolves.toBe('stale')
+    expect(cachedText('th_1'), 'a pre-clear response must not repopulate the cache').toBeUndefined()
+  })
 })

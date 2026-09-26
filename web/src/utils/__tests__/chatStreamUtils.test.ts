@@ -2928,6 +2928,45 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(thinks[0].text).toBe('deltas after switch', 'live deltas must survive')
   })
 
+  it('is idempotent: a second db_load does not re-target an earlier finished block', () => {
+    // The scan picks "the last think_id-less block of this parent". After the
+    // first adoption the streaming block HAS an id, so a second db_load (which
+    // happens routinely mid-stream: panel open, foreground resync, WS reconnect)
+    // would skip it and land on an earlier, already-finished block — giving two
+    // blocks the same think_id. That collides in the v-for key and makes the
+    // finished block lazy-load the streaming block's prefix.
+    const live = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([
+        { type: 'thinking', text: 'X reasoning', done: true },
+        { type: 'tool_use', name: 'Read', id: 'call_t', done: true },
+        { type: 'thinking', text: 'Z deltas' },
+      ]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [
+          { type: 'thinking', think_id: 'th_x', done: true },
+          { type: 'tool_use', name: 'Read', id: 'call_t', done: true },
+          { type: 'thinking', think_id: 'th_z', in_progress: true },
+        ],
+      },
+    ]
+
+    let merged = rebuildFromDb(live, dbMsgs as any)
+    merged = rebuildFromDb(merged, dbMsgs as any)
+
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    const ids = thinks.map((b: any) => b.think_id).filter(Boolean)
+    expect(new Set(ids).size, 'think_id must not repeat (v-for key collision)').toBe(ids.length)
+    expect(thinks[0].think_id, 'the finished block must not be mis-adopted').toBeUndefined()
+    expect(thinks[1].think_id).toBe('th_z')
+    expect(thinks[1].in_progress).toBe(true)
+  })
+
   it('does not adopt a done marker onto a live block (keeps existing dedup behavior)', () => {
     // Only in_progress markers are positional-safe to adopt. A done marker is
     // handled by the existing liveHasThinking dedup, which drops the DB block
@@ -2994,6 +3033,23 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
     expect(think.done).toBe(true)
     expect(think.in_progress).toBeUndefined()
+  })
+
+  it('ws_thinking_done finds the block across a same-parent tool_use', () => {
+    // Mirrors the backend's AccumulateBlock, which has NO tool_use boundary.
+    // The ACP think-tool path emits thinking_done once when the ToolCall
+    // arrives and AGAIN when the think tool completes — by then its tool_use is
+    // already in the array. A boundary would stop the scan short and leave the
+    // block spinning for the rest of the turn.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'A reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, {
+      type: 'ws_tool_use',
+      data: { id: 'call_think', name: 'DeepThink', input: {}, done: false, parent_tool_call_id: 'call_a' } as any,
+    })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_a' })
+    const think = (s[0].blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
   })
 })
 

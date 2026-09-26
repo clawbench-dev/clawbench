@@ -762,6 +762,12 @@ function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number
  *     streaming at a time, so at most one in_progress marker exists per parent
  *     — the match is unambiguous. Done markers are left to the existing
  *     liveHasThinking dedup, which is proven not to duplicate.
+ *   - Adoption is IDEMPOTENT: if a live block already carries the marker's
+ *     think_id, nothing is adopted for that parent. Without this, a second
+ *     db_load mid-stream re-ran the scan, skipped the streaming block (it now
+ *     has an id) and matched the marker to an EARLIER, already-finished block —
+ *     giving two blocks the same think_id, which collides in the v-for key and
+ *     makes the wrong block lazy-load the streaming block's prefix.
  *   - The target is the LAST think_id-less live block of the same parent: a
  *     parent's earlier blocks are finished (and, if adopted, already carry an
  *     id), so the streaming one is the newest.
@@ -785,6 +791,10 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
   for (const [parent, markers] of inProgressByParent) {
     if (markers.length !== 1) continue // ambiguous — do not guess
     const marker = markers[0]
+    // Already adopted on an earlier pass (a repeated db_load mid-stream).
+    // Re-running the scan would skip the streaming block — it carries an id by
+    // now — and land on an earlier finished block instead.
+    if (liveBlocks.some((lb) => lb.think_id === marker.think_id)) continue
     let target: ContentBlock | undefined
     for (const lb of liveBlocks) {
       if (lb.type !== 'thinking' || lb.think_id) continue
@@ -938,11 +948,10 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // received its text yet, while the DB already has it.
   //
   // Only the TEXT is taken from the DB. The live non-text blocks stay in place,
-  // in their original order, because the DB's rate-limited flush deliberately
-  // omits in-progress thinking (session_executor.go only writes a slim marker
-  // for DONE thinking) — returning the DB array wholesale would silently drop
-  // the reasoning the user is currently watching, along with any live
-  // warning/error block. DB-only non-text blocks (tools that finished before the
+  // in their original order: the live placeholder is the fresher source for
+  // everything it already holds, and returning the DB array wholesale would
+  // discard live warning/error blocks and any block the DB's 500ms flush has not
+  // caught up with yet. DB-only non-text blocks (tools that finished before the
   // placeholder was recreated) are spliced in at their DB position.
   if (dbText && dbText !== liveText && dbText.startsWith(liveText)) {
     return mergeOrderedBlocks(dbBlocks, liveBlocks, true)
@@ -1605,7 +1614,15 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // "last thinking block" let agent B's completion mark agent A's block,
       // leaving B's own block done=false — rendered as a perpetual spinner once
       // the DB marker is adopted. Other parents' blocks are stepped over
-      // (interleaving noise); a same-parent tool_use still ends the search.
+      // (interleaving noise).
+      //
+      // Deliberately NO tool_use boundary, mirroring the backend's
+      // AccumulateBlock. A tool_use does not end the search: the ACP think-tool
+      // path emits thinking_done once when the ToolCall arrives (before its
+      // tool_use is appended) and AGAIN when the think tool completes — by then
+      // the tool_use is already in the array, so a boundary would stop the scan
+      // short and leave the block spinning for the rest of the turn. The
+      // backend was changed to match; the two must not diverge.
       const parent = action.parentToolCallId || ''
       for (let i = sm.blocks.length - 1; i >= 0; i--) {
         const b = sm.blocks[i]
@@ -1618,7 +1635,6 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
           delete b.in_progress
           break
         }
-        if (b.type === 'tool_use') break
       }
       return state
     }

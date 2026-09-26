@@ -6,8 +6,15 @@ const TAG = 'ThinkingContent'
 
 const thinkingTextCache = reactive(new Map<string, string>())
 const inFlight = new Map<string, Promise<string>>()
+// Bumped by clearThinkingCache. A fetch started before a clear must not write
+// its result afterwards: content_reset deletes the message's chat_thinking rows
+// (the failed Prompt's reasoning must not survive the retry), and a request that
+// was already in flight would otherwise repopulate the cache with exactly the
+// text that was just discarded.
+let cacheGeneration = 0
 
 export function clearThinkingCache() {
+  cacheGeneration++
   thinkingTextCache.clear()
 }
 
@@ -45,11 +52,12 @@ export function useThinkingContent() {
 }
 
 async function doFetch(thinkId: string, msgId: string | number, sessionId?: string): Promise<string> {
+  const gen = cacheGeneration
   // Session-share mode inlines the thinking text into the snapshot, so the
   // authenticated detail endpoint is never reachable (and never needed).
   const shared = getShareThinking(msgId, thinkId)
   if (shared !== undefined) {
-    thinkingTextCache.set(thinkId, shared)
+    if (gen === cacheGeneration) thinkingTextCache.set(thinkId, shared)
     return shared
   }
 
@@ -71,6 +79,8 @@ async function doFetch(thinkId: string, msgId: string | number, sessionId?: stri
     appLog.w(TAG, 'thinking text empty for', thinkId)
     throw new Error('thinking text empty')
   }
-  thinkingTextCache.set(thinkId, data.text)
+  // A clear during the request means the rows this text came from are gone
+  // (content_reset) — do not resurrect them. The caller still gets the value.
+  if (gen === cacheGeneration) thinkingTextCache.set(thinkId, data.text)
   return data.text
 }

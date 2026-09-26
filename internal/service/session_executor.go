@@ -1220,10 +1220,11 @@ func (e *SessionExecutor) flushStreamingMessage() {
 // includeThinking controls how thinking blocks are persisted in the content
 // row:
 //   - false (rate-limited flushes): thinking full text is excluded from content;
-//     the text is upserted to chat_thinking by flushPendingThinking. DONE blocks
-//     get a slim {think_id, done:true} marker at their natural position so a
-//     refresh mid-stream can lazy-load the completed reasoning; in-progress
-//     blocks are left out entirely (a done=false marker is the spinner regression).
+//     the text is upserted to chat_thinking by flushPendingThinking. Every block
+//     that reached chat_thinking gets a slim {think_id} marker at its natural
+//     position: {done:true} once it finished, {in_progress:true} while it is
+//     still streaming. The in_progress marker is what makes a session switch
+//     lossless — see ContentBlock.InProgress.
 //   - true (graceful-shutdown forced flush): the full thinking text is embedded
 //     in content, then slimThinkingInContent extracts it into chat_thinking —
 //     the one-shot durability point where the text may not have been flushed yet.
