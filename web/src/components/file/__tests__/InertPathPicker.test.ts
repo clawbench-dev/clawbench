@@ -172,6 +172,37 @@ describe('InertPathPicker', () => {
     expect(items[0].text()).toContain('internal/service/history')
   })
 
+  it('stacks the name over the directory so each gets the full row width', async () => {
+    // Two lines, not one row: this panel is full-height, so horizontal space is
+    // the scarce one and a side-by-side name+path squeezes both. Asserted
+    // structurally (a `.text()` check passes under either layout) — the name and
+    // path must be siblings inside a dedicated wrapper, and that wrapper must be
+    // a column flex container.
+    const wrapper = mountPanel()
+    searchState.results = [
+      { name: 'chat_history.go', path: 'internal/service/history/chat_history.go', type: 'file', matchedIndices: [] },
+    ]
+    openInertPathPicker({ path: 'internal/service/chat_history.go' })
+    await nextTick()
+
+    const text = wrapper.find('.ip-item .ip-item-text')
+    expect(text.exists()).toBe(true)
+    // Both lines live inside the wrapper (i.e. they stack), not as siblings of
+    // the icon in the row.
+    expect(text.find('.ip-item-name').exists()).toBe(true)
+    expect(text.find('.ip-item-dir').exists()).toBe(true)
+    // The row must not put the path directly in the flex row next to the name.
+    expect(wrapper.find('.ip-item > .ip-item-dir').exists()).toBe(false)
+
+    // The wrapper owns the stacking. Source-level because jsdom has no layout
+    // engine to read the resolved flex-direction from.
+    const mod = await import('../InertPathPicker.vue?raw')
+    const src = String(mod.default)
+    const wrapperRule = src.match(/\.ip-item-text\s*\{([^}]*)\}/)
+    expect(wrapperRule, '.ip-item-text rule must exist').not.toBeNull()
+    expect(wrapperRule![1]).toMatch(/flex-direction:\s*column/)
+  })
+
   it('opens the chosen candidate at the stashed line target', async () => {
     const wrapper = mountPanel()
     searchState.results = [

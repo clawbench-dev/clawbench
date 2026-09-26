@@ -40,8 +40,10 @@
             @click="openCandidate(file.path)"
           >
             <FileIcon :path="file.path" :size="15" :is-dir="file.type === 'dir'" class="ip-item-icon" />
-            <span class="ip-item-name">{{ file.name }}</span>
-            <span v-if="parentDirOf(file.path)" class="ip-item-dir">{{ parentDirOf(file.path) }}</span>
+            <span class="ip-item-text">
+              <span class="ip-item-name">{{ file.name }}</span>
+              <span v-if="parentDirOf(file.path)" class="ip-item-dir">{{ parentDirOf(file.path) }}</span>
+            </span>
           </button>
 
           <div v-if="search.state.truncated" class="ip-more">
@@ -220,7 +222,10 @@ watch(
 
 .ip-item {
   display: flex;
-  align-items: center;
+  /* Top-align the icon: the row is two lines, so centring it would leave the
+     icon floating between the name and the path instead of sitting on the
+     identity line. */
+  align-items: flex-start;
   gap: var(--space-3);
   width: 100%;
   padding: var(--space-3) var(--space-4);
@@ -241,23 +246,38 @@ watch(
 
 .ip-item-icon {
   flex-shrink: 0;
+  /* No offset needed: the icon's 15px box already centres on the name's line box
+     (measured in Chromium — 0px delta; a 2px nudge pushed it visibly low). */
+}
+
+/* Name over path. The two lines get the full row width each, which matters
+   because this panel is full-height — horizontal space is the scarce one. */
+.ip-item-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .ip-item-name {
-  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--font-mono);
 }
 
+/* Secondary line: muted and smaller, so the name stays the identity. Truncates
+   from the LEFT (rtl) so the deepest directory — the part nearest the file, and
+   therefore the most discriminating — stays visible. */
 .ip-item-dir {
-  flex: 1;
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   direction: rtl;
   text-align: left;
   color: var(--text-muted, #888);
-  font-size: var(--font-size-sm);
+  font-size: var(--font-size-xs);
 }
 
 .ip-more {
