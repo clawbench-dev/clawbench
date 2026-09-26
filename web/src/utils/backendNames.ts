@@ -16,6 +16,7 @@ const backendDisplayNames: Record<string, string> = {
   mimo: 'MiMo-Code',
   pi: 'Pi',
   deepseek: 'CodeWhale',
+  dsh: 'DeepSeek Harness',
   vecli: 'VeCLI',
   grok: 'Grok',
   antigravity: 'Antigravity',
