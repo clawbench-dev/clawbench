@@ -2932,6 +2932,7 @@ export default {
     detected: '已安装',
     notDetected: '未安装',
     install: '安装',
+    detecting: '检测中...',
     rescan: '重新扫描',
     rescanning: '扫描中...',
     manualInstallHint: '请运行以下命令安装：',

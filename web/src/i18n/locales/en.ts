@@ -2933,6 +2933,7 @@ export default {
     detected: 'Installed',
     notDetected: 'Not installed',
     install: 'Install',
+    detecting: 'Detecting...',
     rescan: 'Rescan',
     rescanning: 'Scanning...',
     manualInstallHint: 'Run the following command to install:',
