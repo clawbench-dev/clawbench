@@ -525,6 +525,129 @@ func TestRelayDuplex_LargeTransferThenHalfClose(t *testing.T) {
 	}
 }
 
+// TestRelayDuplex_BidirectionalBulkTransfer drives both directions with 64 KiB
+// concurrently in flight. The existing large-transfer test is strictly
+// request-then-answer (the target reads to EOF before writing), so it never
+// exercises the two copies running at the same time against each other. Both
+// directions must still come out byte-exact.
+func TestRelayDuplex_BidirectionalBulkTransfer(t *testing.T) {
+	restore := SetRelayDrainGraceForTest(2 * time.Second)
+	defer restore()
+
+	relaySide, targetSide, err := tcpPair()
+	if err != nil {
+		t.Fatalf("tcpPair: %v", err)
+	}
+	defer targetSide.Close()
+
+	const size = 64 * 1024
+	request := make([]byte, size)
+	response := make([]byte, size)
+	for i := range request {
+		request[i] = byte(i % 251)
+		response[i] = byte((i + 13) % 251)
+	}
+
+	clientIn, clientInWriter := io.Pipe()
+	var out bytes.Buffer
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RelayDuplex(relaySide, clientIn, &out, nil)
+	}()
+
+	// The target answers while it is still reading the request, so the two
+	// copies overlap rather than serializing.
+	targetErr := make(chan error, 1)
+	go func() {
+		got := make([]byte, size)
+		if _, err := io.ReadFull(targetSide, got); err != nil {
+			targetErr <- err
+			return
+		}
+		if !bytes.Equal(got, request) {
+			targetErr <- errors.New("target received a different request payload")
+			return
+		}
+		if _, err := targetSide.Write(response); err != nil {
+			targetErr <- err
+			return
+		}
+		targetErr <- targetSide.Close()
+	}()
+
+	// Write the request in chunks so the response copy starts before the request
+	// copy has finished.
+	for written := 0; written < size; {
+		end := written + 4096
+		if end > size {
+			end = size
+		}
+		n, err := clientInWriter.Write(request[written:end])
+		if err != nil {
+			t.Fatalf("client write: %v", err)
+		}
+		written += n
+	}
+	if err := clientInWriter.Close(); err != nil {
+		t.Fatalf("client half-close: %v", err)
+	}
+
+	if err := <-targetErr; err != nil {
+		t.Fatalf("target side: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RelayDuplex did not return after both directions finished")
+	}
+
+	if !bytes.Equal(out.Bytes(), response) {
+		t.Fatalf("client got %d bytes, want %d (response truncated or corrupted)", out.Len(), len(response))
+	}
+}
+
+// failingWriter fails every write, modelling a client that has gone away
+// mid-stream.
+type failingWriter struct {
+	err error
+}
+
+func (w failingWriter) Write([]byte) (int, error) { return 0, w.err }
+
+// TestRelayDuplex_ClientOutWriteErrorEndsRelay covers relay.go:54: a write
+// error on the target -> client direction must end that copy (and thus the
+// relay) rather than looping or hanging.
+func TestRelayDuplex_ClientOutWriteErrorEndsRelay(t *testing.T) {
+	restore := SetRelayDrainGraceForTest(200 * time.Millisecond)
+	defer restore()
+
+	relaySide, targetSide, err := tcpPair()
+	if err != nil {
+		t.Fatalf("tcpPair: %v", err)
+	}
+	defer targetSide.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RelayDuplex(relaySide, bytes.NewReader(nil), failingWriter{err: errors.New("client gone")}, nil)
+	}()
+
+	// The target sends data, which the clientOut writer will reject.
+	if _, err := targetSide.Write([]byte("unwritable")); err != nil {
+		t.Fatalf("target write: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("a clientOut write error must end the relay, not hang it")
+	}
+}
+
 func TestHalfCloseWrite_NonTCPFallsBackToClose(t *testing.T) {
 	c1, c2 := net.Pipe()
 	defer c2.Close()

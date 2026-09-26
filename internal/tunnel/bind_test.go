@@ -188,6 +188,33 @@ func TestListenReverse_PortInUseIsRejected(t *testing.T) {
 	}
 }
 
+// TestListenReverse_BindsLoopbackOnly is the security pin for the reverse
+// listener's bind address (bind.go:181). A regression to "0.0.0.0" (or "")
+// would expose every -R port on all interfaces, yet every other test in this
+// package would still pass because they all dial 127.0.0.1. The assertion is on
+// the bound address itself, not on reachability.
+func TestListenReverse_BindsLoopbackOnly(t *testing.T) {
+	guard := PortGuard{IsAllowed: func(p int) bool { return p >= 1024 && p <= 65535 }}
+	reg := NewBindRegistry()
+
+	ln, port, err := ListenReverse(guard, reg, BindRequest{Port: 0, Binding: Binding{ConnID: "c"}})
+	if err != nil {
+		t.Fatalf("ListenReverse: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("listener address is %T, want *net.TCPAddr", ln.Addr())
+	}
+	if !addr.IP.IsLoopback() {
+		t.Fatalf("reverse listener bound to %s; it must bind loopback only so a -R port is not exposed on all interfaces", addr)
+	}
+	if addr.Port != port {
+		t.Fatalf("listener port %d does not match the returned port %d", addr.Port, port)
+	}
+}
+
 func TestListenReverse_DuplicateAcrossBindingsRejected(t *testing.T) {
 	guard := PortGuard{IsAllowed: func(p int) bool { return p >= 1024 && p <= 65535 }}
 	reg := NewBindRegistry()

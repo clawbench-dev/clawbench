@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -246,6 +247,94 @@ func TestClaimRegistry_DiscardUnknownTokenIsNoop(t *testing.T) {
 
 // TestNewClaimToken_IsUnpredictableAndDistinct guards the security property:
 // tokens must be crypto/rand hex, not a counter or timestamp.
+// TestClaimRegistry_ConcurrentClaimsOnlyOneWins races N goroutines against one
+// token. Single-use is a stated requirement (claim.go:127-132): the entry is
+// deleted under the lock, so exactly one claimant may receive the connection.
+// A double-relay of one parked socket would interleave two streams' bytes.
+func TestClaimRegistry_ConcurrentClaimsOnlyOneWins(t *testing.T) {
+	reg := NewClaimRegistry()
+	binding := Binding{ConnID: "conn-1"}
+	conn := newFakeConn()
+
+	token, err := reg.Park(binding, 8080, conn, time.Minute)
+	if err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+
+	const claimants = 32
+	var (
+		start   = make(chan struct{})
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		winners []net.Conn
+		rejects int
+	)
+	for range claimants {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			got, err := reg.Claim(token, binding)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if !errors.Is(err, ErrClaimRejected) {
+					t.Errorf("claim returned %v, want ErrClaimRejected", err)
+				}
+				rejects++
+				return
+			}
+			winners = append(winners, got)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if len(winners) != 1 {
+		t.Fatalf("exactly one claimant must win, got %d", len(winners))
+	}
+	if winners[0] != conn {
+		t.Fatal("the winner must receive the parked connection")
+	}
+	if rejects != claimants-1 {
+		t.Fatalf("expected %d rejections, got %d", claimants-1, rejects)
+	}
+	if reg.Len() != 0 {
+		t.Fatalf("the registry must be empty after the single successful claim, got %d", reg.Len())
+	}
+}
+
+// TestClaimRegistry_ParkZeroTimeoutUsesDefault pins claim.go:76-78: a
+// non-positive timeout means "use DefaultClaimTimeout". Every other test passes
+// an explicit timeout, so this substitution branch is otherwise dead in tests —
+// and the production handler is the only caller that could pass 0.
+func TestClaimRegistry_ParkZeroTimeoutUsesDefault(t *testing.T) {
+	reg := NewClaimRegistry()
+	binding := Binding{ConnID: "conn-1"}
+	conn := newFakeConn()
+
+	token, err := reg.Park(binding, 8080, conn, 0)
+	if err != nil {
+		t.Fatalf("Park with a zero timeout must succeed: %v", err)
+	}
+	if token == "" {
+		t.Fatal("Park must still return a token")
+	}
+	if reg.Len() != 1 {
+		t.Fatalf("the connection must be parked, got %d pending", reg.Len())
+	}
+
+	// A default-length timeout is minutes, so the connection must still be
+	// alive well after a zero would have expired it instantly.
+	time.Sleep(50 * time.Millisecond)
+	if conn.isClosed() {
+		t.Fatal("a zero timeout must mean DefaultClaimTimeout, not immediate expiry")
+	}
+	if _, err := reg.Claim(token, binding); err != nil {
+		t.Fatalf("the token must still be redeemable under the default timeout: %v", err)
+	}
+}
+
 func TestNewClaimToken_IsUnpredictableAndDistinct(t *testing.T) {
 	seen := make(map[string]bool)
 	for range 64 {

@@ -544,8 +544,16 @@ func dialBoundPort(t *testing.T, rd *bufio.Reader, port int) (net.Conn, tunnel.C
 // POST /api/tunnel/stream?claim=<token>.
 func openClaimStream(t *testing.T, client *http.Client, base, token string) (*io.PipeWriter, *http.Response) {
 	t.Helper()
+	return openClaimStreamQuery(t, client, base, "claim="+token)
+}
+
+// openClaimStreamQuery is openClaimStream with an arbitrary raw query string, so
+// a test can combine a claim token with stray host/port parameters and observe
+// which branch wins.
+func openClaimStreamQuery(t *testing.T, client *http.Client, base, rawQuery string) (*io.PipeWriter, *http.Response) {
+	t.Helper()
 	pr, pw := io.Pipe()
-	req, err := http.NewRequest(http.MethodPost, base+"/api/tunnel/stream?claim="+token, pr)
+	req, err := http.NewRequest(http.MethodPost, base+"/api/tunnel/stream?"+rawQuery, pr)
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/octet-stream")
 
@@ -865,16 +873,371 @@ func TestTunnelControl_ClientDisconnectClosesParkedConnections(t *testing.T) {
 	assert.Error(t, err, "a parked connection must be closed when its control stream ends")
 }
 
-// TestTunnelStream_ClaimIgnoresHostAndPort pins the branch precedence: a claim
-// request must not be diverted by a stray host/port pair.
+// waitClaimsEmpty polls until the claim registry holds no parked connections,
+// proving a session's ReleaseBinding has run. The release is driven by context
+// cancellation on the server, so it is not synchronous with the client dropping
+// its stream.
+func waitClaimsEmpty(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if tunnelClaims.Len() == 0 {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("claim registry still holds %d parked connections", tunnelClaims.Len())
+}
+
+// TestTunnelControl_LateClaimAfterDisconnectIsForbidden pins the security
+// consequence of Close's ReleaseBinding (claim.go:185): once the control stream
+// that minted a token is gone, the token must be dead. The existing disconnect
+// test only checks the visitor socket closes; it does not check that the token
+// is unusable, which is what stops a leaked token from being redeemed after its
+// owner left.
+func TestTunnelControl_LateClaimAfterDisconnectIsForbidden(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	// A long claim timeout proves the rejection is driven by the disconnect,
+	// not by token expiry.
+	orig := tunnelClaimTimeout
+	tunnelClaimTimeout = time.Minute
+	t.Cleanup(func() { tunnelClaimTimeout = orig })
+
+	client := h2cTunnelClient()
+	port := freeLoopbackPort(t)
+	pw, rd, resp := openControlStream(t, client, base)
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, port).Type)
+
+	visitor, incoming := dialBoundPort(t, rd, port)
+	defer visitor.Close()
+
+	// Drop the control stream, which releases the parked connection and its
+	// token.
+	_ = pw.Close()
+	_ = resp.Body.Close()
+	waitClaimsEmpty(t)
+
+	cpw, cresp := openClaimStream(t, client, base, incoming.Token)
+	defer cresp.Body.Close()
+	defer func() { _ = cpw.Close() }()
+	assert.Equal(t, http.StatusForbidden, cresp.StatusCode,
+		"a token whose control stream has disconnected must be rejected")
+}
+
+// TestTunnelControl_LateClaimAfterUnbindIsForbidden covers the per-port half of
+// the same guarantee: unbind calls tunnelClaims.ReleasePort
+// (tunnel_control.go:209), so a token minted before the unbind must not survive
+// it — the port is no longer exposed, so its parked socket must be unreachable.
+func TestTunnelControl_LateClaimAfterUnbindIsForbidden(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	orig := tunnelClaimTimeout
+	tunnelClaimTimeout = time.Minute
+	t.Cleanup(func() { tunnelClaimTimeout = orig })
+
+	client := h2cTunnelClient()
+	port := freeLoopbackPort(t)
+	pw, rd, resp := openControlStream(t, client, base)
+	defer resp.Body.Close()
+	defer func() { _ = pw.Close() }()
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, port).Type)
+
+	visitor, incoming := dialBoundPort(t, rd, port)
+	defer visitor.Close()
+
+	sendControl(t, pw, tunnel.ControlMessage{Type: tunnel.MsgUnbind, Port: port})
+	require.Equal(t, tunnel.MsgUnbound, readControl(t, rd).Type)
+
+	cpw, cresp := openClaimStream(t, client, base, incoming.Token)
+	defer cresp.Body.Close()
+	defer func() { _ = cpw.Close() }()
+	assert.Equal(t, http.StatusForbidden, cresp.StatusCode,
+		"a token for a port that has been unbound must be rejected")
+}
+
+// TestTunnelControl_OverlongControlLineDropsStream documents the buffer
+// bound at tunnel_control.go:337 (64 KiB). A line longer than that makes
+// Scan() fail with bufio.ErrTooLong, which ends readControlLoop — and because
+// the loop returning tears the session down, EVERY reverse port the client had
+// bound is released, not just the offending one. The Android client has its own
+// MAX_CONTROL_LINE = 64*1024, so this is a real client/server bound-mismatch
+// surface. The test pins the current behavior rather than asserting it is
+// desirable.
+func TestTunnelControl_OverlongControlLineDropsStream(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	portA := freeLoopbackPort(t)
+	portB := freeLoopbackPort(t)
+	pw, rd, resp := openControlStream(t, h2cTunnelClient(), base)
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portA).Type)
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portB).Type)
+
+	// One line past the scanner's 64 KiB ceiling. The `{"type":"bind",...}`
+	// prefix keeps it well-formed up to the truncation point, so the failure is
+	// the buffer bound, not a JSON parse error. Written off the test goroutine:
+	// the scanner stops reading at its limit, so the tail of the write may only
+	// complete (or fail) once the server tears the stream down.
+	overlong := make([]byte, 65*1024)
+	copy(overlong, `{"type":"bind","port":`)
+	for i := len(`{"type":"bind","port":`); i < len(overlong)-1; i++ {
+		overlong[i] = '0'
+	}
+	overlong[len(overlong)-1] = '\n'
+	writeErr := make(chan error, 1)
+	go func() {
+		_, err := pw.Write(overlong)
+		writeErr <- err
+	}()
+
+	// Both bound ports must be released: the loop returned, which unwinds the
+	// whole session.
+	waitPortFree(t, portA)
+	waitPortFree(t, portB)
+
+	// The stream itself ends; the write must not remain blocked forever.
+	select {
+	case <-writeErr:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the overlong write never completed after the server dropped the stream")
+	}
+	_ = resp.Body.Close()
+}
+
+// TestTunnelControl_IgnoresServerToClientTypes sends each server -> client type
+// from the client. dispatchControl (tunnel_control.go:366-369) must ignore them
+// rather than trust their payload, and the stream must stay usable.
+func TestTunnelControl_IgnoresServerToClientTypes(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	pw, rd, resp := openControlStream(t, h2cTunnelClient(), base)
+	defer resp.Body.Close()
+	defer func() { _ = pw.Close() }()
+
+	for _, typ := range []string{
+		tunnel.MsgBound, tunnel.MsgBindErr, tunnel.MsgIncoming, tunnel.MsgUnbound, tunnel.MsgPong,
+	} {
+		sendControl(t, pw, tunnel.ControlMessage{Type: typ, Port: 8080, Token: "forged", Code: 9})
+	}
+
+	// The stream must still work: ping gets a pong, and a bind succeeds.
+	sendControl(t, pw, tunnel.ControlMessage{Type: tunnel.MsgPing})
+	require.Equal(t, tunnel.MsgPong, readControl(t, rd).Type,
+		"ignored server-to-client messages must not desynchronize the stream")
+
+	port := freeLoopbackPort(t)
+	assert.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, port).Type,
+		"the stream must remain usable after ignoring protocol-violating messages")
+}
+
+// TestTunnelControl_RejectsNegativeAndOutOfRangeBind pins the range guard at
+// guard.go:69-71. Both values must come back as a bind_err with code 2, not a
+// dropped stream: the client's bookkeeping depends on the answer.
+func TestTunnelControl_RejectsNegativeAndOutOfRangeBind(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	pw, rd, resp := openControlStream(t, h2cTunnelClient(), base)
+	defer resp.Body.Close()
+	defer func() { _ = pw.Close() }()
+
+	for _, port := range []int{-1, 65536} {
+		msg := bindAndExpect(t, pw, rd, port)
+		require.Equal(t, tunnel.MsgBindErr, msg.Type, "bind(%d) must be rejected", port)
+		assert.Equal(t, tunnel.BindErrNotAllowed, msg.Code,
+			"bind(%d) must use the range guard's code 2", port)
+		assert.Equal(t, port, msg.Port, "bind_err must echo the requested port")
+	}
+
+	// The stream survived both rejections.
+	sendControl(t, pw, tunnel.ControlMessage{Type: tunnel.MsgPing})
+	assert.Equal(t, tunnel.MsgPong, readControl(t, rd).Type)
+}
+
+// TestTunnelControl_UnbindForeignPortIsRejected is the cross-stream guard for
+// unbind: a second control stream must not be able to release a port the first
+// stream owns (bind.go:78-92 rejects a foreign owner, and tunnel_control.go:142
+// only logs it). The first stream's bind must stay live.
+func TestTunnelControl_UnbindForeignPortIsRejected(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	port := freeLoopbackPort(t)
+
+	pw1, rd1, resp1 := openControlStream(t, h2cTunnelClient(), base)
+	defer resp1.Body.Close()
+	defer func() { _ = pw1.Close() }()
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw1, rd1, port).Type)
+
+	pw2, rd2, resp2 := openControlStream(t, h2cTunnelClient(), base)
+	defer resp2.Body.Close()
+	defer func() { _ = pw2.Close() }()
+
+	// The second stream tries to unbind the first stream's port.
+	sendControl(t, pw2, tunnel.ControlMessage{Type: tunnel.MsgUnbind, Port: port})
+	assert.Equal(t, tunnel.MsgUnbound, readControl(t, rd2).Type,
+		"a foreign unbind is still acknowledged so the client's bookkeeping completes")
+
+	// The port must still be bound and listening: the foreign unbind was a
+	// no-op.
+	assert.True(t, tunnelBinds.IsBound(port), "a foreign unbind must not release the port")
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)), 2*time.Second)
+	require.NoError(t, err, "the first stream's port must still be listening")
+	_ = conn.Close()
+	// Dialing produced an `incoming` line on the first stream; drain it so the
+	// unbound reply below is the next line.
+	require.Equal(t, tunnel.MsgIncoming, readControl(t, rd1).Type)
+
+	// The real owner can still release it.
+	sendControl(t, pw1, tunnel.ControlMessage{Type: tunnel.MsgUnbind, Port: port})
+	require.Equal(t, tunnel.MsgUnbound, readControl(t, rd1).Type)
+	waitPortFree(t, port)
+}
+
+// TestTunnelGuard_ReservesMainPortPlusOneNotCustomSSHPort pins a known product
+// decision rather than fixing it: tunnelGuard() hardcodes SSHPort =
+// model.ServerPort+1 (tunnel_control.go:254-264) instead of the configured SSH
+// port. With the default configuration the two coincide, so this is only
+// observable when port_forward.port is customized — and then mainPort+1 stays
+// denied even though nothing listens there, while the real custom SSH port is
+// denied only because reserveSSHPorts put it in the registry's reserved set.
+//
+// Do not "fix" this by reading the configured port: the h2 guard mirrors the
+// SSH server's own mainPort+1 default, and the registry's reserved set is the
+// shared source of truth for a non-default port.
+func TestTunnelGuard_ReservesMainPortPlusOneNotCustomSSHPort(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	// setupTunnelControlTest pins model.ServerPort = 20000.
+	require.Equal(t, 20000, model.ServerPort)
+	require.Equal(t, 20001, model.ServerPort+1)
+
+	g := tunnelGuard()
+	assert.Equal(t, 20000, g.MainPort)
+	assert.Equal(t, 20001, g.SSHPort,
+		"the guard must reserve mainPort+1, mirroring the SSH server's default")
+
+	// mainPort+1 is denied by the hardcode even if nothing listens there.
+	assert.ErrorIs(t, g.ReverseBindDenied(20001), tunnel.ErrBindReservedOrTaken)
+
+	// A custom SSH port is not known to the hardcode; it is denied only once the
+	// registry is told to reserve it (as reserveSSHPorts does).
+	const customSSHPort = 2222
+	assert.NoError(t, g.ReverseBindDenied(customSSHPort),
+		"a custom SSH port is outside the guard's hardcoded knowledge")
+
+	service.ProxyService.SetReservedPorts(customSSHPort)
+	g = tunnelGuard()
+	assert.ErrorIs(t, g.ReverseBindDenied(customSSHPort), tunnel.ErrBindReservedOrTaken,
+		"the registry's reserved set is what protects a custom SSH port")
+
+	_ = base
+}
+
+// TestControlSession_CloseRacesBindWithoutWaitGroupMisuse is the regression
+// guard for the sync.WaitGroup misuse that -race reported on wg.sema: a bind
+// running on the handler goroutine calls wg.Add while Close runs wg.Wait on the
+// context-cancellation goroutine. WaitGroup documents Add-concurrent-with-Wait
+// as misuse, and an Add after Wait returned would leave an accept loop the
+// teardown never joined.
+//
+// The test drives many bind/close cycles through the real session so the race
+// detector has a chance to observe the pair; under -race it fails on the
+// unfixed code. It also asserts no port is left reserved after Close, which is
+// the leak the mutual exclusion prevents.
+func TestControlSession_CloseRacesBindWithoutWaitGroupMisuse(t *testing.T) {
+	_, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	for i := range 50 {
+		binding := tunnel.Binding{AuthID: "a", ConnID: fmt.Sprintf("conn-%d", i)}
+		session := newControlSession(binding, io.Discard, nil)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			session.handleBind(0)
+		}()
+		go func() {
+			defer wg.Done()
+			session.Close()
+		}()
+		wg.Wait()
+		session.Close() // idempotent
+
+		// Whatever the interleaving, Close must have released every reservation
+		// this binding owned.
+		released := tunnelBinds.ReleaseBinding(binding)
+		assert.Empty(t, released,
+			"Close must have already released every port the session bound (iteration %d)", i)
+	}
+}
+
+// TestTunnelStream_ClaimIgnoresHostAndPort pins the branch precedence at
+// tunnel_stream.go:67-70: a present `claim` parameter short-circuits the
+// host/port dial path entirely. The cases below pair the claim with a
+// *dialable* host/port, so a reversed precedence would dial the stray target
+// and answer 502 instead of the claim branch's 403 — the failure mode the old
+// (host/port-less) version of this test could not detect.
 func TestTunnelStream_ClaimIgnoresHostAndPort(t *testing.T) {
 	base, cleanup := setupTunnelControlTest(t)
 	defer cleanup()
 
-	_, resp := openClaimStream(t, h2cTunnelClient(), base, "deadbeef")
-	defer resp.Body.Close()
-	// Still 403 from the claim branch, not a 502 from dialing a bogus target.
-	assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+	// A live, whitelisted target: if host/port were consulted, the server would
+	// dial it and answer 200, never the claim branch's 403.
+	echoPort := startTunnelEchoServer(t)
+	require.True(t, service.ProxyService.IsPortAllowed(echoPort),
+		"the stray port must be forwardable, otherwise this test proves nothing")
+
+	t.Run("bad token with a dialable target is refused by the claim branch", func(t *testing.T) {
+		pw, resp := openClaimStreamQuery(t, h2cTunnelClient(), base,
+			fmt.Sprintf("claim=deadbeef&host=127.0.0.1&port=%d", echoPort))
+		defer resp.Body.Close()
+		defer func() { _ = pw.Close() }()
+
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"an unknown claim token must be refused by the claim branch, not dial the stray target")
+	})
+
+	t.Run("good token relays the claimed socket, not the query target", func(t *testing.T) {
+		client := h2cTunnelClient()
+		port := freeLoopbackPort(t)
+		pw, rd, resp := openControlStream(t, client, base)
+		defer resp.Body.Close()
+		defer func() { _ = pw.Close() }()
+		require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, port).Type)
+
+		visitor, incoming := dialBoundPort(t, rd, port)
+		defer visitor.Close()
+
+		// Point host/port at the echo server (which would echo the payload) while
+		// the token names the parked visitor socket (which receives it instead).
+		// Relaying to the query target would make the visitor see nothing.
+		cpw, cresp := openClaimStreamQuery(t, client, base,
+			fmt.Sprintf("claim=%s&host=127.0.0.1&port=%d", incoming.Token, echoPort))
+		defer cresp.Body.Close()
+		require.Equal(t, http.StatusOK, cresp.StatusCode,
+			"a good token must win over the stray host/port")
+
+		payload := []byte("claim-wins-over-query")
+		_, err := cpw.Write(payload)
+		require.NoError(t, err)
+
+		buf := make([]byte, len(payload))
+		require.NoError(t, visitor.SetReadDeadline(time.Now().Add(3*time.Second)))
+		_, err = io.ReadFull(visitor, buf)
+		require.NoError(t, err, "the claimed socket must receive the bytes")
+		assert.Equal(t, payload, buf,
+			"bytes must relay to the claimed socket, not the host/port in the query")
+
+		_ = cpw.Close()
+	})
 }
 
 // TestTunnelStream_NoClaimNoPortIsBadRequest keeps the T2 behavior intact.

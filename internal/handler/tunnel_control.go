@@ -48,6 +48,20 @@ var (
 type controlSession struct {
 	binding tunnel.Binding
 
+	// binds/claims/proxy are captured at construction rather than read from
+	// the package globals at teardown time. Close can run on the
+	// context-cancellation goroutine (registered via context.AfterFunc in
+	// TunnelControl), which is NOT part of the HTTP server's goroutine set and
+	// so can still be executing after the request's handler has returned.
+	// Reading the reassignable globals there races with anything that swaps
+	// them (tests do, for isolation); the captured references are immutable for
+	// the life of the session, so the teardown cannot race. In production the
+	// registries never change while a session is alive, so behavior is
+	// identical.
+	binds  *tunnel.BindRegistry
+	claims *tunnel.ClaimRegistry
+	proxy  *service.ProxyRegistry
+
 	// w is the response writer; rc is its controller, used to flush after each
 	// line (net/http and the h2 framer both buffer) and to bound each write.
 	w  io.Writer
@@ -58,6 +72,16 @@ type controlSession struct {
 	// writes would corrupt the NDJSON stream.
 	writeMu sync.Mutex
 
+	// wgMu guards the wg.Add in handleBind against the wg.Wait in Close.
+	// handleBind runs on the handler goroutine while Close may run on the
+	// context-cancellation goroutine, so without this the two can race — which
+	// sync.WaitGroup documents as misuse ("Add called concurrently with Wait")
+	// and the race detector flags on wg.sema. closing makes the Add a no-op once
+	// teardown has begun, so no accept loop is started after Wait may have
+	// already returned.
+	wgMu    sync.Mutex
+	closing bool
+
 	// wg tracks the per-listener accept loops so cleanup can wait for them to
 	// stop touching shared state.
 	wg sync.WaitGroup
@@ -67,9 +91,19 @@ type controlSession struct {
 	closeOnce sync.Once
 }
 
-// newControlSession builds a session around an established control stream.
+// newControlSession builds a session around an established control stream. It
+// captures the process-wide registries and the live proxy service so teardown
+// (which may run on a context-cancellation goroutine, see controlSession) never
+// reads the reassignable package globals.
 func newControlSession(binding tunnel.Binding, w io.Writer, rc *http.ResponseController) *controlSession {
-	return &controlSession{binding: binding, w: w, rc: rc}
+	return &controlSession{
+		binding: binding,
+		binds:   tunnelBinds,
+		claims:  tunnelClaims,
+		proxy:   service.ProxyService,
+		w:       w,
+		rc:      rc,
+	}
 }
 
 // write sends one control message, serialized against other writers and bounded
@@ -100,7 +134,7 @@ func (s *controlSession) write(msg tunnel.ControlMessage) error {
 
 // handleBind validates and establishes a reverse listener for port.
 func (s *controlSession) handleBind(port int) {
-	ln, actual, err := tunnel.ListenReverse(tunnelGuard(), tunnelBinds, tunnel.BindRequest{
+	ln, actual, err := tunnel.ListenReverse(tunnelGuard(), s.binds, tunnel.BindRequest{
 		Port:    port,
 		Binding: s.binding,
 	})
@@ -119,9 +153,11 @@ func (s *controlSession) handleBind(port int) {
 	// Drive the registry's Active flag, exactly as the SSH server does after a
 	// successful tcpip-forward (internal/ssh/server.go:534). Unknown ports are
 	// ignored by SetReverseBound, so a manual bind for an unregistered port
-	// still works.
-	if service.ProxyService != nil {
-		service.ProxyService.SetReverseBound(actual, true)
+	// still works. Setting it here (before the loop is registered) keeps the
+	// ordering safe: if Close has already run, startAcceptLoop below reports it
+	// and the release path clears the flag again.
+	if s.proxy != nil {
+		s.proxy.SetReverseBound(actual, true)
 	}
 
 	slog.Info("tunnel: reverse bind established", slog.Int("port", actual))
@@ -129,17 +165,38 @@ func (s *controlSession) handleBind(port int) {
 		slog.Debug("tunnel: failed to report bound", slog.String("err", err.Error()))
 		// The client never learned the port, so the bind is unusable. Release
 		// it rather than leaving a listener nobody will ever unbind.
-		releaseReverseBind(s.binding, actual)
+		s.releaseReverseBind(actual)
 		return
 	}
 
+	// Starting the accept loop must be serialized against Close: otherwise this
+	// wg.Add can race Close's wg.Wait (sync.WaitGroup misuse, flagged on
+	// wg.sema), and an Add after Wait has returned would leave a listener the
+	// teardown already closed but whose reservation Close never saw.
+	if !s.startAcceptLoop(ln, actual) {
+		// Teardown began between the bind and here. Release the reservation so
+		// the port does not leak, and start no loop Wait would miss.
+		s.releaseReverseBind(actual)
+	}
+}
+
+// startAcceptLoop registers an accept loop for ln under wgMu and starts it. It
+// returns false when Close has already begun, in which case the caller must
+// release the bind rather than start a loop Close's wg.Wait would miss.
+func (s *controlSession) startAcceptLoop(ln net.Listener, port int) bool {
+	s.wgMu.Lock()
+	defer s.wgMu.Unlock()
+	if s.closing {
+		return false
+	}
 	s.wg.Add(1)
-	go s.acceptLoop(ln, actual)
+	go s.acceptLoop(ln, port)
+	return true
 }
 
 // handleUnbind releases a previously bound port.
 func (s *controlSession) handleUnbind(port int) {
-	if !releaseReverseBind(s.binding, port) {
+	if !s.releaseReverseBind(port) {
 		// Unknown or already-released port: still answer so the client's
 		// bookkeeping completes rather than retrying forever.
 		slog.Debug("tunnel: unbind for unknown port", slog.Int("port", port))
@@ -166,7 +223,7 @@ func (s *controlSession) acceptLoop(ln net.Listener, port int) {
 // park hands one accepted connection to the client: it is held (not relayed)
 // until the client redeems the token via POST /api/tunnel/stream?claim=...
 func (s *controlSession) park(conn net.Conn, port int) {
-	token, err := tunnelClaims.Park(s.binding, port, conn, tunnelClaimTimeout)
+	token, err := s.claims.Park(s.binding, port, conn, tunnelClaimTimeout)
 	if err != nil {
 		slog.Warn("tunnel: failed to mint claim token", slog.String("err", err.Error()))
 		_ = conn.Close()
@@ -178,7 +235,7 @@ func (s *controlSession) park(conn net.Conn, port int) {
 	// parked connection's own lifetime is bounded by the claim timeout instead.
 	if err := s.write(tunnel.ControlMessage{Type: tunnel.MsgIncoming, Port: port, Token: token}); err != nil {
 		slog.Debug("tunnel: failed to send incoming", slog.String("err", err.Error()))
-		tunnelClaims.Discard(token)
+		s.claims.Discard(token)
 		return
 	}
 	slog.Debug("tunnel: connection parked awaiting claim", slog.Int("port", port))
@@ -188,12 +245,19 @@ func (s *controlSession) park(conn net.Conn, port int) {
 // this session and clears the registry Active flags. Safe to call repeatedly.
 func (s *controlSession) Close() {
 	s.closeOnce.Do(func() {
-		for _, port := range tunnelBinds.ReleaseBinding(s.binding) {
-			if service.ProxyService != nil {
-				service.ProxyService.SetReverseBound(port, false)
+		for _, port := range s.binds.ReleaseBinding(s.binding) {
+			if s.proxy != nil {
+				s.proxy.SetReverseBound(port, false)
 			}
 		}
-		tunnelClaims.ReleaseBinding(s.binding)
+		s.claims.ReleaseBinding(s.binding)
+
+		// Stop accepting new loops before waiting: a concurrent handleBind must
+		// not Add after this Wait returns. Holding wgMu across the flag flip
+		// makes Add-before-flag and flag-before-Wait mutually exclusive.
+		s.wgMu.Lock()
+		s.closing = true
+		s.wgMu.Unlock()
 
 		s.wg.Wait()
 		slog.Info("tunnel: control session closed")
@@ -202,13 +266,13 @@ func (s *controlSession) Close() {
 
 // releaseReverseBind closes a port's listener, discards its parked connections
 // and clears its Active flag. It reports whether this binding owned the port.
-func releaseReverseBind(binding tunnel.Binding, port int) bool {
-	if !tunnelBinds.Release(binding, port) {
+func (s *controlSession) releaseReverseBind(port int) bool {
+	if !s.binds.Release(s.binding, port) {
 		return false
 	}
-	tunnelClaims.ReleasePort(binding, port)
-	if service.ProxyService != nil {
-		service.ProxyService.SetReverseBound(port, false)
+	s.claims.ReleasePort(s.binding, port)
+	if s.proxy != nil {
+		s.proxy.SetReverseBound(port, false)
 	}
 	slog.Info("tunnel: reverse bind released", slog.Int("port", port))
 	return true

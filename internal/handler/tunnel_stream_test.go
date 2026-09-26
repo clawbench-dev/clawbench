@@ -387,6 +387,110 @@ func TestTunnelStream_MultipleConcurrentStreams(t *testing.T) {
 	}
 }
 
+// TestTunnelStream_HostIsUnconstrainedButPortIsTheBoundary pins the deliberate
+// design decision documented at target.go:44-47 and tunnel_stream.go:91-96:
+// there is NO host allowlist. The port whitelist is the only boundary, matching
+// the SSH direct-tcpip path. This is an SSRF surface by construction (the
+// endpoint exists to forward an authenticated caller's bytes), so the test
+// fixes the posture in both directions:
+//
+//   - a disallowed port is refused before any dial (403), even for a
+//     link-local/metadata host; and
+//   - a disallowed-in-range host with an allowed port IS dialed (502), proving
+//     the host is not silently filtered.
+//
+// If someone later adds a host allowlist, the second case fails; if someone
+// removes the port check, the first does. Neither change can pass silently.
+func TestTunnelStream_HostIsUnconstrainedButPortIsTheBoundary(t *testing.T) {
+	url, cleanup := setupTunnelTest(t)
+	defer cleanup()
+
+	// The canonical cloud metadata address. It is deliberately used as a
+	// non-loopback host to prove the host is not constrained.
+	const metadataHost = "169.254.169.254"
+
+	t.Run("disallowed port is refused before dialing", func(t *testing.T) {
+		// Port 80 is outside the default 1024-65535 whitelist. The 403 must come
+		// from the port guard, so the server never dials the metadata host.
+		req, err := http.NewRequest(http.MethodPost, streamURL(url, metadataHost, 80), bytes.NewReader(nil))
+		require.NoError(t, err)
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"a disallowed port must be refused regardless of the host")
+	})
+
+	t.Run("allowed port on a non-loopback host is dialed", func(t *testing.T) {
+		// Port 8080 is inside the whitelist. The host is not: the server must
+		// still attempt the dial and fail it as 502, which is the positive proof
+		// that no host allowlist exists. The dial is bounded by
+		// tunnelDialTimeout, so the client waits a little past it.
+		client := &http.Client{Timeout: tunnelDialTimeout + 5*time.Second}
+		req, err := http.NewRequest(http.MethodPost, streamURL(url, metadataHost, 8080), bytes.NewReader(nil))
+		require.NoError(t, err)
+		resp, err := client.Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		assert.Equal(t, http.StatusBadGateway, resp.StatusCode,
+			"an allowed port on a non-loopback host must reach the dial (502), proving the host is unconstrained")
+	})
+}
+
+// TestTunnelStream_RequestIsDuplexAndResponseHasNoContentLength pins the wire
+// contract of design §4.1: the request body is a duplex (streaming) body and the
+// response carries NO Content-Length. A regression to a buffered path — e.g.
+// io.ReadAll'ing the request before writing, or setting a length on the
+// response — would still pass every functional test in this file while breaking
+// the protocol the Electron/Android clients rely on.
+//
+// Asserted on the raw h2 request/response: resp.ContentLength must be -1 (Go's
+// "unknown/streamed" sentinel) and no Content-Length header may be present.
+func TestTunnelStream_RequestIsDuplexAndResponseHasNoContentLength(t *testing.T) {
+	url, cleanup := setupTunnelTest(t)
+	defer cleanup()
+
+	echoPort := startTunnelEchoServer(t)
+	client := h2cTunnelClient()
+
+	// The body is an io.Pipe: unbounded and streaming, i.e. no known length.
+	pr, pw := io.Pipe()
+	req, err := http.NewRequest(http.MethodPost, streamURL(url, "127.0.0.1", echoPort), pr)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	// For a client request, ContentLength == 0 with a non-nil body is Go's
+	// "unknown length" signal (net/http/request.go: it only sets a positive
+	// length for *bytes.Buffer/Reader/Strings.Reader). A non-streaming rewrite
+	// that buffers the body would set a real length here.
+	require.NotNil(t, req.Body, "the request body must be present")
+	assert.Equal(t, int64(0), req.ContentLength,
+		"the streaming request body must not declare a length")
+	assert.Empty(t, req.Header.Get("Content-Length"),
+		"the request must not carry a Content-Length header")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, 2, resp.ProtoMajor, "this contract is about HTTP/2 framing")
+
+	assert.Equal(t, int64(-1), resp.ContentLength,
+		"the response must be streamed, not length-delimited (ContentLength == -1)")
+	assert.Empty(t, resp.Header.Get("Content-Length"),
+		"the response must carry no Content-Length header")
+
+	// Prove the stream is genuinely duplex while the body is still open: a
+	// round trip completes before the request body ends. A buffered path would
+	// deadlock here until the body is closed.
+	_, err = pw.Write([]byte("duplex"))
+	require.NoError(t, err)
+	buf := make([]byte, len("duplex"))
+	_, err = io.ReadFull(resp.Body, buf)
+	require.NoError(t, err)
+	assert.Equal(t, "duplex", string(buf))
+	_ = pw.Close()
+}
+
 // TestTunnelStream_DialFailureReturns502BeforeAnyBody is the "no half-written
 // response" guard: a dead target must produce a clean 502, never a 200 with a
 // truncated body.
