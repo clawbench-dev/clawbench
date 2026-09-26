@@ -174,6 +174,14 @@ func FilePath(name string) (string, bool) {
 // ResolveActive returns the bare name of the wallpaper that should currently be
 // displayed, and whether one is active. A globally disabled wallpaper resolves
 // to none even though the gallery and its selection are retained.
+//
+// Mode "wave" deliberately has no case here and falls through to ("", false):
+// the animated wave is drawn entirely on the client and has no file on disk.
+// Inventing a placeholder name would push a non-existent entry through
+// FilePath / thumbnail serving / ReconcileLocalGallery, all of which treat a
+// name as a real file. Callers that need to know whether the wave is showing
+// must read Appearance.WallpaperMode instead of ActiveFile — an empty active
+// file means "no image", not "no background".
 func ResolveActive(cfg *model.Config) (string, bool) {
 	if !cfg.Appearance.WallpaperEnabled {
 		return "", false

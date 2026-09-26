@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>旋转地球 · 可调参数版</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #04060a; }
+  body { font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: #c9d1d9; }
+  #stage { position: fixed; inset: 0; }
+  #stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+  /* ── 参数面板 ── */
+  #panel {
+    position: fixed; top: 0; right: 0; width: 306px; height: 100%;
+    background: rgba(10,13,19,.86); backdrop-filter: blur(14px);
+    border-left: 1px solid rgba(255,255,255,.09);
+    display: flex; flex-direction: column; z-index: 20;
+    transition: transform .26s cubic-bezier(.4,0,.2,1);
+  }
+  #panel.hide { transform: translateX(100%); }
+  #panel header {
+    padding: 12px 14px; border-bottom: 1px solid rgba(255,255,255,.09);
+    display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;
+  }
+  #panel header b { font-size: 12px; letter-spacing: .04em; color: #e6edf3; }
+  .hbtn {
+    background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.16);
+    color: #c9d1d9; border-radius: 6px; padding: 4px 9px; cursor: pointer;
+    font: 11px ui-monospace, monospace; transition: .15s;
+  }
+  .hbtn:hover { background: rgba(255,255,255,.15); }
+  .hbtn.pri { background: #fe8019; border-color: #fe8019; color: #14161a; font-weight: 600; }
+  #scroll { overflow-y: auto; padding: 6px 0 20px; flex: 1; }
+  #scroll::-webkit-scrollbar { width: 8px; }
+  #scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 4px; }
+
+  .grp { border-bottom: 1px solid rgba(255,255,255,.06); }
+  .grp > h4 {
+    padding: 10px 14px 6px; font-size: 10px; font-weight: 600;
+    letter-spacing: .1em; text-transform: uppercase; color: #7d8590;
+  }
+  .row { padding: 4px 14px 7px; }
+  .row .lab { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+  .row .lab span:first-child { color: #adbac7; }
+  .row .lab span:last-child { color: #fe8019; font-variant-numeric: tabular-nums; font-size: 11px; }
+  .row input[type=range] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 3px;
+    background: rgba(255,255,255,.16); border-radius: 2px; outline: none; cursor: pointer;
+  }
+  .row input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+    background: #fe8019; cursor: pointer; border: 2px solid #14161a;
+  }
+  .row input[type=range]::-moz-range-thumb {
+    width: 12px; height: 12px; border-radius: 50%; background: #fe8019;
+    cursor: pointer; border: 2px solid #14161a;
+  }
+  .chk { display: flex; align-items: center; gap: 8px; padding: 5px 14px; cursor: pointer; }
+  .chk input { accent-color: #fe8019; cursor: pointer; }
+  .chk span { color: #adbac7; }
+  .seg { display: flex; gap: 5px; padding: 3px 14px 9px; }
+  .seg button {
+    flex: 1; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+    color: #adbac7; border-radius: 5px; padding: 5px 4px; cursor: pointer;
+    font: 11px ui-monospace, monospace; transition: .15s;
+  }
+  .seg button:hover { background: rgba(255,255,255,.13); }
+  .seg button.on { background: #fe8019; border-color: #fe8019; color: #14161a; font-weight: 600; }
+
+  #toggle {
+    position: fixed; top: 12px; right: 12px; z-index: 21;
+    background: rgba(10,13,19,.8); border: 1px solid rgba(255,255,255,.16);
+    color: #c9d1d9; border-radius: 7px; padding: 7px 12px; cursor: pointer;
+    font: 11px ui-monospace, monospace; backdrop-filter: blur(8px);
+  }
+  #panel:not(.hide) ~ #toggle { right: 318px; }
+
+  #hud {
+    position: fixed; left: 12px; bottom: 12px; z-index: 10;
+    background: rgba(10,13,19,.72); backdrop-filter: blur(8px);
+    border: 1px solid rgba(255,255,255,.08); border-radius: 8px;
+    padding: 8px 12px; white-space: pre; color: #8b949e; line-height: 1.55;
+  }
+  #hud b { color: #fe8019; font-weight: 600; }
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(20px);
+    background: #fe8019; color: #14161a; padding: 9px 18px; border-radius: 8px;
+    font-weight: 600; opacity: 0; pointer-events: none; transition: .22s; z-index: 30;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="hud">加载中…</div>
+<button id="toggle">参数 ▸</button>
+
+<aside id="panel" class="hide">
+  <header>
+    <b>地球参数</b>
+    <div style="display:flex;gap:5px">
+      <button class="hbtn" id="reset">重置</button>
+      <button class="hbtn pri" id="copy">复制参数</button>
+    </div>
+  </header>
+  <div id="scroll"></div>
+</aside>
+
+<div id="toast"></div>
+
+<script>
+'use strict'
+
+// ═══════════════════════════════════════════════════════════════
+// 参数表 —— UI 完全由此生成，加参数只需在此加一行
+// ═══════════════════════════════════════════════════════════════
+const SCHEMA = [
+  { title: '自转与视角', items: [
+    { k: 'spin',      label: '自转速度',   min: 0,    max: 4,    step: .02, def: 1,    unit: '×' },
+    { k: 'tilt',      label: '地轴倾角',   min: -45,  max: 45,   step: 1,   def: 23.4, unit: '°' },
+    { k: 'camDist',   label: '相机距离',   min: 1.5,  max: 4.5,  step: .05, def: 2.75, unit: '' },
+    { k: 'fov',       label: '视野 FOV',   min: .35,  max: 1.6,  step: .02, def: .72,  unit: 'rad' },
+    { k: 'camLat',    label: '相机纬度',   min: -70,  max: 70,   step: 1,   def: 8,    unit: '°' },
+  ]},
+  { title: '光照', items: [
+    // 默认把光源放在相机同侧偏上，让球面大部分被照亮 ——
+    // 否则默认视角下 90% 是夜面，看不清贴图（第一版就是这个毛病）
+    { k: 'sunAz',     label: '光源方位',   min: -180, max: 180,  step: 1,   def: 62,   unit: '°' },
+    { k: 'sunEl',     label: '光源高度',   min: -60,  max: 80,   step: 1,   def: 26,   unit: '°' },
+    { k: 'ambient',   label: '环境光',     min: 0,    max: .5,   step: .01, def: .10,  unit: '' },
+    { k: 'diffuse',   label: '漫反射强度', min: 0,    max: 2,    step: .02, def: 1.05, unit: '' },
+    { k: 'terminator',label: '晨昏线柔和', min: .02,  max: .8,   step: .01, def: .28,  unit: '' },
+  ]},
+  { title: '夜色', items: [
+    { k: 'nightAmt',  label: '夜灯亮度',   min: 0,    max: 4,    step: .05, def: 1.9,  unit: '×' },
+    { k: 'nightTint', label: '夜灯暖度',   min: 0,    max: 1,    step: .02, def: .45,  unit: '' },
+  ]},
+  { title: '云层', items: [
+    { k: 'cloudAmt',  label: '云量不透明', min: 0,    max: 1.4,  step: .02, def: .82,  unit: '' },
+    { k: 'cloudSpin', label: '云层相对转速', min: -.6, max: .6,  step: .01, def: .07,  unit: '×' },
+    { k: 'cloudHi',   label: '云层高光',   min: 0,    max: 1,    step: .02, def: .25,  unit: '' },
+    { k: 'cloudShadow', label: '云影投射到地面', type: 'bool', def: true },
+  ]},
+  { title: '海面与地表', items: [
+    { k: 'specAmt',   label: '海面镜面',   min: 0,    max: 3,    step: .05, def: .55,  unit: '' },
+    { k: 'specSharp', label: '高光锐度',   min: 4,    max: 200,  step: 2,   def: 120,  unit: '' },
+    { k: 'relief',    label: '地形起伏',   min: 0,    max: 2.5,  step: .05, def: .85,  unit: '' },
+  ]},
+  { title: '大气与背景', items: [
+    { k: 'atmoAmt',   label: '大气强度',   min: 0,    max: 3,    step: .05, def: .95,  unit: '' },
+    { k: 'atmoSize',  label: '大气范围',   min: 1.2,  max: 6,    step: .05, def: 3.0,  unit: '' },
+    { k: 'atmoTint',  label: '大气色调',   min: 0,    max: 1,    step: .02, def: .5,   unit: '' },
+    { k: 'stars',     label: '星空亮度',   min: 0,    max: 2,    step: .05, def: .55,  unit: '' },
+    { k: 'vignette',  label: '暗角',       min: 0,    max: 1,    step: .02, def: .3,   unit: '' },
+  ]},
+  { title: '成像', items: [
+    { k: 'exposure',  label: '曝光',       min: .4,   max: 2,    step: .02, def: 1.06, unit: '' },
+    { k: 'contrast',  label: '对比度',     min: .7,   max: 1.6,  step: .02, def: 1.06, unit: '' },
+    { k: 'saturate',  label: '饱和度',     min: 0,    max: 2,    step: .02, def: 1.14, unit: '' },
+    { k: 'gamma',     label: '伽马',       min: 1.4,  max: 2.8,  step: .02, def: 2.2,  unit: '' },
+  ]},
+]
+
+// 默认 4K 档：球体在屏上直径约 1300px，可见半球需要约 1300px 贴图宽，
+// 对应整幅贴图宽约 2600px。4K 昼面的可见半球是 2048px，有 1.6 倍余量；
+// 而 2K 只有 1024px，会被放大 1.3 倍 —— 这正是「纹理模糊」的直接来源。
+// 其余贴图（夜灯/海面/云层/法线）都是低频信息，2K/1K 肉眼无差。
+const BAKED = { tex: '4k', ss: 1.5, aniso: 'max', fps: 30, paused: false }
+
+// 诊断开关（?noaniso=1&nostars=1&novig=1&noclouds=1&small=1）——用于定位上下文丢失
+const Q = new URLSearchParams(location.search)
+const DBG = {
+  noaniso: Q.has('noaniso'),
+  nostars: Q.has('nostars'),
+  novig: Q.has('novig'),
+  noclouds: Q.has('noclouds'),
+  nonight: Q.has('nonight'),
+  nospec: Q.has('nospec'),
+  small: Q.has('small'),
+  /** 关掉 mipmap，验证「发糊是否来自 mip 选层过粗」 */
+  nomip: Q.has('nomip'),
+  /**
+   * 色调映射默认**关闭**。
+   * 实测 ACES 会把暗部整体抬亮（海洋 R=30 → ~90），把球体的颜色方差从
+   * 2603 压到 1719（−34%），海陆对比被抹平 —— 看起来就是「发白、发糊」。
+   * 地球贴图本身已经是显示参考素材，不需要再压一遍高光。
+   * 想要电影感可用 ?tm=1 或面板切换。
+   */
+  notm: !Q.has('tm'),
+}
+if (DBG.noaniso) BAKED.aniso = '1'
+if (DBG.small) BAKED.ss = 1.0
+
+// ═══════════════════════════════════════════════════════════════
+// 贴图
+// ═══════════════════════════════════════════════════════════════
+const SETS = {
+  '2k': {
+    dir: 'tex/',
+    day: 'earth_atmos_2048.jpg',
+    night: 'earth_lights_2048.png',
+    spec: 'earth_specular_2048.jpg',
+    clouds: 'earth_clouds_1024.png',
+    normal: null,
+  },
+  // 4K 档：仅昼面用 4K，其余保持 2K/1K。
+  // 全部用 8K 会让显存到 858 MiB（含 mipmap）—— 实测直接导致
+  // WebGL 上下文反复丢失且无法恢复。当前组合约 78 MiB。
+  '4k': {
+    dir: 'tex4k/',
+    day: 'day.jpg',
+    night: 'night.jpg',
+    spec: 'spec.jpg',
+    clouds: 'clouds.jpg',
+    normal: 'normal.jpg',
+  },
+}
+
+const IMG = {}          // key -> HTMLImageElement
+let texSet = null       // 当前使用的贴图集名
+let TEX = null          // { day, night, spec, clouds, normal } GPU 纹理
+let TEX_BYTES = 0
+
+function loadImg (url) {
+  return new Promise((res, rej) => {
+    const im = new Image()
+    im.onload = () => res(im)
+    im.onerror = () => rej(new Error('贴图加载失败: ' + url))
+    im.src = url
+  })
+}
+
+/**
+ * 加载一套贴图。
+ *
+ * 只有昼面是必需的；夜灯/高光/云层/法线都是可选增强 —— 任何一张加载失败
+ * 都不该让整个地球挂掉（真实设备上单张贴图 404、超时、解码失败都常见）。
+ * 失败的可选项记录在 pack.missing 里，供 HUD 显示。
+ */
+async function ensureSet (name) {
+  if (texSet === name && IMG[name]) return
+  const s = SETS[name]
+  if (!s) throw new Error('未知贴图集: ' + name)
+  const keys = ['day', 'night', 'spec', 'clouds', 'normal'].filter((k) => s[k])
+  const pack = { missing: [] }
+  const results = await Promise.all(keys.map(async (k) => {
+    try { return [k, await loadImg(s.dir + s[k])] }
+    catch (e) {
+      if (k === 'day') throw e           // 昼面缺失无法渲染，直接失败
+      return [k, null]
+    }
+  }))
+  let bytes = 0
+  for (const [k, im] of results) {
+    if (im) { pack[k] = im; bytes += im.width * im.height * 4 * 1.34 }
+    else pack.missing.push(k)
+  }
+  IMG[name] = pack
+  texSet = name
+  TEX_BYTES = bytes
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 着色器
+// ═══════════════════════════════════════════════════════════════
+const STARS_VS = `
+attribute vec2 aPos;
+varying vec2 vNdc;
+void main(){
+  vNdc = aPos;
+  gl_Position = vec4(aPos, 0.0, 1.0);
+}`
+
+const STARS_FS = `
+precision highp float;
+varying vec2 vNdc;
+uniform float uAspect;
+uniform float uTanHalfFov;
+uniform float uStars;
+uniform float uRot;
+float hash(vec3 p){
+  p = fract(p * 0.3183099 + vec3(0.71, 0.113, 0.419));
+  p *= 17.0;
+  return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+}
+void main(){
+  vec3 dir = normalize(vec3(vNdc.x * uAspect * uTanHalfFov, vNdc.y * uTanHalfFov, -1.0));
+
+  // 星点：把方向量化成格子，每格用哈希决定「是否有星」以及「星在格内的位置」。
+  // 关键是要在**格内取随机点**再算距离 —— 直接对格心算距离会得到方块状星点
+  // （第一版就是这个 bug，截图里星星全是小方块）。
+  vec3 q = dir * 78.0;
+  vec3 cell = floor(q);
+  vec3 f = q - cell;
+  float h = hash(cell);
+  float star = 0.0;
+  if (h > 0.972) {
+    vec3 sp = vec3(hash(cell + 1.3), hash(cell + 7.7), hash(cell + 13.1));
+    float d = length(f - sp);
+    star = smoothstep(0.30, 0.02, d);
+  }
+  float mag = pow(hash(cell + 3.7), 2.2);
+  vec3 tint = mix(vec3(0.72, 0.82, 1.0), vec3(1.0, 0.88, 0.70), hash(cell + 11.3));
+
+  // 银河带
+  float band = exp(-pow(dot(dir, normalize(vec3(0.4, 0.75, 0.25))) * 3.2, 2.0));
+  vec3 gal = vec3(0.055, 0.070, 0.125) * band;
+
+  vec3 col = gal + tint * star * (0.25 + mag * 1.9) * uStars;
+  gl_FragColor = vec4(col, 1.0);
+}`
+
+const VIGNETTE_FS = `
+precision highp float;
+varying vec2 vNdc;
+uniform float uVignette;
+uniform float uAspect;
+void main(){
+  vec2 p = vec2(vNdc.x * uAspect, vNdc.y);
+  p /= vec2(uAspect, 1.0);
+  float r = length(vNdc);
+  float v = smoothstep(0.45, 1.15, r);
+  gl_FragColor = vec4(0.0, 0.0, 0.0, v * uVignette);
+}`
+
+const GLOBE_VS = `
+attribute vec3 aPos;
+attribute vec2 aUv;
+uniform mat4 uMvp;
+uniform float uTilt;
+varying vec2 vUv;
+varying vec3 vObj;
+void main(){
+  // 地轴倾角：绕 Z 轴旋转几何体
+  float c = cos(uTilt), s = sin(uTilt);
+  vec3 p = vec3(aPos.x * c - aPos.y * s, aPos.x * s + aPos.y * c, aPos.z);
+  vObj = normalize(p);
+  vUv = aUv;
+  gl_Position = uMvp * vec4(p, 1.0);
+}`
+
+const GLOBE_FS = `
+precision highp float;
+varying vec2 vUv;
+varying vec3 vObj;
+
+uniform sampler2D uDay;
+uniform sampler2D uNight;
+uniform sampler2D uSpec;
+uniform sampler2D uClouds;
+uniform sampler2D uNormal;
+uniform float uHasNormal;
+uniform float uRot;
+uniform float uCloudRot;
+uniform vec3  uLight;
+uniform float uNightAmt;
+uniform float uNightTint;
+uniform float uCloudAmt;
+uniform float uCloudHi;
+uniform float uCloudShadow;
+uniform float uSpecAmt;
+uniform float uSpecSharp;
+uniform float uRelief;
+uniform float uAtmoAmt;
+uniform float uAtmoSize;
+uniform float uAtmoTint;
+uniform float uAmbient;
+uniform float uDiffuse;
+uniform float uTerminator;
+uniform float uExposure;
+uniform float uContrast;
+uniform float uSaturate;
+uniform float uGamma;
+uniform float uToneMap;
+
+const float PI = 3.14159265359;
+
+vec2 lonLatUv(vec3 n, float rot){
+  float lon = atan(n.z, n.x) + rot;
+  float lat = asin(clamp(n.y, -1.0, 1.0));
+  return vec2(lon / (2.0 * PI) + 0.5, 0.5 - lat / PI);
+}
+
+// ACES 近似色调映射
+vec3 aces(vec3 x){
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
+
+void main(){
+  vec3 n = normalize(vObj);
+  vec2 uv = lonLatUv(n, uRot);
+
+  // ── 法线扰动（地形起伏）──
+  // 球面切空间：东向切向量与北向切向量
+  if (uHasNormal > 0.5 && uRelief > 0.001) {
+    vec3 nm = texture2D(uNormal, uv).rgb * 2.0 - 1.0;
+    vec3 east = normalize(vec3(-n.z, 0.0, n.x) + vec3(1e-5, 0.0, 0.0));
+    vec3 north = normalize(cross(n, east));
+    n = normalize(n + (east * nm.x + north * nm.y) * uRelief * 0.55);
+  }
+
+  vec3 L = normalize(uLight);
+  float lam = dot(n, L);
+  // 晨昏线柔和度可调
+  float dayAmt = smoothstep(-uTerminator, uTerminator, lam);
+
+  vec3 day = texture2D(uDay, uv).rgb;
+
+  // ── 云层（提前算，供云影使用）──
+  float cl = 0.0;
+  if (uCloudAmt > 0.001) {
+    vec2 cuv = lonLatUv(normalize(vObj), uRot + uCloudRot);
+    cl = texture2D(uClouds, cuv).r;
+    // 平方衰减：云层贴图有大量中间灰度，线性使用会让整球蒙上一层白雾
+    // （实测不加这一句，海洋会从 [31,60,113] 被抬到 [136,145,160]）。
+    // 平方后只有真正的云核显出来，稀薄部分几乎不参与混合。
+    cl *= cl;
+  }
+
+  // ── 昼夜混合 ──
+  vec3 base;
+  if (uNightAmt > 0.001) {
+    vec3 night = texture2D(uNight, uv).rgb;
+    // 暖化夜灯
+    night = mix(night, night * vec3(1.25, 0.92, 0.62), uNightTint);
+    base = mix(night * uNightAmt, day, dayAmt);
+  } else {
+    base = day;
+  }
+
+  // 漫反射 + 环境
+  base *= (uAmbient + uDiffuse * max(lam, 0.0));
+
+  // ── 云影：云层挡住阳光，地面变暗 ──
+  if (uCloudShadow > 0.5 && uCloudAmt > 0.001) {
+    base *= (1.0 - cl * 0.42 * dayAmt);
+  }
+
+  // ── 云层叠加 ──
+  if (uCloudAmt > 0.001) {
+    float lit = uAmbient + uDiffuse * max(lam, 0.0);
+    vec3 cloudCol = vec3(lit) * mix(0.86, 1.0, uCloudHi);
+    base = mix(base, cloudCol, clamp(cl * uCloudAmt, 0.0, 1.0) * dayAmt);
+  }
+
+  // ── 海面镜面高光 ──
+  if (uSpecAmt > 0.001) {
+    float water = texture2D(uSpec, uv).r;
+    // 不同数据源水陆极性可能相反，取与自身中值差异较大的一侧为水
+    water = smoothstep(0.25, 0.75, water);
+    vec3 V = vec3(0.0, 0.0, 1.0);
+    vec3 h = normalize(L + V);
+    float sp = pow(max(dot(n, h), 0.0), uSpecSharp) * water * dayAmt;
+    base += vec3(1.0, 0.97, 0.9) * sp * uSpecAmt;
+  }
+
+  // ── 大气：贴地薄雾 + 边缘光 ──
+  if (uAtmoAmt > 0.001) {
+    float rim = pow(1.0 - clamp(n.z, 0.0, 1.0), uAtmoSize);
+    vec3 tint = mix(vec3(0.30, 0.55, 1.0), vec3(0.55, 0.72, 1.0), uAtmoTint);
+    base += tint * rim * uAtmoAmt * (0.35 + 0.65 * max(dayAmt, 0.15));
+    // 朝阳侧的暖色散射
+    float warm = pow(max(lam, 0.0), 3.0) * rim;
+    base += vec3(1.0, 0.62, 0.32) * warm * uAtmoAmt * 0.5;
+  }
+
+  // ── 成像 ──
+  base *= uExposure;
+  if (uToneMap > 0.5) base = aces(base);
+  base = (base - 0.5) * uContrast + 0.5;
+  float lum = dot(base, vec3(0.2126, 0.7152, 0.0722));
+  base = mix(vec3(lum), base, uSaturate);
+  // 伽马：1.0 = 线性直出；2.2 = sRGB 标准。滑块越大画面越亮越「透」
+  base = pow(clamp(base, 0.0, 1.0), vec3(2.2 / uGamma));
+
+  gl_FragColor = vec4(base, 1.0);
+}`
+
+// ═══════════════════════════════════════════════════════════════
+// WebGL 工具
+// ═══════════════════════════════════════════════════════════════
+function compile (gl, type, src) {
+  const s = gl.createShader(type)
+  gl.shaderSource(s, src); gl.compileShader(s)
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s))
+  return s
+}
+function program (gl, vs, fs) {
+  const p = gl.createProgram()
+  gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vs))
+  gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fs))
+  gl.linkProgram(p)
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p))
+  return p
+}
+function perspective (fovy, aspect, near, far) {
+  const f = 1 / Math.tan(fovy / 2), nf = 1 / (near - far)
+  return new Float32Array([
+    f / aspect, 0, 0, 0, 0, f, 0, 0,
+    0, 0, (far + near) * nf, -1, 0, 0, 2 * far * near * nf, 0,
+  ])
+}
+function mul (a, b) {
+  const o = new Float32Array(16)
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+    o[i * 4 + j] = a[j] * b[i * 4] + a[4 + j] * b[i * 4 + 1] + a[8 + j] * b[i * 4 + 2] + a[12 + j] * b[i * 4 + 3]
+  }
+  return o
+}
+
+/**
+ * 上传纹理。
+ *
+ * 各向异性过滤是「球体边缘/极区发糊」的主因：球面在屏幕上的压缩比很高，
+ * 各向同性 mipmap 只能取一个方形采样区域，于是斜视角下被迫选更粗的
+ * mip 层级（宁可糊也不闪烁）。开启各向异性后可以取细长的采样区域，
+ * 边缘立刻变清晰 —— 这是本次「纹理模糊」的核心修复。
+ */
+function uploadTex (gl, img, unit, aniso) {
+  const t = gl.createTexture()
+  gl.activeTexture(gl.TEXTURE0 + unit)
+  gl.bindTexture(gl.TEXTURE_2D, t)
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+  if (DBG.nomip) {
+    // 只用 base 层：用来验证「发糊是不是 mip 选层过粗导致的」
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+    return t
+  }
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR)
+  if (aniso > 1) {
+    const ext = gl.getExtension('EXT_texture_filter_anisotropic') ||
+                gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic')
+    if (ext) {
+      const max = gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+      gl.texParameterf(gl.TEXTURE_2D, ext.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(aniso, max))
+    }
+  }
+  gl.generateMipmap(gl.TEXTURE_2D)
+  return t
+}
+
+function maxAniso (gl) {
+  const ext = gl.getExtension('EXT_texture_filter_anisotropic') ||
+              gl.getExtension('WEBKIT_EXT_texture_filter_anisotropic')
+  return ext ? gl.getParameter(ext.MAX_TEXTURE_MAX_ANISOTROPY_EXT) : 0
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 渲染器
+// ═══════════════════════════════════════════════════════════════
+const stage = document.getElementById('stage')
+const hud = document.getElementById('hud')
+const cfg = {}
+for (const g of SCHEMA) for (const it of g.items) cfg[it.k] = it.def
+
+let cv, gl, progGlobe, progStars, progVignette, quadBuf
+let sphere = { vbo: null, ibo: null, count: 0 }
+let u = {}, su = {}, vu = {}
+let anisoMax = 0
+let lastTexKey = ''
+let contextLost = false
+let lastError = null
+let evLost = 0
+let evRestored = 0
+
+function initGL () {
+  cv = document.createElement('canvas')
+  stage.appendChild(cv)
+  gl = cv.getContext('webgl', {
+    antialias: true, alpha: false, depth: true,
+    powerPreference: 'low-power', preserveDrawingBuffer: false,
+  })
+  if (!gl) throw new Error('此环境不支持 WebGL')
+  anisoMax = maxAniso(gl)
+
+  // 上下文丢失在移动端是真实事件（后台被系统回收、GPU 复位）。
+  // 不处理的话画面会永久冻结成黑屏且不报错 —— 必须监听并重建。
+  cv.addEventListener('webglcontextlost', (e) => {
+    e.preventDefault()          // 阻止默认行为，浏览器才会尝试恢复
+    contextLost = true
+    evLost++
+    toast('WebGL 上下文丢失，正在恢复…')
+  }, false)
+  cv.addEventListener('webglcontextrestored', () => {
+    contextLost = false
+    evRestored++
+    try {
+      // 恢复时要重新上传全部贴图。实测：2K 能在 ~300ms 内恢复，
+      // 而大贴图（8K 组合达 858 MiB）会立刻再次丢失 —— 恢复所需的
+      // 显存恰恰是当初导致丢失的那部分。所以第二次尝试起主动降级，
+      // 保证「宁可糊也要活着」而不是永久黑屏。
+      if (evRestored >= 2 && BAKED.tex === '4k') {
+        BAKED.tex = '2k'
+        toast('显存不足，已降级到 2K 贴图')
+      }
+      ensureSet(BAKED.tex).then(() => {
+        try { rebuildGL(); toast('已恢复') }
+        catch (err) { toast('恢复失败: ' + err.message) }
+      })
+    } catch (err) { toast('恢复失败: ' + err.message) }
+  }, false)
+
+  progGlobe = program(gl, GLOBE_VS, GLOBE_FS)
+  progStars = program(gl, STARS_VS, STARS_FS)
+  progVignette = program(gl, STARS_VS, VIGNETTE_FS)
+
+  // 星空用全屏三角形
+  quadBuf = gl.createBuffer()
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
+
+  buildSphere(192, 96)
+  resize()
+}
+
+/** 上下文恢复后重建全部 GPU 资源（program / buffer / texture 全部失效） */
+function rebuildGL () {
+  u = {}; su = {}; vu = {}
+  progGlobe = program(gl, GLOBE_VS, GLOBE_FS)
+  progStars = program(gl, STARS_VS, STARS_FS)
+  progVignette = program(gl, STARS_VS, VIGNETTE_FS)
+  quadBuf = gl.createBuffer()
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW)
+  buildSphere(192, 96)
+  uploadAll()
+  resize()
+}
+
+function buildSphere (SEG, RING) {
+  const verts = [], idx = []
+  for (let y = 0; y <= RING; y++) {
+    const v = y / RING, phi = v * Math.PI
+    for (let x = 0; x <= SEG; x++) {
+      const uu = x / SEG, th = uu * Math.PI * 2
+      verts.push(Math.sin(phi) * Math.cos(th), Math.cos(phi), Math.sin(phi) * Math.sin(th), uu, v)
+    }
+  }
+  for (let y = 0; y < RING; y++) {
+    for (let x = 0; x < SEG; x++) {
+      const a = y * (SEG + 1) + x, b = a + SEG + 1
+      idx.push(a, b, a + 1, b, b + 1, a + 1)
+    }
+  }
+  sphere.count = idx.length
+  sphere.vbo = gl.createBuffer()
+  gl.bindBuffer(gl.ARRAY_BUFFER, sphere.vbo)
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(verts), gl.STATIC_DRAW)
+  sphere.ibo = gl.createBuffer()
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, sphere.ibo)
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx), gl.STATIC_DRAW)
+}
+
+function uploadAll () {
+  const pack = IMG[texSet]
+  const aniso = BAKED.aniso === 'max' ? (anisoMax || 1) : (parseFloat(BAKED.aniso) || 1)
+  const up = (img, unit) => (img ? uploadTex(gl, img, unit, aniso) : null)
+  TEX = {
+    day: up(pack.day, 0),
+    night: up(pack.night, 1),
+    spec: up(pack.spec, 2),
+    clouds: up(pack.clouds, 3),
+    normal: up(pack.normal, 4),
+  }
+}
+
+function resize () {
+  if (!cv) return
+  const dpr = window.devicePixelRatio || 1
+  const s = BAKED.ss
+  cv.width = Math.round(innerWidth * dpr * s)
+  cv.height = Math.round(innerHeight * dpr * s)
+  gl.viewport(0, 0, cv.width, cv.height)
+}
+
+let spinAccum = 0, cloudAccum = 0, prevT = 0
+
+/**
+ * 计算实际使用的垂直 FOV。
+ *
+ * 相机 FOV 是**垂直**的，所以在竖屏手机上球体会按屏幕高度定尺寸，
+ * 结果横向溢出、被裁掉两侧（实测手机截图里球体撑满整屏）。
+ * 这里加一条约束：球体必须在「较窄的那一边」也留出 10% 边距。
+ *   - 横屏：较窄边是高度 → tan(v/2) ≥ (1/d)/0.9
+ *   - 竖屏：较窄边是宽度 → tan(v/2) ≥ (1/d)/(0.9·aspect)
+ * 用户设的 fov 作为下限，约束只会在需要时把它抬高。
+ */
+function computeFov (aspect) {
+  const wantTan = Math.tan(cfg.fov / 2)
+  const needTan = (1 / cfg.camDist) / (0.9 * Math.min(aspect, 1))
+  return 2 * Math.atan(Math.max(wantTan, needTan))
+}
+
+function drawFrame (tSec) {
+  // 上下文丢失期间禁止发任何 GL 调用（否则刷屏报错），等待 restored
+  if (contextLost) return
+  const dt = prevT ? Math.min(tSec - prevT, 0.1) : 0
+  prevT = tSec
+  if (!BAKED.paused) {
+    spinAccum += dt * cfg.spin
+    cloudAccum += dt * cfg.spin * cfg.cloudSpin
+  }
+
+  const aspect = cv.width / cv.height
+
+  // 深度缓冲必须每帧清空，否则上一帧的深度残留会让球体自我遮挡
+  gl.clearColor(0.016, 0.024, 0.039, 1)
+  gl.clearDepth(1)
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT)
+
+  // ── 星空 ──
+  gl.disable(gl.DEPTH_TEST)
+  gl.useProgram(progStars)
+  gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
+  const sLoc = gl.getAttribLocation(progStars, 'aPos')
+  gl.enableVertexAttribArray(sLoc)
+  gl.vertexAttribPointer(sLoc, 2, gl.FLOAT, false, 0, 0)
+  for (const k of ['uAspect', 'uTanHalfFov', 'uStars']) if (!su[k]) su[k] = gl.getUniformLocation(progStars, k)
+  gl.uniform1f(su.uAspect, aspect)
+  gl.uniform1f(su.uTanHalfFov, Math.tan(computeFov(aspect) / 2))
+  gl.uniform1f(su.uStars, cfg.stars)
+  gl.drawArrays(gl.TRIANGLES, 0, 3)
+
+  // ── 地球 ──
+  gl.enable(gl.DEPTH_TEST)
+  gl.useProgram(progGlobe)
+  gl.bindBuffer(gl.ARRAY_BUFFER, sphere.vbo)
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, sphere.ibo)
+  const aPos = gl.getAttribLocation(progGlobe, 'aPos')
+  gl.enableVertexAttribArray(aPos)
+  gl.vertexAttribPointer(aPos, 3, gl.FLOAT, false, 20, 0)
+  const aUv = gl.getAttribLocation(progGlobe, 'aUv')
+  gl.enableVertexAttribArray(aUv)
+  gl.vertexAttribPointer(aUv, 2, gl.FLOAT, false, 20, 12)
+
+  for (const k of ['uMvp', 'uTilt', 'uRot', 'uCloudRot', 'uLight', 'uHasNormal',
+    'uDay', 'uNight', 'uSpec', 'uClouds', 'uNormal', 'uToneMap']) {
+    if (!u[k]) u[k] = gl.getUniformLocation(progGlobe, k)
+  }
+  for (const k of Object.keys(cfg)) {
+    const uk = 'u' + k.charAt(0).toUpperCase() + k.slice(1)
+    if (!u[uk]) u[uk] = gl.getUniformLocation(progGlobe, uk)
+  }
+
+  // 相机：绕纬度俯仰 + 距离
+  const lat = cfg.camLat * Math.PI / 180
+  const proj = perspective(computeFov(aspect), aspect, 0.1, 100)
+  const view = new Float32Array(16)
+  view[0] = view[5] = view[10] = view[15] = 1
+  // 简化：把相机俯仰等效为世界绕 X 轴的旋转（小角度近似足够）
+  const cl = Math.cos(lat), sl = Math.sin(lat)
+  view[5] = cl; view[6] = -sl; view[9] = sl; view[10] = cl
+  view[14] = -cfg.camDist
+
+  gl.uniformMatrix4fv(u.uMvp, false, mul(proj, view))
+  gl.uniform1f(u.uTilt, cfg.tilt * Math.PI / 180)
+  gl.uniform1f(u.uRot, spinAccum * Math.PI * 2)
+  gl.uniform1f(u.uCloudRot, cloudAccum * Math.PI * 2)
+
+  const az = cfg.sunAz * Math.PI / 180, el = cfg.sunEl * Math.PI / 180
+  gl.uniform3f(u.uLight, Math.cos(el) * Math.cos(az), Math.sin(el), Math.cos(el) * Math.sin(az))
+
+  gl.uniform1f(u.uHasNormal, TEX.normal ? 1 : 0)
+  // 缺贴图时把对应强度归零，并给该纹理单元绑一张占位图 ——
+  // 采样未绑定的单元虽然按规范返回黑色，但会刷 "incomplete texture" 警告
+  const missing = IMG[texSet]?.missing || []
+  if (missing.includes('night')) gl.uniform1f(u.uNightAmt, 0)
+  if (missing.includes('spec')) gl.uniform1f(u.uSpecAmt, 0)
+  if (missing.includes('clouds')) gl.uniform1f(u.uCloudAmt, 0)
+  for (const [i, k] of ['day', 'night', 'spec', 'clouds'].entries()) {
+    gl.activeTexture(gl.TEXTURE0 + i)
+    gl.bindTexture(gl.TEXTURE_2D, TEX[k] || TEX.day)
+    gl.uniform1i(u['u' + k.charAt(0).toUpperCase() + k.slice(1)], i)
+  }
+  if (TEX.normal) {
+    gl.activeTexture(gl.TEXTURE0 + 4)
+    gl.bindTexture(gl.TEXTURE_2D, TEX.normal)
+    gl.uniform1i(u.uNormal, 4)
+  }
+  for (const k of Object.keys(cfg)) {
+    const uk = 'u' + k.charAt(0).toUpperCase() + k.slice(1)
+    if (u[uk]) gl.uniform1f(u[uk], cfg[k])
+  }
+  // 布尔项以 float 传
+  gl.uniform1f(u.uCloudShadow, cfg.cloudShadow ? 1 : 0)
+  gl.uniform1f(u.uToneMap, DBG.notm ? 0 : 1)
+
+  gl.drawElements(gl.TRIANGLES, sphere.count, gl.UNSIGNED_SHORT, 0)
+
+  // ── 暗角（最后叠加，不参与深度）──
+  if (cfg.vignette > 0.001) {
+    gl.disable(gl.DEPTH_TEST)
+    gl.useProgram(progVignette)
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuf)
+    const vLoc = gl.getAttribLocation(progVignette, 'aPos')
+    gl.enableVertexAttribArray(vLoc)
+    gl.vertexAttribPointer(vLoc, 2, gl.FLOAT, false, 0, 0)
+    if (!vu.uVignette) {
+      vu.uVignette = gl.getUniformLocation(progVignette, 'uVignette')
+      vu.uAspect = gl.getUniformLocation(progVignette, 'uAspect')
+    }
+    gl.uniform1f(vu.uVignette, cfg.vignette)
+    gl.uniform1f(vu.uAspect, aspect)
+    gl.enable(gl.BLEND)
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
+    gl.drawArrays(gl.TRIANGLES, 0, 3)
+    gl.disable(gl.BLEND)
+  }
+}
+
+// ── 循环（30fps 上限）──
+let rafId = null, last = 0, frames = 0, fps = 0, fpsAt = 0, drawMs = []
+function loop (now) {
+  rafId = requestAnimationFrame(loop)
+  if (now - last < 1000 / BAKED.fps) return
+  last = now
+  const t0 = performance.now()
+  drawFrame(now / 1000)
+  drawMs.push(performance.now() - t0)
+  if (drawMs.length > 120) drawMs.shift()
+  frames++
+  if (now - fpsAt >= 1000) { fps = frames; frames = 0; fpsAt = now; renderHud() }
+}
+
+function renderHud () {
+  const s = [...drawMs].sort((a, b) => a - b)
+  const q = (p) => s.length ? s[Math.min(s.length - 1, Math.floor(s.length * p))].toFixed(1) : '—'
+  const texMiB = (TEX_BYTES / 1048576).toFixed(0)
+  const canMiB = (cv.width * cv.height * 4 / 1048576).toFixed(1)
+  const res = IMG[texSet]?.day
+  const missing = IMG[texSet]?.missing || []
+  const state = contextLost ? '⚠ 上下文丢失' : (BAKED.paused ? '已暂停' : '运行中')
+  hud.innerHTML =
+    `<b>${fps}</b> fps  · 上限 ${BAKED.fps} · ${state}\n` +
+    `CPU/帧  p50 ${q(.5)}ms  p95 ${q(.95)}ms\n` +
+    `画布 ${cv.width}×${cv.height}  ${canMiB} MiB\n` +
+    `贴图 ${texSet} ${res ? res.width + '×' + res.height : ''}  ${texMiB} MiB\n` +
+    `各向异性 ${BAKED.aniso === 'max' ? (anisoMax || '不支持') : BAKED.aniso}×` +
+    (missing.length ? `\n缺贴图 ${missing.join(', ')}（该项已自动关闭）` : '') +
+    (lastError ? `\n错误 ${lastError}` : '')
+}
+
+// ═══════════════════════════════════════════════════════════════
+// 参数面板
+// ═══════════════════════════════════════════════════════════════
+const scroll = document.getElementById('scroll')
+
+function buildPanel () {
+  scroll.innerHTML = ''
+  for (const g of SCHEMA) {
+    const box = document.createElement('div')
+    box.className = 'grp'
+    box.innerHTML = `<h4>${g.title}</h4>`
+    for (const it of g.items) {
+      if (it.type === 'bool') {
+        const lab = document.createElement('label')
+        lab.className = 'chk'
+        lab.innerHTML = `<input type="checkbox" ${cfg[it.k] ? 'checked' : ''}><span>${it.label}</span>`
+        lab.querySelector('input').addEventListener('change', (e) => { cfg[it.k] = e.target.checked })
+        box.appendChild(lab)
+        continue
+      }
+      const row = document.createElement('div')
+      row.className = 'row'
+      const val = () => it.unit ? `${(+cfg[it.k]).toFixed(it.step < .1 ? 2 : 0)}${it.unit}` : (+cfg[it.k]).toFixed(2)
+      row.innerHTML =
+        `<div class="lab"><span>${it.label}</span><span>${val()}</span></div>` +
+        `<input type="range" min="${it.min}" max="${it.max}" step="${it.step}" value="${cfg[it.k]}">`
+      const inp = row.querySelector('input')
+      const out = row.querySelector('.lab span:last-child')
+      inp.addEventListener('input', () => { cfg[it.k] = parseFloat(inp.value); out.textContent = val() })
+      box.appendChild(row)
+    }
+    scroll.appendChild(box)
+  }
+
+  // 成像级选项（不进 SCHEMA 的值域滑块）
+  const box = document.createElement('div')
+  box.className = 'grp'
+  box.innerHTML = '<h4>渲染</h4>'
+  const addSeg = (label, opts, cur, onPick) => {
+    const wrap = document.createElement('div')
+    wrap.innerHTML = `<div class="row" style="padding-bottom:2px"><div class="lab"><span>${label}</span><span></span></div></div>`
+    const seg = document.createElement('div')
+    seg.className = 'seg'
+    for (const o of opts) {
+      const b = document.createElement('button')
+      b.textContent = o.label
+      if (o.value === cur) b.classList.add('on')
+      b.addEventListener('click', () => {
+        seg.querySelectorAll('button').forEach((x) => x.classList.remove('on'))
+        b.classList.add('on')
+        onPick(o.value)
+      })
+      seg.appendChild(b)
+    }
+    wrap.appendChild(seg)
+    box.appendChild(wrap)
+  }
+  addSeg('贴图分辨率', [
+    { label: '2K 省电', value: '2k' },
+    { label: '4K 清晰', value: '4k' },
+  ], BAKED.tex, async (v) => {
+    const r = await window.__globe.switchTex(v)
+    toast(r.ok ? `贴图已切换到 ${r.size[0]}×${r.size[1]}` : `贴图加载失败：${r.error}`)
+  })
+  addSeg('超采样', [
+    { label: '1.0×', value: 1 }, { label: '1.5×', value: 1.5 }, { label: '2.0×', value: 2 },
+  ], BAKED.ss, (v) => { BAKED.ss = v; resize() })
+  addSeg('各向异性', [
+    { label: '关', value: '1' }, { label: '4×', value: '4' },
+    { label: '8×', value: '8' }, { label: '最大', value: 'max' },
+  ], BAKED.aniso, (v) => { BAKED.aniso = v; uploadAll() })
+  addSeg('帧率上限', [
+    { label: '30', value: 30 }, { label: '60', value: 60 },
+  ], BAKED.fps, (v) => { BAKED.fps = v })
+  addSeg('色调映射', [
+    { label: 'ACES（柔和）', value: 'aces' },
+    { label: '直出（通透）', value: 'none' },
+  ], DBG.notm ? 'none' : 'aces', (v) => { DBG.notm = (v === 'none'); uploadAll() })
+  const p = document.createElement('label')
+  p.className = 'chk'
+  p.innerHTML = `<input type="checkbox" ${BAKED.paused ? 'checked' : ''}><span>暂停动画</span>`
+  p.querySelector('input').addEventListener('change', (e) => { BAKED.paused = e.target.checked })
+  box.appendChild(p)
+  scroll.appendChild(box)
+}
+
+function toast (msg) {
+  const t = document.getElementById('toast')
+  t.textContent = msg; t.classList.add('show')
+  clearTimeout(toast._id)
+  toast._id = setTimeout(() => t.classList.remove('show'), 1600)
+}
+
+document.getElementById('reset').addEventListener('click', () => {
+  for (const g of SCHEMA) for (const it of g.items) cfg[it.k] = it.def
+  buildPanel()
+  toast('已重置为默认值')
+})
+
+document.getElementById('copy').addEventListener('click', async () => {
+  const out = { ...cfg }
+  const txt = JSON.stringify(out, null, 2)
+  try {
+    await navigator.clipboard.writeText(txt)
+    toast('参数已复制到剪贴板')
+  } catch {
+    // file:// 或权限受限时退化为可选中文本框
+    const ta = document.createElement('textarea')
+    ta.value = txt; document.body.appendChild(ta); ta.select()
+    try { document.execCommand('copy'); toast('参数已复制') }
+    catch { toast('复制失败，请手动选取') }
+    ta.remove()
+  }
+})
+
+const panel = document.getElementById('panel')
+const toggle = document.getElementById('toggle')
+toggle.addEventListener('click', () => {
+  panel.classList.toggle('hide')
+  toggle.textContent = panel.classList.contains('hide') ? '参数 ▸' : '参数 ◂'
+})
+
+addEventListener('resize', resize)
+addEventListener('keydown', (e) => {
+  if (e.key === 'h' || e.key === 'H') toggle.click()
+})
+
+// ═══════════════════════════════════════════════════════════════
+// 启动
+// ═══════════════════════════════════════════════════════════════
+window.__globe = {
+  ready: null,
+  cfg,
+  baked: BAKED,
+  getFps: () => fps,
+  getGl: () => gl,
+  isLost: () => contextLost,
+  events: () => ({ lost: evLost, restored: evRestored }),
+  texInfo: () => {
+    const p = IMG[texSet]
+    return { set: texSet, day: p?.day ? [p.day.width, p.day.height] : null, hasNormal: !!p?.normal }
+  },
+  set: (k, v) => { cfg[k] = v; buildPanel() },
+  /** 直接设置各向异性并重传贴图（探针用；避免依赖按钮文案） */
+  setAniso: (v) => { BAKED.aniso = v; uploadAll() },
+  resize,
+  /** 走与 UI 完全相同的路径切贴图集，返回是否真的成功 */
+  switchTex: async (name) => {
+    BAKED.tex = name
+    try {
+      await ensureSet(name)
+      uploadAll()
+      renderHud()
+      const p = IMG[name]
+      return { ok: true, size: [p.day.width, p.day.height], missing: p.missing }
+    } catch (e) {
+      lastError = e.message
+      renderHud()
+      return { ok: false, error: e.message }
+    }
+  },
+  /** 主动丢弃上下文，验证恢复链 */
+  killContext: () => {
+    const ext = gl.getExtension('WEBGL_lose_context')
+    if (!ext) return { ok: false, error: 'WEBGL_lose_context 不可用' }
+    ext.loseContext()
+    return { ok: true }
+  },
+  restoreContext: () => {
+    const ext = gl.getExtension('WEBGL_lose_context')
+    if (!ext) return { ok: false }
+    ext.restoreContext()
+    return { ok: true }
+  },
+  info: () => {
+    const d = gl && gl.getExtension('WEBGL_debug_renderer_info')
+    return {
+      renderer: d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : (gl ? gl.getParameter(gl.RENDERER) : null),
+      maxAniso: anisoMax,
+      maxTexSize: gl ? gl.getParameter(gl.MAX_TEXTURE_SIZE) : 0,
+      samples: gl ? gl.getParameter(gl.SAMPLES) : 0,
+      lost: contextLost,
+    }
+  },
+
+  /**
+   * 采样一帧的水平扫描线，返回清晰度指标。
+   *
+   * 必须在**同一个 JS 任务内**先绘制再 readPixels：context 没有开
+   * preserveDrawingBuffer，一旦让出控制权给合成器，后备缓冲就被清空，
+   * readPixels 只会读到全 0（这正是第一版探针全 0 的原因）。
+   */
+  sampleSharpness: (yFracs = [0.42, 0.5, 0.58], x0Frac = 0.30, x1Frac = 0.70) => {
+    if (contextLost) return null
+    drawFrame(performance.now() / 1000)
+    const W = cv.width, H = cv.height
+    const x0 = Math.floor(W * x0Frac), x1 = Math.floor(W * x1Frac)
+    const w = x1 - x0
+    const buf = new Uint8Array(w * 4)
+    let total = 0, n = 0
+    for (const f of yFracs) {
+      const y = Math.floor(H * f)
+      gl.readPixels(x0, y, w, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+      for (let i = 1; i < w; i++) {
+        const a = 0.2126 * buf[(i - 1) * 4] + 0.7152 * buf[(i - 1) * 4 + 1] + 0.0722 * buf[(i - 1) * 4 + 2]
+        const b = 0.2126 * buf[i * 4] + 0.7152 * buf[i * 4 + 1] + 0.0722 * buf[i * 4 + 2]
+        const d = a - b
+        total += d * d; n++
+      }
+    }
+    return n ? +(total / n).toFixed(3) : 0
+  },
+
+  /** 取一帧的若干扫描线原始像素，用于确认画面非空 */
+  sampleRows: (yFracs = [0.5]) => {
+    if (contextLost) return null
+    drawFrame(performance.now() / 1000)
+    const W = cv.width, H = cv.height
+    const out = {}
+    for (const f of yFracs) {
+      const y = Math.floor(H * f)
+      const buf = new Uint8Array(W * 4)
+      gl.readPixels(0, y, W, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf)
+      let sum = 0, max = 0, nonZero = 0
+      for (let i = 0; i < W; i++) {
+        const v = buf[i * 4] + buf[i * 4 + 1] + buf[i * 4 + 2]
+        sum += v; if (v > max) max = v; if (v > 12) nonZero++
+      }
+      out['y' + f] = { mean: +(sum / (W * 3)).toFixed(1), max, litPx: nonZero }
+    }
+    return out
+  },
+}
+
+window.__globe.ready = (async () => {
+  initGL()
+  await ensureSet(BAKED.tex)
+  uploadAll()
+  buildPanel()
+  renderHud()
+  rafId = requestAnimationFrame(loop)
+  return { ok: true, daySize: [IMG[texSet].day.width, IMG[texSet].day.height] }
+})().catch((e) => {
+  hud.textContent = '初始化失败：' + e.message
+  throw e
+})
+</script>
+</body>
+</html>

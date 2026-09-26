@@ -343,6 +343,30 @@ func slimThinkingInContent(content string) (string, []ThinkingRecord, error) {
 			records = append(records, ThinkingRecord{ThinkID: thinkID, Text: text})
 			changed = true
 		}
+		// A slim marker must never claim to be in-progress. The frontend renders
+		// `{think_id, done:false}` with no text as a perpetual spinner ("输出中")
+		// that never emits anything — the text was just moved to chat_thinking,
+		// so nothing will ever arrive to finish it. Every caller of this function
+		// is a terminal path (Finalize, orphan cleanup, the forced shutdown
+		// flush, and the steer split's "before" half), where no thinking block
+		// can still be running, so the flag is both safe and truthful here.
+		// Leaving it false is what produced ~181k stale `done:false` markers in
+		// production, each of which rendered as a headless spinner once the
+		// frontend adopted the DB row on a session switch.
+		if done, _ := block["done"].(bool); !done {
+			block["done"] = true
+			changed = true
+		}
+		// The in_progress flag is a STREAMING-ROW-only signal (see
+		// ContentBlock.InProgress): it tells the frontend "this block still has
+		// deltas coming, lazy-load the prefix instead of showing a finished
+		// chip". On a terminal path the block is over by definition, so the flag
+		// must be cleared — leaving it set would make a finalized reply look
+		// like it is still streaming.
+		if inProgress, _ := block["in_progress"].(bool); inProgress {
+			delete(block, "in_progress")
+			changed = true
+		}
 	}
 	if !changed {
 		return content, nil, nil

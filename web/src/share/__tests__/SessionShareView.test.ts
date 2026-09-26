@@ -27,8 +27,9 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
       'hideSessionActions', 'readOnly',
     ],
     inject: ['chatRender', 'autoSpeech', 'chatSession'],
+    emits: ['toggle-tool', 'show-tool-detail', 'show-metadata', 'toggle-summary'],
     template: `
-      <div class="chat-message-stub" :data-msg-id="msg.id" :data-role="msg.role" :data-read-only="readOnly">
+      <div class="chat-message-stub" :data-msg-id="msg.id" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-role="msg.role" :data-read-only="readOnly">
         <span class="block-count">{{ (msg.blocks || []).length }}</span>
         <span class="thinking-text">{{ (msg.blocks || []).filter(b => b.type === 'thinking').map(b => b.text).join('|') }}</span>
         <span class="tool-output">{{ (msg.blocks || []).filter(b => b.type === 'tool_use').map(b => b.output).join('|') }}</span>
@@ -36,6 +37,10 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
         <span class="has-render">{{ typeof chatRender.renderTextBlock }}</span>
         <span class="auto-speech-active">{{ autoSpeech.isActive(1) }}</span>
         <span class="agent-backend">{{ chatSession.getAgentBackend() }}</span>
+        <button class="emit-toggle-summary" type="button" @click="$emit('toggle-summary', msg.id)">summary</button>
+        <button class="emit-show-metadata" type="button" @click="$emit('show-metadata', msg)">meta</button>
+        <button class="emit-toggle-tool" type="button" @click="$emit('toggle-tool', 'tool-key-1')">tool</button>
+        <button class="emit-show-tool-detail" type="button" @click="$emit('show-tool-detail', { key: 'tool-key-1' })">tool detail</button>
       </div>`,
   },
 }))
@@ -75,6 +80,13 @@ vi.mock('@/composables/useChatRender', () => ({
   }),
 }))
 
+// Shared drawer spies so event-forwarding tests can assert the view delegates
+// to the composables rather than swallowing the child's events.
+const drawerSpies = vi.hoisted(() => ({
+  open: vi.fn(),
+  handleShowToolDetail: vi.fn(),
+}))
+
 vi.mock('@/composables/useToolDetailDrawer', () => ({
   useToolDetailDrawer: () => ({
     // Mirrors the real return shape: the view reads effectiveOpen (a ref) for
@@ -82,7 +94,7 @@ vi.mock('@/composables/useToolDetailDrawer', () => ({
     effectiveOpen: { value: false },
     toolDetailOverlay: { show: false, name: '', subagentType: '', summary: '', inputHtml: '', outputHtml: '', status: '', done: true, duration: 0, displayNameOverride: '' },
     closeOverlay: vi.fn(),
-    handleShowToolDetail: vi.fn(),
+    handleShowToolDetail: drawerSpies.handleShowToolDetail,
     handleOverlayRetryClick: vi.fn(),
   }),
 }))
@@ -91,7 +103,7 @@ vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({
     isOpen: { value: false },
     effectiveOpen: { value: false },
-    open: vi.fn(),
+    open: drawerSpies.open,
     close: vi.fn(),
   }),
 }))
@@ -194,8 +206,11 @@ afterEach(() => {
   for (const w of mounted.splice(0)) w.unmount()
 })
 
-async function mountView() {
-  const wrapper = mount(SessionShareView, { global: { plugins: [i18n] } })
+async function mountView(opts: { attach?: boolean } = {}) {
+  const wrapper = mount(SessionShareView, {
+    global: { plugins: [i18n] },
+    attachTo: opts.attach ? document.body : undefined,
+  })
   mounted.push(wrapper)
   await flushPromises()
   await nextTick()
@@ -246,19 +261,18 @@ describe('SessionShareView', () => {
     expect(wrapper.text()).not.toContain('claude-sonnet-4')
   })
 
-  // Layout contract: the title must live INSIDE the same centred column as the
-  // messages, so it reads as a heading for the thread. It must not be a
-  // left-title/right-actions toolbar (.share-topbar).
-  // The chat area frames its conversation column with full-height vertical
-  // rules that start at the title and run to the bottom. The header and the
-  // body must both live inside that frame, or the rules would stop short.
-  it('frames the column so the vertical rules span title to bottom', async () => {
+  // The share page uses the same chrome skeleton as the file share (full-width
+  // .share-topbar over .share-body), with a two-row stacked topbar. The
+  // conversation column below keeps its centred 900px measure, with no side
+  // rules, inside the scrolling content area.
+  it('places the message column inside the shared share-body skeleton', async () => {
     const wrapper = await mountView()
     const column = wrapper.find('.session-share-column')
     expect(column.exists()).toBe(true)
-    // Both children live inside the frame.
-    expect(column.find('.session-share-header').exists()).toBe(true)
-    expect(column.find('.session-share-body').exists()).toBe(true)
+    // The column lives inside the scrolling content area, not beside it.
+    expect(wrapper.find('.share-body').exists()).toBe(true)
+    expect(wrapper.find('.share-content .session-share-column').exists()).toBe(true)
+    expect(column.find('.session-share-messages').exists()).toBe(true)
   })
 
   // Layout parity with the chat area. The share page reuses ChatMessageItem, so
@@ -285,7 +299,7 @@ describe('SessionShareView', () => {
     expect(body).toContain('gap: var(--space-8)')
   })
 
-  it('declares the vertical rules on the column, not the header', async () => {
+  it('keeps the column unframed (no side rules) but centred and full-height', async () => {
     // Scoped CSS is not evaluated by jsdom, so read the component source.
     const src = readFileSync(
       join(__dirname, '..', 'SessionShareView.vue'),
@@ -293,24 +307,25 @@ describe('SessionShareView', () => {
     )
     const col = src.match(/\.session-share-column\s*\{([\s\S]*?)\}/)
     expect(col, '.session-share-column rule must exist').not.toBeNull()
-    expect(col![1]).toContain("border-left: 1px solid")
-    expect(col![1]).toContain("border-right: 1px solid")
+    // The message area must NOT be boxed by vertical rules on either side.
+    expect(col![1]).not.toContain('border-left')
+    expect(col![1]).not.toContain('border-right')
     expect(col![1]).toContain("max-width: 900px")
-    // The column must stretch, so the rules reach the bottom of the page.
-    expect(col![1]).toContain("flex: 1")
+    // The column must still fill the scroll container's height.
+    expect(col![1]).toContain("min-height: 100%")
   })
-  it('puts the title in the header block, not a share-topbar', async () => {
+  it('puts the title in the full-width stacked topbar', async () => {
     const wrapper = await mountView()
-    expect(wrapper.find('.session-share-header').exists()).toBe(true)
-    expect(wrapper.find('.session-share-title').exists()).toBe(true)
-    expect(wrapper.find('.share-topbar').exists()).toBe(false)
-    // The title and the message column are siblings in the same flex column.
-    expect(wrapper.find('.session-share-header-inner').exists()).toBe(true)
+    expect(wrapper.find('.share-topbar').exists()).toBe(true)
+    expect(wrapper.find('.share-topbar--stacked').exists()).toBe(true)
+    expect(wrapper.find('.share-topbar-title').exists()).toBe(true)
+    // The byline shares the topbar, below the title row.
+    expect(wrapper.find('.share-topbar .session-share-byline').exists()).toBe(true)
   })
 
   it('uses an h1 for the title so it is the page heading', async () => {
     const wrapper = await mountView()
-    expect(wrapper.find('h1.session-share-title').exists()).toBe(true)
+    expect(wrapper.find('h1.share-topbar-title').exists()).toBe(true)
   })
 
   it('renders the agent icon in the byline', async () => {
@@ -452,6 +467,184 @@ describe('SessionShareView', () => {
     expect(wrapper.find('.session-share-duration').text()).toContain('2.0s')
   })
 
+  // ── Conversation TOC ──
+  //
+  // The share page offers a conversation index so a long thread can be
+  // navigated by jumping to a message. Entries cover EVERY message (both
+  // roles), rendered with the same row component the in-app conversation
+  // index uses.
+  describe('conversation TOC', () => {
+    it('lists every message, both roles, in order', async () => {
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows).toHaveLength(2)
+      expect(rows[0].find('.msg-role-tag').classes()).toContain('role-user')
+      expect(rows[1].find('.msg-role-tag').classes()).toContain('role-assistant')
+      // The node badge carries the 1-based conversation ordinal.
+      expect(rows[0].find('.msg-index').text()).toBe('1')
+      expect(rows[1].find('.msg-index').text()).toBe('2')
+    })
+
+    it('shows a preview derived from each message', async () => {
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows[0].find('.msg-text').text()).toContain('please fix it')
+      // The assistant row uses its stored summary when one exists.
+      expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
+    })
+
+    it('scrolls the content container to the clicked message and flashes it', async () => {
+      // attachTo is required: flashElement early-returns for a detached element
+      // (it cannot animate), so the class assertion would silently pass on [].
+      const wrapper = await mountView({ attach: true })
+      const content = wrapper.find('.share-content').element as HTMLElement
+      const scrollTo = vi.fn()
+      content.scrollTo = scrollTo
+      const flashTargets: string[] = []
+      // jsdom has no CSS engine; spy on classList.add to observe the flash.
+      const rows = wrapper.findAll('.chat-message-stub')
+      const target = rows[1].element as HTMLElement
+      target.classList.add = vi.fn((c: string) => { flashTargets.push(c) })
+
+      await wrapper.findAll('.share-toc .msg-item')[1].trigger('click')
+
+      expect(scrollTo).toHaveBeenCalledTimes(1)
+      expect(scrollTo.mock.calls[0][0]).toMatchObject({ behavior: 'smooth' })
+      expect(flashTargets).toContain('chat-message-highlight')
+    })
+
+    it('marks the clicked entry active immediately', async () => {
+      const wrapper = await mountView()
+      const content = wrapper.find('.share-content').element as HTMLElement
+      content.scrollTo = vi.fn()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      expect(rows[0].classes()).not.toContain('active')
+
+      await rows[1].trigger('click')
+
+      expect(wrapper.findAll('.share-toc .msg-item')[1].classes()).toContain('active')
+    })
+
+    // Regression: the scroll-spy observer was wired up while `loading` was
+    // still true — the template renders the spinner branch then, so the message
+    // rows did not exist yet and the observer ended up observing ZERO elements.
+    // The highlight then never appeared at any scroll position. Assert the
+    // observer is actually attached to every message row once the snapshot has
+    // rendered.
+    it('observes every message row for the scroll-spy', async () => {
+      const observed: Element[] = []
+      const original = globalThis.IntersectionObserver
+      class SpyIO {
+        constructor(public cb: IntersectionObserverCallback) {}
+        observe(el: Element) { observed.push(el) }
+        unobserve() {}
+        disconnect() {}
+        takeRecords() { return [] }
+        root = null
+        rootMargin = ''
+        thresholds = []
+      }
+      // @ts-expect-error test double
+      globalThis.IntersectionObserver = SpyIO
+      try {
+        const wrapper = await mountView()
+        expect(wrapper.findAll('.chat-message-stub')).toHaveLength(2)
+        // Both messages must be observed, and the id must be stamped on the row
+        // (the callback reads dataset.msgId, so an unstamped row is invisible
+        // to the spy even if observed).
+        expect(observed).toHaveLength(2)
+        expect(observed.map((el) => (el as HTMLElement).dataset.msgId)).toEqual(['11', '12'])
+      } finally {
+        globalThis.IntersectionObserver = original
+      }
+    })
+
+    // The rail is its own scroll container: a highlight that is scrolled out of
+    // the rail is useless, so the active row must be brought into view (only
+    // when it is actually outside, and only within the rail).
+    it('scrolls the rail to reveal an active entry that is out of view', async () => {
+      const wrapper = await mountView()
+      // jsdom has no Element.scrollTo; stub the content container so the jump
+      // itself does not throw before the active id is set.
+      ;(wrapper.find('.share-content').element as HTMLElement).scrollTo = vi.fn()
+      const rail = wrapper.find('.share-toc').element as HTMLElement
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      const target = rows[1].element as HTMLElement
+      // Rail viewport 100..500; the row sits below it.
+      rail.getBoundingClientRect = () => ({ top: 100, bottom: 500, height: 400, left: 0, right: 300, width: 300, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect
+      target.getBoundingClientRect = () => ({ top: 900, bottom: 940, height: 40, left: 0, right: 300, width: 300, x: 0, y: 900, toJSON: () => ({}) }) as DOMRect
+      const scrollTo = vi.fn()
+      rail.scrollTo = scrollTo
+
+      await rows[1].trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      expect(scrollTo).toHaveBeenCalledTimes(1)
+      // Scrolled DOWN (row is below the rail viewport).
+      expect(scrollTo.mock.calls[0][0].top).toBeGreaterThan(0)
+      expect(scrollTo.mock.calls[0][0].behavior).toBe('smooth')
+    })
+
+    it('does not scroll the rail when the active entry is already visible', async () => {
+      const wrapper = await mountView()
+      ;(wrapper.find('.share-content').element as HTMLElement).scrollTo = vi.fn()
+      const rail = wrapper.find('.share-toc').element as HTMLElement
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      const target = rows[1].element as HTMLElement
+      rail.getBoundingClientRect = () => ({ top: 100, bottom: 500, height: 400, left: 0, right: 300, width: 300, x: 0, y: 100, toJSON: () => ({}) }) as DOMRect
+      target.getBoundingClientRect = () => ({ top: 200, bottom: 240, height: 40, left: 0, right: 300, width: 300, x: 0, y: 200, toJSON: () => ({}) }) as DOMRect
+      const scrollTo = vi.fn()
+      rail.scrollTo = scrollTo
+
+      await rows[1].trigger('click')
+      await flushPromises()
+      await nextTick()
+
+      expect(scrollTo).not.toHaveBeenCalled()
+    })
+
+    it('toggles the rail from the topbar button', async () => {
+      const wrapper = await mountView()
+      expect(wrapper.find('.share-toc').exists()).toBe(true)
+      await wrapper.find('.share-toc-toggle').trigger('click')
+      expect(wrapper.find('.share-toc').exists()).toBe(false)
+      await wrapper.find('.share-toc-toggle').trigger('click')
+      expect(wrapper.find('.share-toc').exists()).toBe(true)
+    })
+
+    // On a narrow screen the rail is replaced by a teleported drawer with a
+    // backdrop; the close button and the backdrop must both dismiss it. A
+    // regression here traps the reader in the overlay on mobile.
+    it('opens and dismisses the narrow-screen TOC drawer', async () => {
+      const wrapper = await mountView({ attach: true })
+      const vm = wrapper.vm as unknown as { isNarrow: boolean }
+      // Drive the narrow branch directly: matchMedia in jsdom reports wide.
+      vm.isNarrow = true
+      await nextTick()
+
+      // The wide rail is gone; the drawer is teleported to <body>.
+      expect(wrapper.find('.share-toc--wide').exists()).toBe(false)
+      const drawer = document.querySelector('.share-toc-drawer')
+      expect(drawer, 'narrow drawer must be teleported to body').not.toBeNull()
+
+      // Close button dismisses.
+      const closeBtn = drawer!.querySelector('.share-toc-close') as HTMLElement
+      closeBtn.click()
+      await nextTick()
+      expect(document.querySelector('.share-toc-drawer')).toBeNull()
+
+      // Re-open, then dismiss via the backdrop.
+      ;(wrapper.vm as unknown as { tocOpen: boolean }).tocOpen = true
+      await nextTick()
+      const reopened = document.querySelector('.share-toc-drawer')
+      expect(reopened).not.toBeNull()
+      ;(reopened!.querySelector('.share-toc-backdrop') as HTMLElement).click()
+      await nextTick()
+      expect(document.querySelector('.share-toc-drawer')).toBeNull()
+    })
+  })
+
   // ── Snapshot JSON export ──
   //
   // The export contract is "the exact document this link serves". The critical
@@ -560,6 +753,105 @@ describe('SessionShareView', () => {
       const before = fetchCalls.length
       await wrapper.find('.session-share-export').trigger('click')
       expect(fetchCalls).toHaveLength(before)
+    })
+
+    // A restricted WebView (no download manager) makes downloadBlob throw.
+    // Swallowing it would leave the tap silently doing nothing, so the failure
+    // must surface in the byline.
+    it('surfaces a download failure instead of failing silently', async () => {
+      downloadBlobMock.mockImplementationOnce(() => {
+        throw new Error('no download manager')
+      })
+      const wrapper = await mountView()
+      await wrapper.find('.session-share-export').trigger('click')
+      await nextTick()
+      expect(wrapper.text()).toContain('Could not export the snapshot')
+    })
+  })
+
+  // A snapshot whose messages carry no `blocks` array (e.g. a malformed or
+  // partially-built payload) must not crash the inlined-data indexer.
+  it('tolerates messages without a blocks array', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        session: { title: 'No blocks', backend: 'codebuddy' },
+        messages: [{ id: 1, role: 'user', content: 'hi', createdAt: '2026-09-22T09:00:00Z' }],
+      }),
+    } as unknown as Response)) as unknown as typeof fetch
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('No blocks')
+  })
+
+  // ── Child event forwarding ──
+  //
+  // ChatMessageItem owns the affordances (summary toggle, metadata modal, tool
+  // detail); the share host must forward each to its own handler. A dropped
+  // event silently disables the control on the share page.
+  describe('child event forwarding', () => {
+    it('forwards toggle-summary from the child to the message state', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as {
+        messages: Array<{ id: number; showingSummary?: boolean }>
+      }
+      const assistant = vm.messages.find((m) => m.id === 12)
+      const before = assistant!.showingSummary
+      // Click the child's emit button — this must reach onToggleSummary, whose
+      // observable effect is the flipped flag (script-setup functions are not
+      // exposed on the vm, so assert the effect rather than a spy).
+      await wrapper.findAll('.emit-toggle-summary')[1].trigger('click')
+      expect(assistant!.showingSummary).not.toBe(before)
+    })
+
+    it('toggling summary flips showingSummary on the message', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as {
+        onToggleSummary: (id: number) => void
+        messages: Array<{ id: number; showingSummary?: boolean }>
+      }
+      const assistant = vm.messages.find((m) => m.id === 12)
+      expect(assistant).toBeTruthy()
+      const before = assistant!.showingSummary
+      vm.onToggleSummary(12)
+      await nextTick()
+      expect(assistant!.showingSummary).not.toBe(before)
+    })
+
+    it('toggle-summary is a no-op for a message with no summary', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as {
+        onToggleSummary: (id: number) => void
+        messages: Array<{ id: number; showingSummary?: boolean }>
+      }
+      // The user message (id 11) has no summary in the snapshot.
+      const user = vm.messages.find((m) => m.id === 11)
+      expect(user!.showingSummary).toBeUndefined()
+      vm.onToggleSummary(11)
+      await nextTick()
+      expect(user!.showingSummary).toBeUndefined()
+    })
+
+    it('toggle-summary ignores an unknown message id', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as { onToggleSummary: (id: number) => void }
+      expect(() => vm.onToggleSummary(9999)).not.toThrow()
+    })
+
+    it('forwards show-metadata to open the metadata drawer', async () => {
+      const wrapper = await mountView()
+      drawerSpies.open.mockClear()
+      await wrapper.findAll('.emit-show-metadata')[1].trigger('click')
+      expect(drawerSpies.open).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards toggle-tool and show-tool-detail to the tool drawer', async () => {
+      const wrapper = await mountView()
+      drawerSpies.handleShowToolDetail.mockClear()
+      await wrapper.find('.emit-show-tool-detail').trigger('click')
+      expect(drawerSpies.handleShowToolDetail).toHaveBeenCalledTimes(1)
+      // toggle-tool must not throw (it delegates to chatRender.toggleToolDetail).
+      await expect(wrapper.find('.emit-toggle-tool').trigger('click')).resolves.toBeUndefined()
     })
   })
 })

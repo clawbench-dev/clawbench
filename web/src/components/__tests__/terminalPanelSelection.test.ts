@@ -268,4 +268,22 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain("if (!dir) {")
     expect(source).toContain("t('terminal.cwdUnavailable')")
   })
+
+  it('dismisses the terminal theme picker when the panel becomes inactive', () => {
+    const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
+
+    // The theme picker is a PopupMenu teleported to <body> with a fixed
+    // z-index, so the BottomSheet/v-show does not hide it and the dock buttons'
+    // @click.stop blocks the document-level outside-click handler. The inactive
+    // branch of the `props.active` watcher must therefore close it explicitly,
+    // alongside the two menus that already were. Asserting the three together
+    // keeps a future edit from dropping one of them again.
+    const inactiveBranch = source.slice(
+      source.indexOf('disableVolumeKeys()'),
+      source.indexOf('viewport.stopWatching()'),
+    )
+    expect(inactiveBranch).toContain('showCommands.value = false')
+    expect(inactiveBranch).toContain('showTabMenu.value = false')
+    expect(inactiveBranch).toContain('themeMenuOpen.value = false')
+  })
 })

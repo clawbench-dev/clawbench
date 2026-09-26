@@ -314,6 +314,19 @@ func TestStreamEventToPayload_ThinkingDone(t *testing.T) {
 	assert.Empty(t, m)
 }
 
+// A sub-agent's thinking_done must carry its parent link so the frontend closes
+// the thinking block of the sub-agent that finished, rather than whichever
+// block happens to be last (concurrent sub-agents interleave on the wire).
+func TestStreamEventToPayload_ThinkingDoneCarriesParent(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:             "thinking_done",
+		ParentToolCallID: "call_parent_1",
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, "call_parent_1", m["parent_tool_call_id"])
+}
+
 func TestStreamEventToPayload_Done(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "done"})
 	_, ok := payload.(map[string]any)

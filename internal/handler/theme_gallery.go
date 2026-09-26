@@ -400,7 +400,7 @@ func ServeThemeWallpaperMode(w http.ResponseWriter, r *http.Request) {
 	app := &model.ConfigInstance.Appearance
 
 	if req.Mode != nil {
-		if *req.Mode != "local" && *req.Mode != "bing" {
+		if !model.IsValidWallpaperMode(*req.Mode) {
 			configMutex.Unlock()
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 			return

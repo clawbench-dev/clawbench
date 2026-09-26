@@ -34,6 +34,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			project_path TEXT NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
+			title_source TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0
 		);
 	`)

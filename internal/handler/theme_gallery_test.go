@@ -1072,6 +1072,76 @@ func TestThemeWallpaperMode_SelectingLocalDisablesBingFetch(t *testing.T) {
 	assert.Zero(t, triggered, "switching to local must not trigger a Bing fetch")
 }
 
+func TestThemeWallpaperMode_SelectingWaveDisablesBingFetch(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	origTrigger := triggerBingSync
+	triggered := 0
+	triggerBingSync = func() { triggered++ }
+	defer func() { triggerBingSync = origTrigger }()
+
+	// Start on Bing with its fetch switch on, then switch to the animated wave.
+	model.ConfigInstance.Appearance.WallpaperMode = "bing"
+	model.ConfigInstance.Appearance.Bing.Enabled = true
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", strings.NewReader(`{"mode":"wave"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeWallpaperMode, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "wave", model.ConfigInstance.Appearance.WallpaperMode)
+	assert.False(t, model.ConfigInstance.Appearance.Bing.Enabled,
+		"the wave has no image to fetch, so the Bing worker must stop")
+	assert.Zero(t, triggered, "selecting wave must not trigger a Bing fetch")
+
+	// The wave has no file, so active_file must stay empty rather than naming
+	// some placeholder.
+	var resp wallpaperStateResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "wave", resp.Mode)
+	assert.Empty(t, resp.ActiveFile, "wave must not report an active file")
+}
+
+func TestThemeWallpaperMode_SelectingWavePersists(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	origTrigger := triggerBingSync
+	triggerBingSync = func() {}
+	defer func() { triggerBingSync = origTrigger }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", strings.NewReader(`{"mode":"wave"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	callHandler(ServeThemeWallpaperMode, req)
+
+	// Must survive a restart, like the other modes.
+	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
+	data, err := os.ReadFile(cfgPath)
+	require.NoError(t, err)
+	reloaded := model.Config{}
+	require.NoError(t, yaml.Unmarshal(data, &reloaded))
+	assert.Equal(t, "wave", reloaded.Appearance.WallpaperMode)
+}
+
+func TestThemeWallpaperMode_RejectsUnknownMode(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.Appearance.WallpaperMode = "local"
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", strings.NewReader(`{"mode":"nonsense"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeWallpaperMode, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, "local", model.ConfigInstance.Appearance.WallpaperMode,
+		"a rejected mode must leave the stored value untouched")
+}
+
 func TestThemeWallpaperMode_EnabledToggleLeavesModeCouplingAlone(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
 	defer teardown()

@@ -226,6 +226,43 @@ describe('SessionDrawer', () => {
     ]
   })
 
+  it('renders a JSON-shaped wire id readably, not as raw JSON', () => {
+    // DeepSeek Harness identifies a model by a JSON-stringified provider/model
+    // pair; that exact string is what the agent requires on the wire, so it must
+    // stay in m.id — but the list must show it as provider/model, never as a
+    // JSON blob.
+    mockAgents.agents.value[0].models = [
+      { id: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', default: true },
+    ]
+    const wrapper = mountDrawer()
+    const idText = wrapper.find('.model-item-id').text()
+    expect(idText).toBe('deepseek-official/deepseek-v4-pro')
+    expect(idText).not.toContain('[')
+    expect(idText).not.toContain('"')
+    mockAgents.agents.value[0].models = [
+      { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
+      { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
+    ]
+  })
+
+  it('matches the model search against the displayed id form', () => {
+    mockAgents.agents.value[0].models = [
+      { id: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', default: true },
+      { id: '["deepseek-official","deepseek-flash"]', name: 'DeepSeek-V41-Flash', default: false },
+    ]
+    const wrapper = mountDrawer()
+    const input = wrapper.find('.model-search-input')
+    input.setValue('official/deepseek-v4')
+    return wrapper.vm.$nextTick().then(() => {
+      const names = wrapper.findAll('.model-item-name').map(n => n.text())
+      expect(names).toEqual(['DeepSeek-V4-Pro'])
+      mockAgents.agents.value[0].models = [
+        { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6', default: true },
+        { id: 'claude-opus-4-5', name: 'Claude Opus 4.5', default: false },
+      ]
+    })
+  })
+
   it('marks default model with is-default class', () => {
     const wrapper = mountDrawer()
     const items = wrapper.findAll('.model-item')

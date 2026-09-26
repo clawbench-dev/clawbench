@@ -171,6 +171,36 @@ body.code-preview-dragging * {
   flex-shrink: 0;
 }
 
+/* Download button in the unsupported-file placeholder (binary / too large).
+   Deliberately its own class rather than the file viewer's `.download-btn`:
+   that one is scoped to FileViewer.vue and would not apply here, and the two
+   surfaces must stay visually identical by intent, not by accident. */
+.code-preview-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding:5px var(--space-6);
+  background: var(--accent-color, #1a73e8);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  cursor: pointer;
+  transition: filter var(--duration-base);
+}
+
+.code-preview-download-btn svg {
+  flex-shrink: 0;
+}
+
+.code-preview-download-btn:hover {
+  filter: brightness(1.15);
+}
+
 .code-preview-notice {
   padding: var(--space-2) var(--space-5);
   font-size: var(--font-size-xs);

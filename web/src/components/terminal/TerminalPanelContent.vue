@@ -76,7 +76,8 @@
     </div>
 
     <!-- Upload progress for files dropped onto the terminal (shared state with
-         the file manager, which is never visible at the same time). -->
+         the file manager, which is never visible at the same time). Renders
+         through the same TransferProgressBar the download bar uses. -->
     <UploadProgressBar
       :visible="dirUploading"
       :progress="dirUploadProgress"
@@ -1301,6 +1302,11 @@ watch(() => props.active, async (isActive) => {
      terminalKeys.reset()
      showCommands.value = false
      showTabMenu.value = false
+     // The theme picker is a PopupMenu teleported to <body> with a fixed
+     // z-index, and the dock buttons use @click.stop, so its document-level
+     // outside-click handler never fires on a tab switch — it would stay open
+     // over the panel that replaced the terminal. Same reason as the two above.
+     themeMenuOpen.value = false
      viewport.stopWatching()
      gestures.detach()
    }

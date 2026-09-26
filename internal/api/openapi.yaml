@@ -537,7 +537,9 @@ paths:
     post:
       tags: [Theme]
       summary: 切换壁纸来源 / 总开关
-      description: 仅应用传入的字段。切到 `bing` 会同步打开抓取开关并立即触发一次抓取。
+      description: |
+        仅应用传入的字段。切到 `bing` 会同步打开抓取开关并立即触发一次抓取。
+        切到 `wave` 时 `active_file` 为空（动态波浪由客户端绘制，无磁盘文件）。
       operationId: themeWallpaperMode
       requestBody:
         required: true
@@ -548,7 +550,7 @@ paths:
               properties:
                 mode:
                   type: string
-                  enum: [local, bing]
+                  enum: [local, bing, wave]
                 enabled:
                   type: boolean
       responses:
@@ -2207,8 +2209,11 @@ paths:
 
         可选行窗口（快速预览窗格使用）：传 `lineStart`/`lineEnd` 时只返回该区间
         （1-based，闭区间）的行，并附带文件总行数 `totalLines`，避免大文件整体传输。
-        行窗口只对文本文件生效；`forceText` / 二进制嗅探路径会忽略窗口并返回完整
-        净化内容。窗口最多 `maxWindowLines` 行。
+        行窗口按行流式读取、不整体载入内存，因此**不受整文件大小上限约束**（整文件响应
+        超过 `maxGetFileBytes` 才返回 400 `FileTooLarge`）；窗口自身有
+        `maxWindowLines` / `maxWindowBytes` 上限。
+        行窗口对文本文件，以及**扩展名非文本但嗅探为非二进制**的文件（如 `LICENSE`、
+        无扩展名脚本）生效；`forceText` / 二进制嗅探路径会忽略窗口并返回完整净化内容。
 
         非法区间（0 / 负数 / 非整数 / `lineEnd < lineStart` / 只传 `lineEnd`）一律返回
         400 `InvalidLineRange`，**与文件类型无关**——二进制文件同样先校验区间。
@@ -4742,11 +4747,12 @@ components:
       properties:
         mode:
           type: string
-          enum: [local, bing]
+          enum: [local, bing, wave]
         enabled:
           type: boolean
         active_file:
           type: string
+          description: 当前显示的图片文件名；`wave` 模式为空串（无磁盘文件）。
         selected:
           type: string
 

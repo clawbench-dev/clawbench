@@ -609,13 +609,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       const resp = await apiGet<FileContentResponse>(url, { signal, timeoutMs: 10_000 })
       if (reqId !== currentRequestId) return
 
+      // Record the response before the binary early-return: the unsupported
+      // placeholder shows the file's size, and a binary response is the only
+      // source of it (there is no content to slice).
+      fileContent.value = resp
+
       if (resp.isBinary) {
         status.value = 'error'
         errorCode.value = 'binary'
         return
       }
 
-      fileContent.value = resp
       isLargeFile.value = (resp.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
       seedHeldContent(resp)
       // Large files ARE cached now: only the window is held, not the whole file,

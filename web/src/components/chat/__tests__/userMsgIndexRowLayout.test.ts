@@ -7,8 +7,12 @@ import { describe, expect, it } from 'vitest'
  * line (role chip · preview · time) and anything longer is clipped with an
  * ellipsis. jsdom has no CSS engine, so this is a source-contract check — the
  * same pattern chatMetaBarAlignment.test.ts / chatBoldStyle.test.ts use.
+ *
+ * The rows live in MessageIndexRow.vue (shared by UserMsgIndexDrawer and the
+ * public conversation-share TOC), so the contract is asserted against that
+ * component rather than either host.
  */
-const source = readFileSync(resolve(__dirname, '../UserMsgIndexDrawer.vue'), 'utf8')
+const source = readFileSync(resolve(__dirname, '../MessageIndexRow.vue'), 'utf8')
 const scopedStart = source.lastIndexOf('<style scoped>')
 const style = source.slice(scopedStart, source.indexOf('<style>', scopedStart))
 
@@ -71,8 +75,9 @@ describe('UserMsgIndexDrawer: icon-only role chips', () => {
 
   it('exposes the role as an accessible name for the icon', () => {
     // Icon-only controls are invisible to screen readers without this.
-    expect(source).toMatch(/:aria-label="roleLabel\(msg\)"/)
-    expect(source).toMatch(/function roleLabel\(msg\)/)
+    // roleLabel is a computed in the shared row component (the message is a prop).
+    expect(source).toMatch(/:aria-label="roleLabel"/)
+    expect(source).toMatch(/const roleLabel = computed/)
   })
 })
 

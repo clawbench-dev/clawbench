@@ -1,58 +1,71 @@
 <template>
-  <div class="session-share">
-    <!-- Conversation column. Mirrors the chat area: a framed 900px measure
-         bounded by full-height vertical rules, with the title inside the frame
-         at the top so the rules start at the title and run to the bottom. -->
-    <div class="session-share-column">
-      <div class="session-share-header">
-        <div class="session-share-header-inner">
-          <div class="session-share-title-row">
-            <h1 class="session-share-title" :title="title">{{ title }}</h1>
-            <!-- Export the snapshot verbatim (client-side; no extra request).
-                 Hidden until the payload lands, so it cannot be tapped into a
-                 no-op while loading or in the error state. -->
-            <button
-              v-if="!loading && !error && snapshot"
-              class="session-share-export"
-              :title="t('share.exportJson')"
-              :aria-label="t('share.exportJson')"
-              @click="onExportJson"
-            >
-              <Download :size="16" />
-            </button>
-          </div>
-          <!-- Byline: which CLI produced this conversation, how long it is, and
-               how long the agent actually spent on it. The model is deliberately
-               NOT shown — it is per-message, so a single session-level label
-               would misreport a thread that switched models midway. Each message
-               keeps its own metadata modal. -->
-          <div class="session-share-byline">
-            <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
-            <span v-else-if="error" class="share-status share-error">{{ error }}</span>
-            <template v-else>
-              <span v-if="backendLabel" class="session-share-agent">
-                <AgentIcon :backend="backendLabel" :name="agentName" :size="14" />
-                <span class="session-share-agent-name">{{ agentName }}</span>
-              </span>
-              <span v-if="backendLabel && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
-              <span v-if="messageCount > 0" class="session-share-count">
-                {{ t('share.messageCount', { count: messageCount }) }}
-              </span>
-              <!-- Total agent time. Summed from each assistant turn's wallMs
-                   (the same value its meta bar shows); omitted when no turn
-                   carries one, rather than rendering "0ms". -->
-              <template v-if="totalDurationMs > 0">
-                <span v-if="messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
-                <span class="session-share-duration">
-                  {{ t('share.totalDuration', { duration: formatDuration(totalDurationMs) }) }}
-                </span>
-              </template>
-            </template>
-          </div>
+  <div class="share-view">
+    <!-- Full-width topbar (shared .share-topbar chrome), stacked into two rows:
+         the title, then the byline. The conversation column below keeps its own
+         900px measure, so the chrome can span the viewport without widening the
+         thread. -->
+    <div class="share-topbar share-topbar--stacked">
+      <div class="share-topbar-main">
+        <h1 class="share-topbar-title" :title="title">{{ title }}</h1>
+        <div class="share-top-actions">
+          <!-- Conversation TOC toggle. Hidden until the snapshot lands, since
+               the entries are derived from the messages. -->
+          <button
+            v-if="!loading && !error && tocItems.length > 0"
+            class="share-btn share-toc-toggle"
+            type="button"
+            :title="t('share.toggleToc')"
+            :aria-label="t('share.toggleToc')"
+            :aria-expanded="tocOpen"
+            @click="tocOpen = !tocOpen"
+          >
+            <List :size="16" />
+          </button>
+          <!-- Export the snapshot verbatim (client-side; no extra request). -->
+          <button
+            v-if="!loading && !error && snapshot"
+            class="share-btn session-share-export"
+            type="button"
+            :title="t('share.exportJson')"
+            :aria-label="t('share.exportJson')"
+            @click="onExportJson"
+          >
+            <Download :size="16" />
+          </button>
         </div>
       </div>
+      <!-- Byline: which CLI produced this conversation, how long it is, and
+           how long the agent actually spent on it. The model is deliberately
+           NOT shown — it is per-message, so a single session-level label
+           would misreport a thread that switched models midway. Each message
+           keeps its own metadata modal. -->
+      <div class="session-share-byline">
+        <span v-if="loading" class="share-status">{{ t('share.loading') }}</span>
+        <span v-else-if="error" class="share-status share-error">{{ error }}</span>
+        <template v-else>
+          <span v-if="backendLabel" class="session-share-agent">
+            <AgentIcon :backend="backendLabel" :name="agentName" :size="14" />
+            <span class="session-share-agent-name">{{ agentName }}</span>
+          </span>
+          <span v-if="backendLabel && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+          <span v-if="messageCount > 0" class="session-share-count">
+            {{ t('share.messageCount', { count: messageCount }) }}
+          </span>
+          <!-- Total agent time. Summed from each assistant turn's wallMs
+               (the same value its meta bar shows); omitted when no turn
+               carries one, rather than rendering "0ms". -->
+          <template v-if="totalDurationMs > 0">
+            <span v-if="messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>
+            <span class="session-share-duration">
+              {{ t('share.totalDuration', { duration: formatDuration(totalDurationMs) }) }}
+            </span>
+          </template>
+        </template>
+      </div>
+    </div>
 
-      <div class="session-share-body">
+    <div class="share-body">
+      <div class="share-content session-share-content" ref="contentRef">
         <div v-if="loading" class="share-center-hint">
           <LoadingIndicator size="md" />
         </div>
@@ -63,32 +76,82 @@
           <div class="share-error-desc">{{ error }}</div>
         </div>
 
-        <div v-else class="session-share-messages">
-          <ChatMessageItem
-            v-for="(msg, i) in messages"
-            :key="msg.id"
-            :msg="msg"
-            :index="i"
-            :expanded-tools="expandedTools"
-            :block-tasks="blockTasks"
-            :block-ask-questions="blockAskQuestions"
-            :agents="[]"
-            :static-block-cache="staticBlockCache"
-            :active="false"
-            :is-last-assistant="isLastAssistantMessage(messages, msg)"
-            :is-last-message="i === messages.length - 1"
-            :hide-session-actions="true"
-            :read-only="true"
-            @toggle-tool="onToggleTool"
-            @show-tool-detail="onShowToolDetail"
-            @show-metadata="onShowMetadata"
-            @toggle-summary="onToggleSummary"
-            @render-flush="() => {}"
-            @file-tag-click="() => {}"
-          />
+        <!-- Conversation column. Mirrors the chat area's 900px measure, with
+             no side rules: the messages sit directly on the page background. -->
+        <div v-else class="session-share-column">
+          <div class="session-share-messages">
+            <ChatMessageItem
+              v-for="(msg, i) in messages"
+              :key="msg.id"
+              :msg="msg"
+              :index="i"
+              :expanded-tools="expandedTools"
+              :block-tasks="blockTasks"
+              :block-ask-questions="blockAskQuestions"
+              :agents="[]"
+              :static-block-cache="staticBlockCache"
+              :active="false"
+              :is-last-assistant="isLastAssistantMessage(messages, msg)"
+              :is-last-message="i === messages.length - 1"
+              :hide-session-actions="true"
+              :read-only="true"
+              @toggle-tool="onToggleTool"
+              @show-tool-detail="onShowToolDetail"
+              @show-metadata="onShowMetadata"
+              @toggle-summary="onToggleSummary"
+              @render-flush="() => {}"
+              @file-tag-click="() => {}"
+            />
+          </div>
         </div>
       </div>
+
+      <!-- TOC rail (wide screens). Entries are every message in the thread,
+           rendered with the same row component the in-app conversation index
+           uses. Narrow screens get the slide-in drawer below. -->
+      <aside v-if="tocItems.length > 0 && tocOpen && !isNarrow" class="share-toc share-toc--wide" ref="tocRailRef">
+        <div class="share-toc-head">
+          <div class="share-toc-title">{{ t('share.toc') }}</div>
+        </div>
+        <div class="share-toc-list">
+          <MessageIndexRow
+            v-for="(item, i) in tocItems"
+            :key="item.id"
+            :msg="item"
+            :index="i + 1"
+            :active="activeTocId === item.id"
+            :show-time="true"
+            @select="scrollToMessage(item.id)"
+          />
+        </div>
+      </aside>
     </div>
+
+    <!-- Narrow-screen TOC drawer: backdrop + slide-in panel -->
+    <Teleport to="body">
+      <div v-if="isNarrow && tocItems.length > 0 && tocOpen" class="share-toc-drawer">
+        <div class="share-toc-backdrop" @click="tocOpen = false" />
+        <aside class="share-toc share-toc--wide share-toc-panel" ref="tocPanelRef">
+          <div class="share-toc-head">
+            <div class="share-toc-title">{{ t('share.toc') }}</div>
+            <button class="share-toc-close" type="button" :aria-label="t('common.close')" @click="tocOpen = false">
+              <X :size="16" />
+            </button>
+          </div>
+          <div class="share-toc-list">
+            <MessageIndexRow
+              v-for="(item, i) in tocItems"
+              :key="item.id"
+              :msg="item"
+              :index="i + 1"
+              :active="activeTocId === item.id"
+              :show-time="true"
+              @select="scrollToMessage(item.id); tocOpen = false"
+            />
+          </div>
+        </aside>
+      </div>
+    </Teleport>
 
     <!-- Tool detail overlay: reads input/output from the inlined snapshot, so no
          authenticated request is made. -->
@@ -126,12 +189,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, provide, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Download, FileX2 } from 'lucide-vue-next'
+import { Download, FileX2, List, X } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
+import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
@@ -140,6 +204,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { isLastAssistantMessage, isShowingSummary, normalizeDisplayMode, parseMessages } from '@/utils/chatSessionUtils'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { getBackendDisplayName } from '@/utils/backendNames'
+import { flashElement } from '@/utils/domFlash'
 import { setShareSessionData, shareApiUrl, type ShareToolCallData } from './shareMode'
 import { downloadBlob } from '@/utils/download.ts'
 import { formatDuration } from '@/utils/format.ts'
@@ -176,6 +241,134 @@ const messages = ref<Record<string, unknown>[]>([])
  * order as well as its data.
  */
 const snapshot = ref<Record<string, unknown> | null>(null)
+
+// ── Conversation TOC ──
+// Every message is an entry (both roles), rendered with the same row component
+// the in-app conversation index uses. Entries ARE the parsed messages: the row
+// component derives its own preview text, so no separate projection is needed.
+const tocOpen = ref(true)
+/** Narrow layout (<900px): the TOC moves to a slide-in drawer over the content. */
+const isNarrow = ref(false)
+let tocMq: MediaQueryList | null = null
+function syncNarrow() {
+  if (typeof window.matchMedia !== 'function') return // jsdom / non-browser
+  isNarrow.value = window.matchMedia('(max-width: 899px)').matches
+}
+const contentRef = ref<HTMLElement | null>(null)
+/** Row shape consumed by MessageIndexRow (a structural subset of a parsed
+ *  message). The messages array stays loosely typed because it is also fed to
+ *  useChatRender, which works on generic records. */
+interface TocMessage {
+  id: number | string
+  role?: string
+  summary?: string
+  content?: string
+  createdAt?: string
+  blocks?: Array<{ type?: string; text?: string }>
+  files?: Array<string | { path?: string }>
+}
+const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMessage[])
+/** Message id currently in view (scroll-spy); null until the observer fires. */
+const activeTocId = ref<number | string | null>(null)
+
+/**
+ * Jump to a message by id.
+ *
+ * Scrolls ONLY the content container (never the outer page / topbar), matching
+ * ShareView.scrollToHeading — a bare scrollIntoView would also move the
+ * topbar and every other scrollable ancestor.
+ */
+function scrollToMessage(msgId: number | string) {
+  const root = contentRef.value
+  if (!root) return
+  // Match on the dataset rather than building a selector with the id: ids are
+  // free-form (string ids may contain quotes), and CSS.escape is not available
+  // in every environment the view is rendered in (jsdom).
+  const key = `db-${msgId}`
+  const el = Array.from(root.querySelectorAll<HTMLElement>('[data-msg-key]'))
+    .find((node) => node.dataset.msgKey === key)
+  if (!el) return
+  const targetTop = el.getBoundingClientRect().top - root.getBoundingClientRect().top + root.scrollTop
+  root.scrollTo({ top: targetTop, behavior: 'smooth' })
+  flashElement(el, { className: 'chat-message-highlight' })
+  activeTocId.value = msgId
+  // Hold the clicked entry's highlight while the smooth scroll runs, so the
+  // scroll-spy does not immediately steal it mid-flight.
+  holdActiveUntil = Date.now() + TOC_ACTIVE_HOLD_MS
+}
+
+// ── Scroll-spy ──
+// Highlights the message currently in view. IntersectionObserver with a root
+// margin biased to the top: the first message whose top has passed the upper
+// band wins, which matches "what am I reading" better than raw intersection.
+const TOC_ACTIVE_HOLD_MS = 1200
+let holdActiveUntil = 0
+let tocObserver: IntersectionObserver | null = null
+/** Ids currently intersecting the spy band. */
+const visibleIds = new Set<number | string>()
+
+function setupTocObserver() {
+  teardownTocObserver()
+  const root = contentRef.value
+  if (!root || typeof IntersectionObserver !== 'function') return
+  tocObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      const id = (entry.target as HTMLElement).dataset.msgId
+      if (id == null) continue
+      const key = /^\d+$/.test(id) ? Number(id) : id
+      if (entry.isIntersecting) visibleIds.add(key)
+      else visibleIds.delete(key)
+    }
+    if (Date.now() < holdActiveUntil) return
+    // tocItems is in document order, so the first visible entry is the
+    // topmost one. Keep the last known id when nothing is in the band
+    // (between messages, or scrolled past the end).
+    const topmost = tocItems.value.find((m) => visibleIds.has(m.id))
+    if (topmost) activeTocId.value = topmost.id
+  }, {
+    root,
+    rootMargin: '-60px 0px -70% 0px',
+    threshold: 0,
+  })
+  for (const el of root.querySelectorAll<HTMLElement>('[data-msg-key]')) {
+    el.dataset.msgId = String(el.dataset.msgKey).replace(/^db-/, '')
+    tocObserver.observe(el)
+  }
+}
+
+function teardownTocObserver() {
+  if (tocObserver) {
+    tocObserver.disconnect()
+    tocObserver = null
+  }
+  visibleIds.clear()
+}
+
+// ── Keep the active TOC entry visible ──
+// The rail (and the narrow drawer) is its own scroll container; a highlighted
+// entry scrolled out of it is as useless as no highlight at all. Scroll only
+// the rail that owns the row — a bare scrollIntoView would also move the page.
+// At most one of the two refs is non-null (wide rail vs. teleported drawer).
+const tocRailRef = ref<HTMLElement | null>(null)
+const tocPanelRef = ref<HTMLElement | null>(null)
+watch(activeTocId, async (id) => {
+  if (id == null) return
+  await nextTick()
+  const rail = tocRailRef.value ?? tocPanelRef.value
+  if (!rail) return
+  const row = Array.from(rail.querySelectorAll<HTMLElement>('.msg-item'))
+    .find((el) => el.classList.contains('active'))
+  if (!row) return
+  const r = row.getBoundingClientRect()
+  const railRect = rail.getBoundingClientRect()
+  const headH = rail.querySelector('.share-toc-head')?.getBoundingClientRect().height ?? 0
+  const top = railRect.top + headH
+  if (r.top >= top && r.bottom <= railRect.bottom) return // already visible
+  // Centre it within the visible band below the header.
+  const band = railRect.bottom - top
+  const delta = r.top - top - (band - r.height) / 2
+  rail.scrollTo({ top: rail.scrollTop + delta, behavior: 'smooth' })
+})
 
 /**
  * Total assistant wall-clock time, summed across the thread.
@@ -407,33 +600,51 @@ async function loadSnapshot() {
     // to in-app navigation (mirrors ShareView's file-share handling).
     store.state.projectRoot = store.state.projectRoot || ''
     store.state.homeDir = store.state.homeDir || ''
+    // Desktop opens with the TOC rail visible; narrow screens default closed
+    // (opened on demand via the topbar button → slide-in drawer).
+    tocOpen.value = !isNarrow.value
   } catch (err) {
     appLog.w(TAG, 'failed to load session snapshot', err)
     error.value = t('share.notFound')
   } finally {
     loading.value = false
   }
+  // The observer must be wired AFTER the message rows are in the DOM. While
+  // `loading` is true the template renders the spinner branch, so the rows do
+  // not exist yet — setting up inside the try would observe zero elements and
+  // the TOC would never highlight anything.
+  if (!error.value) {
+    await nextTick()
+    setupTocObserver()
+  }
 }
 
-onMounted(loadSnapshot)
+onMounted(() => {
+  syncNarrow()
+  if (typeof window.matchMedia === 'function') {
+    tocMq = window.matchMedia('(max-width: 899px)')
+    tocMq.addEventListener('change', syncNarrow)
+  }
+  void loadSnapshot()
+})
+
+onBeforeUnmount(() => {
+  teardownTocObserver()
+  tocMq?.removeEventListener('change', syncNarrow)
+  tocMq = null
+})
 </script>
 
 <style scoped>
-/* This view does NOT use .share-topbar from css/share-chrome.css: that bar is a
-   left-title / right-actions toolbar, whereas a conversation wants its title
-   above the thread, aligned to the message column (see .session-share-header).
-   The file-share SPA and the markdown export still use .share-topbar. */
+/* This view reuses the shared share chrome (.share-view / .share-topbar /
+   .share-body / .share-toc) from css/share-chrome.css, with the two-row
+   .share-topbar--stacked variant. Only the conversation-specific pieces live
+   here: the message column and the byline. */
 
-.session-share {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.session-share-body {
-  flex: 1;
-  overflow-y: auto;
-  min-height: 0;
+/* Scroll container (the shared .share-content). The view keeps a ref to it so
+   the TOC's jump math and the scroll-spy root are the same element. */
+.session-share-content {
+  padding-bottom: var(--space-6);
 }
 
 /* Message layout mirrors the chat area exactly (.chat-messages +
@@ -451,85 +662,21 @@ onMounted(loadSnapshot)
   gap: var(--space-8);
 }
 
-/* The conversation column: a centred 900px measure framed by full-height
-   vertical rules, mirroring the chat area. Owning the width HERE (rather than
-   on the header and the message list separately) is what lets one pair of
-   borders run unbroken from the title to the bottom of the page. */
+/* The conversation column: a centred 900px measure. No side rules — the
+   message column reads as one continuous surface against the page background.
+   `min-height: 100%` keeps the column filling the scroll container even for a
+   short thread. */
 .session-share-column {
-  flex: 1;
-  min-height: 0;
+  min-height: 100%;
+  box-sizing: border-box;
   width: 100%;
   max-width: 900px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--border-color, rgba(128, 128, 128, .25));
-  border-right: 1px solid var(--border-color, rgba(128, 128, 128, .25));
 }
 
-.session-share-header {
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, .25));
-  background: var(--bg-secondary, #f6f8fa);
-}
-
-.session-share-header-inner {
-  padding: 14px 20px 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-/* Title + export button. The button is pinned to the right edge while the
-   title keeps the full remaining width (min-width: 0 is required for the
-   title's line clamp to engage inside a flex row). */
-.session-share-title-row {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-4);
-}
-
-.session-share-title-row .session-share-title {
-  flex: 1;
-  min-width: 0;
-}
-
-.session-share-export {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary, #57606a);
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .session-share-export:hover {
-    background: var(--bg-tertiary, #eaeef2);
-    color: var(--accent-color, #0969da);
-  }
-}
-
-.session-share-title {
-  margin: 0;
-  font-size: var(--font-size-xl, 15px);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #1f2328);
-  line-height: var(--line-height-snug, 1.3);
-  /* Session titles are often long: wrap to at most two lines, then ellipsise. */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  word-break: break-word;
-}
-
+/* Byline row inside the stacked topbar. */
 .session-share-byline {
   display: flex;
   align-items: center;
@@ -569,6 +716,7 @@ onMounted(loadSnapshot)
   color: #cf222e;
 }
 
+/* Loading / error states fill the content column. */
 .share-center-hint,
 .share-error-state {
   display: flex;
@@ -576,7 +724,7 @@ onMounted(loadSnapshot)
   align-items: center;
   justify-content: center;
   gap: var(--space-4);
-  height: 100%;
+  min-height: 60vh;
   padding: 32px;
   color: var(--text-muted, #656d76);
   text-align: center;
@@ -586,5 +734,28 @@ onMounted(loadSnapshot)
   font-size: var(--font-size-lg, 16px);
   font-weight: 600;
   color: var(--text-primary, #1f2328);
+}
+
+/* Jump target flash, mirroring ChatMessageList's chat-message-highlight. The
+   share SPA does not load that component's styles, so the animation is
+   re-declared here against the message card. */
+:deep(.chat-message.chat-message-highlight .msg-card) {
+  animation: session-share-highlight-flash var(--flash-duration, 0.7s) ease-out 1;
+}
+@keyframes session-share-highlight-flash {
+  0%, 100% { outline-color: transparent; }
+  14%      { outline-color: color-mix(in srgb, var(--accent-color) 70%, transparent); }
+  45%      { outline-color: color-mix(in srgb, var(--accent-color) 35%, transparent); }
+}
+:deep(.chat-message.chat-message-highlight .msg-card) {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  border-radius: var(--radius-md);
+}
+@media (prefers-reduced-motion: reduce) {
+  :deep(.chat-message.chat-message-highlight .msg-card) {
+    animation: none !important;
+    outline-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+  }
 }
 </style>

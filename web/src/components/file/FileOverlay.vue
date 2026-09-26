@@ -167,8 +167,13 @@ function handleContentClick(event) {
     return
   }
 
-  // 2. Handle clicks on annotated file-path spans (markdown or code)
-  const pathSpan = event.target.closest('.chat-file-path, .code-file-path')
+  // 2. Handle clicks on annotated file-path spans (markdown or code).
+  // Skip inert paths (verified missing / glob patterns): they carry
+  // data-path-type="none" and no open affordance, so opening them would just
+  // toast "File not found" — the defect reported in issue #501. They keep
+  // their text (and their data-file-path, for a later re-verification pass),
+  // which is why this guard is needed rather than relying on the selector.
+  const pathSpan = event.target.closest('.chat-file-path:not([data-path-type="none"]), .code-file-path:not([data-path-type="none"])')
   if (pathSpan) {
     event.preventDefault()
     event.stopPropagation()

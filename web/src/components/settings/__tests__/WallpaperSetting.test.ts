@@ -89,6 +89,9 @@ const i18n = createI18n({
           wallpaperBlurDesc: 'Desc',
           wallpaperEdgeFade: 'Edge fade',
           wallpaperEdgeFadeDesc: 'Desc',
+          wallpaperModeWave: 'Animated',
+          wallpaperWaveSpeed: 'Animation speed',
+          wallpaperWaveSpeedDesc: 'Desc',
           resetToDefault: 'Reset',
         },
       },
@@ -155,6 +158,22 @@ function bingConfigWith(overrides: Record<string, unknown> = {}) {
         last_attempt_at: 1,
         ...overrides,
       },
+    },
+  }
+}
+
+/** Server config with the animated wave active (no image file). */
+function waveConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    appearance: {
+      // The wave has no file on disk, so the server reports an empty active_file.
+      active_file: '',
+      panel_opacity: 0.85,
+      wallpaper_mode: 'wave',
+      wallpaper_enabled: true,
+      local: { selected: '', items: [] },
+      bing: { enabled: false, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 0 },
+      ...overrides,
     },
   }
 }
@@ -232,6 +251,108 @@ describe('WallpaperSetting', () => {
       const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
       expect(labels).toContain('Local gallery')
       expect(labels).not.toContain('Current image')
+    })
+
+    it('offers the animated wave as a third source', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const waveBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Animated')
+      expect(waveBtn).toBeTruthy()
+
+      await waveBtn!.trigger('click')
+      const call = fetchMock.mock.calls.find(c => c[0] === '/api/theme/wallpaper')
+      expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({ mode: 'wave' })
+    })
+
+    it('marks the wave button active in wave mode', async () => {
+      serverConfig.value = waveConfig()
+      const wrapper = mountSetting()
+      await nextTick()
+      const waveBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Animated')!
+      const localBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Local gallery')!
+      expect(waveBtn.classes()).toContain('wallpaper-mode__btn--active')
+      expect(localBtn.classes()).not.toContain('wallpaper-mode__btn--active')
+    })
+
+    it('shows the wave speed row and neither the gallery nor the Bing block', async () => {
+      // The wave must not fall through to the gallery. Note the gallery branch
+      // is a v-else (see the next test for why), so this passes because the
+      // wave branch is matched FIRST, not because the gallery is gated on local.
+      serverConfig.value = waveConfig()
+      const wrapper = mountSetting()
+      await nextTick()
+      const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
+      expect(labels).toContain('Animation speed')
+      expect(labels).not.toContain('Local gallery')
+      expect(labels).not.toContain('Current image')
+    })
+
+    it('still shows the gallery when no source has been chosen yet', async () => {
+      // Existing installs have wallpaper_mode "" (the server only defaults it to
+      // bing on a fresh install), which resolves to 'none'. The gallery must
+      // render there — it is the only way to pick an image. Gating the gallery
+      // on `mode === 'local'` would hide it for every existing user.
+      serverConfig.value = {
+        appearance: {
+          active_file: '',
+          panel_opacity: 0.85,
+          wallpaper_mode: '',
+          wallpaper_enabled: false,
+          local: { selected: '', items: [] },
+          bing: { enabled: false, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 0 },
+        },
+      }
+      const wrapper = mountSetting()
+      await nextTick()
+      const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
+      expect(labels).toContain('Local gallery')
+    })
+
+    it('disables the image-only rows in wave mode but keeps panel opacity usable', async () => {
+      // Blur and edge fade have no effect on the wave, so leaving them enabled
+      // would let the user drag a slider that does nothing. Panel opacity does
+      // apply (the wave shows through the translucent panels).
+      serverConfig.value = waveConfig()
+      const wrapper = mountSetting()
+      await nextTick()
+      const rows = wrapper.findAll('.settings-item')
+      const rowFor = (label: string) =>
+        rows.find(r => r.find('.settings-item__label').exists() && r.find('.settings-item__label').text() === label)!
+
+      expect(rowFor('Panel opacity').classes()).not.toContain('settings-item--disabled')
+      expect(rowFor('Gaussian blur').classes()).toContain('settings-item--disabled')
+      expect(rowFor('Edge fade').classes()).toContain('settings-item--disabled')
+    })
+
+    it('keeps the image-only rows enabled for an image wallpaper', async () => {
+      // The counterpart to the test above: the split must not disable them for
+      // images, where blur/edge-fade genuinely apply.
+      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      const wrapper = mountSetting()
+      await nextTick()
+      const rows = wrapper.findAll('.settings-item')
+      const rowFor = (label: string) =>
+        rows.find(r => r.find('.settings-item__label').exists() && r.find('.settings-item__label').text() === label)!
+
+      expect(rowFor('Gaussian blur').classes()).not.toContain('settings-item--disabled')
+      expect(rowFor('Edge fade').classes()).not.toContain('settings-item--disabled')
+    })
+
+    it('writes the wave speed to local config', async () => {
+      serverConfig.value = waveConfig()
+      const wrapper = mountSetting()
+      await nextTick()
+      const slider = wrapper.findAll('input[type="range"]').find(i => {
+        const el = i.element as HTMLInputElement
+        return el.min === '10' && el.max === '100'
+      })!
+      ;(slider.element as HTMLInputElement).value = '80'
+      await slider.trigger('input')
+      expect(localConfig.wallpaperWaveSpeed).toBe(80)
     })
 
     it('polls for the Bing preview after switching to Bing', async () => {

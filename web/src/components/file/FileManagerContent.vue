@@ -586,7 +586,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { setAttachDragData, setMultiAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
-import { downloadFileByPath } from '@/utils/download.ts'
+import { downloadFileByPath, postForBlobWithProgress } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
@@ -2414,17 +2414,22 @@ async function doArchive(paths, zipName) {
     if (!paths.length) return
     if (toast) toast.show(t('file.toast.archiving', { n: paths.length }), { icon: '📦', type: 'info', duration: 0 })
     try {
-        const resp = await fetch('/api/file/archive', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths }),
-        })
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ error: 'Unknown error' }))
-            if (toast) toast.show(t('file.toast.archiveFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 3000 })
+        // The archive is built and streamed on the fly, so the server sends no
+        // Content-Length — the progress bar runs indeterminately while it
+        // arrives, then the blob is handed to the platform's save path.
+        const result = await postForBlobWithProgress('/api/file/archive', { paths }, zipName || 'archive.zip')
+        if (result.cancelled) return
+        if (!result.blob) {
+            if (toast) {
+                if (result.errorDetail) {
+                    toast.show(t('file.toast.archiveFailedDetail', { error: result.errorDetail }), { icon: '❌', type: 'error', duration: 3000 })
+                } else {
+                    toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+                }
+            }
             return
         }
-        const blob = await resp.blob()
+        const blob = result.blob
         const native = getNative()
         if (isAppMode.value && native && native.downloadBlob) {
             // Android native: convert blob to base64 and pass to native bridge
@@ -3572,7 +3577,8 @@ function scrollSelectedIntoView(path) {
 }
 
 /* Upload progress bar and drop overlay styles live in their shared components
-   (components/common/UploadProgressBar.vue and DropOverlay.vue). */
+   (components/common/TransferProgressBar.vue via UploadProgressBar.vue, and
+   DropOverlay.vue). */
 
 /* ── Paste overlay ── */
 .paste-overlay {

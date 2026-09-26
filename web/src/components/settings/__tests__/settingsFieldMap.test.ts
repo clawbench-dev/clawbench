@@ -166,34 +166,44 @@ describe('settingsFieldMap', () => {
     expect(map['recent_projects.max_count']).toBeTruthy()
   })
 
-  it('appearance exposes an auto-scale switch ahead of the manual scale slider', () => {
+  it('appearance exposes an auto-fit action ahead of the manual scale slider', () => {
     const entries = categoryItems['appearance']
-    const autoEntry = entries.find(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    const autoEntry = entries.find(e => e.type === 'item' && e.spec.key === 'uiScaleAutoFit')
     expect(autoEntry).toBeDefined()
-    if (autoEntry!.type !== 'item') throw new Error('expected item entry for uiScaleAuto')
-    expect(autoEntry.spec.type).toBe('switch')
+    if (autoEntry!.type !== 'item') throw new Error('expected item entry for uiScaleAutoFit')
+    // Must be a one-shot action, NOT a switch: a switch re-derived the factor
+    // on every applier call, which made the UI jump.
+    expect(autoEntry.spec.type).toBe('action')
     expect(autoEntry.spec.source).toBe('local')
-    // Android is excluded from auto scaling, so the switch is hidden there.
+    // Android layouts are already density-adapted, so the button is hidden.
     expect(autoEntry.spec.hideInAndroidApp).toBe(true)
     expect(autoEntry.spec.sectionHeader).toBe('settings.items.appearanceDisplaySection')
 
-    const autoIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    const autoIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScaleAutoFit')
     const sliderIdx = entries.findIndex(e => e.type === 'item' && e.spec.key === 'uiScale')
     expect(autoIdx).toBeGreaterThanOrEqual(0)
     expect(sliderIdx).toBeGreaterThan(autoIdx)
   })
 
-  it('disables the manual scale slider unless auto-scale is off', () => {
+  it('keeps the manual scale slider always enabled', () => {
     const entries = categoryItems['appearance']
     const slider = entries.find(e => e.type === 'item' && e.spec.key === 'uiScale')
     expect(slider).toBeDefined()
     if (slider!.type !== 'item') throw new Error('expected item entry for uiScale')
-    // Inverted on purpose: disableUnless fires when the condition is UNMET, so
-    // `uiScaleAuto === false` means "disabled while auto is ON".
-    expect(slider.spec.disableUnless).toEqual({ key: 'uiScaleAuto', value: false })
+    // The slider used to be disabled while the auto switch was on. The auto-fit
+    // button writes into the slider, so it must never be gated on a key that no
+    // longer exists (disableUnless would read `undefined` and disable it
+    // permanently).
+    expect(slider.spec.disableUnless).toBeUndefined()
     expect(slider.spec.min).toBe(0.8)
     expect(slider.spec.max).toBe(1.5)
     expect(slider.spec.defaultValue).toBe(1)
+  })
+
+  it('has no uiScaleAuto switch left anywhere', () => {
+    const all = Object.values(categoryItems).flat()
+    const stale = all.find(e => e.type === 'item' && e.spec.key === 'uiScaleAuto')
+    expect(stale).toBeUndefined()
   })
 
   it('the scale slider step grid matches UI_SCALE_STEP and is anchored at min', () => {
@@ -353,8 +363,26 @@ describe('settingsFieldMap', () => {
     expect(cfg.hasConnectivityTest).toBe(true)
   })
 
-  // ── Summarization (语音摘要) ──
+  // ── Auto rename (自动命名) ──
 
+  it('chat category exposes the auto-rename toggle with an AI-summary jump', () => {
+    const items = categoryItems.chat
+    const toggle = items.find(e => e.type === 'item' && e.spec.key === 'chat.auto_rename_enabled')
+    expect(toggle).toBeDefined()
+    const toggleSpec = (toggle as { type: 'item'; spec: ItemSpec }).spec
+    expect(toggleSpec.type).toBe('switch')
+    expect(toggleSpec.source).toBe('server')
+
+    // The jump to the shared AI summary panel is offered only when the toggle
+    // is on — the feature has nothing to call without that model.
+    const jump = items.find(e => e.type === 'item' && e.spec.key === 'navigateAiSummaryForRename')
+    expect(jump).toBeDefined()
+    const jumpSpec = (jump as { type: 'item'; spec: ItemSpec }).spec
+    expect(jumpSpec.navigateTo).toBe('aiSummary')
+    expect(jumpSpec.disableUnless).toEqual({ key: 'chat.auto_rename_enabled', value: true })
+  })
+
+  // ── Summarization (语音摘要) ──
   it('tts category exposes voice summary type as an immediate item', () => {
     const items = categoryItems.tts
     const ttsBackend = items.find(e => e.type === 'item' && e.spec.key === 'summarize.tts_backend')
@@ -661,5 +689,103 @@ describe('auto-continue settings', () => {
     const map = getServerFieldToLabelKey()
     expect(map['chat.auto_continue_enabled']).toBe('settings.items.chatAutoContinueEnabled')
     expect(map['chat.auto_continue_max_retries']).toBe('settings.items.chatAutoContinueMaxRetries')
+  })
+})
+
+describe('section grouping invariant', () => {
+  /**
+   * SettingsCategory renders one card per *contiguous run* of items sharing a
+   * sectionHeader. Two non-adjacent runs with the same header therefore render
+   * as two separate cards with the same title — e.g. the AI-summary jump
+   * (navigateAiSummary) ended up in its own one-row 推荐回复 card after later
+   * commits inserted other sections between it and the recommend rows.
+   *
+   * A header may repeat only when the runs are genuinely separated by a panel
+   * entry (which flushes the current card). Items without a header all merge
+   * into the single "其他" card, so they are exempt.
+   */
+  it('never emits two separate cards with the same section header', () => {
+    for (const [category, entries] of Object.entries(categoryItems)) {
+      const seenHeaders = new Set<string>()
+      let currentHeader: string | null = null
+      let flushedByPanel = false
+
+      for (const entry of entries) {
+        if (entry.type === 'panel') {
+          currentHeader = null
+          flushedByPanel = true
+          continue
+        }
+        const header = entry.spec.sectionHeader ?? null
+        if (header === null) continue
+        if (header !== currentHeader) {
+          // Starting a new run: it must not repeat an earlier run's header,
+          // unless a panel entry legitimately split the category in two.
+          if (seenHeaders.has(header) && !flushedByPanel) {
+            throw new Error(
+              `${category}: section header "${header}" starts a second card. ` +
+              `Keep rows sharing a header contiguous, or move the stray row to its own section.`,
+            )
+          }
+          seenHeaders.add(header)
+          currentHeader = header
+          flushedByPanel = false
+        }
+      }
+    }
+  })
+
+  it('keeps the AI-summary jump inside the 推荐回复 card', () => {
+    const items = categoryItems.chat.filter(e => e.type === 'item').map(e => e.spec)
+    const recommendKeys = items
+      .filter(i => i.sectionHeader === 'settings.items.recommendSectionHeader')
+      .map(i => i.key)
+    expect(recommendKeys).toContain('navigateAiSummary')
+    // The recommend block must be one contiguous run, so its rows are adjacent
+    // members of the same card rather than scattered across two.
+    const indices = items
+      .map((item, idx) => (item.sectionHeader === 'settings.items.recommendSectionHeader' ? idx : -1))
+      .filter(idx => idx >= 0)
+    expect(indices[indices.length - 1] - indices[0] + 1).toBe(indices.length)
+  })
+})
+
+describe('AI summary model jump rows', () => {
+  /**
+   * All three rows are the SAME destination (`navigateTo: 'aiSummary'`) reached
+   * from three different features. They used to carry two different label/desc
+   * key pairs, so the naming drifted: two said "模型详情" and one said
+   * "配置 AI 摘要模型". Sharing one key pair is the fix, and this pins it.
+   */
+  const JUMP_ROWS: Array<[category: string, key: string]> = [
+    ['chat', 'navigateAiSummary'], // 推荐回复
+    ['chat', 'navigateAiSummaryForRename'], // 自动命名
+    ['tts', 'navigateAiSummary'], // 语音摘要
+  ]
+
+  function findSpec(category: string, key: string) {
+    const entry = categoryItems[category].find(e => e.type === 'item' && e.spec.key === key)
+    expect(entry, `${category}.${key} must exist`).toBeDefined()
+    return (entry as { type: 'item'; spec: ItemSpec }).spec
+  }
+
+  it('all three jump to the aiSummary panel', () => {
+    for (const [category, key] of JUMP_ROWS) {
+      expect(findSpec(category, key).navigateTo).toBe('aiSummary')
+    }
+  })
+
+  it('share one label/description key pair so the naming cannot drift', () => {
+    for (const [category, key] of JUMP_ROWS) {
+      const spec = findSpec(category, key)
+      expect(spec.labelKey).toBe('settings.items.aiSummaryRef')
+      expect(spec.descriptionKey).toBe('settings.items.aiSummaryRefDesc')
+    }
+  })
+
+  it('all opt into the shared-model config status pill', () => {
+    for (const [category, key] of JUMP_ROWS) {
+      expect(findSpec(category, key).showSummaryModelStatus).toBe(true)
+    }
   })
 })

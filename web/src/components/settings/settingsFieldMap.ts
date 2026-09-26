@@ -111,6 +111,13 @@ export interface ItemSpec {
   hideInAndroidApp?: boolean
   /** For action items: navigate to this category sub-route ID on click */
   navigateTo?: string
+  /**
+   * Show the shared AI-summary-model config status pill on this row
+   * (已配置 / 未配置). Used by the rows that jump to the `aiSummary` panel, so
+   * the user can tell at a glance whether the model those features call is
+   * actually configured — the backend silently skips when it is not.
+   */
+  showSummaryModelStatus?: boolean
   /** Progress bar for info-type items: { value, max }. Bar hidden when value >= max. */
   progress?: { value: number; max: number }
 }
@@ -203,8 +210,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.localeZh', value: 'zh' },
       { labelKey: 'settings.items.localeEn', value: 'en' },
     ]}},
-    { type: 'item', spec: { labelKey: 'settings.items.uiScaleAuto', descriptionKey: 'settings.items.uiScaleAutoDesc', key: 'uiScaleAuto', type: 'switch', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', disableUnless: { key: 'uiScaleAuto', value: false }, sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    // One-shot auto fit, deliberately NOT a switch: the scale is a stored value
+    // now, and the button only computes it when clicked. An always-on switch
+    // re-derived the factor on every applier call, which made the UI jump.
+    // Hidden on Android, whose layout is already density-adapted by the WebView.
+    { type: 'item', spec: { labelKey: 'settings.items.uiScaleAutoFit', descriptionKey: 'settings.items.uiScaleAutoFitDesc', key: 'uiScaleAutoFit', type: 'action', source: 'local', hideInAndroidApp: true, sectionHeader: 'settings.items.appearanceDisplaySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.uiScale', descriptionKey: 'settings.items.uiScaleDesc', key: 'uiScale', type: 'slider', source: 'local', min: 0.8, max: 1.5, step: UI_SCALE_STEP, defaultValue: 1, displayFormat: 'percent', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.headerShortcutTips', descriptionKey: 'settings.items.headerShortcutTipsDesc', key: 'headerShortcutTips', type: 'switch', source: 'local', sectionHeader: 'settings.items.appearanceDisplaySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.fontMono', descriptionKey: 'settings.items.fontMonoDesc', key: 'fontMono', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildFontFamilyOptions(true) }},
     { type: 'item', spec: { labelKey: 'settings.items.fontMonoFallback', descriptionKey: 'settings.items.fontMonoFallbackDesc', key: 'fontMonoFallback', type: 'select', source: 'local', defaultValue: 'default', sectionHeader: 'settings.items.fontSection', options: buildMonoFallbackOptions() }},
@@ -231,14 +242,20 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     ]}},
     { type: 'item', spec: { labelKey: 'settings.items.chatInitialMessages', descriptionKey: 'settings.items.chatInitialMessagesDesc', key: 'chat.initial_messages', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatPageSize', descriptionKey: 'settings.items.chatPageSizeDesc', key: 'chat.page_size', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatSystemPromptInterval', descriptionKey: 'settings.items.chatSystemPromptIntervalDesc', key: 'chat.system_prompt_interval', type: 'number', source: 'server' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatForkContextBudget', descriptionKey: 'settings.items.chatForkContextBudgetDesc', key: 'chat.fork_context_budget', type: 'number', source: 'server', min: 1000 } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendEnabled', descriptionKey: 'settings.items.chatRecommendEnabledDesc', key: 'chat.recommend_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatRecommendContextMessages', descriptionKey: 'settings.items.chatRecommendContextMessagesDesc', key: 'chat.recommend_context_messages', type: 'number', source: 'server', min: 0, max: 20, disableUnless: { key: 'chat.recommend_enabled', value: true }, sectionHeader: 'settings.items.recommendSectionHeader' } },
+    // The AI-summary jump belongs to the 推荐回复 card. It must stay contiguous
+    // with the rows above: the renderer groups cards by *runs* of the same
+    // sectionHeader, so any row with a different header inserted here splits
+    // this row into a second, one-row 推荐回复 card.
+    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.recommend_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.recommendSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueEnabled', descriptionKey: 'settings.items.chatAutoContinueEnabledDesc', key: 'chat.auto_continue_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoContinueSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.chatAutoContinueMaxRetries', descriptionKey: 'settings.items.chatAutoContinueMaxRetriesDesc', key: 'chat.auto_continue_max_retries', type: 'number', source: 'server', min: -1, disableUnless: { key: 'chat.auto_continue_enabled', value: true }, sectionHeader: 'settings.items.autoContinueSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.recommend_enabled', value: true }, sectionHeader: 'settings.items.recommendSectionHeader' } },
-    { type: 'item', spec: { labelKey: 'settings.items.sessionMaxCount', descriptionKey: 'settings.items.sessionMaxCountDesc', key: 'session.max_count', type: 'number', source: 'server', sectionHeader: 'settings.items.chatMessageSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.chatAutoRenameEnabled', descriptionKey: 'settings.items.chatAutoRenameEnabledDesc', key: 'chat.auto_rename_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.autoRenameSectionHeader' } },
+    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummaryForRename', type: 'action', source: 'local', navigateTo: 'aiSummary', disableUnless: { key: 'chat.auto_rename_enabled', value: true }, showSummaryModelStatus: true, sectionHeader: 'settings.items.autoRenameSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionEnabled', descriptionKey: 'settings.items.archiveRetentionEnabledDesc', key: 'session.archive_retention_enabled', type: 'switch', source: 'server', sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
     { type: 'item', spec: { labelKey: 'settings.items.archiveRetentionDays', descriptionKey: 'settings.items.archiveRetentionDaysDesc', key: 'session.archive_retention_days', type: 'number', source: 'server', min: 0, disableUnless: { key: 'session.archive_retention_enabled', value: true }, sectionHeader: 'settings.items.archiveRetentionSectionHeader' } },
   ],
@@ -401,7 +418,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
       { labelKey: 'settings.items.summarizeSimple', value: 'simple' },
       { labelKey: 'settings.items.summarizeApi', value: 'api' },
     ]} },
-    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', sectionHeader: 'settings.items.voiceSummarySection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.aiSummaryRef', descriptionKey: 'settings.items.aiSummaryRefDesc', key: 'navigateAiSummary', type: 'action', source: 'local', navigateTo: 'aiSummary', showSummaryModelStatus: true, sectionHeader: 'settings.items.voiceSummarySection' } },
   ],
   tts_engine: [
     { type: 'panel', config: {

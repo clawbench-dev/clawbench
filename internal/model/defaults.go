@@ -276,6 +276,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.AutoContinueMaxRetries < AutoContinueUnlimited {
 		cfg.Chat.AutoContinueMaxRetries = 0
 	}
+	// AutoRenameEnabled: bool zero-value (false) is the intentional default —
+	// auto-renaming spends an LLM call without the user asking, so it is
+	// opt-in. Use the presence map to distinguish "user wrote false" from
+	// "user omitted the field".
+	if p, ok := presence["chat.auto_rename_enabled"]; !ok || !p {
+		cfg.Chat.AutoRenameEnabled = false
+	}
 
 	// --- Session ---
 	if cfg.Session.MaxCount <= 0 {

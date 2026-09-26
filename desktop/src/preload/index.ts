@@ -22,6 +22,14 @@ for (const channel of NAV_CHANNELS) {
   })
 }
 
+// Download progress is streamed from the main process (which owns the HTTP
+// transfer) and forwarded as a CustomEvent, matching what the Android shell
+// dispatches via `evaluateJavascript`. The renderer therefore has one progress
+// event shape to handle regardless of host.
+ipcRenderer.on('clawbench-download-progress', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-download-progress', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
@@ -50,7 +58,14 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   updateLastSeenEventId: (id: string) => { ipcRenderer.send('native:update-last-seen', id) },
   setKeepScreenOn: (on: boolean) => { ipcRenderer.send('native:keep-screen-on', on) },
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
-  dismissSplash: () => { /* desktop has no native splash overlay */ },
+  // The desktop shell DOES have a splash overlay (a native WebContentsView
+  // floating above the app while it connects and boots — see main/splash.ts).
+  // App.vue already calls this on every initialization exit path, so wiring it
+  // to a real IPC is all the renderer side needs.
+  dismissSplash: () => { ipcRenderer.send('native:dismiss-splash') },
+  // Backs the overlay's cancel button, which the overlay page wires to
+  // ClawBenchNative.cancelSplash() in splash mode.
+  cancelSplash: () => { ipcRenderer.send('native:splash-cancel') },
   stopBackgroundService: () => { /* desktop has no Android foreground service */ },
   setVolumeKeyMode: () => { /* desktop has no hardware volume keys */ },
   setTerminalSessionCount: () => { /* desktop has no status-bar terminal badge */ },
@@ -86,6 +101,9 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   reconnectTunnel: () => invoke('native:reconnect-tunnel'),
   reconnectTunnelAsync: () => invoke('native:reconnect-tunnel'),
   downloadFile: (path: string) => invoke('native:download-file', path),
+  downloadFileWithProgress: (path: string, fileName: string, downloadId: number) =>
+    invoke('native:download-file-with-progress', path, fileName, downloadId),
+  cancelDownload: (id: number) => invoke('native:cancel-download', id),
   downloadUrl: (url: string, fileName: string) => invoke('native:download-url', url, fileName),
   downloadBlob: (b64: string, fileName: string) => invoke('native:download-blob', b64, fileName),
   openInBrowser: (port: number, protocol: string, host: string, path: string) => invoke('native:open-in-browser', port, protocol, host, path),

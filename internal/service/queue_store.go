@@ -123,9 +123,15 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 	// and a session whose first message is queued would otherwise stay "New
 	// Session N" until the drain loop runs. Best-effort: a title failure must
 	// not fail the enqueue.
-	if err := applyAutoTitle(sessionID, content, files, fallbackTitle); err != nil {
+	titled, err := applyAutoTitle(sessionID, content, files, fallbackTitle)
+	if err != nil {
 		slog.Warn("queue: failed to auto-title session at enqueue",
 			slog.String("session", sessionID), slog.String("error", err.Error()))
+	}
+	// The queued message is not in chat_history yet, so the AI rename must be
+	// handed the text explicitly; CollectSessionUserMessages appends it.
+	if titled {
+		ScheduleAutoRename(sessionID, ExtractPlainText(content))
 	}
 
 	return rowID, nil
@@ -187,7 +193,10 @@ func materializeQueuedRowTx(tx *sql.Tx, row QueuedRow) (int64, error) {
 	// fallbackTitle is empty on purpose: the title was already applied at
 	// enqueue time (AddQueuedMessage). maybeAutoTitleSessionTx short-circuits
 	// once title_source is 'auto', so passing "" here cannot blank the title.
-	return insertChatMessageTx(tx, row.ProjectPath, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "")
+	// The AI rename was likewise already scheduled at enqueue — its `titled`
+	// result is discarded here on purpose.
+	msgID, _, err := insertChatMessageTx(tx, row.ProjectPath, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "")
+	return msgID, err
 }
 
 // ClaimNextAndMaterialize claims the oldest queued message for a session and

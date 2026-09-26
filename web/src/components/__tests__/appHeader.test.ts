@@ -1382,6 +1382,66 @@ describe('AppHeader', () => {
     expect(wrapper.vm.themeMenuOpen).toBe(true)
   })
 
+  // The project / recent-files / branch dropdowns are AppMenuPanel (also
+  // teleported to <body> with position:fixed) and share the same root cause as
+  // the two PopupMenu above. Fixing only the PopupMenus left the identical bug
+  // reachable from these three entries, so they are pinned here too.
+  it('closes the project dropdown when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+  })
+
+  it('closes the recent-files dropdown when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.fileDropdownOpen = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.fileDropdownOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+  })
+
+  it('closes the branch dropdown when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.branchDropdownOpen = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.branchDropdownOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
+  })
+
+  it('closes all three dropdowns when the wide-mode leftTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+    wrapper.vm.fileDropdownOpen = true
+    wrapper.vm.branchDropdownOpen = true
+    await wrapper.vm.$nextTick()
+
+    switchLeftTab('settings')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
+  })
+
+  it('leaves the dropdowns alone when unrelated state changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    mockState.gitBranch = 'feature/x'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(true)
+  })
+
   // ── handleLogout ──
 
   it('handleLogout calls ClawBenchNative.showServerDialog in APP mode', async () => {

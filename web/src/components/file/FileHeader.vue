@@ -192,11 +192,7 @@
               <Share2 :size="14" />
               {{ t('file.header.shareExternal') }}
             </button>
-            <a v-if="!isAppMode && toolbarCollapsedIds.includes('download')" class="dropdown-item" :href="buildLocalFileUrl(file.path, { download: true })" :download="file.name" @click="menuOpen = false">
-              <Download :size="14" />
-              {{ t('common.download') }}
-            </a>
-            <button v-else-if="toolbarCollapsedIds.includes('download')" class="dropdown-item" @click="handleDownload">
+            <button v-if="toolbarCollapsedIds.includes('download')" class="dropdown-item" @click="handleDownload">
               <Download :size="14" />
               {{ t('common.download') }}
             </button>

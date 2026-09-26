@@ -713,10 +713,17 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 }
 
 // postProcessBlocks applies finalize post-processing on blocks:
-// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging.
+// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging,
+// and terminal thinking completion.
 // Shared by buildResult and Finalize to prevent divergence.
 // NOTE: persistAskToolCalls must be called separately after Finalize
 // uses postProcessBlocks, to avoid double-persisting from buildResult.
+//
+// Every caller is a TERMINAL path (buildResult on done/error/ctx.Done, Finalize,
+// and the steer split's "before" half), which is what makes MarkAllThinkingDone
+// correct here: no thinking block can still be running once the turn is over.
+// It is deliberately not applied on the streaming flush path, where done=false
+// is a real, current fact.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
@@ -728,6 +735,10 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 	// Common block post-processing (idempotent, cheap)
 	blocks = ai.RemoveRejectedToolBlocks(blocks)
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+	// Merge first (it drops empty-text blocks), then close everything that
+	// survives: a turn ending on reasoning never receives thinking_done, so its
+	// last block would otherwise persist as done=false and render as a spinner.
+	blocks = ai.MarkAllThinkingDone(blocks)
 
 	return blocks
 }
@@ -1209,10 +1220,11 @@ func (e *SessionExecutor) flushStreamingMessage() {
 // includeThinking controls how thinking blocks are persisted in the content
 // row:
 //   - false (rate-limited flushes): thinking full text is excluded from content;
-//     the text is upserted to chat_thinking by flushPendingThinking. DONE blocks
-//     get a slim {think_id, done:true} marker at their natural position so a
-//     refresh mid-stream can lazy-load the completed reasoning; in-progress
-//     blocks are left out entirely (a done=false marker is the spinner regression).
+//     the text is upserted to chat_thinking by flushPendingThinking. Every block
+//     that reached chat_thinking gets a slim {think_id} marker at its natural
+//     position: {done:true} once it finished, {in_progress:true} while it is
+//     still streaming. The in_progress marker is what makes a session switch
+//     lossless — see ContentBlock.InProgress.
 //   - true (graceful-shutdown forced flush): the full thinking text is embedded
 //     in content, then slimThinkingInContent extracts it into chat_thinking —
 //     the one-shot durability point where the text may not have been flushed yet.
@@ -1258,36 +1270,49 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 	for _, b := range e.blocks {
 		if b.Type == blockTypeThinking {
 			// The full thinking text NEVER goes into the rate-limited content row
-			// (it lives in chat_thinking via flushPendingThinking; embedding even a
-			// slim think_id marker for an IN-PROGRESS block would leak an "empty
-			// thinking block" into the frontend's live placeholder — the
-			// mergeStreamBlocks path (db_load after stream_start) adopts the DB's
-			// non-text blocks into the live stream, and a done=false slim block
-			// there renders as a perpetual loading spinner until the message
-			// finalizes).
+			// (it lives in chat_thinking via flushPendingThinking). What goes in
+			// is a slim {think_id} marker, in one of two shapes:
 			//
-			// EXCEPTION: a DONE thinking block (thinking_done received, text fully
-			// persisted to chat_thinking) gets a slim {think_id, done:true} marker at
-			// its natural position. A done marker renders as a collapsed chip (never
-			// a spinner), and it is what lets a page refresh mid-stream recover the
-			// already-completed reasoning via the /thinking lazy-load — the streaming
-			// row would otherwise carry no trace of the block and the thinking would
-			// be lost on reload. Finalize's persistThinkingToDB overwrites these
-			// markers with the final slim content (idempotent, same think_ids), so no
-			// orphan/duplicate rows are left behind.
+			//   done:true            — the block finished. Renders as a collapsed
+			//                          chip; the /thinking lazy-load recovers the text.
+			//   in_progress:true     — the block is STILL streaming. Renders as a
+			//                          chip that lazy-loads the prefix so far and
+			//                          keeps appending live deltas into the SAME
+			//                          block.
+			//
+			// The in_progress marker is what makes a session switch lossless. An
+			// in-progress block used to be omitted entirely, which cost two
+			// user-visible symptoms from one cause: (1) the streaming row carried
+			// no trace of the block, so rebuildFromDb on switch-back dropped the
+			// already-streamed prefix; (2) the next delta, finding no block to
+			// merge into, opened a second one — and a frontend-created block has
+			// no `done`, so it rendered as a spinner forever. The earlier fix
+			// (done-gating the marker) only addressed the opposite hazard — a
+			// done:false marker rendering as an empty spinner — and left this
+			// one, because the block was absent rather than mislabeled.
+			//
+			// Both shapes require a chat_thinking row to lazy-load; a marker with
+			// nothing behind it would 404 on expand.
 			if e.forceIncludeThinking {
 				serializedBlocks = append(serializedBlocks, b)
-			} else if b.Done && b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
-				// Only blocks that actually reached chat_thinking get markers — an
-				// empty done block has no row to lazy-load and would 404.
-				// ParentToolCallID must ride along so a reload keeps a sub-agent's
-				// thinking grouped under its parent Agent card.
-				serializedBlocks = append(serializedBlocks, model.ContentBlock{
-					Type:             blockTypeThinking,
-					ThinkID:          b.ThinkID,
-					Done:             true,
-					ParentToolCallID: b.ParentToolCallID,
-				})
+			} else if b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
+				if b.Done {
+					// ParentToolCallID must ride along so a reload keeps a
+					// sub-agent's thinking grouped under its parent Agent card.
+					serializedBlocks = append(serializedBlocks, model.ContentBlock{
+						Type:             blockTypeThinking,
+						ThinkID:          b.ThinkID,
+						Done:             true,
+						ParentToolCallID: b.ParentToolCallID,
+					})
+				} else {
+					serializedBlocks = append(serializedBlocks, model.ContentBlock{
+						Type:             blockTypeThinking,
+						ThinkID:          b.ThinkID,
+						InProgress:       true,
+						ParentToolCallID: b.ParentToolCallID,
+					})
+				}
 			}
 			continue
 		}

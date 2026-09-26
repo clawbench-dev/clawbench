@@ -28,6 +28,7 @@ import (
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
@@ -614,6 +615,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

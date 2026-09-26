@@ -145,6 +145,27 @@ describe('parseAssistantContent', () => {
       expect(parseAssistantContent(content, { liveStreaming: true }).blocks[0].done).toBe(undefined)
     })
 
+    it('keeps in_progress on a live row (the block is still streaming)', () => {
+      // The render layer reads this flag to decide "lazy-load the prefix and
+      // keep appending" rather than "finished chip".
+      const content = JSON.stringify({
+        blocks: [{ type: 'thinking', think_id: 'th_1', in_progress: true }],
+      })
+      const result = parseAssistantContent(content, { liveStreaming: true })
+      expect(result.blocks[0].in_progress).toBe(true)
+    })
+
+    it('clears in_progress on a non-live row (the turn is over)', () => {
+      // A snapshot read mid-finalize can still carry the flag, and the flag only
+      // means anything while deltas are still arriving. Left set, it would keep
+      // a finished block in its "still writing" render state forever.
+      const content = JSON.stringify({
+        blocks: [{ type: 'thinking', think_id: 'th_1', in_progress: true }],
+      })
+      const result = parseAssistantContent(content)
+      expect(result.blocks[0].in_progress).toBeUndefined()
+    })
+
     it('is opt-in: the default (historical) path still forces done=true', () => {
       const content = JSON.stringify({
         blocks: [{ type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false }],

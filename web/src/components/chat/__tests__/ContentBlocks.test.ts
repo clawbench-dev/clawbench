@@ -47,13 +47,14 @@ vi.mock('@/utils/icons', () => ({
 
 // `renderMarkdownHtml` is used by the thinking renderer, which discards
 // `detectedPaths` (unlike renderTextBlock, which schedules verification). Tests
-// that need annotated thinking markup override this.
+// that need annotated thinking markup override this. Options are forwarded so
+// tests can pin WHICH pipeline mode the thinking renderer asked for.
 const { mockRenderMarkdownHtml } = vi.hoisted(() => ({
-  mockRenderMarkdownHtml: vi.fn((text: string) => `<p>${text}</p>`),
+  mockRenderMarkdownHtml: vi.fn((text: string, _opts?: unknown) => `<p>${text}</p>`),
 }))
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdown: (text: string) => `<p>${text}</p>`,
-  renderMarkdownHtml: (text: string) => mockRenderMarkdownHtml(text),
+  renderMarkdownHtml: (text: string, opts?: unknown) => mockRenderMarkdownHtml(text, opts),
 }))
 
 vi.mock('@/utils/appLog', () => ({
@@ -508,6 +509,57 @@ describe('ContentBlocks', () => {
         streaming: true,
       })
       expect(wrapper.find('.thinking-spinner').exists()).toBe(false)
+    })
+
+    // ── Read-only (public share page) lazy thinking render ──
+    //
+    // A settled snapshot starts with every thinking block collapsed, and the
+    // collapsed content is hidden by CSS — yet `v-html` would still run the
+    // full markdown + DOMPurify pipeline for text nobody can see. A shared
+    // thread can carry megabytes of reasoning across hundreds of blocks
+    // (measured: 4.4 MB / 134k DOM nodes on a 49-message thread ≈ 7s of
+    // blocked main thread), so a collapsed block must render nothing until it
+    // is expanded.
+    describe('read-only lazy render', () => {
+      it('does not render a collapsed block\'s markdown in read-only mode', () => {
+        mockRenderMarkdownHtml.mockClear()
+        const wrapper = mountBlocks({
+          readOnly: true,
+          streaming: false,
+          blocks: [{ type: 'thinking', text: 'Long hidden reasoning', done: true }],
+        })
+        // Collapsed, and the markdown renderer was never asked for its HTML.
+        expect(wrapper.find('.chat-thinking').classes()).toContain('thinking-collapsed')
+        expect(mockRenderMarkdownHtml).not.toHaveBeenCalled()
+        expect(wrapper.find('.thinking-inline-content').text()).toBe('')
+      })
+
+      it('renders the markdown once the read-only block is expanded', async () => {
+        mockRenderMarkdownHtml.mockClear()
+        const wrapper = mountBlocks({
+          readOnly: true,
+          streaming: false,
+          blocks: [{ type: 'thinking', text: 'Long hidden reasoning', done: true }],
+        })
+        expect(mockRenderMarkdownHtml).not.toHaveBeenCalled()
+
+        await wrapper.find('.thinking-header').trigger('click')
+        await nextTick()
+
+        expect(mockRenderMarkdownHtml).toHaveBeenCalled()
+        expect(wrapper.find('.thinking-inline-content').text()).toContain('Long hidden reasoning')
+      })
+
+      it('still renders immediately in the interactive app (not read-only)', () => {
+        mockRenderMarkdownHtml.mockClear()
+        mountBlocks({
+          readOnly: false,
+          streaming: false,
+          blocks: [{ type: 'thinking', text: 'App reasoning', done: true }],
+        })
+        // The interactive app keeps its current eager behavior.
+        expect(mockRenderMarkdownHtml).toHaveBeenCalled()
+      })
     })
   })
 
@@ -1314,6 +1366,42 @@ describe('ContentBlocks', () => {
       await nextTick()
       expect(fetchMock).not.toHaveBeenCalled()
       expect(wrapper.find('.thinking-inline-content').html()).toContain('inline thought')
+    })
+
+    it('renders the lazy-loaded prefix stitched onto live deltas', async () => {
+      // A streaming block whose think_id was adopted from the DB marker: its
+      // prefix lives in chat_thinking, its live deltas are in `text`. The
+      // rendered text must be both, stitched (see thinkingRenderSource).
+      //
+      // NOTE: this exercises the TEMPLATE path only. The throttled batch path
+      // (flushBlockHtml) runs inside a requestAnimationFrame scheduler, which
+      // jsdom never reaches — so this test passes even when that path is broken
+      // (verified by mutation). The regression guard for the two paths agreeing
+      // is the source-sniffing test in thinkingRenderSourceGuard.test.ts; this
+      // one only pins the stitched-content contract.
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ think_id: 'th_live', text: 'PREFIX ' }),
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const wrapper = mountBlocks({
+        msgId: 'm1',
+        sessionId: 's1',
+        blocks: [{ type: 'thinking', think_id: 'th_live', in_progress: true, text: 'live deltas' }],
+        streaming: true,
+        active: true,
+      })
+
+      // Let the auto-prefix-load land.
+      await flushPromises()
+      await nextTick()
+      await wrapper.vm.$forceUpdate()
+      await nextTick()
+
+      const html = wrapper.find('.thinking-inline-content').html()
+      expect(html).toContain('PREFIX')
+      expect(html).toContain('live deltas')
     })
 
     it('shows error retry and refetches on retry click', async () => {
@@ -2584,12 +2672,11 @@ describe('path verification after a cache hit', () => {
   })
 
   it('drops cached negative results when a turn ends', async () => {
-    // A turn that creates files usually names them BEFORE writing them. The
-    // thinking block renders mid-stream (thinking does NOT skip enhancements,
-    // unlike text blocks) and verifies the path while the file does not exist
-    // yet, caching 'none'. Because a cached 'none' is never re-checked, the
-    // final text's annotation was then stripped even though the file existed —
-    // only a hard refresh (which resets the module-level cache) recovered it.
+    // A turn that creates files usually names them BEFORE writing them. Whichever
+    // pass verifies such a path while the file does not exist yet caches 'none',
+    // and a cached 'none' is never re-checked — so a later pass reporting that
+    // path has its annotation stripped even though the file exists, and only a
+    // hard refresh (which resets the module-level cache) recovered it.
     //
     // The turn boundary must therefore drop the negative entries so the
     // post-streaming re-render re-verifies and resolves the new file.
@@ -2652,5 +2739,94 @@ describe('path verification after a cache hit', () => {
 
     expect(mockVerifyFilePaths).toHaveBeenCalledWith(['src/real.go'], expect.anything())
     mockRenderMarkdownHtml.mockImplementation((text: string) => `<p>${text}</p>`)
+  })
+
+  it('skips path annotation while a thinking block is streaming', async () => {
+    // Symmetry with the text-block streaming path. The thinking renderer used
+    // to pass only { skipKatex: true }, so it annotated paths mid-stream — and
+    // a turn that names a file BEFORE writing it cached a negative result that
+    // later stripped the final text's annotation (only a hard refresh fixed
+    // it). Streaming must not annotate; the post-streaming re-render does.
+    mockRenderMarkdownHtml.mockClear()
+
+    mountBlocks({
+      blocks: [{ type: 'thinking', text: 'reasoning about src/real.go', done: false }],
+      streaming: true,
+      renderTextBlock: () => '',
+    })
+    await nextTick()
+
+    const opts = mockRenderMarkdownHtml.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined
+    expect(opts?.skipEnhancements).toBe(true)
+    expect(opts?.skipKatex).toBe(true)
+  })
+
+  it('annotates thinking paths once streaming ends (full pipeline)', async () => {
+    // The counterpart: the annotation the streaming pass skips must come back
+    // when the turn ends, or the asymmetry would simply invert into "never".
+    mockRenderMarkdownHtml.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'thinking', text: 'reasoning about src/real.go', done: true }],
+      streaming: false,
+      renderTextBlock: () => '',
+    })
+    await nextTick()
+
+    const opts = mockRenderMarkdownHtml.mock.calls.at(-1)?.[1] as Record<string, unknown> | undefined
+    // The non-streaming path calls renderMarkdownHtml(text) with no options,
+    // i.e. the full pipeline (path annotation included).
+    expect(opts?.skipEnhancements).toBeFalsy()
+    expect(wrapper.html()).toContain('reasoning about src/real.go')
+  })
+})
+
+describe('provisional thinking text is replaced on finish', () => {
+  it('refetches the full reasoning when a block that was fetched mid-stream finishes', async () => {
+    // The auto-prefix-load runs while the block streams, so its result is
+    // whatever chat_thinking had been flushed at that instant — a PREFIX of the
+    // reasoning. Once the block is done that snapshot is stale, and the render
+    // path serves the cache whenever an entry exists, so without a refetch the
+    // block stayed frozen mid-sentence forever. Reported case: a 25131-char
+    // reasoning frozen at its first 10175 chars.
+    let call = 0
+    const fetchMock = vi.fn().mockImplementation(() => {
+      call++
+      const text = call === 1 ? 'PARTIAL-PREFIX-ONLY' : 'PARTIAL-PREFIX-ONLY-AND-THE-REST-OF-THE-THOUGHT'
+      return Promise.resolve({ ok: true, json: async () => ({ think_id: 'th_x', text }) })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const w = mountBlocks({
+      msgId: 'm1', sessionId: 's1', streaming: true, active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_x', in_progress: true }],
+    })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    // The block finishes: content carries only the slim {done:true} marker.
+    await w.setProps({ streaming: false, blocks: [{ type: 'thinking', think_id: 'th_x', done: true }] })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    const html = w.find('.thinking-inline-content').html()
+    expect(fetchMock.mock.calls.length, 'must refetch the final text').toBe(2)
+    expect(html).toContain('AND-THE-REST')
+  })
+
+  it('does not refetch a done block whose text was never fetched mid-stream', async () => {
+    // Gating matters: a long conversation must not fire one request per
+    // completed thinking block on every render.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_done', text: 'reasoning' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const w = mountBlocks({
+      msgId: 'm1', sessionId: 's1', streaming: false, active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+    })
+    await flushPromises(); await nextTick()
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 })

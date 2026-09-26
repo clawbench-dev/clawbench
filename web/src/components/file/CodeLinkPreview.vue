@@ -113,8 +113,10 @@
         {{ t('file.codePreview.windowTruncatedNotice') }}
       </div>
 
-      <!-- Mobile In-Preview Search Bar -->
-      <div v-if="isSearchOpen" class="code-preview-search-bar">
+      <!-- Mobile In-Preview Search Bar. Gated on showTextTools too: retargeting
+           an open search onto a binary/media/directory file must not leave a
+           dead search bar over a body with nothing to search. -->
+      <div v-if="isSearchOpen && showTextTools" class="code-preview-search-bar">
         <input
           ref="sheetSearchInputRef"
           v-model="searchQuery"
@@ -138,9 +140,22 @@
         </button>
       </div>
 
-      <!-- Content Area: directory listing / media / rendered Markdown / code -->
+      <!-- Content Area: unsupported / directory listing / media / rendered
+           Markdown / code -->
+      <UnsupportedFileBody
+        v-if="isUnsupportedView"
+        :name="fileBaseName"
+        :path="targetFilePath"
+        :size="unsupportedSize"
+        :description="unsupportedDescription"
+      >
+        <button class="code-preview-download-btn" @click="handleDownload">
+          <Download :size="14" />
+          {{ t('common.download') }}
+        </button>
+      </UnsupportedFileBody>
       <DirPreviewBody
-        v-if="isDirView"
+        v-else-if="isDirView"
         chromeless
         :entries="preview.dirEntries.value"
         :loading="preview.dirLoading.value"
@@ -535,8 +550,8 @@
         </div>
       </div>
 
-      <!-- Desktop In-Preview Search Bar -->
-      <div v-if="isSearchOpen" class="code-preview-search-bar" @pointerdown.stop>
+      <!-- Desktop In-Preview Search Bar (gated on showTextTools, see above) -->
+      <div v-if="isSearchOpen && showTextTools" class="code-preview-search-bar" @pointerdown.stop>
         <input
           ref="searchInputRef"
           v-model="searchQuery"
@@ -599,10 +614,22 @@
         </div>
       </div>
 
-      <!-- Body / Scroll pane: directory listing / media / rendered Markdown /
-           source code slice -->
+      <!-- Body / Scroll pane: unsupported / directory listing / media /
+           rendered Markdown / source code slice -->
+      <UnsupportedFileBody
+        v-if="isUnsupportedView"
+        :name="fileBaseName"
+        :path="targetFilePath"
+        :size="unsupportedSize"
+        :description="unsupportedDescription"
+      >
+        <button class="code-preview-download-btn" @click="handleDownload">
+          <Download :size="14" />
+          {{ t('common.download') }}
+        </button>
+      </UnsupportedFileBody>
       <DirPreviewBody
-        v-if="isDirView"
+        v-else-if="isDirView"
         chromeless
         :entries="preview.dirEntries.value"
         :loading="preview.dirLoading.value"
@@ -665,17 +692,18 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, Maximize2, MessageSquareQuote, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
+import { Check, ChevronDown, ChevronUp, Copy, Download, Eye, ExternalLink, Folder, Hash, Link, Maximize2, MessageSquareQuote, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
 import DirPreviewBody from '@/components/file/DirPreviewBody.vue'
+import UnsupportedFileBody from '@/components/file/UnsupportedFileBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
-import { buildLocalFileUrl } from '@/utils/download'
+import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
@@ -781,7 +809,19 @@ const mediaKind = computed<'image' | 'video' | 'audio' | 'pdf' | null>(() => {
   return null
 })
 // Text-slice tools are only meaningful when a code/markdown body is showing.
-const showTextTools = computed(() => !isMediaView.value && !isDirView.value)
+// An unsupported file (binary / past the whole-file cap) renders the
+// placeholder instead, so it has no searchable, wrappable or copyable text
+// either — the same rule the full-screen viewer applies.
+const showTextTools = computed(() => !isMediaView.value && !isDirView.value && !isUnsupportedView.value)
+
+/**
+ * The file cannot be sliced as text (binary sniff, or past the whole-file cap)
+ * — the body renders the unsupported placeholder instead, matching the
+ * full-screen viewer's presentation.
+ */
+const isUnsupportedView = computed(() =>
+  props.preview.errorCode.value === 'binary' || props.preview.errorCode.value === 'too-large'
+)
 
 // ── Directory body ─────────────────────────────────────────────────────────
 // A directory annotation has no file content, so the card lists it with the
@@ -1314,6 +1354,25 @@ const errorMessageText = computed(() => {
  * that path is also where the download lives.
  */
 const tooLarge = computed(() => props.preview.errorCode.value === 'too-large')
+
+/** Reason shown in the placeholder, matching the full-screen viewer's wording. */
+const unsupportedDescription = computed(() =>
+  props.preview.errorCode.value === 'too-large'
+    ? t('file.viewer.fileTooLarge')
+    : t('file.viewer.binaryFile')
+)
+
+/** Size for the placeholder's parenthetical. A windowed fetch reports the real
+ *  file size even when it answered with isBinary (no content), so this is the
+ *  file's size, not the response's. */
+const unsupportedSize = computed(() => props.preview.fileContent.value?.size ?? null)
+
+/** Download the previewed file through the shared in-product progress path. */
+const handleDownload = () => {
+  const filePath = props.preview.target.value?.filePath
+  if (!filePath) return
+  downloadFileByPath(filePath, fileBaseName.value)
+}
 
 const isTargetLine = (lineNum: number): boolean => {
   const sliced = props.preview.slicedCode.value

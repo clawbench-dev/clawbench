@@ -1758,4 +1758,42 @@ describe('ForgePanelContent forge deep-link', () => {
 
     expect(mockMarkForgeRead).toHaveBeenCalledWith('pipeline/run:555')
   })
+
+  // The repository menu teleports to <body> with a fixed z-index and the dock
+  // buttons use @click.stop, so its document-level outside-click handler never
+  // fires on a tab switch. Without an explicit close it stays open over the
+  // panel that replaced forge.
+  it('closes the repository menu when the panel becomes inactive', async () => {
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.repoMenuOpen).toBe(true)
+
+    await wrapper.setProps({ active: false })
+    await flushPromises()
+    expect(wrapper.vm.repoMenuOpen).toBe(false)
+  })
+
+  it('leaves the repository menu open when unrelated props change', async () => {
+    // Guard against an over-eager watcher: a re-render triggered by something
+    // other than the active flag must not dismiss an open menu.
+    const wrapper = mount(ForgePanelContent, {
+      props: { active: true, projectPath: '/proj' },
+      global: opts,
+    })
+    await flushPromises()
+
+    await wrapper.find('.forge-repo-badge').trigger('click')
+    await flushPromises()
+    expect(wrapper.vm.repoMenuOpen).toBe(true)
+
+    await wrapper.setProps({ projectPath: '/proj2' })
+    await flushPromises()
+    expect(wrapper.vm.repoMenuOpen).toBe(true)
+  })
 })

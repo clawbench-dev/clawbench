@@ -56,6 +56,7 @@
           :max="getItemMax(item)"
           :step="item.step"
           :needs-restart="item.needsRestart"
+          :summary-model-status="resolveSummaryModelStatus(item)"
           :force-close="activeKey !== null && activeKey !== item.key"
           :no-divider="false"
           :default-value="item.defaultValue"
@@ -102,7 +103,7 @@ import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
 import SettingsAgentDetail from './SettingsAgentDetail.vue'
 import IosInstallDrawer from '@/components/common/IosInstallDrawer.vue'
-import { useSettingsConfig, getEffectiveUIScale } from '@/composables/useSettingsConfig'
+import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/composables/useSettingsConfig'
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
@@ -115,6 +116,7 @@ import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
 import { PROJECT_FEEDBACK_URL, PROJECT_HOMEPAGE_URL } from '@/utils/projectLinks'
 import { categoryItems, isPanelOnlyCategory, getCategoryPanels, isDependsOnMet, isSubPageRoute, getSubPagePanel, type ItemSpec, type CategoryEntry, type GroupPanelConfig } from './settingsFieldMap'
+import { isSummaryModelConfigured } from '@/utils/aiSummaryModel'
 import { THEMES } from '@/utils/themeMeta'
 import type { OptionPreview, SelectOption } from './SettingsItem.vue'
 import { filterAvailableFonts, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, buildFontStack, getCustomFontChoices, type FontChoice } from '@/utils/fontConfig'
@@ -189,6 +191,21 @@ watch(() => (serverConfig.value?.fonts as Record<string, unknown> | undefined)?.
 function resolveConfigValue(key: string): unknown {
   if (key in localConfig) return localConfig[key]
   return getServerValueWithDefault(key)
+}
+
+// ── Shared AI-summary-model status ──
+
+/**
+ * Whether the shared AI summary model is configured, read from the live server
+ * config so the row's status pill updates as soon as the base URL is saved
+ * (patchConfig reloads the config, which flows back through this ref).
+ */
+const summaryModelConfigured = computed(() => isSummaryModelConfigured(serverConfig.value))
+
+/** Status pill for a row, or undefined when the row does not opt in. */
+function resolveSummaryModelStatus(item: ItemSpec): 'configured' | 'unconfigured' | undefined {
+  if (!item.showSummaryModelStatus) return undefined
+  return summaryModelConfigured.value ? 'configured' : 'unconfigured'
 }
 
 // ── Sub-page panel (data-driven) ──
@@ -375,9 +392,9 @@ function getItemValue(item: ItemSpec): unknown {
   if ((item as ItemSpec & { modelValue?: unknown }).modelValue !== undefined && item.source === 'local' && item.type === 'info') {
     return (item as ItemSpec & { modelValue?: unknown }).modelValue
   }
-  // The scale slider shows the factor actually in effect, not the stored
-  // manual value: with auto on the stored value is ignored, so displaying it
-  // would read as a bug ("200% applied but the slider says 100%").
+  // Route the slider through the resolver rather than the raw stored value, so
+  // an off-grid or out-of-range legacy value (e.g. 0.82) displays the same
+  // number the applier uses and the thumb lands on the matching step.
   if (item.key === 'uiScale') return getEffectiveUIScale()
   if (item.key === 'serverVersion') {
     return serverConfig.value?.version ?? '-'
@@ -392,10 +409,10 @@ function getItemValue(item: ItemSpec): unknown {
 }
 
 /**
- * Widen the scale slider's track when the auto factor exceeds the manual
- * range's ceiling (auto caps at 200%, the slider at 150%). Without this the
- * disabled thumb would pin to the right edge while the label read "200%",
- * showing a position that does not match the value.
+ * Widen the scale slider's track when the stored factor exceeds the slider's
+ * own ceiling (auto fit caps at 200%, the slider at 150%). Without this the
+ * thumb would pin to the right edge while the label read "200%", showing a
+ * position that does not match the value.
  */
 function getItemMax(item: ItemSpec): number | undefined {
   if (item.key === 'uiScale' && item.max !== undefined) {
@@ -408,8 +425,8 @@ function getItemMax(item: ItemSpec): number | undefined {
  * Gray out a flat item when its `disableUnless` condition is unmet.
  *
  * Mirrors SettingsGroupPanel's isFieldDisabled. The value resolver is the same
- * one used for visibility, so a condition on a local key (e.g. uiScaleAuto)
- * reads the live config rather than the server snapshot.
+ * one used for visibility, so a condition on a local key reads the live config
+ * rather than the server snapshot.
  */
 function getItemDisabled(item: ItemSpec): boolean {
   if (!item.disableUnless) return false
@@ -484,6 +501,12 @@ function handleClick(item: ItemSpec) {
   }
   if (item.key === 'checkUpgrade') {
     upgradeDialogRef.value?.show()
+  }
+  if (item.key === 'uiScaleAutoFit') {
+    // Computes the factor once from the current screen and stores it, so the
+    // scale becomes a stable value the slider below can then tweak.
+    const factor = autoFitUIScale()
+    toast.show(t('settings.items.uiScaleAutoFitDone', { pct: Math.round(factor * 100) }), { icon: '✅', type: 'success', duration: 2500 })
   }
 }
 

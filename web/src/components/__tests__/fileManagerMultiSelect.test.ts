@@ -595,7 +595,7 @@ describe('FileManagerContent — more menu and upload', () => {
 
   it('upload progress bar is not visible when not uploading', () => {
     const wrapper = mountComponent()
-    expect(wrapper.find('.dir-upload-progress').exists()).toBe(false)
+    expect(wrapper.find('.transfer-progress').exists()).toBe(false)
   })
 
   it('hidden file input exists with multiple attribute', () => {

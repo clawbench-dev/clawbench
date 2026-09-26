@@ -60,7 +60,7 @@ const {
   },
   SessionListHeaderStub: {
     name: 'SessionListHeader',
-    template: '<div class="header-stub"><slot name="actions" /></div>',
+    template: '<div class="header-stub"><slot name="actions" /><slot name="actions-end" /></div>',
   },
 }))
 

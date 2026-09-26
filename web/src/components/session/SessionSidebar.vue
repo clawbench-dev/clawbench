@@ -20,6 +20,10 @@
             <button v-if="hasAnySharedSession" class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
               <MessageSquareShare :size="16" />
             </button>
+          </template>
+          <!-- Unpin sits in the trailing slot so it is the right-most control in
+               the header, after search/create/refresh. -->
+          <template #actions-end>
             <button class="header-action-btn sidebar-pin-btn is-active" @click.stop="$emit('close')" :title="t('session.unpinToSidebar')">
               <PanelRight :size="16" />
             </button>

@@ -297,6 +297,25 @@ describe('SettingsAgentDetail', () => {
       expect(options.map(o => o.sublabel)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
     })
 
+    it('renders a JSON-shaped wire id as provider/model, not raw JSON', () => {
+      // DeepSeek Harness identifies a model by a JSON-stringified pair; the id
+      // must stay untouched (it is the wire value) but the sublabel must be
+      // readable rather than a JSON blob.
+      const wrapper = mountDetail({
+        models: [
+          { id: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', default: true },
+        ],
+      })
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = items.find((it: any) => it.props('label') === 'Preferred Model')
+
+      const options = item!.props('options') as Array<{ label: string; value: string; sublabel?: string }>
+      // The value (what gets sent to the agent) is unchanged...
+      expect(options[0].value).toBe('["deepseek-official","deepseek-v4-pro"]')
+      // ...while the sublabel is the readable form.
+      expect(options[0].sublabel).toBe('deepseek-official/deepseek-v4-pro')
+    })
+
     it('omits the sublabel when the display name already is the id', () => {
       const wrapper = mountDetail({
         models: [{ id: 'gpt-5.1-codex', name: 'gpt-5.1-codex', default: true }],

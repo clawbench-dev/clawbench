@@ -33,38 +33,18 @@
       </div>
       <template v-else>
         <div class="panel-list" ref="listRef">
-          <div
+          <!-- Row rendering + styles live in MessageIndexRow so the share TOC
+               and this drawer can never drift apart. -->
+          <MessageIndexRow
             v-for="(msg, idx) in filteredMessages"
             :key="msg.id || idx"
-            class="msg-item"
-            :class="{
-              active: msg.id === activeId,
-              'msg-item-active': listNav.activeIndex.value === idx,
-              'msg-item--assistant': msg.role === 'assistant',
-            }"
-            :aria-current="msg.id === activeId || undefined"
-            tabindex="0"
-            role="button"
-            @click="$emit('select', msg)"
-            @keydown.enter="$emit('select', msg)"
-          >
-            <span class="msg-node">
-              <span class="msg-index">{{ msgIndex(msg) }}</span>
-            </span>
-            <div class="msg-body">
-              <span
-                class="msg-role-tag"
-                :class="msg.role === 'assistant' ? 'role-assistant' : 'role-user'"
-                :title="roleLabel(msg)"
-                :aria-label="roleLabel(msg)"
-              >
-                <Bot v-if="msg.role === 'assistant'" :size="12" />
-                <User v-else :size="12" />
-              </span>
-              <span class="msg-text" :class="{ 'msg-text--muted': isPlaceholder(msg) }" v-html="rowHighlight(msg)"></span>
-              <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
-            </div>
-          </div>
+            :msg="msg"
+            :index="msgIndex(msg)"
+            :active="msg.id === activeId"
+            :nav-active="listNav.activeIndex.value === idx"
+            :search-query="searchQuery"
+            @select="$emit('select', $event)"
+          />
         </div>
       </template>
     </div>
@@ -73,15 +53,14 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { Bot, MessagesSquare, User } from 'lucide-vue-next'
-import { formatIndexMsg, matchIndexMsg, assistantIndexText } from '@/utils/userMsgIndexUtils.ts'
-import { highlightText } from '@/utils/searchUtils'
+import { MessagesSquare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
+import { matchIndexMsg } from '@/utils/userMsgIndexUtils.ts'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
-import { formatRelativeTime } from '@/utils/format.ts'
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 
 const { t } = useI18n()
@@ -125,31 +104,6 @@ const msgOrdinal = computed(() => {
 
 function msgIndex(msg) {
   return (msgOrdinal.value.get(msg) ?? 0) + 1
-}
-
-function truncateText(msg) {
-  return formatIndexMsg(msg, rowLabels.value)
-}
-
-/** Whether a row renders its "no text" placeholder (dimmed styling). */
-function isPlaceholder(msg) {
-  return msg.role === 'assistant' && !assistantIndexText(msg)
-}
-
-/**
- * The role chip shows only an icon, so the label lives in title/aria-label —
- * otherwise the role would be invisible to screen readers and to anyone who
- * cannot tell the two glyphs apart.
- */
-function roleLabel(msg) {
-  return msg.role === 'assistant'
-    ? t('chat.messageList.conversationIndexRoleAssistant')
-    : t('chat.messageList.conversationIndexRoleUser')
-}
-
-/** Row display text with the active query's matches wrapped in <mark>. */
-function rowHighlight(msg) {
-  return highlightText(truncateText(msg), searchQuery.value)
 }
 
 // ── Keyboard ↑/↓ + Enter navigation over the message index ──
@@ -301,212 +255,5 @@ onUnmounted(() => {
   color: var(--text-muted);
   line-height: var(--line-height-normal);
   max-width: 260px;
-}
-
-/* ── Message items ──
-   Each row is exactly ONE line: the role chip, the (ellipsised) preview and
-   the timestamp sit side by side. `--rail-punch` is the row's own opaque
-   background, used by the node to mask the rail running behind it — it must
-   track every row background below, or the node shows a mismatched halo. */
-.msg-item {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-6);
-  padding: 8px var(--space-4) 8px 12px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  transition: background var(--duration-base) ease;
-  -webkit-tap-highlight-color: transparent;
-  --rail-punch: var(--bg-secondary);
-}
-
-/* Timeline rail — one continuous 2px line through the node centres. Each row
-   draws a SOLID segment so consecutive rows join seamlessly (a per-row gradient
-   would fade the line at every row boundary, which reads as a broken rail).
-   Only the first/last rows are trimmed, so the rail starts and ends on a node
-   instead of dangling past the list. */
-.msg-item::before {
-  content: '';
-  position: absolute;
-  left: 22px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: color-mix(in srgb, var(--accent-color) 26%, transparent);
-}
-
-.msg-item:first-child::before {
-  top: 50%;
-}
-
-.msg-item:last-child::before {
-  bottom: 50%;
-}
-
-/* A lone row has no rail to draw between nodes. */
-.msg-item:first-child:last-child::before {
-  display: none;
-}
-
-@media (hover: hover) {
-  .msg-item:hover {
-    border-radius: 0;
-    --rail-punch: color-mix(in srgb, var(--text-primary) 5%, var(--bg-secondary));
-    background: var(--rail-punch);
-  }
-  .msg-item:hover .msg-node {
-    background: color-mix(in srgb, var(--accent-color) 16%, var(--bg-secondary));
-    border-color: color-mix(in srgb, var(--accent-color) 34%, transparent);
-  }
-}
-
-.msg-item:active {
-  opacity: var(--opacity-soft);
-}
-
-.msg-item.active {
-  border-radius: 0;
-  --rail-punch: color-mix(in srgb, var(--accent-color) 10%, var(--bg-secondary));
-  background: var(--rail-punch);
-  box-shadow: inset 3px 0 0 var(--accent-color);
-}
-
-.msg-item-active {
-  --rail-punch: color-mix(in srgb, var(--text-primary) 7%, var(--bg-secondary));
-  background: var(--rail-punch);
-}
-
-/* ── Timeline node (number badge) ── */
-.msg-node {
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--bg-secondary);
-  border: 1.5px solid color-mix(in srgb, var(--text-muted) 45%, transparent);
-  box-shadow: 0 0 0 3px var(--rail-punch);
-  transition: background var(--duration-base), border-color var(--duration-base), color var(--duration-base);
-}
-
-.msg-item.active .msg-node {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px var(--rail-punch);
-}
-
-.msg-index {
-  font-size: 10px;
-  font-weight: var(--font-weight-bold);
-  color: var(--text-secondary);
-  line-height: 1;
-  transition: color var(--duration-base);
-}
-
-.msg-item.active .msg-index {
-  color: #fff;
-}
-
-.msg-item.active .msg-text {
-  color: var(--accent-color, #0066cc);
-}
-
-/* ── Message body (single line: role chip · preview · time) ── */
-.msg-body {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex: 1;
-  min-width: 0;
-}
-
-/* Role chip: an icon-only square, sized to match the timeline node so the two
-   columns of the row line up. The role name lives in title/aria-label. */
-.msg-role-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border-radius: var(--radius-sm);
-  border: 1px solid transparent;
-}
-
-.msg-role-tag.role-user {
-  color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent-color) 24%, transparent);
-}
-
-.msg-role-tag.role-assistant {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--text-secondary) 24%, transparent);
-}
-
-/* The row's only flexible element: everything past one line is clipped with an
-   ellipsis, so every row keeps the same height regardless of message length. */
-.msg-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-  line-height: var(--line-height-normal);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Placeholder rows (an assistant turn with no text) read as secondary. */
-.msg-text--muted {
-  color: var(--text-muted);
-  font-style: italic;
-}
-
-/* Assistant rows use a lighter node outline so the two roles are
-   distinguishable even when the row is not the active one. */
-.msg-item--assistant .msg-node {
-  border-color: color-mix(in srgb, var(--text-muted) 28%, transparent);
-}
-
-.msg-text :deep(mark) {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
-  color: inherit;
-  border-radius: var(--radius-xs);
-  padding: 0 1px;
-}
-
-.msg-time {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  flex-shrink: 0;
-  font-size: 10.5px;
-  color: var(--text-muted, #999);
-  line-height: 1;
-  letter-spacing: 0.2px;
-}
-
-.msg-time::before {
-  content: '';
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--border-color);
-}
-</style>
-
-<style>
-/* Dark theme override — non-scoped for the [data-theme] selector. Softer mark
-   fill keeps highlighted query text readable on dark backgrounds. */
-[data-theme-base="dark"] .msg-text mark {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
-  color: inherit;
 }
 </style>

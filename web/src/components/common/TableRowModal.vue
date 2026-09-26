@@ -158,8 +158,11 @@ async function handleValueClick(event) {
     return
   }
 
-  // 6. File-open button or path text
-  const fileBtn = target.closest('.chat-file-open-btn') || target.closest('.chat-file-path')
+  // 6. File-open button or path text. Inert paths (verified missing / glob
+  // patterns, data-path-type="none") keep their text but must not be opened —
+  // doing so only toasted "File not found" (issue #501).
+  const fileBtn = target.closest('.chat-file-open-btn')
+    || target.closest('.chat-file-path:not([data-path-type="none"])')
   if (fileBtn) {
     event.preventDefault()
     event.stopPropagation()

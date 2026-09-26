@@ -332,6 +332,33 @@ func TestServeConfig_Patch_AutoContinue(t *testing.T) {
 	assert.Equal(t, -1, model.ChatAutoContinueMaxRetries)
 }
 
+// The auto-rename toggle must survive a PATCH round trip: in
+// PatchableConfigPaths but missing from applyConfigPatch means the PATCH is
+// accepted, written to config.yaml, and then never reflected in ConfigInstance
+// — the UI toggle would silently snap back.
+func TestServeConfig_Patch_AutoRename(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.ChatAutoRenameEnabled = false
+	t.Cleanup(func() { model.ChatAutoRenameEnabled = false })
+
+	body := `{"chat":{"auto_rename_enabled":true}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.Chat.AutoRenameEnabled,
+		"auto_rename_enabled must be applied to ConfigInstance")
+	assert.True(t, model.ChatAutoRenameEnabled,
+		"applyHotReloadGlobals must sync model.ChatAutoRenameEnabled")
+	// It is a hot-reload field: no restart may be requested.
+	assert.NotContains(t, w.Body.String(), `"needs_restart":true`)
+}
+
 // Retry counts below the -1 sentinel are unrepresentable and must be rejected
 // rather than stored (they would read as "unlimited" by accident).
 func TestServeConfig_Patch_AutoContinueRetriesBelowSentinel(t *testing.T) {
@@ -2939,6 +2966,28 @@ func TestServeConfig_Patch_WallpaperModeAccepted(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Equal(t, "bing", model.ConfigInstance.Appearance.WallpaperMode)
+}
+
+func TestServeConfig_Patch_WallpaperModeWaveAccepted(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	origDataDir := model.DataDir
+	model.DataDir = t.TempDir()
+	defer func() { model.DataDir = origDataDir }()
+
+	model.ConfigInstance = model.Config{}
+
+	// PATCH is a second write path to the same field as POST
+	// /api/theme/wallpaper; both must accept the animated wave.
+	body := `{"appearance":{"wallpaper_mode":"wave"}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "wave", model.ConfigInstance.Appearance.WallpaperMode)
 }
 
 func TestServeConfig_Patch_WallpaperModeEnumValidated(t *testing.T) {

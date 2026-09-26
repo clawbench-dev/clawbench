@@ -372,6 +372,69 @@ describe('useFileUpload', () => {
       expect(upload.dirUploadDone.value).toBe(1)
     })
 
+    it('batch progress never goes backwards across file boundaries', async () => {
+      // Regression: each file's own 0-100 was written straight into the batch
+      // ref, so a 3-file upload produced [50,100,50,100,50,100] — the bar
+      // restarted at every file and read as "stuck / jumping back".
+      const samples: number[] = []
+
+      xhrSendHandler = (xhr) => {
+        const emit = (loaded: number, total: number) =>
+          xhr.upload.onprogress?.({ lengthComputable: true, loaded, total })
+        emit(50, 100)
+        emit(100, 100)
+        respondSuccess(xhr, 'dir/f.txt')
+      }
+
+      const upload = useFileUpload()
+      // 'sync' so every assignment is captured, not just the settled value.
+      const { watch } = await import('vue')
+      const stop = watch(upload.dirUploadProgress, (v) => samples.push(v), { flush: 'sync' })
+
+      const files = [makeFile('a.txt', 100), makeFile('b.txt', 100), makeFile('c.txt', 100)]
+      await upload.handleFileDropToDir(files, '/dir')
+      stop()
+
+      // Drop the terminal reset (finishDirUpload zeroes the ref to hide the
+      // bar); the samples before it are the visible sequence.
+      const visible = samples.filter((v, i) => !(i === samples.length - 1 && v === 0))
+
+      // Monotonically non-decreasing: no restart at any file boundary.
+      for (let i = 1; i < visible.length; i++) {
+        expect(visible[i], `progress went backwards: ${JSON.stringify(samples)}`)
+          .toBeGreaterThanOrEqual(visible[i - 1])
+      }
+      // It advances across the batch and reaches 100% before finishing.
+      expect(Math.max(...visible)).toBe(100)
+      expect(upload.dirUploadProgress.value).toBe(0) // reset on finish
+    })
+
+    it('weights progress by bytes, not by file count', async () => {
+      // Two files of 100 and 300 bytes. Completing the small one must move the
+      // bar by 25% (100/400), not by 50% as a per-file count would.
+      const samples: number[] = []
+      let n = 0
+
+      xhrSendHandler = (xhr) => {
+        n++
+        const size = n === 1 ? 100 : 300
+        xhr.upload.onprogress?.({ lengthComputable: true, loaded: size, total: size })
+        respondSuccess(xhr, 'dir/f.bin')
+      }
+
+      const upload = useFileUpload()
+      const { watch } = await import('vue')
+      const stop = watch(upload.dirUploadProgress, (v) => samples.push(v), { flush: 'sync' })
+
+      await upload.handleFileDropToDir(
+        [makeFile('small.bin', 100), makeFile('big.bin', 300)], '/dir'
+      )
+      stop()
+
+      expect(samples).toContain(25)
+      expect(Math.max(...samples)).toBe(100)
+    })
+
     it('multiple files in dir upload', async () => {
       let callCount = 0
       xhrSendHandler = (xhr) => {
@@ -938,6 +1001,48 @@ describe('useFileUpload', () => {
       expect(upload.dirUploading.value).toBe(false)
       expect(upload.dirUploadTotal.value).toBe(2)
       expect(upload.dirUploadDone.value).toBe(2)
+    })
+
+    it('tree download progress is monotonic across files', async () => {
+      // Same defect as the upload path: each file's own percentage was written
+      // into the batch ref, so the bar restarted at every file.
+      const root = fakeRootHandle()
+      ;(globalThis as any).showDirectoryPicker = vi.fn().mockResolvedValue(root)
+
+      const fetchMock = vi.fn().mockImplementation((url: string) => {
+        if (url.includes('/api/file/list-tree')) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              files: [
+                { rel: 'a.txt', size: 4 },
+                { rel: 'b.txt', size: 4 },
+                { rel: 'c.txt', size: 4 },
+              ],
+            }),
+          })
+        }
+        if (url.includes('/api/fs/raw/')) {
+          return Promise.resolve({ ok: true, body: fakeBody([1, 2, 3, 4]) })
+        }
+        return Promise.resolve({ ok: false })
+      })
+      vi.stubGlobal('fetch', fetchMock)
+
+      const samples: number[] = []
+      const upload = useFileUpload()
+      const { watch } = await import('vue')
+      const stop = watch(upload.dirUploadProgress, (v) => samples.push(v), { flush: 'sync' })
+
+      await upload.downloadDirAsTree('src')
+      stop()
+
+      const visible = samples.filter((v, i) => !(i === samples.length - 1 && v === 0))
+      for (let i = 1; i < visible.length; i++) {
+        expect(visible[i], `progress went backwards: ${JSON.stringify(samples)}`)
+          .toBeGreaterThanOrEqual(visible[i - 1])
+      }
+      expect(Math.max(...visible)).toBe(100)
     })
 
     it('shows an error and does nothing when showDirectoryPicker is unavailable', async () => {

@@ -33,7 +33,6 @@ const localConfig = reactive<Record<string, any>>({
   terminalFontSize: 12,
   androidLogCapture: false,
   uiScale: 1,
-  uiScaleAuto: true,
   notificationSound: true,
   headerShortcutTips: true,
 })
@@ -61,6 +60,7 @@ const mockAgents = [
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   getEffectiveUIScale: () => mockEffectiveUIScale.value,
+  autoFitUIScale: mockAutoFitUIScale,
   useSettingsConfig: () => ({
     localConfig,
     serverConfig,
@@ -112,10 +112,14 @@ vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
-// The scale slider displays the factor actually in effect (auto-derived or
-// manual). Stubbed as a plain holder so cases can control it without depending
-// on the real screen height.
+// The scale slider displays the factor actually in effect. Stubbed as a plain
+// holder so cases can control it without depending on the real screen height.
 const mockEffectiveUIScale = vi.hoisted(() => ({ value: 1 }))
+
+// The auto-fit button. The REAL computation (screen height → factor → stored
+// value) is covered in useSettingsConfig.test.ts against the unmocked module;
+// here we only pin that clicking the row reaches this path at all.
+const mockAutoFitUIScale = vi.hoisted(() => vi.fn(() => 1.5))
 
 const mockCanInstallPwa = ref(false)
 const mockIsIOS = ref(false)
@@ -208,8 +212,9 @@ const i18n = createI18n({
           localeDesc: '语言',
           uiScale: '界面缩放',
           uiScaleDesc: '界面缩放',
-          uiScaleAuto: '自动缩放',
-          uiScaleAutoDesc: '自动缩放',
+          uiScaleAutoFit: '自动适配',
+          uiScaleAutoFitDesc: '自动适配',
+          uiScaleAutoFitDone: '已按当前屏幕适配为 {pct}%',
           headerShortcutTips: '顶栏快捷键提示',
           headerShortcutTipsDesc: '顶栏快捷键提示',
           ttsEngine: 'TTS引擎',
@@ -354,6 +359,8 @@ const i18n = createI18n({
           // aiSummary nav
           aiSummaryRef: 'AI摘要',
           aiSummaryRefDesc: 'AI摘要',
+          summaryModelConfigured: '已配置',
+          summaryModelNotConfigured: '未配置',
         },
         dialog: {
           changePasswordTitle: '修改密码',
@@ -408,10 +415,11 @@ describe('SettingsCategory', () => {
     vi.clearAllMocks()
     // Reset app mode: individual cases flip it to cover the app-only rows.
     mockIsAppMode.value = false
-    // Reset the scale-related state: cases override it to cover auto/manual.
-    localConfig.uiScaleAuto = true
+    // Reset the scale-related state: cases override the effective factor.
     localConfig.uiScale = 1
     mockEffectiveUIScale.value = 1
+    mockAutoFitUIScale.mockReset()
+    mockAutoFitUIScale.mockReturnValue(1.5)
     mockDialogConfirm.mockResolvedValue(false)
     mockGetServerValueWithDefault.mockImplementation((key: string) => {
       // Simple flat-dot-path resolver against serverConfig
@@ -498,6 +506,51 @@ describe('SettingsCategory', () => {
       expect(item).toBeTruthy()
       // session.max_count is hot-reloadable via applyHotReloadGlobals, no restart needed
       expect(item!.props().needsRestart).toBe(false)
+    })
+  })
+
+  // ─── Shared AI-summary-model status ─────────────────────
+  describe('AI summary model status', () => {
+    /** The three rows that jump to the aiSummary panel all share one label. */
+    function jumpRows(wrapper: ReturnType<typeof mountCategory>) {
+      return wrapper
+        .findAllComponents({ name: 'SettingsItem' })
+        .filter(i => i.props().label === 'AI摘要')
+    }
+
+    afterEach(() => {
+      delete (serverConfig.value as Record<string, unknown>).ai_summary
+    })
+
+    it('marks the jump rows unconfigured when the base URL is unset', () => {
+      delete (serverConfig.value as Record<string, unknown>).ai_summary
+      const rows = jumpRows(mountCategory('chat'))
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(row.props().summaryModelStatus).toBe('unconfigured')
+      }
+    })
+
+    it('marks the jump rows configured once the base URL is set', () => {
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
+        api: { base_url: 'https://summary.example.com' },
+      }
+      const rows = jumpRows(mountCategory('chat'))
+      expect(rows.length).toBeGreaterThan(0)
+      for (const row of rows) {
+        expect(row.props().summaryModelStatus).toBe('configured')
+      }
+    })
+
+    it('leaves rows without the opt-in flag without a status', () => {
+      ;(serverConfig.value as Record<string, unknown>).ai_summary = {
+        api: { base_url: 'https://summary.example.com' },
+      }
+      const wrapper = mountCategory('chat')
+      const plain = wrapper
+        .findAllComponents({ name: 'SettingsItem' })
+        .find(i => i.props().label === '最大会话数')
+      expect(plain!.props().summaryModelStatus).toBeUndefined()
     })
   })
 
@@ -602,37 +655,35 @@ describe('SettingsCategory', () => {
       expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
     })
 
-    it('renders the auto-scale switch', () => {
+    it('renders the auto-fit row as an action, not a switch', () => {
       const wrapper = mountCategory('appearance')
       const item = wrapper.findAllComponents({ name: 'SettingsItem' })
-        .find(i => i.props().label === '自动缩放')
+        .find(i => i.props().label === '自动适配')
       expect(item).toBeTruthy()
-      expect(item!.props().type).toBe('switch')
+      // A switch would re-derive the factor on every applier call (the jumping
+      // this replaced); an action only runs when clicked.
+      expect(item!.props().type).toBe('action')
     })
 
-    it('saves the auto-scale toggle locally', async () => {
+    it('clicking auto-fit runs the one-shot fit', async () => {
+      mockAutoFitUIScale.mockReturnValue(1.5)
       const wrapper = mountCategory('appearance')
       const item = wrapper.findAllComponents({ name: 'SettingsItem' })
-        .find(i => i.props().label === '自动缩放')
+        .find(i => i.props().label === '自动适配')
       expect(item).toBeTruthy()
 
-      await item!.vm.$emit('update:modelValue', false)
+      await item!.vm.$emit('click')
       await wrapper.vm.$nextTick()
 
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('uiScaleAuto', false)
+      expect(mockAutoFitUIScale).toHaveBeenCalled()
+      // The row must not write the setting itself — autoFitUIScale owns the
+      // compute + persist so there is a single source of truth.
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('uiScaleAutoFit', expect.anything())
     })
 
-    it('disables the scale slider while auto-scale is on', () => {
-      localConfig.uiScaleAuto = true
-      const wrapper = mountCategory('appearance')
-      const item = wrapper.findAllComponents({ name: 'SettingsItem' })
-        .find(i => i.props().label === '界面缩放')
-      expect(item).toBeTruthy()
-      expect(item!.props().disabled).toBe(true)
-    })
-
-    it('enables the scale slider once auto-scale is off', () => {
-      localConfig.uiScaleAuto = false
+    it('keeps the scale slider enabled', () => {
+      // It used to be disabled while the auto switch was on. Now the auto-fit
+      // button writes INTO this slider, so it must always be usable.
       const wrapper = mountCategory('appearance')
       const item = wrapper.findAllComponents({ name: 'SettingsItem' })
         .find(i => i.props().label === '界面缩放')
@@ -640,10 +691,7 @@ describe('SettingsCategory', () => {
       expect(item!.props().disabled).toBe(false)
     })
 
-    it('shows the effective factor on the slider, not the stored manual value', () => {
-      // With auto on the stored manual value is ignored, so displaying it
-      // would read as a bug (200% applied but the slider says 100%).
-      localConfig.uiScaleAuto = true
+    it('shows the effective factor on the slider', () => {
       localConfig.uiScale = 1
       mockEffectiveUIScale.value = 2
       const wrapper = mountCategory('appearance')
@@ -652,11 +700,10 @@ describe('SettingsCategory', () => {
       expect(item!.props().modelValue).toBe(2)
     })
 
-    it('widens the slider max when the auto factor exceeds the manual ceiling', () => {
-      // Auto caps at 200% while the manual track ends at 150%; without the
-      // widening the disabled thumb would pin to the edge and disagree with
-      // the displayed value.
-      localConfig.uiScaleAuto = true
+    it('widens the slider max when the stored factor exceeds the slider ceiling', () => {
+      // Auto fit caps at 200% while the slider track ends at 150%; without the
+      // widening the thumb would pin to the edge and disagree with the
+      // displayed value.
       mockEffectiveUIScale.value = 2
       const wrapper = mountCategory('appearance')
       const item = wrapper.findAllComponents({ name: 'SettingsItem' })
@@ -664,11 +711,11 @@ describe('SettingsCategory', () => {
       expect(item!.props().max).toBe(2)
     })
 
-    it('hides the auto-scale switch inside the Android app', () => {
+    it('hides the auto-fit row inside the Android app', () => {
       mockIsAppMode.value = true
       const wrapper = mountCategory('appearance')
       const labels = wrapper.findAllComponents({ name: 'SettingsItem' }).map(i => i.props().label)
-      expect(labels).not.toContain('自动缩放')
+      expect(labels).not.toContain('自动适配')
       // The manual slider stays available — Android keeps its existing behaviour.
       expect(labels).toContain('界面缩放')
     })

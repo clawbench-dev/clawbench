@@ -12,6 +12,7 @@ import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 import { markCancelRequested, reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 import { addQueued, removeQueued, removeQueuedMany, getQueue } from '@/composables/useMessageQueue.ts'
+import { clearThinkingCache } from '@/composables/useThinkingContent.ts'
 
 const TAG = 'ChatStream'
 
@@ -581,6 +582,11 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'content_reset': {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { noteDroppedEvent('content_reset', 'no streaming placeholder'); return }
+        // The backend deletes this message's chat_thinking rows on content_reset
+        // (the failed Prompt's reasoning must not survive the retry), so the
+        // cached text for those think_ids is now a lie. Drop it: a lazy-load
+        // would otherwise serve reasoning from the attempt that was thrown away.
+        clearThinkingCache()
         dispatch({ type: 'ws_content_reset' })
         onRenderNeeded()
         break
@@ -609,7 +615,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'thinking_done': {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking_done', payload); noteDroppedEvent('thinking_done', 'buffered until placeholder'); return }
-        dispatch({ type: 'ws_thinking_done' })
+        // Carry the parent so a sub-agent's completion closes ITS OWN thinking
+        // block (concurrent sub-agents interleave on the wire).
+        const doneData = payload as unknown as ThinkingEventData
+        dispatch({ type: 'ws_thinking_done', parentToolCallId: doneData.parent_tool_call_id })
         onRenderNeeded()
         break
       }

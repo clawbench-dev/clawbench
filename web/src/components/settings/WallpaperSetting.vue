@@ -48,13 +48,48 @@
           >
             {{ t('settings.items.wallpaperModeBing') }}
           </button>
+          <button
+            class="wallpaper-mode__btn"
+            :class="{ 'wallpaper-mode__btn--active': mode === 'wave' }"
+            :disabled="!enabled || busy"
+            @click.stop="onSelectMode('wave')"
+          >
+            {{ t('settings.items.wallpaperModeWave') }}
+          </button>
         </div>
       </div>
       <div class="settings-item__desc">{{ t('settings.items.wallpaperSourceDesc') }}</div>
     </div>
 
+    <!-- ── Animated wave section ───────────────────────────────── -->
+    <template v-if="mode === 'wave'">
+      <div class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperWaveSpeed') }}</span>
+          </div>
+        </div>
+        <div class="settings-item__right">
+          <span class="settings-item__slider-value">{{ waveSpeedDisplay }}</span>
+          <input
+            type="range"
+            class="settings-item__slider"
+            :value="waveSpeed"
+            min="10"
+            max="100"
+            step="1"
+            :disabled="!enabled"
+            @input="onWaveSpeedInput"
+            @click.stop
+          />
+          <button v-if="waveSpeed !== 50" class="settings-item__slider-reset" @click.stop="resetWaveSpeed" :title="t('settings.resetToDefault')">↺</button>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperWaveSpeedDesc') }}</div>
+      </div>
+    </template>
+
     <!-- ── Bing section ────────────────────────────────────────── -->
-    <template v-if="mode === 'bing'">
+    <template v-else-if="mode === 'bing'">
       <div class="settings-item" :class="{ 'settings-item--disabled': !enabled || busy }">
         <div class="settings-item__left">
           <div class="settings-item__text">
@@ -97,6 +132,10 @@
     </template>
 
     <!-- ── Local gallery section ───────────────────────────────── -->
+    <!-- Deliberately the final v-else, not `v-else-if="mode === 'local'"`:
+         an existing install that never picked a source has wallpaper_mode "",
+         which resolves to 'none'. The gallery must still render there — it is
+         how the user picks an image in the first place. -->
     <template v-else>
       <div class="settings-item" :class="{ 'settings-item--disabled': !enabled || busy }">
         <div class="settings-item__left">
@@ -155,7 +194,8 @@
     </template>
 
     <!-- ── Display options ─────────────────────────────────────── -->
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasActiveWallpaper }">
+    <!-- Panel opacity applies to any background, including the wave. -->
+    <div class="settings-item" :class="{ 'settings-item--disabled': !hasActiveBackground }">
       <div class="settings-item__left">
         <div class="settings-item__text">
           <span class="settings-item__label">{{ t('settings.items.wallpaperPanelOpacity') }}</span>
@@ -170,7 +210,7 @@
           min="0.5"
           max="1"
           step="0.01"
-          :disabled="!hasActiveWallpaper"
+          :disabled="!hasActiveBackground"
           @input="onOpacityInput"
           @click.stop
         />
@@ -179,7 +219,8 @@
       <div class="settings-item__desc">{{ t('settings.items.wallpaperPanelOpacityDesc') }}</div>
     </div>
 
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasActiveWallpaper }">
+    <!-- Blur and edge fade only affect an image; the wave has neither. -->
+    <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
       <div class="settings-item__left">
         <div class="settings-item__text">
           <span class="settings-item__label">{{ t('settings.items.wallpaperBlur') }}</span>
@@ -194,7 +235,7 @@
           min="0"
           max="60"
           step="1"
-          :disabled="!hasActiveWallpaper"
+          :disabled="!hasImageWallpaper"
           @input="onBlurInput"
           @click.stop
         />
@@ -203,19 +244,19 @@
       <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
     </div>
 
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasActiveWallpaper }">
+    <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
       <div class="settings-item__left">
         <div class="settings-item__text">
           <span class="settings-item__label">{{ t('settings.items.wallpaperEdgeFade') }}</span>
         </div>
       </div>
       <div class="settings-item__right">
-        <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasActiveWallpaper }">
+        <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasImageWallpaper }">
           <input
             type="checkbox"
             class="settings-item__switch-input"
             :checked="!!wallpaperEdgeFade"
-            :disabled="!hasActiveWallpaper"
+            :disabled="!hasImageWallpaper"
             @change="onEdgeFadeChange"
             @click.stop
           />
@@ -247,6 +288,7 @@ import {
   resolveWallpaperState,
   resolveWallpaperMode,
   resolveWallpaperEnabled,
+  isWaveActive,
   resolveGalleryItems,
   resolveGallerySelected,
   resolveBingStatus,
@@ -287,14 +329,25 @@ const appearance = computed(() => serverConfig.value?.appearance as Record<strin
 const state = computed(() => resolveWallpaperState(appearance.value))
 const enabled = computed(() => resolveWallpaperEnabled(appearance.value))
 const mode = computed<WallpaperMode>(() => resolveWallpaperMode(appearance.value))
+const waveActive = computed(() => isWaveActive(appearance.value))
 const galleryItems = computed(() => resolveGalleryItems(appearance.value))
 const selected = computed(() => resolveGallerySelected(appearance.value))
 const bingStatus = computed(() => resolveBingStatus(appearance.value))
 
 const atLimit = computed(() => galleryItems.value.length >= maxGalleryItems)
 
-/** Whether any wallpaper is actually displayed (drives the display rows). */
-const hasActiveWallpaper = computed(() => state.value === 'set' && enabled.value)
+/**
+ * Whether an image wallpaper is displayed. Drives the rows that only make sense
+ * for an image (blur, edge fade) — the wave has neither, and leaving them
+ * enabled there would let the user drag a slider with no visible effect.
+ */
+const hasImageWallpaper = computed(() => state.value === 'set' && enabled.value)
+
+/**
+ * Whether ANY background is displayed (image or wave). Drives the rows that
+ * apply to both — panel translucency is meaningful for the wave too.
+ */
+const hasActiveBackground = computed(() => hasImageWallpaper.value || (waveActive.value && enabled.value))
 
 /** Panel opacity from config (0.5..1.0). */
 const panelOpacity = computed(() => resolvePanelOpacity(appearance.value))
@@ -305,12 +358,18 @@ const wallpaperBlur = computed(() => Number(localConfig.wallpaperBlur || 0))
 const wallpaperEdgeFade = computed(() => !!localConfig.wallpaperEdgeFade)
 const blurDisplay = computed(() => (wallpaperBlur.value > 0 ? `${wallpaperBlur.value}px` : '0'))
 
+/** Wave animation speed (local pref, 10–100 where 50 = 1x). */
+const waveSpeed = computed(() => Number(localConfig.wallpaperWaveSpeed ?? 50))
+const waveSpeedDisplay = computed(() => `${(waveSpeed.value / 50).toFixed(2)}×`)
+
 /** Re-apply the wallpaper effect with the current theme. */
 function refreshEffect() {
   applyWallpaper(
     (appearance.value?.active_file as string) ?? '',
     resolvePanelOpacity(appearance.value),
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
+    false,
+    isWaveActive(appearance.value),
   )
 }
 
@@ -409,7 +468,7 @@ async function onSelectItem(name: string) {
   }
 }
 
-async function onSelectMode(next: 'local' | 'bing') {
+async function onSelectMode(next: 'local' | 'bing' | 'wave') {
   if (next === mode.value) return
   busy.value = true
   error.value = ''
@@ -575,8 +634,26 @@ function onEdgeFadeChange(e: Event) {
   setLocalConfig('wallpaperEdgeFade', checked)
 }
 
+/** Wave speed: 10–100 where 50 is 1x. Live preview + debounced persist. */
+function onWaveSpeedInput(e: Event) {
+  const v = Number((e.target as HTMLInputElement).value)
+  const clamped = Math.min(100, Math.max(10, Math.round(v)))
+  localConfig.wallpaperWaveSpeed = clamped // instant preview
+  if (waveSpeedSaveTimer) clearTimeout(waveSpeedSaveTimer)
+  waveSpeedSaveTimer = setTimeout(() => {
+    setLocalConfig('wallpaperWaveSpeed', clamped)
+  }, 250)
+}
+
+function resetWaveSpeed() {
+  localConfig.wallpaperWaveSpeed = 50
+  setLocalConfig('wallpaperWaveSpeed', 50)
+  if (waveSpeedSaveTimer) clearTimeout(waveSpeedSaveTimer)
+}
+
 let opacitySaveTimer: ReturnType<typeof setTimeout> | null = null
 let blurSaveTimer: ReturnType<typeof setTimeout> | null = null
+let waveSpeedSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 // Keep the scrim in sync when the theme changes while this panel is open.
 function onThemeChange() {
@@ -594,6 +671,7 @@ onUnmounted(() => {
   window.removeEventListener('clawbench-theme-change', onThemeChange)
   if (opacitySaveTimer) clearTimeout(opacitySaveTimer)
   if (blurSaveTimer) clearTimeout(blurSaveTimer)
+  if (waveSpeedSaveTimer) clearTimeout(waveSpeedSaveTimer)
 })
 </script>
 

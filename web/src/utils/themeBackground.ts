@@ -146,6 +146,11 @@ export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): s
  * `forceBust`     — when true, regenerate the image URL even if the file name is
  *                   unchanged. Pass after an upload/replace that reuses the same
  *                   file name (new bytes must bypass the immutable cache).
+ * `waveActive`    — when true, the animated wave is the background. It has no
+ *                   file, so `wallpaperFile` is empty, but the translucent
+ *                   panel surfaces must still be turned on. Defaults to false,
+ *                   which keeps every pre-existing 4-arg call behaving exactly
+ *                   as before.
  *
  * Maintains the shared file→URL cache (see resolveWallpaperUrl) and writes the
  * scrim/panel-alpha CSS variables + wallpaper-active class. Callers that bind
@@ -153,13 +158,21 @@ export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): s
  * variable is kept written here for compatibility but is no longer the
  * rendering source of truth.
  */
-export function applyWallpaper(wallpaperFile: string, panelOpacity: number, dark: boolean, forceBust = false): void {
+export function applyWallpaper(
+  wallpaperFile: string,
+  panelOpacity: number,
+  dark: boolean,
+  forceBust = false,
+  waveActive = false,
+): void {
   const el = document.documentElement
-  const active = !!wallpaperFile
+  const hasImage = !!wallpaperFile
+  // The scrim only makes sense over an image; the wave needs no darkening.
+  const active = hasImage || waveActive
   const url = resolveWallpaperUrl(wallpaperFile, forceBust)
 
   el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
-  el.style.setProperty('--wallpaper-scrim', active ? wallpaperScrim(dark) : 'transparent')
+  el.style.setProperty('--wallpaper-scrim', hasImage ? wallpaperScrim(dark) : 'transparent')
 
   const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.5, panelOpacity)) : 0.85
   // Store the panel opacity as a <percentage> so the CSS color-mix stops are
@@ -167,7 +180,7 @@ export function applyWallpaper(wallpaperFile: string, panelOpacity: number, dark
   el.style.setProperty('--panel-alpha', `${Math.round(alpha * 1000) / 10}%`)
 
   el.classList.toggle('wallpaper-active', active)
-  appLog.d('ThemeBg', `applyWallpaper file=${wallpaperFile || '(none)'} alpha=${alpha} dark=${dark} url=${url || 'none'}`)
+  appLog.d('ThemeBg', `applyWallpaper file=${wallpaperFile || '(none)'} wave=${waveActive} alpha=${alpha} dark=${dark} url=${url || 'none'}`)
 }
 
 /** Reset the cached image URL/file state (used when the wallpaper is removed). */
@@ -192,6 +205,15 @@ export function applyWallpaperScrim(dark: boolean): void {
  * exposes it as `active_file`, so the client reads that rather than
  * reimplementing the precedence.
  */
+/**
+ * Whether an *image* wallpaper is displayed, per the server's `active_file`.
+ *
+ * Careful with the name: `'unset'` means "no image file", NOT "no background".
+ * The animated wave (`wallpaper_mode: 'wave'`) is drawn on the client and has
+ * no file, so it reports `'unset'` here while still being a live background.
+ * Use isWaveActive() to detect that case, and resolveWallpaperMode() when you
+ * need to distinguish "no background at all" from "wave".
+ */
 export function resolveWallpaperState(appearance: Record<string, unknown> | undefined): WallpaperState {
   if (!appearance) return 'unknown'
   // Treat "key absent" as unknown rather than "no wallpaper", so the UI does
@@ -201,13 +223,24 @@ export function resolveWallpaperState(appearance: Record<string, unknown> | unde
 }
 
 /** Wallpaper source currently in effect. */
-export type WallpaperMode = 'none' | 'local' | 'bing'
+export type WallpaperMode = 'none' | 'local' | 'bing' | 'wave'
 
 /** Resolve the active wallpaper source from the server config. */
 export function resolveWallpaperMode(appearance: Record<string, unknown> | undefined): WallpaperMode {
   const mode = appearance?.wallpaper_mode
-  if (mode === 'local' || mode === 'bing') return mode
+  if (mode === 'local' || mode === 'bing' || mode === 'wave') return mode
   return 'none'
+}
+
+/**
+ * Whether the animated wave is currently the active background.
+ *
+ * The wave has no file, so this cannot be derived from `active_file` — it must
+ * read the mode. `enabled` still gates it, matching how the server clears
+ * `active_file` when the global wallpaper switch is off.
+ */
+export function isWaveActive(appearance: Record<string, unknown> | undefined): boolean {
+  return resolveWallpaperMode(appearance) === 'wave' && resolveWallpaperEnabled(appearance)
 }
 
 /** Whether the wallpaper layer is globally enabled (default: enabled). */

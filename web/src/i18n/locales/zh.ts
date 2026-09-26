@@ -46,6 +46,9 @@ export default {
   imageBlock: {
     view: '放大查看',
     openFile: '打开文件',
+    // 本地图片文件加载失败（/api/fs/raw|thumb 返回 404）时就地展示，避免只留一个
+    // 无提示的裂图占位（issue #501）。
+    loadFailed: '图片加载失败',
   },
   tableBlock: {
     label: '表格',
@@ -1272,6 +1275,8 @@ export default {
     },
   },
   file: {
+    /** Label for the aggregate upload progress bar. */
+    uploading: '上传中...',
     codePreview: {
       title: '代码预览',
       dragToMove: '拖动窗口',
@@ -1400,8 +1405,14 @@ export default {
       dirLoadFailed: '目录不存在或无法访问',
       dirRemoved: '当前目录已被移除',
       fileNotFound: '文件不存在',
+      // 路径含通配符（`src/*.go`、`**/*.ts`）时的提示：它是模式而非文件，
+      // 无法打开，标注出来说明链接为何不可点（issue #501）。
+      globPattern: '这是通配符模式，不是文件路径',
       fileNotFoundReturned: '文件已不存在，已返回来源页面',
       fileRemoved: '文件不存在，可能已被移除',
+      // 验证失效路径 chip 的 tooltip。与 `fileRemoved`（同时用作 toast）不同，
+      // 这条要说明可点击：点击按文件名在项目内搜索（issue #501 后续）。
+      fileRemovedSearchable: '此路径下未找到文件——点击可按文件名搜索',
       externalFile: '此文件位于项目目录之外',
       archiving: '正在打包 {n} 个文件...',
       archiveDone: '打包下载完成',
@@ -1546,6 +1557,12 @@ export default {
       wordGlobal: '在当前项目下',
       wordVerb: '搜索',
       scopeGlobal: '全局搜索',
+      // 验证失效的路径 chip：两个候选位置都不存在，但文件可能改名/移动到了
+      // 项目别处。点击按文件名搜索（issue #501 后续）。
+      inertHeading: '查找“{name}”',
+      inertHint: '该路径无法解析。请选择匹配的文件：',
+      inertNoResults: '项目中没有名为“{name}”的文件',
+      inertNoResultsHint: '它可能已被改名或移动。可到文件管理器中搜索。',
     },
     contentSearch: {
       title: '文件内容搜索',
@@ -1909,6 +1926,8 @@ export default {
     partial: '已上传 {ok} 项，{failed} 项失败: {error}',
     cancelled: '已取消上传',
     downloaded: '已下载 {count} 项',
+    downloadFailed: '下载失败',
+    downloadCancelled: '已取消下载',
     dirDownloadUnsupported: '当前浏览器不支持按文件树下载，请使用 Chrome/Edge 并开启 HTTPS 访问',
     dirDownloadFailed: '获取文件列表失败',
   },
@@ -2063,9 +2082,12 @@ export default {
       wallpaperEnable: '启用背景图',
       wallpaperEnableDesc: '关闭后不显示任何背景图，但图库与已选图片都会保留，可随时重新开启',
       wallpaperSource: '背景图来源',
-      wallpaperSourceDesc: '本地图库与 Bing 每日壁纸相互独立，同一时刻只有一个生效',
+      wallpaperSourceDesc: '三种来源相互独立，同一时刻只有一个生效',
       wallpaperModeLocal: '本地图库',
       wallpaperModeBing: 'Bing 每日',
+      wallpaperModeWave: '动态壁纸',
+      wallpaperWaveSpeed: '动画速度',
+      wallpaperWaveSpeedDesc: '波浪流动的快慢。由浏览器实时绘制，并跟随主题自动配色',
       wallpaperBingFollow: '自动跟随 Bing 每日壁纸',
       wallpaperBingFollowDesc: '服务器每天自动获取一次 Bing 每日壁纸并缓存，所有设备共用同一张；获取失败时继续使用上次成功的图片',
       wallpaperBingSync: '立即同步',
@@ -2210,8 +2232,9 @@ export default {
       localeEn: 'English',
       uiScale: '界面缩放',
       uiScaleDesc: '全局放大/缩小界面，效果等同浏览器缩放',
-      uiScaleAuto: '自动缩放',
-      uiScaleAutoDesc: '按屏幕分辨率自动放大界面（以 1080p 为基准，更高分辨率自动放大，最高 200%）；关闭后使用下方滑块手动调整',
+      uiScaleAutoFit: '自动适配',
+      uiScaleAutoFitDesc: '点击一次，按当前屏幕分辨率计算合适的缩放并写入下方滑块（以 1080p 为基准，最高 200%）；之后可随时用滑块微调',
+      uiScaleAutoFitDone: '已按当前屏幕适配为 {pct}%',
       headerShortcutTips: '顶栏快捷键提示',
       headerShortcutTipsDesc: '在顶部栏中段滚动展示快捷键使用方法（默认开启）',
       autoSpeech: '自动语音',
@@ -2381,8 +2404,10 @@ export default {
       summarizeApi: 'LLM摘要',
       aiSummarySection: 'AI 摘要模型',
       aiSummarySectionDesc: '共享的 AI 模型配置，用于语音摘要与推荐回复',
-      aiSummaryRef: '模型详情',
-      aiSummaryRefDesc: '前往「AI 摘要模型」配置 LLM 模型与 API',
+      aiSummaryRef: 'AI 摘要模型',
+      aiSummaryRefDesc: '用于推荐回复、自动命名与语音摘要；前往配置 LLM 模型与 API',
+      summaryModelConfigured: '已配置',
+      summaryModelNotConfigured: '未配置',
       aiSummaryApiHeader: 'AI 模型配置',
       aiSummaryModel: '模型名称',
       aiSummaryModelDesc: '模型名称，留空使用后端默认',
@@ -2405,6 +2430,9 @@ export default {
       chatAutoContinueEnabledDesc: '会话因进程崩溃、AI 无输出或后端报错而意外中断时，自动发送「继续」并接着跑，不论当时是否已产出部分内容。手动终止（含打断重发）的会话永不续接',
       chatAutoContinueMaxRetries: '最大重试次数',
       chatAutoContinueMaxRetriesDesc: '每个用户消息允许自动续接的次数。-1 表示不限（服务端仍有硬上限保护），0 表示不重试',
+      autoRenameSectionHeader: '自动命名',
+      chatAutoRenameEnabled: 'AI 自动命名会话',
+      chatAutoRenameEnabledDesc: '会话首次命名时，改为让 AI 摘要用户消息来生成标题（Fork 与继续会话会连同此前的用户消息一起总结）。需先在「AI 摘要模型」中配置模型；未配置或调用失败时，仍使用原来的本地标题',
       ttsSpeed: '语速',
       ttsSpeedDesc: '语音播放速率，1.0 为正常速度',
       ttsVoice: '语音',
@@ -2904,6 +2932,7 @@ export default {
     detected: '已安装',
     notDetected: '未安装',
     install: '安装',
+    detecting: '检测中...',
     rescan: '重新扫描',
     rescanning: '扫描中...',
     manualInstallHint: '请运行以下命令安装：',

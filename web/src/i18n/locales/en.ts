@@ -46,6 +46,10 @@ export default {
   imageBlock: {
     view: 'View image',
     openFile: 'Open file',
+    // Shown in place of an <img> whose local file could not be loaded (a 404
+    // from /api/fs/raw|thumb), so a missing file reads as a labelled gap
+    // instead of a silent broken-image glyph (issue #501).
+    loadFailed: 'Image failed to load',
   },
   tableBlock: {
     label: 'Table',
@@ -1269,6 +1273,8 @@ export default {
     },
   },
   file: {
+    /** Label for the aggregate upload progress bar. */
+    uploading: 'Uploading...',
     codePreview: {
       title: 'Code Preview',
       dragToMove: 'Drag to move',
@@ -1397,8 +1403,16 @@ export default {
       dirLoadFailed: 'Directory not found or inaccessible',
       dirRemoved: 'The current directory may have been removed',
       fileNotFound: 'File not found',
+      // Tooltip for a local link whose path contains glob wildcards (`src/*.go`,
+      // `**/*.ts`). It is a pattern, not a file, so it can never be opened —
+      // marking it explains why the link is inert (issue #501).
+      globPattern: 'This is a glob pattern, not a file path',
       fileNotFoundReturned: 'File no longer exists; returned to the origin page',
       fileRemoved: 'File does not exist; it may have been removed',
+      // Tooltip on a verified-missing path chip. Unlike `fileRemoved` (which is
+      // also used as a toast), this one advertises the click affordance: the
+      // chip searches the project for the filename (issue #501 follow-up).
+      fileRemovedSearchable: 'File not found here — click to search by filename',
       externalFile: 'This file is outside the project directory',
       archiving: 'Packing {n} items...',
       archiveDone: 'Download ready',
@@ -1543,6 +1557,13 @@ export default {
       wordGlobal: 'project',
       wordVerb: 'search in',
       scopeGlobal: 'Global search',
+      // Verified-missing path chip: the path failed existence checks against
+      // both resolution candidates, but the file may exist elsewhere in the
+      // project. Clicking searches for it by filename (issue #501 follow-up).
+      inertHeading: 'Find “{name}”',
+      inertHint: 'This path could not be resolved. Pick the matching file:',
+      inertNoResults: 'No file named “{name}” in the project',
+      inertNoResultsHint: 'It may have been renamed or moved. Try searching from the file manager.',
     },
     contentSearch: {
       title: 'File content search',
@@ -1906,6 +1927,8 @@ export default {
     partial: 'Uploaded {ok} item(s), {failed} failed: {error}',
     cancelled: 'Upload cancelled',
     downloaded: 'Downloaded {count} item(s)',
+    downloadFailed: 'Download failed',
+    downloadCancelled: 'Download cancelled',
     dirDownloadUnsupported: 'Tree download is not supported in this browser. Use Chrome/Edge with HTTPS.',
     dirDownloadFailed: 'Failed to fetch file list',
   },
@@ -2060,9 +2083,12 @@ export default {
       wallpaperEnable: 'Enable wallpaper',
       wallpaperEnableDesc: 'Turning this off hides the wallpaper while keeping your gallery and selection, so you can switch it back on anytime',
       wallpaperSource: 'Wallpaper source',
-      wallpaperSourceDesc: 'The local gallery and the Bing daily image are independent; only one is shown at a time',
+      wallpaperSourceDesc: 'The three sources are independent; only one is shown at a time',
       wallpaperModeLocal: 'Local gallery',
       wallpaperModeBing: 'Bing daily',
+      wallpaperModeWave: 'Animated',
+      wallpaperWaveSpeed: 'Animation speed',
+      wallpaperWaveSpeedDesc: 'How fast the wave drifts. Drawn live in the browser and recoloured to match your theme',
       wallpaperBingFollow: 'Follow the Bing daily image',
       wallpaperBingFollowDesc: 'The server fetches and caches the Bing daily image once a day, shared across all your devices. If a fetch fails, the last successful image keeps showing',
       wallpaperBingSync: 'Sync now',
@@ -2207,8 +2233,9 @@ export default {
       localeEn: 'English',
       uiScale: 'UI Scale',
       uiScaleDesc: 'Global zoom in/out, equivalent to browser zoom',
-      uiScaleAuto: 'Auto Scale',
-      uiScaleAutoDesc: 'Scale the UI up automatically for the screen resolution (1080p baseline; larger screens scale up, capped at 200%). Turn off to use the slider below.',
+      uiScaleAutoFit: 'Auto Fit',
+      uiScaleAutoFitDesc: 'Click once to compute a scale for the current screen resolution and write it to the slider below (1080p baseline, capped at 200%). Fine-tune with the slider afterwards.',
+      uiScaleAutoFitDone: 'Fitted to {pct}% for the current screen',
       headerShortcutTips: 'Header shortcut tips',
       headerShortcutTipsDesc: 'Scroll shortcut usage tips in the middle of the header bar (enabled by default)',
       autoSpeech: 'Auto Speech',
@@ -2378,8 +2405,10 @@ export default {
       summarizeApi: 'LLM Summary',
       aiSummarySection: 'AI Summary Model',
       aiSummarySectionDesc: 'Shared AI model config for voice summary and recommended reply',
-      aiSummaryRef: 'Model Details',
-      aiSummaryRefDesc: 'Go to "AI Summary Model" to configure the LLM model and API',
+      aiSummaryRef: 'AI Summary Model',
+      aiSummaryRefDesc: 'Used by recommended reply, auto-rename and voice summary; configure the LLM model and API',
+      summaryModelConfigured: 'Configured',
+      summaryModelNotConfigured: 'Not configured',
       aiSummaryApiHeader: 'AI Model Config',
       aiSummaryModel: 'Model Name',
       aiSummaryModelDesc: 'Model name, empty uses backend default',
@@ -2402,6 +2431,9 @@ export default {
       chatAutoContinueEnabledDesc: 'When a session is interrupted unexpectedly — process crash, no AI output, or a backend error — automatically send "Continue" and resume, regardless of how much output it had already produced. Sessions you stopped yourself (including interrupt-and-send) are never resumed',
       chatAutoContinueMaxRetries: 'Max Retries',
       chatAutoContinueMaxRetriesDesc: 'How many times each user message may be auto-resumed. -1 means unlimited (the server still enforces a hard ceiling); 0 disables retries',
+      autoRenameSectionHeader: 'Auto Rename',
+      chatAutoRenameEnabled: 'AI Auto-rename Sessions',
+      chatAutoRenameEnabledDesc: 'When a session is first named, have AI summarize the user messages into the title instead (forks and continued sessions include the earlier user messages too). Requires a model in "AI Summary Model"; if it is unconfigured or the call fails, the original local title is kept',
       ttsSpeed: 'Speed',
       ttsSpeedDesc: 'Speech playback rate, 1.0 is normal speed',
       ttsVoice: 'Voice',
@@ -2901,6 +2933,7 @@ export default {
     detected: 'Installed',
     notDetected: 'Not installed',
     install: 'Install',
+    detecting: 'Detecting...',
     rescan: 'Rescan',
     rescanning: 'Scanning...',
     manualInstallHint: 'Run the following command to install:',

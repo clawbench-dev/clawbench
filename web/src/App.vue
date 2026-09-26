@@ -13,8 +13,11 @@
            re-decodes in Android WebView — CSS-var-driven background-image swaps
            sometimes need an app restart to repaint. -->
       <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
+        <!-- Bound to wallpaperUrl, not wallpaperActive: in wave mode the layer
+             is active but there is no image, and an <img src=""> makes some
+             browsers request the current page URL. -->
         <img
-          v-if="wallpaperActive"
+          v-if="wallpaperUrl"
           :src="wallpaperUrl"
           class="wallpaper-image"
           :class="{
@@ -24,6 +27,7 @@
           alt=""
           draggable="false"
         />
+        <WaveBackground v-else-if="waveActive" :speed="wallpaperWaveSpeed" />
         <div class="wallpaper-scrim"></div>
       </div>
       <WelcomeOverlay ref="welcomeOverlay" />
@@ -39,6 +43,16 @@
         @select-recent-file="handleAppHeaderRecentFileSelect"
       />
       <ConnectionOverlay />
+
+      <!-- Download progress. Floats just under the app header and is taken out
+           of flow, so a download never pushes the layout around. -->
+      <DownloadProgressBar
+        :visible="downloadVisible"
+        :file-name="downloadFileName"
+        :received="downloadReceived"
+        :total="downloadTotal"
+        @cancel="cancelDownload"
+      />
 
       <main class="main-content" :class="{ 'wide-screen': isWideScreen }">
         <!-- Wide-screen vertical dock (non-chat tabs only) -->
@@ -473,6 +487,7 @@
     <ToastNotification :toast="toast" />
     <CompletionPopover />
     <DialogOverlay />
+    <InertPathPicker />
   </div>
 </template>
 
@@ -483,7 +498,7 @@ import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
@@ -493,6 +508,7 @@ import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHori
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
+import InertPathPicker from './components/file/InertPathPicker.vue'
 import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
@@ -502,6 +518,7 @@ import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
+import WaveBackground from './components/WaveBackground.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
   loadingComponent: AsyncComponentLoader,
@@ -514,6 +531,8 @@ import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ShareLinkDialog from './components/file/ShareLinkDialog.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
+import DownloadProgressBar from './components/common/DownloadProgressBar.vue'
+import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
@@ -556,6 +575,8 @@ import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
 import { installDragClickGuard } from './utils/dragClickGuard'
+import { installInertPathClick } from './utils/inertPathClick'
+import { closeInertPathPicker } from './composables/useInertPathPicker'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
@@ -952,6 +973,12 @@ function switchTab(tab: string, force = false) {
   activeTab.value = tab
   // Auto-close all drawers not belonging to the new tab
   onTabSwitch(tab)
+  // The inert-path picker is deliberately NOT tab-scoped (an inert chip can be
+  // clicked in any tab, so gating it on one tab id would hide the panel
+  // elsewhere). Closing it on every tab switch is the replacement for that
+  // scoping: a picker left open would otherwise float over the new panel, since
+  // BottomSheet teleports to <body>.
+  closeInertPathPicker()
   if (tab === 'browse') {
     store.loadFiles(store.state.currentDir, false, 0, true)
   }
@@ -985,6 +1012,21 @@ function switchTab(tab: string, force = false) {
  */
 interface OpenSessionDetail { sessionId?: string; projectPath?: string }
 interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
+
+/**
+ * Handle clawbench-session-title-update: a session's title changed outside the
+ * rename flow (the automatic AI rename). If it is the session currently open,
+ * adopt the new title and refresh the session list so its row matches. Other
+ * sessions need no local update — the list reload covers them.
+ */
+function handleSessionTitleUpdate(e: Event) {
+  const detail = (e as CustomEvent<{ session_id?: string; title?: string }>).detail
+  if (!detail?.session_id || !detail.title) return
+  if (detail.session_id === sessionIdentity.currentSessionId.value) {
+    sessionIdentity.currentSessionTitle.value = detail.title
+  }
+  store.state.sessionListVersion++
+}
 
 /** Handle clawbench-open-session event from Android push notification tap */
 function handleOpenSession(e: Event) {
@@ -1163,6 +1205,8 @@ const markdownViewMode = ref('rendered')
 const toast = useToast()
 provide('toast', toast)
 
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
+
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName } = useAgents()
 
@@ -1187,10 +1231,14 @@ const sortDir = ref(localConfig.sortDir || 'asc')
 // image URL bound to the <img> (rebuilt only when the file changes — see
 // resolveWallpaperUrl); wallpaperBlurPx / wallpaperEdgeFade are local display
 // preferences that take effect immediately (no server round-trip needed).
+// waveActive covers the animated wave, which is a background with no image
+// file — so "layer visible" is no longer the same as "an image is set".
 const wallpaperActive = ref(false)
 const wallpaperUrl = ref('')
 const wallpaperBlurPx = ref(0)
 const wallpaperEdgeFade = ref(false)
+const waveActive = ref(false)
+const wallpaperWaveSpeed = ref(50)
 
 /** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
 const wallpaperImageStyle = computed(() =>
@@ -1204,17 +1252,21 @@ function refreshWallpaper() {
   const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
   const state = resolveWallpaperState(appearance)
   // The server resolves which image is active (mode + enabled + selection);
-  // an empty value means no wallpaper, including the globally-disabled case.
+  // an empty value means no image, including the globally-disabled case. The
+  // wave is the one background that has no file, so it is detected separately.
   const file = resolveActiveFile(appearance)
+  const wave = isWaveActive(appearance)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
-  wallpaperActive.value = state === 'set'
+  waveActive.value = wave
+  wallpaperActive.value = state === 'set' || wave
   wallpaperBlurPx.value = Number(localConfig.wallpaperBlur || 0)
   wallpaperEdgeFade.value = !!localConfig.wallpaperEdgeFade
+  wallpaperWaveSpeed.value = Number(localConfig.wallpaperWaveSpeed ?? 50)
   // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
   // panel-alpha CSS variables + wallpaper-active class.
   wallpaperUrl.value = resolveWallpaperUrl(file, false)
-  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false)
+  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false, wave)
 
   scheduleBingFirstImagePoll()
 }
@@ -1246,8 +1298,10 @@ onUnmounted(() => {
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
-// Local display prefs (blur / edge fade) change instantly without a round-trip.
-watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade], refreshWallpaper)
+// Local display prefs (blur / edge fade / wave speed) change instantly without
+// a server round-trip. Wave speed only feeds a prop; the component adjusts its
+// own timeScale without rebuilding the canvas or resetting the phase.
+watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
@@ -1785,6 +1839,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
+  window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
       const resolved = (e as CustomEvent<string>).detail
@@ -2344,10 +2399,10 @@ watch(() => inlineOverflowTabs.value.length, () => {
 // ResizeObserver may not fire when CSS zoom on <html> changes, so we
 // must explicitly re-measure to recalculate overflow layout.
 // Use requestAnimationFrame to ensure browser has reflowed after the zoom change.
-// uiScaleAuto is watched too: toggling it changes the applied factor without
-// touching uiScale (and on Electron the zoom is applied natively, where no
+// Both the slider and the "auto fit" button write uiScale, so watching it alone
+// covers every writer (on Electron the zoom is applied natively, where no
 // ResizeObserver fires at all).
-watch([() => localConfig.uiScale, () => localConfig.uiScaleAuto], () => {
+watch([() => localConfig.uiScale], () => {
   requestAnimationFrame(() => {
     startDockResize()
     // Also update --dock-height CSS variable for fixed-position elements
@@ -3385,6 +3440,13 @@ function handleCtrlShiftF(e: KeyboardEvent) {
      // document-level guard replaces a per-row check that only ever reached four
      // of the ~50 clickable rows containing selectable text.
      stopDragClickGuard = installDragClickGuard()
+     // Turns a verified-missing path chip into a filename-search entry point.
+     // MUST come after installDragClickGuard: this layer reads
+     // `e.defaultPrevented` to tell a drag-select from a real click, and the
+     // drag guard is what sets it (it uses stopPropagation, not
+     // stopImmediatePropagation, so a same-node listener still runs). Ordering
+     // is asserted by inertPathClickWiring.test.ts.
+     stopInertPathClick = installInertPathClick()
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
@@ -3400,12 +3462,15 @@ function handleCtrlShiftF(e: KeyboardEvent) {
 
 let stopLocalLinkGuard: (() => void) | null = null
 let stopDragClickGuard: (() => void) | null = null
+let stopInertPathClick: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
     stopLocalLinkGuard = null
     stopDragClickGuard?.()
     stopDragClickGuard = null
+    stopInertPathClick?.()
+    stopInertPathClick = null
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
@@ -3424,6 +3489,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
+    window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()
@@ -3848,6 +3914,15 @@ onUnmounted(() => {
 }
 .wide-dock .dock-btn.active:hover {
     color: var(--accent-color);
+}
+
+/* Larger glyphs on the vertical dock. The rail stays 48px and the buttons stay
+   34px (the active indicator and DOCK_STEP are pinned to that geometry), so the
+   extra icon size comes out of the button's own padding rather than the dock
+   footprint. Scoped under .wide-dock to outrank the base .dock-btn svg rule. */
+.wide-dock .dock-btn svg {
+    width: 20px;
+    height: 20px;
 }
 
 .bottom-dock {

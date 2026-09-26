@@ -23,9 +23,12 @@ vi.mock('@/composables/useToast', () => ({
 // buildLocalFileUrl is mocked so the lightbox tests can pin the exact URL the
 // card hands to the Lightbox (the real builder's encoding rules are covered by
 // the download.ts unit tests). vi.mock is hoisted, so it must live at module
-// top level.
+// top level. downloadFileByPath is mocked too: the unsupported-file placeholder
+// downloads through it, and a real implementation would touch the DOM/native
+// bridge in a unit test.
 vi.mock('@/utils/download', () => ({
   buildLocalFileUrl: (p: string) => `/api/fs/raw/${p}`,
+  downloadFileByPath: vi.fn(),
 }))
 
 // Mock fileType. Label is path-derived so the media meta-row test can assert
@@ -144,7 +147,12 @@ const i18n = createI18n({
         header: {
           lineNumbers: 'Line Numbers',
         },
+        viewer: {
+          binaryFile: 'Binary file, cannot preview in browser',
+          fileTooLarge: 'File too large to preview in browser',
+        },
       },
+      common: { download: 'Download' },
     },
   },
 })
@@ -566,10 +574,100 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     const floating = document.querySelector('.code-link-preview-floating')
-    expect(floating?.textContent).toContain('Binary file cannot be previewed')
+    // The placeholder reuses the full-screen viewer's wording (see
+    // UnsupportedFileBody), not the preview-specific binaryNotSupported string.
+    expect(floating?.textContent).toContain('Binary file, cannot preview in browser')
     // Header openFull button is still available
     const openBtn = floating?.querySelector('button[title="Open file"]')
     expect(openBtn).not.toBeNull()
+  })
+
+  it('renders the shared unsupported placeholder with a download button for a binary file', async () => {
+    // A binary file has no text to slice, so the card renders the same
+    // placeholder the full-screen viewer does (shared UnsupportedFileBody) —
+    // including a download button, which the old bare error message lacked.
+    const preview = createMockPreviewController({
+      status: ref('error'),
+      errorCode: ref('binary'),
+      fileContent: ref({ content: '', name: 'archive.bin', path: 'archive.bin', supported: false, isBinary: true, size: 500 }),
+      target: ref({ filePath: 'archive.bin' }),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const placeholder = document.querySelector('.code-link-preview-floating .unsupported-file')
+    expect(placeholder).not.toBeNull()
+    // Same wording as the full-screen viewer, not the preview-specific string.
+    expect(placeholder?.textContent).toContain('Binary file, cannot preview in browser')
+    // The file name and its size are shown, like the viewer does.
+    expect(placeholder?.textContent).toContain('archive.bin')
+    expect(placeholder?.textContent).toContain('(500 B)')
+
+    const downloadBtn = placeholder?.querySelector('.code-preview-download-btn') as HTMLButtonElement
+    expect(downloadBtn).not.toBeNull()
+    expect(downloadBtn.textContent).toContain('Download')
+
+    const { downloadFileByPath } = await import('@/utils/download')
+    downloadBtn.click()
+    expect(downloadFileByPath).toHaveBeenCalledWith('archive.bin', 'archive.bin')
+  })
+
+  it('hides the text-viewer tools for an unsupported file', () => {
+    // Search / wrap / line numbers / copy code are all meaningless without a
+    // text slice — the viewer applies the same rule.
+    const preview = createMockPreviewController({
+      status: ref('error'),
+      errorCode: ref('binary'),
+      fileContent: ref({ content: '', name: 'archive.bin', path: 'archive.bin', supported: false, isBinary: true, size: 500 }),
+      target: ref({ filePath: 'archive.bin' }),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating')!
+    expect(floating.querySelector('button[title="Find"]')).toBeNull()
+    expect(floating.querySelector('button[title="Wrap lines"]')).toBeNull()
+    expect(floating.querySelector('button[title="Line Numbers"]')).toBeNull()
+    expect(floating.querySelector('button[title="Copy code"]')).toBeNull()
+    // The file-level actions stay available.
+    expect(floating.querySelector('button[title="Open Directory"]')).not.toBeNull()
+  })
+
+  it('renders the unsupported placeholder for a too-large file too', () => {
+    const preview = createMockPreviewController({
+      status: ref('error'),
+      errorCode: ref('too-large'),
+      fileContent: ref({ content: '', name: 'huge.log', path: 'huge.log', supported: true, size: 50 * 1024 * 1024 }),
+      target: ref({ filePath: 'huge.log' }),
+    })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const placeholder = document.querySelector('.code-link-preview-floating .unsupported-file')
+    expect(placeholder).not.toBeNull()
+    expect(placeholder?.textContent).toContain('File too large to preview in browser')
+    expect(placeholder?.textContent).toContain('huge.log')
+    expect(placeholder?.textContent).toContain('(50.0 MB)')
+    expect(placeholder?.querySelector('.code-preview-download-btn')).not.toBeNull()
+  })
+
+  it('does not render the unsupported placeholder for a normal file', () => {
+    const preview = createMockPreviewController({ status: ref('ready') })
+    mount(CodeLinkPreview, {
+      props: { preview },
+      global: { plugins: [i18n] },
+    })
+
+    const floating = document.querySelector('.code-link-preview-floating')!
+    expect(floating.querySelector('.unsupported-file')).toBeNull()
+    // And the text tools are back.
+    expect(floating.querySelector('button[title="Find"]')).not.toBeNull()
   })
 
   it('keeps the icon open-button for a too-large file (no wide text button)', () => {
@@ -587,7 +685,7 @@ describe('CodeLinkPreview.vue', () => {
     })
 
     const floating = document.querySelector('.code-link-preview-floating')
-    expect(floating?.textContent).toContain('File exceeds 10MiB limit')
+    expect(floating?.textContent).toContain('File too large to preview in browser')
 
     const detailsBtn = floating?.querySelector('button[title="View details / Download"]')
     expect(detailsBtn).not.toBeNull()

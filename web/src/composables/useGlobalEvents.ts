@@ -386,6 +386,16 @@ function connect() {
                     window.dispatchEvent(new CustomEvent('clawbench-recommendation', { detail: msg.data }))
                 }
 
+                // A session title changed outside the rename flow (automatic AI
+                // rename). The client that renamed learns the title from its own
+                // response; this event exists so OTHER clients — and this one,
+                // when it did not initiate the rename — converge. Dispatched as a
+                // window event so App.vue can update the open chat header and
+                // refresh a mounted session list.
+                if (msg.event === 'session_title_update') {
+                    window.dispatchEvent(new CustomEvent('clawbench-session-title-update', { detail: msg.data }))
+                }
+
                 // Forge (GitHub/GitLab) change events: re-derive the unread
                 // badge on LIVE events only. Replayed events are caught-up
                 // history, so they must not inflate the badge after a reconnect.

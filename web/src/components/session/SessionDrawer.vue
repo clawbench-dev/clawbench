@@ -26,6 +26,10 @@
             <button v-if="hasAnySharedSession" class="header-action-btn" data-action="shared-sessions" :title="t('sharedSessions.button')" @click.stop="sharedSessionsRef?.open()">
               <MessageSquareShare :size="16" />
             </button>
+          </template>
+          <!-- Pin sits in the trailing slot so it is the right-most control in
+               the header, after search/create. -->
+          <template #actions-end>
             <button v-if="isWideScreen" class="header-action-btn" data-action="pin" @click.stop="$emit('pin')" :title="t('session.pinToSidebar')">
               <PanelRight :size="16" />
             </button>

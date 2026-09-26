@@ -14,6 +14,8 @@ import {
   nextClientSeq,
   rebuildFromDb,
   messageText,
+  mergeThinkingPrefix,
+  thinkingRenderSource,
   chatMessageReducer,
   trackInFlightSend,
   untrackInFlightSend,
@@ -2847,23 +2849,280 @@ describe('sub-agent thinking_done', () => {
     id: 1, role: 'assistant', content: '', blocks: [], streaming: true, createdAt: '2026-01-01T00:00:00Z',
   })
 
-  it('marks a sub-agent thinking block done (parent boundary must not block it)', () => {
+  it('marks a sub-agent thinking block done when done carries its parent', () => {
     let s = [streamingMsg()]
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
-    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_p' })
     const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
     expect(think.done).toBe(true)
     expect(think.parent_tool_call_id).toBe('call_p')
   })
 
-  it('marks the last thinking block done when child follows parent', () => {
+  it('thinking_done is parent-scoped (closes its own agent, not the last block)', () => {
     let s = [streamingMsg()]
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'parent thought' })
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
-    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    // A starts, B interleaves, A emits one more delta, then A finishes. The
+    // LAST block belongs to B, so an unfiltered done would wrongly close B.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'A reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'B reasoning', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' more A', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_a' })
     const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
-    expect(thinks[1].done).toBe(true)
-    expect(thinks[0].done).toBeUndefined()
+    expect(thinks.length).toBe(2)
+    expect(thinks[0]).toMatchObject({ parent_tool_call_id: 'call_a', done: true })
+    expect(thinks[1]).toMatchObject({ parent_tool_call_id: 'call_b' })
+    expect(thinks[1].done).toBeFalsy()
+  })
+
+  it('top-level thinking_done does not close a sub-agent block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child', parentToolCallId: 'call_p' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBeFalsy()
+  })
+
+  it('empty ws_thinking does not open a block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '', parentToolCallId: 'call_a' })
+    expect(s[0].blocks!.filter((b: any) => b.type === 'thinking').length).toBe(0)
+    // A real delta afterwards still creates the block normally.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'real', parentToolCallId: 'call_a' })
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(1)
+    expect(thinks[0].text).toBe('real')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// In-progress thinking markers (A-plan): a still-streaming thinking block is
+// represented in the streaming row as {think_id, in_progress:true}. Without it
+// a session switch lost the already-emitted prefix and the next delta opened a
+// second, done-less block that spun forever.
+// ---------------------------------------------------------------------------
+describe('in-progress thinking marker (switch-back losslessness)', () => {
+  const streamingMsg = (blocks: any[]): any => ({
+    role: 'assistant', id: 42, content: '', blocks, streaming: true, parentQueueId: '1',
+  })
+
+  it('adopts the in_progress marker think_id onto the live streaming block', () => {
+    // The live block was built from deltas and has no think_id; the DB row has
+    // an in_progress marker for the same block. Adoption links the two so the
+    // render layer can lazy-load the prefix.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'deltas after switch' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_live', in_progress: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(1, 'marker must be adopted, not duplicated')
+    expect(thinks[0].think_id).toBe('th_live')
+    expect(thinks[0].in_progress).toBe(true)
+    expect(thinks[0].text).toBe('deltas after switch', 'live deltas must survive')
+  })
+
+  it('is idempotent: a second db_load does not re-target an earlier finished block', () => {
+    // The scan picks "the last think_id-less block of this parent". After the
+    // first adoption the streaming block HAS an id, so a second db_load (which
+    // happens routinely mid-stream: panel open, foreground resync, WS reconnect)
+    // would skip it and land on an earlier, already-finished block — giving two
+    // blocks the same think_id. That collides in the v-for key and makes the
+    // finished block lazy-load the streaming block's prefix.
+    const live = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([
+        { type: 'thinking', text: 'X reasoning', done: true },
+        { type: 'tool_use', name: 'Read', id: 'call_t', done: true },
+        { type: 'thinking', text: 'Z deltas' },
+      ]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [
+          { type: 'thinking', think_id: 'th_x', done: true },
+          { type: 'tool_use', name: 'Read', id: 'call_t', done: true },
+          { type: 'thinking', think_id: 'th_z', in_progress: true },
+        ],
+      },
+    ]
+
+    let merged = rebuildFromDb(live, dbMsgs as any)
+    merged = rebuildFromDb(merged, dbMsgs as any)
+
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    const ids = thinks.map((b: any) => b.think_id).filter(Boolean)
+    expect(new Set(ids).size, 'think_id must not repeat (v-for key collision)').toBe(ids.length)
+    expect(thinks[0].think_id, 'the finished block must not be mis-adopted').toBeUndefined()
+    expect(thinks[1].think_id).toBe('th_z')
+    expect(thinks[1].in_progress).toBe(true)
+  })
+
+  it('does not adopt a done marker onto a live block (keeps existing dedup behavior)', () => {
+    // Only in_progress markers are positional-safe to adopt. A done marker is
+    // handled by the existing liveHasThinking dedup, which drops the DB block
+    // rather than identifying the live one.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'reasoned' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(1)
+    expect(thinks[0].think_id).toBeUndefined()
+    expect(thinks[0].text).toBe('reasoned')
+  })
+
+  it('skips adoption when a parent has two in_progress markers (ambiguous)', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'live' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [
+          { type: 'thinking', think_id: 'th_a', in_progress: true },
+          { type: 'thinking', think_id: 'th_b', in_progress: true },
+        ],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks.some((b: any) => b.think_id), 'ambiguous parent must not be guessed').toBe(false)
+  })
+
+  it('ws_thinking appends to a marker block without writing the literal "undefined"', () => {
+    // A marker adopted from the DB has no text; a delta arriving afterwards must
+    // seed an empty string rather than concatenating onto undefined.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', think_id: 'th_live', in_progress: true }]),
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_thinking', text: 'delta' })
+    const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.text).toBe('delta')
+    expect(think.text).not.toContain('undefined')
+  })
+
+  it('ws_thinking_done clears in_progress and marks the block done', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', think_id: 'th_live', in_progress: true, text: 'partial' }]),
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_thinking_done' })
+    const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
+    expect(think.in_progress).toBeUndefined()
+  })
+
+  it('ws_thinking_done finds the block across a same-parent tool_use', () => {
+    // Mirrors the backend's AccumulateBlock, which has NO tool_use boundary.
+    // The ACP think-tool path emits thinking_done once when the ToolCall
+    // arrives and AGAIN when the think tool completes — by then its tool_use is
+    // already in the array. A boundary would stop the scan short and leave the
+    // block spinning for the rest of the turn.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'A reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, {
+      type: 'ws_tool_use',
+      data: { id: 'call_think', name: 'DeepThink', input: {}, done: false, parent_tool_call_id: 'call_a' } as any,
+    })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_a' })
+    const think = (s[0].blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// mergeThinkingPrefix: stitching a lazy-loaded prefix with live deltas.
+// ---------------------------------------------------------------------------
+describe('mergeThinkingPrefix', () => {
+  it('concatenates when the two halves are disjoint', () => {
+    expect(mergeThinkingPrefix('prefix ', 'live')).toBe('prefix live')
+  })
+
+  it('returns live when it already covers the prefix', () => {
+    expect(mergeThinkingPrefix('prefix', 'prefix and more')).toBe('prefix and more')
+  })
+
+  it('returns the prefix when live is a stale subset', () => {
+    expect(mergeThinkingPrefix('prefix and more', 'prefix')).toBe('prefix and more')
+  })
+
+  it('trims the overlap at the seam', () => {
+    // DB prefix ends with "world"; live restarts at "world" (a boundary both
+    // paths emitted).
+    expect(mergeThinkingPrefix('hello world', 'world and beyond')).toBe('hello world and beyond')
+  })
+
+  it('returns live when there is no prefix', () => {
+    expect(mergeThinkingPrefix(undefined, 'live')).toBe('live')
+    expect(mergeThinkingPrefix('', 'live')).toBe('live')
+  })
+
+  it('returns the prefix when live is empty', () => {
+    expect(mergeThinkingPrefix('prefix', '')).toBe('prefix')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// thinkingRenderSource: the ONE string both render paths must agree on.
+//
+// The template path (getThinkingHtml) and the throttled batch path
+// (flushBlockHtml) render the same block. When flushBlockHtml rendered
+// `block.text` alone, a block carrying a lazy-loaded prefix lost it for one
+// frame and got it back the next — alternating every ~300ms, which the user saw
+// as the block blanking and refilling ("flashes every few seconds, looks like it
+// clears and reloads").
+// ---------------------------------------------------------------------------
+describe('thinkingRenderSource', () => {
+  it('stitches the cached prefix onto live deltas', () => {
+    // The reported shape: prefix in chat_thinking, deltas arrived after.
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'deltas' }, 'PREFIX '))
+      .toBe('PREFIX deltas')
+  })
+
+  it('renders the prefix alone when no deltas arrived yet', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1' }, 'PREFIX ')).toBe('PREFIX ')
+  })
+
+  it('renders deltas alone while the prefix is still loading', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'deltas' }, undefined))
+      .toBe('deltas')
+  })
+
+  it('trims the overlap when both sides emitted the seam', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'world end' }, 'hello world'))
+      .toBe('hello world end')
+  })
+
+  it('is text-only for a block without a think_id', () => {
+    expect(thinkingRenderSource({ type: 'thinking', text: 'plain' }, 'IGNORED')).toBe('plain')
+  })
+
+  it('is empty for a block with nothing to show', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1' })).toBe('')
+    expect(thinkingRenderSource(undefined)).toBe('')
   })
 })
 
