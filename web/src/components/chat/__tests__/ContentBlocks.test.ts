@@ -1317,6 +1317,62 @@ describe('ContentBlocks', () => {
       expect(wrapper.find('.thinking-inline-content').html()).toContain('inline thought')
     })
 
+    it('keeps the lazy-loaded prefix across the throttled flush (no blank/refill loop)', async () => {
+      // A streaming block whose think_id was adopted from the DB marker: its
+      // prefix lives in chat_thinking, its live deltas are in `text`.
+      //
+      // The throttled batch render (flushBlockHtml) used to render `block.text`
+      // ALONE while the normal path rendered prefix+text. The two alternate
+      // every ~300ms, so the block blanked and refilled on a loop — the
+      // reported "flashes every few seconds, looks like it clears and reloads,
+      // no new text appears".
+      //
+      // This drives the REAL flush: a blocks change arms the 300ms timer, and
+      // advancing it rewrites blockHtmlCache through flushBlockHtml. If that
+      // path disagrees with the template path, the prefix disappears here.
+      vi.useFakeTimers()
+      try {
+        const fetchMock = vi.fn().mockResolvedValue({
+          ok: true,
+          json: async () => ({ think_id: 'th_live', text: 'PREFIX ' }),
+        })
+        vi.stubGlobal('fetch', fetchMock)
+
+        const wrapper = mountBlocks({
+          msgId: 'm1',
+          sessionId: 's1',
+          blocks: [{ type: 'thinking', think_id: 'th_live', in_progress: true, text: 'live deltas' }],
+          streaming: true,
+          active: true,
+        })
+
+        // Let the auto-prefix-load land.
+        await flushPromises()
+        await nextTick()
+
+        // A live delta arrives → the template path renders and arms the flush.
+        await wrapper.setProps({
+          blocks: [{ type: 'thinking', think_id: 'th_live', in_progress: true, text: 'live deltas more' }],
+        })
+        await nextTick()
+        expect(wrapper.find('.thinking-inline-content').html()).toContain('PREFIX')
+
+        // Now let the throttled batch render run — this is the path that used to
+        // drop the prefix and make the block flash.
+        vi.advanceTimersByTime(400)
+        await nextTick()
+        await flushPromises()
+        await wrapper.vm.$forceUpdate()
+        await nextTick()
+
+        const html = wrapper.find('.thinking-inline-content').html()
+        expect(html).toContain('PREFIX')
+        expect(html).toContain('live deltas more')
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('shows error retry and refetches on retry click', async () => {
       const fetchMock = vi.fn()
         .mockResolvedValueOnce({ ok: false, status: 404 })

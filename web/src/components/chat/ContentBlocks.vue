@@ -375,7 +375,7 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
-import { mergeThinkingPrefix } from '@/utils/chatStreamUtils.ts'
+import { thinkingRenderSource } from '@/utils/chatStreamUtils.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
 import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -1415,6 +1415,19 @@ const _blockFlushScheduler = new StreamFrameScheduler()
  */
 const THINKING_STREAMING_OPTS = { skipEnhancements: true, skipKatex: true } as const
 
+/**
+ * The text a thinking block should render during streaming.
+ *
+ * Thin wrapper over the shared `thinkingRenderSource` that supplies the
+ * lazy-loaded prefix from the thinking-text cache. Both render paths (this
+ * component's `getThinkingHtml` and the throttled `flushBlockHtml`) go through
+ * it so they can never disagree about a block's content — see the helper's doc
+ * for what that divergence cost.
+ */
+function thinkingSource(block: any): string {
+  return thinkingRenderSource(block, block?.think_id ? thinkingContent.cachedText(block.think_id) : undefined)
+}
+
 /** Drop every cached block's HTML and its source, forcing a full re-render.
  *  Use this instead of assigning `blockHtmlCache.value = new Map()` directly —
  *  clearing only the HTML would leave the source map matching, and the next
@@ -1464,14 +1477,23 @@ function flushBlockHtml() {
         newSources.set(key, src)
       } else if (block.type === 'thinking') {
         const key = `t-${stableBlockKey(i, block)}`
-        const src = block.text ?? ''
+        // The SOURCE must match what getThinkingHtml renders, not just block.text.
+        // A thinking block can carry a lazy-loaded prefix (think_id → chat_thinking)
+        // that is stitched onto its live deltas — so its rendered text is
+        // mergeThinkingPrefix(cachedText, block.text), not block.text. Using
+        // block.text here made this throttled flush render the block WITHOUT its
+        // prefix, while the normal render path (getThinkingHtml) rendered it WITH
+        // the prefix. The two alternate every ~300ms, so the block visibly
+        // blanked and refilled on a loop — the reported "flashes every few
+        // seconds, looks like it clears and reloads, no new text appears".
+        const src = thinkingSource(block)
         const cached = prevCache.get(key)
         if (_blockHtmlSource.get(key) === src && cached !== undefined) {
           newCache.set(key, cached)
         } else {
           // Thinking blocks use renderMarkdownHtml during streaming. Same
           // options as a streaming text block — see THINKING_STREAMING_OPTS.
-          newCache.set(key, renderMarkdownHtml(block.text, THINKING_STREAMING_OPTS))
+          newCache.set(key, renderMarkdownHtml(src, THINKING_STREAMING_OPTS))
         }
         newSources.set(key, src)
       }
@@ -1559,20 +1581,17 @@ function getBlockHtml(bi: number, block: any) {
  *
  *  Slim blocks with no live text render purely from the lazy-load cache. */
 function getThinkingHtml(bi: number, block: any) {
+  const src = thinkingSource(block)
+  if (src) {
+    return getThinkingTextHtml(src, bi, block)
+  }
   if (block.think_id) {
-    const prefix = thinkingContent.cachedText(block.think_id)
-    if (block.text) {
-      const merged = mergeThinkingPrefix(prefix, block.text)
-      return getThinkingTextHtml(merged, bi, block)
-    }
-    if (prefix) return renderMarkdownHtml(prefix)
+    // Identified block with neither a live delta nor a cached prefix yet: the
+    // lazy-load is still in flight (or failed).
     if (thinkingContent.errors.value[block.think_id]) {
       return `<div class="thinking-load-error"><span>${t('chat.contentBlocks.thinkingLoadFailed')}</span><button class="thinking-retry-btn" onclick="this.closest('.chat-thinking').querySelector('.thinking-header').click()">${t('chat.contentBlocks.retry')}</button></div>`
     }
     return '<div class="placeholder-dots"><span></span><span></span><span></span></div>'
-  }
-  if (block.text) {
-    return getThinkingTextHtml(block.text, bi, block)
   }
   return ''
 }
@@ -1649,7 +1668,8 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
 // Watch for thinking blocks that become "done" mid-stream (via thinking_done SSE event).
 // Only the block currently being streamed stays expanded — when its output
 // completes it collapses immediately. Blocks the user manually expanded are kept open.
-let _prevDoneKeys = new Set<string>()// The watched value is a joined STRING, not a fresh array: a watcher returning an
+let _prevDoneKeys = new Set<string>()
+// The watched value is a joined STRING, not a fresh array: a watcher returning an
 // array is never `Object.is`-equal to its previous value, so it fired on every
 // blocks mutation — invalidating the whole HTML cache on each streaming tick and
 // defeating the incremental cache. A string compares by value, so this only runs

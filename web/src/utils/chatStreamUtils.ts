@@ -671,6 +671,28 @@ export function mergeThinkingPrefix(prefix: string | undefined, live: string): s
 }
 
 /**
+ * The text a thinking block renders during streaming: its live deltas stitched
+ * onto the lazy-loaded prefix.
+ *
+ * SINGLE SOURCE OF TRUTH for every render path. A thinking block can hold both
+ * a `think_id` (its prefix lives in `chat_thinking`) and `text` (the deltas that
+ * arrived after the prefix was persisted). Two paths render it — the template's
+ * `getThinkingHtml` and the throttled batch `flushBlockHtml` — and they MUST
+ * agree on this string. When flushBlockHtml rendered `block.text` alone, a block
+ * with a prefix lost it for one frame and got it back the next; the two
+ * alternated every ~300ms and the user saw the block blank and refill in a loop
+ * ("flashes every few seconds, looks like it clears and reloads").
+ *
+ * @param cachedPrefix the block's text from chat_thinking, if already loaded
+ */
+export function thinkingRenderSource(block: ContentBlock | undefined, cachedPrefix?: string): string {
+  if (!block) return ''
+  if (!block.think_id) return block.text ?? ''
+  if (block.text) return mergeThinkingPrefix(cachedPrefix, block.text)
+  return cachedPrefix ?? ''
+}
+
+/**
  * Cumulative text spans of the DB text blocks: `index` is the block's index in
  * `dbBlocks`, `start`/`end` its character range in the concatenated DB text.
  * Used to anchor a live text block (or a DB-only block) at a text position.

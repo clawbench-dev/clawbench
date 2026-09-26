@@ -15,6 +15,7 @@ import {
   rebuildFromDb,
   messageText,
   mergeThinkingPrefix,
+  thinkingRenderSource,
   chatMessageReducer,
   trackInFlightSend,
   untrackInFlightSend,
@@ -3025,6 +3026,47 @@ describe('mergeThinkingPrefix', () => {
 
   it('returns the prefix when live is empty', () => {
     expect(mergeThinkingPrefix('prefix', '')).toBe('prefix')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// thinkingRenderSource: the ONE string both render paths must agree on.
+//
+// The template path (getThinkingHtml) and the throttled batch path
+// (flushBlockHtml) render the same block. When flushBlockHtml rendered
+// `block.text` alone, a block carrying a lazy-loaded prefix lost it for one
+// frame and got it back the next — alternating every ~300ms, which the user saw
+// as the block blanking and refilling ("flashes every few seconds, looks like it
+// clears and reloads").
+// ---------------------------------------------------------------------------
+describe('thinkingRenderSource', () => {
+  it('stitches the cached prefix onto live deltas', () => {
+    // The reported shape: prefix in chat_thinking, deltas arrived after.
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'deltas' }, 'PREFIX '))
+      .toBe('PREFIX deltas')
+  })
+
+  it('renders the prefix alone when no deltas arrived yet', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1' }, 'PREFIX ')).toBe('PREFIX ')
+  })
+
+  it('renders deltas alone while the prefix is still loading', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'deltas' }, undefined))
+      .toBe('deltas')
+  })
+
+  it('trims the overlap when both sides emitted the seam', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'world end' }, 'hello world'))
+      .toBe('hello world end')
+  })
+
+  it('is text-only for a block without a think_id', () => {
+    expect(thinkingRenderSource({ type: 'thinking', text: 'plain' }, 'IGNORED')).toBe('plain')
+  })
+
+  it('is empty for a block with nothing to show', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1' })).toBe('')
+    expect(thinkingRenderSource(undefined)).toBe('')
   })
 })
 
