@@ -1391,6 +1391,7 @@
     </div>
   </div>
 
+<script src="url-utils.js"></script>
 <script>
   var connecting = false;
   var savedServers = [];
@@ -1483,6 +1484,28 @@
       } catch(e) {
         showError('addErrorMsg', t('connection_failed') + e.message);
         setConnecting(false, true);
+      }
+    });
+
+    // Event: blur on the host field -> normalize a full URL into protocol + port.
+    // Blur, not paste/input: the field is only rewritten after the user leaves it,
+    // so typing is never disturbed mid-keystroke. Reading .value (rather than
+    // clipboard data) also sidesteps WebView clipboard restrictions.
+    document.getElementById('addHost').addEventListener('blur', function() {
+      var parsed = parseServerInput(document.getElementById('addHost').value);
+      // Not a URL we understand -> leave the field exactly as the user typed it.
+      if (!parsed) return;
+
+      hideError('addErrorMsg');
+      document.getElementById('addHost').value = parsed.host;
+      // Only override the port when the URL carried one explicitly; the field
+      // keeps its default (20000) otherwise.
+      if (parsed.port !== null) {
+        document.getElementById('addPort').value = parsed.port;
+      }
+      // No scheme in the input -> leave the radio untouched.
+      if (parsed.protocol !== null) {
+        document.querySelector('input[name="addProtocol"][value="' + parsed.protocol + '"]').checked = true;
       }
     });
 

@@ -13,6 +13,8 @@ extraResources:
   # clips — that is why the page showed a cropped "ClawBenc".
   - from: assets/logo.png
     to: logo.png
+  - from: assets/url-utils.js
+    to: url-utils.js
 files:
   - dist/
   - package.json
