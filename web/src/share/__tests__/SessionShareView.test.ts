@@ -27,6 +27,7 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
       'hideSessionActions', 'readOnly',
     ],
     inject: ['chatRender', 'autoSpeech', 'chatSession'],
+    emits: ['toggle-tool', 'show-tool-detail', 'show-metadata', 'toggle-summary'],
     template: `
       <div class="chat-message-stub" :data-msg-id="msg.id" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-role="msg.role" :data-read-only="readOnly">
         <span class="block-count">{{ (msg.blocks || []).length }}</span>
@@ -36,6 +37,10 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
         <span class="has-render">{{ typeof chatRender.renderTextBlock }}</span>
         <span class="auto-speech-active">{{ autoSpeech.isActive(1) }}</span>
         <span class="agent-backend">{{ chatSession.getAgentBackend() }}</span>
+        <button class="emit-toggle-summary" type="button" @click="$emit('toggle-summary', msg.id)">summary</button>
+        <button class="emit-show-metadata" type="button" @click="$emit('show-metadata', msg)">meta</button>
+        <button class="emit-toggle-tool" type="button" @click="$emit('toggle-tool', 'tool-key-1')">tool</button>
+        <button class="emit-show-tool-detail" type="button" @click="$emit('show-tool-detail', { key: 'tool-key-1' })">tool detail</button>
       </div>`,
   },
 }))
@@ -75,6 +80,13 @@ vi.mock('@/composables/useChatRender', () => ({
   }),
 }))
 
+// Shared drawer spies so event-forwarding tests can assert the view delegates
+// to the composables rather than swallowing the child's events.
+const drawerSpies = vi.hoisted(() => ({
+  open: vi.fn(),
+  handleShowToolDetail: vi.fn(),
+}))
+
 vi.mock('@/composables/useToolDetailDrawer', () => ({
   useToolDetailDrawer: () => ({
     // Mirrors the real return shape: the view reads effectiveOpen (a ref) for
@@ -82,7 +94,7 @@ vi.mock('@/composables/useToolDetailDrawer', () => ({
     effectiveOpen: { value: false },
     toolDetailOverlay: { show: false, name: '', subagentType: '', summary: '', inputHtml: '', outputHtml: '', status: '', done: true, duration: 0, displayNameOverride: '' },
     closeOverlay: vi.fn(),
-    handleShowToolDetail: vi.fn(),
+    handleShowToolDetail: drawerSpies.handleShowToolDetail,
     handleOverlayRetryClick: vi.fn(),
   }),
 }))
@@ -91,7 +103,7 @@ vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({
     isOpen: { value: false },
     effectiveOpen: { value: false },
-    open: vi.fn(),
+    open: drawerSpies.open,
     close: vi.fn(),
   }),
 }))
@@ -600,6 +612,37 @@ describe('SessionShareView', () => {
       await wrapper.find('.share-toc-toggle').trigger('click')
       expect(wrapper.find('.share-toc').exists()).toBe(true)
     })
+
+    // On a narrow screen the rail is replaced by a teleported drawer with a
+    // backdrop; the close button and the backdrop must both dismiss it. A
+    // regression here traps the reader in the overlay on mobile.
+    it('opens and dismisses the narrow-screen TOC drawer', async () => {
+      const wrapper = await mountView({ attach: true })
+      const vm = wrapper.vm as unknown as { isNarrow: boolean }
+      // Drive the narrow branch directly: matchMedia in jsdom reports wide.
+      vm.isNarrow = true
+      await nextTick()
+
+      // The wide rail is gone; the drawer is teleported to <body>.
+      expect(wrapper.find('.share-toc--wide').exists()).toBe(false)
+      const drawer = document.querySelector('.share-toc-drawer')
+      expect(drawer, 'narrow drawer must be teleported to body').not.toBeNull()
+
+      // Close button dismisses.
+      const closeBtn = drawer!.querySelector('.share-toc-close') as HTMLElement
+      closeBtn.click()
+      await nextTick()
+      expect(document.querySelector('.share-toc-drawer')).toBeNull()
+
+      // Re-open, then dismiss via the backdrop.
+      ;(wrapper.vm as unknown as { tocOpen: boolean }).tocOpen = true
+      await nextTick()
+      const reopened = document.querySelector('.share-toc-drawer')
+      expect(reopened).not.toBeNull()
+      ;(reopened!.querySelector('.share-toc-backdrop') as HTMLElement).click()
+      await nextTick()
+      expect(document.querySelector('.share-toc-drawer')).toBeNull()
+    })
   })
 
   // ── Snapshot JSON export ──
@@ -710,6 +753,105 @@ describe('SessionShareView', () => {
       const before = fetchCalls.length
       await wrapper.find('.session-share-export').trigger('click')
       expect(fetchCalls).toHaveLength(before)
+    })
+
+    // A restricted WebView (no download manager) makes downloadBlob throw.
+    // Swallowing it would leave the tap silently doing nothing, so the failure
+    // must surface in the byline.
+    it('surfaces a download failure instead of failing silently', async () => {
+      downloadBlobMock.mockImplementationOnce(() => {
+        throw new Error('no download manager')
+      })
+      const wrapper = await mountView()
+      await wrapper.find('.session-share-export').trigger('click')
+      await nextTick()
+      expect(wrapper.text()).toContain('Could not export the snapshot')
+    })
+  })
+
+  // A snapshot whose messages carry no `blocks` array (e.g. a malformed or
+  // partially-built payload) must not crash the inlined-data indexer.
+  it('tolerates messages without a blocks array', async () => {
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        version: 1,
+        session: { title: 'No blocks', backend: 'codebuddy' },
+        messages: [{ id: 1, role: 'user', content: 'hi', createdAt: '2026-09-22T09:00:00Z' }],
+      }),
+    } as unknown as Response)) as unknown as typeof fetch
+    const wrapper = await mountView()
+    expect(wrapper.text()).toContain('No blocks')
+  })
+
+  // ── Child event forwarding ──
+  //
+  // ChatMessageItem owns the affordances (summary toggle, metadata modal, tool
+  // detail); the share host must forward each to its own handler. A dropped
+  // event silently disables the control on the share page.
+  describe('child event forwarding', () => {
+    it('forwards toggle-summary from the child to the message state', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as {
+        messages: Array<{ id: number; showingSummary?: boolean }>
+      }
+      const assistant = vm.messages.find((m) => m.id === 12)
+      const before = assistant!.showingSummary
+      // Click the child's emit button — this must reach onToggleSummary, whose
+      // observable effect is the flipped flag (script-setup functions are not
+      // exposed on the vm, so assert the effect rather than a spy).
+      await wrapper.findAll('.emit-toggle-summary')[1].trigger('click')
+      expect(assistant!.showingSummary).not.toBe(before)
+    })
+
+    it('toggling summary flips showingSummary on the message', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as {
+        onToggleSummary: (id: number) => void
+        messages: Array<{ id: number; showingSummary?: boolean }>
+      }
+      const assistant = vm.messages.find((m) => m.id === 12)
+      expect(assistant).toBeTruthy()
+      const before = assistant!.showingSummary
+      vm.onToggleSummary(12)
+      await nextTick()
+      expect(assistant!.showingSummary).not.toBe(before)
+    })
+
+    it('toggle-summary is a no-op for a message with no summary', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as {
+        onToggleSummary: (id: number) => void
+        messages: Array<{ id: number; showingSummary?: boolean }>
+      }
+      // The user message (id 11) has no summary in the snapshot.
+      const user = vm.messages.find((m) => m.id === 11)
+      expect(user!.showingSummary).toBeUndefined()
+      vm.onToggleSummary(11)
+      await nextTick()
+      expect(user!.showingSummary).toBeUndefined()
+    })
+
+    it('toggle-summary ignores an unknown message id', async () => {
+      const wrapper = await mountView()
+      const vm = wrapper.vm as unknown as { onToggleSummary: (id: number) => void }
+      expect(() => vm.onToggleSummary(9999)).not.toThrow()
+    })
+
+    it('forwards show-metadata to open the metadata drawer', async () => {
+      const wrapper = await mountView()
+      drawerSpies.open.mockClear()
+      await wrapper.findAll('.emit-show-metadata')[1].trigger('click')
+      expect(drawerSpies.open).toHaveBeenCalledTimes(1)
+    })
+
+    it('forwards toggle-tool and show-tool-detail to the tool drawer', async () => {
+      const wrapper = await mountView()
+      drawerSpies.handleShowToolDetail.mockClear()
+      await wrapper.find('.emit-show-tool-detail').trigger('click')
+      expect(drawerSpies.handleShowToolDetail).toHaveBeenCalledTimes(1)
+      // toggle-tool must not throw (it delegates to chatRender.toggleToolDetail).
+      await expect(wrapper.find('.emit-toggle-tool').trigger('click')).resolves.toBeUndefined()
     })
   })
 })
