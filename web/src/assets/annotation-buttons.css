@@ -30,25 +30,56 @@
    A path the app knows cannot be opened. It keeps its text so the reader can
    still see and copy it, but is visibly NOT a link: muted, dashed underline,
    and `cursor: help` so the tooltip explaining why is discoverable.
-   The selectors are intentionally specific (`a.chat-file-path-inert`, plus a
-   plain `.chat-file-path-inert`) because a local <a> also matches the generic
-   link rules in markdown-common.css — and those come later in the cascade for
-   some surfaces, so a low-specificity rule would lose to the accent colour. */
+
+   Every declaration that must beat the live-chip styling carries `!important`,
+   because the inert class cannot out-specify the rules it has to override:
+
+     - `color`  — a local <a> also matches markdown-common.css's generic link
+                  rules (`.markdown-body a` / `.chat-message.user a`, which
+                  paint it accent/white), and the ancestor-scoped chip rules
+                  below come later in the cascade for some surfaces.
+     - `background` — the chip fill is set by ANCESTOR-scoped rules that
+                  outrank a bare `.chat-file-path-inert`:
+                    `.chat-message.assistant .chat-file-path` (0,3,0)
+                    `.chat-message.user .chat-file-path`      (0,3,0)
+                    `.markdown-body .chat-file-path`          (0,2,0)
+                    `.table-row-value .chat-file-path`        (0,2,0)
+                  A missing path must NOT keep that fill — leaving it makes the
+                  inert chip look identical to a working one, which is the very
+                  issue #501 symptom this whole block exists to prevent.
+     - `cursor` — inert elements deliberately keep `data-file-path` (so a later
+                  re-verify pass can re-mark them), which makes
+                  `.chat-file-path[data-file-path] { cursor: pointer }` (0,2,0)
+                  match them and claim the pointer affordance that the state
+                  must deny.
+     - `text-decoration` (hover) — the generic link rules underline on hover
+                  (`.chat-message.assistant a:hover` is (0,3,1)), which outranks
+                  both `a.chat-file-path-inert` (0,1,1) and
+                  `.chat-file-path-inert:hover` (0,2,0). Left alone, an inert
+                  <a> gained a solid underline on hover — a live-link signal
+                  stacked on top of the dashed "not a link" border.
+
+   The selectors are also listed with their compound forms (`a.` prefix,
+   `.code-file-path.` prefix) so the rule outranks the code-viewer's
+   `.code-file-path` and the generic anchor rules on specificity, not merely on
+   source order. */
 a.chat-file-path-inert,
 .chat-file-path-inert,
 .code-file-path.chat-file-path-inert {
   color: var(--text-muted, #999) !important;
-  text-decoration: none;
+  text-decoration: none !important;
   border-bottom: 1px dashed color-mix(in srgb, var(--text-muted, #999) 60%, transparent);
-  cursor: help;
-  background: none;
+  cursor: help !important;
+  background: none !important;
 }
 
 a.chat-file-path-inert:hover,
 .chat-file-path-inert:hover {
   color: var(--text-muted, #999) !important;
-  text-decoration: none;
-  background: color-mix(in srgb, var(--text-muted, #999) 10%, transparent);
+  text-decoration: none !important;
+  /* Faint tint only, so the explanatory tooltip stays discoverable without
+     resurrecting the live chip's stronger (18%) hover fill. */
+  background: color-mix(in srgb, var(--text-muted, #999) 10%, transparent) !important;
 }
 
 /* ── File open button ── */
