@@ -7,9 +7,38 @@ import { classifyUrl } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
+import { createSplashController, type SplashController } from './splash'
 import { nextZoomFactor, type ZoomAction } from './zoom'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * The native loading overlay for the main window, if one is up.
+ *
+ * Kept at module scope because the bridge (`native:dismiss-splash` from the
+ * app, `native:splash-cancel` from the overlay's cancel button) and the window
+ * lifecycle both need it, and they reach it through the exported helpers below
+ * rather than each holding their own reference.
+ */
+let splash: SplashController | null = null
+
+/** Show the loading overlay for a navigation to `url`, if it warrants one. */
+export function showSplashFor(url: string): void {
+  splash?.show(url)
+}
+
+/** Hide the loading overlay. Idempotent; safe when none is up. */
+export function dismissSplash(): void {
+  splash?.dismiss()
+}
+
+/**
+ * Abort the in-flight connection from the overlay's cancel button: stop the
+ * navigation, hide the overlay, and return to the server-selection page.
+ */
+export function cancelSplash(): void {
+  splash?.cancel()
+}
 
 export function getMainWindow(): BrowserWindow | null { return mainWindow }
 
@@ -132,11 +161,35 @@ export function createMainWindow(): BrowserWindow {
   // A (re)load tears down the renderer's listeners, so anything clicked before
   // it re-registers must be deferred rather than sent into the void.
   mainWindow.webContents.on('did-start-loading', () => markRendererLoading())
+
+  // Native loading overlay, floating above the window's own page. Created before
+  // the first navigation so a cold start can cover it too.
+  splash?.destroy()
+  splash = createSplashController(mainWindow, {
+    onAbort: (reason) => {
+      // Both paths land on the login page. A timeout also reports why, through
+      // the same onConnectError hook the did-fail-load fallback uses — without
+      // it the user would be returned to the login page with no explanation.
+      void mainWindow?.loadFile(loginPagePath())
+        .then(() => {
+          if (reason !== 'timeout') return
+          const wc = mainWindow?.webContents
+          if (!wc) return
+          void wc.executeJavaScript(buildConnectErrorScript('Connection timed out'), true)
+        })
+        .catch(() => { /* login page itself failed to load; nothing to report to */ })
+    },
+  })
+
   const serverUrl = getStore().get('serverUrl')
   if (serverUrl) {
+    // Cold start with a saved server: same gap as connecting from the login
+    // page, so the overlay covers it here too.
+    showSplashFor(serverUrl)
     mainWindow.loadURL(serverUrl)
   } else {
     // First run: no server configured — show a built-in login page to enter the server URL.
+    // No overlay: the login page is a local document with nothing to wait for.
     mainWindow.loadFile(loginPagePath())
   }
 
@@ -150,6 +203,9 @@ export function createMainWindow(): BrowserWindow {
     // Subframe failures, cancelled navigations and a failure of the login page
     // itself must not hijack the window — see shouldFallBackToLogin.
     if (!shouldFallBackToLogin({ errorCode, failedUrl, loginUrl, isMainFrame })) return
+    // The server is unreachable, so the overlay's premise (something is
+    // loading) no longer holds — drop it before showing the login page.
+    dismissSplash()
     // Server page failed to load (unreachable) — fall back to the server-selection
     // login page so the user can pick another server instead of a blank page.
     // loadFile resolves once the page is ready, so the failure can then be
@@ -185,13 +241,21 @@ export function createMainWindow(): BrowserWindow {
     }
     return { action: 'deny' }
   })
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    splash?.destroy()
+    splash = null
+    mainWindow = null
+  })
   return mainWindow
 }
 
 /** Navigate the main window back to the server-selection login page. */
 export function showLoginPage(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    // Reached from the settings "reconfigure server" action and from the
+    // notification deep-link fallback. The overlay must come down, or it would
+    // sit on top of the login page the user just asked for.
+    dismissSplash()
     mainWindow.loadFile(loginPagePath())
   }
 }

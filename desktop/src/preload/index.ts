@@ -58,7 +58,14 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   updateLastSeenEventId: (id: string) => { ipcRenderer.send('native:update-last-seen', id) },
   setKeepScreenOn: (on: boolean) => { ipcRenderer.send('native:keep-screen-on', on) },
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
-  dismissSplash: () => { /* desktop has no native splash overlay */ },
+  // The desktop shell DOES have a splash overlay (a native WebContentsView
+  // floating above the app while it connects and boots — see main/splash.ts).
+  // App.vue already calls this on every initialization exit path, so wiring it
+  // to a real IPC is all the renderer side needs.
+  dismissSplash: () => { ipcRenderer.send('native:dismiss-splash') },
+  // Backs the overlay's cancel button, which the overlay page wires to
+  // ClawBenchNative.cancelSplash() in splash mode.
+  cancelSplash: () => { ipcRenderer.send('native:splash-cancel') },
   stopBackgroundService: () => { /* desktop has no Android foreground service */ },
   setVolumeKeyMode: () => { /* desktop has no hardware volume keys */ },
   setTerminalSessionCount: () => { /* desktop has no status-bar terminal badge */ },

@@ -10,7 +10,10 @@ import {
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
-import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
+import {
+  getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
+  showSplashFor, dismissSplash, cancelSplash,
+} from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
@@ -77,9 +80,22 @@ export function registerBridge(): void {
       getStore().set('servers', [{ url }, ...servers])
     }
     const w = getMainWindow()
-    if (w) { w.loadURL(url) }
-    else { createMainWindow() }
+    if (w) {
+      // Raise the native loading overlay BEFORE navigating: the login page is
+      // torn down by loadURL, and the server page renders nothing until its own
+      // initialization resolves, so without this the window is blank for the
+      // whole connect + boot period. Mirrors Android's connectToServer().
+      showSplashFor(url)
+      w.loadURL(url)
+    } else { createMainWindow() }
   })
+
+  // The app calls this on every initialization exit path (see App.vue's
+  // guardStartupWithSplash), so it is the single signal that the overlay is no
+  // longer needed.
+  ipcMain.on('native:dismiss-splash', () => dismissSplash())
+  // The overlay page's cancel button. Navigates back to the login page.
+  ipcMain.on('native:splash-cancel', () => cancelSplash())
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))
   ipcMain.handle('native:test-port-reachable', (_e, p: number) => testPortReachable(p))

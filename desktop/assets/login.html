@@ -29,7 +29,14 @@
       connection_failed: 'Connection failed: ',
       connect_error: 'Unable to connect. Check address and network.',
       wrong_password: 'Wrong password',
-      too_many_attempts: 'Too many attempts'
+      too_many_attempts: 'Too many attempts',
+      // Splash overlay (?splash=1). Wording mirrors Android's splash_status_*
+      // strings so the two platforms read identically.
+      splash_connecting: 'Connecting…',
+      splash_loading: 'Loading page…',
+      splash_rendering: 'Rendering…',
+      splash_initializing: 'Initializing app…',
+      splash_cancel: 'Cancel connection'
     },
     zh: {
       slogan: '从终端到桌面',
@@ -53,7 +60,14 @@
       connection_failed: '连接失败: ',
       connect_error: '无法连接到服务器，请检查地址和网络。',
       wrong_password: '密码错误',
-      too_many_attempts: '尝试次数过多'
+      too_many_attempts: '尝试次数过多',
+      // Splash overlay (?splash=1). Wording mirrors Android's splash_status_*
+      // strings so the two platforms read identically.
+      splash_connecting: '正在连接…',
+      splash_loading: '正在加载页面…',
+      splash_rendering: '正在渲染…',
+      splash_initializing: '正在初始化应用…',
+      splash_cancel: '取消连接'
     }
   };
   var LANG = 'en';
@@ -1272,9 +1286,122 @@
       padding-bottom: env(safe-area-inset-bottom);
     }
   }
+  /* ── Splash overlay (?splash=1) ──────────────────────────────────────────
+     Shown by the main process while connecting to a server and booting the
+     app. Mirrors Android's native splash: a circular logo with a rotating
+     sweep ring, a stage line, and a cancel button. The ring reproduces
+     android/app/src/main/res/drawable/splash_sweep.xml (a dim full ring plus a
+     ~90° bright arc spun linearly over 1.6s). */
+  body.splash-mode .content { display: none; }
+
+  .splash {
+    position: fixed;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-primary);
+    z-index: 100;
+  }
+  body.splash-mode .splash { display: flex; }
+
+  /* Fade-out hook, called by the main process just before it hides the view. */
+  .splash.is-fading { opacity: 0; transition: opacity 200ms ease; }
+
+  .splash-logo-wrapper {
+    position: relative;
+    width: 132px;
+    height: 132px;
+  }
+
+  /* Sweep ring: a dim circle with one bright arc, spun by rotating the box. */
+  .splash-sweep {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    border: 2px solid var(--border-color);
+    opacity: 0.4;
+    animation: splash-spin 1.6s linear infinite;
+  }
+  .splash-sweep::after {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    border-top-color: var(--accent-color);
+    border-right-color: var(--accent-color);
+    /* Two adjacent edges approximate the native 90° sweep segment without an
+       SVG, so no extra asset ships for this. */
+    transform: rotate(45deg);
+  }
+
+  @keyframes splash-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
+  .splash-logo {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    width: 108px;
+    height: 108px;
+    border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .splash-title {
+    margin-top: 24px;
+    font-size: 20px;
+    font-weight: 500;
+    color: var(--text-primary);
+    letter-spacing: 0.06em;
+    opacity: 0.85;
+  }
+
+  .splash-stage {
+    margin-top: 12px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-muted);
+    opacity: 0.7;
+  }
+
+  .splash-cancel {
+    margin-top: 28px;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-family: inherit;
+    color: var(--text-hint);
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 150ms ease, color 150ms ease;
+  }
+  .splash-cancel:hover {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+  }
 </style>
 </head>
 <body>
+  <!-- Splash overlay (?splash=1). Rendered by the main process as a native
+       WebContentsView floating above the app while it connects and boots; see
+       desktop/src/main/splash.ts. Hidden unless the query flag is present. -->
+  <div class="splash" id="splash">
+    <div class="splash-logo-wrapper">
+      <div class="splash-sweep"></div>
+      <img class="splash-logo" src="logo.png" alt="ClawBench">
+    </div>
+    <div class="splash-title">ClawBench</div>
+    <div class="splash-stage" id="splashStage" data-i18n="splash_connecting">正在连接…</div>
+    <button type="button" class="splash-cancel" id="splashCancel" data-i18n="splash_cancel">取消连接</button>
+  </div>
+
   <div class="bg-gradient"></div>
   <div class="bg-grid"></div>
 
@@ -1420,9 +1547,52 @@
     });
   }
 
+  // ── Splash overlay (?splash=1) ──────────────────────────────────────────
+  // The main process loads this same page with ?splash=1 as a native view
+  // floating over the app while it connects and boots. In that mode the login
+  // form is irrelevant: only the splash markup is shown, and the process drives
+  // the stage text through __splashSetStage.
+  var SPLASH_MODE = /(?:^|[?&])splash=1(?:&|$)/.test(window.location.search);
+  var SPLASH_STAGE_KEYS = {
+    connecting: 'splash_connecting',
+    loading: 'splash_loading',
+    rendering: 'splash_rendering',
+    initializing: 'splash_initializing'
+  };
+
+  /** Advance the splash stage text. Called from the main process. */
+  window.__splashSetStage = function(stage) {
+    var key = SPLASH_STAGE_KEYS[stage];
+    if (!key) return;
+    var el = document.getElementById('splashStage');
+    if (el) el.textContent = t(key);
+  };
+
+  /** Begin the splash fade-out. The main process hides the view shortly after. */
+  window.__splashFadeOut = function() {
+    var el = document.getElementById('splash');
+    if (el) el.classList.add('is-fading');
+  };
+
+  if (SPLASH_MODE) {
+    document.body.classList.add('splash-mode');
+  }
+
   window.addEventListener('DOMContentLoaded', function() {
     // Apply i18n to all elements with data-i18n / data-i18n-placeholder
     applyI18n();
+
+    if (SPLASH_MODE) {
+      // Splash mode is display-only apart from the cancel button; skip the
+      // login form's data loading entirely.
+      var cancelBtn = document.getElementById('splashCancel');
+      if (cancelBtn) {
+        cancelBtn.addEventListener('click', function() {
+          try { ClawBenchNative.cancelSplash(); } catch(e) {}
+        });
+      }
+      return;
+    }
 
     // Load server list (single source of truth)
     loadServerList();
