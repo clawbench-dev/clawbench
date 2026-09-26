@@ -163,12 +163,14 @@ function draw() {
 
     const alpha = Math.min(0.95, layer.alpha)
     const fill = ctx.createLinearGradient(0, yPeak, 0, fadeEnd)
-    // The first two stops sit ~2% apart: a tight bright lip at the crest reads
-    // as a crisp edge, then a long fade gives the in-wave gradient. Widening
-    // this transition past a few percent makes the edge look soft and fuzzy.
-    fill.addColorStop(0, rgba(palette.waveRim, alpha))
-    fill.addColorStop(0.02, rgba(palette.waveRim, alpha * 0.88))
-    fill.addColorStop(0.28, rgba(palette.waveBody, alpha * 0.5))
+    // The crest lip runs to ~20% and only reaches 0.52 alpha. The original was a
+    // tight, near-opaque lip (2% / 0.88), which reads as a hard drawn edge — too
+    // crisp for the intended soft look. A longer, dimmer ramp widens the
+    // 10%-to-90% transition by ~1.4x and drops the peak contrast to ~0.65x,
+    // while the crest still stays brighter than the band body.
+    fill.addColorStop(0, rgba(palette.waveRim, alpha * 0.80))
+    fill.addColorStop(0.20, rgba(palette.waveRim, alpha * 0.52))
+    fill.addColorStop(0.46, rgba(palette.waveBody, alpha * 0.38))
     fill.addColorStop(1, rgba(palette.waveBody, 0))
 
     ctx.beginPath()
@@ -180,7 +182,8 @@ function draw() {
     ctx.fillStyle = fill
     ctx.fill()
 
-    // Crest stroke — the main contributor to edge crispness.
+    // Crest stroke. A wider, dimmer stroke reads as a soft rim rather than a
+    // drawn line — the crispness came from a 1.5px stroke at near-opaque alpha.
     const edgeAlpha = Math.min(1, alpha * 1.25) * layer.edge
     if (edgeAlpha > 0.01) {
       ctx.beginPath()
@@ -189,7 +192,7 @@ function draw() {
         else ctx.lineTo(points[i][0], points[i][1])
       }
       ctx.strokeStyle = rgba(palette.waveRim, edgeAlpha)
-      ctx.lineWidth = 1.5
+      ctx.lineWidth = 3.4
       ctx.lineJoin = 'round'
       ctx.lineCap = 'round'
       ctx.stroke()

@@ -209,9 +209,9 @@ export interface WaveLayer {
  * period — one long swell rather than a field of ripples.
  */
 export const WAVE_LAYERS: readonly WaveLayer[] = [
-  { base: 0.34, lam: 2.70, amp: 0.090, band: 0.42, tilt: -0.10, alpha: 0.34, edge: 0.55, phase0: 0.0, warp: 0.50, harm: 0.10, env: 0.20, travel: 0.024, evolve: 0.026 },
-  { base: 0.55, lam: 2.40, amp: 0.110, band: 0.50, tilt: -0.14, alpha: 0.52, edge: 0.80, phase0: 1.1, warp: 0.66, harm: 0.14, env: 0.24, travel: 0.032, evolve: 0.034 },
-  { base: 0.76, lam: 2.10, amp: 0.130, band: 0.58, tilt: -0.18, alpha: 0.72, edge: 1.00, phase0: 2.2, warp: 0.82, harm: 0.18, env: 0.28, travel: 0.042, evolve: 0.044 },
+  { base: 0.34, lam: 2.70, amp: 0.090, band: 0.42, tilt: -0.10, alpha: 0.34, edge: 0.24, phase0: 0.0, warp: 0.50, harm: 0.10, env: 0.20, travel: 0.024, evolve: 0.026 },
+  { base: 0.55, lam: 2.40, amp: 0.110, band: 0.50, tilt: -0.14, alpha: 0.52, edge: 0.34, phase0: 1.1, warp: 0.66, harm: 0.14, env: 0.24, travel: 0.032, evolve: 0.034 },
+  { base: 0.76, lam: 2.10, amp: 0.130, band: 0.58, tilt: -0.18, alpha: 0.72, edge: 0.40, phase0: 2.2, warp: 0.82, harm: 0.18, env: 0.28, travel: 0.042, evolve: 0.044 },
 ]
 
 const TAU = Math.PI * 2
