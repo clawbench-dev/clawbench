@@ -1,12 +1,32 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { copyText } from '@/utils/clipboard'
+import { switchLeftTab, resetWideScreenState } from '@/composables/useWideScreenLayout'
 
 const mockedCopyText = vi.mocked(copyText)
+
+// jsdom lacks window.matchMedia. The theme-picker tests are the first in this
+// file to actually render the theme menu, whose rows call
+// getThemePreviewStyle → resolveThemeId('auto') → window.matchMedia. Without a
+// stub that throws inside render (and the test's rethrowing errorHandler turns
+// it into a hang). Stub a light scheme; other suites do the same.
+function stubMatchMedia() {
+  vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })))
+}
+stubMatchMedia()
 
 // ── Mock setup ──
 const {
@@ -134,6 +154,11 @@ function $(selector: string) {
   return document.body.querySelector(selector) as HTMLElement | null
 }
 
+/** Shared injectable activeTab ref (narrow-mode tab). Tests mutate it to
+ *  simulate a dock tab switch, which cannot be done via click because the dock
+ *  lives in App.vue, not AppHeader. */
+const injectedActiveTab = ref('chat')
+
 function mountHeader(props: Record<string, unknown> = {}) {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -143,7 +168,7 @@ function mountHeader(props: Record<string, unknown> = {}) {
     global: {
       plugins: [i18n],
       stubs: { PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
-      provide: { switchTab: vi.fn(), toast: { show: vi.fn() }, hotSwitchProject: vi.fn() },
+      provide: { switchTab: vi.fn(), toast: { show: vi.fn() }, hotSwitchProject: vi.fn(), activeTab: injectedActiveTab },
       config: {
         errorHandler: (err: unknown) => {
           if (err instanceof Error && err.message.includes('Maximum recursive updates')) return
@@ -191,6 +216,11 @@ describe('AppHeader', () => {
     dialogConfirmFn.mockResolvedValue(true)
     mockedCopyText.mockReset()
     mockedCopyText.mockImplementation((_text: string, onSuccess?: () => void) => { onSuccess?.() })
+    injectedActiveTab.value = 'chat'
+    resetWideScreenState()
+    // Re-stub: earlier tests call vi.unstubAllGlobals(), which also clears the
+    // module-level matchMedia stub the theme picker needs to render.
+    stubMatchMedia()
   })
 
   // ── projectName computed (5) ──
@@ -1297,6 +1327,59 @@ describe('AppHeader', () => {
     expect(forceBtn).toBeTruthy()
 
     wrapper.vm.dirtyModalOpen = false
+  })
+
+  // ── Navigation dismisses header popups ──
+  // Regression: theme + system-resources menus are PopupMenu (teleported to
+  // <body>, position:fixed, z-index 9999). The dock buttons use @click.stop, so
+  // the document-level outside-click handlers never fire on a tab switch and
+  // the menu stayed open over the newly shown tab (visible on narrow screens,
+  // where the tab replaces the whole area below the header).
+
+  it('closes theme menu when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(false)
+  })
+
+  it('closes resources menu when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleResourcesMenu()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.resourcesMenuOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+  })
+
+  it('closes both menus when the wide-mode leftTab changes', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    ;(wrapper.vm as any).toggleResourcesMenu()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(true)
+    expect(wrapper.vm.resourcesMenuOpen).toBe(true)
+
+    switchLeftTab('settings')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(false)
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+  })
+
+  it('leaves the menus alone when unrelated state changes', async () => {
+    // Guard against an over-eager watcher: git branch updates must not dismiss.
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+    mockState.gitBranch = 'feature/x'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(true)
   })
 
   // ── handleLogout ──

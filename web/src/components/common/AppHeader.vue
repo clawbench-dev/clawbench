@@ -916,6 +916,19 @@ watch(resourcesMenuOpen, (open) => {
     }
 })
 
+// Navigation dismisses the header popups. Both are PopupMenu (teleported to
+// <body>, position:fixed, z-index 9999) and the dock buttons use @click.stop,
+// so the document-level outside-click handlers never fire on a tab switch —
+// the menu would otherwise stay open over the newly shown tab. Watching the
+// tab refs covers narrow (activeTab) and wide (leftTab) layouts.
+watch(
+    [activeTab, leftTab],
+    () => {
+        themeMenuOpen.value = false
+        resourcesMenuOpen.value = false
+    },
+)
+
 onMounted(() => {
     document.addEventListener('click', onClickOutside)
     document.addEventListener('visibilitychange', onBlinkVisibilityChange)
