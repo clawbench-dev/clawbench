@@ -1,4 +1,16 @@
-# The REAL clawbench server for Tier 2 (h2 stream tunnel).
+# Tier 2 real-server image.
+#
+# The config is selected at BUILD time by SERVER_CONFIG (see
+# docker-compose.yml's `server` service), so `docker compose build server`
+# bakes in exactly one config file:
+#
+#   config.yaml            enabled:false + transport:h2   -> registry EXISTS
+#   config.no-h2.yaml      enabled:false + transport:ssh  -> registry is nil
+#
+# The negative-config phase (tests/tunnel.server.mjs, the 503 assertions)
+# rebuilds this image with SERVER_CONFIG=config.no-h2.yaml. That is deliberately
+# a *different image tag* (see compose) so the two phases can never race on the
+# same tag, and the binary itself is unchanged — only the config differs.
 #
 # Why a real server and not the Tier 1 mock: MockWebServer / the dependency-free
 # mock are HALF-DUPLEX — they consume the whole request body before writing a
@@ -17,13 +29,16 @@
 # unreachable here); the Go binary itself needs no runtime.
 FROM node:20-alpine
 
+# Which server-config/*.yaml to bake in. Defaults to the h2-capable config.
+ARG SERVER_CONFIG=config.yaml
+
 WORKDIR /app
 
 # The real server + its config. config/config.yaml is resolved by
 # platform.FindConfigPath: <data-dir>/config/config.yaml first, then the
 # CWD-relative config/config.yaml — both are satisfied here.
 COPY assets/clawbench-server /app/clawbench
-COPY server-config/config.yaml /app/config/config.yaml
+COPY server-config/${SERVER_CONFIG} /app/config/config.yaml
 
 # data-dir holds the SQLite DB and logs. It is a plain directory inside the
 # container: the harness tears the container down each run, so a fresh data dir

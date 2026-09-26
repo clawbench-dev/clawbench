@@ -13,7 +13,7 @@ vitest suite or `scripts/pre-push-checks.sh`.
 | Tier | What it proves | Status |
 |------|----------------|--------|
 | **1** | Native shell + WebView login flow (launch → login page → form → home) | implemented, green (`tests/smoke.login.mjs`) |
-| **2** | h2 stream tunnel (`feat/ssh-ws-forward`) on a real runtime, against a REAL server — `-L` and `-R` byte transfer, wire selection, negative path, teardown | implemented, green (`tests/tunnel.{server,forward,reverse}.mjs`) [^same-site] |
+| **2** | h2 stream tunnel (`feat/ssh-ws-forward`) on a real runtime, against a REAL server — `-L` and `-R` byte transfer, wire selection, reconnect, concurrency, binary transparency, half-close/drain-grace, negative paths, teardown, and the 503 config gate | implemented, green (`tests/tunnel.{server,forward,reverse}.mjs`) [^same-site] |
 
 [^same-site]: **Caveat:** the byte transfer is real, but on this API-28 image it
     runs with a harness-installed cookie, because the app cannot read its own
@@ -171,9 +171,25 @@ did not, every `/api/tunnel/*` request would be `503 PortForwardUnavailable`. Th
 only combination that legitimately disables the h2 endpoints is
 `enabled: false` + `transport: ssh`.
 
-`tests/tunnel.server.mjs` asserts this by status class: an **unauthenticated**
-`POST /api/tunnel/stream` must be `401` (the handler ran, `middleware.Auth`
-rejected it) and **not** `503` (no registry).
+`tests/tunnel.server.mjs` asserts this on an **authenticated** request: the
+handler's nil-registry guard is *inside* the handler, and `middleware.Auth`
+returns `401` before the handler runs for any request without a cookie. An
+unauthenticated probe therefore cannot observe `503` at all — an earlier revision
+asserted `status !== 503` without a cookie and could never fail (the 401 came
+from the middleware regardless of the registry). The spec now:
+
+- probes unauthenticated and asserts **401** (a statement about the auth layer);
+- probes **authenticated** and asserts the handler was reached — a dead-target
+  dial is **502**, and the control stream is **200** — never `503`;
+- and pins the `503` branch with a **positive control**: the `server-no-h2`
+  compose service runs the same binary with `enabled: false` + `transport: ssh`
+  (`server-config/config.no-h2.yaml`) on port **20002**, and both endpoints are
+  asserted to answer `503` there. Without that control, "not 503" would be
+  consistent with a 503 branch that does not exist.
+
+The control server runs alongside the h2 server for the whole Tier 2 phase
+(`network_mode: service:emulator`, so the runner reaches it at
+`http://emulator:20002`), which is far cheaper than a second emulator boot.
 
 ### Version agreement (why login does not hang)
 
@@ -196,7 +212,8 @@ Everything the tunnel needs lives in the emulator's network namespace:
 
 ```
 [emulator container netns]                       [device]
-  10.0.2.2:20000  real clawbench server
+  10.0.2.2:20000  real clawbench server (enabled:false, transport:h2)
+  127.0.0.1:20002 negative-config control server (enabled:false, transport:ssh)
   127.0.0.1:18080 tunnel target (node:net)  <──h2──  127.0.0.1:15080  (-L listener)
   127.0.0.1:17080 reverse listener (server binds) <──h2──  127.0.0.1:18090  (-R device target)
   0.0.0.0:18081   target/control HTTP server
@@ -205,7 +222,11 @@ Everything the tunnel needs lives in the emulator's network namespace:
 | Service | Role |
 |---------|------|
 | `server` | The real `clawbench` binary (`Dockerfile.server`), h2-only config |
+| `server-no-h2` | The same binary with `enabled:false, transport:ssh` on :20002 — the 503 positive control |
 | `target` | `target-server/server.mjs` — the `-L` dial target + a control API for the runner |
+
+Both server services share the emulator's netns (like `target`), so the runner
+reaches them at `http://emulator:20000` and `http://emulator:20002`.
 
 `target` must share the server's namespace because the h2 `-L` handler dials the
 target **from the server's namespace**, so `127.0.0.1:18080` is only a valid
@@ -260,16 +281,59 @@ payload with **device-side `toybox nc`** run through Appium's `mobile: shell`:
   device target replies with its marker and records the request. Again both
   directions are witnessed independently.
 
-**API 28 device tools (probed, not assumed):** `toybox` (multi-call, includes
-`nc`, `netstat`, `setsid`, `pkill`), `/system/xbin/nc` (BSD flavour), `sh`.
-There is **no** `curl`, `wget`, or `busybox`. Two measured constraints shaped the
-probes:
+### Target reply modes
 
-- `mkfifo` is **denied** (`Permission denied`, SELinux), so the device `-R`
-  responder feeds `nc` from a **regular file** on stdin and appends received
-  bytes to another.
-- A raw `printf '...' | nc -l` listener replies then EOFs immediately, exiting
-  before it reads the request — hence the file-fed shape above.
+The `-L` target's behavior is selectable at runtime (`POST
+/__target/mode?mode=`), so a spec can make a probe that would pass against a
+lenient target fail against a strict one:
+
+| Mode | Behavior | Used to prove |
+|------|----------|---------------|
+| `http` (default) | reply on headers-complete, echoing the request | the byte-transfer assertions |
+| `eof` | reply **only** on client EOF | the half-close really traversed the tunnel |
+| `raw` | read to EOF, echo bytes verbatim | 64 KiB binary byte-transparency (`cmp` on-device) |
+| `stall` | close the write side at once, never reply | the bounded drain grace (design §4.2.1) |
+| `delay` | record the request, wait 10s, then reply | a relay that is in flight when its port is removed |
+
+The mode is snapshotted per connection, so flipping it cannot change the
+behavior of a connection that is already open.
+
+### Probes beyond the single request
+
+- **Binary**: `probeLocalPortRaw` pushes a payload to the device, streams it
+  through the forward, and runs `cmp` **on the device** — a base64 round trip
+  through Appium would hide a byte-transparency bug.
+- **Concurrent**: `probeLocalPortConcurrent` fans out N `nc` probes on the
+  device (T14 calls for 20-way) and checks each reply plus the target's log.
+- **Half-close / stalled**: dedicated device scripts keep the request body open
+  (`probeLocalPortStalled`) or rely on EOF (`probeLocalPortHalfClose`).
+- **In flight**: `startDetachedLocalProbe` runs a probe with `setsid` so the
+  spec can remove the port *while* the relay is live — Appium serialises its
+  commands, so a blocking probe could never be concurrent with the removal.
+
+**API 28 device tools (probed, not assumed):** `toybox` (multi-call, includes
+`nc`, `netstat`, `setsid`, `pkill`, `md5sum`, `cmp`, `dd`, `timeout`),
+`/system/xbin/nc` (BSD flavour), `sh`. The applet list was read out of the
+system image with `debugfs` rather than assumed. There is **no** `curl`,
+`wget`, or `busybox`. Several measured constraints shaped the probes:
+
+- **The device `-R` target uses `nc -L` (capital), not a `while true; nc -l`
+  loop.** A loop drops connections: `nc` exits when its connection ends and the
+  loop needs a moment to respawn, and a connection arriving in that window gets
+  `ECONNREFUSED`. Measured: a loop serving ~1 connection/s served only ~half of
+  20 sequential probes, every failure an immediate `ECONNREFUSED`. `nc -L` keeps
+  one listening socket and forks a handler per connection, so there is no window.
+- **The handler emits its response from a FILE with `cat`.** A shell builtin
+  `printf` is block-buffered when stdout is a socket, so the response would sit
+  in the buffer until the handler exits — which it cannot do while still
+  reading — and the peer times out.
+- **The handler's request recorder is bounded (`timeout 2 cat >> log`).** In the
+  `-R` direction the device target never observes the server-side client's
+  half-close (the server relay does not forward it to the device — design
+  §4.2.1), so an unbounded `cat` would block until the relay's drain grace tore
+  the stream down and the handler would never exit.
+- `mkfifo` is **denied** (`Permission denied`, SELinux), so no FIFO shape is
+  available.
 
 ### Appium `mobile: shell` needs a server flag
 

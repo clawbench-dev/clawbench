@@ -120,8 +120,8 @@ log "step 4/8: compose build (tier=$TIER)"
 # (The service lists mirror the `run_phase` calls at the bottom of this script.)
 case "$TIER" in
   1)   BUILD_SERVICES="emulator mock runner" ;;
-  2)   BUILD_SERVICES="emulator server target runner" ;;
-  all) BUILD_SERVICES="emulator mock server target runner" ;;
+  2)   BUILD_SERVICES="emulator server server-no-h2 target runner" ;;
+  all) BUILD_SERVICES="emulator mock server server-no-h2 target runner" ;;
 esac
 # shellcheck disable=SC2086 # word-split is intended: BUILD_SERVICES is a list
 compose build $BUILD_SERVICES
@@ -222,7 +222,12 @@ run_phase() {
   # accepting. The Tier 1 mock binds instantly; the real server needs a few
   # seconds to open its SQLite DB and start workers. Poll /api/health from the
   # emulator container (which shares the server's netns) rather than sleeping.
-  log "phase tier=$tier: wait for $server_service on :20000"
+  #
+  # `$4` is an extra "host:port" to wait for (empty for Tier 1). Tier 2 passes
+  # the negative-config control server (20002), so the 503 assertion in
+  # tunnel.server.mjs cannot race a server that is still booting.
+  local extra_probe="${4:-}"
+  log "phase tier=$tier: wait for $server_service on :20000${extra_probe:+ and $extra_probe}"
   local server_timeout="${E2E_SERVER_TIMEOUT:-120}"
   local deadline=$(( $(date +%s) + server_timeout ))
   local server_up=0
@@ -246,6 +251,31 @@ PY' | tr -d '\r\n' | grep -q '^200$'; then
   fi
   echo "$server_service is serving /api/health (200)"
 
+  if [[ -n "$extra_probe" ]]; then
+    local probe_port="${extra_probe##*:}"
+    local extra_up=0
+    deadline=$(( $(date +%s) + server_timeout ))
+    while (( $(date +%s) < deadline )); do
+      if compose exec -T emulator sh -c \
+          "python3 - <<PY 2>/dev/null
+import urllib.request
+print(urllib.request.urlopen('http://127.0.0.1:${probe_port}/api/health', timeout=3).status)
+PY" | tr -d '\r\n' | grep -q '^200$'; then
+        extra_up=1; break
+      fi
+      printf '.'
+      sleep 5
+    done
+    echo
+    if [[ "$extra_up" != "1" ]]; then
+      echo "ERROR: the extra server on ${extra_probe} did not answer /api/health within ${server_timeout}s" >&2
+      compose logs --tail=80 server-no-h2 >&2 || true
+      PHASE_RC=1
+      return 0
+    fi
+    echo "extra server on ${extra_probe} is serving /api/health (200)"
+  fi
+
   log "phase tier=$tier: run suite"
   # Detached (not `compose run --rm`) so the container survives its exit and its
   # artifacts can be copied out before teardown. E2E_TIER selects the spec files.
@@ -267,6 +297,8 @@ PY' | tr -d '\r\n' | grep -q '^200$'; then
     echo "--- $server_service log (tail) ---"
     compose logs --tail=40 "$server_service" || true
     if [[ "$tier" != "1" ]]; then
+      echo "--- negative-config server log (tail) ---"
+      compose logs --tail=40 server-no-h2 || true
       echo "--- tunnel target log (tail) ---"
       compose logs --tail=40 target || true
     fi
@@ -297,7 +329,7 @@ if [[ "$TIER" == "2" || "$TIER" == "all" ]]; then
   if [[ "$OVERALL_RC" != "0" && "$TIER" == "all" ]]; then
     log "SKIP — Tier 2 (Tier 1 failed; fix that first)"
   else
-    run_phase 2 server "target"
+    run_phase 2 server "target server-no-h2" "20002"
     if [[ "$PHASE_RC" == "0" ]]; then
       log "PASS — Tier 2 suite succeeded"
     else
