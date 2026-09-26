@@ -1179,6 +1179,194 @@ func TestControlSession_CloseRacesBindWithoutWaitGroupMisuse(t *testing.T) {
 	}
 }
 
+// TestControlSession_ParkUsesCapturedClaimTimeout is the regression guard for
+// the tunnelClaimTimeout data race: park() runs on the accept-loop goroutine,
+// which outlives the request, so reading the reassignable package global there
+// races with anything that swaps it (setupTunnelControlTest.Cleanup restores it
+// exactly like a test writer would). The fix captures the value into
+// controlSession at construction, next to binds/claims/proxy.
+//
+// Two assertions, because a race alone is only observable under -race:
+//
+//   - Deterministic (no -race needed): a session constructed while the global
+//     is long keeps using that long value after the global is shortened, so a
+//     parked connection survives well past the new short timeout. A park that
+//     read the global would expire it.
+//   - -race-sensitive: a goroutine hammers the global while the accept loop
+//     parks connections. Under -race the unfixed global read is reported as a
+//     data race on tunnelClaimTimeout; with the capture there is no shared
+//     read at all. Run this test with `-race` to exercise that half.
+func TestControlSession_ParkUsesCapturedClaimTimeout(t *testing.T) {
+	_, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	orig := tunnelClaimTimeout
+	t.Cleanup(func() { tunnelClaimTimeout = orig })
+
+	// Long value at construction: the session must keep it even after the
+	// global is shortened below.
+	tunnelClaimTimeout = time.Minute
+
+	binding := tunnel.Binding{AuthID: "a", ConnID: "capture"}
+	s := newControlSession(binding, io.Discard, nil)
+	ln, port, err := tunnel.ListenReverse(tunnelGuard(), s.binds, tunnel.BindRequest{
+		Port: 0, Binding: binding,
+	})
+	require.NoError(t, err)
+	require.True(t, s.startAcceptLoop(ln, port), "the accept loop must start")
+	defer s.Close()
+
+	// Shorten the global AFTER construction. A park that reads the global would
+	// now use 1ms and discard the connection almost immediately; the captured
+	// value keeps it parked.
+	tunnelClaimTimeout = time.Millisecond
+
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	require.Eventually(t, func() bool { return tunnelClaims.Len() == 1 }, 2*time.Second, 10*time.Millisecond,
+		"the accepted connection must be parked")
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, tunnelClaims.Len(),
+		"park must use the claim timeout captured at construction, not the shortened global")
+
+	// -race half: hammer the global while the accept loop parks more
+	// connections, so the race detector can observe a read of the global if the
+	// capture regressed.
+	stop := make(chan struct{})
+	var writer sync.WaitGroup
+	writer.Add(1)
+	go func() {
+		defer writer.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				tunnelClaimTimeout = 50 * time.Millisecond
+			}
+		}
+	}()
+
+	for range 200 {
+		c, derr := net.DialTimeout("tcp", addr, 2*time.Second)
+		if derr == nil {
+			_ = c.Close()
+		}
+	}
+	close(stop)
+	writer.Wait()
+}
+
+// blockingCloseConn is a net.Conn whose Close blocks until release is closed.
+// It lets a test hold controlSession.Close inside a chosen window.
+type blockingCloseConn struct {
+	closeStarted chan struct{}
+	release      chan struct{}
+	once         sync.Once
+}
+
+func newBlockingCloseConn() *blockingCloseConn {
+	return &blockingCloseConn{
+		closeStarted: make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+}
+
+type blockingCloseAddr struct{}
+
+func (blockingCloseAddr) Network() string { return "blocking" }
+func (blockingCloseAddr) String() string  { return "blocking" }
+
+func (c *blockingCloseConn) Read([]byte) (int, error)         { select {} }
+func (c *blockingCloseConn) Write(b []byte) (int, error)      { return len(b), nil }
+func (c *blockingCloseConn) LocalAddr() net.Addr              { return blockingCloseAddr{} }
+func (c *blockingCloseConn) RemoteAddr() net.Addr             { return blockingCloseAddr{} }
+func (c *blockingCloseConn) SetDeadline(time.Time) error      { return nil }
+func (c *blockingCloseConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *blockingCloseConn) SetWriteDeadline(time.Time) error { return nil }
+func (c *blockingCloseConn) Close() error {
+	c.once.Do(func() {
+		close(c.closeStarted)
+		<-c.release
+	})
+	return nil
+}
+
+// TestControlSession_CloseDoesNotHangOnReservationInScanWindow is the
+// deterministic regression guard for the permanent-hang window the WaitGroup
+// fix left open.
+//
+// ListenReverse reserves a port outside wgMu (bind.go:197-202), while the
+// wg.Add that makes the reservation reachable by wg.Wait happens under wgMu in
+// startAcceptLoop. On the unfixed code the release scan ran BEFORE wgMu was
+// taken, so a handleBind whose reservation landed after the scan but whose Add
+// landed before the closing flip was counted by wg.Wait but invisible to the
+// scan — nothing closed its listener, so wg.Wait hung forever.
+//
+// The test holds Close inside exactly that scan->flip window with a parked
+// connection whose Close blocks, then runs a handleBind while Close is parked
+// there. On the fixed code the scan and the flip are one critical section, so
+// handleBind either completes before the scan (its reservation is seen) or
+// serializes behind wgMu and starts no loop after the flip. Either way Close
+// returns and the reservation is released.
+func TestControlSession_CloseDoesNotHangOnReservationInScanWindow(t *testing.T) {
+	_, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	binding := tunnel.Binding{AuthID: "a", ConnID: "scan-window"}
+	s := newControlSession(binding, io.Discard, nil)
+
+	// Park a connection whose Close blocks. Close's claims.ReleaseBinding runs
+	// it between the bind scan and the closing flip, holding Close in the
+	// scan->flip window.
+	blocker := newBlockingCloseConn()
+	if _, err := s.claims.Park(binding, 1, blocker, time.Minute); err != nil {
+		t.Fatalf("Park: %v", err)
+	}
+
+	closed := make(chan struct{})
+	go func() {
+		s.Close()
+		close(closed)
+	}()
+	<-blocker.closeStarted // Close is now inside the window
+
+	// Run a bind while Close is parked in the window.
+	port := freeLoopbackPort(t)
+	handleDone := make(chan struct{})
+	go func() {
+		s.handleBind(port)
+		close(handleDone)
+	}()
+
+	// Wait until the bind has reserved the port, so it is genuinely in the
+	// window (reservation made, accept loop not yet joined) before Close is
+	// allowed to proceed.
+	require.Eventually(t, func() bool { return tunnelBinds.IsBound(port) }, 2*time.Second, 10*time.Millisecond,
+		"the in-window bind must have reserved its port")
+
+	close(blocker.release)
+
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Errorf("Close hung: a reservation made in the scan window was counted by wg.Wait but never released")
+		return
+	}
+	select {
+	case <-handleDone:
+	case <-time.After(3 * time.Second):
+		t.Errorf("handleBind hung after Close")
+		return
+	}
+
+	assert.False(t, tunnelBinds.IsBound(port), "the in-window bind must have been released, not leaked")
+	waitPortFree(t, port)
+}
+
 // TestTunnelStream_ClaimIgnoresHostAndPort pins the branch precedence at
 // tunnel_stream.go:67-70: a present `claim` parameter short-circuits the
 // host/port dial path entirely. The cases below pair the claim with a

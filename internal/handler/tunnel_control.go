@@ -23,7 +23,10 @@ import (
 const tunnelControlWriteTimeout = 10 * time.Second
 
 // tunnelClaimTimeout bounds how long an accepted reverse connection waits to be
-// claimed before it is closed. A var so tests can shorten it.
+// claimed before it is closed. A var so tests can shorten it; it is captured
+// into controlSession at construction (see newControlSession) rather than read
+// here, because park() runs on an accept-loop goroutine that outlives the
+// request — the same class of reader as the Race-1 globals.
 var tunnelClaimTimeout = tunnel.DefaultClaimTimeout
 
 // Reverse-tunnel registries. They are process-wide because a reverse bind
@@ -62,6 +65,14 @@ type controlSession struct {
 	claims *tunnel.ClaimRegistry
 	proxy  *service.ProxyRegistry
 
+	// claimTimeout is tunnelClaimTimeout captured at construction, for the same
+	// reason as binds/claims/proxy: park() reads it on the accept-loop
+	// goroutine, which outlives the request and can still be running after a
+	// test has restored the global (Cleanup). Reading the global there is a
+	// data race; the captured value is immutable for the session's life. In
+	// production the global is set once at init, so behavior is identical.
+	claimTimeout time.Duration
+
 	// w is the response writer; rc is its controller, used to flush after each
 	// line (net/http and the h2 framer both buffer) and to bound each write.
 	w  io.Writer
@@ -97,12 +108,13 @@ type controlSession struct {
 // reads the reassignable package globals.
 func newControlSession(binding tunnel.Binding, w io.Writer, rc *http.ResponseController) *controlSession {
 	return &controlSession{
-		binding: binding,
-		binds:   tunnelBinds,
-		claims:  tunnelClaims,
-		proxy:   service.ProxyService,
-		w:       w,
-		rc:      rc,
+		binding:      binding,
+		binds:        tunnelBinds,
+		claims:       tunnelClaims,
+		proxy:        service.ProxyService,
+		claimTimeout: tunnelClaimTimeout,
+		w:            w,
+		rc:           rc,
 	}
 }
 
@@ -223,7 +235,7 @@ func (s *controlSession) acceptLoop(ln net.Listener, port int) {
 // park hands one accepted connection to the client: it is held (not relayed)
 // until the client redeems the token via POST /api/tunnel/stream?claim=...
 func (s *controlSession) park(conn net.Conn, port int) {
-	token, err := s.claims.Park(s.binding, port, conn, tunnelClaimTimeout)
+	token, err := s.claims.Park(s.binding, port, conn, s.claimTimeout)
 	if err != nil {
 		slog.Warn("tunnel: failed to mint claim token", slog.String("err", err.Error()))
 		_ = conn.Close()
@@ -245,17 +257,30 @@ func (s *controlSession) park(conn net.Conn, port int) {
 // this session and clears the registry Active flags. Safe to call repeatedly.
 func (s *controlSession) Close() {
 	s.closeOnce.Do(func() {
+		// The release scan and the closing flip must be one critical section.
+		//
+		// ListenReverse reserves a port OUTSIDE wgMu (bind.go:197-202), while
+		// the wg.Add that makes the reservation reachable by Wait happens under
+		// wgMu in startAcceptLoop. If the scan ran before taking wgMu, a bind
+		// whose reservation landed after the scan but whose Add landed before
+		// the flip would be counted by wg.Wait but invisible to the scan —
+		// nothing would ever close that listener, so Wait would hang forever.
+		// Holding wgMu across scan+flip closes the window: every Add either
+		// happens-before the scan (its reservation, made earlier on the same
+		// goroutine, is then seen by the scan) or after the flip (startAcceptLoop
+		// observes closing and starts no loop, and the caller releases the
+		// reservation itself).
+		//
+		// wg.Wait is deliberately called AFTER unlocking: an accept loop needs
+		// wgMu to be free to run to completion, so waiting under it would
+		// deadlock.
+		s.wgMu.Lock()
 		for _, port := range s.binds.ReleaseBinding(s.binding) {
 			if s.proxy != nil {
 				s.proxy.SetReverseBound(port, false)
 			}
 		}
 		s.claims.ReleaseBinding(s.binding)
-
-		// Stop accepting new loops before waiting: a concurrent handleBind must
-		// not Add after this Wait returns. Holding wgMu across the flag flip
-		// makes Add-before-flag and flag-before-Wait mutually exclusive.
-		s.wgMu.Lock()
 		s.closing = true
 		s.wgMu.Unlock()
 
