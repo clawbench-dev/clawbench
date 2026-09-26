@@ -249,12 +249,11 @@ describe('SessionShareView', () => {
     expect(wrapper.text()).not.toContain('claude-sonnet-4')
   })
 
-  // Layout contract: the title must live INSIDE the same centred column as the
   // The share page uses the same chrome skeleton as the file share (full-width
   // .share-topbar over .share-body), with a two-row stacked topbar. The
-  // conversation column below keeps its framed 900px measure; the frame must
-  // reach the bottom of the scroll container so the rules run unbroken.
-  it('frames the message column inside the shared share-body skeleton', async () => {
+  // conversation column below keeps its centred 900px measure, with no side
+  // rules, inside the scrolling content area.
+  it('places the message column inside the shared share-body skeleton', async () => {
     const wrapper = await mountView()
     const column = wrapper.find('.session-share-column')
     expect(column.exists()).toBe(true)
@@ -288,7 +287,7 @@ describe('SessionShareView', () => {
     expect(body).toContain('gap: var(--space-8)')
   })
 
-  it('declares the vertical rules on the column, not the topbar', async () => {
+  it('keeps the column unframed (no side rules) but centred and full-height', async () => {
     // Scoped CSS is not evaluated by jsdom, so read the component source.
     const src = readFileSync(
       join(__dirname, '..', 'SessionShareView.vue'),
@@ -296,11 +295,11 @@ describe('SessionShareView', () => {
     )
     const col = src.match(/\.session-share-column\s*\{([\s\S]*?)\}/)
     expect(col, '.session-share-column rule must exist').not.toBeNull()
-    expect(col![1]).toContain("border-left: 1px solid")
-    expect(col![1]).toContain("border-right: 1px solid")
+    // The message area must NOT be boxed by vertical rules on either side.
+    expect(col![1]).not.toContain('border-left')
+    expect(col![1]).not.toContain('border-right')
     expect(col![1]).toContain("max-width: 900px")
-    // The column must fill the scroll container's height, so the rules reach
-    // the bottom of the page even for a short thread.
+    // The column must still fill the scroll container's height.
     expect(col![1]).toContain("min-height: 100%")
   })
   it('puts the title in the full-width stacked topbar', async () => {

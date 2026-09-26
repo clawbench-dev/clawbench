@@ -76,10 +76,8 @@
           <div class="share-error-desc">{{ error }}</div>
         </div>
 
-        <!-- Conversation column. Mirrors the chat area: a framed 900px measure
-             bounded by full-height vertical rules, with the messages inside.
-             The frame spans the full column height (the rules run to the
-             bottom) regardless of how short the thread is. -->
+        <!-- Conversation column. Mirrors the chat area's 900px measure, with
+             no side rules: the messages sit directly on the page background. -->
         <div v-else class="session-share-column">
           <div class="session-share-messages">
             <ChatMessageItem
@@ -610,7 +608,7 @@ onBeforeUnmount(() => {
 /* This view reuses the shared share chrome (.share-view / .share-topbar /
    .share-body / .share-toc) from css/share-chrome.css, with the two-row
    .share-topbar--stacked variant. Only the conversation-specific pieces live
-   here: the framed message column and the byline. */
+   here: the message column and the byline. */
 
 /* Scroll container (the shared .share-content). The view keeps a ref to it so
    the TOC's jump math and the scroll-spy root are the same element. */
@@ -633,10 +631,10 @@ onBeforeUnmount(() => {
   gap: var(--space-8);
 }
 
-/* The conversation column: a centred 900px measure framed by full-height
-   vertical rules, mirroring the chat area. `min-height: 100%` makes the frame
-   reach the bottom of the scroll container even for a short thread, so the
-   rules run unbroken from the first message to the bottom of the page. */
+/* The conversation column: a centred 900px measure. No side rules — the
+   message column reads as one continuous surface against the page background.
+   `min-height: 100%` keeps the column filling the scroll container even for a
+   short thread. */
 .session-share-column {
   min-height: 100%;
   box-sizing: border-box;
@@ -645,8 +643,6 @@ onBeforeUnmount(() => {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  border-left: 1px solid var(--border-color, rgba(128, 128, 128, .25));
-  border-right: 1px solid var(--border-color, rgba(128, 128, 128, .25));
 }
 
 /* Byline row inside the stacked topbar. */
