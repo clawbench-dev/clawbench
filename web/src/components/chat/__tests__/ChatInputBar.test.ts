@@ -201,14 +201,20 @@ vi.mock('@/composables/useLocale.ts', () => ({
 const mockDrawerOpen = vi.fn()
 const mockDrawerClose = vi.fn()
 const mockDrawerToggle = vi.fn()
+// Records every useTabDrawer(tabId, opts) call so tests can assert a popup was
+// registered as tab-scoped (and with which options).
+const mockUseTabDrawerCalls: any[][] = []
 vi.mock('@/composables/useTabDrawer', () => ({
-  useTabDrawer: () => ({
-    effectiveOpen: { value: false },
-    isOpen: { value: false },
-    open: mockDrawerOpen,
-    close: mockDrawerClose,
-    toggle: mockDrawerToggle,
-  }),
+  useTabDrawer: (...args: any[]) => {
+    mockUseTabDrawerCalls.push(args)
+    return {
+      effectiveOpen: { value: false },
+      isOpen: { value: false },
+      open: mockDrawerOpen,
+      close: mockDrawerClose,
+      toggle: mockDrawerToggle,
+    }
+  },
   onTabSwitch: vi.fn(),
   resetTabDrawerState: vi.fn(),
 }))
@@ -436,7 +442,7 @@ afterEach(() => {
 })
 
 const stubs = {
-  PopupMenu: { template: '<div><slot /></div>' },
+  PopupMenu: { name: 'PopupMenu', template: '<div><slot /></div>' },
   SessionDrawer: true,
   AttachDrawer: true,
   QuickSendDrawer: true,
@@ -1359,10 +1365,66 @@ describe('ChatInputBar', () => {
 
   it('usage info shows when context size > 0', async () => {
     mockContextSize.value = 100000
-    mockContextUsed.value = 50000
+    mockContextUsed.value = 5000
     const wrapper = mountBar({ currentModelName: 'gpt-4' })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.session-info-usage').exists()).toBe(true)
+  })
+
+  // Regression: the context usage popup teleports to <body> with a fixed
+  // z-index, so a plain local ref kept it visible over the Settings tab after
+  // switching away from chat. It must be a tab-scoped drawer with
+  // autoRestore:false so useTabDrawer closes it on tab switch.
+  it('registers the context usage popup as a tab-scoped drawer (autoRestore: false)', async () => {
+    mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    const usageCall = mockUseTabDrawerCalls.find(
+      ([, opts]) => opts && opts.autoRestore === false,
+    )
+    expect(usageCall).toBeTruthy()
+    expect(usageCall![0]).toBe('chat')
+  })
+
+  it('clicking the usage chip toggles the usage drawer, not a local ref', async () => {
+    mockContextSize.value = 100000
+    mockContextUsed.value = 50000
+    mockDrawerToggle.mockClear()
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await wrapper.find('.session-info-usage').trigger('click')
+    expect(mockDrawerToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('PopupMenu close intent (update:show=false) closes the usage drawer', async () => {
+    mockContextSize.value = 100000
+    mockContextUsed.value = 50000
+    mockDrawerClose.mockClear()
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    // Several PopupMenus are mounted — pick the usage one by its slot content.
+    const popup = wrapper
+      .findAllComponents({ name: 'PopupMenu' })
+      .find((c) => c.html().includes('usage-popup'))
+    expect(popup).toBeTruthy()
+    popup!.vm.$emit('update:show', false)
+    await nextTick()
+    expect(mockDrawerClose).toHaveBeenCalled()
+  })
+
+  it('compact button closes the usage drawer instead of mutating a local ref', async () => {
+    mockContextUsed.value = 80000
+    mockContextSize.value = 100000
+    mockAvailableCommands.value = [{ name: '/compact', description: 'Compact' }]
+    mockSessionTransport.value = 'acp-stdio'
+    mockDrawerClose.mockClear()
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    await wrapper.find('.usage-popup-compact-btn').trigger('click')
+    expect(mockDrawerClose).toHaveBeenCalled()
+
+    mockContextUsed.value = 0
+    mockContextSize.value = 0
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
   })
 
   it('groups all token/cost rows under the Token Detail section header', async () => {

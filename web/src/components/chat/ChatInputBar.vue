@@ -211,7 +211,7 @@
         @update:show="onFileMenuShowChange"
       />
       <!-- Context usage detail popup -->
-      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
+      <PopupMenu v-if="showUsageInfo" :show="usageDrawer.effectiveOpen.value" @update:show="onUsagePopupUpdate" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
         <div class="usage-popup">
           <div class="usage-popup-header">
             <Activity :size="14" />
@@ -297,7 +297,7 @@
             </div>
           </template>
           <div class="usage-popup-compact">
-            <button class="usage-popup-compact-btn" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+            <button class="usage-popup-compact-btn" @click.stop="handleCompact(); usageDrawer.close()" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
               <Minimize2 :size="13" />
               {{ t('chat.sessionInfo.compact') }}
             </button>
@@ -315,7 +315,7 @@
       </template>
       <template v-if="showUsageInfo">
         <span class="session-info-divider"></span>
-        <span ref="usageElRef" class="session-info-usage" @click.stop="showUsagePopup = !showUsagePopup">
+        <span ref="usageElRef" class="session-info-usage" @click.stop="usageDrawer.toggle()">
           <Activity :size="11" />
           <span class="usage-bar">
             <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
@@ -819,8 +819,18 @@ function openSettingsDrawer(tab) {
 }
 
 // ── Context usage popup ──
-const showUsagePopup = ref(false)
+// Registered as a tab-scoped drawer (autoRestore: false) so that switching
+// away from the chat tab closes it. PopupMenu teleports to <body> with a fixed
+// z-index, so it would otherwise stay visible over the settings page.
+const usageDrawer = useTabDrawer('chat', { autoRestore: false })
 const usageElRef = ref(null)
+
+// PopupMenu closes itself (outside click / Escape / inner click) by emitting
+// update:show=false; effectiveOpen is read-only so route the intent to the drawer.
+function onUsagePopupUpdate(v) {
+  if (v) usageDrawer.open()
+  else usageDrawer.close()
+}
 // ── Unified completion menus (slash commands + @ file references) ──
 // Both menus share useCompletionMenu (state/keyboard/select) and
 // CompletionMenu.vue (rendering); they differ only in trigger parsing, data
@@ -1773,12 +1783,12 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
-watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); showUsagePopup.value = false } })
-watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; fileMenu.close() } })
-watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; commandMenu.close() } })
-watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); usageDrawer.close() } })
+watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); fileMenu.close() } })
+watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); commandMenu.close() } })
+watch(() => usageDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
 
 onMounted(() => {
   fetchItems()
