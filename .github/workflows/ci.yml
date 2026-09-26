@@ -603,21 +603,25 @@ jobs:
           ./gradlew assembleDebug -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME"
 
       - name: Stage harness assets
-        # `--with-server` unconditionally, INCLUDING for Tier 1. Reason: run.sh
-        # does a bare `compose build` (android-e2e/scripts/run.sh:112), which
-        # builds every service — and Dockerfile.server hard-COPYs
-        # assets/clawbench-server. For Tier 1 run.sh only runs
-        # `prepare-assets.sh` *without* --with-server, so on a fresh checkout
-        # (assets/ is gitignored) that COPY fails and the whole run dies before
-        # the emulator even starts. Locally this is masked by a stale
-        # clawbench-server left in assets/ by a previous Tier 2 run.
+        # `--with-server` ONLY for the tiers that run the real server. run.sh
+        # scopes its compose build to the selected tier's services (ce4c649c):
+        # Tier 1 builds `emulator mock runner`, Tier 2 `emulator server
+        # server-no-h2 target runner`, `all` all five. Tier 1 therefore never
+        # touches the `server` service and never needs assets/clawbench-server,
+        # so building it there would be one Go link (~10-20 s) for nothing.
         #
-        # Staging it here for every tier costs one Go link (~10-20 s) and makes
-        # all three tier choices work on a clean checkout. The correct fix is in
-        # the harness (build only the selected tier's services, or make the
-        # server image tolerate a missing binary); until that lands this is the
-        # CI-side workaround, and it touches no harness file.
-        run: ./android-e2e/scripts/prepare-assets.sh --with-server
+        # A PR run has no `github.event.inputs`, so the `|| 'all'` fallback
+        # resolves to `all`, which does need the server — same expression the
+        # run step below uses, kept in sync deliberately.
+        env:
+          E2E_TIER_INPUT: ${{ github.event.inputs.android_e2e_tier || 'all' }}
+        run: |
+          set -euo pipefail
+          case "$E2E_TIER_INPUT" in
+            all|2) ./android-e2e/scripts/prepare-assets.sh --with-server ;;
+            1)     ./android-e2e/scripts/prepare-assets.sh ;;
+            *) echo "::error::unknown android_e2e_tier '$E2E_TIER_INPUT'"; exit 2 ;;
+          esac
 
       - name: Pull emulator image
         # Plain `docker pull`, NOT android-e2e/scripts/pull-image.sh. That script
