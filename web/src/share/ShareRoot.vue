@@ -21,6 +21,20 @@
 
     <SessionShareView v-else-if="kind === 'session'" />
     <ShareView v-else-if="kind === 'file'" />
+
+    <!-- Download progress. Floats under the share topbar (44px, taller than the
+         app's --header-height, hence the offset override) and is out of flow.
+         The share SPA builds its own token-scoped download URLs, so it mounts
+         the bar itself rather than relying on App.vue, which this entry does
+         not use. -->
+    <DownloadProgressBar
+      :visible="downloadVisible"
+      :file-name="downloadFileName"
+      :received="downloadReceived"
+      :total="downloadTotal"
+      :style="{ '--transfer-progress-top': 'calc(44px + var(--space-2, 4px))' }"
+      @cancel="cancelDownload"
+    />
   </div>
 </template>
 
@@ -29,11 +43,15 @@ import { onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { FileX2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import DownloadProgressBar from '@/components/common/DownloadProgressBar.vue'
 import ShareView from './ShareView.vue'
 import SessionShareView from './SessionShareView.vue'
 import { setShareToken, shareApiUrl } from './shareMode'
+import { useDownloadProgress } from '@/composables/useDownloadProgress'
 
 const { t } = useI18n()
+
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
 
 const loading = ref(true)
 const error = ref('')

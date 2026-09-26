@@ -55,9 +55,9 @@ describe('DownloadProgressBar', () => {
     expect(wrapper.find('.transfer-progress-value').text()).toBe('100%')
   })
 
-  it('caps and centers its width so it is not ugly on desktop', () => {
+  it('floats under the header so it never disturbs the layout', () => {
     const wrapper = mountBar({ received: 1, total: 2 })
-    expect(wrapper.find('.transfer-progress').classes()).toContain('transfer-progress--centered')
+    expect(wrapper.find('.transfer-progress').classes()).toContain('transfer-progress--floating')
   })
 
   it('emits cancel when the button is clicked', async () => {

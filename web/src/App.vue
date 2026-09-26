@@ -44,6 +44,16 @@
       />
       <ConnectionOverlay />
 
+      <!-- Download progress. Floats just under the app header and is taken out
+           of flow, so a download never pushes the layout around. -->
+      <DownloadProgressBar
+        :visible="downloadVisible"
+        :file-name="downloadFileName"
+        :received="downloadReceived"
+        :total="downloadTotal"
+        @cancel="cancelDownload"
+      />
+
       <main class="main-content" :class="{ 'wide-screen': isWideScreen }">
         <!-- Wide-screen vertical dock (non-chat tabs only) -->
         <div v-show="isWideScreen" class="wide-dock">
@@ -385,16 +395,6 @@
         :agentId="sessionIdentity.currentAgentId.value"
         @close="acpSessionDrawer.close()"
         @select="handleAcpSessionSelect"
-      />
-
-      <!-- Download progress, inline above the bottom dock so the two stack
-           rather than overlap (the bar is a normal flow child). -->
-      <DownloadProgressBar
-        :visible="downloadVisible"
-        :file-name="downloadFileName"
-        :received="downloadReceived"
-        :total="downloadTotal"
-        @cancel="cancelDownload"
       />
 
       <!-- Bottom dock (tab bar) -->

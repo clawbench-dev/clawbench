@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import TransferProgressBar from '../TransferProgressBar.vue'
 
 /**
@@ -36,16 +38,15 @@ describe('TransferProgressBar', () => {
     expect(mountBar().find('.transfer-progress-detail').exists()).toBe(false)
   })
 
-  it('is not width-capped by default (upload bars fill their panel)', () => {
+  it('stays in flow by default (upload bars push their panel content down)', () => {
     expect(mountBar().find('.transfer-progress').classes())
-      .not.toContain('transfer-progress--centered')
+      .not.toContain('transfer-progress--floating')
   })
 
-  it('caps and centers the width when centered is set', () => {
-    // A download bar spans the whole window, so at desktop widths it needs a
-    // cap or it stretches edge to edge.
-    const wrapper = mountBar({ centered: true })
-    expect(wrapper.find('.transfer-progress').classes()).toContain('transfer-progress--centered')
+  it('floats when the floating prop is set', () => {
+    // A download bar must not disturb the layout it appears over.
+    const wrapper = mountBar({ floating: true })
+    expect(wrapper.find('.transfer-progress').classes()).toContain('transfer-progress--floating')
   })
 
   it('renders the detail slot when provided', () => {
@@ -72,5 +73,50 @@ describe('TransferProgressBar', () => {
 
     await btn.trigger('click')
     expect(wrapper.emitted('cancel')).toHaveLength(1)
+  })
+})
+
+/**
+ * Source-contract checks for the floating placement. jsdom does not compute
+ * `position: fixed`, so these assert the CSS itself rather than a rendered
+ * geometry that would silently pass either way.
+ */
+describe('TransferProgressBar floating placement (source contract)', () => {
+  const source = readFileSync(
+    resolve(__dirname, '../TransferProgressBar.vue'),
+    'utf8',
+  )
+  const rule = source.match(/\.transfer-progress--floating\s*\{[\s\S]*?\}/)
+
+  it('defines the floating rule', () => {
+    expect(rule).toBeTruthy()
+  })
+
+  it('takes the bar out of flow so it cannot disturb the layout', () => {
+    expect(rule![0]).toContain('position: fixed')
+  })
+
+  it('centers it horizontally without needing the container width', () => {
+    expect(rule![0]).toContain('left: 50%')
+    expect(rule![0]).toContain('transform: translateX(-50%)')
+  })
+
+  it('caps the width so it does not stretch edge to edge on desktop', () => {
+    expect(rule![0]).toContain('max-width: 520px')
+  })
+
+  it('keeps a gutter on narrow viewports where the cap does not apply', () => {
+    expect(rule![0]).toContain('width: calc(100% - 2 * var(--space-4, 12px))')
+  })
+
+  it('clears the app header and allows a host to override the offset', () => {
+    // The share SPA's topbar is 44px, not --header-height, so it overrides.
+    expect(rule![0]).toContain('--transfer-progress-top')
+    expect(rule![0]).toContain('var(--header-height')
+    expect(rule![0]).toContain('var(--header-safe-area-top')
+  })
+
+  it('stacks above the header rather than behind it', () => {
+    expect(rule![0]).toContain('z-index: var(--z-header')
   })
 })

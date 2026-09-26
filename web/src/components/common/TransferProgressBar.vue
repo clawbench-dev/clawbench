@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="transfer-progress" :class="{ 'transfer-progress--centered': centered }">
+  <div v-if="visible" class="transfer-progress" :class="{ 'transfer-progress--floating': floating }">
     <div class="transfer-progress-head">
       <span class="transfer-progress-label" :title="label">{{ label }}</span>
       <span v-if="detail" class="transfer-progress-detail">{{ detail }}</span>
@@ -30,11 +30,14 @@ import { X } from 'lucide-vue-next'
  * callers (`UploadProgressBar`, `DownloadProgressBar`) are thin adapters that
  * map their own state onto these props.
  *
- * It is INLINE (a normal flow child of its host panel), not floating: uploads
- * render inside the file-manager/terminal panel and downloads above the bottom
- * dock, so each host decides placement and no overlay stacking is involved.
- * `centered` caps the width and centers the bar — a download spans the whole
- * window, so at desktop widths an uncapped bar would stretch edge to edge.
+ * Two placements, chosen by the host:
+ *  - INLINE (default): a normal flow child. Uploads use this inside the
+ *    file-manager/terminal panel, where the bar should push the list down.
+ *  - FLOATING (`floating`): fixed under the app header, centered, capped in
+ *    width. Downloads use this — a download can start from any surface, and as
+ *    a flow child it either pushed the whole layout down or sat at the window
+ *    bottom. Floating keeps it in one predictable place without disturbing the
+ *    content beneath it.
  *
  * `indeterminate` is for transfers with no known size (the streamed archive
  * endpoint sends no Content-Length): the bar animates instead of sitting at a
@@ -55,13 +58,13 @@ withDefaults(defineProps<{
   /** Tooltip for the value, e.g. "1.2 MB / 4.8 MB". */
   valueTitle?: string
   cancelTitle: string
-  /** Cap the width and center it (for bars spanning a whole window). */
-  centered?: boolean
+  /** Float under the app header instead of occupying layout space. */
+  floating?: boolean
 }>(), {
   detail: '',
   indeterminate: false,
   valueTitle: '',
-  centered: false,
+  floating: false,
 })
 
 const emit = defineEmits<{
@@ -82,13 +85,23 @@ const emit = defineEmits<{
   flex-shrink: 0;
 }
 
-/* A bar spanning the whole window (the download bar, mounted at app level)
-   would stretch edge to edge on desktop; cap it and center it instead. Below
-   the cap (narrow viewports) width:100% still fills the available space. */
-.transfer-progress--centered {
-  width: 100%;
+/* Floated under the app header, centered and width-capped.
+   `left: 50%` + `translateX(-50%)` centers it at any width without the bar
+   having to know its container's size; the cap keeps it from stretching edge
+   to edge on desktop, and `calc(100% - 2*inset)` keeps a gutter on narrow
+   viewports (where the cap does not apply) so it never touches the edges.
+   The top offset clears the fixed app header, whose height already includes
+   the top safe-area inset. A host with different chrome above it (the share
+   SPA's 44px topbar) overrides `--transfer-progress-top`. */
+.transfer-progress--floating {
+  position: fixed;
+  top: var(--transfer-progress-top,
+    calc(var(--header-height, 36px) + var(--header-safe-area-top, 0px) + var(--space-2, 4px)));
+  left: 50%;
+  transform: translateX(-50%);
+  width: calc(100% - 2 * var(--space-4, 12px));
   max-width: 520px;
-  margin-inline: auto;
+  z-index: var(--z-header, 1100);
 }
 
 .transfer-progress-head {
