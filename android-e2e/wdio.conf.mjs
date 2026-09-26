@@ -22,6 +22,31 @@ const ARTIFACTS_DIR = process.env.E2E_ARTIFACTS_DIR || '/e2e/artifacts';
 const CHROMEDRIVER_SHIM =
   process.env.E2E_CHROMEDRIVER || '/home/androidusr/chromedriver/chromedriver-shim.py';
 
+// Hard cap for each artifact capture in `afterTest`. When a test fails because the
+// renderer is wedged, the very commands we reach for to diagnose it (screenshot,
+// page source) hang on that same wedged socket. Left uncapped this cost ~6 minutes
+// per failure *on top of* the mocha timeout. A few seconds is ample for a healthy
+// renderer, and aborting cleanly keeps a red run diagnosable and prompt.
+const ARTIFACT_TIMEOUT_MS = Number(process.env.E2E_ARTIFACT_TIMEOUT_MS || 8000);
+
+/** Reject if `promise` has not settled within `ms`; the underlying command is
+ *  abandoned (its eventual rejection is swallowed) rather than awaited. */
+function withTimeout(promise, ms, label) {
+  promise.catch(() => {}); // never let the abandoned promise become unhandled
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label} exceeded ${ms}ms`)),
+        ms,
+      );
+      // Do not keep the event loop alive just for this timer.
+      if (typeof timer.unref === 'function') timer.unref();
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 export const config = {
   runner: 'local',
   hostname: APPIUM_HOST,
@@ -55,28 +80,44 @@ export const config = {
   reporters: ['spec'],
   mochaOpts: {
     ui: 'bdd',
-    timeout: 300000,
+    // Bounds how long a single test may hang. The longest legitimate in-test wait
+    // budget is the connect test's own deadlines (60s health + 60s login + 90s
+    // home marker = 210s), so this stays above that to let the test's specific
+    // failure message fire first, while capping a wedged-renderer hang well below
+    // mocha's 300s default. Combined with the artifact cap below, a failure now
+    // returns in ~4 min worst case instead of ~13.
+    timeout: 240000,
   },
 
-  /** Screenshot + page source on failure, so a red run is diagnosable. */
+  /** Screenshot + page source on failure, so a red run is diagnosable.
+   *
+   *  Every capture is hard-capped: a failure caused by a wedged renderer wedges
+   *  these commands too, and an uncapped screenshot was observed to hang ~6
+   *  minutes *after* the test had already timed out. Each artifact is attempted
+   *  independently so one hang does not skip the others. */
   afterTest: async function (test, _context, { error, passed }) {
     if (passed) return;
     const fs = await import('node:fs/promises');
     await fs.mkdir(ARTIFACTS_DIR, { recursive: true });
     const safe = test.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    const cap = (p, label) => withTimeout(p, ARTIFACT_TIMEOUT_MS, label);
+
     try {
-      await browser.saveScreenshot(`${ARTIFACTS_DIR}/FAIL-${safe}.png`);
+      await cap(
+        browser.saveScreenshot(`${ARTIFACTS_DIR}/FAIL-${safe}.png`),
+        'screenshot',
+      );
     } catch (e) {
       console.error(`[artifacts] screenshot failed: ${e.message}`);
     }
     try {
-      const src = await browser.getPageSource();
+      const src = await cap(browser.getPageSource(), 'page source');
       await fs.writeFile(`${ARTIFACTS_DIR}/FAIL-${safe}.xml`, src);
     } catch (e) {
       console.error(`[artifacts] page source failed: ${e.message}`);
     }
     try {
-      const ctxs = await browser.getContexts();
+      const ctxs = await cap(browser.getContexts(), 'contexts');
       await fs.writeFile(`${ARTIFACTS_DIR}/FAIL-${safe}.contexts.json`,
         JSON.stringify(ctxs, null, 2));
     } catch (e) {

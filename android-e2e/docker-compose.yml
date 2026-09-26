@@ -53,7 +53,14 @@ services:
     environment:
       MOCK_PORT: "20000"
       MOCK_HOST: "0.0.0.0"
-      CLAWBENCH_VERSION: "${CLAWBENCH_VERSION:?set by scripts/run.sh from the built APK}"
+      # Defaulted (not `:?`) so `docker compose down -v` — the teardown hint
+      # run.sh prints under --keep-up — can interpolate the file without a value
+      # in the environment. Defaulting to the *empty string* (not a placeholder
+      # like "unknown") deliberately keeps the mock server's loud runtime guard:
+      # `resolveVersion()` throws when CLAWBENCH_VERSION is falsy, so a real run
+      # that forgot to set it still fails loudly instead of silently advertising
+      # a bogus version. scripts/run.sh exports the APK's versionName.
+      CLAWBENCH_VERSION: "${CLAWBENCH_VERSION:-}"
     restart: "no"
 
   runner:

@@ -7,10 +7,11 @@
 #   3. stage APK + chromedriver into the build context (prepare-assets.sh)
 #   4. compose build + up
 #   5. wait for the emulator to finish booting (sys.boot_completed)
-#   6. install the APK (Appium's fullReset also installs, but doing it here makes
+#   6. disable the soft IME (prevents the login form from being clipped)
+#   7. install the APK (Appium's fullReset also installs, but doing it here makes
 #      failures explicit and lets the first launch be deterministic)
-#   7. run the WebdriverIO suite in the runner container
-#   8. always tear down, and copy artifacts out before the containers go away
+#   8. run the WebdriverIO suite in the runner container
+#   9. always tear down, and copy artifacts out before the containers go away
 #
 # Idempotent: safe to re-run; every stage is a no-op if already satisfied. The
 # teardown trap fires on success, failure, and Ctrl-C, so no multi-GB emulator
@@ -34,7 +35,7 @@ for arg in "$@"; do
     --skip-build) SKIP_BUILD=1 ;;
     --keep-up)    KEEP_UP=1 ;;
     -h|--help)
-      sed -n '2,20p' "$0"; exit 0 ;;
+      sed -n '2,18p' "$0"; exit 0 ;;
     *) echo "unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
@@ -56,12 +57,19 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+# Stale failure artifacts from a previous run must not be mistaken for this
+# run's. Cleared here (before any container work) so --keep-up re-runs are also
+# covered; the runner writes into /e2e/artifacts inside its own container, which
+# is copied out at the end.
+rm -rf "${ARTIFACTS:?}"
+mkdir -p "$ARTIFACTS"
+
 # ---------------------------------------------------------------- 1. image ----
-log "step 1/7: emulator base image"
+log "step 1/8: emulator base image"
 "$HERE/pull-image.sh"
 
 # ------------------------------------------------------------------ 2. APK ----
-log "step 2/7: build debug APK"
+log "step 2/8: build debug APK"
 if [[ "$SKIP_BUILD" == "1" ]]; then
   echo "skipped (--skip-build)"
 else
@@ -79,17 +87,16 @@ echo "APK versionName = $CLAWBENCH_VERSION  (mock server will report exactly thi
 export CLAWBENCH_VERSION
 
 # -------------------------------------------------------------- 3. staging ----
-log "step 3/7: stage assets"
+log "step 3/8: stage assets"
 "$HERE/prepare-assets.sh"
 
 # ----------------------------------------------------------------- 4. build ---
-log "step 4/7: compose build + up"
-mkdir -p "$ARTIFACTS"
+log "step 4/8: compose build + up"
 compose build
 compose up -d emulator mock
 
 # ------------------------------------------------------------ 5. wait boot ----
-log "step 5/7: wait for emulator boot"
+log "step 5/8: wait for emulator boot"
 BOOT_TIMEOUT="${E2E_BOOT_TIMEOUT:-600}"
 deadline=$(( $(date +%s) + BOOT_TIMEOUT ))
 booted=0
@@ -110,13 +117,35 @@ if [[ "$booted" != "1" ]]; then
 fi
 echo "emulator booted (sys.boot_completed=1)"
 
-# -------------------------------------------------------------- 6. install ----
-log "step 6/7: install APK"
+# ------------------------------------------------------- 6. disable soft IME --
+# The login form lives in a WebView whose body is `min-height:100dvh` +
+# `display:flex; align-items:center`, and MainActivity is `adjustResize`. When
+# WebdriverIO focuses an input, the WebView's own requestFocus makes the IME
+# appear (mShowExplicitlyRequested=true — `hw.keyboard=yes` in the AVD does NOT
+# suppress it), the window shrinks by the IME height, and the vertically-centered
+# form collapses into a ~3px sliver. The next interaction then fails with
+# "element not interactable". The test never needs a real keyboard (setValue
+# drives the WebView DOM, not the IME), so disable every IME before the suite.
+log "step 6/8: disable soft IMEs (prevents login-form clipping)"
+compose exec -T emulator sh -c '
+  for ime in $(adb -s emulator-5554 shell ime list -s 2>/dev/null | tr -d "\r"); do
+    adb -s emulator-5554 shell ime disable "$ime" >/dev/null 2>&1 || true
+  done
+  remaining="$(adb -s emulator-5554 shell ime list -s 2>/dev/null | tr -d "\r" | tr "\n" " ")"
+  if [ -n "$remaining" ]; then
+    echo "WARNING: IMEs still enabled: $remaining" >&2
+  else
+    echo "all soft IMEs disabled"
+  fi
+'
+
+# -------------------------------------------------------------- 7. install ----
+log "step 7/8: install APK"
 compose exec -T emulator sh -c \
   'adb -s emulator-5554 install -r -g /apk/clawbench-android-debug.apk' | tail -2
 
-# ----------------------------------------------------------------- 7. tests ---
-log "step 7/7: run Tier 1 smoke test"
+# ----------------------------------------------------------------- 8. tests ---
+log "step 8/8: run Tier 1 smoke test"
 # Detached (not `compose run --rm`) so the container survives its exit and its
 # artifacts can be copied out before teardown.
 compose up -d runner

@@ -4,11 +4,16 @@
  *
  * The Android app refuses to leave the login page unless the server it talks to
  * identifies itself correctly, so this mock implements exactly the three
- * endpoints `MainActivity` touches:
+ * endpoints `MainActivity` touches, in the order the app calls them:
  *
- *   GET  /api/health  -> {"app":"clawbench","version":"<APK versionName>"}
  *   POST /login       -> 200 + Set-Cookie session cookie
+ *   GET  /api/health  -> {"app":"clawbench","version":"<APK versionName>"}
  *   GET  /            -> home page carrying E2E_HOME_MARKER
+ *
+ * `authenticateAndNavigate` (`MainActivity.java:1274`) POSTs /login first; only
+ * inside `handleAuthResponse` on a 200 does it GET /api/health (:1696), and then
+ * `webView.loadUrl(url)` issues GET / (:1711). (The smoke test asserts this
+ * order, so the endpoints must stay individually correct and reachable.)
  *
  * Anything else returns the same marker page (so `webView.loadUrl(serverUrl)`
  * always lands somewhere assertable).

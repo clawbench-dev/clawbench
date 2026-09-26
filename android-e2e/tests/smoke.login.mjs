@@ -6,8 +6,15 @@
  *   MainActivity launch -> file:///android_asset/login.html (first launch)
  *     -> switch into the WEBVIEW_* context
  *     -> fill host/port/password, pick HTTP
- *     -> native connectToServer(): GET /api/health, POST /login, inject cookie
- *     -> webView.loadUrl(serverUrl) -> mock home page carrying E2E_HOME_MARKER
+ *     -> native connectToServer(): POST /login, then (on 200) GET /api/health,
+ *        inject the auth cookie
+ *     -> webView.loadUrl(serverUrl) -> GET / -> mock home page carrying
+ *        E2E_HOME_MARKER
+ *
+ * The request order is significant and asserted: `authenticateAndNavigate`
+ * (`MainActivity.java:1274`) calls `performLoginRequest` (POST /login) FIRST, and
+ * only inside `handleAuthResponse` on a 200 does it call `performHealthCheck`
+ * (GET /api/health, :1696) before `webView.loadUrl(url)` issues GET / (:1711).
  *
  * The make-or-break dependency is the WebView context switch; if that regresses
  * the very first assertion fails loudly with the available contexts.
@@ -44,13 +51,40 @@ async function waitForMockRequest(pred, timeoutMs, what) {
   );
 }
 
+/**
+ * Defensive fill: scroll the field into view, then clear + type, and dismiss any
+ * soft IME that appeared.
+ *
+ * scripts/run.sh disables every IME before the suite, so in the normal case no
+ * keyboard appears and `hideKeyboard()` throws immediately (there is nothing to
+ * hide). It is kept as a belt-and-braces measure: if an IME ever does surface
+ * (e.g. a future image re-enables one), the shrunk, vertically-centered login
+ * form would collapse and the *next* field interaction would fail with
+ * "element not interactable". Hiding after each field keeps the form full-height
+ * regardless.
+ */
+async function fillField(selector, value) {
+  const el = await browser.$(selector);
+  await el.scrollIntoView({ block: 'center', inline: 'center' });
+  await el.clearValue();
+  await el.setValue(value);
+  try {
+    await browser.hideKeyboard();
+  } catch (e) {
+    // Expected when no IME is shown ("no keyboard" / unsupported); ignore.
+  }
+}
+
 describe('ClawBench Android shell — Tier 1 login smoke', () => {
   before(async () => {
-    // Reset the mock's request log so assertions see only this run's traffic.
+    // Reset the mock's request log so the final test's ordering assertion sees
+    // only this run's app traffic (and not a previous run's, or the runner's own
+    // /__requests polling).
     try {
       await fetch(`${MOCK_CONTROL}/__reset`, { method: 'POST' });
     } catch (e) {
-      // Non-fatal: assertions below are order-independent predicates.
+      // Non-fatal: the per-request waits below are membership-based, so a reset
+      // failure only weakens the ordering assertion, not the flow assertions.
     }
   });
 
@@ -103,31 +137,25 @@ describe('ClawBench Android shell — Tier 1 login smoke', () => {
     // Protocol: HTTP (the form defaults to HTTPS).
     await browser.$('input[name="addProtocol"][value="http"]').click();
 
-    const host = await browser.$('#addHost');
-    await host.clearValue();
-    await host.setValue(MOCK_HOST);
+    await fillField('#addHost', MOCK_HOST);
+    await fillField('#addPort', MOCK_PORT);
+    await fillField('#addPassword', PASSWORD);
 
-    const port = await browser.$('#addPort');
-    await port.clearValue();
-    await port.setValue(MOCK_PORT);
-
-    const password = await browser.$('#addPassword');
-    await password.clearValue();
-    await password.setValue(PASSWORD);
-
+    await browser.$('#addConnectBtn').scrollIntoView({ block: 'center', inline: 'center' });
     await browser.$('#addConnectBtn').click();
 
-    // The native layer now does GET /api/health then POST /login before loading
-    // the server URL into the WebView.
-    await waitForMockRequest(
-      (reqs) => reqs.some((r) => r.path === '/api/health'),
-      60000,
-      'GET /api/health from the app',
-    );
+    // Native order: POST /login first, then GET /api/health only on a 200
+    // (`authenticateAndNavigate` -> `handleAuthResponse`), then the WebView
+    // loads the server root.
     await waitForMockRequest(
       (reqs) => reqs.some((r) => r.path === '/login' && r.method === 'POST'),
       60000,
       'POST /login from the app',
+    );
+    await waitForMockRequest(
+      (reqs) => reqs.some((r) => r.path === '/api/health'),
+      60000,
+      'GET /api/health from the app',
     );
 
     // The app navigates the WebView to the server root; the marker proves we left
@@ -162,16 +190,40 @@ describe('ClawBench Android shell — Tier 1 login smoke', () => {
     assert.equal(errorVisible, false, 'login error banner is visible');
   });
 
-  it('recorded the expected request sequence at the mock server', async () => {
+  it('records the native auth requests in order: POST /login -> GET /api/health -> GET /', async () => {
     const reqs = await (await fetch(`${MOCK_CONTROL}/__requests`)).json();
     const paths = reqs.map((r) => `${r.method} ${r.path}`);
     console.log(`[tier1] mock request log: ${JSON.stringify(paths)}`);
-    assert.ok(paths.includes('GET /api/health'), 'missing GET /api/health');
-    assert.ok(paths.includes('POST /login'), 'missing POST /login');
-    // The WebView must have fetched the home page after auth.
+
+    // Strip this test's own control traffic (/__requests, /__reset) so the
+    // ordering assertion below sees only what the app did.
+    const appReqs = reqs.filter((r) => !r.path.startsWith('/__'));
+    const appPaths = appReqs.map((r) => `${r.method} ${r.path}`);
+
+    // The app is known to issue these three, in this exact order:
+    //   POST /login      (authenticateAndNavigate)
+    //   GET  /api/health (handleAuthResponse, only after a 200 login)
+    //   GET  /           (webView.loadUrl, after the health check)
+    // Asserting the order (not just membership) catches a regression that
+    // reorders or drops a step, which the previous membership-only check missed.
+    const idx = (method, path) =>
+      appReqs.findIndex((r) => r.method === method && r.path.split('?')[0] === path);
+    const login = idx('POST', '/login');
+    const health = idx('GET', '/api/health');
+    const home = appReqs.findIndex(
+      (r) => r.method === 'GET' && (r.path === '/' || r.path.startsWith('/?')),
+    );
+
+    assert.ok(login >= 0, `missing POST /login; log=${JSON.stringify(appPaths)}`);
+    assert.ok(health >= 0, `missing GET /api/health; log=${JSON.stringify(appPaths)}`);
+    assert.ok(home >= 0, `home page never fetched; log=${JSON.stringify(appPaths)}`);
     assert.ok(
-      reqs.some((r) => r.method === 'GET' && (r.path === '/' || r.path.startsWith('/?'))),
-      `home page never fetched; log=${JSON.stringify(paths)}`,
+      login < health,
+      `expected POST /login before GET /api/health; log=${JSON.stringify(appPaths)}`,
+    );
+    assert.ok(
+      health < home,
+      `expected GET /api/health before GET /; log=${JSON.stringify(appPaths)}`,
     );
   });
 });

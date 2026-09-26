@@ -34,7 +34,43 @@ multi-GB emulator container is left behind.
 ## Prerequisites
 
 - Docker CLI reachable (this repo's dev container talks to a **host** docker daemon).
-- `/dev/kvm` available on the host.
+- **`docker compose` v2** (`docker compose`, not the standalone `docker-compose`
+  binary). The harness uses `docker compose -p <project> -f <file>` with v2 syntax.
+  Check with `docker compose version` (expect `v2.x` or newer).
+- **~15 GB free disk** before the first run. The `budtmo/docker-android:emulator_9.0`
+  image is **9.14 GB uncompressed / 2.65 GB compressed** on disk, and the derived
+  emulator image plus the AVD/userdata adds several more GB. `docker system df`
+  shows current usage.
+- **`/dev/kvm` present AND usable.** Presence is not enough — the emulator needs
+  read/write on the device node, and without working KVM it falls back to
+  unusably slow software emulation (or fails to boot). Verify *usability* before
+  the first run:
+
+  ```bash
+  # On the docker *host* (not inside this dev container): the node must exist.
+  # Note this dev container itself has no /dev/kvm even when the host does, so a
+  # failed `ls` here is not conclusive — prefer the container check below.
+  ls -l /dev/kvm
+
+  # The authoritative check. Run as root, because a fresh container has NOT yet
+  # adjusted the node's ownership — budtmo's emulator startup chowns /dev/kvm to
+  # its own uid (1300) as part of `change_permission()`. As the *default*
+  # container user this command therefore reports "This user doesn't have
+  # permissions to use KVM" even on a perfectly good host (exit 11); that is
+  # expected and does NOT indicate a problem.
+  docker run --rm --device /dev/kvm -u root --entrypoint sh \
+    budtmo/docker-android:emulator_9.0 -c 'emulator -accel-check'
+  # Expect: "KVM (version N) is installed and usable." and exit status 0.
+  ```
+
+  The container must already have the image loaded (see `scripts/pull-image.sh`).
+  Once the harness is running, the authoritative check is inside the live
+  container, after its startup chown:
+
+  ```bash
+  docker compose -p clawbench-android-e2e \
+    -f android-e2e/docker-compose.yml exec emulator emulator -accel-check
+  ```
 - JDK 17 at `/usr/lib/jvm/java-17-openjdk-amd64` (AGP 8.2; the default JDK 21 fails).
 - Android SDK at `/opt/android-sdk` (for the Gradle build only).
 - `python3`, `curl`, `unzip` on the host running `run.sh`.
@@ -48,6 +84,7 @@ scripts/run.sh
   ├─ scripts/prepare-assets.sh  APK + chromedriver 2.44 -> android-e2e/assets/
   ├─ docker compose build/up    emulator + mock (+ runner)
   ├─ wait for sys.boot_completed
+  ├─ disable every soft IME     (prevents the login-form clipping flake)
   ├─ adb install -r -g <apk>
   ├─ docker compose up -d runner ; docker wait  (Tier 1 suite)
   └─ trap: compose down -v
@@ -118,6 +155,41 @@ skip the login page and fail confusingly. The wdio config sets `fullReset: true`
 `noReset: false`, so the app is uninstalled and reinstalled between runs, and the
 first test asserts it is on the native login activity before proceeding.
 
+## The soft-IME flake (why `run.sh` disables the IME)
+
+The login form is a WebView whose body is `min-height: 100dvh; overflow: hidden;
+display: flex; align-items: center` (`android/app/src/main/assets/login.html`), and
+`MainActivity` is `android:windowSoftInputMode="adjustResize"`. When WebdriverIO
+focuses an input, the **WebView's own `requestFocus` makes the IME appear** — the
+AVD's `hw.keyboard=yes` does **not** suppress it (the WebView sets
+`mShowExplicitlyRequested=true`). The window then shrinks by the IME height
+(measured: the WebView goes from `[0,72][1080,1776]` to `[0,72][1080,1029]`), and
+the vertically-centered form collapses into a ~3px sliver. The next interaction
+(`#addPort.clearValue()`) then fails with `400 element not interactable`, and the
+run took ~13 minutes to report it.
+
+The test never needs a real keyboard: `setValue` drives the WebView DOM, not the
+IME. So `run.sh` disables every IME after boot and before the suite:
+
+```bash
+adb -s emulator-5554 shell ime list -s          # list enabled IMEs
+adb -s emulator-5554 shell ime disable <id>     # disable each
+```
+
+Verified: with the IME disabled the WebView bounds stay `[0,72][1080,1776]` across
+repeated focus cycles, and the suite passes 5/5 consecutive runs. As belt-and-braces
+the test also calls `browser.hideKeyboard()` (try/catch — it throws when no IME is
+shown) after each field and `scrollIntoView` before each interaction.
+
+## Failure artifacts are time-capped
+
+A failure caused by a wedged renderer wedges the diagnostic commands too: an
+uncapped `browser.saveScreenshot()` in the `afterTest` hook was observed to hang
+~6 minutes *after* the test had already timed out. `wdio.conf.mjs` now wraps every
+artifact capture (screenshot / page source / contexts) in a hard
+`E2E_ARTIFACT_TIMEOUT_MS` cap (default 8s) that aborts cleanly and logs, and the
+per-test mocha timeout is 240s. A red run now returns in ~4 minutes worst case.
+
 ## The mock server
 
 `mock-server/server.mjs` is dependency-free (`node:http`). It implements exactly the
@@ -125,22 +197,32 @@ contract `MainActivity` depends on:
 
 | Endpoint | Behaviour |
 |----------|-----------|
-| `GET /api/health` | `{"app":"clawbench","version":"<APK versionName>"}` |
 | `POST /login` | `200` + `Set-Cookie: clawbench_session=...` |
+| `GET /api/health` | `{"app":"clawbench","version":"<APK versionName>"}` |
 | `GET /` (and anything else) | HTML home page containing `#e2e-home-marker` |
 | `GET /__requests` | test-control: JSON log of every request seen |
 | `POST /__reset` | test-control: clear that log |
+
+The app calls them in the order **`POST /login` → `GET /api/health` → `GET /`**
+(`authenticateAndNavigate` POSTs first; the health check and `webView.loadUrl`
+run only after a 200), and the last test asserts that order.
 
 **The version must match the APK's `versionName`.** `VersionCompare` shows a
 *blocking* native dialog when the app is older than the server, which would hang the
 test. `run.sh` reads `output-metadata.json` and passes it as `CLAWBENCH_VERSION`; the
 server never hardcodes it (it exits with a clear error if neither that nor
-`APK_METADATA` is set).
+`APK_METADATA` is set). `docker-compose.yml` defaults the variable to the empty
+string so `docker compose down -v` (the `--keep-up` teardown hint) can interpolate
+without a value — the empty default deliberately still trips the server's loud
+runtime guard.
 
 ## Artifacts
 
-On failure the wdio config writes a screenshot, page source, and the context list to
-`android-e2e/artifacts/` (copied out of the runner container before teardown).
+`run.sh` **clears `artifacts/` at the start of every run** (including `--keep-up`
+re-runs), so a `FAIL-*` file can only come from the current run. On failure the
+wdio config writes a screenshot, page source, and the context list to
+`android-e2e/artifacts/` (copied out of the runner container before teardown), each
+capture time-capped as described above.
 
 ## Known limitations
 
