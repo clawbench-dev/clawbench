@@ -1574,6 +1574,17 @@
     if (el) el.classList.add('is-fading');
   };
 
+  /**
+   * Reset the overlay for a fresh show. The page is REUSED across connects
+   * (the main process only loads it once), so the fade class left by the
+   * previous dismissal must be cleared — otherwise the second connect renders
+   * the overlay fully transparent.
+   */
+  window.__splashReset = function() {
+    var el = document.getElementById('splash');
+    if (el) el.classList.remove('is-fading');
+  };
+
   if (SPLASH_MODE) {
     document.body.classList.add('splash-mode');
   }

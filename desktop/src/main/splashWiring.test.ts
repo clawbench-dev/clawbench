@@ -139,6 +139,24 @@ describe('login page supports splash mode', () => {
     expect(src.split('splash_cancel:').length - 1).toBe(2)
   })
 
+  it('resets the fade state on every show, not just the first', () => {
+    // The overlay page is REUSED across connects, so the `is-fading` class the
+    // previous dismissal added would otherwise make the second connect render
+    // fully transparent (measured: opacity stayed 0 on re-show).
+    const src = readRepoFile(LOGIN)
+    expect(src).toContain('window.__splashReset = function')
+    const resetFn = src.match(/window\.__splashReset = function[\s\S]*?\n  \};/)
+    expect(resetFn, 'reset hook not found').not.toBeNull()
+    expect(resetFn![0]).toContain("classList.remove('is-fading')")
+  })
+
+  it('calls the reset hook from the main process on show', () => {
+    // Declaring the hook is not enough; a show path that skips it still leaves
+    // the overlay invisible on the second connect.
+    const src = readRepoFile('desktop/src/main/splash.ts')
+    expect(src).toContain('window.__splashReset && window.__splashReset()')
+  })
+
   it('wires the cancel button to the native bridge', () => {
     const src = readRepoFile(LOGIN)
     const handler = src.match(/getElementById\('splashCancel'\)[\s\S]*?\}\)/)

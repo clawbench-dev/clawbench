@@ -228,6 +228,13 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
       visible = true
       syncBounds()
       view.setVisible(true)
+      // The page is reused across connects, so clear the fade class the previous
+      // dismissal left behind — otherwise this show renders fully transparent.
+      if (pageReady) {
+        void view.webContents
+          .executeJavaScript('window.__splashReset && window.__splashReset()')
+          .catch(() => { /* overlay went away mid-call */ })
+      }
       if (!pageReady) {
         // First use: load the overlay content. Subsequent shows reuse the
         // already-loaded document. setStage() below queues the stage, which the
