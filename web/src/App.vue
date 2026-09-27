@@ -1299,7 +1299,7 @@ function refreshWallpaper() {
   const nextUrl = resolveWallpaperUrl(file, false)
   if (nextUrl !== wallpaperUrl.value) wallpaperFailed.value = false
   wallpaperUrl.value = nextUrl
-  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false, wave)
+  applyWallpaper(file ?? '', resolvePanelOpacity(localConfig.panelOpacity), dark, false, wave)
 
   scheduleBingFirstImagePoll()
 }
@@ -1331,10 +1331,11 @@ onUnmounted(() => {
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
-// Local display prefs (blur / edge fade / wave speed) change instantly without
-// a server round-trip. Wave speed only feeds a prop; the component adjusts its
-// own timeScale without rebuilding the canvas or resetting the phase.
-watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
+// Local display prefs (panel opacity / blur / edge fade / wave speed) change
+// instantly without a server round-trip. Wave speed only feeds a prop; the
+// component adjusts its own timeScale without rebuilding the canvas or
+// resetting the phase.
+watch(() => [localConfig.panelOpacity, localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),

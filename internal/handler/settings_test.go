@@ -2774,7 +2774,8 @@ func TestServeConfig_Get_Appearance(t *testing.T) {
 	defer teardown()
 
 	cfg := model.Config{}
-	cfg.Appearance.PanelOpacity = 0.9
+	cfg.Appearance.WallpaperMode = "bing"
+	cfg.Appearance.WallpaperEnabled = true
 	model.ConfigInstance = cfg
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
@@ -2787,19 +2788,23 @@ func TestServeConfig_Get_Appearance(t *testing.T) {
 
 	appearance, ok := resp["appearance"].(map[string]any)
 	require.True(t, ok, "response should contain appearance section")
-	assert.Equal(t, 0.9, appearance["panel_opacity"])
+	assert.Equal(t, "bing", appearance["wallpaper_mode"])
+	assert.Equal(t, true, appearance["wallpaper_enabled"])
+	// Panel opacity is a per-device browser preference — it must never be
+	// exposed in the config response, or clients would sync it across devices.
+	_, hasOpacity := appearance["panel_opacity"]
+	assert.False(t, hasOpacity, "panel_opacity must not appear in the config response")
 }
 
-func TestServeConfig_Patch_AppearancePanelOpacity(t *testing.T) {
+// TestServeConfig_Patch_AppearancePanelOpacityRejected guards the migration of
+// panel opacity from a server config value to a per-device localStorage
+// preference: the key was removed from the PATCH whitelist, so an old client
+// still sending it must be rejected rather than silently writing config.yaml.
+func TestServeConfig_Patch_AppearancePanelOpacityRejected(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	origDataDir := model.DataDir
-	model.DataDir = t.TempDir()
-	defer func() { model.DataDir = origDataDir }()
-
 	cfg := model.Config{}
-	cfg.Appearance.PanelOpacity = 0.85
 	model.ConfigInstance = cfg
 
 	body := `{"appearance":{"panel_opacity":0.75}}`
@@ -2808,51 +2813,7 @@ func TestServeConfig_Patch_AppearancePanelOpacity(t *testing.T) {
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeConfig, req)
 
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 0.75, model.ConfigInstance.Appearance.PanelOpacity)
-
-	// panel_opacity is a hot-reload field — no restart needed.
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.False(t, resp["needs_restart"].(bool))
-}
-
-func TestServeConfig_Patch_AppearancePanelOpacityOutOfRangeRejected(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Appearance.PanelOpacity = 0.85
-	model.ConfigInstance = cfg
-
-	// 0.5 is the new lower bound — anything below is rejected.
-	body := `{"appearance":{"panel_opacity":0.45}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Equal(t, 0.85, model.ConfigInstance.Appearance.PanelOpacity, "out-of-range patch must not apply")
-}
-
-func TestServeConfig_Patch_AppearancePanelOpacityLowerBoundAccepted(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Appearance.PanelOpacity = 0.85
-	model.ConfigInstance = cfg
-
-	// The relaxed lower bound (0.5) must be accepted.
-	body := `{"appearance":{"panel_opacity":0.5}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 0.5, model.ConfigInstance.Appearance.PanelOpacity)
 }
 
 func TestServeConfig_Get_AppearanceExposesResolvedActiveFile(t *testing.T) {
@@ -3116,8 +3077,6 @@ func TestServeConfig_Patch_WrongTypedValuesRejected(t *testing.T) {
 		{"bing.enabled as object", `{"appearance":{"bing":{"enabled":{}}}}`},
 		{"bing.mkt as number", `{"appearance":{"bing":{"mkt":5}}}`},
 		{"bing.mkt as object", `{"appearance":{"bing":{"mkt":{}}}}`},
-		{"panel_opacity as object", `{"appearance":{"panel_opacity":{}}}`},
-		{"panel_opacity as string", `{"appearance":{"panel_opacity":"0.5"}}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

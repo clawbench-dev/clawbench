@@ -370,8 +370,8 @@ const hasImageWallpaper = computed(() => state.value === 'set' && enabled.value)
  */
 const hasActiveBackground = computed(() => hasImageWallpaper.value || (waveActive.value && enabled.value))
 
-/** Panel opacity from config (0.5..1.0). */
-const panelOpacity = computed(() => resolvePanelOpacity(appearance.value))
+/** Panel opacity from the local preference (0.5..1.0). */
+const panelOpacity = computed(() => resolvePanelOpacity(localConfig.panelOpacity))
 const opacityDisplay = computed(() => `${Math.round(panelOpacity.value * 100)}%`)
 
 /** Gaussian blur radius (px, local pref) + edge-fade switch (local pref). */
@@ -387,7 +387,7 @@ const waveSpeedDisplay = computed(() => `${(waveSpeed.value / 50).toFixed(2)}×`
 function refreshEffect() {
   applyWallpaper(
     (appearance.value?.active_file as string) ?? '',
-    resolvePanelOpacity(appearance.value),
+    resolvePanelOpacity(localConfig.panelOpacity),
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
     false,
     isWaveActive(appearance.value),
@@ -609,20 +609,19 @@ function todayStamp(): string {
 
 function onOpacityInput(e: Event) {
   const v = Number((e.target as HTMLInputElement).value)
+  // Live preview (no server round-trip), mirroring the other local display
+  // prefs below. App.vue's watcher on localConfig re-applies the effect too,
+  // but applying here keeps the drag responsive even before that flush.
   applyWallpaper(
     (appearance.value?.active_file as string) ?? '',
     v,
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
   )
-  // Persist with debounce; patchConfig() reloads serverConfig, which the
-  // App.vue watcher turns into a fresh applyWallpaper (alpha + state).
+  // Persist debounced; setLocalConfig also writes the reactive singleton so
+  // App.vue's watcher sees the settled value.
   if (opacitySaveTimer) clearTimeout(opacitySaveTimer)
   opacitySaveTimer = setTimeout(() => {
-    void patchConfig({ appearance: { panel_opacity: v } })
-      .catch(() => {
-        error.value = t('settings.items.wallpaperSaveFailed')
-        void loadConfig()
-      })
+    setLocalConfig('panelOpacity', v)
   }, 350)
 }
 

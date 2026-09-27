@@ -139,19 +139,19 @@ describe('settingsFieldMap', () => {
     expect(entry!.spec.sectionHeader).toBe('settings.items.fontSection')
   })
 
-  it('wallpaper panel-opacity slider allows the relaxed 0.5 lower bound', () => {
-    // Regression: the panel-opacity floor was relaxed from 0.7 to 0.5 (the
-    // wallpaper translucent-panel tuning range widened). Guard the slider spec
-    // so a future tighten does not silently diverge from the server-side
-    // PATCH validation (settings.go, validatePatchValues: 0.5–1.0).
+  it('panel opacity is a local slider, not a server field', () => {
+    // Panel opacity is a per-device display tweak stored in localStorage
+    // (alongside blur / edge fade / wave speed). It must NOT appear in the
+    // server-field map, or the restart dialog would claim it needs a server
+    // round-trip — and the PATCH would be rejected by the backend whitelist.
     const map = getServerFieldToLabelKey()
-    expect(map['appearance.panel_opacity']).toBe('settings.items.wallpaperPanelOpacity')
+    expect(map['panelOpacity']).toBeUndefined()
 
     const appearanceEntries = categoryItems['appearance']
-    const entry = appearanceEntries.find(e => e.type === 'item' && e.spec.key === 'appearance.panel_opacity')
+    const entry = appearanceEntries.find(e => e.type === 'item' && e.spec.key === 'panelOpacity')
     expect(entry).toBeDefined()
-    if (entry!.type !== 'item') throw new Error('expected item entry for appearance.panel_opacity')
-    expect(entry.spec.source).toBe('server')
+    if (entry!.type !== 'item') throw new Error('expected item entry for panelOpacity')
+    expect(entry.spec.source).toBe('local')
     expect(entry.spec.type).toBe('slider')
     expect(entry.spec.min).toBe(0.5)
     expect(entry.spec.max).toBe(1)

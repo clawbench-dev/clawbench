@@ -212,14 +212,24 @@ describe('themeBackground', () => {
   })
 
   describe('resolvePanelOpacity', () => {
-    it('defaults to 0.85', () => {
+    it('defaults to 0.85 for missing / non-numeric values', () => {
       expect(resolvePanelOpacity(undefined)).toBe(0.85)
-      expect(resolvePanelOpacity({})).toBe(0.85)
+      expect(resolvePanelOpacity(null)).toBe(0.85)
+      expect(resolvePanelOpacity('')).toBe(0.85)
+      expect(resolvePanelOpacity('abc')).toBe(0.85)
     })
 
-    it('returns the configured value', () => {
-      expect(resolvePanelOpacity({ panel_opacity: 0.7 })).toBe(0.7)
-      expect(resolvePanelOpacity({ panel_opacity: 1 })).toBe(1)
+    it('accepts a stored numeric preference', () => {
+      expect(resolvePanelOpacity(0.7)).toBe(0.7)
+      expect(resolvePanelOpacity(1)).toBe(1)
+      // A stringified value (hand-edited localStorage) is coerced.
+      expect(resolvePanelOpacity('0.6')).toBe(0.6)
+    })
+
+    it('rejects out-of-range values', () => {
+      expect(resolvePanelOpacity(0)).toBe(0.85)
+      expect(resolvePanelOpacity(-0.2)).toBe(0.85)
+      expect(resolvePanelOpacity(1.5)).toBe(0.85)
     })
   })
 

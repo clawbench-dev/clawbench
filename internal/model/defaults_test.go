@@ -178,9 +178,6 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Fonts.Dir != filepath.Join(tmpDir, ".clawbench", "fonts") {
 		t.Errorf("Fonts.Dir = %q, want %q", cfg.Fonts.Dir, filepath.Join(tmpDir, ".clawbench", "fonts"))
 	}
-	if cfg.Appearance.PanelOpacity != 0.85 {
-		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
-	}
 	// A nil presence map with no database present is a fresh install, which
 	// pre-selects the Bing source but leaves the wallpaper switch off.
 	if cfg.Appearance.WallpaperMode != "bing" {
@@ -362,22 +359,6 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	// Unset values should get defaults
 	if cfg.Upload.MaxFiles != 20 {
 		t.Errorf("Upload.MaxFiles = %d, want 20 (default)", cfg.Upload.MaxFiles)
-	}
-}
-
-func TestApplyDefaultsPanelOpacityExplicitPreserved(t *testing.T) {
-	setupTestBinDir(t)
-
-	cfg := Config{}
-	cfg.Appearance.PanelOpacity = 0.7
-
-	ApplyDefaults(&cfg, map[string]bool{
-		"appearance":               true,
-		"appearance.panel_opacity": true,
-	})
-
-	if cfg.Appearance.PanelOpacity != 0.7 {
-		t.Errorf("Appearance.PanelOpacity = %v, want 0.7 (explicitly set)", cfg.Appearance.PanelOpacity)
 	}
 }
 
