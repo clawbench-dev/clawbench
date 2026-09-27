@@ -48,15 +48,19 @@
     user-select: none;
 }
 
-/* Everything clickable inside the header opts out of the drag region, or it
-   would be impossible to click. Listed explicitly rather than as a blanket
-   `*` so the marquee and badges keep behaving as before. */
+/* Interactive elements inside the header opt out of the drag region, or they
+   could not be clicked.
+
+   Deliberately an ALLOWLIST of small, intrinsically interactive things — never
+   a container that fills free space. `.header-tips` was listed here once and it
+   is `flex: 1`, so it turned the whole middle band into a dead zone where the
+   window could not be dragged; the ticker now opts out only on its text (see
+   `.stt-viewport`). Any addition here should be a control, not a filler. */
 .header button,
 .header a,
 .header input,
 .header select,
-.header .badge-capsule,
-.header .header-tips {
+.header .badge-capsule {
     -webkit-app-region: no-drag;
 }
 

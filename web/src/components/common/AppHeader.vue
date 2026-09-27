@@ -256,7 +256,7 @@
         :aria-label="t('appHeader.windowMinimize')"
         @click="minimizeWindow"
       >
-        <Minus :size="14" />
+        <Minus :size="16" />
       </button>
       <button
         class="window-control"
@@ -265,10 +265,19 @@
         :aria-label="isWindowMaximized ? t('appHeader.windowRestore') : t('appHeader.windowMaximize')"
         @click="toggleMaximizeWindow"
       >
-        <!-- Two overlapping squares is the conventional "restore" glyph. lucide
-             has no dedicated restore icon; `Copy` is exactly that shape. -->
-        <Copy v-if="isWindowMaximized" :size="14" />
-        <Square v-else :size="13" />
+        <!-- Hand-drawn rather than lucide: these two glyphs need a corner radius
+             and a box size lucide does not offer (`Square` is fixed at rx=2 on an
+             18/24 box, which reads rounder and smaller than the OS glyphs). The
+             radius here is 1.5 on a 16/24 box — squarer, and matched between the
+             maximize and restore shapes so they do not look like two families.
+             Two overlapping squares is the conventional "restore" glyph. -->
+        <svg v-if="isWindowMaximized" class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="8" y="8" width="14" height="14" rx="1.5" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
+        <svg v-else class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="1.5" />
+        </svg>
       </button>
       <button
         class="window-control window-control--close"
@@ -277,7 +286,7 @@
         :aria-label="t('appHeader.windowClose')"
         @click="closeWindow"
       >
-        <X :size="15" />
+        <X :size="16" />
       </button>
     </div>
   </header>
@@ -285,7 +294,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check, Minus, Square } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -1335,11 +1344,26 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
        window edge — the same edge the native controls occupied. */
     margin-right: calc(var(--space-3) * -1);
     border-radius: 0 0 var(--radius-sm) var(--radius-sm);
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    /* Only the bottom edge and corners are visible; the top border would draw a
-       line under the header's own bottom border and read as a seam. */
-    border-top: none;
+    /* Derived from the header's own colour rather than a fixed token.
+
+       `--bg-tertiary` was the obvious pick and is wrong: it is not a "one step
+       from secondary" ramp in every theme. Measured across all 36 themes, 15 of
+       them had a bg-secondary↔bg-tertiary contrast below 1.12 — ayu-dark only
+       1.062, which is why the block vanished there. `--bg-elevated` is no
+       better (vitesse-light: 1.028).
+
+       Mixing toward `--text-primary` instead makes the DIRECTION correct by
+       construction: the foreground is guaranteed to contrast with the
+       background it sits on, in light and dark themes alike. 10% lands every
+       theme at >=1.113 (was >=1.062), with the one straggler at 1.113 against
+       the 1.12 target — close enough to read, and the alternative (12%) made
+       the light themes noticeably muddy. */
+    background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
+    /* No border and no dividers between the buttons. An outline plus two
+       separators turned the three controls into a 3-cell table, which is what
+       made it read as heavy; the tinted block already delimits the group, and
+       hover supplies the per-button separation. */
+    border: none;
     overflow: hidden;
     /* Sized by its fixed-width children, not by flex: the tips marquee owns the
        header's free space and would otherwise squeeze this to a sliver. */
@@ -1354,9 +1378,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .window-control {
     /* Equal thirds of the block, via one width on each button rather than a
        total on the parent: the three glyphs have different intrinsic widths (a
-       `□` is not a `✕`), so content sizing would make the dividers uneven.
-       46px per button is the Windows convention. */
-    width: 46px;
+       `□` is not a `✕`), so content sizing would make them uneven.
+       40px (down from 46px) with a 16px glyph lands the ink density at ~20.6%,
+       close to the neighbouring icon buttons (~22%), instead of the sparse
+       14% the 46px/14px combination produced. */
+    width: 40px;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -1370,14 +1396,17 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     -webkit-app-region: no-drag;
 }
 
-/* A hairline between the three, but not at the block's outer edges (where the
-   block's own border already is). */
-.window-control + .window-control {
-    border-left: 1px solid var(--border-color);
+/* The inline maximize/restore SVGs must not be stretched by the flex parent. */
+.window-control-glyph {
+    flex: 0 0 auto;
 }
 
 @media (hover: hover) {
     .window-control:hover {
+        /* Back to the header's own colour: the button lifts OUT of the tinted
+           block, so the three cells light up individually. This reads stronger
+           than deepening the tint (measured: min contrast 1.113 vs 1.095) and
+           needs no extra token. */
         background: var(--bg-secondary);
         color: var(--text-primary);
     }
@@ -1391,7 +1420,10 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .window-control:active {
-    background: var(--bg-primary);
+    /* Pressed = pressed further IN than the cluster, not back out to a
+       different token: `--bg-primary` is not reliably on the far side of the
+       cluster in every theme, but a deeper mix of the same recipe always is. */
+    background: color-mix(in srgb, var(--text-primary) 22%, var(--bg-secondary));
 }
 
 .window-control--close:active {

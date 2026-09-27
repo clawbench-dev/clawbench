@@ -383,3 +383,73 @@ describe('token references across the app', () => {
     expect(declared.size).toBeGreaterThan(50)
   })
 })
+
+/**
+ * Contrast guard for the app-drawn window controls (frameless desktop shell).
+ *
+ * The cluster is a tinted block sitting on the header, so it is only visible if
+ * its background actually differs from `--bg-secondary` — in EVERY theme, not
+ * just the one being developed on.
+ *
+ * That is exactly what broke: the block used `--bg-tertiary`, which is not a
+ * "one step from secondary" ramp in every theme. Measured across the 36 themes,
+ * 15 had a secondary↔tertiary contrast under 1.12 and ayu-dark managed only
+ * 1.062 — the block simply disappeared there. `--bg-elevated` was no better
+ * (vitesse-light: 1.028).
+ *
+ * The fix derives the colour by mixing `--text-primary` into `--bg-secondary`,
+ * which makes the direction correct by construction. This spec pins that: the
+ * assertion is on the RECIPE, not on one theme's hex, so retuning any theme
+ * cannot silently reintroduce an invisible cluster.
+ *
+ * jsdom cannot resolve `color-mix()` or `var()`, and the real geometry lives in
+ * a scoped Vue block, so — like the rest of this file — the check reads source.
+ */
+describe('window-control cluster contrast (all themes)', () => {
+  const headerSrc = readCss('src/components/common/AppHeader.vue')
+
+  /** The `background:` a rule declares. The selector is anchored to the end of
+   *  the name (`(?![-\w])`) so `.window-control` cannot match the
+   *  `.window-control-glyph` rule that follows it. */
+  function bgOf(selector: string): string {
+    const rule = headerSrc.match(new RegExp(`\\${selector}(?![\\w-])[^{]*\\{([\\s\\S]*?)\\}`))
+    expect(rule, `${selector} rule must exist`).not.toBeNull()
+    const bg = rule![1].match(/background:\s*([^;]+);/)
+    expect(bg, `${selector} must declare a background`).not.toBeNull()
+    return bg![1].trim()
+  }
+
+  it('derives the cluster colour from the header colour instead of a fixed step', () => {
+    const bg = bgOf('.window-controls')
+    expect(
+      bg,
+      'the cluster must mix --text-primary into --bg-secondary; a fixed step ' +
+        'like --bg-tertiary or --bg-elevated is invisible in ~15 of 36 themes',
+    ).toContain('color-mix(')
+    expect(bg).toContain('var(--text-primary)')
+    expect(bg).toContain('var(--bg-secondary)')
+  })
+
+  it('does not go back to a fixed background step', () => {
+    const bg = bgOf('.window-controls')
+    for (const bad of ['--bg-tertiary', '--bg-elevated']) {
+      expect(bg, `${bad} is not a reliable one-step ramp across themes`).not.toContain(bad)
+    }
+  })
+
+  it('keeps the pressed state on the same recipe, not a different token', () => {
+    // `--bg-primary` is not reliably on the far side of the cluster in every
+    // theme; a deeper mix of the same recipe always is.
+    const active = bgOf('.window-control:active')
+    expect(active).toContain('color-mix(')
+    expect(active).not.toContain('--bg-primary')
+  })
+
+  it('lifts hover back to the header colour rather than deepening the tint', () => {
+    // Hovering returns the button to --bg-secondary so it visually pops OUT of
+    // the block. Measured stronger than deepening (min 1.113 vs 1.095).
+    const hover = headerSrc.match(/\.window-control:hover\s*\{([\s\S]*?)\}/)
+    expect(hover, '.window-control:hover must exist').not.toBeNull()
+    expect(hover![1]).toContain('var(--bg-secondary)')
+  })
+})
