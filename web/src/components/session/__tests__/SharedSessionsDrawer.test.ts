@@ -57,6 +57,15 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// The open-in-new-tab control must route through the shared external-link
+// primitive. A bare same-origin `target="_blank"` anchor is a dead click in the
+// desktop shell (the window-open handler denies the popup without opening
+// anything) and in the Android WebView (no multi-window support).
+const mockOpenExternalUrl = vi.fn()
+vi.mock('@/utils/externalLink', () => ({
+  openExternalUrl: (url: string) => mockOpenExternalUrl(url),
+}))
+
 const messages = {
   en: {
     common: { retry: 'Retry', loading: 'Loading...' },
@@ -204,6 +213,24 @@ describe('SharedSessionsDrawer', () => {
     await wrapper.findAll('.shared-session-btn')[1].trigger('click')
     expect(h.copyText).toHaveBeenCalledWith('https://host.example/share/tok1')
     expect(h.toastShow).toHaveBeenCalled()
+  })
+
+  it('routes the open-in-new-tab click through openExternalUrl', async () => {
+    // See the mock note above: the raw same-origin anchor cannot open in either
+    // native host, so the click has to go through the bridge-aware primitive.
+    fetchMock.mockResolvedValue(jsonResponse({
+      shares: [{ token: 'tok1', sessionId: 's1', title: 'A', backend: 'codebuddy', messageCount: 1, createdAt: '', archived: false }],
+    }))
+    const wrapper = mountDrawer()
+    await openAndLoad(wrapper)
+
+    const openBtn = wrapper.findAll('.shared-session-btn')[0]
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    openBtn.element.dispatchEvent(ev)
+    await nextTick()
+
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith('https://host.example/share/tok1')
+    expect(ev.defaultPrevented).toBe(true)
   })
 
   it('revokes one share by token after confirmation', async () => {

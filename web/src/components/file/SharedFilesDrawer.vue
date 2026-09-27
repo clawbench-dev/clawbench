@@ -65,6 +65,7 @@
               target="_blank"
               rel="noopener noreferrer"
               :title="t('sharedFiles.openInNewTab')"
+              @click.prevent="openExternalUrl(shareUrl(item))"
             >
               <ExternalLink :size="14" />
             </a>
@@ -97,6 +98,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { copyText } from '@/utils/clipboard.ts'
+import { openExternalUrl } from '@/utils/externalLink'
 import { useFileShare } from '@/composables/useFileShare'
 
 const emit = defineEmits(['selectFile', 'close'])

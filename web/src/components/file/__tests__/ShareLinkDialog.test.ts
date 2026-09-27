@@ -33,6 +33,15 @@ vi.mock('@/utils/clipboard.ts', () => ({
   },
 }))
 
+// The open-page control must route through the shared external-link primitive.
+// A bare `target="_blank"` anchor is a dead click in the desktop shell (the
+// window-open handler denies a same-origin popup) and in the Android WebView
+// (no multi-window support), so the raw anchor cannot be the open path.
+const mockOpenExternalUrl = vi.fn()
+vi.mock('@/utils/externalLink', () => ({
+  openExternalUrl: (url: string) => mockOpenExternalUrl(url),
+}))
+
 const messages = {
   en: {
     common: { copy: 'Copy', copied: 'Copied', close: 'Close', loading: 'Loading...' },
@@ -188,6 +197,27 @@ describe('ShareLinkDialog', () => {
       expect(footer.find('.fbtn-danger').exists()).toBe(true)
       // No footer close button anymore.
       expect(footer.find('.share-dialog-cancel').exists()).toBe(false)
+    })
+
+    it('routes the open-page click through openExternalUrl instead of a bare new-tab anchor', async () => {
+      // A plain same-origin `target="_blank"` anchor is a dead click in both
+      // native hosts: Electron's setWindowOpenHandler denies the popup without
+      // opening anything, and the Android WebView has no multi-window support.
+      // The click must therefore go through the shared external-link primitive.
+      const wrapper = mountDialog()
+      await flushPromises()
+      await nextTick()
+
+      const openLink = wrapper.find('.modal-footer a.fbtn')
+      expect(openLink.exists()).toBe(true)
+      const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+      openLink.element.dispatchEvent(ev)
+      await nextTick()
+
+      expect(mockOpenExternalUrl).toHaveBeenCalledWith('https://host.example/share/tok1')
+      // The anchor's own navigation must be suppressed, or the native hosts
+      // would see a popup request in addition to the bridge call.
+      expect(ev.defaultPrevented).toBe(true)
     })
   })
 
