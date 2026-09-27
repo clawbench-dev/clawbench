@@ -234,6 +234,7 @@ const renderList = computed(() => {
     if (entry.type === 'item') {
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
       if (entry.spec.appOnly && !isAppMode.value) continue
+      if (entry.spec.androidOnly && !isAndroidApp.value) continue
       if (entry.spec.hideInAndroidApp && isAndroidApp.value) continue
       if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
       if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue

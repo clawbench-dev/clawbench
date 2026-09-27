@@ -101,6 +101,18 @@ export interface ItemSpec {
   /** Only show this item when running inside the Android app */
   appOnly?: boolean
   /**
+   * Hide this item everywhere EXCEPT the Android WebView shell (i.e. show it
+   * only on Android).
+   *
+   * Distinct from `appOnly`, which cannot express this: `appOnly` is filtered
+   * as `!isAppMode`, and BOTH native hosts report isAppMode() === true, so an
+   * `appOnly` row renders in the Electron desktop shell too. Use `androidOnly`
+   * for rows whose feature is genuinely Android-only (its native bridge method
+   * exists solely on Android, or its copy names Android-only permissions) —
+   * otherwise desktop users get a switch that silently does nothing.
+   */
+  androidOnly?: boolean
+  /**
    * Hide this item inside the Android WebView shell (but keep it in the plain
    * browser and the Electron desktop shell).
    *
@@ -320,10 +332,14 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // switch matters most. It gates the Notification API path and is independent
     // of the server-side push_mode (that one selects the mobile/IM channel).
     { type: 'item', spec: { labelKey: 'settings.items.desktopNotification', descriptionKey: 'settings.items.desktopNotificationDesc', key: 'desktopNotification', type: 'switch', source: 'local', sectionHeader: 'settings.items.desktopNotifySection' } },
-    // Out-of-app desktop/system surfaces (app-only, so the whole card disappears
-    // in browser mode — the render list is filtered before cards are grouped).
-    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
-    { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', appOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    // Out-of-app desktop/system surfaces. `androidOnly` (NOT `appOnly`): the
+    // floating status window and the Live Updates chip are Android features —
+    // `setFloatingWindowEnabled` / `setLiveUpdateEnabled` / `canPostPromoted-
+    // Notifications` exist only on the Android bridge, and the copy names
+    // Android-only permissions. `appOnly` is `!isAppMode`, which the Electron
+    // shell also satisfies, so these rendered there as dead switches.
+    { type: 'item', spec: { labelKey: 'settings.items.floatingStatusWindow', descriptionKey: 'settings.items.floatingStatusWindowDesc', key: 'floatingStatusWindow', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.liveUpdate', descriptionKey: 'settings.items.liveUpdateDesc', key: 'liveUpdate', type: 'switch', source: 'local', androidOnly: true, sectionHeader: 'settings.items.desktopSystemSection' } },
     { type: 'panel', config: {
       panelId: 'push',
       titleKey: 'settings.items.mobileNotifySection',

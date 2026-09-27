@@ -38,9 +38,14 @@
       </button>
     </div>
 
-    <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
+    <!-- Shortcut tips marquee: fills the empty middle area.
+         Shown wherever there is a physical keyboard, which includes the Electron
+         desktop shell — it reports isAppMode (native host) but is a desktop
+         window, so gating on `!isAppMode` alone hid the tips exactly where they
+         are most useful. Only the Android WebView (isAppMode && !isDesktopApp)
+         is excluded: touch-only, no keyboard, marquee would just be noise. -->
     <ShortcutTipTicker
-      v-if="isWideScreen && !isAppMode && localConfig.headerShortcutTips"
+      v-if="isWideScreen && (!isAppMode || isDesktopApp) && localConfig.headerShortcutTips"
       :context="shortcutContext"
       class="header-tips"
       :title="t('appHeader.shortcutTipsDialog.openTip')"
@@ -278,7 +283,7 @@ import type { Ref } from 'vue'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
 const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { reactive, ref } from 'vue'
+import { reactive, ref, nextTick } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { copyText } from '@/utils/clipboard'
-import { switchLeftTab, resetWideScreenState } from '@/composables/useWideScreenLayout'
+import { switchLeftTab, resetWideScreenState, _setWideScreenForTest } from '@/composables/useWideScreenLayout'
 
 const mockedCopyText = vi.mocked(copyText)
 
@@ -38,6 +38,7 @@ const {
   mockStateHolder,
   wsConfig,
   isAppModeConfig,
+  isDesktopAppConfig,
 } = vi.hoisted(() => {
   const holder: { state: Record<string, unknown> | null } = { state: null }
   return {
@@ -49,6 +50,7 @@ const {
     mockStateHolder: holder,
     wsConfig: { value: 'connected' as string },
     isAppModeConfig: { value: false as boolean },
+    isDesktopAppConfig: { value: false as boolean },
   }
 })
 
@@ -82,7 +84,7 @@ vi.mock('@/composables/useAppMode', () => {
   return {
     useAppMode: () => ({
       isAppMode: vue.ref(isAppModeConfig.value),
-      isDesktopApp: vue.ref(false),
+      isDesktopApp: vue.ref(isDesktopAppConfig.value),
     }),
   }
 })
@@ -207,6 +209,7 @@ describe('AppHeader', () => {
   beforeEach(() => {
     wsConfig.value = 'connected'
     isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
     mockState.gitBranch = ''
     mockState.gitDirty = false
     mockState.gitWorkingTreeChangeCount = 0
@@ -1440,6 +1443,50 @@ describe('AppHeader', () => {
     mockState.gitBranch = 'feature/x'
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.dropdownOpen).toBe(true)
+  })
+
+  // ── shortcut tips ticker visibility (keyboard-bearing surfaces) ──
+
+  it('shows the shortcut tips ticker on the Electron desktop shell', async () => {
+    // The Electron shell is a native host (isAppMode === true) but a desktop
+    // window with a physical keyboard, so the tips apply there. Gating only on
+    // `!isAppMode` hid them in the desktop app while showing them in a browser
+    // on the same machine.
+    isAppModeConfig.value = true
+    isDesktopAppConfig.value = true
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeTruthy()
+  })
+
+  it('hides the shortcut tips ticker on the Android WebView', async () => {
+    // Android reports isAppMode without isDesktopApp — a touch surface with no
+    // physical keyboard, where the marquee would only be noise.
+    isAppModeConfig.value = true
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeFalsy()
+  })
+
+  it('shows the shortcut tips ticker in the web browser', async () => {
+    isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeTruthy()
+  })
+
+  it('hides the shortcut tips ticker on narrow screens', async () => {
+    isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(false)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeFalsy()
   })
 
   // ── handleLogout ──
