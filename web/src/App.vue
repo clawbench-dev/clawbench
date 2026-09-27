@@ -22,10 +22,13 @@
           class="wallpaper-image"
           :class="{
             'wallpaper-image--edge-fade': wallpaperEdgeFade,
+            'local-media-hidden': wallpaperFailed,
           }"
           :style="wallpaperImageStyle"
           alt=""
           draggable="false"
+          @error="onWallpaperError"
+          @load="wallpaperFailed = false"
         />
         <WaveBackground v-else-if="waveActive" :speed="wallpaperWaveSpeed" />
         <div class="wallpaper-scrim"></div>
@@ -1239,6 +1242,20 @@ const wallpaperBlurPx = ref(0)
 const wallpaperEdgeFade = ref(false)
 const waveActive = ref(false)
 const wallpaperWaveSpeed = ref(50)
+/**
+ * The wallpaper file is missing / unreadable. The wallpaper is decoration, so
+ * the correct degradation is to hide it and let .wallpaper-layer's
+ * --bg-primary show through — NOT to show the content MediaLoadError card,
+ * which would put a "failed to load" message behind the whole application.
+ * The element is hidden rather than removed so a later successful load (the
+ * file re-appears, or a new wallpaper is applied) revives it.
+ */
+const wallpaperFailed = ref(false)
+
+function onWallpaperError() {
+  wallpaperFailed.value = true
+  appLog.w(TAG, 'wallpaper image failed to load; falling back to solid background')
+}
 
 /** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
 const wallpaperImageStyle = computed(() =>
@@ -1265,7 +1282,11 @@ function refreshWallpaper() {
   wallpaperWaveSpeed.value = Number(localConfig.wallpaperWaveSpeed ?? 50)
   // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
   // panel-alpha CSS variables + wallpaper-active class.
-  wallpaperUrl.value = resolveWallpaperUrl(file, false)
+  // A changed URL is a fresh attempt: clear the previous failure, or a new
+  // wallpaper would stay hidden behind the old one's failure state.
+  const nextUrl = resolveWallpaperUrl(file, false)
+  if (nextUrl !== wallpaperUrl.value) wallpaperFailed.value = false
+  wallpaperUrl.value = nextUrl
   applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false, wave)
 
   scheduleBingFirstImagePoll()

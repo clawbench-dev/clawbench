@@ -541,6 +541,37 @@ describe('WallpaperSetting', () => {
       expect(wrapper.findAll('.wallpaper-gallery__item')).toHaveLength(0)
     })
 
+    it('hides a thumbnail whose image fails, keeping the tile usable', async () => {
+      // A missing file used to leave a broken-image glyph inside the tile, next
+      // to the delete button. The tile itself must stay (it is still deletable),
+      // so the image is hidden rather than the tile removed.
+      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], '')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      const thumb = wrapper.find('.wallpaper-gallery__thumb')
+      expect(thumb.classes()).not.toContain('local-media-hidden')
+
+      await thumb.trigger('error')
+
+      expect(wrapper.find('.wallpaper-gallery__thumb').classes()).toContain('local-media-hidden')
+      // The tile and its delete control survive.
+      expect(wrapper.find('.wallpaper-gallery__item').exists()).toBe(true)
+      expect(wrapper.find('.wallpaper-gallery__delete').exists()).toBe(true)
+    })
+
+    it('hides a failed Bing preview thumbnail', async () => {
+      serverConfig.value = bingConfigWith()
+      const wrapper = mountSetting()
+      await nextTick()
+
+      const thumb = wrapper.find('.wallpaper-thumb')
+      expect(thumb.exists()).toBe(true)
+      await thumb.trigger('error')
+
+      expect(wrapper.find('.wallpaper-thumb').classes()).toContain('local-media-hidden')
+    })
+
     it('selects a tile via POST /api/theme/local/select', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)

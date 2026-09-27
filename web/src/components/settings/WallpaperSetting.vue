@@ -122,7 +122,7 @@
           </div>
         </div>
         <div v-if="bingStatus.file" class="wallpaper-thumb-wrap">
-          <img :src="galleryImageUrl(bingStatus.file, bingStatus.abs_path)" class="wallpaper-thumb" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" />
+          <img :src="galleryImageUrl(bingStatus.file, bingStatus.abs_path)" class="wallpaper-thumb" :class="{ 'local-media-hidden': thumbErrors.has(bingStatus.file) }" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" @error="onThumbError(bingStatus.file)" />
         </div>
       </div>
 
@@ -175,7 +175,9 @@
             <img
               :src="galleryImageUrl(item.file, item.abs_path)"
               class="wallpaper-gallery__thumb"
+              :class="{ 'local-media-hidden': thumbErrors.has(item.file) }"
               :alt="item.name"
+              @error="onThumbError(item.file)"
               @click="onSelectItem(item.file)"
             />
             <button
@@ -273,7 +275,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import {
@@ -335,6 +337,25 @@ const selected = computed(() => resolveGallerySelected(appearance.value))
 const bingStatus = computed(() => resolveBingStatus(appearance.value))
 
 const atLimit = computed(() => galleryItems.value.length >= maxGalleryItems)
+
+/**
+ * File names whose thumbnail failed to load, so the <img> can be hidden instead
+ * of leaving the browser's broken-image glyph inside the tile.
+ *
+ * The tile itself stays: it is still selectable/deletable, and removing it would
+ * make a transient fetch failure look like the image was deleted. Keyed by file
+ * name, which is the gallery's identity for an item.
+ *
+ * Entries are never pruned, so a name that failed once stays hidden for the
+ * lifetime of this panel. That is deliberate: the alternative is a retry storm
+ * against a file we already know is unreadable, and the panel is short-lived
+ * (remounting the settings view clears it).
+ */
+const thumbErrors = reactive(new Set<string>())
+
+function onThumbError(file: string) {
+  if (file) thumbErrors.add(file)
+}
 
 /**
  * Whether an image wallpaper is displayed. Drives the rows that only make sense

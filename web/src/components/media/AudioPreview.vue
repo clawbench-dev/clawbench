@@ -1,10 +1,17 @@
 <template>
   <div class="audio-preview-container">
     <div class="audio-preview-body">
-      <div class="audio-icon">
+      <!-- A missing / unreadable file leaves a dead native player with no
+           explanation. Show the shared failure element instead.
+           The player is HIDDEN rather than removed: a later src change (the file
+           appears, or the user fixes it) reloads the same element and
+           `loadedmetadata` clears the failure — removing it would make the
+           failure permanent. -->
+      <MediaLoadError v-if="loadFailed" kind="audio" :name="file.name" fill />
+      <div class="audio-icon" :class="{ 'local-media-hidden': loadFailed }">
         <Music :size="40" />
       </div>
-      <div class="audio-info">
+      <div class="audio-info" :class="{ 'local-media-hidden': loadFailed }">
         <div class="audio-name">{{ file.name }}</div>
         <div class="audio-size" v-if="fileSize">{{ fileSize }}</div>
       </div>
@@ -13,7 +20,9 @@
         :src="mediaUrl"
         controls
         class="audio-player"
+        :class="{ 'local-media-hidden': loadFailed }"
         @loadedmetadata="onLoaded"
+        @error="onError"
       />
     </div>
   </div>
@@ -22,6 +31,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { Music } from 'lucide-vue-next'
+import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { buildLocalFileUrl } from '@/utils/download.ts'
 
 const props = defineProps({
@@ -41,6 +51,8 @@ const mediaUrl = computed(() => {
 
 const audioRef = ref(null)
 const duration = ref(0)
+/** The file could not be fetched/decoded — the player is unusable. */
+const loadFailed = ref(false)
 
 const fileSize = computed(() => {
     if (!props.file?.size) return null
@@ -51,9 +63,14 @@ const fileSize = computed(() => {
 })
 
 function onLoaded() {
+    loadFailed.value = false
     if (audioRef.value) {
         duration.value = audioRef.value.duration
     }
+}
+
+function onError() {
+    loadFailed.value = true
 }
 </script>
 

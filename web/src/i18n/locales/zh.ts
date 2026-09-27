@@ -46,9 +46,6 @@ export default {
   imageBlock: {
     view: '放大查看',
     openFile: '打开文件',
-    // 本地图片文件加载失败（/api/fs/raw|thumb 返回 404）时就地展示，避免只留一个
-    // 无提示的裂图占位（issue #501）。
-    loadFailed: '图片加载失败',
   },
   tableBlock: {
     label: '表格',
@@ -1916,6 +1913,9 @@ export default {
   },
   media: {
     videoNotSupported: '您的浏览器不支持视频播放',
+    // 媒体文件（图片 / 视频 / 音频）加载失败时就地展示，替代无提示的裂图或空白
+    // 窗格。所有媒体界面共用 MediaLoadError.vue（issue #501 后续统一）。
+    loadFailed: '媒体加载失败',
   },
   upload: {
     failed: '上传失败: {error}',

@@ -2451,11 +2451,12 @@ describe('CodeLinkPreview.vue — media body (image / SVG / video / audio / PDF)
     img.dispatchEvent(new Event('error'))
     await flushPromises()
 
-    const errEl = document.querySelector('.code-preview-media-error')
+    // The shared MediaLoadError element, resolved through the global i18n
+    // instance — assert the real string, not a key, so a missing key fails.
+    const errEl = document.querySelector('.media-load-error')
     expect(errEl).not.toBeNull()
-    // Assert the translated text, not just the container — a missing i18n key
-    // would otherwise still pass.
-    expect(errEl!.textContent).toContain('Failed to load media file')
+    expect(errEl!.textContent).toContain('Media failed to load')
+    expect(errEl!.textContent).toContain('broken.png')
     wrapper.unmount()
   })
 })

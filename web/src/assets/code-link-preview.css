@@ -837,20 +837,10 @@ body.code-preview-dragging * {
   min-height: 0;
 }
 
-/* Load failure: message centered over the pane. */
-.code-preview-media-error {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  padding: 24px;
-  text-align: center;
-  color: var(--text-secondary, #666);
-  background: var(--bg-primary, #fff);
-}
+/* Load failure is rendered by the shared MediaLoadError component, whose
+   styling lives in the global media-block.css (`.media-load-error`). It is not
+   scoped here because the same element is also mounted imperatively for v-html
+   content, outside any component tree. */
 
 .code-preview-media {
   position: relative;
