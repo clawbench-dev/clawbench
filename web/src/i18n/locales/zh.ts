@@ -320,6 +320,10 @@ export default {
     aboutClawBench: '关于 ClawBench',
     reconfigureServer: '重新配置服务器',
     debugLog: '调试日志',
+    windowMinimize: '最小化',
+    windowMaximize: '最大化',
+    windowRestore: '向下还原',
+    windowClose: '关闭',
     shortcutTip: {
       contextSend: '聊天页 · 输入框内',
       actionSend: '发送消息 · Shift+Enter 换行',

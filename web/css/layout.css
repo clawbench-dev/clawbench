@@ -30,6 +30,34 @@
     gap: var(--space-2);
     overflow: hidden;
     z-index: var(--z-header);
+    /* Window drag handle for the frameless desktop shell (Windows/Linux). A
+       frameless window is not draggable on its own, so without this the window
+       could not be moved at all. Harmless in a browser and on Android, where
+       the property is ignored. Buttons inside must opt back out — see
+       `.window-control` and the interactive children below. */
+    -webkit-app-region: drag;
+}
+
+/* Text selection is suppressed only on the frameless shell, where a drag on the
+   header would otherwise paint its labels blue (Electron's own recommendation).
+   Scoped to `header--frameless` rather than applied unconditionally: in a
+   browser the property is NOT ignored, so a blanket rule would silently break
+   selecting the project / branch / file names for every web user. */
+.header--frameless {
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+/* Everything clickable inside the header opts out of the drag region, or it
+   would be impossible to click. Listed explicitly rather than as a blanket
+   `*` so the marquee and badges keep behaving as before. */
+.header button,
+.header a,
+.header input,
+.header select,
+.header .badge-capsule,
+.header .header-tips {
+    -webkit-app-region: no-drag;
 }
 
 /* Main content area */

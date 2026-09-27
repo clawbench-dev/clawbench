@@ -36,7 +36,8 @@
       splash_loading: 'Loading page…',
       splash_rendering: 'Rendering…',
       splash_initializing: 'Initializing app…',
-      splash_cancel: 'Cancel connection'
+      splash_cancel: 'Cancel connection',
+      window_close: 'Close'
     },
     zh: {
       slogan: '从终端到桌面',
@@ -67,7 +68,8 @@
       splash_loading: '正在加载页面…',
       splash_rendering: '正在渲染…',
       splash_initializing: '正在初始化应用…',
-      splash_cancel: '取消连接'
+      splash_cancel: '取消连接',
+      window_close: '关闭'
     }
   };
   var LANG = 'en';
@@ -715,6 +717,76 @@
     position: relative;
     overflow: hidden;
     -webkit-tap-highlight-color: transparent;
+    /* This page IS the window on first run and whenever the server is
+       unreachable, and the window is frameless on Windows/Linux — so without a
+       drag region the login window could not be moved at all. The whole page is
+       the handle (there is no title bar), which is why every interactive
+       element below has to opt back out. Ignored on macOS/Android/browser. */
+    -webkit-app-region: drag;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  /* Opt out of the page-wide drag handle. Without this the inputs and buttons
+     would be undraggable-but-unclickable — a click would start a window move.
+     `.dlg-box` is included because the confirmation dialog's message text
+     should be selectable, and `.server-item` because its rows are clickable. */
+  input,
+  button,
+  select,
+  a,
+  .form-card,
+  .server-list,
+  .field-group,
+  .server-item,
+  .dlg-box,
+  .dlg-actions {
+    -webkit-app-region: no-drag;
+  }
+
+  /* Text the user may want to select (server URLs, error messages) opts out of
+     both the drag region and the inherited user-select:none. */
+  input,
+  .server-url,
+  .error-message,
+  .splash-stage {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Window close, for the frameless Windows/Linux shell. Pinned to the window's
+     top-right — the same corner the native controls occupy on those platforms. */
+  .window-close {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 46px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 0 0 0 6px;
+    background: transparent;
+    color: var(--text-hint);
+    cursor: pointer;
+    z-index: 200;
+    transition: background 150ms ease, color 150ms ease;
+  }
+
+  .window-close svg {
+    width: 15px;
+    height: 15px;
+  }
+
+  .window-close:hover {
+    background: var(--color-red, #ef4444);
+    color: #fff;
+  }
+
+  .window-close[hidden] {
+    display: none;
   }
 
   /* Decorative background — matches LoginView.vue */
@@ -1405,6 +1477,19 @@
   <div class="bg-gradient"></div>
   <div class="bg-grid"></div>
 
+  <!-- Window close, for the frameless Windows/Linux shell.
+       This document has no AppHeader, so it is the ONLY way to close the window
+       on first run or when the server is unreachable — without it the window
+       would have no close affordance at all. Hidden unless the host reports
+       app-drawn controls (macOS keeps its traffic lights, and Android is not a
+       window), so it never duplicates a native button. -->
+  <button type="button" class="window-close" id="windowClose" data-i18n-aria-label="window_close" data-i18n-title="window_close" aria-label="Close" title="Close" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+      <line x1="6" y1="6" x2="18" y2="18"/>
+      <line x1="18" y1="6" x2="6" y2="18"/>
+    </svg>
+  </button>
+
   <div class="content">
     <!-- Brand -->
     <div class="brand">
@@ -1545,6 +1630,15 @@
     document.querySelectorAll('[data-i18n-placeholder]').forEach(function(el) {
       el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
     });
+    // Attribute-valued strings (tooltips, accessible names). The icon-only
+    // close button has no text to translate, so without these it would keep its
+    // hard-coded English label in every language.
+    document.querySelectorAll('[data-i18n-title]').forEach(function(el) {
+      el.title = t(el.getAttribute('data-i18n-title'));
+    });
+    document.querySelectorAll('[data-i18n-aria-label]').forEach(function(el) {
+      el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria-label')));
+    });
   }
 
   // ── Splash overlay (?splash=1) ──────────────────────────────────────────
@@ -1588,6 +1682,25 @@
   if (SPLASH_MODE) {
     document.body.classList.add('splash-mode');
   }
+
+  /**
+   * Reveal and wire the window close button when the host draws its own
+   * controls (frameless Windows/Linux). `hasCustomWindowControls` is absent on
+   * older hosts, macOS and Android — the button stays hidden there, so it never
+   * duplicates a native close button. Runs before DOMContentLoaded so the
+   * button is usable even while the splash overlay is up.
+   */
+  (function initWindowClose() {
+    var btn = document.getElementById('windowClose');
+    if (!btn) return;
+    var supported = false;
+    try { supported = ClawBenchNative.hasCustomWindowControls && ClawBenchNative.hasCustomWindowControls() === true; } catch(e) {}
+    if (!supported) return;
+    btn.hidden = false;
+    btn.addEventListener('click', function() {
+      try { ClawBenchNative.windowClose(); } catch(e) {}
+    });
+  })();
 
   window.addEventListener('DOMContentLoaded', function() {
     // Apply i18n to all elements with data-i18n / data-i18n-placeholder

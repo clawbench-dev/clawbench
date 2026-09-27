@@ -318,6 +318,10 @@ export default {
     aboutClawBench: 'About ClawBench',
     reconfigureServer: 'Reconfigure Server',
     debugLog: 'Debug Log',
+    windowMinimize: 'Minimize',
+    windowMaximize: 'Maximize',
+    windowRestore: 'Restore',
+    windowClose: 'Close',
     shortcutTip: {
       contextSend: 'Chat · in the input box',
       actionSend: 'Send message · Shift+Enter for newline',
