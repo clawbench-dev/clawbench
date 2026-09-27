@@ -3040,7 +3040,7 @@ export default {
     clearAll: 'Clear all',
     clear: 'Clear',
     confirmClearAll: 'Clear every shared conversation in this project? All share links will stop working immediately (other projects are unaffected).',
-    archived: 'Conversation archived',
+    archived: 'Archived',
     archivedHint: 'This conversation is archived and can no longer be opened, but its share link still works and can be revoked here.',
     messageCount: '{count} messages',
     confirmRevoke: 'Revoke the share of "{name}"? The link will stop working immediately.',

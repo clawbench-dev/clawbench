@@ -3039,7 +3039,7 @@ export default {
     clearAll: '一键清空',
     clear: '清空',
     confirmClearAll: '确定清空本项目的全部已分享会话？所有分享链接将立即失效（其他项目不受影响）。',
-    archived: '会话已归档',
+    archived: '已归档',
     archivedHint: '会话已归档，无法再打开，但分享链接仍然有效，可在此取消分享。',
     messageCount: '{count} 条消息',
     confirmRevoke: '确定取消「{name}」的分享？链接将立即失效。',

@@ -83,7 +83,7 @@ const messages = {
       clearAll: 'Clear all',
       clear: 'Clear',
       confirmClearAll: 'Clear every shared conversation?',
-      archived: 'Conversation archived',
+      archived: 'Archived',
       archivedHint: 'Archived, but the link still works.',
       messageCount: '{count} messages',
       confirmRevoke: 'Revoke "{name}"?',
@@ -192,7 +192,11 @@ describe('SharedSessionsDrawer', () => {
     expect(rows[1].classes()).toContain('archived')
     expect(rows[1].classes()).not.toContain('clickable')
 
-    expect(wrapper.text()).toContain('Conversation archived')
+    // The badge text matches the session-search list's archived badge so the
+    // same state reads identically in both lists.
+    const badge = rows[1].find('.shared-session-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('Archived')
 
     // Clicking the archived row must not emit a selection.
     await rows[1].trigger('click')

@@ -309,13 +309,15 @@ defineExpose({ open: openDrawer })
   text-overflow: ellipsis;
 }
 
+/* Kept identical to SessionSearchDrawer's archived badge so the same state
+   reads the same in both lists. */
 .shared-session-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px var(--space-3);
-  border-radius: var(--radius-sm);
-  background: rgba(128,128,128,.15);
-  color: var(--text-secondary, #57606a);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: rgba(230, 162, 60, 0.12);
+  color: var(--color-orange);
 }
 
 .shared-session-meta {
