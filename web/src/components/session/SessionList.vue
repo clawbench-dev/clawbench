@@ -1481,9 +1481,20 @@ onUnmounted(() => {
 }
 
 /* Unread — a plain dot, no animation. It is the quietest of the three, which
-   is what keeps a list with many unread rows calm. */
+   is what keeps a list with many unread rows calm.
+
+   The dot is 8px inside the 14px slot, NOT a 14px disc. A solid disc at the
+   ring's diameter carries far more visual weight than a 2px ring, so at equal
+   size the two read as unrelated indicators — the dot looked like a heavier,
+   oversized thing next to the ring. The Demo sizes them apart (15px ring vs
+   8px dot) and this matches it.
+
+   Drawn as a radial-gradient rather than a nested element so the slot keeps its
+   14px footprint: shrinking the element itself would let the title run 6px
+   further right on unread rows than on running ones, which shows up as a ragged
+   right edge when scanning the list. */
 .session-status.is-unread {
-  background: var(--running-ring);
+  background: radial-gradient(circle, var(--running-ring) 4px, transparent 4px);
 }
 
 @keyframes session-status-spin {

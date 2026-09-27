@@ -345,4 +345,48 @@ describe('session status slot', () => {
       /position:\s*absolute/,
     )
   })
+
+  it('paints the unread dot smaller than the rings, as a dot rather than a disc', () => {
+    // A solid disc at the ring's diameter carries far more visual weight than a
+    // 2px ring, so at equal size the two read as unrelated indicators — the dot
+    // looked like a heavier, oversized thing beside the ring. The Demo draws
+    // them at different sizes (15px ring / 8px dot); this pins the ratio.
+    //
+    // The dot is painted by a radial-gradient INSIDE the 14px slot rather than
+    // by shrinking the element: the slot must keep its footprint, or the title
+    // would run 6px further right on unread rows than on running ones and the
+    // list's right edge would look ragged.
+    const unread = list.match(/\n\.session-status\.is-unread\s*\{[^}]*\}/)?.[0]
+    expect(unread, '.session-status.is-unread should exist').toBeTruthy()
+
+    // The dot's radius is the gradient's stop, not a width/height.
+    const stop = Number(unread!.match(/(\d+(?:\.\d+)?)px,\s*transparent/)?.[1])
+    expect(Number.isFinite(stop), 'the dot should be a radial-gradient with a px stop').toBe(true)
+    const dotDiameter = stop * 2
+    expect(dotDiameter, 'the dot should be visibly smaller than the ring').toBeLessThan(12)
+    expect(dotDiameter, 'the dot should still be a readable dot').toBeGreaterThanOrEqual(6)
+
+    // And it must NOT be a flat fill spanning the whole slot.
+    expect(
+      unread,
+      'a flat background paints a full-slot disc — the oversized look being fixed',
+    ).not.toMatch(/background:\s*var\(--running-ring\)/)
+
+    // Nor may it shrink the ELEMENT to get a small dot: the slot must keep its
+    // 14px footprint, or the title runs further right on unread rows than on
+    // running ones and the list's right edge looks ragged. The dot's size comes
+    // from the gradient stop, never from width/height on this rule.
+    expect(
+      unread,
+      'the unread rule must not resize the slot — size the gradient stop instead',
+    ).not.toMatch(/(?:^|[;{]\s*)(width|height)\s*:/)
+
+    // Both rings are bordered circles of the same size, so the hierarchy is
+    // "two rings + one smaller dot", not "three things of equal weight".
+    for (const cls of ['is-running', 'is-pending']) {
+      const rule = list.match(new RegExp(`\\n\\.session-status\\.${cls}\\s*\\{[^}]*\\}`))?.[0]
+      expect(rule, `.session-status.${cls} should exist`).toBeTruthy()
+      expect(rule, `${cls} should be a ring (border), not a fill`).toMatch(/border:/)
+    }
+  })
 })
