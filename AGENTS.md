@@ -122,6 +122,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 ## 开发规则
 
+- **改 UI 前先读视觉设计指导手册**：动样式、加组件、加主题、加动效之前必读 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)——样式三层归属、设计 token（字号/间距/圆角/层级/时长）、36 主题机制与新增步骤、布局骨架，以及六条红线（`v-html` 匹配不到 scoped 规则、共享类基规则也必须全局、`app-region` 豁免只能是控件、对比度不能靠固定跳一档背景、`content-visibility` 滚动跳变、Android WebView 像素怪癖）。改动检查清单与守卫测试索引也在文末。
 - **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
 - **改动 HTTP 接口必须同步 OpenAPI 文档**：任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、参数、请求 / 响应字段、状态码）都必须同步更新 `internal/api/openapi.yaml`（已从 `docs/spec/api/` 迁入以支持 `go:embed`）。
