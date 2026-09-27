@@ -107,7 +107,6 @@ vi.mock('@/utils/contentBlocks.ts', () => ({
   statusClass: (task: any) => `status-${task.status}`,
   statusLabel: (task: any, t: any) => task.status,
   statusLabelSimple: (task: any, t: any) => task.status,
-  formatTime: (iso: any) => iso,
   askQuestionSummary: (input: any) => input?.question || '',
   extractAskQuestions: (input: any) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return []

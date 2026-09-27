@@ -407,7 +407,6 @@ function getAgentName(): string {
 
 provide('chatRender', {
   renderTextBlock: chatRender.renderTextBlock,
-  formatMessageTime: chatRender.formatMessageTime,
   toolCallSummary: chatRender.toolCallSummary,
   formatToolInput: chatRender.formatToolInput,
   truncate: chatRender.truncate,

@@ -21,7 +21,6 @@ import {
   parseAssistantContent,
   toolCallSummary,
   hasImagesInContent,
-  formatMessageTime,
   formatDetailTime,
   truncate,
 } from '@/utils/chatBlocks.ts'
@@ -365,7 +364,6 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
     formatToolInput,
     toolCallSummary,
     hasImagesInContent,
-    formatMessageTime,
     formatDetailTime,
     truncate,
     // Expose cache for ContentBlocks.vue integration

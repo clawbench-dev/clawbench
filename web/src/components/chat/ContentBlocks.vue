@@ -627,6 +627,11 @@ watch([() => props.streaming, () => props.startedAt], ([streaming]) => {
   elapsedTimer = setInterval(updateElapsed, 1000)
 }, { immediate: true })
 
+// Deliberately NOT formatDuration(): this is a live counter that ticks every
+// second, so it needs second-level precision to visibly move. formatDuration
+// caps at the largest unit (a 1h20m turn would read "1.3h" and appear frozen
+// for ~6 minutes at a time). Every *static* duration in the app goes through
+// formatDuration instead.
 const elapsedLabel = computed(() => {
   if (elapsedSeconds.value < 60) return `${elapsedSeconds.value}s`
   const minutes = Math.floor(elapsedSeconds.value / 60)

@@ -864,7 +864,6 @@ const capsuleSliderStyle = computed(() => {
 
 provide('chatRender', {
   renderTextBlock: render.renderTextBlock,
-  formatMessageTime: render.formatMessageTime,
   toolCallSummary: render.toolCallSummary,
   formatToolInput: render.formatToolInput,
   truncate: render.truncate,

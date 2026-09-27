@@ -62,7 +62,6 @@ vi.mock('@/composables/useChatRender', () => ({
     staticBlockCache: {},
     toggleToolDetail: vi.fn(),
     renderTextBlock: vi.fn(() => '<p>rendered</p>'),
-    formatMessageTime: vi.fn(() => ''),
     formatDetailTime: vi.fn(() => ''),
     toolCallSummary: vi.fn(() => ''),
     formatToolInput: vi.fn(() => '<div>input</div>'),

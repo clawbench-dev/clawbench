@@ -165,7 +165,7 @@ const props = defineProps({
 
 defineEmits(['close'])
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const dialog = useDialog()
 const toast = useToast()
 const { markShared, markUnshared } = useSessionShare()
@@ -191,7 +191,7 @@ const allSelected = computed(() => {
 })
 
 function relativeTime(iso) {
-  return iso ? formatRelativeTime(iso, locale.value) : ''
+  return iso ? formatRelativeTime(iso) : ''
 }
 
 function toggleOne(m) {

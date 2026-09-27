@@ -147,7 +147,7 @@
       </div>
       <div v-if="data.durationMs" class="metadata-item">
         <span class="metadata-label">{{ t('chat.metadata.duration') }}</span>
-        <span class="metadata-value">{{ (data.durationMs / 1000).toFixed(2) }}s</span>
+        <span class="metadata-value">{{ formatDuration(data.durationMs) }}</span>
       </div>
       <div v-if="data.costUsd" class="metadata-item">
         <span class="metadata-label">{{ t('chat.metadata.cost') }}</span>

@@ -289,7 +289,6 @@ const chatRender = useChatRender({ messages, theme, currentSessionId: ref('') })
 // ── Provide dependencies that ChatMessageItem injects ──
 provide('chatRender', {
   renderTextBlock: chatRender.renderTextBlock,
-  formatMessageTime: chatRender.formatMessageTime,
   toolCallSummary: chatRender.toolCallSummary,
   formatToolInput: chatRender.formatToolInput,
   truncate: chatRender.truncate,

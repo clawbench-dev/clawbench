@@ -43,7 +43,7 @@
         </div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :size="14" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClassOf(task!)"></span>{{ statusLabelOf(task!) }}</div>
-        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTimeOf(task!.lastRunAt as string) }}</div>
+        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatRelativeTime(task!.lastRunAt as string) }}</div>
       </template>
 
       <!-- ── Cron schedule ── -->
@@ -52,8 +52,8 @@
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :size="14" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.repeat') }}</strong>{{ repeatLabel(task!.repeatMode as string, task!.maxRuns as number) }}</div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClassOf(task!)"></span>{{ statusLabelOf(task!) }}</div>
-        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTimeOf(task!.lastRunAt as string) }}</div>
-        <div v-if="task!.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatTimeOf(task!.nextRunAt as string) }}</div>
+        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatRelativeTime(task!.lastRunAt as string) }}</div>
+        <div v-if="task!.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatRelativeTime(task!.nextRunAt as string) }}</div>
       </template>
     </div>
   </div>
@@ -74,11 +74,11 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Archive, Clock, Zap } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import { humanizeCron, repeatLabel } from '@/utils/format'
-import { statusClass, statusLabel, statusLabelSimple, formatTime } from '@/utils/contentBlocks.ts'
+import { humanizeCron, repeatLabel, formatRelativeTime } from '@/utils/format'
+import { statusClass, statusLabel, statusLabelSimple } from '@/utils/contentBlocks.ts'
 import { eventChips, eventKindLabel } from '@/utils/forgeEventLabels'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const props = defineProps<{
   /** Task record from /api/tasks (or the shared block store). */
@@ -131,14 +131,13 @@ function handleClick() {
   if (actionable.value) emit('select')
 }
 
-// The shared helpers are locale-agnostic (they take `t`/`locale`), so these
-// wrappers bind the component's own i18n context for the template. The task
-// record arrives as a loose API payload, so the shape the helpers require is
-// asserted here rather than on the prop.
+// The status helpers take `t` explicitly (they are shared with non-component
+// callers), so these wrappers bind the component's own i18n context for the
+// template. The task record arrives as a loose API payload, so the shape the
+// helpers require is asserted here rather than on the prop.
 function statusClassOf(task: Record<string, unknown>) { return statusClass(task as { status: string }) }
 function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task as { status: string; runCount: number; runningCount: number }, t) }
 function statusLabelSimpleOf(task: Record<string, unknown>) { return statusLabelSimple(task as { status: string }, t) }
-function formatTimeOf(iso: string) { return formatTime(iso, locale.value, t) }
 </script>
 
 <style scoped>

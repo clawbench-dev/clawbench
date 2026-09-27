@@ -147,7 +147,7 @@
                 <span class="forge-state-dot" :class="`pipeline-${job.status}`"></span>
                 {{ t(`forge.pipeline.status.${job.status}`) }}
               </span>
-              <span class="col-duration">{{ formatDuration(job.durationSeconds) }}</span>
+              <span class="col-duration">{{ formatJobDuration(job.durationSeconds) }}</span>
             </div>
           </div>
         </div>
@@ -165,6 +165,7 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgePipelineDetail } from '@/composables/useForge'
+import { formatDuration } from '@/utils/format'
 import type { ForgePipelineRun, ForgePipelinePullRequest } from '@/utils/forgeApi'
 
 const props = defineProps<{
@@ -200,7 +201,7 @@ const errorTitle = computed(() => {
 /** Duration is only shown when the platform reported it. */
 const durationText = computed(() => {
   const seconds = detail.run.value?.durationSeconds
-  return seconds ? formatDuration(seconds) : ''
+  return seconds ? formatJobDuration(seconds) : ''
 })
 
 /**
@@ -232,13 +233,13 @@ function onQuote() {
   if (run) emit('quote', run)
 }
 
-/** Human-readable duration; empty for a missing or zero value. */
-function formatDuration(seconds: number | undefined): string {
+/** Human-readable duration for a job; '—' for a missing or zero value, which is
+ *  what the platform reports when it has no timing data. Delegates the actual
+ *  formatting to the shared formatter so pipeline durations read the same as
+ *  every other duration in the app (the API reports seconds, it takes ms). */
+function formatJobDuration(seconds: number | undefined): string {
   if (!seconds || seconds <= 0) return '—'
-  const m = Math.floor(seconds / 60)
-  const s = Math.round(seconds % 60)
-  if (m === 0) return `${s}s`
-  return `${m}m ${s}s`
+  return formatDuration(seconds * 1000)
 }
 
 function formatTime(iso: string): string {
