@@ -22,6 +22,7 @@ import {
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import { DEFAULT_RATIO } from '@/utils/splitRatio'
 import enMessages from '@/i18n/locales/en'
 import zhMessages from '@/i18n/locales/zh'
 import { DOCK_TABS_WITH_ICONS } from '@/composables/dockTabMeta'
@@ -127,9 +128,10 @@ describe('useWideScreenLayout', () => {
     expect(leftTab.value).toBe('browse')
   })
 
-  it('fresh init with no persisted ratio keeps splitRatio at 0.5', () => {
+  it('fresh init with no persisted ratio uses the 4:6 default (left narrower)', () => {
     const { splitRatio } = useWideScreenLayout()
-    expect(splitRatio.value).toBe(0.5)
+    expect(splitRatio.value).toBe(DEFAULT_RATIO)
+    expect(splitRatio.value).toBeCloseTo(0.4)
   })
 
   it('wide-screen mode makes getWideScreenState expose chat + leftTab as active tabs', () => {
