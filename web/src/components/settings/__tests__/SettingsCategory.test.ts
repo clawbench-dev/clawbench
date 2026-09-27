@@ -108,8 +108,12 @@ vi.mock('@/composables/useAgents', () => ({
 // on the hoisted vue import. Cases set `.value` before mounting, so the render
 // reads the intended value without needing reactivity.
 const mockIsAppMode = vi.hoisted(() => ({ value: false }))
+// Mutable so a case can flip the desktop-shell flag. BOTH native hosts report
+// isAppMode === true, so "Android app only" rows can only be distinguished by
+// consulting isDesktopApp.
+const mockIsDesktopApp = vi.hoisted(() => ({ value: false }))
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
+  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: mockIsDesktopApp }),
 }))
 
 // The scale slider displays the factor actually in effect. Stubbed as a plain
@@ -415,6 +419,7 @@ describe('SettingsCategory', () => {
     vi.clearAllMocks()
     // Reset app mode: individual cases flip it to cover the app-only rows.
     mockIsAppMode.value = false
+    mockIsDesktopApp.value = false
     // Reset the scale-related state: cases override the effective factor.
     localConfig.uiScale = 1
     mockEffectiveUIScale.value = 1
@@ -1239,6 +1244,22 @@ describe('SettingsCategory', () => {
         .map(c => c.props().title)
 
       expect(titles).toEqual(['应用内通知', '桌面端通知', '桌面与系统'])
+    })
+
+    it('drops the 桌面与系统 card in the Electron desktop shell', () => {
+      // The two rows in that card (桌面悬浮状态窗 / 灵动岛) are Android-only:
+      // their bridge methods exist only on Android and their copy names
+      // Android-only permissions. `appOnly` is implemented as "isAppMode",
+      // which is ALSO true in Electron, so the card used to render there as two
+      // switches that silently did nothing. The rows are now `androidOnly`.
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+      const wrapper = mountCategory('notification')
+      const titles = wrapper.findAllComponents({ name: 'SettingsCard' })
+        .map(c => c.props().title)
+
+      expect(titles).not.toContain('桌面与系统')
+      expect(titles).toEqual(['应用内通知', '桌面端通知'])
     })
 
     it('drops the 桌面与系统 card entirely in browser mode (app-only rows)', () => {

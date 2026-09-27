@@ -525,10 +525,16 @@ describe('settingsFieldMap', () => {
     expect(item!.appOnly).toBeFalsy()
   })
 
-  it('desktop/system notification items stay app-only', () => {
+  it('desktop/system notification items are Android-only, not merely app-only', () => {
+    // `appOnly` is filtered as `!isAppMode`, and BOTH native hosts report
+    // isAppMode === true — so an appOnly row also renders in the Electron
+    // desktop shell, as two switches whose Android bridge methods do not exist
+    // there. These rows must use `androidOnly` instead.
     const items = categoryItems['notification'].filter(e => e.type === 'item').map(e => e.spec)
     const desktop = items.filter(i => i.sectionHeader === 'settings.items.desktopSystemSection')
-    expect(desktop.every(i => i.appOnly === true)).toBe(true)
+    expect(desktop.length).toBeGreaterThan(0)
+    expect(desktop.every(i => i.androidOnly === true)).toBe(true)
+    expect(desktop.every(i => i.appOnly !== true)).toBe(true)
   })
 
   it('desktopNotification is a local switch that is NOT app-only', () => {

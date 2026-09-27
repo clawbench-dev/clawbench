@@ -3155,6 +3155,43 @@ describe('loadHistory', () => {
     )
   })
 
+  it('transport-layer failure (offline / Failed to fetch): logs but does NOT toast', async () => {
+    // On Android the app resumes and immediately fires an authoritative reload
+    // (onAppResume → handleManualRefresh) before the network/radio has come
+    // back, so the fetch rejects with TypeError('Failed to fetch'). The
+    // connection then recovers on its own and the reconnect re-syncs the
+    // session — a toast describing the already-healed blip is pure noise. The
+    // connectivity state is already expressed by ConnectionOverlay and the
+    // header status dot. Only the log line remains.
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockToastFn).not.toHaveBeenCalled()
+  })
+
+  it('HTTP-layer failure (server reachable, non-2xx): still toasts', async () => {
+    // Guard the discriminator: a server that answers with an error must keep
+    // producing a visible failure — only unreachable-server failures are
+    // suppressed. The body deliberately echoes the transport wording (a proxy
+    // upstream error would look exactly like this) so the test also pins that
+    // the status is attached structurally and not inferred from the message.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.resolve({ error: 'failed to fetch upstream' }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
   it('skipIfUnchanged=true with same snapshot: early returns without updating', async () => {
     // First load: set the snapshot
     mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-a')

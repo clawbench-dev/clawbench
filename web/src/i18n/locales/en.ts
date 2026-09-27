@@ -46,10 +46,6 @@ export default {
   imageBlock: {
     view: 'View image',
     openFile: 'Open file',
-    // Shown in place of an <img> whose local file could not be loaded (a 404
-    // from /api/fs/raw|thumb), so a missing file reads as a labelled gap
-    // instead of a silent broken-image glyph (issue #501).
-    loadFailed: 'Image failed to load',
   },
   tableBlock: {
     label: 'Table',
@@ -318,6 +314,10 @@ export default {
     aboutClawBench: 'About ClawBench',
     reconfigureServer: 'Reconfigure Server',
     debugLog: 'Debug Log',
+    windowMinimize: 'Minimize',
+    windowMaximize: 'Maximize',
+    windowRestore: 'Restore',
+    windowClose: 'Close',
     shortcutTip: {
       contextSend: 'Chat · in the input box',
       actionSend: 'Send message · Shift+Enter for newline',
@@ -1913,6 +1913,10 @@ export default {
   },
   media: {
     videoNotSupported: 'Your browser does not support video playback',
+    // Shown in place of media (image / video / audio) whose local file could not
+    // be loaded, instead of a silent broken-image glyph or an empty pane. Every
+    // media surface renders the shared MediaLoadError.vue.
+    loadFailed: 'Media failed to load',
   },
   upload: {
     failed: 'Upload failed: {error}',

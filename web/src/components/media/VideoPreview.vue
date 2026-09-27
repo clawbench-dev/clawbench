@@ -1,12 +1,18 @@
 <template>
   <div class="video-preview-container">
     <div class="video-preview-body">
+      <!-- A missing / unreadable file leaves a black box with a dead player and
+           no explanation. The player is HIDDEN rather than removed so a later
+           successful load (`loadedmetadata`) revives it. -->
+      <MediaLoadError v-if="loadFailed" kind="video" :name="file.name" fill />
       <video
         ref="videoRef"
         :src="mediaUrl"
         controls
         class="video-player"
+        :class="{ 'local-media-hidden': loadFailed }"
         @loadedmetadata="onLoaded"
+        @error="onError"
       >
         {{ t('media.videoNotSupported') }}
       </video>
@@ -17,6 +23,7 @@
 <script setup>
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { buildLocalFileUrl } from '@/utils/download.ts'
 
 const { t } = useI18n()
@@ -37,9 +44,15 @@ const mediaUrl = computed(() => {
 )
 
 const videoRef = ref(null)
+/** The file could not be fetched/decoded — the player is unusable. */
+const loadFailed = ref(false)
 
 function onLoaded() {
-    // Video is ready to play
+    loadFailed.value = false
+}
+
+function onError() {
+    loadFailed.value = true
 }
 </script>
 

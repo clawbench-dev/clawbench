@@ -9,6 +9,8 @@ import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
 import { createSplashController, type SplashController } from './splash'
 import { nextZoomFactor, type ZoomAction } from './zoom'
+import { shouldUseFramelessWindow } from './windowChrome'
+import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -151,13 +153,72 @@ function registerContextMenu(webContents: Electron.WebContents): void {
   })
 }
 
+/**
+ * Keep the renderer's view of the maximize state in step with the window's.
+ *
+ * The header's maximize/restore button must show the right glyph, but the state
+ * can change from places the renderer cannot see: our own IPC toggle, an OS
+ * snap/tile, or a double-click on the drag region (Electron's built-in
+ * behaviour for a draggable region, which does NOT go through our IPC at all).
+ * Listening to the window events therefore covers every path, whereas mirroring
+ * state in the renderer after each click would miss the others.
+ *
+ * The initial value is NOT pushed here: a push on load would race the
+ * renderer's own subscription (the preload's listener fires before Vue mounts),
+ * so the renderer instead queries the current state once when it mounts. That
+ * makes the initial read deterministic instead of order-dependent.
+ */
+function registerWindowStateReporting(win: BrowserWindow): void {
+  const send = () => {
+    if (win.isDestroyed()) return
+    const state: WindowState = { maximized: win.isMaximized() }
+    win.webContents.send(WINDOW_STATE_CHANNEL, state)
+  }
+  win.on('maximize', send)
+  win.on('unmaximize', send)
+}
+
+/** Minimize the main window (frameless header control). */
+export function minimizeMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize()
+}
+
+/**
+ * Toggle the main window between maximized and restored (frameless header
+ * control). Toggling rather than setting avoids the two sides disagreeing about
+ * the current state — the window is the authority.
+ */
+export function toggleMaximizeMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMaximized()) mainWindow.unmaximize()
+  else mainWindow.maximize()
+}
+
+/** Close the main window (frameless header control). */
+export function closeMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
+}
+
+/** Whether the main window is currently maximized (frameless header control). */
+export function isMainWindowMaximized(): boolean {
+  return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()
+}
+
 export function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, show: false,
+    // Windows/Linux get a frameless window and draw their own controls in the
+    // header (see windowChrome.ts). macOS keeps the native frame so its
+    // top-left traffic lights stay where users expect them. A frameless window
+    // is NOT draggable by default — the header supplies the drag region — and
+    // is still resizable on Windows/Linux; on Wayland Electron gives frameless
+    // windows GTK shadow plus an extended resize border.
+    frame: !shouldUseFramelessWindow(process.platform),
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
+  registerWindowStateReporting(mainWindow)
   // A (re)load tears down the renderer's listeners, so anything clicked before
   // it re-registers must be deferred rather than sent into the void.
   mainWindow.webContents.on('did-start-loading', () => markRendererLoading())

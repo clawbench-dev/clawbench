@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { reactive, ref } from 'vue'
+import { reactive, ref, nextTick } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { copyText } from '@/utils/clipboard'
-import { switchLeftTab, resetWideScreenState } from '@/composables/useWideScreenLayout'
+import { switchLeftTab, resetWideScreenState, _setWideScreenForTest } from '@/composables/useWideScreenLayout'
 
 const mockedCopyText = vi.mocked(copyText)
 
@@ -38,6 +38,7 @@ const {
   mockStateHolder,
   wsConfig,
   isAppModeConfig,
+  isDesktopAppConfig,
 } = vi.hoisted(() => {
   const holder: { state: Record<string, unknown> | null } = { state: null }
   return {
@@ -49,6 +50,7 @@ const {
     mockStateHolder: holder,
     wsConfig: { value: 'connected' as string },
     isAppModeConfig: { value: false as boolean },
+    isDesktopAppConfig: { value: false as boolean },
   }
 })
 
@@ -82,7 +84,7 @@ vi.mock('@/composables/useAppMode', () => {
   return {
     useAppMode: () => ({
       isAppMode: vue.ref(isAppModeConfig.value),
-      isDesktopApp: vue.ref(false),
+      isDesktopApp: vue.ref(isDesktopAppConfig.value),
     }),
   }
 })
@@ -190,7 +192,7 @@ describe('AppHeader', () => {
       activeWrapper.unmount()
       activeWrapper = null
     }
-    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title').forEach(el => el.remove())
+    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title,.window-controls,.window-control').forEach(el => el.remove())
     if (activeContainer?.parentNode) {
       document.body.removeChild(activeContainer)
       activeContainer = null
@@ -207,6 +209,7 @@ describe('AppHeader', () => {
   beforeEach(() => {
     wsConfig.value = 'connected'
     isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
     mockState.gitBranch = ''
     mockState.gitDirty = false
     mockState.gitWorkingTreeChangeCount = 0
@@ -1442,6 +1445,50 @@ describe('AppHeader', () => {
     expect(wrapper.vm.dropdownOpen).toBe(true)
   })
 
+  // ── shortcut tips ticker visibility (keyboard-bearing surfaces) ──
+
+  it('shows the shortcut tips ticker on the Electron desktop shell', async () => {
+    // The Electron shell is a native host (isAppMode === true) but a desktop
+    // window with a physical keyboard, so the tips apply there. Gating only on
+    // `!isAppMode` hid them in the desktop app while showing them in a browser
+    // on the same machine.
+    isAppModeConfig.value = true
+    isDesktopAppConfig.value = true
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeTruthy()
+  })
+
+  it('hides the shortcut tips ticker on the Android WebView', async () => {
+    // Android reports isAppMode without isDesktopApp — a touch surface with no
+    // physical keyboard, where the marquee would only be noise.
+    isAppModeConfig.value = true
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeFalsy()
+  })
+
+  it('shows the shortcut tips ticker in the web browser', async () => {
+    isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeTruthy()
+  })
+
+  it('hides the shortcut tips ticker on narrow screens', async () => {
+    isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(false)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeFalsy()
+  })
+
   // ── handleLogout ──
 
   it('handleLogout calls ClawBenchNative.showServerDialog in APP mode', async () => {
@@ -1481,5 +1528,120 @@ describe('AppHeader', () => {
     expect((wrapper.vm as any).highlightBadge).toBe('file')
     expect(fileBtn).toBeTruthy()
     expect(fileBtn?.classList.contains('badge-highlight')).toBe(true)
+  })
+
+  // ── app-drawn window controls (frameless desktop shell) ──
+
+  /** Stub the bridge the cluster reads. `hasCustomWindowControls` is the gate. */
+  function stubWindowControls(hasControls: boolean) {
+    const native = {
+      hasCustomWindowControls: vi.fn(() => hasControls),
+      isWindowMaximized: vi.fn(async () => false),
+      windowMinimize: vi.fn(),
+      windowToggleMaximize: vi.fn(),
+      windowClose: vi.fn(),
+    }
+    vi.stubGlobal('ClawBenchNative', native)
+    return native
+  }
+
+  it('shows the three window controls when the window is frameless', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const buttons = document.body.querySelectorAll('.window-control')
+    expect(buttons).toHaveLength(3)
+    // The cluster is the only close affordance on a frameless window, so its
+    // presence is asserted on the buttons themselves, not just the container.
+    expect(document.body.querySelector('.window-controls')).toBeTruthy()
+  })
+
+  it('hides the window controls on a framed window (macOS / Android / web)', async () => {
+    stubWindowControls(false)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    // Two sets of controls (native + app-drawn) would be worse than none.
+    expect(document.body.querySelector('.window-controls')).toBeFalsy()
+    expect(document.body.querySelectorAll('.window-control').length).toBe(0)
+  })
+
+  it('wires the three buttons to minimize / maximize / close', async () => {
+    const native = stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const buttons = [...document.body.querySelectorAll<HTMLElement>('.window-control')]
+    buttons[0].click()
+    buttons[1].click()
+    buttons[2].click()
+
+    expect(native.windowMinimize).toHaveBeenCalledTimes(1)
+    expect(native.windowToggleMaximize).toHaveBeenCalledTimes(1)
+    expect(native.windowClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('swaps the middle button between maximize and restore', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const middle = () => document.body.querySelectorAll<HTMLElement>('.window-control')[1]
+    const initialTitle = middle().getAttribute('title')
+
+    window.dispatchEvent(new CustomEvent('clawbench-window-state', { detail: { maximized: true } }))
+    await wrapper.vm.$nextTick()
+
+    // The label must change with the state, or the button lies about what it
+    // will do next.
+    expect(middle().getAttribute('title')).not.toBe(initialTitle)
+    expect(middle().getAttribute('title')).toContain('Restore')
+  })
+
+  it('renders the controls after the native icon buttons, at the right edge', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const header = document.body.querySelector('.header')
+    expect(header).toBeTruthy()
+    // Last element child = the right edge. The cluster deliberately comes after
+    // the theme/server buttons rather than being inserted among them.
+    const last = header!.lastElementChild
+    expect(last?.classList.contains('window-controls')).toBe(true)
+  })
+
+  it('gives the close button its own class so it can be styled apart', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const buttons = [...document.body.querySelectorAll<HTMLElement>('.window-control')]
+    expect(buttons[2].classList.contains('window-control--close')).toBe(true)
+    // Only the close button carries the modifier; a stray one on minimize
+    // would turn it red on hover too.
+    expect(buttons[0].classList.contains('window-control--close')).toBe(false)
+    expect(buttons[1].classList.contains('window-control--close')).toBe(false)
+  })
+
+  it('marks the header frameless only when the window has no frame', async () => {
+    // `user-select: none` is scoped to this class so that a drag on the header
+    // does not highlight its labels — but it is NOT applied in a browser, where
+    // the property is honoured and would break selecting the project/branch
+    // names for every web user.
+    stubWindowControls(true)
+    const frameless = mountAndTrack()
+    await frameless.vm.$nextTick()
+    expect(document.body.querySelector('.header')?.classList.contains('header--frameless')).toBe(true)
+    // Unmount before the second mount: the wrappers attach to document.body and
+    // are only cleaned up in afterEach, so a global query would otherwise find
+    // this (frameless) header and assert against the wrong element.
+    frameless.unmount()
+
+    stubWindowControls(false)
+    const framed = mountAndTrack()
+    await framed.vm.$nextTick()
+    expect(document.body.querySelector('.header')?.classList.contains('header--frameless')).toBe(false)
   })
 })

@@ -117,7 +117,14 @@
         </button>
       </template>
       <template v-else>
-        <a class="fbtn" :href="linkUrl" target="_blank" rel="noopener noreferrer" :title="t('sessionShare.openPage')">
+        <a
+          class="fbtn"
+          :href="linkUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          :title="t('sessionShare.openPage')"
+          @click.prevent="openExternalUrl(linkUrl)"
+        >
           <ExternalLink :size="14" />
           {{ t('sessionShare.openPage') }}
         </a>
@@ -138,6 +145,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { copyText } from '@/utils/clipboard.ts'
+import { openExternalUrl } from '@/utils/externalLink'
 import { formatRelativeTime } from '@/utils/format.ts'
 import { appLog } from '@/utils/appLog'
 import { useSessionShare } from '@/composables/useSessionShare'

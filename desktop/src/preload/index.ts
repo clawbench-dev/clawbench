@@ -30,6 +30,13 @@ ipcRenderer.on('clawbench-download-progress', (_e, detail: unknown) => {
   window.dispatchEvent(new CustomEvent('clawbench-download-progress', { detail }))
 })
 
+// Maximize/restore state, pushed whenever the window's changes. Forwarded as a
+// CustomEvent for the same reason as the channels above: the renderer listens
+// to the window, not to IPC, so the two hosts stay interchangeable.
+ipcRenderer.on('clawbench-window-state', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-window-state', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
@@ -124,4 +131,17 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Native page zoom (appearance "auto scale"). Fire-and-forget: the main
   // process validates the factor and applies it to the window.
   setZoomFactor: (factor: number) => { ipcRenderer.send('native:set-zoom-factor', factor) },
+
+  // ── Frameless window controls (Windows/Linux) ──
+  // The window has no native frame there, so these are the only way to
+  // minimize/maximize/close it. Answered by the main process rather than
+  // derived here: the preload is sandboxed and cannot import windowChrome.ts,
+  // and duplicating the platform table would let the two drift.
+  hasCustomWindowControls: () => {
+    try { return ipcRenderer.sendSync('native:window-has-custom-controls') === true } catch { return false }
+  },
+  windowMinimize: () => { ipcRenderer.send('native:window-minimize') },
+  windowToggleMaximize: () => { ipcRenderer.send('native:window-toggle-maximize') },
+  windowClose: () => { ipcRenderer.send('native:window-close') },
+  isWindowMaximized: () => invoke('native:window-is-maximized'),
 })

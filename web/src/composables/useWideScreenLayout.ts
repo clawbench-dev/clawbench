@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { normalizeRatio } from '@/utils/splitRatio'
+import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
 import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 
@@ -55,7 +55,7 @@ export function computeIsWideScreen(cssWidth: number, screenWidth: number, scree
 
 const isWideScreen = ref(false)
 const leftTab = ref<DockTabId>('browse')
-const splitRatio = ref(0.5)
+const splitRatio = ref(DEFAULT_RATIO)
 export const PANE_LEFT = 'left' as const
 export const PANE_RIGHT = 'right' as const
 export type ActivePane = typeof PANE_LEFT | typeof PANE_RIGHT
@@ -263,7 +263,7 @@ export function setSplitRatio(ratio: number) {
 
 export function resetWideScreenState() {
   leftTab.value = 'browse'
-  splitRatio.value = 0.5
+  splitRatio.value = DEFAULT_RATIO
   isWideScreen.value = false
   activePane.value = 'right'
   leftCollapsed.value = false

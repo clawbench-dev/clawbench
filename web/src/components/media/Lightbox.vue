@@ -29,19 +29,24 @@
       >
         <img
           v-if="displayUrl && !currentSvg"
-          v-show="!imageLoading"
+          v-show="!imageLoading && !imageFailed"
           ref="imgRef"
           :key="displayUrl"
           :src="displayUrl"
           :style="imgStyle"
+          :class="{ 'local-media-hidden': imageFailed }"
           draggable="false"
           @mousedown.prevent
           @load="onImageLoad"
-          @error="imageLoading = false"
+          @error="onImageError"
         />
         <div v-if="imageLoading" class="lb-loading-spinner">
           <LoadingIndicator size="lg" inline />
         </div>
+        <!-- A 404 used to leave the overlay permanently blank (the spinner just
+             stopped). Show the shared failure element instead, filling the
+             overlay so the retry / close controls stay the obvious next step. -->
+        <MediaLoadError v-if="imageFailed" :name="currentFileName" fill />
         <div v-if="currentSvg" ref="svgContainerRef" :style="imgStyle" v-html="currentSvg" />
       </div>
       <div class="lightbox-bottom-bar">
@@ -64,6 +69,7 @@ import { X, ChevronLeft, ChevronRight, Download } from 'lucide-vue-next'
 import { ref, computed, provide, watch, onMounted, onUnmounted } from 'vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { store } from '@/stores/app.ts'
 import { baseName, joinPath } from '@/utils/path.ts'
 import { getFileType } from '@/utils/fileType.ts'
@@ -100,6 +106,12 @@ const siblingFiles = ref([])
 const currentIndex = ref(-1)
 const slideDirection = ref('') // '', 'left', 'right'
 const imageLoading = ref(false)
+/**
+ * The current image answered 404 (or failed to decode). Distinct from
+ * `imageLoading` because a failure also ENDS the loading state — without a
+ * separate flag the overlay would render nothing at all.
+ */
+const imageFailed = ref(false)
 
 // Markdown image navigation state
 const mdImages = ref([]) // [{src, name}]
@@ -175,6 +187,7 @@ function calcFitScale(naturalW, naturalH) {
 
 function onImageLoad() {
     imageLoading.value = false
+    imageFailed.value = false
     const img = imgRef.value
     if (!img) return
     naturalW.value = img.naturalWidth
@@ -183,6 +196,32 @@ function onImageLoad() {
     fitScale.value = s
     scale.value = s
     dimensionsReady.value = true
+}
+
+/**
+ * The image could not be fetched. Stop the spinner and record the failure so
+ * the overlay can show the shared MediaLoadError element — previously this only
+ * cleared `imageLoading`, leaving a blank lightbox with no explanation.
+ */
+function onImageError() {
+    imageLoading.value = false
+    imageFailed.value = true
+}
+
+/**
+ * Begin showing a new image (or retrying the current one): engage the spinner
+ * for URL-backed media and clear any previous failure.
+ *
+ * Every load path goes through here so the "clear the failure" invariant cannot
+ * be forgotten in one of them — there are six call sites (open, both markdown
+ * and directory navigation, both openMdImages branches, resetAndRefresh), and a
+ * missed one leaves the previous image's failure card over the new image.
+ * Inline SVGs render synchronously, so they must also clear the failure without
+ * engaging the spinner.
+ */
+function beginMedia(isSvg) {
+    imageLoading.value = !isSvg
+    imageFailed.value = false
 }
 
 function onSvgMounted() {
@@ -288,7 +327,7 @@ function navigateToIndex(newIdx, direction) {
     const entryPath = joinPath(store.state.currentDir || '', entry.name)
 
     // Show loading immediately, hide old image
-    imageLoading.value = true
+    beginMedia(false)
     slideDirection.value = direction
 
     // Reset transform for new image
@@ -368,7 +407,7 @@ function navigateMdImage(newIdx, direction) {
     if (!img) return
     // Show loading immediately (only for URL-based images; SVGs render instantly)
     const isSvg = !!img.svg
-    imageLoading.value = !isSvg
+    beginMedia(isSvg)
     slideDirection.value = direction
 
     // Reset transform for new image
@@ -406,7 +445,7 @@ function open(url, svg = '', filePath = '') {
     currentUrl.value = svg ? '' : withCacheBuster(normalizeUrl(url))
     currentSvg.value = svg
     lightboxVisible.value = true
-    imageLoading.value = !svg
+    beginMedia(!!svg)
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0
@@ -449,12 +488,12 @@ function openMdImages(imgs, startIndex) {
     if (img.svg) {
         currentSvg.value = img.svg
         currentUrl.value = ''
-        imageLoading.value = false
+        beginMedia(true)
     } else {
         // collectMdImages pre-resolves data-full-src into src
         currentUrl.value = withCacheBuster(normalizeUrl(img.src))
         currentSvg.value = ''
-        imageLoading.value = true
+        beginMedia(false)
     }
     currentFilePath.value = ''
 
@@ -499,10 +538,9 @@ function close() {
 function resetAndRefresh() {
     // SVG content is rendered synchronously from the in-memory string — there
     // is no fetch/load cycle, so the loading state (and the spinning button)
-    // must not be engaged for it.
-    if (!currentSvg.value) {
-        imageLoading.value = true
-    }
+    // must not be engaged for it. A retry must also clear the previous failure,
+    // or the error card would sit over the reloading image.
+    beginMedia(!!currentSvg.value)
     fitScale.value = 1
     naturalW.value = 0
     naturalH.value = 0
@@ -1025,6 +1063,22 @@ onUnmounted(() => {
 .lb-loading-spinner .loading-indicator {
     --li-color: #fff;
     --li-track-color: rgba(255, 255, 255, 0.3);
+}
+
+/* The failure card sits on the lightbox's always-dark backdrop, so it needs
+   light-on-dark colors. The global .media-load-error defaults to the theme's
+   text tokens, which are dark in a light theme and would be unreadable here. */
+.lightbox-content :deep(.media-load-error) {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+.lightbox-content :deep(.media-load-error-icon) {
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.lightbox-content :deep(.media-load-error-text) {
+    color: rgba(255, 255, 255, 0.92);
 }
 
 .lightbox-content img {

@@ -20,6 +20,15 @@ vi.mock('@/utils/clipboard.ts', () => ({
   copyText: vi.fn((_t: string, cb?: () => void) => cb?.()),
 }))
 
+// The open-page control must route through the shared external-link primitive.
+// A bare same-origin `target="_blank"` anchor is a dead click in the desktop
+// shell (the window-open handler denies the popup without opening anything) and
+// in the Android WebView (no multi-window support).
+const mockOpenExternalUrl = vi.fn()
+vi.mock('@/utils/externalLink', () => ({
+  openExternalUrl: (url: string) => mockOpenExternalUrl(url),
+}))
+
 const confirmMock = vi.fn(async () => true)
 
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
@@ -235,6 +244,29 @@ describe('SessionShareDialog', () => {
     // Destructive actions confirm first.
     expect(confirmMock).toHaveBeenCalledWith('Revoke?', { dangerous: true })
     expect(fetchCalls.some((c) => c.method === 'DELETE')).toBe(true)
+  })
+
+  it('routes the open-page click through openExternalUrl', async () => {
+    // A bare same-origin `target="_blank"` anchor is a dead click in the desktop
+    // shell (setWindowOpenHandler denies the popup without opening anything) and
+    // in the Android WebView (no multi-window support), so the click must go
+    // through the bridge-aware primitive.
+    globalThis.fetch = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      fetchCalls.push({ url: String(url), method, body: undefined })
+      return { ok: true, json: async () => ({ ...messagesResponse(3), token: 'ex', path: '/share/ex' }) } as Response
+    }) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    const openLink = wrapper.find('.footer a.fbtn')
+    expect(openLink.exists()).toBe(true)
+
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    openLink.element.dispatchEvent(ev)
+    await nextTick()
+
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith(`${window.location.origin}/share/ex`)
+    expect(ev.defaultPrevented).toBe(true)
   })
 
   it('confirms before regenerating (rotating kills the old link)', async () => {

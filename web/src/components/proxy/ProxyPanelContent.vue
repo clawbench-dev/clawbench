@@ -34,8 +34,11 @@
           <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
 
-        <!-- App mode: background service tip -->
-        <div v-if="tunnelStatus === 'ok'" class="tunnel-banner tip">
+        <!-- Android WebView: background service tip. Deliberately NOT shown in
+             the Electron shell, which also reports isAppMode: a desktop window
+             keeps running while minimized, so "grant background permission or
+             the tunnel gets killed" does not apply to it. -->
+        <div v-if="isAndroidApp && tunnelStatus === 'ok'" class="tunnel-banner tip">
           <Info :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-detail">{{ t('proxy.backgroundTip') }}</span>
@@ -105,8 +108,12 @@
         </div>
       </div>
 
-      <!-- Web mode: SSH not enabled -->
-      <div v-if="!isAppMode && sshInfo && !sshInfo.enabled" class="tunnel-banner warning">
+      <!-- Server-side SSH not enabled. Shown to the browser AND the Electron
+           shell (both depend on the server's SSH config, and when it is off
+           checkTunnelHealth() bails out early with status 'unknown', so this is
+           the only thing that explains why nothing works). Hidden on Android,
+           whose own native tunnel banners cover the same ground. -->
+      <div v-if="!isAndroidApp && sshInfo && !sshInfo.enabled" class="tunnel-banner warning">
         <AlertTriangle :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.tunnelNoSsh') }}</span>
@@ -287,6 +294,7 @@ import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
+import { useAppMode } from '@/composables/useAppMode'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect.ts'
@@ -333,6 +341,11 @@ watch(showForm, (val) => {
 })
 
 const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
+// `isAppMode` is true for BOTH native hosts (it is just isNativeApp()), so any
+// banner whose copy is Android-specific must additionally exclude the Electron
+// desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.
+const { isDesktopApp } = useAppMode()
+const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 const toast = useToast()
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.

@@ -84,6 +84,7 @@
           target="_blank"
           rel="noopener noreferrer"
           :title="t('shareDialog.openPage')"
+          @click.prevent="openExternalUrl(linkUrl)"
         >
           <ExternalLink :size="14" />
           {{ t('shareDialog.openPage') }}
@@ -106,6 +107,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { useFileShare } from '@/composables/useFileShare.ts'
 import { copyText } from '@/utils/clipboard.ts'
+import { openExternalUrl } from '@/utils/externalLink'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
 // dialogs load it; see the file header for why it cannot be scoped.
 import '@/assets/share-dialog.css'

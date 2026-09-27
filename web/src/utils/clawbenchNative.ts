@@ -157,6 +157,27 @@ export interface ClawBenchNative {
    * caller falls back to CSS zoom when this is absent.
    */
   setZoomFactor?(factor: number): void
+
+  // ── Frameless window controls (Electron on Windows/Linux) ──
+  /**
+   * Whether this host draws its own window controls, i.e. the window has no
+   * native frame. True only for the Electron shell on Windows/Linux; false on
+   * macOS (native traffic lights), Android and the plain browser.
+   *
+   * Answered by the main process so the platform table lives in exactly one
+   * place (`desktop/src/main/windowChrome.ts`). The renderer must not re-derive
+   * it from the user agent: the UA is absent in the sandboxed preload, and a
+   * second copy of the table would silently drift.
+   */
+  hasCustomWindowControls?(): boolean
+  /** Minimize the window. Present exactly when `hasCustomWindowControls()` is true. */
+  windowMinimize?(): void
+  /** Toggle the window between maximized and restored. */
+  windowToggleMaximize?(): void
+  /** Close the window (quits the app, matching the native close button). */
+  windowClose?(): void
+  /** Current maximize state, for the button's initial glyph. */
+  isWindowMaximized?(): Promise<boolean>
 }
 
 /** Navigation target for a native notification click. */

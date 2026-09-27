@@ -139,3 +139,48 @@ describe('ShortcutTipTicker centering contract', () => {
     expect(src).not.toMatch(/\.stt-viewport\s*\{[^}]*(?<![-\w])width:\s*100%;/)
   })
 })
+
+/**
+ * The window drag region (frameless desktop shell).
+ *
+ * `.stt` is `flex: 1`, so it spans the header's ENTIRE free band. Marking it
+ * `-webkit-app-region: no-drag` therefore punched a window-sized hole in the
+ * header's drag region: the window could not be moved by dragging the middle of
+ * the header — exactly where a user naturally grabs. Measured in a browser at
+ * 1400px wide, `.stt` was 1131.5px of the header.
+ *
+ * `no-drag` belongs on `.stt-viewport` instead, which is `width: fit-content`:
+ * it shrinks to the tip text, so the tip stays clickable while the blank space
+ * around it still drags the window.
+ *
+ * jsdom cannot evaluate `-webkit-app-region` (Chromium-only), so the contract is
+ * pinned on the CSS source, like the centering checks above.
+ */
+describe('ShortcutTipTicker drag-region contract', () => {
+  const src = readFileSync(resolve(__dirname, '../ShortcutTipTicker.vue'), 'utf8')
+  const globalCss = readFileSync(resolve(__dirname, '../../../../css/layout.css'), 'utf8')
+
+  it('opts the shrink-to-fit viewport out of the drag region', () => {
+    expect(src).toMatch(/\.stt-viewport\s*\{[^}]*-webkit-app-region:\s*no-drag;/)
+  })
+
+  it('does NOT opt the full-width container out of the drag region', () => {
+    // This is the regression itself. `.stt` fills the header's free space, so
+    // exempting it makes most of the header undraggable.
+    expect(src).not.toMatch(/\.stt\s*\{[^}]*-webkit-app-region:\s*no-drag;/)
+  })
+
+  it('does not exempt the full-width tips band in the global header rules', () => {
+    // The same mistake can be made from the other file: `.header-tips` is the
+    // class AppHeader puts on the ticker, and it is also `flex: 1`.
+    expect(globalCss).not.toMatch(/\.header-tips\s*\{[^}]*-webkit-app-region:\s*no-drag;/)
+    expect(globalCss).not.toMatch(/,\s*\.header\s+\.header-tips\s*\{[^}]*-webkit-app-region:\s*no-drag;/)
+  })
+
+  it('still exempts the controls that genuinely need clicking', () => {
+    // Guarding against the over-correction: removing every no-drag would make
+    // the header's buttons unusable, which is worse than an undraggable band.
+    expect(globalCss).toMatch(/\.header\s+button[^{]*\{[^}]*-webkit-app-region:\s*no-drag;/)
+    expect(globalCss).toMatch(/\.header\s+\.badge-capsule\s*\{[^}]*-webkit-app-region:\s*no-drag;/)
+  })
+})

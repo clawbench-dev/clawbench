@@ -5,14 +5,20 @@ import {
   uninstallLocalMediaFallback,
   isLocalMediaUrl,
   mediaPathFromSrc,
-  MEDIA_MISSING_CLASS,
 } from '@/utils/localMediaFallback'
+import { gt } from '@/composables/useLocale'
 
-// The module reads `gt()` from useLocale, which needs a live i18n instance.
-// Stub it so assertions can match a stable string instead of pulling vue-i18n in.
-vi.mock('@/composables/useLocale', () => ({
-  gt: (key: string) => key,
-}))
+// The placeholder is the shared MediaLoadError component, mounted imperatively
+// (this module runs on v-html surfaces with no Vue app instance). Assertions
+// therefore go through the real i18n instance rather than a stubbed key — a
+// missing key would render the key itself and must not pass.
+const LOAD_FAILED = gt('media.loadFailed')
+/**
+ * The placeholder's class, spelled out rather than imported. It is the shared
+ * component's root class, so a literal here fails if either side renames it —
+ * an imported constant would silently follow the rename and keep passing.
+ */
+const MEDIA_MISSING_CLASS = 'media-load-error'
 
 /** Build the figure markup the media-block factory produces for a local image. */
 function figure(src: string): string {
@@ -74,8 +80,12 @@ describe('applyMediaMissingFallback', () => {
     const ph = document.querySelector(`.${MEDIA_MISSING_CLASS}`)
     expect(ph).not.toBeNull()
     // The failure is explained AND names the file the reader expected.
-    expect(ph!.textContent).toContain('imageBlock.loadFailed')
+    expect(ph!.textContent).toContain(LOAD_FAILED)
     expect(ph!.textContent).toContain('diagram.png')
+    // The placeholder is the shared component, not a bespoke DOM blob — that is
+    // what keeps this path and the Vue media surfaces visually identical.
+    expect(ph!.classList.contains('media-load-error')).toBe(true)
+    expect(ph!.querySelector('.media-load-error-icon')).not.toBeNull()
   })
 
   it('hides the figure toolbar, which would open a lightbox onto nothing', () => {
@@ -119,6 +129,31 @@ describe('applyMediaMissingFallback', () => {
     expect(img.classList.contains('local-media-hidden')).toBe(false)
     expect(img.hasAttribute('data-media-missing')).toBe(false)
     expect(document.querySelector('.image-block-wrapper')!.classList.contains('image-block-missing')).toBe(false)
+  })
+
+  it('leaves no orphaned placeholder node behind after recovery', () => {
+    // The placeholder is a mounted Vue component, so restoring the image must
+    // UNMOUNT it, not merely detach its element — a leaked component instance
+    // (and its DOM) would accumulate on every rewrite of the file.
+    // The host is inserted next to the <img>, inside `.lightbox-img-wrap`.
+    document.body.innerHTML = figure('/api/fs/raw/later.png')
+    const img = document.querySelector('img') as HTMLImageElement
+    applyMediaMissingFallback(img)
+
+    const cell = document.querySelector('.lightbox-img-wrap')!
+    expect(cell.childElementCount, 'img + placeholder host').toBe(2)
+    // Hold the host itself: after removal it is detached, so asserting on the
+    // tree would pass even if the component were never unmounted.
+    const host = cell.children[1] as HTMLElement
+    expect(host.querySelector('.media-load-error')).not.toBeNull()
+
+    img.dispatchEvent(new Event('load'))
+
+    // Back to just the <img>, and the host is EMPTY — proving `render(null, …)`
+    // ran rather than the element merely being detached.
+    expect(cell.childElementCount).toBe(1)
+    expect(host.childElementCount, 'placeholder component must be unmounted').toBe(0)
+    expect(host.textContent).toBe('')
   })
 
   it('escapes a file name that looks like markup', () => {

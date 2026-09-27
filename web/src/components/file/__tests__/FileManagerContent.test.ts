@@ -4067,6 +4067,36 @@ describe('FileManagerContent — upload', () => {
     clickSpy.mockRestore()
   })
 
+  /**
+   * Folder upload is a Chromium `<input webkitdirectory>` feature, so it works
+   * in the Electron desktop shell exactly as it does in a browser. The gate
+   * used to be `!isAppMode`, which is just `!isNativeApp()` — true in Electron
+   * too — so the button and its hidden input vanished from the desktop app.
+   * Only the Android WebView (a touch surface) must stay excluded.
+   */
+  describe('folder upload availability by host', () => {
+    it('renders the folder input in the Electron desktop shell', () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = true
+      const wrapper = mountContent()
+      expect(wrapper.find('input[webkitdirectory]').exists()).toBe(true)
+    })
+
+    it('hides the folder input in the Android WebView shell', () => {
+      mockIsAppMode.value = true
+      mockIsDesktopApp.value = false
+      const wrapper = mountContent()
+      expect(wrapper.find('input[webkitdirectory]').exists()).toBe(false)
+    })
+
+    it('renders the folder input in a plain browser', () => {
+      mockIsAppMode.value = false
+      mockIsDesktopApp.value = false
+      const wrapper = mountContent()
+      expect(wrapper.find('input[webkitdirectory]').exists()).toBe(true)
+    })
+  })
+
   it('onUploadFileSelect calls handleFileSelectToDir and emits refresh', async () => {
     mockHandleFileSelectToDir.mockResolvedValue(undefined)
     const wrapper = mountContent({ currentDir: 'src' })

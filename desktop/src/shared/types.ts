@@ -45,3 +45,20 @@ export const NAV_CHANNELS = [
 ] as const
 
 export type NavChannel = (typeof NAV_CHANNELS)[number]
+
+/**
+ * Main → renderer channel reporting the window's maximize state.
+ *
+ * A frameless window has no native maximize/restore affordance, so the header's
+ * cluster is the only place the user can see which of the two the window is in
+ * — the button has to swap between the maximize and restore glyphs. The state
+ * is owned by the window (it also changes on double-click of the drag region
+ * and on OS-level snaps), so it is pushed from the main process rather than
+ * inferred in the renderer.
+ */
+export const WINDOW_STATE_CHANNEL = 'clawbench-window-state'
+
+/** Payload of `WINDOW_STATE_CHANNEL`. */
+export interface WindowState {
+  maximized: boolean
+}

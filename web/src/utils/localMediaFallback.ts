@@ -15,10 +15,15 @@
  * What this does
  * --------------
  * A single document-level capture-phase `error` listener (resource errors do
- * NOT bubble, so capture is required) swaps a failed local `<img>` for a
- * labelled placeholder with the file name and a localized "failed to load"
- * message. External URLs, `data:` URIs and the file manager's own thumbnails
- * (which already degrade to a type icon) are left alone.
+ * NOT bubble, so capture is required) swaps a failed local `<img>` for the
+ * shared MediaLoadError component, mounted imperatively with `h()` + `render()`
+ * — this module runs on v-html surfaces (chat messages, share pages) that have
+ * no Vue app instance, so it cannot rely on a component tree. The same
+ * component is used by every Vue media surface, which is what keeps a failed
+ * image looking identical in a chat bubble and in the file viewer.
+ *
+ * External URLs, `data:` URIs and the file manager's own thumbnails (which
+ * already degrade to a type icon) are left alone.
  *
  * The original `<img>` is kept in the DOM but hidden, and a one-shot `load`
  * listener restores it. That makes the fallback reversible: if the file is
@@ -26,14 +31,14 @@
  * re-fetches, and the real image reappears without a re-render.
  */
 
-import { gt } from '@/composables/useLocale'
+import { h, render } from 'vue'
 import { baseName } from '@/utils/path'
+import MediaLoadError from '@/components/media/MediaLoadError.vue'
 
 /** Marks an <img> that already has a placeholder, so a retry cannot stack them. */
 const MISSING_ATTR = 'data-media-missing'
 /** Wrapper class hiding the figure's view/attach toolbar for missing media. */
 const WRAPPER_CLASS = 'image-block-missing'
-export const MEDIA_MISSING_CLASS = 'local-media-missing'
 
 /**
  * True when the URL is served by one of our own local-file endpoints and can
@@ -61,36 +66,32 @@ export function mediaPathFromSrc(src: string): string {
     }
 }
 
-/** Build the placeholder element. Uses textContent — never innerHTML — so a
- *  crafted file name cannot inject markup. */
-function buildPlaceholder(src: string): HTMLElement {
-    const el = document.createElement('span')
-    el.className = MEDIA_MISSING_CLASS
-    el.setAttribute('role', 'img')
-
-    const label = gt('imageBlock.loadFailed')
+/**
+ * Build the placeholder by mounting the shared MediaLoadError component into a
+ * detached host.
+ *
+ * Mounting imperatively (rather than hand-writing DOM here) is what makes the
+ * chat / share surfaces and the Vue media surfaces render the SAME element: one
+ * component, one set of global classes, one place to change the wording or the
+ * icon. `render()` is used with a bare host — the component is written against
+ * the global i18n instance precisely so it works without an app context.
+ *
+ * Returns the host element (which the caller inserts) plus a teardown that
+ * unmounts the component. The host carries no class of its own: the
+ * placeholder's identity is the component's root class, so there is exactly one
+ * element to find (and to count).
+ */
+function buildPlaceholder(src: string): { host: HTMLElement; dispose: () => void } {
+    const host = document.createElement('span')
     const name = baseName(mediaPathFromSrc(src))
-    el.setAttribute('title', name ? `${label}: ${name}` : label)
-    el.setAttribute('aria-label', el.getAttribute('title')!)
-
-    const icon = document.createElement('span')
-    icon.className = 'local-media-missing-icon'
-    icon.setAttribute('aria-hidden', 'true')
-    icon.textContent = '\u26A0' // ⚠
-    el.appendChild(icon)
-
-    const text = document.createElement('span')
-    text.className = 'local-media-missing-text'
-    text.textContent = label
-    el.appendChild(text)
-
-    if (name) {
-        const file = document.createElement('span')
-        file.className = 'local-media-missing-name'
-        file.textContent = name
-        el.appendChild(file)
+    render(h(MediaLoadError, { kind: 'image', name }), host)
+    return {
+        host,
+        dispose: () => {
+            render(null, host)
+            host.remove()
+        },
     }
-    return el
 }
 
 /** Swap a failed local image for the placeholder, reversibly. */
@@ -103,7 +104,7 @@ export function applyMediaMissingFallback(img: HTMLImageElement): boolean {
     img.classList.add('local-media-hidden')
 
     const placeholder = buildPlaceholder(src)
-    img.insertAdjacentElement('afterend', placeholder)
+    img.insertAdjacentElement('afterend', placeholder.host)
 
     const wrapper = img.closest('.image-block-wrapper')
     wrapper?.classList.add(WRAPPER_CLASS)
@@ -113,7 +114,7 @@ export function applyMediaMissingFallback(img: HTMLImageElement): boolean {
     img.addEventListener('load', () => {
         img.removeAttribute(MISSING_ATTR)
         img.classList.remove('local-media-hidden')
-        placeholder.remove()
+        placeholder.dispose()
         wrapper?.classList.remove(WRAPPER_CLASS)
     }, { once: true })
 

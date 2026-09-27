@@ -138,7 +138,6 @@ watch(effectiveTips, () => {
   /* Center the tip within the free header region (between the file capsule
      and the theme toggle) instead of hugging the capsule. */
   justify-content: center;
-  cursor: pointer;
 }
 
 /* fit-content (not 100%): a short tip lets the viewport shrink to its own
@@ -151,6 +150,15 @@ watch(effectiveTips, () => {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
+  /* Only the tip TEXT is interactive — it opens the shortcut-tips dialog.
+
+     `no-drag` is scoped here rather than on `.stt` on purpose: `.stt` is
+     `flex: 1`, so it spans the header's whole free band, and opting the whole
+     band out of the drag region made the window undraggable across the middle
+     of the header. The viewport shrinks to the text, so the blank space around
+     it keeps dragging the window. */
+  -webkit-app-region: no-drag;
+  cursor: pointer;
 }
 
 .stt-vert {

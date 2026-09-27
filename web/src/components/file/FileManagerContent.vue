@@ -77,7 +77,7 @@
           <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
           </button>
-          <button v-if="!isAppMode && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
+          <button v-if="!isAndroidApp && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
             <FolderUp :size="16" />
           </button>
           <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
@@ -134,7 +134,7 @@
                   <span>{{ t('file.uploadHere') }}</span>
                 </button>
               </template>
-              <template v-if="!isAppMode && toolbarCollapsedIds.includes('uploadFolder')">
+              <template v-if="!isAndroidApp && toolbarCollapsedIds.includes('uploadFolder')">
                 <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerFolderUpload(); moreMenuOpen = false">
                   <FolderUp :size="14" />
                   <span>{{ t('file.uploadFolder') }}</span>
@@ -216,8 +216,8 @@
     <!-- Hidden file input for upload -->
     <input type="file" ref="uploadInputRef" @change="onUploadFileSelect" style="display:none" multiple />
 
-    <!-- Hidden directory input for folder upload (PC only, preserves structure) -->
-    <input v-if="!isAppMode" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
+    <!-- Hidden directory input for folder upload (Chromium only: web + Electron) -->
+    <input v-if="!isAndroidApp" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
 
     <!-- Upload progress bar (byte-based bar + count progress below) -->
     <UploadProgressBar
@@ -607,6 +607,13 @@ import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 const toast = inject('toast', null)
 const { isAppMode, isDesktopApp } = useAppMode()
 const { isPC } = usePlatformDetect()
+/**
+ * True only in the Android WebView shell. `isAppMode` is just `isNativeApp()`,
+ * so it is ALSO true in the Electron desktop shell — gating desktop-capable
+ * features on `!isAppMode` hides them there. Same predicate as
+ * SettingsCategory.vue and the keyboard-shortcut guard below.
+ */
+const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 const { t, locale } = useI18n()
 const TAG = 'FileManager'
 

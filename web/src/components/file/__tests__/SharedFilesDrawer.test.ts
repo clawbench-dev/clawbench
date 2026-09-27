@@ -45,6 +45,15 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
 }))
 
+// The open-in-new-tab control must route through the shared external-link
+// primitive. A bare same-origin `target="_blank"` anchor is a dead click in the
+// desktop shell (the window-open handler denies the popup without opening
+// anything) and in the Android WebView (no multi-window support).
+const mockOpenExternalUrl = vi.fn()
+vi.mock('@/utils/externalLink', () => ({
+  openExternalUrl: (url: string) => mockOpenExternalUrl(url),
+}))
+
 const messages = {
   en: {
     common: { retry: 'Retry' },
@@ -173,6 +182,26 @@ describe('SharedFilesDrawer', () => {
     expect(externalLinks[0].attributes('href')).toBe('https://host.example/share/tok1')
     expect(externalLinks[0].attributes('target')).toBe('_blank')
     expect(externalLinks[0].attributes('rel')).toBe('noopener noreferrer')
+  })
+
+  it('routes the open-in-new-tab click through openExternalUrl', async () => {
+    // See the mock note above: the raw same-origin anchor cannot open in either
+    // native host, so the click has to go through the bridge-aware primitive.
+    fetchMock.mockResolvedValue(jsonResponse({
+      shares: [{ token: 'tok1', name: 'a.md', path: 'docs/a.md', createdAt: 'x', exists: true }],
+    }))
+    const wrapper = mountDrawer()
+    ;(wrapper.vm as any).open()
+    await flushPromises()
+    await nextTick()
+
+    const openLink = wrapper.find('a[title="Open link in new tab"]')
+    const ev = new MouseEvent('click', { bubbles: true, cancelable: true })
+    openLink.element.dispatchEvent(ev)
+    await nextTick()
+
+    expect(mockOpenExternalUrl).toHaveBeenCalledWith('https://host.example/share/tok1')
+    expect(ev.defaultPrevented).toBe(true)
   })
 
   it('revokes a share after confirmation and removes the row', async () => {

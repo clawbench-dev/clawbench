@@ -13,6 +13,7 @@ import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
   showSplashFor, dismissSplash, cancelSplash,
+  minimizeMainWindow, toggleMaximizeMainWindow, closeMainWindow, isMainWindowMaximized,
 } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
 import { setKeepScreenOnImpl } from './powersave'
@@ -22,6 +23,7 @@ import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
 import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
+import { shouldUseFramelessWindow } from './windowChrome'
 
 export function registerBridge(): void {
   initStore()
@@ -178,6 +180,22 @@ export function registerBridge(): void {
     applyZoomFactor(getMainWindow(), Number(factor))
   })
   ipcMain.on('native:show-server-dialog', () => showLoginPage())
+  // Whether the header should draw the window controls. Answered from the main
+  // process so `windowChrome.ts` stays the single source of truth — the
+  // renderer must not re-derive the platform table, and the preload (sandboxed,
+  // so it cannot import our modules) must not either. Synchronous because the
+  // cluster's presence is decided during render; an async answer would flash a
+  // header that is missing its controls.
+  ipcMain.on('native:window-has-custom-controls', (e) => {
+    e.returnValue = shouldUseFramelessWindow(process.platform)
+  })
+  // Window controls for the frameless Windows/Linux header cluster. The window
+  // is the authority on its own state, so maximize is a toggle and the resulting
+  // state is pushed back over WINDOW_STATE_CHANNEL rather than assumed here.
+  ipcMain.on('native:window-minimize', () => minimizeMainWindow())
+  ipcMain.on('native:window-toggle-maximize', () => toggleMaximizeMainWindow())
+  ipcMain.on('native:window-close', () => closeMainWindow())
+  ipcMain.handle('native:window-is-maximized', () => isMainWindowMaximized())
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
   // The renderer signals that its notification-click listeners are registered.
   // Until then a clicked notification is stashed rather than sent into a page

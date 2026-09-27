@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-  <header class="header">
+  <header class="header" :class="{ 'header--frameless': hasCustomControls }">
     <button
       class="header-logo-btn"
       type="button"
@@ -38,9 +38,14 @@
       </button>
     </div>
 
-    <!-- Shortcut tips marquee: fills the empty middle area (PC / web only) -->
+    <!-- Shortcut tips marquee: fills the empty middle area.
+         Shown wherever there is a physical keyboard, which includes the Electron
+         desktop shell — it reports isAppMode (native host) but is a desktop
+         window, so gating on `!isAppMode` alone hid the tips exactly where they
+         are most useful. Only the Android WebView (isAppMode && !isDesktopApp)
+         is excluded: touch-only, no keyboard, marquee would just be noise. -->
     <ShortcutTipTicker
-      v-if="isWideScreen && !isAppMode && localConfig.headerShortcutTips"
+      v-if="isWideScreen && (!isAppMode || isDesktopApp) && localConfig.headerShortcutTips"
       :context="shortcutContext"
       class="header-tips"
       :title="t('appHeader.shortcutTipsDialog.openTip')"
@@ -236,16 +241,65 @@
     <PopupMenu v-model:show="resourcesMenuOpen" :target-element="serverBtnRef" :max-width="320" :max-height="440" :menu-items-count="10" anchor="right">
       <SystemResourcesPanel ref="resourcesPanelRef" :show-logout="isAppMode" :ws-status="wsStatus" @logout="handleLogout" />
     </PopupMenu>
+
+    <!-- App-drawn window controls (frameless desktop shell, Windows/Linux).
+         Present only when the window has no native frame, so the two can never
+         both show controls or both be missing. The window is the authority on
+         its maximize state, so the middle button's glyph follows the pushed
+         state rather than a locally toggled boolean — an OS snap or a
+         double-click on the drag region changes it without going through us. -->
+    <div v-if="hasCustomControls" class="window-controls">
+      <button
+        class="window-control"
+        type="button"
+        :title="t('appHeader.windowMinimize')"
+        :aria-label="t('appHeader.windowMinimize')"
+        @click="minimizeWindow"
+      >
+        <Minus :size="16" />
+      </button>
+      <button
+        class="window-control"
+        type="button"
+        :title="isWindowMaximized ? t('appHeader.windowRestore') : t('appHeader.windowMaximize')"
+        :aria-label="isWindowMaximized ? t('appHeader.windowRestore') : t('appHeader.windowMaximize')"
+        @click="toggleMaximizeWindow"
+      >
+        <!-- Hand-drawn rather than lucide: these two glyphs need a corner radius
+             and a box size lucide does not offer (`Square` is fixed at rx=2 on an
+             18/24 box, which reads rounder and smaller than the OS glyphs). The
+             radius here is 1.5 on a 16/24 box — squarer, and matched between the
+             maximize and restore shapes so they do not look like two families.
+             Two overlapping squares is the conventional "restore" glyph. -->
+        <svg v-if="isWindowMaximized" class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="8" y="8" width="14" height="14" rx="1.5" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+        </svg>
+        <svg v-else class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="1.5" />
+        </svg>
+      </button>
+      <button
+        class="window-control window-control--close"
+        type="button"
+        :title="t('appHeader.windowClose')"
+        :aria-label="t('appHeader.windowClose')"
+        @click="closeWindow"
+      >
+        <X :size="16" />
+      </button>
+    </div>
   </header>
   </Teleport>
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
 import { useAppMode } from '@/composables/useAppMode'
+import { useWindowControls } from '@/composables/useWindowControls'
 import { baseName, dirName } from '@/utils/path.ts'
 import { store } from '@/stores/app.ts'
 import { setPendingManageNavigation } from '@/composables/useCommitNavigation.ts'
@@ -278,7 +332,14 @@ import type { Ref } from 'vue'
 
 const { t } = useI18n()
 const { wsStatus } = useGlobalEvents()
-const { isAppMode } = useAppMode()
+const { isAppMode, isDesktopApp } = useAppMode()
+const {
+  hasCustomControls,
+  isMaximized: isWindowMaximized,
+  minimize: minimizeWindow,
+  toggleMaximize: toggleMaximizeWindow,
+  close: closeWindow,
+} = useWindowControls()
 const { resources, startBackgroundPolling, stopBackgroundPolling } = useSystemResources()
 const switchTab = inject<(tab: string) => void>('switchTab')
 const { isWideScreen, leftTab, activePane } = useWideScreenLayout()
@@ -1261,6 +1322,113 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 .server-toggle.status-dot-disconnected {
     color: var(--color-red, #ef4444);
+}
+
+/* ── App-drawn window controls (frameless desktop shell) ──
+   Reads as a tab hanging from the header's top edge: flush to the top, a small
+   margin at the bottom, and rounded only at the bottom. That is what
+   distinguishes it from the flat icon buttons to its left without a hard
+   divider, and it is why the block is pulled out of the header's own padding —
+   the header's right padding would otherwise leave a gap above it.
+
+   `align-self: stretch` + a bottom margin makes the height follow the header
+   (minus the margin) instead of a magic number, so it stays correct if the
+   header height or the safe-area inset changes. */
+.window-controls {
+    display: flex;
+    align-self: stretch;
+    margin-top: 0;
+    margin-bottom: var(--space-2);
+    margin-left: var(--space-2);
+    /* Cancels the header's right padding so the block sits flush against the
+       window edge — the same edge the native controls occupied. */
+    margin-right: calc(var(--space-3) * -1);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    /* Derived from the header's own colour rather than a fixed token.
+
+       `--bg-tertiary` was the obvious pick and is wrong: it is not a "one step
+       from secondary" ramp in every theme. Measured across all 36 themes, 15 of
+       them had a bg-secondary↔bg-tertiary contrast below 1.12 — ayu-dark only
+       1.062, which is why the block vanished there. `--bg-elevated` is no
+       better (vitesse-light: 1.028).
+
+       Mixing toward `--text-primary` instead makes the DIRECTION correct by
+       construction: the foreground is guaranteed to contrast with the
+       background it sits on, in light and dark themes alike. 10% lands every
+       theme at >=1.113 (was >=1.062), with the one straggler at 1.113 against
+       the 1.12 target — close enough to read, and the alternative (12%) made
+       the light themes noticeably muddy. */
+    background: color-mix(in srgb, var(--text-primary) 10%, var(--bg-secondary));
+    /* No border and no dividers between the buttons. An outline plus two
+       separators turned the three controls into a 3-cell table, which is what
+       made it read as heavy; the tinted block already delimits the group, and
+       hover supplies the per-button separation. */
+    border: none;
+    overflow: hidden;
+    /* Sized by its fixed-width children, not by flex: the tips marquee owns the
+       header's free space and would otherwise squeeze this to a sliver. */
+    flex: 0 0 auto;
+    /* The cluster must not be a drag handle: dragging from a button is how a
+       user expects to move the window only if the whole strip is a title bar.
+       Here the buttons are controls, so they opt out and the header's empty
+       space remains the drag region. */
+    -webkit-app-region: no-drag;
+}
+
+.window-control {
+    /* Equal thirds of the block, via one width on each button rather than a
+       total on the parent: the three glyphs have different intrinsic widths (a
+       `□` is not a `✕`), so content sizing would make them uneven.
+       40px (down from 46px) with a 16px glyph lands the ink density at ~20.6%,
+       close to the neighbouring icon buttons (~22%), instead of the sparse
+       14% the 46px/14px combination produced. */
+    width: 40px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: default;
+    transition: background var(--duration-fast), color var(--duration-fast);
+    -webkit-app-region: no-drag;
+}
+
+/* The inline maximize/restore SVGs must not be stretched by the flex parent. */
+.window-control-glyph {
+    flex: 0 0 auto;
+}
+
+@media (hover: hover) {
+    .window-control:hover {
+        /* Back to the header's own colour: the button lifts OUT of the tinted
+           block, so the three cells light up individually. This reads stronger
+           than deepening the tint (measured: min contrast 1.113 vs 1.095) and
+           needs no extra token. */
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+    }
+    /* The close button turns red on hover — the one convention shared by every
+       desktop platform, and the only way to tell it apart from the other two
+       at a glance. */
+    .window-control--close:hover {
+        background: var(--color-red, #ef4444);
+        color: #fff;
+    }
+}
+
+.window-control:active {
+    /* Pressed = pressed further IN than the cluster, not back out to a
+       different token: `--bg-primary` is not reliably on the far side of the
+       cluster in every theme, but a deeper mix of the same recipe always is. */
+    background: color-mix(in srgb, var(--text-primary) 22%, var(--bg-secondary));
+}
+
+.window-control--close:active {
+    background: var(--color-red, #ef4444);
+    color: #fff;
 }
 
 @keyframes status-pulse {
