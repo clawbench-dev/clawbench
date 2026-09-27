@@ -1751,6 +1751,8 @@ export default {
     chooseSession: '选择会话',
     addedToSessionDraft: '已加入该会话的输入框',
     createdSession: '已创建会话并发送',
+    addAndOpen: '添加并打开',
+    openAndCreated: '已创建会话并打开',
     drawerTitle: '引用详情',
     quotedContent: '引用内容',
     annotation: '批注',

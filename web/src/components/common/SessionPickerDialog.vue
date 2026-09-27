@@ -37,6 +37,18 @@
           <span v-if="isRunning(session.id)" class="sp-run-spinner" aria-hidden="true">
             <LoadingIndicator inline size="sm" />
           </span>
+          <!-- The row click adds WITHOUT leaving this screen. This button is the
+               other half of the pair: same delivery, then open that session.
+               Two explicit actions beat one action plus a mode to remember. -->
+          <button
+            class="sp-goto"
+            type="button"
+            :title="t('quoteBar.addAndOpen')"
+            :aria-label="t('quoteBar.addAndOpen')"
+            @click.stop="handleSelectAndOpen(session.id)"
+          >
+            <ArrowRight :size="14" />
+          </button>
         </div>
 
         <div v-if="orderedSessions.length === 0" class="sp-empty">{{ t('session.noSessions') }}</div>
@@ -63,7 +75,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, Plus } from 'lucide-vue-next'
+import { MessageSquare, Plus, ArrowRight } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -78,11 +90,14 @@ import { appLog } from '@/utils/appLog'
  * Compact destination picker for "quote to a conversation" / "attach to a
  * conversation" when the chat panel is NOT visible.
  *
- * The row language is deliberately the app's simplest: 28px single line, backend
- * icon, ellipsised title, and a small amber dot + label for a running session.
- * The session currently open is pinned to the top and tinted, so the common
- * "just put it in the conversation I already have" case is the first row and
- * needs no scanning.
+ * Two explicit actions per row, so the user never has to remember a mode:
+ *  - clicking the row ADDS to that session and keeps the current screen;
+ *  - the trailing button ADDS and then OPENS that session.
+ *
+ * The row language is the app's simplest: one line, agent icon, ellipsised
+ * title, and a trailing spinner while a session is running. The session
+ * currently open is pinned to the top and tinted, so the common "just put it in
+ * the conversation I already have" case is the first row and needs no scanning.
  */
 
 interface PickerSession {
@@ -96,7 +111,10 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  /** Add to this session and stay where the user is. */
   (e: 'select', sessionId: string): void
+  /** Add to this session, then open it. */
+  (e: 'select-and-open', sessionId: string): void
   (e: 'create'): void
   (e: 'close'): void
 }>()
@@ -178,6 +196,11 @@ function scrollActiveIntoView(index: number) {
 
 function handleSelect(sessionId: string) {
   emit('select', sessionId)
+  handleClose()
+}
+
+function handleSelectAndOpen(sessionId: string) {
+  emit('select-and-open', sessionId)
   handleClose()
 }
 
@@ -275,6 +298,56 @@ function handleClose() {
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
+}
+
+/* "Add and open this session". Hidden until the row is hovered or the button
+   itself is focused, so the resting list stays as quiet as possible while the
+   affordance is still reachable by keyboard and on touch (where a hover never
+   happens, so :focus-within/the tap keeps it usable). */
+.sp-goto {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--duration-base), background var(--duration-base), color var(--duration-base);
+}
+
+.sp-goto svg {
+  flex-shrink: 0;
+}
+
+@media (hover: hover) {
+  .sp-row:hover .sp-goto {
+    opacity: 1;
+  }
+
+  .sp-goto:hover {
+    background: var(--bg-hover);
+    color: var(--accent-color);
+  }
+}
+
+.sp-goto:focus-visible {
+  opacity: 1;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* Touch devices have no hover, so the button would be invisible AND
+   untappable-looking. Keep it always visible there. */
+@media (hover: none) {
+  .sp-goto {
+    opacity: var(--opacity-soft);
+  }
 }
 
 .sp-row-create {

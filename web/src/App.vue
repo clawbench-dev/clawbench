@@ -370,6 +370,7 @@
       <SessionPickerDialog
         :open="sessionPickerOpen"
         @select="confirmTarget({ kind: 'session', id: $event })"
+        @select-and-open="confirmTarget({ kind: 'session', id: $event }, { openAfter: true })"
         @create="confirmTarget({ kind: 'create' })"
         @close="cancelTarget()"
       />
@@ -558,7 +559,7 @@ import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
-import { setActiveTabGetter, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
+import { setActiveTabGetter, setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
 import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
@@ -1684,6 +1685,17 @@ const quoteQuestion = useQuoteQuestion()
 // the chat panel?". `activeTab` lives here (not in the layout module), so
 // inject a getter once rather than coupling the dispatcher to App state.
 setActiveTabGetter(() => activeTab.value)
+// "Add and open" needs to reveal the chat panel, which is a tab switch only
+// App owns — switchSession alone would change the session behind another tab.
+setOpenSessionHandler((sessionId) => {
+  // Wide screen: `switchTab('chat')` RETURNS EARLY (chat is not a left-column
+  // tab), so it does NOT reveal a chat column the user has hidden. Without this
+  // the session would switch behind the still-hidden panel and "add and open"
+  // would look identical to a plain add — the two actions must not converge.
+  if (isWideScreen.value && chatCollapsed.value) setChatCollapsed(false)
+  switchTab('chat')
+  handleSessionSelect(sessionId)
+})
 const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)

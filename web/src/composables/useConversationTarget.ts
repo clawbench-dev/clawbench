@@ -38,6 +38,13 @@ export type SessionTarget =
 export interface PendingRequest {
   mode: 'add' | 'send'
   /**
+   * Open the target session after delivering, instead of staying put.
+   *
+   * Set by the picker's "add and open" button. Only meaningful for `add` — a
+   * `send` is already running in the background and the user asked to stay.
+   */
+  openAfter?: boolean
+  /**
    * The payload, snapshotted at trigger time.
    *
    * Snapshotting is required, not an optimization: the quote bar is dismissed
@@ -64,6 +71,18 @@ let activeTabGetter: (() => string) | null = null
 
 export function setActiveTabGetter(fn: () => string) {
   activeTabGetter = fn
+}
+
+/**
+ * How to actually OPEN a session: switch to it AND bring the chat panel into
+ * view. Injected by App.vue because revealing the panel is a tab switch that
+ * only App owns — `switchSession` alone would change the session while the user
+ * is still looking at another tab.
+ */
+let openSession: ((sessionId: string) => void) | null = null
+
+export function setOpenSessionHandler(fn: (sessionId: string) => void) {
+  openSession = fn
 }
 
 /**
@@ -170,6 +189,15 @@ async function resolveTargetId(target: SessionTarget): Promise<string> {
 }
 
 /**
+ * Open a session: switch to it and bring the chat panel into view. Falls back
+ * to a plain switch when no handler was injected (unit tests, early boot).
+ */
+function openTargetSession(sessionId: string) {
+  if (openSession) openSession(sessionId)
+  else useSessionIdentity().switchSession(sessionId)
+}
+
+/**
  * Deliver a snapshotted payload to the chosen session.
  *
  * The two modes differ in intent:
@@ -180,6 +208,10 @@ async function resolveTargetId(target: SessionTarget): Promise<string> {
  *  - `add`   — stage it into that session's stored draft, so it is waiting in
  *    the input when the user opens that session. For the CURRENT session it
  *    goes to the live input instead, since there is nothing to restore.
+ *
+ * `request.openAfter` is the picker's "add and open" half: same delivery, then
+ * navigate. The delivery always happens first, so opening can never lose the
+ * payload.
  */
 export async function dispatchToTarget(target: SessionTarget, request: PendingRequest): Promise<boolean> {
   const identity = useSessionIdentity()
@@ -212,11 +244,26 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
     for (const q of request.quotes) chatContext.addStagedQuote(q, q.note)
     for (const f of request.attachments) chatContext.addAttachedFile(f.path, f.isDir, f.startLine, f.endLine)
     useToast().show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    // Already on this session; "open" is a no-op, and there is nothing to
+    // reveal that is not already in front of the user.
     return true
   }
 
   for (const q of request.quotes) chatContext.stageQuoteIntoDraft(sessionId, q, q.note)
   for (const f of request.attachments) chatContext.stageAttachmentIntoDraft(sessionId, f)
+
+  if (request.openAfter) {
+    // Open LAST: `switchSession` snapshots the live input on the way out, so
+    // doing it after the staging above cannot disturb the payload we just
+    // parked in the target's draft.
+    openTargetSession(sessionId)
+    useToast().show(
+      gt(isNew ? 'quoteBar.openAndCreated' : 'quoteBar.addedToChat'),
+      { icon: '📎', type: 'success', duration: 2000 },
+    )
+    return true
+  }
+
   // Say where it went: the card is not on screen, so a bare "added" would look
   // like nothing happened.
   useToast().show(gt('quoteBar.addedToSessionDraft'), { icon: '📎', type: 'success', duration: 2000 })
@@ -226,11 +273,14 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
 /**
  * Confirm the pending request against the chosen session and close the picker.
  * A no-op when nothing is pending (e.g. a stray event after cancel).
+ *
+ * `opts.openAfter` comes from the picker's "add and open" button.
  */
-export async function confirmTarget(target: SessionTarget): Promise<void> {
+export async function confirmTarget(target: SessionTarget, opts: { openAfter?: boolean } = {}): Promise<void> {
   const request = pending.value
   pickerOpen.value = false
   pending.value = null
   if (!request) return
+  if (opts.openAfter) request.openAfter = true
   await dispatchToTarget(target, request)
 }

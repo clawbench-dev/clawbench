@@ -42,6 +42,7 @@ const { mockIdentity } = vi.hoisted(() => ({
     currentSessionId: { value: '' },
     enqueueToSession: vi.fn(),
     createSessionInBackground: vi.fn(),
+    switchSession: vi.fn(),
   },
 }))
 vi.mock('@/composables/useSessionIdentity.ts', () => ({
@@ -70,6 +71,7 @@ vi.mock('@/utils/quoteItem.ts', () => ({
 import {
   canSeeChatPanel,
   setActiveTabGetter,
+  setOpenSessionHandler,
   requestTarget,
   requestAttachmentTarget,
   usePendingTarget,
@@ -78,6 +80,9 @@ import {
   confirmTarget,
   type PendingRequest,
 } from '@/composables/useConversationTarget.ts'
+
+/** Injected "open a session" handler (App wires the real one). */
+const mockOpenSession = vi.fn()
 
 const ATTACH: FileEntry = { path: '/a.txt', isDir: false }
 
@@ -102,6 +107,8 @@ describe('useConversationTarget', () => {
     mockIdentity.currentSessionId.value = 's-current'
     mockIdentity.enqueueToSession.mockResolvedValue(true)
     mockIdentity.createSessionInBackground.mockResolvedValue('s-new')
+    mockOpenSession.mockReset()
+    setOpenSessionHandler(mockOpenSession)
     setActiveTabGetter(() => 'chat')
     cancelTarget()
   })
@@ -242,6 +249,43 @@ describe('useConversationTarget', () => {
       expect(mockChatContext.addStagedQuote).toHaveBeenCalled()
       expect(mockChatContext.stageQuoteIntoDraft).not.toHaveBeenCalled()
     })
+
+    // ── "add and open" ──
+
+    it('does NOT open the session on a plain add', async () => {
+      await dispatchToTarget({ kind: 'session', id: 's-other' }, request({ mode: 'add', text: '' }))
+      expect(mockOpenSession).not.toHaveBeenCalled()
+      expect(mockIdentity.switchSession).not.toHaveBeenCalled()
+    })
+
+    it('stages first, then opens the session when openAfter is set', async () => {
+      const order: string[] = []
+      mockChatContext.stageQuoteIntoDraft.mockImplementation(() => { order.push('stage') })
+      mockOpenSession.mockImplementation(() => { order.push('open') })
+
+      await dispatchToTarget({ kind: 'session', id: 's-other' }, request({
+        mode: 'add',
+        text: '',
+        openAfter: true,
+        quotes: [{ id: 'q1', text: 't', note: '', filePath: '/x.ts', language: 'ts', startLine: 1, endLine: 1, sourceKind: 'file' }],
+      }))
+
+      expect(order).toEqual(['stage', 'open'])
+      expect(mockOpenSession).toHaveBeenCalledWith('s-other')
+    })
+
+    it('opens the freshly created session when openAfter is set', async () => {
+      await dispatchToTarget({ kind: 'create' }, request({ mode: 'add', text: '', openAfter: true }))
+
+      expect(mockIdentity.createSessionInBackground).toHaveBeenCalled()
+      expect(mockOpenSession).toHaveBeenCalledWith('s-new')
+      expect(mockToastShow).toHaveBeenCalledWith('quoteBar.openAndCreated', expect.anything())
+    })
+
+    it('does not open when the target is already the current session', async () => {
+      await dispatchToTarget({ kind: 'current' }, request({ mode: 'add', text: '', openAfter: true }))
+      expect(mockOpenSession).not.toHaveBeenCalled()
+    })
   })
 
   // ── requestAttachmentTarget (the "attach to chat" buttons) ───
@@ -350,6 +394,26 @@ describe('useConversationTarget', () => {
 
       expect(mockIdentity.enqueueToSession.mock.calls[0][0]).toBe('s-other')
       expect(mockIdentity.enqueueToSession.mock.calls[0][1]).toBe('snapshotted')
+    })
+
+    it('passes openAfter through to the dispatch when the caller asks for it', async () => {
+      setActiveTabGetter(() => 'browse')
+      requestTarget(request({ mode: 'add', text: '' }))
+
+      await confirmTarget({ kind: 'session', id: 's-other' }, { openAfter: true })
+
+      expect(mockOpenSession).toHaveBeenCalledWith('s-other')
+    })
+
+    it('a send is never turned into an open, even if openAfter slips through', async () => {
+      setActiveTabGetter(() => 'browse')
+      requestTarget(request({ mode: 'send', text: 'hi' }))
+
+      await confirmTarget({ kind: 'session', id: 's-other' }, { openAfter: true })
+
+      // send means "run it over there, leave me here".
+      expect(mockOpenSession).not.toHaveBeenCalled()
+      expect(mockIdentity.enqueueToSession).toHaveBeenCalled()
     })
   })
 })

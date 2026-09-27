@@ -1751,6 +1751,8 @@ export default {
     chooseSession: 'Choose a session',
     addedToSessionDraft: 'Added to that session’s input',
     createdSession: 'Session created and sent',
+    addAndOpen: 'Add and open',
+    openAndCreated: 'Session created and opened',
     drawerTitle: 'Quote details',
     quotedContent: 'Quoted content',
     annotation: 'Annotation',

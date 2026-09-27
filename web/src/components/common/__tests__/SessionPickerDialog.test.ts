@@ -127,9 +127,14 @@ describe('SessionPickerDialog', () => {
 
     // The left side stays icon-only: no running dot before the agent icon.
     expect(wrapper.find('.sp-run-dot').exists()).toBe(false)
-    // The spinner is the LAST child, i.e. parked on the trailing edge.
-    const children = running[0].element.children
-    expect(children[children.length - 1].classList.contains('sp-run-spinner')).toBe(true)
+    // Order on the trailing edge: spinner first, then the goto button (which is
+    // the row's last child, flush right).
+    const children = Array.from(running[0].element.children)
+    const spinnerIdx = children.findIndex(c => c.classList.contains('sp-run-spinner'))
+    const gotoIdx = children.findIndex(c => c.classList.contains('sp-goto'))
+    expect(spinnerIdx).toBeGreaterThan(-1)
+    expect(gotoIdx).toBe(children.length - 1)
+    expect(spinnerIdx).toBeLessThan(gotoIdx)
   })
 
   it('does not render a spinner for idle sessions', async () => {
@@ -171,6 +176,48 @@ describe('SessionPickerDialog', () => {
     expect(wrapper.emitted('select')).toBeTruthy()
     expect(wrapper.emitted('select')![0]).toEqual(['s-2'])
     expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  // ── "Add and open" button ──
+  // The row click adds WITHOUT leaving; the trailing button adds AND opens.
+
+  it('renders a goto button on every session row', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.findAll('.sp-row:not(.sp-row-create) .sp-goto').length).toBe(3)
+    // The create row is a different action, so it has no goto button.
+    expect(wrapper.find('.sp-row-create .sp-goto').exists()).toBe(false)
+  })
+
+  it('emits select-and-open (not select) when the goto button is clicked', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    await wrapper.findAll('.sp-goto')[1].trigger('click')
+
+    expect(wrapper.emitted('select-and-open')).toBeTruthy()
+    expect(wrapper.emitted('select-and-open')![0]).toEqual(['s-2'])
+    // The two actions must stay distinguishable — a click must not fire both.
+    expect(wrapper.emitted('select')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('the goto click does not also trigger the row click', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    // @click.stop on the button is what keeps this from bubbling into the row.
+    await wrapper.findAll('.sp-goto')[0].trigger('click')
+    expect(wrapper.emitted('select-and-open')!.length).toBe(1)
+    expect(wrapper.emitted('select')).toBeFalsy()
+  })
+
+  it('goto buttons are labelled for assistive tech', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    const btn = wrapper.findAll('.sp-goto')[0]
+    expect(btn.attributes('aria-label')).toBe('quoteBar.addAndOpen')
+    expect(btn.attributes('title')).toBe('quoteBar.addAndOpen')
   })
 
   it('emits create (not select) when the create row is clicked', async () => {
