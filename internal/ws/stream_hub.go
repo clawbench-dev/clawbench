@@ -89,7 +89,12 @@ func (h *StreamHub) Subscribe(clientID, sessionID string) {
 	}
 	h.subscribers[sessionID][clientID] = struct{}{}
 
-	slog.Debug("streamhub: client subscribed to session", "client_id", clientID, "session_id", sessionID)
+	// INFO, not Debug: this is the only record of which client owns a session's
+	// stream, and a lost subscription is invisible otherwise (events are then
+	// dropped with reason=no_subscribers, with no way to tell whether the
+	// subscribe ever arrived). Deliberately verbose for diagnosis.
+	slog.Info("streamhub: client subscribed to session",
+		"client_id", clientID, "session_id", sessionID, "subscribers_now", len(h.subscribers[sessionID]))
 }
 
 // Unsubscribe removes a client from a session's streaming events.
@@ -98,9 +103,14 @@ func (h *StreamHub) Unsubscribe(clientID, sessionID string) {
 	defer h.mu.Unlock()
 
 	if subs, ok := h.subscribers[sessionID]; ok {
+		_, wasSubscribed := subs[clientID]
 		delete(subs, clientID)
 		if len(subs) == 0 {
 			delete(h.subscribers, sessionID)
+		}
+		if wasSubscribed {
+			slog.Info("streamhub: client unsubscribed from session",
+				"client_id", clientID, "session_id", sessionID, "remaining", len(subs))
 		}
 	}
 }
@@ -111,11 +121,22 @@ func (h *StreamHub) UnsubscribeAll(clientID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
+	var removed []string
 	for sessionID, subs := range h.subscribers {
+		if _, ok := subs[clientID]; ok {
+			removed = append(removed, sessionID)
+		}
 		delete(subs, clientID)
 		if len(subs) == 0 {
 			delete(h.subscribers, sessionID)
 		}
+	}
+	// INFO so the disconnect side of a lost subscription is on the record too:
+	// the teardown is what silently removes a session's only subscriber, and a
+	// later `done` then drops with reason=no_subscribers.
+	if len(removed) > 0 {
+		slog.Info("streamhub: client unsubscribed from ALL sessions",
+			"client_id", clientID, "sessions", removed)
 	}
 }
 

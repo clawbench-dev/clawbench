@@ -1,5 +1,5 @@
 import { onUnmounted, watch, type Ref } from 'vue'
-import { appLog } from '@/utils/appLog'
+import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
@@ -169,6 +169,24 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (!lastProgressAt) { lastProgressAt = Date.now(); return }
     const silentFor = Date.now() - lastProgressAt
     if (silentFor < STREAM_STALL_MS) return
+    // DIAG (stuck top thinking block): the watchdog firing IS the definition of
+    // "stuck" — dump every thinking block's full decision state here, so the
+    // next report shows which shape it is without any further guessing:
+    //   done=false + in_progress  → backend never finished it (or its
+    //                               thinking_done was dropped in transit)
+    //   done=false + no flag      → frontend-created block the backend does not
+    //                               know about (so a reload drops it)
+    //   done=true  + no cached    → lazy-load never ran / 404'd
+    try {
+      const sm = findStreamingMsg(messages.value)
+      const thinks = (sm?.blocks || []).filter((b: ContentBlock) => b?.type === 'thinking')
+      diagLog(TAG, `stall: silent=${silentFor}ms sid=${currentSessionId.value} streamingMsg=${sm ? sm.id : 'none'} blocks=${sm?.blocks?.length ?? 0} thinking=${thinks.length}`)
+      thinks.forEach((b: ContentBlock, i: number) => {
+        diagLog(TAG, `stall block[${i}]: done=${b.done} in_progress=${b.in_progress} think_id=${b.think_id || '-'} textLen=${(typeof b.text === 'string' ? b.text : '').length} parent=${b.parent_tool_call_id || 'TOP'} _key=${b._key || '-'}`)
+      })
+    } catch (e) {
+      diagLog(TAG, `stall dump failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
     if (stallRecoveries >= MAX_STALL_RECOVERIES) {
       // Logged once per turn, then silent: the budget is exhausted, stop
       // hammering. It is restored when a NEW turn starts — see the `loading`

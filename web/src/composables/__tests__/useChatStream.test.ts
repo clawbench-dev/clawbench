@@ -32,8 +32,13 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
 // a plain `const` declared below it. vi.hoisted runs before the mock and gives
 // the factory something initialised to reference.
 const { mockAppLogW } = vi.hoisted(() => ({ mockAppLogW: vi.fn() }))
-vi.mock('@/utils/appLog', () => ({
+vi.mock('@/utils/appLog', async (importOriginal) => ({
+  // Spread the real module so a NEW export is not undefined here (a hand-listed
+  // mock silently breaks every caller that uses one the list forgot), then stub
+  // diagLog: the real one POSTs, which would consume this file's fetch mocks.
+  ...(await importOriginal<typeof import('@/utils/appLog')>()),
   appLog: { d: vi.fn(), i: vi.fn(), w: (...args: unknown[]) => mockAppLogW(...args), e: vi.fn() },
+  diagLog: vi.fn(),
 }))
 
 // ── Mock useGlobalEvents (WS) ──
