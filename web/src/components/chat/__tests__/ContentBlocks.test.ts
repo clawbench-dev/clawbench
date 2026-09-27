@@ -57,8 +57,13 @@ vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdownHtml: (text: string, opts?: unknown) => mockRenderMarkdownHtml(text, opts),
 }))
 
-vi.mock('@/utils/appLog', () => ({
+vi.mock('@/utils/appLog', async (importOriginal) => ({
+  // Spread the real module so a NEW export is not undefined here (a hand-listed
+  // mock silently breaks every caller that uses one the list forgot), then stub
+  // diagLog: the real one POSTs, which would consume this file's fetch mocks.
+  ...(await importOriginal<typeof import('@/utils/appLog')>()),
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+  diagLog: vi.fn(),
 }))
 
 vi.mock('@/utils/api', () => ({
@@ -2828,5 +2833,54 @@ describe('provisional thinking text is replaced on finish', () => {
     })
     await flushPromises(); await nextTick()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('done thinking blocks auto-load their text', () => {
+  it('loads a done block that was never fetched, instead of leaving dots forever', async () => {
+    // The reported "stuck thinking block": a block carrying a think_id but no
+    // cached text renders three pulsing dots forever, because every automatic
+    // path excluded it — the in_progress watcher (it is done) and the
+    // provisional refetch (its text was never fetched mid-stream). Only a click
+    // remained, and a chip showing dots gives no reason to click.
+    // Observed in client.log: done=true in_progress=undefined cached=none
+    // loading=false err=none — every field saying "nothing will happen".
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_stuck', text: 'the reasoning' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const w = mountBlocks({
+      msgId: '54368', sessionId: 's1', streaming: true, active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_stuck', done: true }],
+    })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    expect(fetchMock, 'a done block with no cached text must be loaded').toHaveBeenCalled()
+    // Expanding it then shows real content rather than dots.
+    await w.find('.thinking-header').trigger('click')
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+    const html = w.find('.thinking-inline-content').html()
+    expect(html).toContain('the reasoning')
+    expect(html).not.toContain('placeholder-dots')
+  })
+
+  it('does not load every collapsed done block (no request storm)', async () => {
+    // A long conversation carries hundreds of done blocks. Only visible ones
+    // (expanded, or the streaming tail) may load automatically.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_x', text: 'x' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blocks = Array.from({ length: 40 }, (_, i) => ({
+      type: 'thinking', think_id: `th_${i}`, done: true,
+    }))
+    mountBlocks({ msgId: 'm1', sessionId: 's1', streaming: false, active: true, blocks })
+    await flushPromises(); await nextTick()
+
+    expect(fetchMock, 'a finished, fully-collapsed history must not bulk-load').not.toHaveBeenCalled()
   })
 })
