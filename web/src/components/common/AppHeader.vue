@@ -218,7 +218,11 @@
             @keydown.enter="selectTheme(opt.value)"
             @keydown.space.prevent="selectTheme(opt.value)"
           >
-            <span class="theme-item-check">{{ currentThemeValue === opt.value ? '✓' : '' }}</span>
+            <span
+              class="theme-swatch"
+              :class="{ 'theme-swatch--auto': opt.value === 'auto' }"
+              aria-hidden="true"
+            ></span>
             <span class="theme-item-name">{{ opt.label }}</span>
             <component :is="getThemeBaseIcon(opt.value)" :size="12" class="theme-item-base-icon" />
           </button>
@@ -398,10 +402,13 @@ function openAboutSettings() {
   switchTab?.('settings')
 }
 
+/** Per-row preview colours consumed by assets/theme-picker.css: the swatch
+ *  background and the sun/moon tint. The row surface itself stays neutral, so
+ *  the theme's foreground colour is no longer needed. */
 function getThemePreviewStyle(value: string) {
   const c = value === 'auto' ? autoPreviewColors.value : getThemePreviewColor(value)
   if (!c) return undefined
-  return { '--tterm-preview-bg': c.bg, '--tterm-preview-fg': c.text, '--tterm-preview-accent': c.accent }
+  return { '--tterm-preview-bg': c.bg, '--tterm-preview-accent': c.accent }
 }
 
 function getThemeBaseIcon(value: string) {
@@ -1892,30 +1899,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .app-menu-column > :not(.app-menu-scroll) {
   flex-shrink: 0;
 }
-.theme-item + .theme-item { border-top: 1px solid var(--border-color); }
-.theme-item {
-  display: flex; align-items: center; gap: var(--space-3);
-  width: 100%; padding:5px var(--space-5); border: none; border-radius: 0;
-  background: var(--tterm-preview-bg, transparent);
-  color: var(--tterm-preview-fg, var(--text-primary));
-  font-size: var(--font-size-sm); text-align: left; cursor: pointer;
-  transition: background var(--duration-fast), box-shadow var(--duration-fast);
-}
+/* The .theme-item row rules live in assets/theme-picker.css — shared with the
+   terminal toolbar picker (both popups are teleported to <body>). Only the
+   focus ring is header-specific, since the terminal rows are not tabbable. */
 .theme-item:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
-/* 预览底色不变，hover 加 accent 全边框高亮 */
-@media (hover: hover) {
-  .theme-item:hover {
-    background: var(--tterm-preview-bg, transparent);
-    box-shadow: inset 0 0 0 1px var(--accent-color);
-  }
-}
-.theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
-.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
-.theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
-.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
-.theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
-.theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

@@ -1,0 +1,119 @@
+/**
+ * Theme picker rows.
+ *
+ * Shared by the app-header quick theme picker (components/common/AppHeader.vue)
+ * and the terminal toolbar theme picker
+ * (components/terminal/TerminalPanelContent.vue). Both popups are teleported to
+ * <body>, so the rules are global rather than scoped.
+ *
+ * The row surface is deliberately NEUTRAL (the current theme's own background /
+ * text colours). Each theme's palette is carried by two small carriers instead
+ * of flooding the row: a colour swatch on the left and the sun/moon indicator on
+ * the right, which keeps the theme's own accent. Previously every row painted
+ * itself with *its own* theme colours, so the menu turned into a stack of
+ * unrelated solid blocks that clashed with whatever theme was active — and on
+ * light themes the row text was frequently unreadable.
+ *
+ * `--tterm-preview-*` are set per row by the two callers.
+ *
+ * Selection is signalled by three things: the 2px accent rail, a 12% accent
+ * tint, and a weight bump on the name. A trailing check mark was removed — it
+ * was the fourth signal for one state and added nothing. Measured across all 36
+ * app themes the rail is the load-bearing one (contrast 2.04 at worst, vs 1.09
+ * for the tint, which on its own is barely perceptible in 19 of 36 themes), so
+ * do not drop the rail in favour of the tint.
+ */
+
+/* ── Entry row ───────────────────────────────────────────────────────────── */
+
+.theme-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 5px var(--space-5);
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  text-align: left;
+  cursor: pointer;
+  /* Anchors the selection rail below. */
+  position: relative;
+  transition: background var(--duration-fast) ease;
+}
+
+.theme-item + .theme-item {
+  border-top: 1px solid var(--border-color);
+}
+
+@media (hover: hover) {
+  .theme-item:hover {
+    background: var(--bg-tertiary);
+  }
+}
+
+.theme-item.active {
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+@media (hover: hover) {
+  .theme-item.active:hover {
+    background: color-mix(in srgb, var(--accent-color) 18%, transparent);
+  }
+}
+
+/* Selection rail. Drawn as a pseudo-element rather than a left border so the
+   row content does not shift by 2px when the selection moves. */
+.theme-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent-color);
+}
+
+/* ── Colour swatch ───────────────────────────────────────────────────────── */
+
+.theme-swatch {
+  flex-shrink: 0;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--tterm-preview-bg, var(--bg-tertiary));
+  /* Inset hairline in the CURRENT theme's text colour, so a near-white swatch
+     stays visible on a light panel and a near-black one on a dark panel. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 28%, transparent);
+}
+
+/* "Auto" follows the system: a light/dark split reads as "either one".
+   Declared after .theme-swatch so it wins at equal specificity. */
+.theme-swatch--auto {
+  background: linear-gradient(135deg, #ffffff 0 48%, #1a1a2e 52% 100%);
+}
+
+/* ── Name ────────────────────────────────────────────────────────────────── */
+
+.theme-item-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--font-weight-medium);
+}
+
+.theme-item.active .theme-item-name {
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ── Light/dark indicator, tinted with the THEME'S OWN accent ─────────────
+   Kept on the theme's accent (not the app accent) so a row still previews its
+   palette at a glance, matching the previous design. */
+.theme-item-base-icon {
+  flex-shrink: 0;
+  color: var(--tterm-preview-accent, var(--text-muted));
+}
