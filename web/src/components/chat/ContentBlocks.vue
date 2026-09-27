@@ -1398,12 +1398,6 @@ const _blockHtmlSource = new Map<string, string>()
 let _throttleTimer: ReturnType<typeof setTimeout> | null = null
 let _throttlePending = false
 const THROTTLE_MS = 300
-// How many trailing blocks count as "currently visible" while streaming, for
-// the done-block auto-load. The live path keeps the newest reasoning rendered
-// open, so those must load without a click; anything further back is a
-// collapsed chip and loads on expand instead. Keeps a long turn from firing one
-// request per finished block on every render.
-const DONE_AUTOLOAD_TAIL = 6
 const _blockFlushScheduler = new StreamFrameScheduler()
 
 /**
@@ -1758,15 +1752,22 @@ watch(() => props.active, (active) => {
 //                  session's client.log as
 //                  done=true cached=none loading=false err=none.
 //
-// Scoped to the blocks the live view actually renders open — an expanded block,
-// or (while streaming) the tail — so a finished conversation does not bulk-load
-// hundreds of collapsed blocks, and so the auto-load does not preempt the click
-// path (a user expanding a FAILED block to retry must not silently receive the
-// cached failure). Everything else keeps lazy-load-on-click.
+// Scoped to the blocks the live view actually renders OPEN — the ones being
+// streamed, plus any the user expanded. A finished conversation therefore does
+// not bulk-load hundreds of collapsed blocks, and the auto-load does not
+// preempt the click path (a user expanding a FAILED block to retry must not
+// silently receive the cached failure). Everything else keeps
+// lazy-load-on-click.
+//
+// An earlier version scoped this by POSITION instead — the last N blocks — and
+// that was the bug: a long streaming message has done thinking blocks all over
+// it, not just at the end, so anything outside the window never loaded.
+// Reported case msgId=54604: six done blocks (indices 0,5,7,10,14,17) sat
+// outside a 6-block window with their text in chat_thinking and were never
+// fetched. Visibility is the correct predicate; position is not.
 watch(
   () => {
     const blocks = props.blocks || []
-    const tailStart = props.streaming ? Math.max(0, blocks.length - DONE_AUTOLOAD_TAIL) : blocks.length
     const ids: string[] = []
     for (let bi = 0; bi < blocks.length; bi++) {
       const b = blocks[bi] as any
@@ -1785,14 +1786,29 @@ watch(
 
       // Finished. Reload when the cached text is a stale mid-stream snapshot
       // (nothing else would replace it), or when nothing was ever loaded AND
-      // the block is in the streaming tail the live view renders open.
+      // the block is actually rendered OPEN.
       if (provisional) { ids.push(`f:${b.think_id}`); continue }
       if (cached !== undefined) continue
-      // NOT for merely-expanded blocks: expanding one goes through
-      // handleThinkingClick, which loads it itself. Auto-loading it here would
-      // fire a second request that races the click's own — and on a FAILED
-      // block it would swallow the retry's fresh request.
-      if (bi >= tailStart) ids.push(`f:${b.think_id}`)
+      // A block renders open only while it is streaming (isThinkingStreaming
+      // ignores `done`) or when the user expanded it. Load exactly those.
+      //
+      // This replaced a fixed tail window (the last N blocks), which was wrong:
+      // a long streaming message has done thinking blocks ALL OVER it, not just
+      // at the end. Reported case msgId=54604 had 6 done blocks outside a
+      // 6-block window (indices 0,5,7,10,14,17) whose text was in chat_thinking
+      // but was never fetched — expanding any of them showed the three dots
+      // forever. Visibility is the correct predicate; a position window is not.
+      //
+      // A block is loaded here only when it is open WITHOUT having been opened
+      // by a click. The click path (handleThinkingClick) already calls
+      // loadThinking itself, and `expandingThinking` is the flag it sets for the
+      // duration of the expand animation — so treating it as "handled" is what
+      // keeps the two from racing. Without this, the click's request and this
+      // one both fire; on a FAILED block the second consumes the retry's fresh
+      // response and the user sees the cached failure instead of the retry.
+      const key = stableBlockKey(bi, b)
+      if (expandingThinking.value[key]) continue
+      if (thinkingExpanded.value[key]) ids.push(`f:${b.think_id}`)
     }
     return ids.join('|')
   },
