@@ -108,12 +108,21 @@
     padding: 0;
 }
 
-/* Cancel the global inline-img vertical margins inside a block figure. */
+/* Cancel the global inline-img vertical margins inside a block figure.
+   The chat pipeline needs the extra `.chat-message … .chat-img` variant below:
+   its sizing rule is 0-3-1 and would otherwise outrank this 0-2-1 rule, leaving
+   a 4px band at the top and bottom of every chat image (measured: figure
+   200x208 around a 200x200 image). The file preview has no competing rule, so
+   the generic selector is enough there — keep both. */
 .image-block-wrapper .lightbox-img-wrap img {
     display: inline-block;
     vertical-align: middle;
     margin: 0;
     line-height: 0;
+}
+
+.chat-message .image-block-wrapper .lightbox-img-wrap img.chat-img {
+    margin: 0;
 }
 
 /* ─── Bare inline <svg> content cell ────────────────────────────────────── */
