@@ -73,13 +73,23 @@
               class="session-row"
               :class="rowClasses(row)"
             >
-              <span v-if="row.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
+              <!-- The edge carries exactly ONE signal. A running row gets the
+                   travelling comet (driven by v-running-sweep); a blocked row
+                   gets a full-width amber bar breathing in place instead.
+
+                   These are two separate elements on purpose, not one element
+                   restyled: the directive writes `transform` through the Web
+                   Animations API, which outranks any plain CSS `transform`, so
+                   a single element would keep travelling even when blocked. -->
+              <span v-if="row.running" class="session-running-line" :class="{ 'is-blocked': row.status === 'pending' }">
+                <i v-if="row.status === 'pending'" class="session-running-band"></i>
+                <i v-else v-running-sweep class="session-running-band"></i>
+              </span>
               <div
                 class="session-item"
                 :class="{ active: row.session.id === currentSessionId }"
                 @click="selectSession(row.session.id, row.session.backend)"
               >
-                <span v-if="row.session.unreadCount > 0 || row.session.pendingApproval" class="session-item-badge"></span>
                 <div class="session-item-info">
                   <div class="session-item-header">
                     <span class="session-item-title">{{ row.session.title }}</span>
@@ -123,6 +133,19 @@
                     >{{ tag.name }}</span>
                   </div>
                 </div>
+                <!-- Status slot. One element, three mutually exclusive states
+                     (see rowStatus): pending outranks running, running outranks
+                     unread. They used to share a single dot, which made "there
+                     is a reply" and "it is blocked waiting for your approval"
+                     look identical. -->
+                <span
+                  v-if="row.status"
+                  class="session-status"
+                  :class="`is-${row.status}`"
+                  :title="statusLabel(row.status)"
+                  :aria-label="statusLabel(row.status)"
+                  role="img"
+                ></span>
               </div>
               <button class="session-more-btn" :title="t('common.moreActions')" @click.stop="showMenuFromButton($event, row.session)">
                 <MoreVertical :size="15" />
@@ -154,9 +177,11 @@
               class="cross-session-row"
               :class="{ running: session.running }"
             >
-              <span v-if="session.running" class="session-running-line"><i v-running-sweep class="session-running-band"></i></span>
+              <span v-if="session.running" class="session-running-line" :class="{ 'is-blocked': crossStatus(session) === 'pending' }">
+                <i v-if="crossStatus(session) === 'pending'" class="session-running-band"></i>
+                <i v-else v-running-sweep class="session-running-band"></i>
+              </span>
               <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
-                <span v-if="session.unreadCount > 0 || session.pendingApproval" class="session-item-badge"></span>
                 <div class="session-item-info">
                   <div class="session-item-header">
                     <span class="session-item-title">{{ session.title }}</span>
@@ -167,6 +192,14 @@
                     <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
                   </div>
                 </div>
+                <span
+                  v-if="crossStatus(session)"
+                  class="session-status"
+                  :class="`is-${crossStatus(session)}`"
+                  :title="statusLabel(crossStatus(session))"
+                  :aria-label="statusLabel(crossStatus(session))"
+                  role="img"
+                ></span>
               </div>
             </div>
           </div>
@@ -333,6 +366,44 @@ function expandGroupOf(sessionId) {
 }
 
 /**
+ * The single status a row shows, or null when it wants nothing from the user.
+ *
+ * Priority is pending > running > unread, and the order matters:
+ *
+ *   - pending outranks running because a session blocked on an approval IS
+ *     still running (the runner is alive, `running` stays true) — but the
+ *     thing the user needs to know is "it is waiting on YOU", not "it is
+ *     busy". Without this rule every approval request would be hidden behind
+ *     the running state.
+ *   - unread is last because it is the only one that is not live: it means
+ *     "there is a reply you have not looked at", which is strictly less urgent
+ *     than work in flight.
+ *
+ * They are mutually exclusive by construction (one slot, one state) so the
+ * three can never be confused for one another, which was the whole problem
+ * with the old shared dot.
+ */
+function rowStatus(session, isRunning) {
+  if (session.pendingApproval) return 'pending'
+  if (isRunning) return 'running'
+  if (session.unreadCount > 0) return 'unread'
+  return null
+}
+
+/** Status for a cross-project row, which carries its own `running` flag. */
+function crossStatus(session) {
+  return rowStatus(session, !!session.running)
+}
+
+/** Tooltip / aria label for a status slot. */
+function statusLabel(status) {
+  if (status === 'pending') return t('session.statusPending')
+  if (status === 'running') return t('session.running')
+  if (status === 'unread') return t('session.statusUnread')
+  return ''
+}
+
+/**
  * The rows actually rendered, in order: each top-level row followed by its
  * group members when expanded. A collapsed group's members are omitted from
  * the DOM entirely (the template v-if's on `isForkCollapsed`), never merely
@@ -351,6 +422,7 @@ const visibleRows = computed(() => {
       childCount: isAnchor ? members.length : 0,
       isAnchor,
       running: props.runningSessionIds.has(top.id),
+      status: rowStatus(top, props.runningSessionIds.has(top.id)),
     })
     if (!isAnchor || isForkCollapsed(top.id)) continue
     members.forEach((member, i) => {
@@ -362,6 +434,7 @@ const visibleRows = computed(() => {
         // child of its type.
         isLastInGroup: i === members.length - 1,
         running: props.runningSessionIds.has(member.session.id),
+        status: rowStatus(member.session, props.runningSessionIds.has(member.session.id)),
       })
     })
   }
@@ -1129,21 +1202,27 @@ onUnmounted(() => {
   box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
 }
 
-/* Running row: the signal is a light band along the bottom edge — a 2px line
-   with a soft glow bleeding upward from it. No full-row fill: an earlier
-   design tinted the whole row, and on dark themes the accent sits far above
-   the row background, so any usable alpha washed the row milky and the band
-   on top of it read as a grey smudge. Confining the light to the bottom edge
-   removes that trade-off — it carries real colour without touching the row's
-   own background (1.44:1 worst case across all 36 themes, vs 1.10:1 for the
-   original fixed green).
-   The glow is what gives it presence; without it a bare 2px line reads as a
-   hairline and is easy to miss while scanning. */
+/* ── Running row: the bottom-edge COMET ──
+   This replaced a two-layer design (a 14px masked glow spanning the row plus an
+   80% band swept through it). Those two effects fought each other — the tall
+   glow softened the band into a smear and made "running" read as ambient
+   lighting instead of progress. There is now ONE layer on this edge: a flat 3px
+   track with a 38% comet travelling across it.
+
+   Do not reintroduce a second layer here (a base glow, a second band, a mask
+   that bleeds upward). If the signal needs more presence, change the comet or
+   the track — adding a layer is what made the old version read as two effects
+   stacked on top of each other.
+
+   No full-row fill either: an earlier design tinted the whole row, and on dark
+   themes the accent sits far above the row background, so any usable alpha
+   washed the row milky. Confining the signal to a 3px edge removes that
+   trade-off — it carries real colour without touching the row's background. */
 .session-row.running {
   overflow: hidden;
 }
 
-/* The band sits on the row's bottom edge. Shared by the local rows and the
+/* The track sits on the row's bottom edge. Shared by the local rows and the
    cross-project rows (same class). The chat input button uses its own
    `sweep-light` keyframes instead — it is a chip, not a full-width row, so the
    two are deliberately not the same animation. */
@@ -1152,66 +1231,89 @@ onUnmounted(() => {
   bottom: 0;
   left: 0;
   right: 0;
-  height: 14px;
+  height: 3px;
   overflow: hidden;
   pointer-events: none;
   z-index: 1;
 }
 
-/* Static base glow: the full row width stays faintly lit even where the
-   travelling band is not. Without this the edge went completely dark between
-   passes, so the indicator blinked off and on instead of reading as a
-   continuously running session. It shares the band's mask so both layers have
-   the same 2px line + upward falloff. */
+/* The static track: a flat, faintly lit bar spanning the full row width. It is
+   NOT a glow — it has no mask, no falloff and no height beyond the 3px edge. It
+   exists so the edge stays legible between comet passes instead of blinking off
+   and on. */
 .session-running-line::before {
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 100%;
-  -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  background: var(--running-glow);
+  inset: 0;
+  background: var(--running-track);
 }
 
-/* The travelling band. A real element (not `::after`) because its travel is
+/* Blocked on an approval: the session is still running, but nothing is
+   progressing, so the comet stops travelling. This is the one state where the
+   row must NOT look busy — see rowStatus(). The amber matches the status ring,
+   so the two halves of the same message agree.
+
+   The comet element becomes the full-width bar itself and breathes in place
+   (recoloured to solid amber below), while the track turns to the amber
+   under-bar. It is the same two layers as a running row, just behaving
+   differently — so the edge is still ONE effect, not a second one appearing. */
+.session-running-line.is-blocked::before {
+  background: var(--pending-track);
+}
+
+.session-running-line.is-blocked .session-running-band {
+  left: 0;
+  width: 100%;
+  background: var(--pending-comet);
+  filter: none;
+  transform: none;
+  animation: session-comet-hold 1.7s ease-in-out infinite;
+}
+
+@keyframes session-comet-hold {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
+/* The travelling comet. A real element (not `::after`) because its travel is
    driven by v-running-sweep through the Web Animations API, which can only
-   target a real node. */
+   target a real node.
+
+   38% of the track wide — a long transparent lead-in, a translucent body and an
+   opaque head at the leading (right) edge, so the travel reads as directed
+   motion rather than a blob drifting past. */
 .session-running-band {
   display: block;
   position: absolute;
   top: 0;
+  bottom: 0;
   left: 0;
-  /* One band, 80% of the row wide, travelling from fully off the left edge to
-     fully off the right. The layer is exactly one band — no tile, no repeat —
-     so the next pass starts the instant this one clears the right edge: bands
-     never double up, and there is no gap between them either.
-     The old version tiled two bands across a 200%-wide layer and scrolled it,
-     which read as a marquee: a new band entered from the left while the
-     previous one was still crossing the middle. */
-  width: 80%;
-  height: 100%;
-  /* Solid 2px at the very bottom, then a fast falloff so the glow stays a
-     halo around the line rather than a wash up the row. A plain linear ramp
-     to 14px spread the light too thinly and lost the crisp edge. */
-  -webkit-mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  mask-image: linear-gradient(to top, #000 0, #000 2px, rgba(0, 0, 0, 0.45) 6px, transparent 14px);
-  /* Soft shoulders so the band reads as light rather than a solid bar. */
-  background-image: linear-gradient(
+  width: 38%;
+  background: linear-gradient(
     90deg,
-    transparent 0%,
-    var(--running-line) 50%,
-    transparent 100%
+    transparent,
+    var(--running-comet) 72%,
+    var(--running-head)
   );
+  /* A short halo around the head. This is part of the comet (it travels with
+     it), not a separate edge glow — the distinction matters, because a
+     stationary glow underneath is what the old design had and it read as a
+     second effect. */
+  filter: drop-shadow(0 0 4px var(--running-comet));
   /* The travel itself is driven by v-running-sweep (Web Animations API), NOT a
      CSS animation. A CSS animation starts when its element first matches the
      rule, so each row would run at its own phase and lose that phase whenever
      Vue's TransitionGroup reorders rows (which restarts the animation). The
-     directive pins every band to the shared document timeline instead, so all
-     running sessions sweep in step. This base transform parks the band off the
-     left edge, where the directive's first keyframe also holds it. */
-  transform: translateX(-100%);
+     directive pins every comet to the shared document timeline instead, so all
+     running sessions sweep in step. This base transform parks the comet off the
+     left edge, where the directive's first keyframe also holds it.
+
+     The travel is expressed as a % of the comet's OWN width (transform), not as
+     a % of the track (`left`), so the compositor can drive it without a layout
+     pass per frame. -105.26% puts the comet's left edge at -40% of the track and
+     268.42% carries it to +102% — i.e. the same start and end points the design
+     specifies, just measured from the comet instead of the track. */
+  transform: translateX(-105.26%);
 }
 
 /* Hover must still work on a running row — there is no fill to preserve now,
@@ -1334,20 +1436,74 @@ onUnmounted(() => {
   color: var(--accent-color, #0066cc);
 }
 
-.session-item-badge {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  width: 8px;
-  height: 8px;
+/* ── Status slot: the row's right-hand signal ──
+   Replaces `.session-item-badge`, which painted ONE blue dot for both "unread"
+   and "pendingApproval" — so "there is a reply" and "it is blocked waiting for
+   your approval" were literally the same pixels. The two are now different
+   shapes AND different motion, because neither channel alone is enough:
+
+     hue    — a theme's accent and its orange may sit close together, and a
+              colour-vision-deficient reader gets nothing from hue at all;
+     motion — survives every theme and every reader.
+
+   So: running rotates (progress), pending pulses in place (blocked on you),
+   unread never moves (nothing is happening). See rowStatus() for why only one
+   is ever shown.
+
+   Sized at 14px so it matches the ring in the demo and stays visible without
+   the row's meta line growing. It is a flex child rather than absolutely
+   positioned (the old badge was `position:absolute` at top-right): a flex slot
+   cannot collide with the pinned wedge in the row's top-right corner, and it
+   gives the title a real boundary to ellipsise against. */
+.session-status {
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: var(--accent-color, #0066cc);
-  animation: badge-breathe 1.2s ease-in-out infinite;
+  box-sizing: border-box;
 }
 
-@keyframes badge-breathe {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: var(--opacity-disabled); transform: scale(0.8); }
+/* Running — a rotating arc. The track is the arc colour at low alpha (see
+   --running-ring-track) so it reads as one ring in motion, not a static ring
+   with something spinning inside it. */
+.session-status.is-running {
+  border: 2px solid var(--running-ring-track);
+  border-top-color: var(--running-ring);
+  animation: session-status-spin 0.75s linear infinite;
+}
+
+/* Pending — a full amber ring that pulses in place. Deliberately does NOT
+   rotate: "stopped and waiting for you" must not look like "busy", and motion
+   direction is the fastest thing a reader picks up. */
+.session-status.is-pending {
+  border: 2px solid var(--pending-ring);
+  animation: session-status-pulse 1.6s ease-in-out infinite;
+}
+
+/* Unread — a plain dot, no animation. It is the quietest of the three, which
+   is what keeps a list with many unread rows calm. */
+.session-status.is-unread {
+  background: var(--running-ring);
+}
+
+@keyframes session-status-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes session-status-pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.18); opacity: 0.45; }
+}
+
+/* The three states are decorative duplicates of information already in the
+   DOM (the row's title/meta and the aria-label on this element), so freezing
+   them loses nothing. Without this the app ignores a user's OS-level motion
+   preference for the one element that is always moving. */
+@media (prefers-reduced-motion: reduce) {
+  .session-status.is-running,
+  .session-status.is-pending {
+    animation: none;
+  }
 }
 
 /* The sweep's keyframes now live in v-running-sweep (directives/runningSweep.ts)

@@ -263,7 +263,9 @@
 - **新按钮不要自建旋转 keyframes**——统一用 `.refresh-spin` + `RefreshButton` 组件（19 处已收敛）。`RefreshButton` 用 WAAPI 驱动旋转并内联 `animation:none` 覆盖 CSS 动画。
 - **菜单淡入**：`opacity` + `transform: translateY(-4px)`，`--duration-base`。
 - **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`、`SessionList.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
-- 非 CSS 动效：running 扫光走 WAAPI 指令 `directives/runningSweep.ts`（2000ms，与文档时间轴相位锁定）。
+- 非 CSS 动效：running 彗星走 WAAPI 指令 `directives/runningSweep.ts`（1500ms，`cubic-bezier(.45,.05,.55,.95)`，与文档时间轴相位锁定）。
+- **会话行底边只有一层效果**：3px 平轨道 + 38% 彗星（`--running-track` / `--running-comet` / `--running-head`）。**不要再叠第二层**——曾经是「14px 带 mask 的光晕 + 80% 扫过光带」两层，看起来像两个效果打架、且光晕把光带糊成环境光。待审批时彗星停止并变成整条琥珀呼吸（`--pending-track` / `--pending-comet`）。**被阻塞的行必须换一个不带指令的元素**：指令用 WAAPI 写 `transform`，优先级高于普通 CSS `transform`，同一元素无法靠样式停下。守卫：`runningSweepTheme.css.test.ts`。
+- **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：运行中＝旋转环、待审批＝原地脉动环、未读＝静止圆点。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。优先级 pending > running > unread（`rowStatus()`），因为待审批的会话 runner 仍活着（`running` 为真），若 running 优先则审批请求会被完全隐藏。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。守卫：`sessionStatusSlot.css.test.ts`。
 
 ---
 

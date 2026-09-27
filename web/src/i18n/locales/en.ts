@@ -974,6 +974,8 @@ export default {
     configAgent: 'Agent settings',
     noSessions: 'No sessions',
     running: 'Running',
+    statusPending: 'Waiting for approval',
+    statusUnread: 'Unread reply',
     executing: 'Running',
     confirmArchive: 'Archive this session and all chat history? You can restore archived sessions via session search.',
     confirmArchiveRunning: 'This session is running. Archiving will terminate it and clear the history. Continue? You can restore archived sessions via session search.',

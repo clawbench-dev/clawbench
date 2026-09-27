@@ -977,6 +977,8 @@ export default {
     configAgent: '智能体配置',
     noSessions: '暂无会话',
     running: '运行中',
+    statusPending: '等待审批',
+    statusUnread: '有未读回复',
     executing: '执行中',
     confirmArchive: '确定归档此会话及其所有聊天记录？归档后可通过会话搜索恢复。',
     confirmArchiveRunning: '此会话正在运行中，归档将终止运行并清除记录，确定归档？归档后可通过会话搜索恢复。',

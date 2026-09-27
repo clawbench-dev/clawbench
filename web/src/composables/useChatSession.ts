@@ -60,7 +60,7 @@ export async function loadSessionsOnce(): Promise<void> {
           store.state.sessionCount = data.totalCount
         }
         // Per-session unread/pending state is rendered on every row
-        // (SessionList's `.session-item-badge`), so a change there needs the
+        // (SessionList's `.session-status`), so a change there needs the
         // list refreshed even when the AGGREGATE is unchanged — e.g. one
         // session marked read while another becomes unread. Comparing only the
         // total would leave those badges stale.

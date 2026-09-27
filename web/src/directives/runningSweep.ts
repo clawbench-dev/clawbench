@@ -1,5 +1,5 @@
 /**
- * v-running-sweep directive — phase-locked travelling band for running sessions.
+ * v-running-sweep directive — phase-locked travelling comet for running sessions.
  *
  * Usage: <i v-running-sweep class="session-running-band"></i>
  *
@@ -14,12 +14,12 @@
  * phase whenever the browser re-creates the animation (Vue's TransitionGroup
  * reorders rows on every list refresh, which restarts a CSS animation). The
  * visible symptom is exactly what users report: several running sessions whose
- * bands are out of step with each other.
+ * comets are out of step with each other.
  *
  * ── The fix ────────────────────────────────────────────────────────────────
  * Drive the animation through the Web Animations API and pin its `startTime` to
- * the timeline origin. Every band in the document then reads its progress
- * straight from the shared document timeline, so two bands created seconds
+ * the timeline origin. Every comet in the document then reads its progress
+ * straight from the shared document timeline, so two comets created seconds
  * apart are at the *same* phase, by construction rather than by luck:
  *
  *     phase = (document.timeline.currentTime - startTime) / duration
@@ -27,30 +27,39 @@
  * With `startTime` a shared constant (0), the phase is a pure function of the
  * shared clock. The same holds across the sidebar and the drawer, the project
  * and cross-project panes, and — unlike the custom-property clock this replaced
- * — it costs nothing on the main thread: the transform stays compositor-driven
- * (~0.16ms/frame, measured equal to the old CSS animation, versus ~1.3ms/frame
- * for an animated custom property).
+ * — it costs nothing on the main thread: the transform stays compositor-driven.
  *
  * A WAAPI animation is also *not* restarted by a DOM move or a `display:none`
  * toggle (both re-create a CSS animation), so the phase survives list reorders
  * and tab switches for free.
  */
 
-/** One full pass. Mirrors the 2s the band has always used. */
-const SWEEP_DURATION_MS = 2000
+/** One full pass. */
+const SWEEP_DURATION_MS = 1500
 
 /**
- * Travel of one band, as a percentage of the band's OWN width.
+ * Travel of one comet, as a percentage of the comet's OWN width.
  *
- * The band is 80% of the row wide (`.session-running-band`), so -100% parks it
- * just off the left edge and 125% (= 100% / 0.8) carries it just off the right
- * edge. Both ends are fully outside the row, which makes the wrap from 125%
- * back to -100% invisible: the next pass starts the instant the previous one
- * leaves, with no overlap and no gap. These two numbers are therefore tied to
- * the 80% width in SessionList.vue — change one and the other must follow.
+ * The travel is deliberately expressed against the comet rather than the track,
+ * so it can ride on `transform` (compositor-only) instead of `left` (which
+ * relayouts every frame).
+ *
+ * The design specifies the travel as a fraction of the TRACK: the comet starts
+ * with its left edge at -40% of the track and ends with it at +102%, so it is
+ * fully clear of both ends at the extremes and the wrap is invisible — the next
+ * pass starts the instant the previous one leaves, with no overlap and no gap.
+ *
+ * The comet is 38% of the track wide (`.session-running-band` in
+ * SessionList.vue), so those two positions become:
+ *
+ *     start: -40  / 38 * 100 = -105.26%
+ *     end:   102  / 38 * 100 =  268.42%
+ *
+ * These three numbers — 38% width, -40%, 102% — are one design and must move
+ * together. Change the width and both keyframes must be recomputed.
  */
-const SWEEP_FROM = 'translateX(-100%)'
-const SWEEP_TO = 'translateX(125%)'
+const SWEEP_FROM = 'translateX(-105.26%)'
+const SWEEP_TO = 'translateX(268.42%)'
 
 interface SweepElement extends HTMLElement {
   _sweepAnim?: Animation
@@ -71,9 +80,14 @@ function mounted(el: SweepElement) {
     {
       duration: SWEEP_DURATION_MS,
       iterations: Infinity,
-      easing: 'linear',
+      // A gentle S-curve, not `linear`: the comet eases in and out of each pass.
+      // Safe across the wrap because the curve's slope at t=0 and t=1 are equal
+      // (both ≈0.111), so the velocity does not jump when one pass becomes the
+      // next. The slowed ends are off-screen anyway, so all this does is soften
+      // the moment the comet enters and leaves.
+      easing: 'cubic-bezier(.45,.05,.55,.95)',
       // Apply the first keyframe while the animation is still pending, so the
-      // band never flashes at translateX(0) (its left shoulder at the row edge)
+      // comet never flashes at translateX(0) (its left shoulder at the row edge)
       // for one frame before the clock takes over.
       fill: 'both',
     },

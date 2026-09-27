@@ -5,8 +5,9 @@ import { RunningSweepDirective } from '../runningSweep'
  * The sweep's correctness is almost entirely "what did we ask the browser for",
  * because the phase alignment comes from ONE property: the animation's
  * `startTime`. Pinning it to the timeline origin is what makes every running
- * session sweep in step (see the directive header), so these tests assert the
- * options precisely rather than smoke-testing that *an* animation exists.
+ * session's comet sweep in step (see the directive header), so these tests
+ * assert the options precisely rather than smoke-testing that *an* animation
+ * exists.
  *
  * jsdom has no Web Animations API, so `Element.animate` is stubbed. That is not
  * a workaround — the directive's own contract is to no-op without it, which is
@@ -43,23 +44,28 @@ describe('RunningSweepDirective', () => {
     expect(anim.startTime, 'startTime must be pinned to the timeline origin').toBe(0)
   })
 
-  it('asks for one infinite linear pass matching the band geometry', () => {
+  it('asks for one infinite eased pass matching the comet geometry', () => {
     const { el, animate } = makeElement()
     RunningSweepDirective.mounted(el)
 
     const [keyframes, options] = animate.mock.calls[0]
-    // Travel of one band as a % of its own width: -100% parks it off the left
-    // edge, 125% (= 100/0.8) carries it off the right. These are tied to the
-    // band's 80% width — see the SWEEP_FROM/SWEEP_TO comment.
+    // Travel of one comet as a % of its own width. The design specifies the
+    // endpoints against the TRACK (-40% to 102%); the comet is 38% of the track
+    // wide, so those become -105.26% and 268.42% of the comet. Both ends are
+    // fully clear of the track, which makes the wrap invisible: the next pass
+    // starts the instant the previous one leaves, with no overlap and no gap.
+    // These numbers are tied to the 38% width in SessionList.vue.
     expect(keyframes).toEqual([
-      { transform: 'translateX(-100%)' },
-      { transform: 'translateX(125%)' },
+      { transform: 'translateX(-105.26%)' },
+      { transform: 'translateX(268.42%)' },
     ])
     expect(options).toMatchObject({
-      duration: 2000,
+      duration: 1500,
       iterations: Infinity,
-      easing: 'linear',
-      // fill:both applies the first keyframe while pending, so the band does
+      // The gentle S-curve the design uses. Equal slope at both ends (~0.111),
+      // so the wrap does not produce a velocity jump.
+      easing: 'cubic-bezier(.45,.05,.55,.95)',
+      // fill:both applies the first keyframe while pending, so the comet does
       // not flash at translateX(0) for a frame before the clock takes over.
       fill: 'both',
     })
