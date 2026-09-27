@@ -349,7 +349,7 @@ defineExpose({ open: openDrawer })
   cursor: pointer;
 }
 .shared-session-btn:hover { background: var(--bg-tertiary, #eaeef2); color: var(--accent-color, #0969da); }
-.shared-session-btn.danger:hover { color: #cf222e; background: #fef2f2; }
+.shared-session-btn.danger:hover { color: var(--color-red); background: color-mix(in srgb, var(--color-red) 10%, transparent); }
 .shared-session-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 .shared-sessions-clear {
@@ -363,7 +363,7 @@ defineExpose({ open: openDrawer })
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #cf222e;
+  color: var(--color-red);
   font-size: var(--font-size-md);
   cursor: pointer;
   flex-shrink: 0;
@@ -375,21 +375,6 @@ defineExpose({ open: openDrawer })
   to { transform: rotate(360deg); }
 }
 @media (hover: hover) {
-  .shared-sessions-clear:not(:disabled):hover { background: #fef2f2; }
-}
-
-/* Dark themes: the light-pink hover surfaces above were tuned for light themes.
-   Keep the red tint but adapt it to the dark surface (same convention as the
-   shared-files drawer). */
-[data-theme-base="dark"] .shared-session-btn.danger:hover {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.15);
-}
-[data-theme-base="dark"] .shared-sessions-clear {
-  color: #fca5a5;
-}
-[data-theme-base="dark"] .shared-sessions-clear:not(:disabled):hover {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.15);
+  .shared-sessions-clear:not(:disabled):hover { background: color-mix(in srgb, var(--color-red) 10%, transparent); }
 }
 </style>
