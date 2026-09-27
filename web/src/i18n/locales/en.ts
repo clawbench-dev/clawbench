@@ -2003,6 +2003,7 @@ export default {
       recommended: 'Recommended',
       recommendAsk: 'Which one do you recommend?',
       recommendationFill: 'Fill',
+      recommendationFilled: 'Filled',
       recommendationExpand: 'Expand',
       recommendationCollapse: 'Collapse',
     },

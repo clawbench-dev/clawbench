@@ -2002,6 +2002,7 @@ export default {
       recommended: '已推荐',
       recommendAsk: '你推荐选哪个？',
       recommendationFill: '填入',
+      recommendationFilled: '已填入',
       recommendationExpand: '展开',
       recommendationCollapse: '收起',
     },

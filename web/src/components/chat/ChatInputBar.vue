@@ -68,14 +68,17 @@
     </div>
     <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
     <Transition name="recommend-slide">
-      <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
+      <div v-if="showRecommendationBanner" class="recommendation-chip" :class="{ accepted: recommendationAccepting }">
         <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
-        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ recommendation }}</span>
-        <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
+        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ displayedRecommendation }}</span>
+        <button class="recommendation-accept" :class="{ accepted: recommendationAccepting }" :disabled="recommendationAccepting" @click.stop="acceptRecommendation" :title="recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill')">
+          <Check v-if="recommendationAccepting" :size="12" :stroke-width="3" class="recommendation-accept-check" />
+          {{ recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill') }}
+        </button>
       </div>
     </Transition>
     <!-- Input container -->
-    <div class="chat-input-container">
+    <div class="chat-input-container" :class="{ 'accept-pulse': recommendationAccepting }">
       <!-- Paste overlay (dynamic feedback while uploading pasted files from clipboard) -->
       <Transition name="paste-fade">
         <div v-if="isPasteOver" class="paste-overlay">
@@ -327,7 +330,7 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
@@ -662,9 +665,49 @@ const { current: recommendation, show: showRecommendationChip } = rec
 // collapsed to a single line). Reset whenever a new recommendation arrives.
 const recommendationExpanded = ref(false)
 
+// ── Accept feedback (采纳确认动效) ─────────────────────────
+// Accepting a recommendation is otherwise only observable as "the chip
+// vanished" — the text appearing in the input box is easy to miss, especially
+// on a narrow screen. `rec.accept()` also *immediately* marks the entry
+// dismissed (so `recommendation` goes empty), which is exactly what makes the
+// banner disappear before the user can register the click. So the confirmation
+// is a short window during which the banner is held on screen showing a
+// checkmark, and only then released.
+//
+// `recommendationAcceptedText` is the snapshot that keeps the chip's text
+// rendered while the underlying slot is already dismissed; without it the
+// banner would blank out its own label mid-animation.
+const ACCEPT_FEEDBACK_MS = 650
+const recommendationAccepting = ref(false)
+const recommendationAcceptedText = ref('')
+let recommendationAcceptTimer = null
+
+/** Whether the banner is on screen — the live recommendation, or the held
+ *  confirmation window after one was accepted. */
+const showRecommendationBanner = computed(() =>
+  recommendationAccepting.value || (showRecommendationChip.value && !!recommendation.value))
+
+/** Banner text: the accepted snapshot while confirming, else the live value. */
+const displayedRecommendation = computed(() =>
+  recommendationAccepting.value ? recommendationAcceptedText.value : recommendation.value)
+
+/** Leave the confirmation window (called by the timer, and by every path that
+ *  supersedes the banner: a new recommendation, a session switch, streaming
+ *  starting, unmount). */
+function endAcceptFeedback() {
+  if (recommendationAcceptTimer) {
+    clearTimeout(recommendationAcceptTimer)
+    recommendationAcceptTimer = null
+  }
+  recommendationAccepting.value = false
+  recommendationAcceptedText.value = ''
+}
+
 function onRecommendationEvent(evt) {
   const detail = evt.detail || {}
   if (detail.session_id == null || detail.message_id == null) return
+  // A fresh recommendation supersedes any in-flight confirmation.
+  endAcceptFeedback()
   rec.upsert(detail.session_id, detail.recommendation, detail.message_id)
   recommendationExpanded.value = false
 }
@@ -674,12 +717,33 @@ function toggleRecommendationExpand() {
 }
 
 function acceptRecommendation() {
+  if (recommendationAccepting.value) return
   const text = rec.accept()
-  if (text) inputText.value = text
+  if (!text) return
+  inputText.value = text
+  // Hold the banner with a checkmark so the click reads as a confirmation, then
+  // let the existing slide-out transition retire it.
+  recommendationAcceptedText.value = text
+  recommendationAccepting.value = true
+  recommendationExpanded.value = false
+  recommendationAcceptTimer = setTimeout(endAcceptFeedback, ACCEPT_FEEDBACK_MS)
+  // Land the caret at the end of the filled text so the user can keep typing
+  // (or hit send) without repositioning. Focusing is also what makes the
+  // handoff clean: the pulse ring animates box-shadow for its 0.6s, and when it
+  // ends the container's own :focus-within ring (raised by this focus) takes
+  // over seamlessly — so the input does not go dark the moment the pulse stops.
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    const end = el.value.length
+    el.setSelectionRange(end, end)
+  })
 }
 
 // Clear any currently surfaced recommendation (chip + stored text).
 function clearRecommendation() {
+  endAcceptFeedback()
   const id = props.currentSessionId
   if (id) rec.invalidate(id)
 }
@@ -1412,8 +1476,10 @@ watch(() => props.currentSessionId, (newId, oldId) => {
 // its own slot (immediate if already cached, otherwise fetched) — the displayed
 // value is derived from the active session's slot, so no cross-session leakage.
 watch(() => props.currentSessionId, () => {
-  // A new conversation starts with a collapsed banner.
+  // A new conversation starts with a collapsed banner, and never inherits the
+  // previous session's accept confirmation.
   recommendationExpanded.value = false
+  endAcceptFeedback()
   // The recommendation for the new session is fetched once its last assistant
   // message is loaded (see the lastAssistantMsgId watcher), so we don't need to
   // fetch here with a possibly-unloaded message id.
@@ -1428,6 +1494,8 @@ const quoteItems = computed(() => props.quotes.length > 0
 // the active session's slot so the in-flight value can't be reused.
 watch(() => props.loading, (val) => {
   if (val && props.currentSessionId) {
+    // A new turn supersedes both the recommendation and its accept confirmation.
+    endAcceptFeedback()
     rec.invalidate(props.currentSessionId)
   }
 })
@@ -1871,6 +1939,7 @@ onBeforeUnmount(() => {
     voicePressTimer = null
   }
   voiceInput.cancel()
+  endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
   if (actionBarObserver) {
     actionBarObserver.disconnect()
@@ -2375,6 +2444,9 @@ defineExpose({
 
 .recommendation-accept {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   border: none;
   background: var(--accent-color, #0066cc);
   color: #fff;
@@ -2383,6 +2455,71 @@ defineExpose({
   font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
   cursor: pointer;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+/* Accept confirmation (采纳确认): the button turns green and pops once, so the
+   click is acknowledged before the banner slides away. `animation` rather than
+   `transition` — this is a one-shot acknowledgement, not a state change. */
+.recommendation-accept.accepted {
+  background: var(--color-success, #16a34a);
+  cursor: default;
+  animation: recommendation-accept-pop 0.4s ease-out;
+}
+
+/* A disabled button must not inherit a global reduced-opacity rule — the
+   confirmation state is deliberately full-strength. */
+.recommendation-accept.accepted:disabled {
+  opacity: 1;
+}
+
+.recommendation-accept-check {
+  flex-shrink: 0;
+}
+
+@keyframes recommendation-accept-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* The chip tints green alongside its button so the whole banner reads as
+   "accepted" rather than just the button. */
+.recommendation-chip.accepted {
+  background: color-mix(in srgb, var(--color-success, #16a34a) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success, #16a34a) 35%, transparent);
+}
+
+.recommendation-chip.accepted .recommendation-icon {
+  color: var(--color-success, #16a34a);
+}
+
+/* Input-box pulse: a short ring that draws the eye from the chip to where the
+   text actually landed. Runs on the container (not the textarea) so it does not
+   fight the :focus-within ring that focus() raises at the same moment.
+   The ring starts already visible (1px at 70%) rather than at 0 spread — a
+   shadow with no spread paints nothing, so starting at 0 would waste the first
+   ~150ms on an invisible ramp instead of reading as an immediate ping. */
+.chat-input-container.accept-pulse {
+  animation: accept-pulse 0.6s ease-out;
+}
+
+@keyframes accept-pulse {
+  0% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color, #0066cc) 70%, transparent); }
+  100% { box-shadow: 0 0 0 9px transparent; }
+}
+
+/* Reduced motion: keep the static confirmations (green button + checkmark) and
+   drop the motion, per the project's "keep functional feedback, drop decorative
+   motion" convention. The pulse is decorative, so it goes entirely. */
+@media (prefers-reduced-motion: reduce) {
+  .recommendation-accept.accepted {
+    animation: none;
+  }
+  .chat-input-container.accept-pulse {
+    animation: none;
+    box-shadow: 0 0 0 1px var(--accent-color, #0066cc);
+  }
 }
 
 /* Base attachment card styles */
