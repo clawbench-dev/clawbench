@@ -2140,13 +2140,7 @@ defineExpose({
   cursor: pointer;
   color: var(--text-muted, #999);
   padding:5px var(--space-4);
-  /* Square corners on purpose (design-guide: a literal 0 states "this one is
-     meant to be square"). The button paints no fill at rest, so a radius only
-     ever shows on hover/active — and it clashes with the running-session sweep
-     (.has-running::before), whose straight-edged band gets its corners clipped
-     by a rounded box and reads as a truncated stripe. A square box lets the
-     sweep run edge to edge. */
-  border-radius: 0;
+  border-radius: var(--radius-xs);
   font-size: var(--font-size-xs);
   line-height: 1;
   transition: color var(--duration-base), background var(--duration-base), transform var(--duration-fast);
@@ -2230,7 +2224,17 @@ defineExpose({
     z-index: 1;
 }
 
-/* Running session indicator — a sweep of light travelling across the button.
+/* Running session indicator — a sweep of light travelling across the button,
+ * over a faint accent tint.
+ *
+ * The tint is what makes the rounded box work. At rest the button paints no
+ * fill, so a radius only ever showed on hover/active; the sweep, however, is a
+ * straight-edged band clipped by `overflow: hidden`, and in a rounded box its
+ * leading and trailing corners get cut — it read as a truncated stripe. Giving
+ * the running state a 10% accent fill (the same recipe .active already uses)
+ * supplies a surface for the band to travel across, so the clipped corners now
+ * read as "the light is entering/leaving the chip" instead of as damage.
+ *
  * Deliberately not the session list's bottom band: this is a chip on the input
  * bar rather than a full-width list row, so a sweep reads well here without
  * the flooding problem that ruled it out for the rows (see --running-sweep in
@@ -2240,11 +2244,22 @@ defineExpose({
     position: relative;
     overflow: hidden;
     color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
 }
 
 .chat-action-btn.has-running:active {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
     transform: scale(0.92);
+}
+
+/* The running tint above outranks the generic `.chat-action-btn:hover` rule
+   (same specificity, later in the sheet), so without this the button would
+   stop responding to the pointer while a session is running — the one state
+   where the user is most likely to reach for it. Deepen the tint on hover. */
+@media (hover: hover) {
+  .chat-action-btn.has-running:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+  }
 }
 
 .chat-action-btn.has-running::before {
