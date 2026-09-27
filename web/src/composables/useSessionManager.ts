@@ -410,6 +410,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
   function registerIdentityActions(extra: {
     sendMessage: (text: string) => Promise<void>
     openChatPanel: () => void
+    /** Enqueue into an arbitrary session without switching (session picker). */
+    enqueueToSession?: (sessionId: string, text: string, entries: FileEntry[], queueId?: string) => Promise<boolean>
   }) {
     identity.registerSessionActions({
       switchSession,
@@ -417,6 +419,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
       archiveSession,
       destroySession,
       sendMessage: extra.sendMessage,
+      enqueueToSession: extra.enqueueToSession,
       openChatPanel: extra.openChatPanel,
       continueFromExecution,
       forkSession,

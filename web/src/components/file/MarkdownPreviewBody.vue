@@ -65,6 +65,7 @@ import { onMermaidDragStart, onMermaidDragEnd } from '@/utils/mdMermaidDrag'
 import { handleMdImageAttachClick, type MdImageAttachActions } from '@/utils/mdImageAttach'
 import { handleMermaidAttachClick, type MermaidAttachActions } from '@/utils/mdMermaidAttach'
 import { handleBlockAttachClick } from '@/utils/mdBlockAttach'
+import { requestAttachmentTarget } from '@/composables/useConversationTarget.ts'
 import { handleMdImageOpenClick } from '@/utils/mdImageOpen'
 import { openFilePath } from '@/composables/useFilePathAnnotation'
 import { useChatContext } from '@/composables/useChatContext'
@@ -142,7 +143,11 @@ let loadPending = false
 const { addAttachedFile, removeAttachedFileByPath, hasAttachedFile } = useChatContext()
 const { show: showToast } = useToast()
 const mdImageAttachActions: MdImageAttachActions = {
-  add: addAttachedFile,
+  add: (path) => {
+    // Destination ambiguous (chat panel off screen) → let the picker own it.
+    if (requestAttachmentTarget({ path, isDir: false })) return
+    addAttachedFile(path)
+  },
   remove: removeAttachedFileByPath,
   has: hasAttachedFile,
   toast: (msg, opts) => showToast(msg, opts),
@@ -154,7 +159,10 @@ const mdImageAttachActions: MdImageAttachActions = {
 
 // Mermaid range-reference badge: same singletons, ranged identity.
 const mermaidAttachActions: MermaidAttachActions = {
-  add: (path, startLine, endLine) => addAttachedFile(path, false, startLine, endLine),
+  add: (path, startLine, endLine) => {
+    if (requestAttachmentTarget({ path, isDir: false, startLine, endLine })) return
+    addAttachedFile(path, false, startLine, endLine)
+  },
   remove: (path, startLine, endLine) => removeAttachedFileByPath(path, startLine, endLine),
   has: (path, startLine, endLine) => hasAttachedFile(path, startLine, endLine),
   toast: (msg, opts) => showToast(msg, opts),

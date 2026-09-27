@@ -461,6 +461,7 @@ import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOA
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
+import { requestTarget } from '@/composables/useConversationTarget.ts'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
@@ -844,6 +845,27 @@ const handleQuoteToChat = () => {
   const endLine = sliced?.endLine ?? target.lineEnd ?? (startLine + Math.max(0, code.split('\n').length - 1))
 
   const { addStagedQuote } = useChatContext()
+  // The card is a quote (with the code as its content), not a bare attachment
+  // chip — see the note below. Route it through the conversation picker when the
+  // chat panel is off screen, so the destination is the user's choice.
+  if (requestTarget({
+    mode: 'add',
+    quotes: [{
+      text: code,
+      filePath: target.filePath,
+      language: ft.lang || '',
+      startLine,
+      endLine,
+      note: '',
+      id: `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    }],
+    attachments: [],
+    text: '',
+  })) {
+    props.preview.close()
+    return
+  }
+
   addStagedQuote({
     text: code,
     filePath: target.filePath,

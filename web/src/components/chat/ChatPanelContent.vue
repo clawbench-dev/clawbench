@@ -836,6 +836,13 @@ const manager = useSessionManager({
 // Register identity actions — all paths now go through manager
 manager.registerIdentityActions({
   sendMessage: (text) => sendMessage(text),
+  // Send into ANOTHER session without switching. The registered sendMessage
+  // above is bound to the session on screen (it reads the live input's staged
+  // quotes and the current session id), so the session picker routes through
+  // the shared enqueue path instead: the backend starts a turn for an idle
+  // session or hands the message to the running drain loop.
+  enqueueToSession: (sessionId, text, entries, queueId) =>
+    manager.enqueueMessage(sessionId, text, entries, [], queueId),
   openChatPanel: () => emit('open'),
 })
 

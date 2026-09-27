@@ -602,6 +602,7 @@ import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
+import { requestAttachmentTarget } from '@/composables/useConversationTarget.ts'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
@@ -2501,6 +2502,9 @@ function doAttachToChat() {
         toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
         return
     }
+    // Destination is only ambiguous when the chat panel is off screen; with it
+    // visible the file goes straight into the current session's input.
+    if (requestAttachmentTarget({ path, isDir })) return
     addAttachedFile(path, isDir)
     toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
 
