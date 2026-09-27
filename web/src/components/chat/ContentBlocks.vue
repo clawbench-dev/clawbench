@@ -1138,6 +1138,10 @@ function stableBlockKey(bi: number, block: any) {
 
 function handleThinkingClick(block: any, bi: number) {
   const blockKey = stableBlockKey(bi, block)
+  // DIAG: the click path has no logging, and its fetch failures go through
+  // appLog.w (gated off by default), so a field report of "I tapped it and it
+  // stayed on the dots" was impossible to distinguish from "it never loaded".
+  diagLog(TAG, `thinking click: msgId=${props.msgId} bi=${bi} tid=${block.think_id || '-'} done=${block.done} inprog=${block.in_progress} collapsed=${isThinkingCollapsed(block, bi)} expandedDone=${isThinkingExpandedDone(block, bi)} hasText=${!!block.text} err=${!!(block.think_id && thinkingContent.errors.value[block.think_id])} cached=${block.think_id ? thinkingContent.cachedText(block.think_id) !== undefined : false}`)
   if (isThinkingCollapsed(block, bi)) {
     // Expand inline with animation
     expandingThinking.value[blockKey] = true
@@ -1146,7 +1150,10 @@ function handleThinkingClick(block: any, bi: number) {
     // Slim block (think_id, no text): lazy-load the thinking text on expand
     if (!block.text && block.think_id) {
       thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
-        .catch(() => { /* error surfaced via errors ref */ })
+        .then((text) => { diagLog(TAG, `thinking click load ok: msgId=${props.msgId} tid=${block.think_id} len=${text.length}`) })
+        .catch((e) => { diagLog(TAG, `thinking click load FAILED: msgId=${props.msgId} tid=${block.think_id} err=${e?.message || e}`) })
+    } else {
+      diagLog(TAG, `thinking click skipped load: msgId=${props.msgId} bi=${bi} hasText=${!!block.text} tid=${block.think_id || '-'}`)
     }
     // Clean up expanding state after animation
     const t = setTimeout(() => {
