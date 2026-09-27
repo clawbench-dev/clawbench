@@ -1,7 +1,8 @@
 <template>
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
-    <div class="chat-top-actions" ref="actionBarRef" :class="{ 'show-labels': showActionLabels }">
+    <div class="chat-top-actions" ref="actionBarRef"
+      :class="{ 'show-labels': showActionLabels, 'is-overflowing': actionBarOverflow }">
       <button class="chat-action-btn" data-action="session"
         :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
         @click="$emit('open-session-tab', 'sessions')"
@@ -342,6 +343,7 @@ import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
 import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
+import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
@@ -779,19 +781,49 @@ const actionBarRef = ref(null)
  * chat panes regardless of wide-screen mode.
  */
 const showActionLabels = ref(false)
+/**
+ * Whether the action bar actually overflows its pane — i.e. some buttons are
+ * off-screen. The strip's scrollbar is hidden, so in that state a plain mouse
+ * wheel cannot reach them; the grab cursor and the drag-to-scroll gesture are
+ * both gated on this flag so a strip that fits behaves like a normal row.
+ */
+const actionBarOverflow = ref(false)
 let actionBarObserver = null
 let actionBarMeasureTimer = null
+/** Disposer for the action bar's drag-to-scroll, or null when not attached. */
+let stopDragScroll = null
+
+/**
+ * Attach or detach drag-to-scroll to match `actionBarOverflow`.
+ *
+ * Attached only while the strip overflows: a strip that fits must not intercept
+ * a press-and-drag (there is nothing to scroll), and must not show a grab
+ * cursor. Idempotent, so it can be called after every re-measure.
+ */
+function syncActionBarDragScroll() {
+  const el = actionBarRef.value
+  if (!el) return
+  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  if (shouldAttach && !stopDragScroll) {
+    stopDragScroll = attachDragScroll(el)
+  } else if (!shouldAttach && stopDragScroll) {
+    stopDragScroll()
+    stopDragScroll = null
+  }
+}
 
 function measureActionLabels() {
   const el = actionBarRef.value
   if (!el) return
   // Force the labels-on layout synchronously via .measure-labels (shows the
-  // label spans) so scrollWidth reflects the intended final width — the group
-  // label is always present — then compare against the available clientWidth.
+  // label spans) so scrollWidth reflects the intended final width, then compare
+  // against the available clientWidth.
   el.classList.add('measure-labels')
   const overflow = el.scrollWidth > el.clientWidth + 2
   el.classList.remove('measure-labels')
   showActionLabels.value = !overflow
+  actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  syncActionBarDragScroll()
 }
 function scheduleMeasureActionLabels() {
   if (actionBarMeasureTimer) clearTimeout(actionBarMeasureTimer)
@@ -1844,6 +1876,8 @@ onBeforeUnmount(() => {
     actionBarObserver.disconnect()
     actionBarObserver = null
   }
+  stopDragScroll?.()
+  stopDragScroll = null
   if (actionBarMeasureTimer) {
     clearTimeout(actionBarMeasureTimer)
     actionBarMeasureTimer = null
@@ -1993,6 +2027,19 @@ defineExpose({
 }
 .chat-top-actions::-webkit-scrollbar {
   display: none;
+}
+/* Drag-to-scroll affordance, only while buttons are actually off-screen.
+   Deliberately NO touch-action here: it applies to touch/pen pointers, and the
+   drag module skips touch precisely so a finger keeps panning the strip
+   natively. Setting `pan-y` would disable that pan and leave touch users unable
+   to reach the off-screen buttons at all. Mouse dragging needs no touch-action. */
+.chat-top-actions.is-overflowing {
+  cursor: grab;
+}
+.chat-top-actions.is-dragging {
+  cursor: grabbing;
+  /* The pointer is captured, so the drag must not start a text selection. */
+  user-select: none;
 }
 
 /* Wide-screen short label next to the action icon. Always in the DOM so the

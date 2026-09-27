@@ -56,6 +56,9 @@ vi.mock('@/utils/stopButtonMachine', () => ({
   createStopButtonMachine: () => ({
     click: () => ({ primed: false, confirmed: false }),
     reset: vi.fn(),
+    // The component calls this in onBeforeUnmount; without it any test that
+    // unmounts the bar throws (the real machine always provides it).
+    destroy: vi.fn(),
   }),
 }))
 
@@ -676,5 +679,49 @@ describe('ChatInputBar — action labels by container width', () => {
     expect(wrapper.find('.chat-group-label').exists()).toBe(false)
     const directButtons = actionBar(wrapper).element.children
     expect(Array.from(directButtons).every(el => el.classList.contains('chat-action-btn'))).toBe(true)
+  })
+
+  it('marks the bar draggable only while it actually overflows', async () => {
+    const wrapper = mountInputBar({}, { deep: true })
+    await nextTick()
+    // jsdom measures 0x0, which fits → no overflow, so no drag affordance.
+    expect(actionBar(wrapper).classes()).not.toContain('is-overflowing')
+
+    mockBarWidth(wrapper, 600, 400)
+    wrapper.vm.measureActionLabels()
+    await nextTick()
+    expect(actionBar(wrapper).classes()).toContain('is-overflowing')
+  })
+
+  it('attaches drag-to-scroll only while overflowing, and detaches on unmount', async () => {
+    const addSpy = vi.spyOn(HTMLElement.prototype, 'addEventListener')
+    const removeSpy = vi.spyOn(HTMLElement.prototype, 'removeEventListener')
+    const wrapper = mountInputBar({}, { deep: true })
+    await nextTick()
+    const bar = actionBar(wrapper).element as HTMLElement
+    // Other handlers on the bar (and elsewhere) also register pointerdown, so
+    // scope every count to THIS element via the call's `this` context.
+    const calls = (spy: typeof addSpy, type: string) =>
+      spy.mock.calls.filter(([t], i) => t === type && spy.mock.contexts[i] === bar)
+
+    // Fits → no pointerdown listener from the drag module.
+    expect(calls(addSpy, 'pointerdown')).toHaveLength(0)
+
+    mockBarWidth(wrapper, 600, 400)
+    wrapper.vm.measureActionLabels()
+    await nextTick()
+    expect(actionBar(wrapper).classes()).toContain('is-overflowing')
+    expect(calls(addSpy, 'pointerdown')).toHaveLength(1)
+
+    // Shrinking back to fit must DETACH it again, not merely hide the cursor.
+    mockBarWidth(wrapper, 300, 300)
+    wrapper.vm.measureActionLabels()
+    await nextTick()
+    expect(actionBar(wrapper).classes()).not.toContain('is-overflowing')
+    expect(calls(removeSpy, 'pointerdown').length).toBeGreaterThan(0)
+
+    wrapper.unmount()
+    addSpy.mockRestore()
+    removeSpy.mockRestore()
   })
 })
