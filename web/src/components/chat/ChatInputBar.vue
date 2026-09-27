@@ -2,64 +2,59 @@
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
     <div class="chat-top-actions" ref="actionBarRef" :class="{ 'show-labels': showActionLabels }">
-      <div class="chat-action-group">
-        <span class="chat-group-label" :title="t('chat.actions.session')">
-          {{ t('chat.actions.session') }}
-        </span>
-        <button class="chat-action-btn" data-action="session"
-          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
-          @click="$emit('open-session-tab', 'sessions')"
-          :title="t('chat.actions.session')">
-          <List :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.session') }}</span>
-        </button>
-        <button class="chat-action-btn"
-          @click="handleCreateClick"
-          @contextmenu.prevent="emit('create-session')"
-          :title="t('chat.create.selectAgentOrLongPress')">
-          <Plus :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.create') }}</span>
-        </button>
-        <button class="chat-action-btn"
-          @click="$emit('open-session-search')"
-          :title="t('chat.actions.sessionSearch')">
-          <Search :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.search') }}</span>
-        </button>
-        <button class="chat-action-btn"
-          @click="$emit('open-user-msg-index')"
-          :title="t('chat.actions.userMsgIndex')">
-          <MessagesSquare :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
-        </button>
-        <button
-          v-if="isACPTransport"
-          class="chat-action-btn acp-sync-btn"
-          :class="{ disabled: acpSyncDisabled }"
-          :disabled="acpSyncDisabled"
-          @click="!acpSyncDisabled && $emit('sync-acp-session')"
-          :title="acpSyncTitle"
-          :aria-label="t('chat.actions.acpSync')"
-        >
-          <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
-          <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
-        </button>
-        <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
-          @click="handleShare"
-          :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
-          <MessageSquareShare :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
-        </button>
-        <!-- Archive sits LAST in the group: it is the destructive/terminal action
-             on the session, so it is separated from the navigation buttons. -->
-        <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
-          @click="handleArchive"
-          :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
-          <Archive :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
-        </button>
-      </div>
+      <button class="chat-action-btn" data-action="session"
+        :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
+        @click="$emit('open-session-tab', 'sessions')"
+        :title="t('chat.actions.session')">
+        <List :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.session') }}</span>
+      </button>
+      <button class="chat-action-btn"
+        @click="handleCreateClick"
+        @contextmenu.prevent="emit('create-session')"
+        :title="t('chat.create.selectAgentOrLongPress')">
+        <Plus :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.create') }}</span>
+      </button>
+      <button class="chat-action-btn"
+        @click="$emit('open-session-search')"
+        :title="t('chat.actions.sessionSearch')">
+        <Search :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.search') }}</span>
+      </button>
+      <button class="chat-action-btn"
+        @click="$emit('open-user-msg-index')"
+        :title="t('chat.actions.userMsgIndex')">
+        <MessagesSquare :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
+      </button>
+      <button
+        v-if="isACPTransport"
+        class="chat-action-btn acp-sync-btn"
+        :class="{ disabled: acpSyncDisabled }"
+        :disabled="acpSyncDisabled"
+        @click="!acpSyncDisabled && $emit('sync-acp-session')"
+        :title="acpSyncTitle"
+        :aria-label="t('chat.actions.acpSync')"
+      >
+        <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
+        <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
+      </button>
+      <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
+        @click="handleShare"
+        :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
+        <MessageSquareShare :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+      </button>
+      <!-- Archive sits LAST: it is the destructive/terminal action on the
+           session, so it is separated from the navigation buttons. -->
+      <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
+        @click="handleArchive"
+        :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
+        <Archive :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
+      </button>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
@@ -2015,47 +2010,9 @@ defineExpose({
   display: inline-block;
 }
 
-/* Session button group */
-.chat-action-group {
-  display: inline-flex;
-  align-items: stretch;
-  border-radius: 20px;
-  overflow: hidden;
-  border: 1px solid var(--border-color, #e5e5e5);
-  flex-shrink: 0;
-}
-
 /* Auto-speech toggle button */
 .auto-speech-btn {
   flex-shrink: 0;
-}
-
-.chat-action-group .chat-action-btn {
-    border-radius: 0;
-    height: auto;
-}
-
-.chat-action-group .chat-action-btn:first-child {
-    border-radius: 0;
-}
-
-/* Group label: subtle text identifying the button group */
-.chat-group-label {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding:5px var(--space-3);
-    color: var(--text-muted, #999);
-    background: var(--bg-tertiary, #f0f0f0);
-    pointer-events: none;
-    user-select: none;
-    border-right: 1px solid var(--border-color, #e5e5e5);
-    font-size: var(--font-size-xs);
-    line-height: 1.3;
-}
-
-.chat-action-group .chat-action-btn:last-child {
-    border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
 .chat-action-btn {

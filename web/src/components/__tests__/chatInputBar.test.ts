@@ -636,7 +636,7 @@ describe('ChatInputBar — action labels by container width', () => {
     await nextTick()
 
     expect(actionBar(wrapper).classes()).not.toContain('show-labels')
-    expect(wrapper.find('.chat-group-label').exists()).toBe(true)
+    expect(wrapper.find('.chat-group-label').exists()).toBe(false)
   })
 
   it('shows short Chinese labels for every action button when width suffices', async () => {
@@ -667,19 +667,14 @@ describe('ChatInputBar — action labels by container width', () => {
     expect(texts).toContain('跳转')
   })
 
-  it('keeps the group label visible whether or not labels are shown', async () => {
-    // Width suffices → labels shown, group label stays
+  it('renders session actions flat — no grouping wrapper or group label', async () => {
     const wrapper = mountInputBar({}, { deep: true })
     await nextTick()
     expect(actionBar(wrapper).classes()).toContain('show-labels')
-    expect(wrapper.find('.chat-group-label').exists()).toBe(true)
-    expect(wrapper.find('.chat-group-label').text()).toBe('会话')
-
-    // Width insufficient → labels hidden, group label still stays
-    mockBarWidth(wrapper, 600, 400)
-    wrapper.vm.measureActionLabels()
-    await nextTick()
-    expect(actionBar(wrapper).classes()).not.toContain('show-labels')
-    expect(wrapper.find('.chat-group-label').exists()).toBe(true)
+    // Buttons are direct children of the action bar; no group container/label.
+    expect(wrapper.find('.chat-action-group').exists()).toBe(false)
+    expect(wrapper.find('.chat-group-label').exists()).toBe(false)
+    const directButtons = actionBar(wrapper).element.children
+    expect(Array.from(directButtons).every(el => el.classList.contains('chat-action-btn'))).toBe(true)
   })
 })

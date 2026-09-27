@@ -949,14 +949,18 @@ describe('ChatInputBar', () => {
     expect(archiveBtn.classes()).toContain('disabled')
   })
 
-  it('archive button is the LAST button in the session group', () => {
+  it('archive button is the LAST session action button in the action bar', () => {
     // Archive is the terminal/destructive action on the session, so it sits at
-    // the far right of the group rather than between the navigation buttons.
+    // the far right of the session buttons (before the auto-speech / refresh
+    // toggles) rather than between the navigation buttons.
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    const group = wrapper.find('.chat-action-group')
-    const buttons = group.findAll('.chat-action-btn')
-    expect(buttons.length).toBeGreaterThan(1)
-    expect(buttons[buttons.length - 1].classes()).toContain('chat-action-btn-archive')
+    const children = Array.from(wrapper.find('.chat-top-actions').element.children) as HTMLElement[]
+    const archiveIdx = children.findIndex(el => el.classList.contains('chat-action-btn-archive'))
+    const speakIdx = children.findIndex(el => el.classList.contains('auto-speech-btn'))
+    expect(archiveIdx).toBeGreaterThan(-1)
+    expect(speakIdx).toBeGreaterThan(archiveIdx)
+    // The button right before archive is another action button (not a group label).
+    expect(children[archiveIdx - 1].classList.contains('chat-action-btn')).toBe(true)
   })
 
   it('archive button is enabled when currentSessionId exists', () => {
