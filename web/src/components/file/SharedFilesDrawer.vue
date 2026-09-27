@@ -69,9 +69,11 @@
             >
               <ExternalLink :size="14" />
             </a>
-            <button class="shared-file-btn" :title="t('sharedFiles.copyLink')" @click="copyLink(item)">
-              <Copy :size="14" />
-            </button>
+            <CopyButton
+              :text="shareUrl(item)"
+              title-key="sharedFiles.copyLink"
+              class="shared-file-btn"
+            />
             <button
               class="shared-file-btn danger"
               :disabled="revokingToken === item.token"
@@ -89,15 +91,15 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { ScreenShare, Copy, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
+import { ScreenShare, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
-import { copyText } from '@/utils/clipboard.ts'
 import { openExternalUrl } from '@/utils/externalLink'
 import { useFileShare } from '@/composables/useFileShare'
 
@@ -155,11 +157,6 @@ function openFile(item) {
   drawer.close()
 }
 
-function copyLink(item) {
-  copyText(shareUrl(item), () => {
-    toast.show(t('sharedFiles.copied'), { icon: '✅', type: 'success', duration: 2000 })
-  })
-}
 
 async function revoke(item) {
   const confirmed = await dialog.confirm(t('sharedFiles.confirmRevoke', { name: item.name }), { dangerous: true })

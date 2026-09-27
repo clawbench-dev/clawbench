@@ -161,16 +161,16 @@
         >
           <GitBranch :size="14" class="item-icon" />
           <span class="item-label">{{ b.name }}</span>
-          <button
+          <!-- Per-row copy button. Feedback state lives inside the button, so
+               clicking one branch checks only that row — no shared
+               "which branch was copied" state to keep in sync. -->
+          <CopyButton
+            :text="b.name"
+            :size="13"
+            title-key="appHeader.copyBranchName"
             class="item-copy-btn"
-            :class="{ 'is-copied': copiedBranch === b.name }"
-            :title="copiedBranch === b.name ? t('common.copied') : t('appHeader.copyBranchName')"
-            :aria-label="copiedBranch === b.name ? t('common.copied') : t('appHeader.copyBranchName')"
-            @click.stop="copyBranchName(b.name)"
-          >
-            <Check v-if="copiedBranch === b.name" :size="13" />
-            <Copy v-else :size="13" />
-          </button>
+            @click.stop
+          />
         </div>
       </div>
       <div class="menu-divider"></div>
@@ -298,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check, Minus } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -311,11 +311,11 @@ import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import HintTooltip from '@/components/common/HintTooltip.vue'
 import ShortcutTipTicker from '@/components/common/ShortcutTipTicker.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
-import { copyText } from '@/utils/clipboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
@@ -517,30 +517,6 @@ async function loadBranches() {
 const dirtyModalOpen = ref(false)
 const dirtyBranch = ref('')
 const dirtyCount = ref(0)
-
-/**
- * Copy a branch name from the quick-index, flashing a check on that row for a
- * moment. Only the header's branch list has this button, so the feedback state
- * lives here rather than in a shared composable.
- */
-const copiedBranch = ref('')
-let copiedBranchTimer: ReturnType<typeof setTimeout> | null = null
-
-function copyBranchName(name: string) {
-    if (!name) return
-    copyText(name, () => {
-        copiedBranch.value = name
-        if (copiedBranchTimer) clearTimeout(copiedBranchTimer)
-        copiedBranchTimer = setTimeout(() => {
-            copiedBranch.value = ''
-            copiedBranchTimer = null
-        }, 1500)
-    })
-}
-
-onUnmounted(() => {
-    if (copiedBranchTimer) clearTimeout(copiedBranchTimer)
-})
 
 async function selectBranch(b: BranchEntry) {
     branchDropdownOpen.value = false

@@ -98,18 +98,9 @@
     opacity: 1;
 }
 
-/* ─── Copied state: show text instead of icon ─── */
-.code-block-copy-btn.is-copied {
-    opacity: 1;
-    color: var(--accent-color);
-    width: auto;
-    padding:0 var(--space-2);
-}
-
-.code-block-copied-text {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-}
+/* ─── Copied state ───
+   Feedback is a glyph swap; the colour and box invariant live in the shared
+   css/copy-button.css so every copy button agrees. Nothing to restate here. */
 
 /* ─── Code block inside wrapper: override default pre styles ─── */
 .code-block-wrapper pre {
@@ -235,18 +226,9 @@
     opacity: 1;
 }
 
-/* ─── Copied state: show text instead of icon ─── */
-.table-block-copy-btn.is-copied {
-    opacity: 1;
-    color: var(--accent-color);
-    width: auto;
-    padding:0 var(--space-2);
-}
-
-.table-block-copied-text {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-}
+/* ─── Copied state ───
+   The trigger's own state is in css/copy-button.css (it must stay auto-width:
+   it carries a chevron next to the glyph). */
 
 /* ─── Copy dropdown trigger (copy icon + chevron) ─── */
 .table-block-copy-dropdown {
@@ -303,8 +285,10 @@
     background: var(--bg-tertiary);
 }
 
+/* The menu item's tint comes from css/copy-button.css (it is listed there with
+   the other copy buttons). Its label stays put — the text IS the format
+   identity — so only the weight bump belongs here. */
 .table-block-copy-menu-item.is-copied {
-    color: var(--accent-color);
     font-weight: var(--font-weight-medium);
 }
 

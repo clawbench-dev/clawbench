@@ -248,7 +248,9 @@ describe('SharedFilesDrawer', () => {
     expect(copyBtn).toBeTruthy()
     await copyBtn!.trigger('click')
     expect(h.copyText).toHaveBeenCalledWith('https://host.example/share/tok9')
-    expect(h.toastShow).toHaveBeenCalled()
+    // Feedback is the shared check glyph, not a toast.
+    expect(copyBtn!.classes()).toContain('is-copied')
+    expect(h.toastShow).not.toHaveBeenCalled()
   })
 
   it('does not revoke when the confirm dialog is cancelled', async () => {

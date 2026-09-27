@@ -11,9 +11,13 @@
         <span class="details-label">{{ item.label }}</span>
         <div class="details-value-wrap" @click="item.copyable && copyValue(item.value, $event)">
           <span class="details-value" :class="{ 'details-value-copyable': item.copyable }">{{ item.value }}</span>
-          <button v-if="item.copyable" class="details-copy-btn" @click.stop="copyValue(item.value, $event)" :title="t('common.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            v-if="item.copyable"
+            :text="item.value"
+            :size="13"
+            class="details-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
     </div>
@@ -22,10 +26,11 @@
 </template>
 
 <script setup>
-import { computed, inject } from 'vue'
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
+import { copyText } from '@/utils/clipboard'
 import FileIcon from '@/components/common/FileIcon.vue'
 import { store } from '@/stores/app.ts'
 import { getFileType, formatFileSize } from '@/utils/fileType.ts'
@@ -37,33 +42,22 @@ const props = defineProps({
 defineEmits(['close'])
 
 const { t, locale } = useI18n()
-const toast = inject('toast', null)
 
+/**
+ * Copy from a CLICKABLE TEXT value (the row / the value itself). The copy
+ * button beside it owns its own state via CopyButton; this path only flashes
+ * the text that was clicked.
+ *
+ * No toast — the flash is the feedback. `copyText` supplies the
+ * non-secure-context fallback that the previous hand-rolled version had.
+ */
 function copyValue(value, event) {
-  const wrap = event.currentTarget.closest('.details-value-wrap')
-  const btn = wrap.querySelector('.details-copy-btn')
-  const txt = wrap.querySelector('.details-value')
-  const doCopy = () => {
-    if (btn) { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 800) }
-    if (txt) { txt.classList.add('copied'); setTimeout(() => txt.classList.remove('copied'), 800) }
-    if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
-  }
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(value).then(doCopy).catch(() => fallbackCopy(value, doCopy))
-  } else {
-    fallbackCopy(value, doCopy)
-  }
-}
-
-function fallbackCopy(value, cb) {
-  const ta = document.createElement('textarea')
-  ta.value = value
-  ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0'
-  document.body.appendChild(ta)
-  ta.select()
-  document.execCommand('copy')
-  document.body.removeChild(ta)
-  cb()
+  const el = event.currentTarget
+  if (!el || !value) return
+  copyText(value, () => {
+    el.classList.add('copied')
+    setTimeout(() => el.classList.remove('copied'), 800)
+  })
 }
 
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
@@ -187,10 +181,6 @@ const detailItems = computed(() => {
     background: var(--bg-tertiary, #f0f0f0);
   }
 }
-.details-copy-btn.copied {
-  color: #22c55e;
-}
-
 .details-row-copyable {
   user-select: none;
 }

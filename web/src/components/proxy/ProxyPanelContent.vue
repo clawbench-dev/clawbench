@@ -86,18 +86,24 @@
               <template v-else-if="installContext.kind === 'linux'">
                 <span class="tunnel-guide-install-note">{{ t('proxy.tunnelInstallLinux') }}</span>
                 <span class="tunnel-guide-install-code">{{ installContext.command }}</span>
-                <button class="tunnel-guide-copy" @click="copyInstallCommand" :title="t('proxy.copyCommand')">
-                  <Copy :size="12" />
-                  {{ installCopied ? t('common.copied') : t('proxy.copyCommand') }}
-                </button>
+                <CopyButton
+                  :text="installContext.command"
+                  :size="12"
+                  :label="t('proxy.copyCommand')"
+                  title-key="proxy.copyCommand"
+                  class="tunnel-guide-copy"
+                />
               </template>
             </div>
             <div class="tunnel-guide-command">
               <code>{{ sshInfo.command }}</code>
-              <button class="tunnel-guide-copy" @click="copySSHCommand" :title="t('proxy.copyCommand')">
-                <Copy :size="12" />
-                {{ sshCopied ? t('common.copied') : t('proxy.copyCommand') }}
-              </button>
+              <CopyButton
+                :text="sshInfo.command"
+                :size="12"
+                :label="t('proxy.copyCommand')"
+                title-key="proxy.copyCommand"
+                class="tunnel-guide-copy"
+              />
             </div>
             <div v-if="sshInfo.fingerprint" class="tunnel-guide-fingerprint">
               <span class="fingerprint-label">Fingerprint:</span>
@@ -146,7 +152,6 @@
               :toggling="togglingPorts.has(p.localPort)"
               @open="openPortWithCheck"
               @open-external="openInExternalBrowser"
-              @copy-address="handleCopyAddress"
               @reconnect="handleReconnect"
               @edit="handleEdit"
               @remove="handleRemove"
@@ -285,13 +290,14 @@
 </template>
 
 <script setup>
-import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
+import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
 import { useAppMode } from '@/composables/useAppMode'
@@ -340,7 +346,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 // `isAppMode` is true for BOTH native hosts (it is just isNativeApp()), so any
 // banner whose copy is Android-specific must additionally exclude the Electron
 // desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.
@@ -359,9 +365,6 @@ function handleOpenScan() {
   }
 }
 
-const sshCopied = ref(false)
-const installCopied = ref(false)
-
 // Tunnel guide: per-OS hint for getting a local ssh client when the manual
 // tunnel command is meant to run on this machine (web mode only).
 const installContext = computed(() => sshInstallHint({
@@ -369,15 +372,6 @@ const installContext = computed(() => sshInstallHint({
   macDesktop: isMacDesktopUA,
   linuxDesktop: isLinuxDesktopUA,
 }))
-
-async function copyInstallCommand() {
-  if (!installContext.value?.command) return
-  try {
-    await navigator.clipboard.writeText(installContext.value.command)
-    installCopied.value = true
-    setTimeout(() => { installCopied.value = false }, 2000)
-  } catch {}
-}
 
 // Track which ports are currently reconnecting (for spinning button state)
 const reconnectingPorts = ref(new Set())
@@ -450,10 +444,6 @@ async function handleSave() {
 }
 
 /** Copy a reverse mapping's server-side address (there is no browser to open). */
-async function handleCopyAddress(serverPort, protocol) {
-  await copyServerAddress(serverPort, protocol)
-}
-
 async function handleQuickAdd(port, protocol, processName) {
   try {
     await registerPort(port, processName || t('proxy.autoDetect'), protocol || 'http')
@@ -491,15 +481,6 @@ async function handleReconnect(localPort) {
     reconnectingPorts.value.delete(localPort)
     reconnectingPorts.value = new Set(reconnectingPorts.value)
   }
-}
-
-async function copySSHCommand() {
-  if (!sshInfo.value?.command) return
-  try {
-    await navigator.clipboard.writeText(sshInfo.value.command)
-    sshCopied.value = true
-    setTimeout(() => { sshCopied.value = false }, 2000)
-  } catch {}
 }
 
 async function handleRetryTunnel() {

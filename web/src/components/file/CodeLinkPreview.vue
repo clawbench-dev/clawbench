@@ -456,10 +456,11 @@ import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
+import { copyText } from '@/utils/clipboard'
+import { useToast } from '@/composables/useToast'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
-import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
 import { requestTarget } from '@/composables/useConversationTarget.ts'
 import { store } from '@/stores/app'
@@ -805,23 +806,14 @@ const contextMeta = computed(() => {
 const isPathCopied = ref(false)
 let pathCopiedTimer: ReturnType<typeof setTimeout> | null = null
 
-const handleCopyPath = async () => {
+const handleCopyPath = () => {
   const target = props.preview.target.value
   if (!target?.filePath) return
   const pathText = target.filePath + (lineRangeSuffix.value || '')
-  try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(pathText)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = pathText
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
+  // No toast: the toolbar button this host drives now shows a check glyph
+  // (shared CopyButton). `copyText` supplies the insecure-context fallback the
+  // hand-rolled clipboard call had.
+  copyText(pathText, () => {
     if (pathCopiedTimer) clearTimeout(pathCopiedTimer)
     isPathCopied.value = true
     updateTooltipText(t('file.codePreview.pathCopied'))
@@ -829,10 +821,7 @@ const handleCopyPath = async () => {
       isPathCopied.value = false
       pathCopiedTimer = null
     }, 1500)
-    useToast().show(t('file.codePreview.pathCopied'), { icon: '📋', type: 'success', duration: 1500 })
-  } catch {
-    // ignore
-  }
+  })
 }
 
 const handleQuoteToChat = () => {
@@ -1328,30 +1317,15 @@ const cardStyle = computed(() => {
   }
 })
 
-const handleCopy = async () => {
+const handleCopy = () => {
   const code = props.preview.slicedCode.value?.code
   if (!code) return
-
-  try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(code)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = code
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
+  copyText(code, () => {
     copied.value = true
     setTimeout(() => {
       copied.value = false
     }, 1500)
-  } catch {
-    // ignore
-  }
+  })
 }
 
 // Media bodies (image/video/audio/PDF) size themselves from the file's own

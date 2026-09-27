@@ -36,9 +36,11 @@
               spellcheck="false"
               @focus="$event.target.select()"
             />
-            <button class="share-dialog-link-btn" :title="t('sessionShare.copyTip')" :aria-label="t('sessionShare.copyTip')" @click="copyLink">
-              <Copy :size="14" />
-            </button>
+            <CopyButton
+              :text="linkUrl"
+              title-key="sessionShare.copyTip"
+              class="share-dialog-link-btn"
+            />
             <button
               class="share-dialog-link-btn"
               :title="t('sessionShare.regenerateTip')"
@@ -140,7 +142,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, Copy, ExternalLink, Info, Link2, RefreshCw, Trash2, User } from 'lucide-vue-next'
+import { Bot, ExternalLink, Info, Link2, RefreshCw, Trash2, User } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
@@ -152,6 +154,7 @@ import { useSessionShare } from '@/composables/useSessionShare'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
 // dialogs load it; see the file header for why it cannot be scoped.
 import '@/assets/share-dialog.css'
+import CopyButton from '@/components/common/CopyButton.vue'
 
 const TAG = 'SessionShareDialog'
 
@@ -260,19 +263,15 @@ async function createLink() {
     const data = await resp.json()
     linkUrl.value = toAbsoluteUrl(data.path)
     markShared(props.sessionId)
-    copyLink()
+    // Auto-copy the freshly created link — the common next step is pasting it
+    // somewhere. Silent: the link is already visible in the field above, and
+    // this path has no button to flash a check on.
+    if (linkUrl.value) copyText(linkUrl.value)
   } catch (err) {
     errorMsg.value = err instanceof Error ? err.message : String(err)
   } finally {
     creating.value = false
   }
-}
-
-function copyLink() {
-  if (!linkUrl.value) return
-  copyText(linkUrl.value, () => {
-    toast.show(t('sessionShare.copied'), { icon: '✅', type: 'success', duration: 2000 })
-  })
 }
 
 async function regenerateLink() {

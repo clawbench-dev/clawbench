@@ -142,7 +142,9 @@ describe('QuoteQuestionBar component', () => {
           MessageSquare: true,
           Plus: true,
           Send: true,
-          Copy: true,
+          // `Copy`/`Check` are deliberately NOT stubbed: the copied-state test
+          // asserts which icon is actually rendered, and a stub would render an
+          // empty `<copy-stub>` with none of lucide's classes.
         },
       },
     })
@@ -528,22 +530,62 @@ describe('QuoteQuestionBar component', () => {
     await copyBtn.trigger('click')
     expect(mockWriteText).toHaveBeenCalledWith('Hello world')
     await vi.waitFor(() => {
-      expect(wrapper.vm.copied).toBe(true)
+      expect(copyBtn.classes()).toContain('is-copied')
     })
     // Clicking copy must not expand the collapsed bar
     expect(wrapper.vm.expanded).toBe(false)
   })
 
-  it('shows copied text on the button after copying', async () => {
+  it('swaps the icon to a check on copy, keeping the button the same size', async () => {
+    // Regression: the copied state used to swap the icon for a "已复制" text
+    // label. The button is pinned to `right: 2px`, so a wider label grew it
+    // LEFTWARD over the quote text — and because the text reserves a fixed
+    // 24px, the only way to keep a label clear would be to reserve the widest
+    // translation (~99px), reintroducing the dead space the bar just removed.
+    // The icon swap keeps the footprint constant.
+    //
+    // The swap itself now lives in the shared CopyButton; this asserts the bar
+    // actually renders that shared button (rather than a local re-implementation
+    // that would silently drift back to a label).
     const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
-    await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
+    const btn = wrapper.find('.quote-bar-row .qq-copy-btn')
+
+    // Idle: a Copy icon, no text.
+    expect(btn.text()).toBe('')
+    expect(btn.find('.lucide-copy').exists()).toBe(true)
+    expect(btn.classes()).toContain('copy-btn')
+
+    await btn.trigger('click')
     await vi.waitFor(() => {
-      expect(wrapper.vm.copied).toBe(true)
+      expect(btn.classes()).toContain('is-copied')
     })
     await nextTick()
-    const copyBtn = wrapper.find('.quote-bar-row .qq-copy-btn')
-    expect(copyBtn.text()).toBe('Copied')
-    expect(copyBtn.classes()).toContain('is-copied')
+
+    // Copied: a Check icon, still no text.
+    expect(btn.find('.lucide-check').exists()).toBe(true)
+    expect(btn.find('.lucide-copy').exists()).toBe(false)
+    expect(btn.text()).toBe('')
+  })
+
+  it('keeps the copy button a fixed square so it cannot overlap the quote', () => {
+    // The 22px square is what the 24px reservation in the snippet is sized for.
+    // If the button ever becomes auto-width again, that reservation stops
+    // covering it and the button starts covering the text.
+    const cssText = Array.from(document.styleSheets)
+      .map((s) => {
+        try { return Array.from(s.cssRules).map((r) => r.cssText).join('\n') }
+        catch { return '' }
+      })
+      .join('\n')
+
+    const btnRule = cssText
+      .split('\n')
+      .filter((line) => line.includes('.qq-copy-btn') && !line.includes('is-copied'))
+      .join('\n')
+    expect(btnRule).toContain('width: 22px')
+    expect(btnRule).toContain('height: 22px')
+    // An auto width would let the button size itself to its content again.
+    expect(btnRule).not.toContain('min-width')
   })
 
   it('does not emit add when the copy button is clicked', async () => {
@@ -556,11 +598,13 @@ describe('QuoteQuestionBar component', () => {
     vi.useFakeTimers()
     try {
       const wrapper = mountBar({ quoteData: { text: 'Hello world' } })
-      await wrapper.find('.quote-bar-row .qq-copy-btn').trigger('click')
-      expect(wrapper.vm.copied).toBe(true)
+      const btn = wrapper.find('.quote-bar-row .qq-copy-btn')
+      await btn.trigger('click')
+      expect(btn.classes()).toContain('is-copied')
       vi.advanceTimersByTime(1500)
       await nextTick()
-      expect(wrapper.vm.copied).toBe(false)
+      expect(btn.classes()).not.toContain('is-copied')
+      expect(btn.find('.lucide-copy').exists()).toBe(true)
     } finally {
       vi.useRealTimers()
     }
@@ -631,12 +675,12 @@ describe('QuoteQuestionBar component', () => {
     expect(active?.classList.contains('qq-textarea')).toBe(true)
   })
 
-  it('expanded quote text constrains its own width so the scrollbar hugs the snippet edge', async () => {
+  it('expanded quote text constrains its own width so long lines scroll in place', async () => {
     // Regression: selecting a table yields a long unbreakable text line. The
     // scrollable .qq-quoted-text--expanded is a flex item and must carry its own
     // min-width:0/flex:1/max-width — flex min-width on the parent does not
     // propagate to a scrollable child, which would stretch the text element to
-    // full width and park the vertical scrollbar mid-bar.
+    // full width and let the content spill past the bar.
     const longTableText = '| 列A  | 列B  | 列C  |'.repeat(200) // 无空格断行点
     const wrapper = mountBar({ quoteData: { text: longTableText } })
     const vm = wrapper.vm as any
@@ -649,7 +693,31 @@ describe('QuoteQuestionBar component', () => {
     // 滚动元素自身必须约束宽度，而不是依赖父容器 min-width
     expect(styles.minWidth).toBe('0px')
     expect(styles.flexGrow).toBe('1')
-    // 预留浮动 copy 按钮空间，避免滚动条压在按钮下面
-    expect(styles.maxWidth).toBe('calc(100% - 40px)')
+    // 预留浮动 copy 按钮空间（22px 宽 + 2px inset = 24px），避免滚动条压在按钮下面
+    expect(styles.maxWidth).toBe('calc(100% - 24px)')
+  })
+
+  it('reserves the copy button only once, so the quote fills the bar width', async () => {
+    // Regression: the base .qq-quoted-text rule reserved the copy button with
+    // `padding-right: 24px`, and .qq-quoted-text--expanded reserved it AGAIN
+    // with `max-width: calc(100% - 40px)` — 64px for a 24px button. The text
+    // stopped ~40px short of the button and read as if the bar never filled.
+    // Exactly one reservation must apply in the expanded state.
+    const expanded = mountBar()
+    await expanded.find('.quote-bar-row').trigger('click')
+    await nextTick()
+
+    const textEl = expanded.find('.qq-quoted-text--expanded').element as HTMLElement
+    // The expanded rule must override the base padding rather than inherit it.
+    expect(window.getComputedStyle(textEl).paddingRight).toBe('0px')
+
+    // Collapsed keeps its padding: there the text is `overflow:hidden` with no
+    // scrollbar, and that padding is the only thing holding it off the button.
+    // Mount a separate bar — `find` would otherwise return the expanded element
+    // first, since `.qq-quoted-text--expanded` also carries `.qq-quoted-text`.
+    const collapsed = mountBar()
+    const baseEl = collapsed.find('.quote-bar-row .qq-quoted-text').element as HTMLElement
+    expect(baseEl.classList.contains('qq-quoted-text--expanded')).toBe(false)
+    expect(window.getComputedStyle(baseEl).paddingRight).toBe('24px')
   })
 })

@@ -9,9 +9,13 @@
         <span class="metadata-label">{{ t('chat.metadata.messageId') }}</span>
         <div class="metadata-value-wrap">
           <span class="metadata-value metadata-session-id metadata-value-copyable">{{ messageId }}</span>
-          <button class="metadata-copy-btn" @click.stop="copyValue(String(messageId), $event)" :title="t('chat.metadata.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            :text="String(messageId)"
+            :size="13"
+            title-key="chat.metadata.copy"
+            class="metadata-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
       <div v-if="createdAt" class="metadata-item">
@@ -50,9 +54,13 @@
         <span class="metadata-label">{{ t('chat.metadata.messageRequestId') }}</span>
         <div class="metadata-value-wrap">
           <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.messageRequestId }}</span>
-          <button class="metadata-copy-btn" @click.stop="copyValue(data.messageRequestId, $event)" :title="t('chat.metadata.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            :text="data.messageRequestId"
+            :size="13"
+            title-key="chat.metadata.copy"
+            class="metadata-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
       <div v-if="data.inputTokens" class="metadata-item">
@@ -111,18 +119,26 @@
         <span class="metadata-label">{{ t('chat.metadata.requestId') }}</span>
         <div class="metadata-value-wrap">
           <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.requestId }}</span>
-          <button class="metadata-copy-btn" @click.stop="copyValue(data.requestId, $event)" :title="t('chat.metadata.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            :text="data.requestId"
+            :size="13"
+            title-key="chat.metadata.copy"
+            class="metadata-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
       <div v-if="data.traceId" class="metadata-item metadata-copyable" @click="copyValue(data.traceId, $event)">
         <span class="metadata-label">{{ t('chat.metadata.traceId') }}</span>
         <div class="metadata-value-wrap">
           <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.traceId }}</span>
-          <button class="metadata-copy-btn" @click.stop="copyValue(data.traceId, $event)" :title="t('chat.metadata.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            :text="data.traceId"
+            :size="13"
+            title-key="chat.metadata.copy"
+            class="metadata-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
       <div v-if="data.responseModelId" class="metadata-item">
@@ -157,18 +173,26 @@
         <span class="metadata-label">{{ t('chat.metadata.sessionId') }}</span>
         <div class="metadata-value-wrap">
           <span class="metadata-value metadata-session-id metadata-value-copyable">{{ sessionId }}</span>
-          <button class="metadata-copy-btn" @click.stop="copyValue(sessionId, $event)" :title="t('chat.metadata.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            :text="sessionId"
+            :size="13"
+            title-key="chat.metadata.copy"
+            class="metadata-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
       <div v-if="data.sessionId && data.sessionId !== sessionId" class="metadata-item metadata-copyable" @click="copyValue(data.sessionId, $event)">
         <span class="metadata-label">{{ t('chat.metadata.externalSessionId') }}</span>
         <div class="metadata-value-wrap">
           <span class="metadata-value metadata-session-id metadata-value-copyable">{{ data.sessionId }}</span>
-          <button class="metadata-copy-btn" @click.stop="copyValue(data.sessionId, $event)" :title="t('chat.metadata.copy')">
-            <Copy :size="13" />
-          </button>
+          <CopyButton
+            :text="data.sessionId"
+            :size="13"
+            title-key="chat.metadata.copy"
+            class="metadata-copy-btn"
+            @click.stop
+          />
         </div>
       </div>
       <div class="metadata-item">
@@ -193,10 +217,11 @@
 
 <script setup>
 import { computed } from 'vue'
-import { Copy, Info } from 'lucide-vue-next'
+import { Info } from 'lucide-vue-next'
+import CopyButton from '@/components/common/CopyButton.vue'
+import { copyText } from '@/utils/clipboard'
 import { useI18n } from 'vue-i18n'
 import ModalDialog from '@/components/common/ModalDialog.vue'
-import { useToast } from '@/composables/useToast.ts'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 
 const { t } = useI18n()
@@ -216,7 +241,6 @@ const props = defineProps({
 
 defineEmits(['close'])
 
-const toast = useToast()
 
 // Map a usageByCategory key (CodeBuddy codebuddy.ai/usageByCategory) to a
 // localized label. Unknown future keys fall back to the raw key.
@@ -242,36 +266,22 @@ const metadataCacheHitRate = computed(() => {
   return (hit / total) * 100
 })
 
+/**
+ * Copy one metadata value from a CLICKABLE TEXT value (the row / the value
+ * itself). The dedicated copy button next to it handles its own state via
+ * CopyButton; this path only needs to flash the text it was clicked on.
+ *
+ * No toast: the flash is the feedback (see the copy-button unification).
+ * `copyText` is used rather than a hand-rolled `navigator.clipboard` call so
+ * the non-secure-context fallback applies here too.
+ */
 function copyValue(value, event) {
-  const wrap = event.currentTarget.closest('.metadata-value-wrap') || event.currentTarget
-  const btn = wrap.querySelector?.('.metadata-copy-btn')
-  const txt = wrap.querySelector?.('.metadata-session-id')
-  const doCopy = () => {
-    if (btn) { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 800) }
-    if (txt) { txt.classList.add('copied'); setTimeout(() => txt.classList.remove('copied'), 800) }
-    toast.show(t('chat.metadata.copied'), { icon: '📋', type: 'success', duration: 1500 })
-  }
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(value).then(doCopy).catch(() => {
-      const ta = document.createElement('textarea')
-      ta.value = value
-      ta.style.cssText = 'position:fixed;opacity:0'
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-      doCopy()
-    })
-  } else {
-    const ta = document.createElement('textarea')
-    ta.value = value
-    ta.style.cssText = 'position:fixed;opacity:0'
-    document.body.appendChild(ta)
-    ta.select()
-    document.execCommand('copy')
-    document.body.removeChild(ta)
-    doCopy()
-  }
+  const el = event.currentTarget
+  if (!el || !value) return
+  copyText(value, () => {
+    el.classList.add('copied')
+    setTimeout(() => el.classList.remove('copied'), 800)
+  })
 }
 </script>
 
@@ -375,10 +385,6 @@ function copyValue(value, event) {
     color: var(--accent-color, #4a90d9);
     background: var(--bg-tertiary, #f0f0f0);
   }
-}
-
-.metadata-copy-btn.copied {
-    color: #22c55e;
 }
 
 .metadata-indexed-yes {

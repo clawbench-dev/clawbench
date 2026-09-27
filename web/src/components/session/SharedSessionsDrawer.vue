@@ -80,9 +80,11 @@
             >
               <ExternalLink :size="14" />
             </a>
-            <button class="shared-session-btn" :title="t('sharedSessions.copyLink')" @click="copyLink(item)">
-              <Copy :size="14" />
-            </button>
+            <CopyButton
+              :text="shareUrl(item)"
+              title-key="sharedSessions.copyLink"
+              class="shared-session-btn"
+            />
             <button
               class="shared-session-btn danger"
               :disabled="revokingToken === item.token"
@@ -100,15 +102,15 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { MessageSquareShare, Copy, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
+import { MessageSquareShare, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
-import { copyText } from '@/utils/clipboard.ts'
 import { openExternalUrl } from '@/utils/externalLink'
 import { useSessionShare } from '@/composables/useSessionShare'
 import { appLog } from '@/utils/appLog'
@@ -172,11 +174,6 @@ function openConversation(item) {
   drawer.close()
 }
 
-function copyLink(item) {
-  copyText(shareUrl(item), () => {
-    toast.show(t('sharedSessions.copied'), { icon: '✅', type: 'success', duration: 2000 })
-  })
-}
 
 async function revoke(item) {
   const name = item.title || t('share.sharedConversation')

@@ -431,25 +431,25 @@ describe('DirBreadcrumb — copy path', () => {
     const copyBtn = wrapper.find('.crumb-copy-btn')
     expect(copyBtn.exists()).toBe(true)
     await copyBtn.trigger('click')
-    expect(mockCopyText).toHaveBeenCalledWith('/project/home/user/docs', expect.any(Function), expect.any(Function))
+    expect(mockCopyText).toHaveBeenCalledWith('/project/home/user/docs', expect.any(Function))
   })
 
   it('copies the absolute Windows-style root path', async () => {
     const wrapper = mountBreadcrumb({ path: 'src/utils' })
     await wrapper.find('.crumb-copy-btn').trigger('click')
-    expect(mockCopyText).toHaveBeenCalledWith('/project/src/utils', expect.any(Function), expect.any(Function))
+    expect(mockCopyText).toHaveBeenCalledWith('/project/src/utils', expect.any(Function))
   })
 
   it('copies an already-absolute path as-is (ProjectDialog)', async () => {
     const wrapper = mountBreadcrumb({ path: '/home/user/other' })
     await wrapper.find('.crumb-copy-btn').trigger('click')
-    expect(mockCopyText).toHaveBeenCalledWith('/home/user/other', expect.any(Function), expect.any(Function))
+    expect(mockCopyText).toHaveBeenCalledWith('/home/user/other', expect.any(Function))
   })
 
   it('copies an already-absolute Windows path as-is (ProjectDialog)', async () => {
     const wrapper = mountBreadcrumb({ path: 'D:\\other\\dir' })
     await wrapper.find('.crumb-copy-btn').trigger('click')
-    expect(mockCopyText).toHaveBeenCalledWith('D:/other/dir', expect.any(Function), expect.any(Function))
+    expect(mockCopyText).toHaveBeenCalledWith('D:/other/dir', expect.any(Function))
   })
 
   it('normalizes a leading-slash project-relative path against the root', async () => {
@@ -457,29 +457,40 @@ describe('DirBreadcrumb — copy path', () => {
     // the value is preserved, while relative values combine with the root.
     const wrapper = mountBreadcrumb({ path: 'photos' })
     await wrapper.find('.crumb-copy-btn').trigger('click')
-    expect(mockCopyText).toHaveBeenCalledWith('/project/photos', expect.any(Function), expect.any(Function))
+    expect(mockCopyText).toHaveBeenCalledWith('/project/photos', expect.any(Function))
   })
 
-  it('shows copied feedback and toast after copy', async () => {
+  it('flashes the shared check state after copy and reverts', async () => {
     vi.useFakeTimers()
     try {
       const wrapper = mountBreadcrumb({ path: 'home/user' })
-      await wrapper.find('.crumb-copy-btn').trigger('click')
-      expect(wrapper.find('.crumb-copy-btn').classes()).toContain('copied')
-      expect(mockToast.show).toHaveBeenCalled()
-      // copied flag resets after 800ms
-      vi.advanceTimersByTime(800)
+      const btn = wrapper.find('.crumb-copy-btn')
+      await btn.trigger('click')
+      expect(btn.classes()).toContain('is-copied')
+      expect(btn.find('.lucide-check').exists()).toBe(true)
+      // Reverts after the shared 1500ms window.
+      vi.advanceTimersByTime(1500)
       await nextTick()
-      expect(wrapper.find('.crumb-copy-btn').classes()).not.toContain('copied')
+      expect(btn.classes()).not.toContain('is-copied')
+      expect(btn.find('.lucide-copy').exists()).toBe(true)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('still shows copied feedback when copyText fails', async () => {
-    mockCopyText.mockImplementation((_text: string, _onSuccess?: () => void, onError?: () => void) => onError?.())
+  it('does not toast — the check is the feedback', async () => {
+    // The copy-button unification removed the success toast: the glyph swap
+    // already says "copied", and a toast said it a second time.
     const wrapper = mountBreadcrumb({ path: 'home/user' })
     await wrapper.find('.crumb-copy-btn').trigger('click')
-    expect(wrapper.find('.crumb-copy-btn').classes()).toContain('copied')
+    expect(mockToast.show).not.toHaveBeenCalled()
+  })
+
+  it('shows no feedback when copyText fails', async () => {
+    mockCopyText.mockImplementation(() => {})
+    const wrapper = mountBreadcrumb({ path: 'home/user' })
+    const btn = wrapper.find('.crumb-copy-btn')
+    await btn.trigger('click')
+    expect(btn.classes()).not.toContain('is-copied')
   })
 })

@@ -100,35 +100,31 @@
       >
         <MessageSquareQuote :size="12" />
       </button>
-      <button
+      <CopyButton
         v-if="showTextTools && !isRenderedView"
+        :copied="copied"
+        :size="12"
+        title-key="file.codePreview.copy"
+        copied-key="file.codePreview.copied"
         class="code-preview-btn"
-        :class="{ 'is-copied': copied }"
-        :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-        :aria-label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
         :data-tooltip="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
         @pointerenter="showTooltip($event, copied ? t('file.codePreview.copied') : t('file.codePreview.copy'))"
         @pointerleave="hideTooltip()"
         @click="$emit('copy')"
-      >
-        <Check v-if="copied" :size="12" />
-        <Copy v-else :size="12" />
-      </button>
+      />
 
       <!-- Copy Path -->
-      <button
+      <CopyButton
+        :copied="isPathCopied"
+        :size="12"
+        title-key="file.codePreview.copyPath"
+        copied-key="file.codePreview.pathCopied"
         class="code-preview-btn copy-path-btn"
-        :class="{ 'is-copied': isPathCopied }"
-        :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-        :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
         :data-tooltip="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
         @pointerenter="showTooltip($event, isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath'))"
         @pointerleave="hideTooltip()"
         @click="$emit('copy-path')"
-      >
-        <Check v-if="isPathCopied" :size="12" />
-        <Link v-else :size="12" />
-      </button>
+      ><template #icon><Link :size="12" /></template></CopyButton>
       <!-- Open Directory (reveal in tree) -->
       <button
         class="code-preview-btn"
@@ -183,7 +179,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, Copy, ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquareQuote, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
+import { ExternalLink, Eye, Folder, Hash, Link, Maximize2, MessageSquareQuote, RefreshCw, Search, TextWrap } from 'lucide-vue-next'
+import CopyButton from '@/components/common/CopyButton.vue'
 
 const { t } = useI18n()
 

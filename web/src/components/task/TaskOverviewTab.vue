@@ -60,6 +60,7 @@ import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
+import { copyText } from '@/utils/clipboard.ts'
 import { store } from '@/stores/app.ts'
 
 const { t } = useI18n()
@@ -94,10 +95,12 @@ let promptRenderId = 0
 // Code link preview for annotated file paths in the prompt body.
 const codeLinkPreview = useCodeLinkPreview({ containerRef: promptBodyRef, source: 'task' })
 
+// Clickable task id. This is TEXT, not a button, so it keeps its own affordance
+// rather than gaining a check glyph (the copy-button unification covers
+// buttons). Routed through copyText so the non-secure-context fallback applies
+// — the previous direct `navigator.clipboard` call silently did nothing there.
 function copyId() {
-  if (taskId.value) {
-    navigator.clipboard.writeText(String(taskId.value)).catch(() => {})
-  }
+  if (taskId.value) copyText(String(taskId.value))
 }
 
 const statusText = computed(() => {

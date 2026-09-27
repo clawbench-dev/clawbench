@@ -19,6 +19,7 @@
 import { useI18n } from 'vue-i18n'
 import { Copy as CopyIcon, X as XIcon, XCircle as XCircleIcon } from 'lucide-vue-next'
 import { useToast } from '@/composables/useToast'
+import { copyText } from '@/utils/clipboard'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 
 const props = defineProps<{
@@ -44,8 +45,13 @@ function handleClose() {
 
 function handleCopyPath() {
   emit('update:show', false)
-  navigator.clipboard.writeText(props.cwd).catch(() => {})
-  toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+  // Menu item, not a button: there is no element left on screen to flash a
+  // check on (the menu closes on this click), so the toast stays here. The
+  // clipboard write goes through the shared helper for the insecure-context
+  // fallback the previous direct call lacked.
+  copyText(props.cwd, () => {
+    toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
+  })
   emit('copyPath')
 }
 

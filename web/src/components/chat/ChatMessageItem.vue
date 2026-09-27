@@ -111,10 +111,12 @@
             </template>
           </button>
         </template>
-        <button v-if="!readOnly && !msg.streaming && (msg.role === 'assistant' || copyableUserText)" class="chat-action-btn" :class="{ 'is-copied': copied }" @click="handleCopyMessage" :title="copied ? t('common.copied') : t('chat.message.copy')" :aria-label="copied ? t('common.copied') : t('chat.message.copy')">
-          <span v-if="copied" class="chat-copy-copied-text">{{ t('common.copied') }}</span>
-          <Copy v-else :size="14" />
-        </button>
+        <CopyButton
+          v-if="!readOnly && !msg.streaming && (msg.role === 'assistant' || copyableUserText)"
+          :text="copyPayload"
+          title-key="chat.message.copy"
+          class="chat-action-btn"
+        />
         <template v-if="msg.role === 'assistant'">
           <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
             <Split :size="14" />
@@ -165,9 +167,8 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Copy, Split, Rewind, MessageSquareQuote } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
-import { copyText } from '@/utils/clipboard.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
@@ -180,6 +181,7 @@ import FileChangesDrawer from './FileChangesDrawer.vue'
 import FileDiffsDrawer from './FileDiffsDrawer.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
 const { t } = useI18n()
@@ -427,22 +429,15 @@ function handleOpenFilePayload(payload) {
   else openFilePath(relPath, lineStart, lineEnd, 'chat')
 }
 
-// Copy message markdown — only the final conclusion (last text block)
-const copied = ref(false)
-function handleCopyMessage() {
-  if (copied.value) return
-  // Role-appropriate payload: assistant reuses the read-aloud extraction (all
-  // text + AskUserQuestion blocks, falling back to the summary for the
-  // summary-only view); a user message copies its own content. `msgText` is
-  // assistant-only (it returns '' for user rows), so using it here would make
-  // the user bar's copy button a silent no-op.
-  const text = props.msg?.role === 'user' ? copyableUserText.value : msgText.value
-  if (!text) return
-  copyText(text, () => {
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 1500)
-  })
-}
+/**
+ * Payload for the copy button.
+ *
+ * Identical to `quotableText` above — both answer "the message's own text,
+ * role-appropriately". Kept as its own name so the copy button's intent reads
+ * at the call site, but it must not diverge from the quote payload: a message
+ * that can be quoted but not copied (or vice versa) is a bug.
+ */
+const copyPayload = quotableText
 </script>
 
 <style scoped>
@@ -554,16 +549,10 @@ function handleCopyMessage() {
     color: var(--accent-color, #0066cc);
 }
 
-/* Copy button "Copied" feedback state */
-.chat-action-btn.is-copied {
-    opacity: 1;
-    color: var(--accent-color);
-}
-
-.chat-copy-copied-text {
-    font-size: var(--font-size-xs);
-    font-weight: var(--font-weight-medium);
-}
+/* Copy-button feedback: the glyph swap and the success tint both come from the
+   shared CopyButton + css/copy-button.css. Do NOT add a `.is-copied` colour
+   here — a scoped rule compiles to (0,3,0) and would override the shared tint,
+   which is exactly the per-surface drift this unification removed. */
 
 @media (hover: hover) {
   .chat-action-btn.active:hover {
