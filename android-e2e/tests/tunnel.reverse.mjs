@@ -91,6 +91,98 @@ async function ensureReverseForward(serverPort = R_SERVER_PORT) {
   return wire;
 }
 
+/**
+ * Add a reverse forward for each port in `reservedPorts`, then assert — only
+ * once those adds have provably COMPLETED — that none of them ended up mapped.
+ *
+ * Why the obvious `waitFor(() => findReverse(p) ? null : true)` is not enough:
+ * that predicate is truthy on the FIRST poll, so it returns immediately and the
+ * assert that follows is an instantaneous sample despite the 15000ms budget.
+ * Meanwhile the add is asynchronous — the bridge only enqueues an intent; the
+ * work runs on `BackgroundService`'s single-thread `networkExecutor`
+ * (BackgroundService.java:202) — and `addReversePortForward` inserts the mapping
+ * OPTIMISTICALLY (`reversePorts.put`, :2122) BEFORE it calls `addReverse()`,
+ * which is where the server rejects a reserved port, and removes the entry only
+ * in the catch (:2151). For 20000/20001 (in range, so they pass the client guard
+ * at :2111) the mapping therefore transiently appears, and a slow network thread
+ * lets the optimistic put land between the sample and the assert: a spurious
+ * failure.
+ *
+ * The completion barrier is `barrierPort`: a valid unbind + add issued AFTER the
+ * rejected ones. Both ride the SAME single-thread executor
+ * (`networkExecutor`, BackgroundService.java:202) in FIFO order, so once the
+ * barrier's mapping is (re)listed every rejected add has fully returned —
+ * including the catch that removed the optimistic entry. Absence is asserted
+ * only after that, so the check cannot pass merely by running before the
+ * optimistic put landed, and it observes the settled state, not a transient one.
+ *
+ * The barrier is deliberately two-phase (unbind, wait until ABSENT, then add,
+ * wait until PRESENT). A bare "wait until present" would itself be the bug being
+ * fixed: if a previous test left the barrier port mapped, the predicate would be
+ * truthy on its first poll, before the remove/add pair had been processed. The
+ * "wait until absent" phase can be vacuous only when the port is already absent,
+ * which is exactly the state the subsequent add needs; the add is what carries
+ * the ordering guarantee.
+ *
+ * (A `clawbench-port-forward-result` event would be the most direct completion
+ * signal, but it is not observable here: `notifyPortForwardResult` dispatches it
+ * only through `BackgroundService.webViewRef`, which is set in
+ * `MainActivity.setupWebView` (:696) — and `updateWebViewRef` no-ops while the
+ * service instance is null (:543-547). In this cold-start fixture the service is
+ * created only by the first port op, after `setupWebView`, so the ref stays null
+ * and the event never reaches the page.)
+ *
+ * Returns the winning wire, so the caller can reuse this as its positive
+ * control.
+ */
+async function assertReverseAddsRejected(reservedPorts, barrierPort) {
+  await enterWebView();
+  // The barrier's valid bind must ride the h2 transport; make the helper
+  // self-contained rather than relying on a previous test having set it.
+  await bridge('setTunnelTransport', 'h2');
+
+  // Keep a baseline reverse mapping alive for the whole helper. Phase 1 below
+  // unbinds the barrier port, and `removeReversePortForward` calls `stopSelf()`
+  // when BOTH port maps are empty (BackgroundService.java:2181-2184) — so the
+  // unbind must never be the last mapping. Hence `barrierPort` must differ from
+  // the baseline: otherwise the unbind would tear the service (and tunnel) down
+  // and the barrier add could never appear.
+  assert.notEqual(
+    barrierPort,
+    R_SERVER_PORT,
+    'the barrier port must differ from the baseline port (R_SERVER_PORT)',
+  );
+  await ensureReverseForward(R_SERVER_PORT);
+
+  for (const port of reservedPorts) {
+    await bridge('addReverseForwardedPort', port, R_DEVICE_TARGET_PORT, '127.0.0.1');
+  }
+
+  // Completion barrier (also the spec's positive control: a valid bind must
+  // still work). Phase 1: drop any stale mapping, so phase 2 is a real
+  // unmapped -> mapped transition rather than an immediate truthy read. It is a
+  // no-op when the barrier port is already absent (the common case).
+  await bridge('removeReverseForwardedPort', barrierPort);
+  await waitFor(async () => ((await findReverse(barrierPort)) ? null : true), 30000,
+    `the barrier reverse mapping for ${barrierPort} to be absent before re-adding`);
+
+  // Phase 2: a fresh, valid add enqueued behind every rejected add.
+  await bridge('addReverseForwardedPort', barrierPort, R_DEVICE_TARGET_PORT, '127.0.0.1');
+  const wire = await waitForActiveWire(60000);
+  await waitFor(async () => (await findReverse(barrierPort)) || null, 30000,
+    `the barrier reverse mapping for ${barrierPort} to appear in getForwardedPorts()`);
+
+  for (const port of reservedPorts) {
+    assert.equal(
+      await findReverse(port),
+      undefined,
+      `a reverse mapping for the reserved port ${port} was accepted`,
+    );
+    console.log(`[tier2][-R] reserved port ${port} is not mapped`);
+  }
+  return wire;
+}
+
 describe('Tier 2 — h2 tunnel -R end-to-end', () => {
   const marker = `rev-${crypto.randomBytes(4).toString('hex')}`;
 
@@ -192,13 +284,24 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     await assertDeviceAnswer(p2, nonce2, 'second connection');
   });
 
-  it('does NOT spend the claim token when the device target is down', async () => {
-    // The single-use token invariant: claimIncoming dials the target BEFORE it
-    // opens the claim stream (H2PortForwardTransport.java:321-331), so a down
-    // target must leave the token unspent. This is the POSITIVE proof of that:
-    // the first probe fails, the target is restarted, and a SECOND probe on the
-    // SAME bound port must succeed. If the failed attempt had burned the token,
-    // the mapping would be permanently dead until a rebind.
+  it('keeps the reverse mapping alive (and still serves) when the device target is down', async () => {
+    // What this spec proves: a failed connection is PER-CONNECTION. The reverse
+    // mapping must survive it (it must not be unbound), and the SAME bound port
+    // must still serve once the target is back.
+    //
+    // What it does NOT prove — despite an earlier name that claimed it did — is
+    // that the single-use claim token went unspent. The server mints a FRESH
+    // token per accepted connection (`park()` per accept,
+    // internal/handler/tunnel_control.go:237 -> internal/tunnel/claim.go:75), so
+    // a second connection gets its own token no matter what happened to the
+    // first. A "claims before dialing" bug (H2PortForwardTransport.claimIncoming)
+    // would therefore NOT be caught here: the second probe would still succeed.
+    //
+    // The token-consumption invariant is pinned where it is observable, by the
+    // Android unit test
+    // `incoming_targetUnreachable_doesNotSpendTheToken`
+    // (android/app/src/test/java/com/clawbench/app/tunnel/H2PortForwardTransportTest.java:485-499),
+    // which asserts `claimedTokens.size() == 0` after a failed dial.
     await ensureReverseForward(R_SERVER_PORT);
 
     // Stop the device target so the dial fails.
@@ -239,23 +342,12 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     // a mapping that cannot work.
     await enterWebView();
 
-    for (const reserved of [20000, 20001]) {
-      await bridge('addReverseForwardedPort', reserved, R_DEVICE_TARGET_PORT, '127.0.0.1');
-      await waitFor(async () => ((await findReverse(reserved)) ? null : true), 15000,
-        `no reverse mapping to be created for the reserved port ${reserved}`);
-      assert.equal(
-        await findReverse(reserved),
-        undefined,
-        `a reverse mapping for the reserved port ${reserved} was accepted`,
-      );
-      console.log(`[tier2][-R] reserved port ${reserved} is not mapped`);
-    }
-
-    // POSITIVE CONTROL: the rejections must not have killed the tunnel. A valid
-    // bind on a fresh port must still work and carry a connection — otherwise
-    // "the reserved port is not mapped" would be equally true if the control
-    // stream had died.
-    const wire = await ensureReverseForward(R_SERVER_PORT_2);
+    // The barrier add doubles as the POSITIVE CONTROL: a valid bind on a fresh
+    // port must still work and carry a connection — otherwise "the reserved port
+    // is not mapped" would be equally true if the control stream had died. The
+    // mapping survival is asserted inside the helper (it must be listed); here
+    // we additionally carry real bytes through it.
+    const wire = await assertReverseAddsRejected([20000, 20001], R_SERVER_PORT_2);
     assert.ok(['tls', 'h2c'].includes(wire), `the tunnel died after the reserved-port rejections (wire="${wire}")`);
     const nonce = `after-reserved-${crypto.randomUUID()}`;
     const probe = await reverseProbe(R_SERVER_PORT_2, nonce, 10000);
@@ -267,23 +359,22 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
   });
 
   it('rejects an out-of-range server port (0) and still serves a valid bind', async () => {
-    // A port outside 1..65535 is rejected by the client before any bind is sent
-    // (BackgroundService.addReversePortForward's own guard). The pairing with a
-    // positive control is what makes this meaningful: it distinguishes
-    // "rejected this port" from "the tunnel died".
+    // A port outside 1..65535 is rejected before any bind is sent. Port 0 is
+    // dropped even earlier than the reserved ports: the service's intent
+    // dispatch (`BackgroundService.java:965`, `if (serverPort > 0)`) rejects it
+    // before `addReversePortForward` — and so before the optimistic put — ever
+    // runs, making absence already definitive. It is still routed through the
+    // same barrier helper so the positive control (a valid bind afterwards) is
+    // identical in shape to the reserved-port spec.
     await enterWebView();
-    await bridge('addReverseForwardedPort', 0, R_DEVICE_TARGET_PORT, '127.0.0.1');
-    await waitFor(async () => ((await findReverse(0)) ? null : true), 15000,
-      'no reverse mapping to be created for port 0');
-    assert.equal(await findReverse(0), undefined, 'a reverse mapping for port 0 was accepted');
-    console.log('[tier2][-R] out-of-range port 0 is not mapped');
-
-    // Positive control: the tunnel still works.
-    const wire = await ensureReverseForward(R_SERVER_PORT);
+    // The barrier port must differ from the baseline (R_SERVER_PORT); reuse the
+    // sibling port the previous spec cleaned up.
+    const wire = await assertReverseAddsRejected([0], R_SERVER_PORT_2);
     assert.ok(['tls', 'h2c'].includes(wire), `the tunnel died after the out-of-range rejection (wire="${wire}")`);
     const nonce = `after-range-${crypto.randomUUID()}`;
-    const probe = await reverseProbe(R_SERVER_PORT, nonce, 10000);
+    const probe = await reverseProbe(R_SERVER_PORT_2, nonce, 10000);
     await assertDeviceAnswer(probe, nonce, 'after the out-of-range rejection');
+    await bridge('removeReverseForwardedPort', R_SERVER_PORT_2);
   });
 
   it('removeReverseForwardedPort tears down a reverse relay that is IN FLIGHT', async () => {

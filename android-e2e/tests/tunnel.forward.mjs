@@ -595,6 +595,14 @@ describe('Tier 2 — h2 tunnel -L', () => {
       // from the server's 502) plus the raw message. Without this assertion the
       // negative test would only prove "no payload came back", which a silently
       // dropped connection would also satisfy.
+      //
+      // This assertion is COUPLED TO A LOG MESSAGE (the format below is emitted
+      // by H2PortForwardTransport.java:481-482). That coupling is unavoidable:
+      // there is no structured bridge surface for PER-CONNECTION errors —
+      // `getTunnelErrorType()` is SESSION-level and must stay empty here (that
+      // is asserted below). So logcat is the only witness for this
+      // classification. A future reader who rewrites that log line MUST update
+      // this spec (or introduce a structured surface for per-connection errors).
       const failureLine = await waitFor(async () => {
         const log = await readDeviceLog();
         return /H2: openStream \S+ failed: [A-Z_]+ .+/.exec(log)?.[0] ?? null;
