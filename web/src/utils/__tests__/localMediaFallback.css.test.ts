@@ -85,3 +85,88 @@ describe('failed-media hide rule (media-block.css contract)', () => {
     expect(rules.length).toBeGreaterThan(0)
   })
 })
+
+/** [classes+attrs+pseudo, elements] — ids are not used in this file. */
+function specOf(selector: string): [number, number] {
+  const classes =
+    (selector.match(/\.[\w-]+/g) ?? []).length +
+    (selector.match(/\[[^\]]*\]/g) ?? []).length +
+    (selector.match(/(?<!:):(?!:)[\w-]+/g) ?? []).length
+  const elements =
+    (selector.match(/(?:^|[\s>+~])[a-zA-Z][\w-]*/g) ?? []).length +
+    (selector.match(/::[\w-]+/g) ?? []).length
+  return [classes, elements]
+}
+
+/**
+ * The declaration that wins `prop` for an element carrying `targetClass`.
+ *
+ * Only the class itself is matched — no ancestor simulation. That is enough
+ * because a competitor's power to win is fully described by its specificity
+ * plus source order: an ancestor-scoped rule (`A .x`) still has to outrank (or
+ * tie-and-follow) the rule under test. Ties resolve to the later rule, which is
+ * what the browser does.
+ */
+function winnerFor(targetClass: string, prop: string, opts: { exclude?: RegExp } = {}) {
+  let best: { selector: string; value: string; spec: [number, number] } | null = null
+  // Source order: a rule that ties on specificity replaces the earlier winner,
+  // which is exactly how the cascade breaks ties.
+  for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    for (const raw of m[1].split(',')) {
+      const selector = raw.replace(/\s+/g, ' ').trim()
+      // The rightmost compound is the element the rule styles; `targetClass`
+      // must be one of its classes.
+      const target = selector.split(/[\s>+~]+/).pop() ?? ''
+      if (!target.split('.').includes(targetClass)) continue
+      if (opts.exclude?.test(selector)) continue
+      const decl = new RegExp(`(?:^|;)\\s*${prop}\\s*:\\s*([^;]+)`).exec(m[2])
+      if (!decl) continue
+      const spec = specOf(selector)
+      if (!best || spec[0] > best.spec[0] || (spec[0] === best.spec[0] && spec[1] >= best.spec[1])) {
+        best = { selector, value: decl[1].trim(), spec }
+      }
+    }
+  }
+  return best
+}
+
+describe('failed media draws exactly ONE frame (media-block.css contract)', () => {
+  /**
+   * A failed image in chat / share keeps the figure wrapper and gets the
+   * placeholder mounted INSIDE it (localMediaFallback.ts inserts after the
+   * <img>, which lives in `.lightbox-img-wrap`). Both used to draw a frame, so
+   * the two boxes sat flush and read as a single element with two borders and
+   * two corner radii — measured --radius-sm (6px) solid outside vs --radius-md
+   * (10px) dashed inside. The fix drops the FIGURE's frame so the placeholder's
+   * dashed border is the only one.
+   *
+   * jsdom has no cascade, so this resolves specificity + source order by hand
+   * rather than grepping for the rule — a newly added higher-specificity
+   * `border` on the figure must fail here instead of silently restoring the
+   * double frame.
+   */
+  it('the figure stops drawing its own border when its media is missing', () => {
+    const border = winnerFor('image-block-missing', 'border')
+    expect(border, 'a rule targeting .image-block-missing must set the border').not.toBeNull()
+    expect(border!.value, `figure border came back via ${border!.selector}`).toBe('none')
+  })
+
+  it('and stops rounding the figure, so the inner card is not clipped', () => {
+    // The base figure sets `overflow: hidden`. Leaving its 6px radius on would
+    // clip the placeholder's 10px corners even with the border gone — the
+    // radius mismatch would survive as a squared-off inner card.
+    const radius = winnerFor('image-block-missing', 'border-radius')
+    expect(radius, 'a rule targeting .image-block-missing must set border-radius').not.toBeNull()
+    expect(radius!.value, `figure radius came back via ${radius!.selector}`).toBe('0')
+  })
+
+  it('the placeholder keeps the dashed frame it is now the sole owner of', () => {
+    // Guarding only the figure's removal would pass just as well if BOTH frames
+    // were deleted, leaving a borderless smudge. The non-fill variant is the
+    // one mounted inside a figure; `--fill` (viewers with nothing else to show)
+    // deliberately has no frame of its own.
+    const border = winnerFor('media-load-error', 'border', { exclude: /--fill/ })
+    expect(border, 'the placeholder must still declare a border').not.toBeNull()
+    expect(border!.value, `placeholder frame lost: ${border!.value}`).toMatch(/dashed/)
+  })
+})
