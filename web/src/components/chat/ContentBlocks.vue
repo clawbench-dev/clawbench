@@ -1606,13 +1606,6 @@ function getThinkingHtml(bi: number, block: any) {
     return getThinkingTextHtml(src, bi, block)
   }
   if (block.think_id) {
-    // DIAG (stuck top thinking block): this branch is what renders the
-    // "perpetually loading" chip — a block that HAS an identity (so the header
-    // shows the spinner path) but has neither live deltas nor cached prefix.
-    // Log the full decision state once per render so the next report pins the
-    // cause instead of guessing: is it a live block the backend never finished,
-    // a marker whose lazy-load 404'd, or a request still in flight?
-    diagLog(TAG, `thinking placeholder: msgId=${props.msgId} bi=${bi} think_id=${block.think_id} done=${block.done} in_progress=${block.in_progress} parent=${block.parent_tool_call_id || 'TOP'} cached=${thinkingContent.cachedText(block.think_id) === undefined ? 'none' : 'yes'} loading=${!!thinkingContent.loading.value[block.think_id]} err=${thinkingContent.errors.value[block.think_id] || 'none'} streaming=${props.streaming} active=${props.active} totalBlocks=${props.blocks?.length || 0}`)
     if (thinkingContent.errors.value[block.think_id]) {
       return `<div class="thinking-load-error"><span>${t('chat.contentBlocks.thinkingLoadFailed')}</span><button class="thinking-retry-btn" onclick="this.closest('.chat-thinking').querySelector('.thinking-header').click()">${t('chat.contentBlocks.retry')}</button></div>`
     }
