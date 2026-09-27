@@ -14,6 +14,7 @@ import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
+import { isTransportError } from '@/utils/networkError'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 import { syncFromHistory, clearQueue } from '@/composables/useMessageQueue.ts'
@@ -730,7 +731,14 @@ export function useChatSession(options: UseChatSessionOptions) {
           setTimeout(() => loadHistory(next.forceScrollBottom, next.showOverlay, next.skipIfUnchanged, next.immediate), 0)
           return
         }
-        throw new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status }))
+        // Attach the HTTP status so the catch below can tell this apart from a
+        // transport failure by structure, not by message text — the server's
+        // error body could itself contain "failed to fetch" (e.g. a proxy's
+        // upstream error) and message sniffing would then swallow a real
+        // server-side failure. Same convention as apiGet/apiPost.
+        const httpErr = new Error(errData.error || gt('chat.session.requestFailed', { status: resp.status })) as Error & { status?: number }
+        httpErr.status = resp.status
+        throw httpErr
       }
       const data = await resp.json()
       // Re-check after JSON parse (another async boundary)
@@ -758,8 +766,20 @@ export function useChatSession(options: UseChatSessionOptions) {
       }
     } catch (err: unknown) {
       appLog.e(TAG, 'Failed to load chat history:', err)
+      // A transport-layer failure (the request never reached the server —
+      // `TypeError: Failed to fetch` on a dropped connection) is NOT surfaced
+      // as a toast. This is the normal state right after the app returns to
+      // the foreground: onAppResume fires an authoritative reload immediately,
+      // before the radio has reconnected, so the fetch rejects — and then the
+      // WS reconnects on its own and re-syncs the session. A toast describing
+      // that already-healed blip is noise, and connectivity is already
+      // expressed by the global ConnectionOverlay and the header status dot.
+      // HTTP-layer failures (server answered with non-2xx) still toast: the
+      // request DID reach the server, so the failure is actionable.
       const _msg = err instanceof Error ? err.message : ''
-      toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: '⚠️', type: 'error' })
+      if (!isTransportError(err)) {
+        toast.show(_msg ? gt('chat.session.loadHistoryFailedDetail', { error: _msg }) : gt('chat.session.loadHistoryFailed'), { icon: '⚠️', type: 'error' })
+      }
       loadHistoryInProgress = false
       if (pendingReload) {
         const next = pendingReload
