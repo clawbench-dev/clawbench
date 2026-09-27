@@ -254,35 +254,6 @@
       />
     </div>
 
-    <!-- Touch-layout nav: floating bar at the bottom-center of the content area.
-         Semi-transparent at rest; fully opaque on hover/focus. Wide screens get
-         the same actions in the header instead, so this stays mobile-only. -->
-    <div
-      v-if="floatingNavVisible"
-      class="file-nav-float"
-    >
-      <button
-        v-if="canNavigateBack || fileNav.canGoBack.value"
-        class="file-nav-btn"
-        type="button"
-        :title="backLabel || t('file.overlay.back')"
-        :aria-label="backLabel || t('file.overlay.back')"
-        @click.stop="handleNavBack"
-      >
-        <ArrowLeft :size="18" />
-      </button>
-      <button
-        v-if="fileNav.canGoForward.value"
-        class="file-nav-btn"
-        type="button"
-        :title="t('file.overlay.forward')"
-        :aria-label="t('file.overlay.forward')"
-        @click.stop="handleNavForward"
-      >
-        <ArrowRight :size="18" />
-      </button>
-    </div>
-
     <!-- Shared diff drawer for all file types -->
     <DiffDrawer
       :visible="diffDrawer.effectiveOpen.value"
@@ -298,7 +269,7 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { Download, Code2, AlertTriangle, Share2, ArrowLeft, ArrowRight } from 'lucide-vue-next'
+import { Download, Code2, AlertTriangle, Share2 } from 'lucide-vue-next'
 import UnsupportedFileBody from './UnsupportedFileBody.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
@@ -321,10 +292,8 @@ import { getFileType } from '@/utils/fileType.ts'
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
-import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
-import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 import { isAbsolutePath } from '@/utils/path.ts'
@@ -334,7 +303,6 @@ import { getNative } from '@/utils/clawbenchNative'
 
 const { t, locale } = useI18n()
 const { isAppMode } = useAppMode()
-const { isWideScreen } = getWideScreenState()
 const toast = useToast()
 const { drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
 // diffDrawer is imported from useMarkdownDiff (encapsulated TabDrawer)
@@ -356,14 +324,6 @@ const props = defineProps({
 const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
 
 const fileNav = useFileNavStack()
-const { active: textSelecting } = useTextSelectionActive()
-// Navigation lives in the header on wide screens; the floating bar is for touch.
-const floatingNavVisible = computed(() =>
-  !isWideScreen.value
-  && fileNav.overlayOpen.value
-  && !textSelecting.value
-  && (props.canNavigateBack || fileNav.canGoBack.value || fileNav.canGoForward.value)
-)
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
@@ -870,55 +830,6 @@ defineExpose({
 }
 .file-viewer-body[data-toc-side="left"] .toc-dock {
     order: 0;
-}
-
-/* Floating history nav (back/forward) overlaid on the content area.
-   Semi-transparent at rest; fully opaque on hover/focus so it never obscures
-   the code while remaining easy to reach. */
-.file-nav-float {
-    position: absolute;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: var(--space-5);
-    z-index: 5;
-    opacity: var(--opacity-muted);
-    transition: opacity var(--duration-base);
-    pointer-events: none;
-}
-
-@media (hover: hover) {
-  .file-nav-float:hover,
-  .file-nav-float:focus-within {
-      opacity: 1;
-  }
-}
-
-.file-nav-float .file-nav-btn {
-    pointer-events: auto;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
-    background: var(--bg-primary, #fff);
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-    transition: background var(--duration-base), color var(--duration-base), transform var(--duration-fast);
-}
-
-.file-nav-float .file-nav-btn:not(:disabled):active {
-    background: var(--bg-tertiary);
-    transform: scale(0.94);
-}
-
-.file-nav-float .file-nav-btn:disabled {
-    opacity: var(--opacity-disabled);
-    cursor: default;
 }
 
 /* The placeholder layout (icon / title / desc / actions) lives in

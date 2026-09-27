@@ -922,7 +922,7 @@ describe('FileHeader', () => {
     })
   })
 
-  describe('wide-screen back navigation', () => {
+  describe('header back navigation', () => {
     beforeEach(() => {
       mockIsWideScreen.value = true
     })
@@ -963,11 +963,11 @@ describe('FileHeader', () => {
       expect(wrapper.find('.file-header-nav').exists()).toBe(false)
     })
 
-    it('hides the nav cluster on narrow (touch) layouts, which use the floating bar', () => {
+    it('shows the nav cluster on narrow (touch) layouts too — there is no mobile-only bar', () => {
       mockIsWideScreen.value = false
       const wrapper = mountHeader({ canNavigateBack: true })
-      expect(wrapper.find('.file-header-nav').exists()).toBe(false)
-      expect(wrapper.find('.file-header-back-btn').exists()).toBe(false)
+      expect(wrapper.find('.file-header-nav').exists()).toBe(true)
+      expect(wrapper.find('.file-header-back-btn').exists()).toBe(true)
     })
   })
 })
