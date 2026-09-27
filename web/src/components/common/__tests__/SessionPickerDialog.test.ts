@@ -69,6 +69,7 @@ vi.mock('@/components/common/LoadingIndicator.vue', () => ({
 }))
 
 import SessionPickerDialog from '@/components/common/SessionPickerDialog.vue'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 const SESSIONS = [
   { id: 's-1', title: 'First session', agentId: 'a-codebuddy' },
@@ -143,6 +144,34 @@ describe('SessionPickerDialog', () => {
     expect(wrapper.findAll('.sp-run-spinner').length).toBe(0)
   })
 
+  // ── Row separators ──
+  // Rows are divided by a hairline. jsdom does not apply scoped CSS, so the
+  // rules themselves are asserted at source level; here we only pin the DOM
+  // shape the `:first-child` rule depends on: the first row IS the list's first
+  // element child (no separator above it), and the create row is last.
+
+  it('keeps the first row as the list\'s first child and create as the last', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const list = wrapper.find('.session-picker-list').element
+    expect(list.children[0].classList.contains('sp-row')).toBe(true)
+    expect(list.children[0].classList.contains('sp-row-create')).toBe(false)
+    const last = list.children[list.children.length - 1]
+    expect(last.classList.contains('sp-row-create')).toBe(true)
+  })
+
+  it('draws the row separator as a top border, suppressed on the first row', () => {
+    // jsdom does not apply the component's scoped CSS, so assert the rules
+    // themselves — a silent drop would leave the list undivided.
+    const src = readWebFile('src/components/common/SessionPickerDialog.vue')
+    const css = src.slice(src.indexOf('<style'))
+    expect(css).toMatch(/\.sp-row\s*\{[^}]*border-top:\s*1px solid var\(--border-color/)
+    // Without this the header's bottom border and the first row's top border
+    // stack into a visibly heavier double line.
+    expect(css).toMatch(/\.sp-row:first-child\s*\{\s*border-top:\s*none/)
+  })
+
   it('marks and pins the currently-open session to the top', async () => {
     currentIdRef().value = 's-3'
     const wrapper = mountPicker()
@@ -185,8 +214,27 @@ describe('SessionPickerDialog', () => {
     const wrapper = mountPicker()
     await flushPromises()
     expect(wrapper.findAll('.sp-row:not(.sp-row-create) .sp-goto').length).toBe(3)
-    // The create row is a different action, so it has no goto button.
+    // The create row is a different action, so it has no goto BUTTON. It shows a
+    // decorative arrow instead — assert it is not a button so it cannot be
+    // mistaken for (or focus into) a second action.
     expect(wrapper.find('.sp-row-create .sp-goto').exists()).toBe(false)
+    const arrow = wrapper.find('.sp-row-create .sp-create-arrow')
+    expect(arrow.exists()).toBe(true)
+    expect(arrow.element.tagName).toBe('SPAN')
+    expect(arrow.attributes('aria-hidden')).toBe('true')
+  })
+
+  it('labels the create row as 新会话 and keeps it a single action', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const create = wrapper.find('.sp-row-create')
+    // quoteBar.newSession is the "新会话" wording (session.newSession, used by
+    // the session-list header, stays "新建会话").
+    expect(create.text()).toContain('quoteBar.newSession')
+    expect(create.text()).not.toContain('session.newSession')
+    // One action: the arrow is not interactive, so the whole row is the target.
+    expect(create.findAll('button').length).toBe(0)
   })
 
   it('emits select-and-open (not select) when the goto button is clicked', async () => {

@@ -55,7 +55,10 @@
 
         <!-- Create a session with the DEFAULT agent and send the payload there.
              Deliberately no agent choice: the user is picking a destination for
-             an already-composed message, not configuring a conversation. -->
+             an already-composed message, not configuring a conversation.
+             The trailing arrow is decorative, not a second action — the row
+             itself is the only target, and the arrow just says "leads
+             somewhere" in the same visual slot the session rows use. -->
         <div
           class="sp-row sp-row-create"
           role="button"
@@ -65,7 +68,10 @@
           @keydown.space.prevent="handleCreate"
         >
           <Plus :size="15" />
-          <span class="sp-title">{{ t('session.newSession') }}</span>
+          <span class="sp-title">{{ t('quoteBar.newSession') }}</span>
+          <span class="sp-create-arrow" aria-hidden="true">
+            <ArrowRight :size="14" />
+          </span>
         </div>
       </template>
     </div>
@@ -227,7 +233,9 @@ function handleClose() {
 
 /* Single line per row. `min-height` rather than a fixed `height` so a taller
    trailing spinner (or a longer fallback title) grows the row instead of being
-   clipped. */
+   clipped.
+   The separator is a TOP border (the session list's convention) so it spans the
+   full row width including the trailing gutter. */
 .sp-row {
   position: relative;
   display: flex;
@@ -236,11 +244,18 @@ function handleClose() {
   min-height: 32px;
   padding: 0 var(--space-6);
   border: none;
+  border-top: 1px solid var(--border-color, #dee2e6);
   background: none;
   cursor: pointer;
   text-align: left;
   color: var(--text-primary);
   transition: background var(--duration-base);
+}
+
+/* No rule above the first row: the list's own top padding already separates it
+   from the header, so a line there just reads as a stray extra edge. */
+.session-picker-list > .sp-row:first-child {
+  border-top: none;
 }
 
 .sp-title {
@@ -358,6 +373,23 @@ function handleClose() {
 .sp-row-create svg {
   flex-shrink: 0;
   color: var(--text-muted);
+}
+
+/* Trailing arrow on the create row: the same visual slot the session rows put
+   their goto button in, but always visible (it is decoration, not an action),
+   and muted so it does not read as a second tap target. */
+.sp-create-arrow {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--text-muted);
+}
+
+.sp-create-arrow svg {
+  flex-shrink: 0;
 }
 
 .sp-empty {
