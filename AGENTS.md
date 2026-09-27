@@ -103,14 +103,15 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 | 模块 | 职责 |
 |------|------|
-| `window.ts` | 主窗口创建、原生上下文菜单（cut/copy/paste 走 OS role，copy-link/copy-image 按语言翻译）、外部链接拦截交给默认浏览器 |
+| `window.ts` | 主窗口创建（Windows/Linux 无边框，macOS 原生帧）、最小化/最大化/关闭三个自绘控制的 IPC、原生上下文菜单（cut/copy/paste 走 OS role，copy-link/copy-image 按语言翻译）、外部链接拦截交给默认浏览器 |
+| `windowChrome.ts` | 无边框窗口的平台判定（纯模块、无 electron import、可单测）：Windows/Linux 自绘控制簇，macOS 保留原生交通灯，未知平台回退原生帧 |
 | `splash.ts` | 登录/启动加载屏（对齐 Android splash）：页面加载成功后才淡出；复用页面时必须清掉上一次的淡出类，且加载成功要取消连接超时 |
 | `bridge.ts` | IPC 桥：服务器列表/凭据、SSH 端口映射、文件下载、分享、系统通知、主题、语言、日志捕获、屏幕常亮 |
 | `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
 | `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
 | `notification.ts` | 原生系统通知，点击导航到会话/任务/仓库（冷启动挂起派发，经 `navReady` 的 `rendererReady()` 握手后才放行）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
 | `clientLog.ts` | 主进程日志回传：缓冲 POST `/api/client-log`（`source="electron"`）+ 写 `{userData}/desktop.log`；镜像渲染进程 console，`recordError` 上报未捕获异常 |
-| `identity.ts` | `APP_USER_MODEL_ID`（Windows toast 身份），**必须与 `electron-builder.yml` 的 `appId` 一致**——该 yml 不随包分发，运行时读不到，漂移会让 Windows 通知静默消失；`identity.test.ts` 守住 |
+| `identity.ts` | `APP_USER_MODEL_ID`（Windows toast 身份），**必须与 `electron-builder.yml` 的 `appId` 一致**——该 yml 不随包分发，运行时读不到，漂移会让 Windows 通知静默消失；`identity.test.ts` 守住。Linux 任务栏图标另依赖 `desktop/package.json` 的 `desktopName`（决定窗口 `app_id`），**不能改 `productName`**——那会挪动 userData 目录、丢用户配置 |
 | `urlPolicy.ts` / `contextMenu.ts` | 外部链接判定（以服务器 Origin 为边界）与原生右键菜单（标准项走 OS role 本地化） |
 | `navReady.ts` / `session.ts` | 渲染进程就绪握手、会话缓存强刷 |
 | `shortcuts.ts` | 应用级快捷键决策表（`before-input-event` 只认领 Ctrl+Shift+R / F12，F5 等一律放行给页面），不 import electron 便于单测 |

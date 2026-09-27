@@ -11,8 +11,11 @@ ClawBench 桌面端是基于 Electron 的跨平台客户端（Windows / macOS / 
 ```mermaid
 flowchart TD
     A[启动 app] --> B[initStore + registerBridge]
-    B --> C[createMainWindow]
-    C --> D{已配置 serverUrl?}
+    B --> C{平台是 Windows / Linux?}
+    C -->|是| C1[无边框窗口<br/>AppHeader 自绘最小化/最大化/关闭]
+    C -->|否| C2[原生帧<br/>macOS 保留左上角交通灯]
+    C1 --> D{已配置 serverUrl?}
+    C2 --> D
     D -->|是| E[loadURL 加载服务器]
     D -->|否| F[内置登录页选择服务器]
     E --> G[用户点击链接/右键]
@@ -22,6 +25,8 @@ flowchart TD
     G --> K[原生上下文菜单]
     K --> L[剪切/复制/粘贴走系统 role<br/>复制链接/复制图片按语言翻译]
 ```
+
+窗口形态在创建时由平台决定：Windows / Linux 无边框（控制簇由 Web UI 画在 header 右侧），macOS 保留原生帧（系统交通灯在左上角）。**只有 Windows / Linux 自绘**是因为两平台的控件位置惯例相反——macOS 的左上角交通灯有极强的肌肉记忆，把控制搬到右上角会与用户预期冲突；而 macOS 若只隐藏标题栏保留交通灯，header 右侧就会出现一个空簇或"按平台静默不同的 header"，不如保留原生帧来得更小更可预测。
 
 外部链接判断以服务器 Origin 为边界，且用**白名单**而非黑名单：只有 `http`/`https`/`mailto`/`tel` 会被处理，其余（`file:`、`javascript:`、`data:`、自定义协议，以及无法解析的 URL）一律 `block`——绝不交给 OS 协议处理器或窗口。白名单内的 URL 再按 Origin 分流：等于服务器 Origin 的在窗口内导航，否则交给默认浏览器。这样 AI 生成的 localhost 端口 URL 与同服务器资源仍可在窗口内使用，而第三方链接不会劫持应用窗口。
 
@@ -50,6 +55,7 @@ sequenceDiagram
 ### 功能清单
 
 - **桌面窗口**：主窗口默认 1280×800，连接配置的服务器地址；首次启动或服务器不可达时展示内置登录页供选择服务器，避免出现空白窗口
+- **无边框窗口与自绘窗口控制（Windows / Linux）**：这两个平台去掉原生标题栏，改在 AppHeader 最右侧画最小化 / 最大化-还原 / 关闭三个按钮；**macOS 保留原生帧**，其左上角交通灯不动，Android / 浏览器不显示。平台判定只有一份（`desktop/src/main/windowChrome.ts`，纯模块、无 electron import、可单测），经同步 IPC 回答渲染层"是否自绘控制"——渲染层**不得按 UA 自行推断**（sandboxed preload 拿不到 UA，且第二份平台表会静默漂移）。未知平台一律回退原生帧：无边框却没有可用控制簇的窗口无法关闭或移动，是最坏结果。窗口是否最大化以**窗口本身为权威**，中间按钮只做 toggle 而非自行维护状态（`maximize`/`unmaximize` 事件回推给渲染层），避免两侧状态分歧
 - **登录/启动加载屏**：窗口创建后先展示一个原生加载屏（对齐 Android 的 splash），覆盖在页面之上，等页面加载成功（`did-finish-load`）后再淡出——用户看到的不是一片空白或半成品页面。**页面加载成功必须取消连接超时**，否则一次成功的加载也会被上一轮的超时计时器误判；**复用同一个浮层页面时必须清除上一次的淡出类**，否则第二次连接时浮层整层透明、看起来像没显示
 - **原生上下文菜单**：Electron 原生右键菜单覆盖可编辑输入框（剪切/复制/粘贴）、文本选择（复制）、链接（复制链接）、图片（复制图片）。剪切/复制/粘贴使用 Electron role 由操作系统自动本地化，仅复制链接/复制图片两个自定义项按当前应用语言提供文案
 - **外部链接默认浏览器打开**：白名单协议（`http`/`https`/`mailto`/`tel`）中，指向服务器 Origin 之外的链接交给系统默认浏览器打开；同服务器 Origin 的链接在窗口内导航；白名单之外的协议一律阻止
@@ -120,6 +126,7 @@ flowchart TD
 
 ### 设计要点
 
+- **平台判定只能有一份，且无边框必须配套拖拽区**：无边框窗口默认不可拖动，拖拽要靠 header 的 `-webkit-app-region: drag` 提供——而拖拽豁免（`no-drag`）只能给**控件**，绝不能给会吃掉剩余空间的填空容器（一个 `flex:1` 的容器列进豁免清单会让整条 header 拖不动）。平台判定同样如此：渲染层若自己再写一份"是不是桌面壳/什么系统"的推断，就与主进程的表静默漂移，且 sandboxed preload 拿不到 UA。因此平台相关决策全部落在主进程的纯模块里，渲染层只消费 IPC 结果
 - **桌面端是壳而非重实现**：桌面端只提供 Web 环境之外的桌面能力（窗口、菜单、通知、隧道、保存对话框），业务逻辑全部复用服务器 + Web 前端。同一套 Vue App 在浏览器、PWA、Android、桌面端共享，桌面端不维护自己的功能副本
 - **桌面壳不是"手机 App 模式"**：桌面端与 Android 都通过原生桥被前端识别为"原生环境"，但两者的省电策略截然相反——Android 窗口退到后台会被系统挂起，因此隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在运行，断开 WS 等于自断通知来源。因此前端必须区分 `isDesktopApp`，门控写成 `isAppMode && !isDesktopApp`。这个区分要从 preload 一路贯通到消费点（preload → `useAppMode` → 各分支），任何一层漏掉都会让最小化后的推送静默失效
 - **`isDesktopApp` 还要参与 `isPC` 判定**：Electron 的 preload 上报 `isNativeApp()=true`，而 `isPC` 原先只看 `isAppMode`，于是整个桌面端被判定为移动端——文件快捷预览弹 BottomSheet 而非桌面浮卡，文件管理器点选语义、终端 PC 工具栏、输入框滑动提示等一并走移动分支。Electron 是有物理键盘鼠标的桌面窗口，必须直接判为 PC；Android/iOS/iPadOS 与 Android 原生 App 仍按移动端处理
