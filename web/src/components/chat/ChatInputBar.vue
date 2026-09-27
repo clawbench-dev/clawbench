@@ -2140,7 +2140,13 @@ defineExpose({
   cursor: pointer;
   color: var(--text-muted, #999);
   padding:5px var(--space-4);
-  border-radius: var(--radius-xs);
+  /* Square corners on purpose (design-guide: a literal 0 states "this one is
+     meant to be square"). The button paints no fill at rest, so a radius only
+     ever shows on hover/active — and it clashes with the running-session sweep
+     (.has-running::before), whose straight-edged band gets its corners clipped
+     by a rounded box and reads as a truncated stripe. A square box lets the
+     sweep run edge to edge. */
+  border-radius: 0;
   font-size: var(--font-size-xs);
   line-height: 1;
   transition: color var(--duration-base), background var(--duration-base), transform var(--duration-fast);
