@@ -105,6 +105,12 @@ describe('ClocStatsPanel', () => {
     expect(text).toContain('合计')
     // Chart got the cloc bar option.
     expect(chartOptions.length).toBeGreaterThan(0)
+    // The bar is a hairline over a full-width track — the same geometry as the
+    // usage bar chart, so both panels read as one system. Asserted against a
+    // literal (not BAR_MAX_WIDTH) so a drifted constant fails here too.
+    const series = (chartOptions.at(-1) as { series: { barMaxWidth?: number; showBackground?: boolean }[] }).series[0]
+    expect(series.barMaxWidth).toBeLessThanOrEqual(6)
+    expect(series.showBackground).toBe(true)
     // Total row values.
     const rows = wrapper.findAll('.stats-table tbody tr')
     expect(rows.length).toBe(4) // 3 languages + total

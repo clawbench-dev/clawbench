@@ -389,7 +389,7 @@ function chartOptionFor(m: UsageMetricId) {
   const categories = rows.map(r => labelOf(r))
   if (filter.value.chartType === 'pie') {
     const values = rows.map(r => rowValueOf(r, m))
-    return buildPieOption(categories, values, m)
+    return buildPieOption(categories, values, m, t(metricLabelKey(m)))
   }
   if (filter.value.chartType === 'trend') {
     const trend = rawTrend.value
@@ -465,6 +465,9 @@ const cacheDonutOption = computed(() => {
     tt?.cacheMiss ?? 0,
     t('stats.cacheHitShort'),
     t('stats.cacheMissShort'),
+    // The center must read the same input total as the overview card, not the
+    // hit+miss sum (which drifts when a row has input but no cache split).
+    tt?.input ?? 0,
   )
 })
 function onOverviewSliceClick(params: Record<string, unknown>) {
