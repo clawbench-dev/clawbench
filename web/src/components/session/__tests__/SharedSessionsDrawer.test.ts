@@ -214,9 +214,13 @@ describe('SharedSessionsDrawer', () => {
     const wrapper = mountDrawer()
     await openAndLoad(wrapper)
 
-    await wrapper.findAll('.shared-session-btn')[1].trigger('click')
+    const copyBtn = wrapper.findAll('.shared-session-btn')[1]
+    await copyBtn.trigger('click')
     expect(h.copyText).toHaveBeenCalledWith('https://host.example/share/tok1')
-    expect(h.toastShow).toHaveBeenCalled()
+    // Feedback is the shared check glyph, not a toast (same contract as the
+    // shared-files drawer's copy button).
+    expect(copyBtn.classes()).toContain('is-copied')
+    expect(h.toastShow).not.toHaveBeenCalled()
   })
 
   it('routes the open-in-new-tab click through openExternalUrl', async () => {
