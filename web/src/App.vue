@@ -365,6 +365,16 @@
         @unpin="quoteQuestion.unpinBar()"
       />
 
+      <!-- Conversation picker: shown only when the chat panel is off screen, so
+           the destination of a quote/attachment is ambiguous. -->
+      <SessionPickerDialog
+        :open="sessionPickerOpen"
+        @select="confirmTarget({ kind: 'session', id: $event })"
+        @select-and-open="confirmTarget({ kind: 'session', id: $event }, { openAfter: true })"
+        @create="confirmTarget({ kind: 'create' })"
+        @close="cancelTarget()"
+      />
+
       <!-- Session drawer — bound to chat tab, auto-closes when leaving chat -->
       <SessionDrawer
         ref="sessionDrawerRef"
@@ -549,6 +559,8 @@ import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
+import { setActiveTabGetter, setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
+import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
@@ -1287,7 +1299,7 @@ function refreshWallpaper() {
   const nextUrl = resolveWallpaperUrl(file, false)
   if (nextUrl !== wallpaperUrl.value) wallpaperFailed.value = false
   wallpaperUrl.value = nextUrl
-  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false, wave)
+  applyWallpaper(file ?? '', resolvePanelOpacity(localConfig.panelOpacity), dark, false, wave)
 
   scheduleBingFirstImagePoll()
 }
@@ -1319,10 +1331,11 @@ onUnmounted(() => {
 // Apply whenever the server config (re)loads — covers cold start (after
 // loadConfig resolves), PATCH round-trips and project switches.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
-// Local display prefs (blur / edge fade / wave speed) change instantly without
-// a server round-trip. Wave speed only feeds a prop; the component adjusts its
-// own timeScale without rebuilding the canvas or resetting the phase.
-watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
+// Local display prefs (panel opacity / blur / edge fade / wave speed) change
+// instantly without a server round-trip. Wave speed only feeds a prop; the
+// component adjusts its own timeScale without rebuilding the canvas or
+// resetting the phase.
+watch(() => [localConfig.panelOpacity, localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
@@ -1669,6 +1682,22 @@ const { chatKeyboardHeight } = useChatKeyboard()
 const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
 
 const quoteQuestion = useQuoteQuestion()
+// The conversation picker decides whether to pop by asking "can the user see
+// the chat panel?". `activeTab` lives here (not in the layout module), so
+// inject a getter once rather than coupling the dispatcher to App state.
+setActiveTabGetter(() => activeTab.value)
+// "Add and open" needs to reveal the chat panel, which is a tab switch only
+// App owns — switchSession alone would change the session behind another tab.
+setOpenSessionHandler((sessionId) => {
+  // Wide screen: `switchTab('chat')` RETURNS EARLY (chat is not a left-column
+  // tab), so it does NOT reveal a chat column the user has hidden. Without this
+  // the session would switch behind the still-hidden panel and "add and open"
+  // would look identical to a plain add — the two actions must not converge.
+  if (isWideScreen.value && chatCollapsed.value) setChatCollapsed(false)
+  switchTab('chat')
+  handleSessionSelect(sessionId)
+})
+const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 

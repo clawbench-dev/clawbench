@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { appLog, setLogCaptureEnabled, stopFlushTimer, _clearBuffer } from '@/utils/appLog'
+import { appLog, setLogCaptureEnabled, stopFlushTimer, _clearBuffer, diagLog, _resetDiagFlush } from '@/utils/appLog'
 
 describe('appLog console output', () => {
   it('appLog.d calls console.log with [tag] prefix', () => {
@@ -362,5 +362,65 @@ describe('appLog HTTP relay', () => {
     const countAfterDisable = fetchSpy.mock.calls.length
     await new Promise(r => setTimeout(r, 2500))
     expect(fetchSpy.mock.calls.length).toBe(countAfterDisable)
+  })
+})
+
+describe('diagLog (ungated diagnostic channel)', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    _clearBuffer()
+    fetchSpy = vi.fn()
+    vi.stubGlobal('fetch', fetchSpy)
+  })
+  afterEach(() => {
+    _resetDiagFlush()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    _clearBuffer()
+  })
+
+  it('coalesces a burst into a single request', async () => {
+    // A diagnostic on a render or per-delta path fires thousands of times per
+    // turn. An earlier version POSTed on every call, and one session produced
+    // ~80k requests from a single placeholder log. The debounce is what makes
+    // those call sites affordable, so it is pinned here.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchSpy.mockResolvedValue({ ok: true })
+    setLogCaptureEnabled(false)
+    _clearBuffer()
+
+    for (let i = 0; i < 50; i++) diagLog('ContentBlocks', `line ${i}`)
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled(), { timeout: 3000 })
+    await new Promise(r => setTimeout(r, 400)) // no second flush follows
+    expect(fetchSpy, 'a burst must coalesce, not POST per line').toHaveBeenCalledTimes(1)
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body).entries).toHaveLength(50)
+  })
+
+  it('reaches the server even when logCapture is disabled', async () => {
+    // The point of the channel: logCapture defaults to off, so a field report
+    // would otherwise leave client.log empty and the bug undiagnosable.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchSpy.mockResolvedValue({ ok: true })
+    setLogCaptureEnabled(false)
+    _clearBuffer()
+
+    diagLog('ChatStream', 'stall block[0]: done=false in_progress=true')
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled(), { timeout: 3000 })
+    const body = JSON.parse(fetchSpy.mock.calls[0][1].body)
+    expect(body.entries).toHaveLength(1)
+    expect(body.entries[0].msg).toContain('stall block[0]')
+    expect(body.entries[0].tag).toBe('DIAG:ChatStream')
+  })
+
+  it('does not break the caller when the relay request fails', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchSpy.mockRejectedValue(new Error('offline'))
+    setLogCaptureEnabled(false)
+    _clearBuffer()
+
+    expect(() => diagLog('ChatStream', 'x')).not.toThrow()
+    await new Promise(r => setTimeout(r, 50))
   })
 })

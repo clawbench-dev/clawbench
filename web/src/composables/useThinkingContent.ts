@@ -1,5 +1,5 @@
 import { ref, reactive } from 'vue'
-import { appLog } from '@/utils/appLog'
+import { appLog, diagLog } from '@/utils/appLog'
 import { getShareThinking } from '@/share/shareMode'
 
 const TAG = 'ThinkingContent'
@@ -111,15 +111,18 @@ async function doFetch(thinkId: string, msgId: string | number, sessionId?: stri
     resp = await fetch(url)
   } catch (e) {
     appLog.w(TAG, 'thinking fetch failed:', e)
+    diagLog(TAG, `fetch threw: tid=${thinkId} msgId=${msgId} err=${e instanceof Error ? e.message : String(e)}`)
     throw e
   }
   if (!resp.ok) {
     appLog.w(TAG, 'thinking fetch failed:', resp.status)
+    diagLog(TAG, `fetch not ok: tid=${thinkId} msgId=${msgId} status=${resp.status}`)
     throw new Error(`thinking fetch failed: ${resp.status}`)
   }
   const data = await resp.json()
   if (!data.text) {
     appLog.w(TAG, 'thinking text empty for', thinkId)
+    diagLog(TAG, `fetch empty text: tid=${thinkId} msgId=${msgId}`)
     throw new Error('thinking text empty')
   }
   // A clear during the request means the rows this text came from are gone

@@ -10,10 +10,7 @@
       <div v-if="showCollapsed" class="quote-bar-row" @click="expand()" @pointerdown="onRowPointerDown">
         <div class="qq-quoted-snippet qq-quoted-snippet--inline">
           <span class="qq-quoted-text">{{ displayQuoteText }}</span>
-          <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
-            <span v-if="copied" class="qq-copied-text">{{ t('common.copied') }}</span>
-            <Copy v-else :size="14" />
-          </button>
+          <CopyButton :text="quoteData?.text || ''" class="qq-copy-btn" @click.stop />
         </div>
         <button class="quote-bar-add" @click.stop="handleAdd" :title="t('quoteBar.addToChat')" :aria-label="t('quoteBar.addToChat')">
           <Plus :size="14" />
@@ -27,10 +24,7 @@
              message directly. -->
         <div v-if="quoteData" class="qq-quoted-snippet">
           <span class="qq-quoted-text qq-quoted-text--expanded">{{ displayQuoteText }}</span>
-          <button class="qq-copy-btn" :class="{ 'is-copied': copied }" @click.stop="handleCopyQuote" :title="copied ? t('common.copied') : t('common.copy')" :aria-label="copied ? t('common.copied') : t('common.copy')">
-            <span v-if="copied" class="qq-copied-text">{{ t('common.copied') }}</span>
-            <Copy v-else :size="14" />
-          </button>
+          <CopyButton :text="quoteData?.text || ''" class="qq-copy-btn" @click.stop />
         </div>
 
         <!-- Pending quote target (composer mode only): the file or issue/PR the
@@ -71,12 +65,12 @@
 </template>
 
 <script setup>
-import { Plus, Send, Copy, Link } from 'lucide-vue-next'
+import { Plus, Send, Link } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { truncateQuoteText, canSendInput } from '@/utils/quoteQuestionUtils'
-import { copyText } from '@/utils/clipboard.ts'
 import FileIcon from '@/components/common/FileIcon.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 
 const { t } = useI18n()
 
@@ -97,8 +91,6 @@ const expanded = ref(false)
 const inputText = ref('')
 const inputRef = ref(null)
 const barRef = ref(null)
-const copied = ref(false)
-let copyTimer = null
 
 // Quote text: single-line preview while collapsed, full text once expanded.
 const displayQuoteText = computed(() => {
@@ -131,8 +123,6 @@ function onVisibleChange(val) {
   if (!val) {
     expanded.value = false
     inputText.value = ''
-    copied.value = false
-    clearTimeout(copyTimer)
   }
 }
 
@@ -206,7 +196,6 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('pointerdown', onPointerDown, true)
   document.removeEventListener('keydown', onKeyDown, true)
-  clearTimeout(copyTimer)
 })
 
 async function expand() {
@@ -254,19 +243,7 @@ function handleAdd() {
   inputText.value = ''
 }
 
-// Copy the quoted text to the clipboard. Shows a brief Check feedback on the
-// button. @click.stop keeps the collapsed row's expand() from firing.
-function handleCopyQuote() {
-  const text = props.quoteData?.text || ''
-  if (!text) return
-  copyText(text, () => {
-    copied.value = true
-    clearTimeout(copyTimer)
-    copyTimer = setTimeout(() => { copied.value = false }, 1500)
-  })
-}
-
-defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChange, inputRef, inputText, copied, handleCopyQuote })
+defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChange, inputRef, inputText })
 </script>
 
 <style scoped>
@@ -334,8 +311,13 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
 
 /* Copy button — floats at the snippet's top-right, overlaying the text.
    position:absolute keeps it out of the text flow (see .qq-quoted-snippet).
-   Width is auto so the "已复制" feedback text fits; min-width keeps the
-   icon-only idle state square. Square corners like every other control here. */
+   Fixed 22px square: the copied state swaps the icon for a Check rather than
+   swapping in a text label, so the button's footprint never changes. A label
+   would grow the button LEFTWARD (it is pinned to `right`), sliding it over the
+   quote text — and since the reservation is a fixed 24px, the only way to keep
+   a label clear would be to reserve the widest translation (~99px), which is
+   the dead space this bar just got rid of. Square corners like every other
+   control here. */
 .qq-copy-btn {
   position: absolute;
   top: 2px;
@@ -343,9 +325,9 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   display: flex;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
+  width: 22px;
   height: 22px;
-  padding: 0 var(--space-2);
+  padding: 0;
   border: none;
   border-radius: var(--radius-xs);
   background: transparent;
@@ -361,17 +343,9 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   }
 }
 
-/* Copied feedback state — shows "已复制" text (same pattern as ChatMessageItem) */
-.qq-copy-btn.is-copied {
-  color: var(--accent-color);
-  background: transparent;
-}
-
-.qq-copied-text {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-}
+/* Copied feedback: the glyph swap comes from CopyButton; the tint is the
+   shared `.copy-btn.is-copied` rule in css/copy-button.css. Nothing to add
+   here — the button keeps this bar's 22px geometry in both states. */
 
 /* ===== Expanded panel ===== */
 .quote-bar-expanded {
@@ -403,12 +377,14 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
    on the overflow element itself). Without this, a long unbreakable line (e.g.
    a selected table rendered as text) stretches the text element to near-full
    width, so its vertical scrollbar lands mid-bar instead of at the right edge.
-   max-width leaves room for the floating copy button; the 8px right padding
-   keeps the scrollbar clear of it. */
+   The 24px is the copy button's real footprint (22px wide + its 2px inset) and
+   is the ONLY reservation made for it — see the padding-right override on
+   .qq-quoted-text--expanded below. Reserving it twice left a dead strip on the
+   right that made the quote read as if it never filled the bar. */
 .qq-quoted-text--expanded {
   flex: 1;
   min-width: 0;
-  max-width: calc(100% - 40px);
+  max-width: calc(100% - 24px);
 }
 
 /* Collapsed inline variant — single row, no flex-start. Matches the expanded
@@ -439,6 +415,10 @@ defineExpose({ expanded, showCollapsed, expand, displayQuoteText, onVisibleChang
   text-overflow: clip;
   word-break: break-word;
   max-height: 120px;
+  /* The expanded state reserves the copy button via max-width instead (see the
+     geometry rule above). Keeping the base 24px here as well would subtract the
+     same space twice and leave the text ~40px short of the bar's right edge. */
+  padding-right: 0;
 }
 
 /* ===== Pending attachment chip (composer mode) =====

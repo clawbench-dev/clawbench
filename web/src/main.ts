@@ -7,6 +7,10 @@ installPromiseWithResolversPolyfill()
 // only when the chosen family is actually used in rendered text).
 import '@/assets/self-hosted-fonts.css'
 
+// Theme picker rows (app-header + terminal toolbars). Global because both
+// pickers are teleported to <body>; see the file header for the design.
+import '@/assets/theme-picker.css'
+
 import { createApp } from 'vue'
 import App from './App.vue'
 import i18n from './i18n'

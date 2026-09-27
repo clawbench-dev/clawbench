@@ -278,7 +278,7 @@ const cards = computed<RenderCard[]>(() => {
         }
         // The wallpaper panel-opacity slider is rendered inside the dedicated
         // WallpaperSetting component, not as a generic SettingsItem row.
-        if (entry.spec.key !== 'appearance.panel_opacity') {
+        if (entry.spec.key !== 'panelOpacity') {
           cur.items.push(entry.spec)
         }
       } else {

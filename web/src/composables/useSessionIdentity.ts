@@ -5,6 +5,7 @@ import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
 import { useChatContext } from '@/composables/useChatContext'
 import { buildSendPayload } from '@/utils/fileAttachmentUtils'
+import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { getRecentSession, clearRecentSession, registerSessionIdRef } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
 import { apiPost } from '@/utils/api'
@@ -490,6 +491,18 @@ let _createSession: ((agentId?: string) => Promise<void>) | null = null
 let _archiveSession: ((sessionId: string, backend?: string) => Promise<void>) | null = null
 let _destroySession: ((sessionId: string) => Promise<void>) | null = null
 let _sendMessage: ((text: string) => Promise<void>) | null = null
+/**
+ * Enqueue a message into an ARBITRARY session, without switching to it.
+ *
+ * The registered `_sendMessage` above is bound to the session on screen: the
+ * ChatPanel handler reads the live input's staged quotes and the current
+ * session id, so it cannot be pointed at another session. The session picker
+ * needs exactly that — "send this to that conversation and stay here" — so it
+ * goes through the unified enqueue path instead, which the backend resolves to
+ * "start a turn" (idle) or "hand to the drain loop" (running). The DingTalk /
+ * Feishu push bots already send into sessions nobody is watching the same way.
+ */
+let _enqueueToSession: ((sessionId: string, text: string, entries: FileEntry[], queueId?: string) => Promise<boolean>) | null = null
 let _openChatPanel: (() => void) | null = null
 let _continueFromExecution: ((taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>) | null = null
 let _checkContinueSession: ((taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>) | null = null
@@ -506,6 +519,12 @@ export interface SessionActions {
   archiveSession: (sessionId: string, backend?: string) => Promise<void>
   destroySession: (sessionId: string) => Promise<void>
   sendMessage: (text: string) => Promise<void>
+  /**
+   * Send a message to a specific session without switching to it. Registered by
+   * ChatPanel (which owns the enqueue path). Optional so callers that only need
+   * the switch/create actions (e.g. App.vue's early registration) can omit it.
+   */
+  enqueueToSession?: (sessionId: string, text: string, entries: FileEntry[], queueId?: string) => Promise<boolean>
   openChatPanel: () => void
   continueFromExecution: (taskId: number, execId: number, switchTabFn: (tab: string) => void) => Promise<boolean>
   checkContinueSession: (taskId: number, execId: number) => Promise<{ exists: boolean; sessionId: string }>
@@ -527,6 +546,7 @@ export function registerSessionActions(actions: SessionActions) {
   _archiveSession = actions.archiveSession
   _destroySession = actions.destroySession
   _sendMessage = actions.sendMessage
+  if (actions.enqueueToSession) _enqueueToSession = actions.enqueueToSession
   _openChatPanel = actions.openChatPanel
   _continueFromExecution = actions.continueFromExecution
   _checkContinueSession = actions.checkContinueSession
@@ -758,6 +778,60 @@ export function useSessionIdentity() {
   }
 
   /**
+   * Send a message to a SPECIFIC session without switching to it.
+   *
+   * Delegates to ChatPanel's registered enqueue path. Unlike `sendMessage`,
+   * this never touches the live input or the current session's staged quotes —
+   * the caller supplies the fully-materialised entries — so it is safe to use
+   * while the user is looking at a different conversation.
+   *
+   * Returns false when the path is unavailable (ChatPanel not mounted) or the
+   * request failed, so the caller can report it instead of claiming success.
+   */
+  async function enqueueToSession(sessionId: string, text: string, entries: FileEntry[], queueId?: string): Promise<boolean> {
+    if (!sessionId) return false
+    if (!_enqueueToSession) {
+      appLog.w(TAG, 'enqueueToSession: chat panel not mounted, cannot send to another session')
+      return false
+    }
+    return await _enqueueToSession(sessionId, text, entries, queueId)
+  }
+
+  /**
+   * Create a new session WITHOUT switching to it.
+   *
+   * The canonical createSession path clears the panel and switches (it exists to
+   * open the session you just made). The session picker needs the opposite: a
+   * destination for a message, while the user stays where they are. A bare POST
+   * is exactly that — the backend resolves the default agent when no agentId is
+   * given — so this deliberately does not touch identity or the message list.
+   *
+   * Returns the new session id, or '' on failure.
+   */
+  async function createSessionInBackground(): Promise<string> {
+    try {
+      const resp = await fetch('/api/ai/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      })
+      const data = await resp.json()
+      if (!resp.ok || !data.ok || !data.sessionId) {
+        appLog.w(TAG, `createSessionInBackground failed: ${resp.status}`)
+        return ''
+      }
+      // The session list (sidebar/drawer) is otherwise unaware of the new row.
+      // Bumping the shared version is the same signal a tag edit uses.
+      store.state.sessionListVersion++
+      if (typeof data.sessionCount === 'number') store.state.sessionCount = data.sessionCount
+      return data.sessionId as string
+    } catch (err) {
+      appLog.e(TAG, 'createSessionInBackground failed:', err)
+      return ''
+    }
+  }
+
+  /**
    * Delete a session. Delegates to ChatPanel if available.
    */
   async function archiveSession(sessionId: string, backend?: string) {
@@ -919,9 +993,11 @@ export function useSessionIdentity() {
     // Action proxies
     switchSession,
     createSession,
+    createSessionInBackground,
     archiveSession,
     destroySession,
     sendMessage,
+    enqueueToSession,
     openChatPanel,
     openSessionTab,
     closeSessionDrawer,

@@ -135,39 +135,6 @@ export function statusLabelSimple(
 }
 
 /**
- * Format an ISO timestamp into a human-readable relative or absolute time string.
- * - < 1 min: "just now"
- * - < 1 hour: "X minutes ago/from now"
- * - < 1 day: "X hours ago/from now"
- * - else: locale date string
- */
-export function formatTime(
-  iso: string | null | undefined,
-  locale: string,
-  t: (key: string, params?: Record<string, unknown>) => string
-): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const now = new Date()
-  const diff = d.getTime() - now.getTime()
-  const absDiff = Math.abs(diff)
-  if (absDiff < 60000) return t('chat.contentBlocks.justNow')
-  if (absDiff < 3600000) {
-    const count = Math.round(absDiff / 60000)
-    return diff > 0
-      ? t('chat.contentBlocks.minutesFromNow', { count })
-      : t('chat.contentBlocks.minutesAgo', { count })
-  }
-  if (absDiff < 86400000) {
-    const count = Math.round(absDiff / 3600000)
-    return diff > 0
-      ? t('chat.contentBlocks.hoursFromNow', { count })
-      : t('chat.contentBlocks.hoursAgo', { count })
-  }
-  return d.toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US')
-}
-
-/**
  * Generate a short summary for an ask-question block.
  * Returns the first question's header if available, otherwise the question text.
  */

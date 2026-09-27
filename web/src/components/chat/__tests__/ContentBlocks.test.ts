@@ -57,8 +57,13 @@ vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdownHtml: (text: string, opts?: unknown) => mockRenderMarkdownHtml(text, opts),
 }))
 
-vi.mock('@/utils/appLog', () => ({
+vi.mock('@/utils/appLog', async (importOriginal) => ({
+  // Spread the real module so a NEW export is not undefined here (a hand-listed
+  // mock silently breaks every caller that uses one the list forgot), then stub
+  // diagLog: the real one POSTs, which would consume this file's fetch mocks.
+  ...(await importOriginal<typeof import('@/utils/appLog')>()),
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+  diagLog: vi.fn(),
 }))
 
 vi.mock('@/utils/api', () => ({
@@ -102,7 +107,6 @@ vi.mock('@/utils/contentBlocks.ts', () => ({
   statusClass: (task: any) => `status-${task.status}`,
   statusLabel: (task: any, t: any) => task.status,
   statusLabelSimple: (task: any, t: any) => task.status,
-  formatTime: (iso: any) => iso,
   askQuestionSummary: (input: any) => input?.question || '',
   extractAskQuestions: (input: any) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return []
@@ -2828,5 +2832,85 @@ describe('provisional thinking text is replaced on finish', () => {
     })
     await flushPromises(); await nextTick()
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('done thinking blocks auto-load their text', () => {
+  it('loads a done block that is expanded, instead of leaving dots forever', async () => {
+    // The reported "stuck thinking block": a block carrying a think_id but no
+    // cached text renders three pulsing dots, because every automatic path
+    // excluded it — the in_progress watcher (it is done) and the provisional
+    // refetch (its text was never fetched mid-stream).
+    //
+    // A COLLAPSED one is fine to defer to a click (that is the intended lazy
+    // path). The bug was that expanding did not reliably produce a load either:
+    // an earlier version scoped the auto-load to a fixed tail window, so a done
+    // block early in a long streaming message (msgId=54604: indices
+    // 0,5,7,10,14,17) never loaded no matter what the user did. Visibility is
+    // now the predicate.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_stuck', text: 'the reasoning' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const w = mountBlocks({
+      msgId: '54368', sessionId: 's1', streaming: true, active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_stuck', done: true }],
+    })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    // Expand it: the visible block must now load and show real content.
+    await w.find('.thinking-header').trigger('click')
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    expect(fetchMock, 'an expanded done block must load').toHaveBeenCalled()
+    const html = w.find('.thinking-inline-content').html()
+    expect(html).toContain('the reasoning')
+    expect(html).not.toContain('placeholder-dots')
+  })
+
+  it('loads a done block far from the tail once it is expanded', async () => {
+    // Regression for msgId=54604: a done thinking block at index 0 of a long
+    // streaming message must load when expanded, even though it is nowhere near
+    // the tail (the old position window excluded it forever).
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_head', text: 'head reasoning' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blocks: any[] = [{ type: 'thinking', think_id: 'th_head', done: true }]
+    for (let i = 0; i < 30; i++) blocks.push({ type: 'tool_use', name: 'Read', done: true })
+
+    const w = mountBlocks({
+      msgId: '54604', sessionId: 's1', streaming: true, active: true, blocks,
+    })
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    await w.find('.thinking-header').trigger('click')
+    await flushPromises(); await nextTick()
+    await w.vm.$forceUpdate(); await nextTick()
+
+    expect(fetchMock, 'a non-tail done block must load when expanded').toHaveBeenCalled()
+    expect(w.find('.thinking-inline-content').html()).toContain('head reasoning')
+  })
+
+  it('does not load every collapsed done block (no request storm)', async () => {
+    // A long conversation carries hundreds of done blocks. Only visible ones
+    // (expanded, or the streaming tail) may load automatically.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_x', text: 'x' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const blocks = Array.from({ length: 40 }, (_, i) => ({
+      type: 'thinking', think_id: `th_${i}`, done: true,
+    }))
+    mountBlocks({ msgId: 'm1', sessionId: 's1', streaming: false, active: true, blocks })
+    await flushPromises(); await nextTick()
+
+    expect(fetchMock, 'a finished, fully-collapsed history must not bulk-load').not.toHaveBeenCalled()
   })
 })

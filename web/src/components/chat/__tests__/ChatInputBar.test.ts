@@ -487,8 +487,11 @@ const stubs = {
 }
 
 describe('ChatInputBar', () => {
-  function mountBar(props = {}) {
+  function mountBar(props = {}, { attachTo }: { attachTo?: Element } = {}) {
     return mount(ChatInputBar, {
+      // jsdom only moves document.activeElement for an element that is actually
+      // in the document, so focus assertions need attachTo.
+      ...(attachTo ? { attachTo } : {}),
       props: {
         inputDisabled: false,
         currentSessionId: '',
@@ -949,14 +952,18 @@ describe('ChatInputBar', () => {
     expect(archiveBtn.classes()).toContain('disabled')
   })
 
-  it('archive button is the LAST button in the session group', () => {
+  it('archive button is the LAST session action button in the action bar', () => {
     // Archive is the terminal/destructive action on the session, so it sits at
-    // the far right of the group rather than between the navigation buttons.
+    // the far right of the session buttons (before the auto-speech / refresh
+    // toggles) rather than between the navigation buttons.
     const wrapper = mountBar({ currentSessionId: 'sess-1' })
-    const group = wrapper.find('.chat-action-group')
-    const buttons = group.findAll('.chat-action-btn')
-    expect(buttons.length).toBeGreaterThan(1)
-    expect(buttons[buttons.length - 1].classes()).toContain('chat-action-btn-archive')
+    const children = Array.from(wrapper.find('.chat-top-actions').element.children) as HTMLElement[]
+    const archiveIdx = children.findIndex(el => el.classList.contains('chat-action-btn-archive'))
+    const speakIdx = children.findIndex(el => el.classList.contains('auto-speech-btn'))
+    expect(archiveIdx).toBeGreaterThan(-1)
+    expect(speakIdx).toBeGreaterThan(archiveIdx)
+    // The button right before archive is another action button (not a group label).
+    expect(children[archiveIdx - 1].classList.contains('chat-action-btn')).toBe(true)
   })
 
   it('archive button is enabled when currentSessionId exists', () => {
@@ -3139,6 +3146,193 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.inputText).toBe('采纳的建议')
     expect(wrapper.vm.showRecommendationChip).toBe(false)
     wrapper.unmount()
+  })
+
+  // ── Accept confirmation animation (采纳确认动效) ──────────
+  //
+  // Accepting used to be observable only as "the chip vanished": the text
+  // landing in the input box is easy to miss, and rec.accept() dismisses the
+  // entry synchronously, so the banner was already gone by the next paint. The
+  // confirmation is a held window during which the banner stays up showing a
+  // checkmark.
+
+  it('holds the banner with a checkmark while confirming, then retires it', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Confirmation window: the underlying recommendation is already dismissed
+    // (rec.accept()), yet the banner must still be on screen — this is the whole
+    // point, so assert BOTH halves.
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+    // The snapshot keeps the label from blanking out mid-animation.
+    expect(wrapper.vm.displayedRecommendation).toBe('采纳我')
+    expect(wrapper.vm.inputText).toBe('采纳我')
+
+    // The button reads as confirmed and the container pulses.
+    const acceptBtn = wrapper.find('.recommendation-accept')
+    expect(acceptBtn.classes()).toContain('accepted')
+    expect(wrapper.find('.recommendation-chip').classes()).toContain('accepted')
+    expect(wrapper.find('.chat-input-container').classes()).toContain('accept-pulse')
+    // The checkmark replaces the plain label — that is the actual "confirm"
+    // signal, so pin it rather than trusting the class alone.
+    expect(acceptBtn.find('.recommendation-accept-check').exists()).toBe(true)
+    // It cannot be accepted twice.
+    expect(acceptBtn.attributes('disabled')).toBeDefined()
+
+    vi.advanceTimersByTime(650)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    expect(wrapper.find('.chat-input-container').classes()).not.toContain('accept-pulse')
+
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('focuses the textarea with the caret after the filled text on accept', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG }, { attachTo: document.body })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('落点')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    const ta = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+    expect(document.activeElement).toBe(ta)
+    expect(ta.selectionStart).toBe(2)
+    wrapper.unmount()
+  })
+
+  it('a new recommendation supersedes an in-flight confirmation', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('第一条')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+
+    dispatchRecommendation('第二条')
+    await wrapper.vm.$nextTick()
+    // The stale confirmation must not keep the banner showing the OLD text, and
+    // the new recommendation must be visible immediately.
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    expect(wrapper.vm.displayedRecommendation).toBe('第二条')
+
+    // The superseded timer must not fire later and tear the new banner down.
+    vi.advanceTimersByTime(650)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    expect(wrapper.vm.displayedRecommendation).toBe('第二条')
+
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('a session switch clears an in-flight confirmation', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+
+    await wrapper.setProps({ currentSessionId: 's2', messages: [] })
+    await wrapper.vm.$nextTick()
+    // The confirmation is per-session feedback; s2 must not inherit s1's chip.
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('streaming starting clears an in-flight confirmation', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+
+    await wrapper.setProps({ loading: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('cancels the accept confirmation timer on unmount', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+
+    // The accept timer is identified by its delay (the confirmation window),
+    // which is unique among the bar's timers. Asserting on a bare timer COUNT
+    // would not work: onBeforeUnmount also clears unrelated timers (placeholder
+    // rotation, paste overlay, action-bar measure), so the count drops either
+    // way and the mutation survives.
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    const acceptIds = setTimeoutSpy.mock.calls
+      .map((c, i) => ({ ms: c[1], id: setTimeoutSpy.mock.results[i].value }))
+      .filter(x => x.ms === 650)
+    expect(acceptIds, 'accept must schedule exactly one confirmation timer').toHaveLength(1)
+
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    wrapper.unmount()
+    expect(
+      clearTimeoutSpy.mock.calls.some(c => c[0] === acceptIds[0].id),
+      'unmount must cancel the pending accept timer',
+    ).toBe(true)
+    // restoreMocks is not enabled for this suite, so these spies would otherwise
+    // keep wrapping the globals for every later test in the file.
+    setTimeoutSpy.mockRestore()
+    clearTimeoutSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('resolves the confirmation label in both locales', () => {
+    const en = createI18n({ legacy: false, locale: 'en', messages: { en: enLocale } })
+    const zh = createI18n({ legacy: false, locale: 'zh', messages: { zh: zhLocale } })
+    expect(en.global.t('tool.askUser.recommendationFilled')).toBe('Filled')
+    expect(zh.global.t('tool.askUser.recommendationFilled')).toBe('已填入')
+  })
+
+  it('drops the motion but keeps the static confirmation under reduced motion', async () => {
+    // jsdom has no CSS engine, so this is a source guard — the same pattern the
+    // flash family uses. The green button/checkmark is functional feedback and
+    // must survive; the pop and the ring pulse are decorative and must not.
+    const mod = await import('../ChatInputBar.vue?raw')
+    const source = String(mod.default)
+    // Slice from the LAST reduced-motion media query: an earlier one (the banner
+    // slide transition) also exists, and a lazy match from the first would span
+    // both — passing even with the accept rules absent.
+    const start = source.lastIndexOf('@media (prefers-reduced-motion: reduce)')
+    expect(start, 'a reduced-motion block must exist').toBeGreaterThan(-1)
+    const block = source.slice(start)
+    expect(block).toMatch(/\.recommendation-accept\.accepted\s*\{[^}]*animation: none/)
+    expect(block).toMatch(/\.chat-input-container\.accept-pulse\s*\{[^}]*animation: none/)
+    // The static green confirmation is NOT disabled by the reduced-motion block.
+    expect(source).toContain('.recommendation-accept.accepted {')
+    expect(source).toContain('background: var(--color-success')
   })
 
   it('ignores recommendation with empty text', async () => {

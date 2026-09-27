@@ -161,16 +161,16 @@
         >
           <GitBranch :size="14" class="item-icon" />
           <span class="item-label">{{ b.name }}</span>
-          <button
+          <!-- Per-row copy button. Feedback state lives inside the button, so
+               clicking one branch checks only that row — no shared
+               "which branch was copied" state to keep in sync. -->
+          <CopyButton
+            :text="b.name"
+            :size="13"
+            title-key="appHeader.copyBranchName"
             class="item-copy-btn"
-            :class="{ 'is-copied': copiedBranch === b.name }"
-            :title="copiedBranch === b.name ? t('common.copied') : t('appHeader.copyBranchName')"
-            :aria-label="copiedBranch === b.name ? t('common.copied') : t('appHeader.copyBranchName')"
-            @click.stop="copyBranchName(b.name)"
-          >
-            <Check v-if="copiedBranch === b.name" :size="13" />
-            <Copy v-else :size="13" />
-          </button>
+            @click.stop
+          />
         </div>
       </div>
       <div class="menu-divider"></div>
@@ -218,7 +218,11 @@
             @keydown.enter="selectTheme(opt.value)"
             @keydown.space.prevent="selectTheme(opt.value)"
           >
-            <span class="theme-item-check">{{ currentThemeValue === opt.value ? '✓' : '' }}</span>
+            <span
+              class="theme-swatch"
+              :class="{ 'theme-swatch--auto': opt.value === 'auto' }"
+              aria-hidden="true"
+            ></span>
             <span class="theme-item-name">{{ opt.label }}</span>
             <component :is="getThemeBaseIcon(opt.value)" :size="12" class="theme-item-base-icon" />
           </button>
@@ -294,7 +298,7 @@
 </template>
 
 <script setup lang="ts">
-import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Copy, Check, Minus } from 'lucide-vue-next'
+import { Projector, Search, GitBranch, Server, FileText, Settings2, SlidersHorizontal, FolderOpen, FolderTree, X, Palette, Sun, Moon, Minus } from 'lucide-vue-next'
 import { ref, computed, onMounted, onUnmounted, inject, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
@@ -307,11 +311,11 @@ import { setPendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import PopupMenu from '@/components/common/PopupMenu.vue'
 import SystemResourcesPanel from '@/components/common/SystemResourcesPanel.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import HintTooltip from '@/components/common/HintTooltip.vue'
 import ShortcutTipTicker from '@/components/common/ShortcutTipTicker.vue'
 import { useRecentFiles } from '@/composables/useRecentFiles'
 import { useMenuKeyboard } from '@/composables/useMenuKeyboard'
-import { copyText } from '@/utils/clipboard'
 import { useDialog } from '@/composables/useDialog.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { localConfig, setLocalConfig } from '@/composables/useSettingsConfig'
@@ -398,10 +402,13 @@ function openAboutSettings() {
   switchTab?.('settings')
 }
 
+/** Per-row preview colours consumed by assets/theme-picker.css: the swatch
+ *  background and the sun/moon tint. The row surface itself stays neutral, so
+ *  the theme's foreground colour is no longer needed. */
 function getThemePreviewStyle(value: string) {
   const c = value === 'auto' ? autoPreviewColors.value : getThemePreviewColor(value)
   if (!c) return undefined
-  return { '--tterm-preview-bg': c.bg, '--tterm-preview-fg': c.text, '--tterm-preview-accent': c.accent }
+  return { '--tterm-preview-bg': c.bg, '--tterm-preview-accent': c.accent }
 }
 
 function getThemeBaseIcon(value: string) {
@@ -510,30 +517,6 @@ async function loadBranches() {
 const dirtyModalOpen = ref(false)
 const dirtyBranch = ref('')
 const dirtyCount = ref(0)
-
-/**
- * Copy a branch name from the quick-index, flashing a check on that row for a
- * moment. Only the header's branch list has this button, so the feedback state
- * lives here rather than in a shared composable.
- */
-const copiedBranch = ref('')
-let copiedBranchTimer: ReturnType<typeof setTimeout> | null = null
-
-function copyBranchName(name: string) {
-    if (!name) return
-    copyText(name, () => {
-        copiedBranch.value = name
-        if (copiedBranchTimer) clearTimeout(copiedBranchTimer)
-        copiedBranchTimer = setTimeout(() => {
-            copiedBranch.value = ''
-            copiedBranchTimer = null
-        }, 1500)
-    })
-}
-
-onUnmounted(() => {
-    if (copiedBranchTimer) clearTimeout(copiedBranchTimer)
-})
 
 async function selectBranch(b: BranchEntry) {
     branchDropdownOpen.value = false
@@ -1892,30 +1875,11 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 .app-menu-column > :not(.app-menu-scroll) {
   flex-shrink: 0;
 }
-.theme-item + .theme-item { border-top: 1px solid var(--border-color); }
-.theme-item {
-  display: flex; align-items: center; gap: var(--space-3);
-  width: 100%; padding:5px var(--space-5); border: none; border-radius: 0;
-  background: var(--tterm-preview-bg, transparent);
-  color: var(--tterm-preview-fg, var(--text-primary));
-  font-size: var(--font-size-sm); text-align: left; cursor: pointer;
-  transition: background var(--duration-fast), box-shadow var(--duration-fast);
-}
+/* The .theme-item row rules live in assets/theme-picker.css — shared with the
+   terminal toolbar picker (both popups are teleported to <body>). Only the
+   focus ring is header-specific, since the terminal rows are not tabbable. */
 .theme-item:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: -2px;
 }
-/* 预览底色不变，hover 加 accent 全边框高亮 */
-@media (hover: hover) {
-  .theme-item:hover {
-    background: var(--tterm-preview-bg, transparent);
-    box-shadow: inset 0 0 0 1px var(--accent-color);
-  }
-}
-.theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
-.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
-.theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
-.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
-.theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
-.theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

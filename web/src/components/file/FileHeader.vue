@@ -1,9 +1,9 @@
 <template>
   <div class="file-header-bar">
-    <!-- Wide-screen only: navigation cluster at the top-left, where desktop users
-         expect a back affordance. Touch layouts keep these on the bottom-center
-         floating bar instead (thumb reach + no room in the header). -->
-    <div v-if="isWideScreen && (canNavigateBack || canGoBackFile || canGoForwardFile)" class="file-header-nav">
+    <!-- Navigation cluster at the top-left: view back/forward plus in-file jump
+         history. Same control set on every layout, touch included — there is no
+         separate floating bar for narrow screens. -->
+    <div v-if="canNavigateBack || canGoBackFile || canGoForwardFile" class="file-header-nav">
       <button
         v-if="canNavigateBack || canGoBackFile"
         class="file-header-btn file-header-back-btn"
@@ -608,7 +608,7 @@ onBeforeUnmount(() => {
     min-width: 0;
 }
 
-/* Wide-screen navigation cluster (back / forward) pinned to the top-left. */
+/* Navigation cluster (back / forward) pinned to the top-left. */
 .file-header-nav {
     display: flex;
     align-items: center;

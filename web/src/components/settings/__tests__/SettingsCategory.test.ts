@@ -644,7 +644,6 @@ describe('SettingsCategory', () => {
         ...serverConfig.value,
         appearance: {
           active_file: 'local-1-a.png',
-          panel_opacity: 0.85,
           wallpaper_mode: 'local',
           wallpaper_enabled: true,
           local: { selected: 'local-1-a.png', items: [{ file: 'local-1-a.png', name: 'a.png', uploaded_at: 1, size: 10 }] },

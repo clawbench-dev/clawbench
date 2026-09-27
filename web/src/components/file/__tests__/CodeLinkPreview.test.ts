@@ -1296,8 +1296,9 @@ describe('CodeLinkPreview.vue', () => {
     expect(rangeEl).not.toBeNull()
     expect(rangeEl?.textContent).toBe(':245-250')
 
-    // Copy path now lives in the second-row toolbar.
-    const copyBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn') as HTMLButtonElement
+    // Copy path now lives in the shared tool row (the same row the floating
+    // card and the docked pane render — there is no sheet-specific toolbar).
+    const copyBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn') as HTMLButtonElement
     expect(copyBtn).not.toBeNull()
 
     // Clicking the copy button copies the full path
@@ -1338,7 +1339,7 @@ describe('CodeLinkPreview.vue', () => {
     else delete (Element.prototype as Record<string, unknown>).scrollWidth
   })
 
-  it('renders thumb-friendly footer actions in sheet mode', async () => {
+  it('renders the shared tool row in sheet mode (no sheet-only footer)', async () => {
     const switchTabMock = vi.fn()
     const loadFilesSpy = vi.spyOn(store, 'loadFiles').mockResolvedValue(undefined as any)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -1351,47 +1352,50 @@ describe('CodeLinkPreview.vue', () => {
       refresh: vi.fn(),
     })
 
-    mount(CodeLinkPreview, {
+    const wrapper = mount(CodeLinkPreview, {
       props: { preview },
       global: {
         plugins: [i18n],
         provide: { switchTab: switchTabMock },
       },
     })
+    await nextTick()
 
-    const footer = document.querySelector('.code-preview-sheet-footer')
-    expect(footer).not.toBeNull()
+    // The sheet has NO bottom pill-button footer any more: the tool row is the
+    // one shared with the floating card and the docked pane.
+    expect(document.querySelector('.code-preview-sheet-footer')).toBeNull()
 
-    // Footer layout: Refresh (leftmost icon), Reveal in file tree, Quote to Chat, Open Full
-    const collapseBtn = footer?.querySelector('.collapse-btn')
-    expect(collapseBtn).toBeNull()
+    const actions = document.querySelector('.code-preview-meta .code-preview-actions') as HTMLElement
+    expect(actions).not.toBeNull()
 
-    // Refresh icon button is back in the footer, first child.
-    const refreshBtn = footer?.querySelector('.refresh-btn') as HTMLButtonElement
+    // Refresh is an icon button in the tool row (no `.refresh-btn` pill class).
+    const refreshBtn = Array.from(actions.querySelectorAll('button'))
+      .find(b => (b.getAttribute('title') || '') === 'Refresh') as HTMLButtonElement
     expect(refreshBtn).not.toBeNull()
-    expect(footer?.firstElementChild).toBe(refreshBtn)
     refreshBtn.click()
     expect(preview.refresh).toHaveBeenCalled()
 
-    // Test Open Full button in footer
-    const openFullBtn = footer?.querySelector('.primary-btn') as HTMLButtonElement
+    // Open Full
+    const openFullBtn = Array.from(actions.querySelectorAll('button'))
+      .find(b => (b.getAttribute('title') || '') === 'Open file') as HTMLButtonElement
     expect(openFullBtn).not.toBeNull()
     openFullBtn.click()
     expect(preview.openFull).toHaveBeenCalled()
 
-    // Test Quote to Chat button in footer (closes the sheet)
-    const quoteBtn = footer?.querySelector('.quote-btn') as HTMLButtonElement
+    // Quote to Chat (closes the sheet and switches to the chat tab)
+    const quoteBtn = Array.from(actions.querySelectorAll('button'))
+      .find(b => (b.getAttribute('title') || '') === 'Quote to chat') as HTMLButtonElement
     expect(quoteBtn).not.toBeNull()
     quoteBtn.click()
     await nextTick()
     expect(preview.close).toHaveBeenCalled()
     expect(switchTabMock).toHaveBeenCalledWith('chat')
 
-    // Reveal in tree lives in the footer. Re-open the sheet first (quote closed it).
+    // Reveal in tree lives in the same row. Re-open the sheet first (quote closed it).
     preview.visible.value = true
     await nextTick()
-    const newFooter = document.querySelector('.code-preview-sheet-footer')
-    const revealBtn = newFooter?.querySelector('.reveal-btn') as HTMLButtonElement
+    const revealBtn = Array.from(document.querySelectorAll('.code-preview-meta .code-preview-actions button'))
+      .find(b => (b.getAttribute('title') || '') === 'Open Directory') as HTMLButtonElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
     await nextTick()
@@ -1964,32 +1968,31 @@ describe('CodeLinkPreview.vue', () => {
     expect(dirMarquee).not.toBeNull()
     expect(dirMarquee?.textContent).toContain('packages/agent/src')
 
-    // Copy path now lives in the second-row toolbar (header has no buttons)
+    // Copy path now lives in the shared tool row (header has no buttons)
     expect(document.querySelector('.bs-header-actions')).toBeNull()
-    const copyBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn')
+    const copyBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')
     expect(copyBtn).not.toBeNull()
 
-    // Body toolbar: meta + tools (Copy Path, Wrap, Line Numbers, Copy Code).
-    // Search moved to the footer bar.
-    const row2 = document.querySelector('.code-preview-sheet-row2')
-    expect(row2).not.toBeNull()
-    const metaInfo = row2?.querySelector('.code-preview-sheet-meta-info')
+    // Body toolbar: the SAME `.code-preview-meta` row the floating card and the
+    // docked pane render — meta summary + the full icon tool set.
+    const toolbar = document.querySelector('.code-preview-sheet-body .code-preview-meta')
+    expect(toolbar).not.toBeNull()
+    const metaInfo = toolbar?.querySelector('.code-preview-meta-info')
     expect(metaInfo?.textContent).toContain('804')
 
-    const tools = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(tools?.length).toBe(4)
-    expect(tools?.[0]?.getAttribute('aria-label') || tools?.[0]?.getAttribute('title')).toMatch(/copy/i)
-    expect(tools?.[1]?.getAttribute('aria-label') || tools?.[1]?.getAttribute('title')).toMatch(/wrap/i)
-    expect(tools?.[2]?.getAttribute('aria-label') || tools?.[2]?.getAttribute('title')).toContain('Line Numbers')
-    expect(tools?.[3]?.getAttribute('aria-label') || tools?.[3]?.getAttribute('title')).toMatch(/copy/i)
+    // The sheet shows the same tool set as the floating card, so the count is
+    // the full row (search/wrap/line-numbers/refresh/quote/copy/copy-path/
+    // reveal/open-full), not the old sheet-only four.
+    const tools = toolbar?.querySelectorAll('.code-preview-actions button')
+    expect(tools?.length).toBeGreaterThanOrEqual(8)
+    const titles = Array.from(tools || []).map(b => b.getAttribute('aria-label') || b.getAttribute('title') || '')
+    expect(titles.some(t => /wrap/i.test(t))).toBe(true)
+    expect(titles.some(t => /Line Numbers/i.test(t))).toBe(true)
+    expect(titles.some(t => /Copy code/i.test(t))).toBe(true)
+    expect(titles.some(t => /Copy path/i.test(t))).toBe(true)
 
-    // Bottom Sheet Footer: Refresh icon first, then Reveal / Quote / Open Full
-    const footer = document.querySelector('.code-preview-sheet-footer')
-    expect(footer?.querySelector('.collapse-btn')).toBeNull()
-    expect(footer?.querySelector('.refresh-btn')).not.toBeNull()
-    expect(footer?.querySelector('.reveal-btn')).not.toBeNull()
-    expect(footer?.querySelector('.quote-btn')).not.toBeNull()
-    expect(footer?.querySelector('.primary-btn')).not.toBeNull()
+    // No sheet-only pill-button footer remains.
+    expect(document.querySelector('.code-preview-sheet-footer')).toBeNull()
 
     wrapper.unmount()
   })
@@ -2063,55 +2066,56 @@ describe('CodeLinkPreview.vue', () => {
     })
     await nextTick()
 
-    // 1. Header has no action buttons; copy-path lives in the body toolbar.
+    // 1. Header has no action buttons; copy-path lives in the shared tool row.
     expect(document.querySelector('.bs-header-actions')).toBeNull()
-    const copyPathBtn = document.querySelector('.code-preview-sheet-tools .copy-path-btn') as HTMLElement
+    const copyPathBtn = document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn') as HTMLElement
     expect(copyPathBtn).not.toBeNull()
     copyPathBtn.click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('packages/agent/src/types.ts:415-420')
 
-    // 2. Body toolbar: Copy Path -> Wrap -> Line Numbers -> Copy Code
-    const row2 = document.querySelector('.code-preview-sheet-row2')
-    const toolBtns = row2?.querySelectorAll('.code-preview-sheet-tools button')
-    expect(toolBtns?.length).toBe(4)
+    // 2. Body toolbar = the shared `.code-preview-meta` row (same as floating).
+    const toolbar = document.querySelector('.code-preview-sheet-body .code-preview-meta')
+    expect(toolbar).not.toBeNull()
+    const toolBtns = toolbar?.querySelectorAll('.code-preview-actions button')
+    expect(toolBtns?.length).toBeGreaterThanOrEqual(8)
 
-    // Tool 1: Wrap toggle
-    const wrapBtn = toolBtns?.[1] as HTMLElement
-    expect(wrapBtn.getAttribute('aria-label') || wrapBtn.getAttribute('title')).toMatch(/wrap/i)
+    const titleOf = (b: Element) => b.getAttribute('aria-label') || b.getAttribute('title') || ''
 
-    // Tool 2: Line numbers toggle (uses the shared global file-viewer setting)
-    const lineNumBtn = toolBtns?.[2] as HTMLElement
-    expect(lineNumBtn.getAttribute('aria-label') || lineNumBtn.getAttribute('title')).toContain('Line Numbers')
+    // Wrap toggle (uses the shared global file-viewer setting)
+    const wrapBtn = Array.from(toolBtns || []).find(b => /wrap/i.test(titleOf(b))) as HTMLElement
+    expect(wrapBtn).not.toBeNull()
+
+    // Line numbers toggle
+    const lineNumBtn = Array.from(toolBtns || []).find(b => /Line Numbers/i.test(titleOf(b))) as HTMLElement
+    expect(lineNumBtn).not.toBeNull()
     lineNumBtn.click()
     await nextTick()
     expect(document.querySelectorAll('.code-preview-line-row .code-preview-line-number').length).toBe(0)
 
-    // Tool 3: Copy Code
-    expect(toolBtns?.[3]?.getAttribute('aria-label') || toolBtns?.[3]?.getAttribute('title')).toMatch(/copy/i)
-    ;(toolBtns?.[3] as HTMLElement).click()
+    // Copy Code
+    const copyCodeBtn = Array.from(toolBtns || []).find(b => /Copy code/i.test(titleOf(b))) as HTMLElement
+    expect(copyCodeBtn).not.toBeNull()
+    copyCodeBtn.click()
     await nextTick()
     expect(writeTextMock).toHaveBeenCalledWith('export interface AgentContext { ... }')
 
-    // 3. Footer: Refresh icon first, then Search, Reveal, Open Full, Quote
-    const footer = document.querySelector('.code-preview-sheet-footer')
-    expect(footer).not.toBeNull()
-    expect(footer?.querySelector('.collapse-btn')).toBeNull()
+    // 3. No sheet-only pill footer; every action lives in the one tool row.
+    expect(document.querySelector('.code-preview-sheet-footer')).toBeNull()
 
-    const refreshBtn = footer?.querySelector('.refresh-btn') as HTMLElement
+    const refreshBtn = Array.from(toolBtns || []).find(b => /^Refresh$/i.test(titleOf(b))) as HTMLElement
     expect(refreshBtn).not.toBeNull()
-    expect(footer?.firstElementChild).toBe(refreshBtn)
     refreshBtn.click()
     expect(preview.refresh).toHaveBeenCalled()
 
-    // Search now lives in the footer (icon-only) and opens the search bar
-    const searchBtn = footer?.querySelector('.code-preview-footer-btn.is-active, .code-preview-footer-btn[title="Find"]') as HTMLElement
+    // Search lives in the tool row and opens the search bar
+    const searchBtn = Array.from(toolBtns || []).find(b => /^Find$/i.test(titleOf(b))) as HTMLElement
     expect(searchBtn).not.toBeNull()
     searchBtn.click()
     await nextTick()
     expect(document.querySelector('.code-preview-search-bar')).not.toBeNull()
 
-    const revealBtn = footer?.querySelector('.reveal-btn') as HTMLElement
+    const revealBtn = Array.from(toolBtns || []).find(b => /Open Directory/i.test(titleOf(b))) as HTMLElement
     expect(revealBtn).not.toBeNull()
     revealBtn.click()
     await flushPromises()
@@ -2319,7 +2323,7 @@ describe('CodeLinkPreview.vue — Markdown rendered document view', () => {
     await flushPromises()
 
     expect(document.querySelector('.md-preview-body')).not.toBeNull()
-    expect(document.querySelector('.code-preview-sheet-tools .copy-path-btn')).not.toBeNull()
+    expect(document.querySelector('.code-preview-meta .code-preview-actions .copy-path-btn')).not.toBeNull()
 
     wrapper.unmount()
   })
@@ -3078,5 +3082,62 @@ describe('code-link-preview.css — the touch sheet is content-sized', () => {
     expect(m, 'the sheet BottomSheet element must exist').not.toBeNull()
     expect(m![0]).toMatch(/\sauto\b/)
     expect(m![0]).toContain('code-preview-sheet-panel')
+  })
+})
+
+describe('code-link-preview.css — one shared tool row (no sheet-only toolbar)', () => {
+  // The sheet used to carry its own `.code-preview-sheet-row2` toolbar plus a
+  // pill-button `.code-preview-sheet-footer`, so the same preview wore two
+  // different toolbars depending on where it was opened. All three surfaces
+  // (floating / docked / sheet) now render the single CodePreviewToolbar
+  // (`.code-preview-meta`). jsdom does not evaluate the stylesheet, so this is
+  // a source contract, in the same style as the other CSS guards here.
+  const css = readFileSync(
+    resolve(__dirname, '../../../assets/code-link-preview.css'),
+    'utf8',
+  )
+  const code = css.replace(/\/\*[\s\S]*?\*\//g, '')
+
+  it('removes the sheet-only tool row and footer rules', () => {
+    for (const cls of [
+      '.code-preview-sheet-row2',
+      '.code-preview-sheet-tools',
+      '.code-preview-sheet-meta-info',
+      '.code-preview-sheet-footer',
+      '.code-preview-footer-btn',
+    ]) {
+      expect(code, `${cls} must be gone`).not.toContain(cls)
+    }
+  })
+
+  it('renders the shared toolbar in all three surfaces', () => {
+    const src = readFileSync(
+      resolve(__dirname, '../../file/CodeLinkPreview.vue'),
+      'utf8',
+    )
+    // Two call sites in CodeLinkPreview (sheet + floating/docked) plus the
+    // component itself: the same markup is reused, never duplicated.
+    const callSites = src.match(/<CodePreviewToolbar\b/g) || []
+    expect(callSites.length).toBe(2)
+    // The docked pane and the floating card share the same second branch, so
+    // `docked` must not introduce its own tool row.
+    expect(src).not.toContain('code-preview-sheet-row2')
+    expect(src).not.toContain('code-preview-sheet-footer')
+  })
+
+  it('drops the grab cursor and touch-action inside the drawer but keeps them floating', () => {
+    // Floating: the meta row is the drag handle, so it keeps `cursor: grab`
+    // and `touch-action: none` (a touch drag pans the card).
+    const floating = code.match(/\.code-preview-meta\s*\{([^}]*)\}/)
+    expect(floating, '.code-preview-meta rule must exist').not.toBeNull()
+    expect(floating![1]).toMatch(/cursor:\s*grab/)
+    expect(floating![1]).toMatch(/touch-action:\s*none/)
+    // Sheet: the drawer has its own grab affordance and the row sits inside a
+    // scrollable sheet, so neither may leak in — `touch-action: none` here
+    // would swallow the swipe that scrolls the drawer body.
+    const sheet = code.match(/\.code-preview-sheet \.code-preview-meta\s*\{([^}]*)\}/)
+    expect(sheet, '.code-preview-sheet .code-preview-meta rule must exist').not.toBeNull()
+    expect(sheet![1]).toMatch(/cursor:\s*default/)
+    expect(sheet![1]).toMatch(/touch-action:\s*auto/)
   })
 })

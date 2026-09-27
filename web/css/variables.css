@@ -112,35 +112,68 @@
     --diff-del-accent: var(--color-red);
     --diff-mod-accent: var(--color-yellow);
 
-    /* ── Running-session indicator. The motif differs by surface, and the two
-       forms exist for measured reasons rather than taste.
+    /* ── Running-session indicator — the bottom-edge COMET.
 
-       `--running-line` — the session-list rows (local and cross-project). The
-       row's bottom edge carries two layers: a static base glow spanning the
-       full width (`--running-glow`), and the travelling band that sweeps across
-       it (`--running-line`). The base glow is what keeps the edge faintly lit
-       between passes — without it the row went completely dark once the band
-       had moved on, which read as the indicator switching off and on.
+       The row's bottom edge is a flat 3px track. Running sessions send a
+       38%-wide comet across it: a long transparent lead-in, a translucent
+       body, and an opaque head at the leading (right) edge, so the travel
+       reads as directed motion rather than a blob drifting past.
 
-       Why the rows do not use a sweep across the whole row: an earlier design
-       tinted the whole row and swept a wide band across it, and on dark themes
-       that washed the row milky. A dark theme's accent sits far above its row
-       background (OKLab L +0.50, vs −0.40 on a light one), so any alpha high
-       enough to show the band flooded the entire row, and the band then read as
-       a grey smudge on top of it. Confining the light to the bottom edge
-       removes the trade-off — it can carry real colour without touching the
-       row's own background.
+       This deliberately replaced an earlier design that laid a 14px glow with
+       a vertical mask along the same edge and swept an 80% band through it.
+       Two effects on one edge fought each other: the tall glow softened the
+       comet into a smear and made the "running" signal read as ambient
+       lighting rather than progress. The comet now owns the edge alone — one
+       layer, one effect. (The 14px glow is gone; do not reintroduce a second
+       layer here without removing the comet.)
 
-       All three tokens are deliberately translucent: at full strength the band
-       read as a hard stripe and the button as a solid block, which was heavier
-       than a "this session is running" signal should be. These alphas keep the
-       accent's exact hue and saturation (never blended toward grey): the sweep
-       lands at 1.44:1 worst case and the base glow at 1.10:1, so the glow is
-       always visible but never competes with the band passing over it.
-       (The original fixed green scored 1.10:1 / 1.08:1.) ── */
-    --running-glow: color-mix(in srgb, var(--accent-color) 14%, transparent);
-    --running-line: color-mix(in srgb, var(--accent-color) 55%, transparent);
+       The tokens stay translucent on purpose: at full strength a 3px stripe
+       reads as a hard border rather than a signal. They keep the accent's
+       exact hue and saturation (never blended toward grey), which is what
+       stops a theme's colour from washing out. ── */
+    --running-track: color-mix(in srgb, var(--accent-color) 12%, transparent);
+    --running-comet: color-mix(in srgb, var(--accent-color) 70%, transparent);
+    --running-head: var(--accent-color);
+
+    /* Blocked on an approval: the comet stops travelling and instead becomes a
+       full-width amber bar breathing in place, so "waiting on you" is
+       distinguishable from "working" even with the comet out of frame. Mirrors
+       the status ring. The track stays as the faint under-bar it always is. */
+    --pending-track: color-mix(in srgb, var(--color-orange) 22%, transparent);
+    --pending-comet: var(--color-orange);
+
+    /* The chat input button is a small chip, not a full-width row, so it keeps
+       its own travelling sweep rather than a bottom edge. */
     --running-sweep: color-mix(in srgb, var(--accent-color) 45%, transparent);
+
+    /* ── Session-row status slot. One element on the right of a row carries
+       all three "this row wants your attention" states, so they have to be
+       told apart at a glance rather than by reading a tooltip.
+
+       The split is by *motion*, because colour alone cannot do it: a theme's
+       accent and its orange are free to sit close together (both are theme
+       properties), and a reader with a colour-vision deficiency gets nothing
+       from the hue either. So:
+
+         running  — the ring ROTATES      (work is progressing)
+         pending  — the ring PULSES in place (work is blocked on you)
+         unread   — a dot that never moves  (nothing is happening)
+
+       Motion is the primary channel and hue is the secondary one, which is
+       what keeps the three apart on all 36 themes.
+
+       `pending` uses `--color-orange` rather than the accent so it reads as a
+       different *kind* of thing (needs you) rather than a different degree of
+       the same thing (busy). It is a per-theme token, so it still follows the
+       user's palette instead of being a hardcoded amber.
+
+       The ring's track is the arc colour at low alpha rather than
+       `--border-color`: on a running row the track must not read as a second,
+       static ring competing with the rotating arc. ── */
+    --running-ring: var(--accent-color);
+    --running-ring-track: color-mix(in srgb, var(--accent-color) 20%, transparent);
+    --pending-ring: var(--color-orange);
+    --pending-ring-track: color-mix(in srgb, var(--color-orange) 20%, transparent);
 
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.

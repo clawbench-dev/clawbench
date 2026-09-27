@@ -318,6 +318,28 @@
     background: transparent;
 }
 
+/* The figure must NOT draw its own frame around a failed image.
+
+   localMediaFallback.ts inserts the placeholder INSIDE the figure
+   (`.lightbox-img-wrap`), and the placeholder draws its own dashed frame. With
+   both frames on, the two boxes sit flush against each other and read as one
+   element with two different borders and two different corner radii — measured
+   --radius-sm (6px) solid outside, --radius-md (10px) dashed inside. Drop the
+   figure's frame and let the placeholder's dashed border be the only one: the
+   dashes already say "this is not real content", and a frame whose media never
+   arrived frames nothing.
+
+   `border-radius: 0` is load-bearing, not cosmetic: the base rule sets
+   `overflow: hidden`, so leaving the figure's 6px radius on would CLIP the
+   placeholder's 10px corners — the radius mismatch would survive the border
+   fix as a squared-off inner card.
+
+   Specificity (0-2-0) outranks the base `.image-block-wrapper` rule (0-1-0). */
+.image-block-wrapper.image-block-missing {
+    border: none;
+    border-radius: 0;
+}
+
 /* A missing image cannot be viewed / attached / opened, so hide the figure's
    floating toolbar — the buttons would open a lightbox onto nothing. */
 .image-block-wrapper.image-block-missing > .image-block-header {

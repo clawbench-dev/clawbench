@@ -34,6 +34,7 @@ import { buildKatexFontCss } from '@/utils/katexFontEmbed.ts'
 // The share SPA (ShareView) and this export embed the SAME chrome stylesheet so
 // the exported document keeps the exact look of the public share page.
 import shareChromeCss from '../../css/share-chrome.css?raw'
+import { COPY_ICON_SVG, CHECK_ICON_SVG, COPY_FEEDBACK_MS } from '@/utils/copyButton.ts'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -252,7 +253,7 @@ function selectorReferencesContent(selector: string): boolean {
         '.mermaid-error', '.line-flash', '.copy-flash', '.char-flash',
         '.chat-audio-player', '.chat-audio-wrapper', '.chat-video-player',
         '.chat-video-wrapper', '.code-line', '.line-num', '.code-text',
-        '.code-block-pre', '.copied-feedback', '.toc-', '.export-lightbox',
+        '.code-block-pre', '.toc-', '.export-lightbox',
     ]
     return contentTokens.some(tok => selector.includes(tok))
 }
@@ -583,6 +584,12 @@ function buildCodeBlockJs(locale: string): string {
     const copiedText = isZh ? '已复制' : 'Copied'
     const wrapOnText = isZh ? '自动换行已开启' : 'Word wrap on'
     const wrapOffText = isZh ? '自动换行已关闭' : 'Word wrap off'
+    // Same glyphs and timing as the in-app copy buttons (utils/copyButton.ts).
+    // The exported .html is standalone — it cannot import the app — so the
+    // values are inlined here rather than referenced.
+    const copyIconSvg = COPY_ICON_SVG
+    const checkIconSvg = CHECK_ICON_SVG
+    const feedbackMs = COPY_FEEDBACK_MS
     return `
 (function() {
     function closeAllTableMenus(except) {
@@ -677,6 +684,9 @@ function buildCodeBlockJs(locale: string): string {
         }
     });
 
+    var COPY_ICON_SVG = ${JSON.stringify(copyIconSvg)};
+    var CHECK_ICON_SVG = ${JSON.stringify(checkIconSvg)};
+
     function copyText(text, btn) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text);
@@ -689,16 +699,24 @@ function buildCodeBlockJs(locale: string): string {
             document.execCommand('copy');
             document.body.removeChild(ta);
         }
-        var orig = btn.innerHTML;
+        // Menu items carry a text label as their identity (Markdown / HTML /
+        // TSV) — the tint alone is their feedback; replacing the label with a
+        // check would hide which format was copied.
+        if (btn.classList.contains('table-block-copy-menu-item')) {
+            btn.classList.add('is-copied');
+            setTimeout(function() { btn.classList.remove('is-copied'); }, ${feedbackMs});
+            return;
+        }
+        if (btn.classList.contains('is-copied')) return;
         var origTitle = btn.getAttribute('title') || '';
-        btn.innerHTML = '<span class="copied-feedback">${copiedText}</span>';
+        btn.innerHTML = CHECK_ICON_SVG;
         btn.classList.add('is-copied');
         btn.setAttribute('title', '${copiedText}');
         setTimeout(function() {
-            btn.innerHTML = orig;
+            btn.innerHTML = COPY_ICON_SVG;
             btn.classList.remove('is-copied');
             btn.setAttribute('title', origTitle);
-        }, 1500);
+        }, ${feedbackMs});
     }
 
     function tableRows(table) {
@@ -1258,7 +1276,6 @@ ${katexFontCss}
 .mermaid-error { border: 1px dashed var(--border-color); padding: 12px; margin: 8px 0; border-radius: 6px; color: var(--text-muted); font-size: 13px; }
 
 /* ─── Copied feedback text ─── */
-.copied-feedback { font-size: 11px; color: var(--accent-color); }
 
 /* ─── Share chrome (shared stylesheet — same file ShareView.vue imports) ─── */
 ${shareChromeCss}

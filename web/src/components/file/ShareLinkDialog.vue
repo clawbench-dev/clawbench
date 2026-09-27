@@ -43,14 +43,11 @@
             spellcheck="false"
             @focus="$event.target.select()"
           />
-          <button
+          <CopyButton
+            :text="linkUrl"
+            title-key="shareDialog.copyTip"
             class="share-dialog-link-btn"
-            :title="t('shareDialog.copyTip')"
-            :aria-label="t('shareDialog.copyTip')"
-            @click="copyLink"
-          >
-            <Copy :size="14" />
-          </button>
+          />
           <button
             class="share-dialog-link-btn"
             :title="t('shareDialog.regenerateTip')"
@@ -101,7 +98,7 @@
 <script setup>
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Copy, ExternalLink, Info, Link2, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { ExternalLink, Info, Link2, RefreshCw, Trash2 } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
@@ -111,6 +108,7 @@ import { openExternalUrl } from '@/utils/externalLink'
 // Shared notice + link-bar chrome. Imported (not global) so only the two share
 // dialogs load it; see the file header for why it cannot be scoped.
 import '@/assets/share-dialog.css'
+import CopyButton from '@/components/common/CopyButton.vue'
 
 const props = defineProps({
   open: Boolean,
@@ -175,19 +173,15 @@ async function createLink() {
     const data = await resp.json()
     linkUrl.value = toAbsoluteUrl(data.path)
     markShared(props.file.path)
-    copyLink()
+    // Auto-copy the freshly created link — the common next step is pasting it
+    // somewhere. Silent on purpose: the link is already visible in the field
+    // above, and this path has no button to flash a check on.
+    if (linkUrl.value) copyText(linkUrl.value)
   } catch (err) {
     errorMsg.value = err instanceof Error ? err.message : String(err)
   } finally {
     creating.value = false
   }
-}
-
-function copyLink() {
-  if (!linkUrl.value) return
-  copyText(linkUrl.value, () => {
-    toast.show(t('common.copied'), { icon: '✅', type: 'success', duration: 2000 })
-  })
 }
 
 async function regenerateLink() {

@@ -4,7 +4,6 @@ import {
   toolCallSummary,
   hasImagesInContent,
   formatDetailTime,
-  formatMessageTime,
   truncate,
 } from '@/utils/chatBlocks.ts'
 import {
@@ -744,77 +743,6 @@ describe('truncate', () => {
     const result = truncate(emoji, 1)
     // Should truncate at codepoint boundary, not in the middle of a grapheme
     expect(result.endsWith('...')).toBe(true)
-  })
-})
-
-// ── formatMessageTime ──
-
-describe('formatMessageTime', () => {
-  it('shows "just now" for timestamps less than 1 minute ago', () => {
-    const now = new Date().toISOString()
-    const result = formatMessageTime(now)
-    expect(result).toContain('time.justNow')
-  })
-
-  it('shows "minutes ago" for timestamps within the last hour', () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60000).toISOString()
-    const result = formatMessageTime(fiveMinAgo)
-    expect(result).toContain('time.minutesAgo')
-    expect(result).toContain('count=5')
-  })
-
-  it('shows "hours ago" for timestamps within the last day', () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString()
-    const result = formatMessageTime(twoHoursAgo)
-    expect(result).toContain('time.hoursAgo')
-    expect(result).toContain('count=2')
-  })
-
-  it('shows "days ago" for timestamps within the last week', () => {
-    const threeDaysAgo = new Date(Date.now() - 3 * 86400000).toISOString()
-    const result = formatMessageTime(threeDaysAgo)
-    expect(result).toContain('time.daysAgo')
-    expect(result).toContain('count=3')
-  })
-
-  it('shows date for timestamps older than 7 days', () => {
-    const tenDaysAgo = new Date(Date.now() - 10 * 86400000).toISOString()
-    const result = formatMessageTime(tenDaysAgo)
-    // Falls back to locale date format, should NOT contain "time." i18n keys
-    expect(result).not.toContain('time.justNow')
-    expect(result).not.toContain('time.minutesAgo')
-    expect(result).not.toContain('time.hoursAgo')
-    expect(result).not.toContain('time.daysAgo')
-    // Should contain a date-like string (digits and delimiters)
-    expect(result.length).toBeGreaterThan(0)
-  })
-
-  it('shows 1 minute ago correctly', () => {
-    const oneMinAgo = new Date(Date.now() - 60000).toISOString()
-    const result = formatMessageTime(oneMinAgo)
-    expect(result).toContain('time.minutesAgo')
-    expect(result).toContain('count=1')
-  })
-
-  it('shows 59 minutes ago correctly', () => {
-    const fiftyNineMinAgo = new Date(Date.now() - 59 * 60000).toISOString()
-    const result = formatMessageTime(fiftyNineMinAgo)
-    expect(result).toContain('time.minutesAgo')
-    expect(result).toContain('count=59')
-  })
-
-  it('shows 23 hours ago correctly', () => {
-    const twentyThreeHoursAgo = new Date(Date.now() - 23 * 3600000).toISOString()
-    const result = formatMessageTime(twentyThreeHoursAgo)
-    expect(result).toContain('time.hoursAgo')
-    expect(result).toContain('count=23')
-  })
-
-  it('shows 6 days ago correctly', () => {
-    const sixDaysAgo = new Date(Date.now() - 6 * 86400000).toISOString()
-    const result = formatMessageTime(sixDaysAgo)
-    expect(result).toContain('time.daysAgo')
-    expect(result).toContain('count=6')
   })
 })
 

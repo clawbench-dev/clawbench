@@ -609,10 +609,14 @@ describe('ChatMessageItem', () => {
       const btn = wrapper.find('button[aria-label="复制"]')
       await btn.trigger('click')
       expect(btn.classes()).toContain('is-copied')
-      expect(wrapper.find('.chat-copy-copied-text').exists()).toBe(true)
+      // Feedback is a glyph swap (shared CopyButton), never a text label —
+      // a label would widen the button inside the fixed meta bar.
+      expect(btn.find('.lucide-check').exists()).toBe(true)
+      expect(btn.text()).toBe('')
       vi.advanceTimersByTime(1500)
       await wrapper.vm.$nextTick()
       expect(btn.classes()).not.toContain('is-copied')
+      expect(btn.find('.lucide-copy').exists()).toBe(true)
       vi.useRealTimers()
     })
 

@@ -212,9 +212,10 @@ func IsValidWallpaperMode(mode string) bool {
 // displayed at a time, selected by WallpaperMode. WallpaperEnabled is a global
 // switch: turning it off hides the wallpaper while retaining the gallery and
 // its selection.
+//
+// Panel translucency is deliberately NOT here: it is a per-device display tweak
+// stored in the browser (localStorage), alongside blur / edge-fade / wave speed.
 type AppearanceConfig struct {
-	PanelOpacity float64 `yaml:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85). Only meaningful when a wallpaper is set.
-
 	// WallpaperMode selects the active source: "local", "bing" or "wave".
 	WallpaperMode string `yaml:"wallpaper_mode"`
 	// WallpaperEnabled is the global on/off switch for the wallpaper layer.

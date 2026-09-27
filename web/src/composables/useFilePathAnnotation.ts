@@ -54,6 +54,41 @@ function tryDecodeUri(uri: string): string {
 
 // ── File URI parsing ───────────────────────────────────────────────────────────
 
+/**
+ * Matching decoration pairs an AI routinely wraps a path in when it writes a
+ * markdown link: ``[label](`path`)`` or `[label]("path")`.
+ *
+ * CommonMark treats the backticks/quotes as PART OF the destination, and marked
+ * percent-encodes the quote family (`%60`/`%22`/`%27`) in the emitted `href`.
+ * Both spellings must be recognized. Only a MATCHING pair is decoration — a
+ * lone backtick is a real (if unusual) filename character.
+ */
+const WRAPPING_PAIRS: ReadonlyArray<readonly [string, string]> = [
+    ['`', '`'],
+    ["'", "'"],
+    ['"', '"'],
+    ['%60', '%60'],
+    ['%27', '%27'],
+    ['%22', '%22'],
+]
+
+/**
+ * Strip ONE matching wrapping decoration pair from a raw path string.
+ *
+ * Runs before line-suffix parsing because the suffix sits INSIDE the wrapping
+ * (`\`src/main.go:10\``) — the suffix regex anchors on `$`, so a trailing
+ * backtick would otherwise hide the line target entirely. The empty-content
+ * guard keeps a lone decoration character from being reduced to nothing.
+ */
+function stripWrappingDecoration(raw: string): string {
+    for (const [open, close] of WRAPPING_PAIRS) {
+        if (raw.length > open.length + close.length && raw.startsWith(open) && raw.endsWith(close)) {
+            return raw.slice(open.length, raw.length - close.length)
+        }
+    }
+    return raw
+}
+
 export interface ParsedFileUri {
     /** Clean filesystem path (percent-decoded, no file:// / hash / :line suffix). */
     path: string
@@ -84,7 +119,11 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
     const input = (rawInput ?? '').trim()
     if (!input) return { path: '', lineRanges: [] }
 
-    let raw = input
+    // 0. Strip a matching wrapping decoration pair. Must precede the file://
+    //    strip below (the decoration wraps the whole URI) and the line-suffix
+    //    parse (`\`src/main.go:10\`` has the suffix inside the backticks, where
+    //    the `$`-anchored suffix regex can never see it).
+    let raw = stripWrappingDecoration(input)
 
     // 1. Strip the file:// scheme (handles file:///path and file://host/path).
     if (raw.startsWith('file://')) {

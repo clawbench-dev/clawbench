@@ -25,8 +25,13 @@ const i18n = createI18n({
   },
 })
 
+// `Check` is required by the shared CopyButton (glyph swap on copy).
+const { mockCopyText } = vi.hoisted(() => ({ mockCopyText: vi.fn((_t: string, ok?: () => void) => ok?.()) }))
+vi.mock('@/utils/clipboard', () => ({ copyText: mockCopyText }))
+
 vi.mock('lucide-vue-next', () => ({
   Box: { name: 'Box', template: '<span class="icon-box" />' },
+  Check: { name: 'Check', template: '<span class="icon-check" />' },
   Copy: { name: 'Copy', template: '<span class="icon-copy" />' },
   ExternalLink: { name: 'ExternalLink', template: '<span class="icon-open" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
@@ -206,11 +211,15 @@ describe('ProxyPortItem', () => {
       expect(wrapper.find('.port-action-btn.copy-address').exists()).toBe(false)
     })
 
-    it('emits copyAddress with the server-side port and protocol', async () => {
+    it('copies the server-side address itself (no emit round-trip)', async () => {
+      // The button now owns its own copy + feedback instead of emitting up to
+      // the panel, which could only show a toast (no button element to flash).
       const wrapper = mountItem({ direction: 'reverse', localPort: 9000, protocol: 'https' })
-      await wrapper.find('.port-action-btn.copy-address').trigger('click')
-      expect(wrapper.emitted('copyAddress')).toBeTruthy()
-      expect(wrapper.emitted('copyAddress')![0]).toEqual([9000, 'https'])
+      const btn = wrapper.find('.port-action-btn.copy-address')
+      await btn.trigger('click')
+      expect(mockCopyText).toHaveBeenCalledWith('https://127.0.0.1:9000', expect.any(Function))
+      expect(btn.classes()).toContain('is-copied')
+      expect(wrapper.emitted('copyAddress')).toBeFalsy()
     })
 
     it('points the target chip leftward at the local service', () => {

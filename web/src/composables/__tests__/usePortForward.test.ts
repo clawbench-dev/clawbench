@@ -2199,17 +2199,14 @@ describe('usePortForward', () => {
             mockIsAppMode.value = false
         })
 
-        it('copies the server-side address of a reverse mapping', async () => {
-            const writeText = vi.fn().mockResolvedValue(undefined)
-            Object.assign(navigator, { clipboard: { writeText } })
-
+        it('no longer exposes copyServerAddress — the port item owns it', async () => {
+            // The copy moved into ProxyPortItem, which renders the shared
+            // CopyButton so the button itself can flash a check. The composable
+            // only had a toast available (no button element to update), so it
+            // was removed rather than left as a second, divergent implementation.
             const { usePortForward } = await import('@/composables/usePortForward')
-            const { copyServerAddress } = usePortForward()
-
-            await copyServerAddress(9000, 'http')
-
-            expect(writeText).toHaveBeenCalledWith('http://127.0.0.1:9000')
-            expect(mockToastShow).toHaveBeenCalledWith('proxy.serverAddressCopied', expect.anything())
+            const api = usePortForward()
+            expect((api as any).copyServerAddress).toBeUndefined()
         })
     })
 

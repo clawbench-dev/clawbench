@@ -1,6 +1,6 @@
 import type { EChartsCoreOption } from 'echarts/core'
 import { gt } from '@/composables/useLocale'
-import { resolveStatsPalette, isNarrowScreen } from '@/components/stats/statsChart'
+import { resolveStatsPalette, isNarrowScreen, BAR_MAX_WIDTH, barValueLabelStyle } from '@/components/stats/statsChart'
 import { formatLineCount } from '@/components/stats/gitStatsFormat'
 
 /**
@@ -99,15 +99,15 @@ export function buildClocBarOption(
     series: [{
       type: 'bar',
       data: values,
-      itemStyle: { color: p.accent, borderRadius: [0, 3, 3, 0] },
-      barMaxWidth: 18,
-      label: {
-        show: true,
-        position: 'right',
-        color: p.textSecondary,
-        fontSize: 10,
-        formatter: (pp: unknown) => formatLineCount((pp as { value: number }).value),
-      },
+      // Hairline bar over a faint track — same geometry as the usage bar
+      // chart (BAR_MAX_WIDTH) so both panels read as one system.
+      itemStyle: { color: p.accent, borderRadius: 2 },
+      barMaxWidth: BAR_MAX_WIDTH,
+      showBackground: true,
+      backgroundStyle: { color: p.axisLine, opacity: 0.35, borderRadius: 2 },
+      // The cloc card sits on --bg-secondary (see ClocStatsPanel's
+      // .stats-card-panel), so the label masks the track with that surface.
+      label: barValueLabelStyle(p, p.surfaceAlt, formatLineCount),
     }],
   }
   if (many) {

@@ -7,7 +7,11 @@
       @click="expanded = !expanded"
     >
       <LoadingIndicator class="queued-bar-spinner" size="sm" inline />
-      <span class="queued-bar-title">{{ t('chat.pending.barTitle', { count: messages.length }) }}</span>
+      <span class="queued-bar-status">
+        <span class="queued-bar-title">{{ t('chat.pending.barTitle') }}</span>
+        <span class="queued-bar-count count-badge">{{ messages.length }}</span>
+      </span>
+      <span v-if="!expanded" class="queued-bar-preview">{{ nextPreview }}</span>
       <ChevronDown class="queued-bar-chevron" :size="14" />
     </button>
 
@@ -44,12 +48,12 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Zap, Square } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 
-defineProps({
+const props = defineProps({
   /** Queued messages for the active session (from useMessageQueue). */
   messages: { type: Array, required: true },
   /** Whether the current backend can join the running turn (insert vs interrupt). */
@@ -62,6 +66,15 @@ defineEmits(['remove', 'action'])
 
 const { t } = useI18n()
 const expanded = ref(false)
+
+// Collapsed header shows the NEXT message to be sent, so the queue is readable
+// without expanding. Attachment-only entries fall back to the same label the
+// expanded row uses. Single-line + ellipsis in CSS bounds the width.
+const nextPreview = computed(() => {
+  const first = props.messages[0]
+  if (!first) return ''
+  return first.text || t('chat.pending.attachment')
+})
 
 function fileLabel(f) {
   if (!f) return ''
@@ -108,14 +121,46 @@ function fileLabel(f) {
   --li-color: var(--accent-color, currentColor);
 }
 
-.queued-bar-title {
-  flex: 1;
+.queued-bar-status {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   text-align: left;
+}
+
+.queued-bar-title {
+  white-space: nowrap;
+}
+
+/* Shape/geometry comes from the shared .count-badge (css/components.css); a
+   scoped rule here would outrank it, so keep only colour + weight. The badge
+   separates the count from the message preview, which otherwise read as one
+   run-on sentence ("排队中 · 2 看一下这个文件"). */
+.queued-bar-count {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-semibold);
+}
+
+.queued-bar-preview {
+  flex: 1;
+  min-width: 0;
+  /* Fainter than the title so it reads as secondary information, and clipped
+     to one line so a long message can never grow the collapsed header. */
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .queued-bar-chevron {
   transition: transform var(--duration-base);
   flex-shrink: 0;
+  /* Keeps the chevron at the right edge in BOTH states. The collapsed preview
+     already fills the row with flex:1, but it is absent when expanded — without
+     this the chevron would sit flush against the title instead. */
+  margin-left: auto;
 }
 
 .queued-bar.expanded .queued-bar-chevron {

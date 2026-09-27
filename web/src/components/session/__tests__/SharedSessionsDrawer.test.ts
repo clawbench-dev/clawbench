@@ -83,7 +83,7 @@ const messages = {
       clearAll: 'Clear all',
       clear: 'Clear',
       confirmClearAll: 'Clear every shared conversation?',
-      archived: 'Conversation archived',
+      archived: 'Archived',
       archivedHint: 'Archived, but the link still works.',
       messageCount: '{count} messages',
       confirmRevoke: 'Revoke "{name}"?',
@@ -192,7 +192,11 @@ describe('SharedSessionsDrawer', () => {
     expect(rows[1].classes()).toContain('archived')
     expect(rows[1].classes()).not.toContain('clickable')
 
-    expect(wrapper.text()).toContain('Conversation archived')
+    // The badge text matches the session-search list's archived badge so the
+    // same state reads identically in both lists.
+    const badge = rows[1].find('.shared-session-badge')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toBe('Archived')
 
     // Clicking the archived row must not emit a selection.
     await rows[1].trigger('click')
@@ -210,9 +214,13 @@ describe('SharedSessionsDrawer', () => {
     const wrapper = mountDrawer()
     await openAndLoad(wrapper)
 
-    await wrapper.findAll('.shared-session-btn')[1].trigger('click')
+    const copyBtn = wrapper.findAll('.shared-session-btn')[1]
+    await copyBtn.trigger('click')
     expect(h.copyText).toHaveBeenCalledWith('https://host.example/share/tok1')
-    expect(h.toastShow).toHaveBeenCalled()
+    // Feedback is the shared check glyph, not a toast (same contract as the
+    // shared-files drawer's copy button).
+    expect(copyBtn.classes()).toContain('is-copied')
+    expect(h.toastShow).not.toHaveBeenCalled()
   })
 
   it('routes the open-in-new-tab click through openExternalUrl', async () => {

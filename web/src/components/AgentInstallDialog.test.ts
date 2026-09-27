@@ -65,7 +65,7 @@ describe('AgentInstallDialog', () => {
 
     it('renders close button', () => {
       mountDialog()
-      const closeBtn = document.querySelector('.dlg-cancel')
+      const closeBtn = document.querySelector('.install-actions .fbtn')
       expect(closeBtn).toBeTruthy()
       expect(closeBtn?.textContent).toContain('关闭')
     })
@@ -101,7 +101,7 @@ describe('AgentInstallDialog', () => {
   describe('close button', () => {
     it('emits close when clicking close button', async () => {
       const wrapper = mountDialog()
-      const closeBtn = document.querySelector('.dlg-cancel') as HTMLElement
+      const closeBtn = document.querySelector('.install-actions .fbtn') as HTMLElement
       expect(closeBtn).toBeTruthy()
 
       closeBtn.click()

@@ -60,7 +60,7 @@ export async function loadSessionsOnce(): Promise<void> {
           store.state.sessionCount = data.totalCount
         }
         // Per-session unread/pending state is rendered on every row
-        // (SessionList's `.session-item-badge`), so a change there needs the
+        // (SessionList's `.session-status`), so a change there needs the
         // list refreshed even when the AGGREGATE is unchanged — e.g. one
         // session marked read while another becomes unread. Comparing only the
         // total would leave those badges stale.
@@ -522,26 +522,6 @@ export function useChatSession(options: UseChatSessionOptions) {
   // the cleanup path requires an explicit `false`.
   let lastAuthoritativeRunning: boolean | null = null
 
-  // Timestamp of the last completed authoritative (force=true) reload.
-  //
-  // On Android, one physical return to the foreground produces TWO resync
-  // requests that do not otherwise know about each other: the resume hook
-  // (force=true, authoritative) and the WS reconnect (force=false, lightweight)
-  // that fires once the backgrounded socket comes back. Measured against the
-  // real client log, the two land a median 0.11s apart (p90 2.1s) — and because
-  // the force path runs with `immediate=true` it bypasses the loadHistory
-  // in-flight queue, so the two fetches run concurrently and the loadHistorySeq
-  // guard discards one of them non-deterministically.
-  //
-  // The dedupe is deliberately ASYMMETRIC: a lightweight reload is skipped when
-  // an authoritative one just ran (the authoritative pass is a strict superset —
-  // it forces the reload instead of skipping on an unchanged snapshot, and it
-  // also resubscribes the stream), but an authoritative reload is NEVER skipped
-  // because a lightweight one just ran. Only the first direction is safe: the
-  // reverse would let a cheap reconnect resync swallow an explicit user refresh.
-  const AUTHORITATIVE_RELOAD_DEDUPE_MS = 5000
-  let lastAuthoritativeReloadAt = 0
-
   // Pending reload: when loadHistory is called while a load is already in-flight,
   // we record the requested parameters and execute one more load after the current
   // one completes. This prevents redundant concurrent fetches while ensuring the
@@ -887,32 +867,27 @@ export function useChatSession(options: UseChatSessionOptions) {
     }
   }
 
-  // Returning to foreground: if the currently-active session has unread
-  // messages, mark it read immediately — the user is looking at it now. This
-  // covers the case where the session completed while the app was backgrounded
-  // (the completion paths skip mark-read there so the floating window can show
-  // the unread badge) and the user returns to it.
-  // markSessionRead is idempotent: the backend anchors last_read_at to the
-  // newest finalized assistant message, so a session with nothing new just
-  // refreshes the anchor harmlessly. loadSessionsOnce (deduped) re-reads the
-  // unread state so the session list badge clears without waiting for a WS
-  // event round-trip.
+  // Returning to the foreground: reopen the current session.
   //
-  // handleManualRefresh() resyncs the current session's messages on foreground
-  // return. This is the belt-and-suspenders path for Android: document.
-  // visibilityState is unreliable in the WebView (onPause doesn't reliably
-  // flip it to 'hidden'), so the WS may NOT have been disconnected while
-  // backgrounded and no clawbench-reconnect event fires on return. Messages
-  // produced in the background would then never appear.
+  // This is the belt-and-suspenders path for Android: document.visibilityState
+  // is unreliable in the WebView (onPause doesn't reliably flip it to
+  // 'hidden'), so the WS may NOT have been disconnected while backgrounded and
+  // no clawbench-reconnect event fires on return. Messages produced in the
+  // background would then never appear.
   //
-  // It deliberately uses handleManualRefresh (forceReload=true, the same
-  // semantics as the chat refresh button / a cold restart) instead of the
-  // lightweight handleWsReconnect (forceReload=false): when the WS stayed
-  // connected through the background period the lightweight path can skip the
-  // reload (skipIfUnchanged) or race the reconnect, leaving DB-flushed
-  // streaming content missing from the UI until the user manually refreshes or
-  // cold-restarts the app. A forced authoritative loadHistory always converges
-  // the streaming placeholder (rebuildFromDb) to what the server has.
+  // It runs the SAME reopen as the refresh button (reopenCurrentSession):
+  // clear the session, then rebuild it authoritatively. That is deliberately
+  // stronger than the lightweight handleWsReconnect (skipIfUnchanged=true),
+  // which can skip the reload when the message snapshot is unchanged or race
+  // the reconnect, leaving DB-flushed streaming content missing. It is also
+  // what makes the foreground return behave exactly like switching away and
+  // back — the only path that cleared frontend-only state (e.g. a stale
+  // thinking block) the DB does not know about.
+  //
+  // The read-marking and session-list refresh are NOT done here: switchSession
+  // (inside reopenCurrentSession) already awaits markSessionRead before calling
+  // loadSessionsOnce, so the badge clears in the correct order. Doing it here
+  // as well would only add a duplicate POST.
   //
   // This listens on onAppResume, NOT on a foreground STATE transition (the
   // composable deliberately has no transition listener). A transition signal is
@@ -923,11 +898,7 @@ export function useChatSession(options: UseChatSessionOptions) {
   // works" symptom. onAppResume fires unconditionally from the native onResume
   // hook.
   const removeForegroundReadListener = onAppResume(() => {
-    const sid = currentSessionId.value
-    if (!sid) return
-    markSessionRead(sid).catch(() => {})
-    loadSessionsOnce()
-    handleManualRefresh().catch(() => {})
+    reopenCurrentSession().catch(() => {})
   })
 
   async function switchSession(sessionId: string, projectPath?: string) {
@@ -997,6 +968,47 @@ export function useChatSession(options: UseChatSessionOptions) {
     // when the user is already on the chat tab (switchTab early-returns).
     // Fire-and-forget: don't block the switching overlay on this secondary call.
     loadSessionsOnce()
+  }
+
+  /**
+   * Re-open the CURRENT session: clear it, then rebuild it authoritatively —
+   * the same path as switching to it, minus the id change.
+   *
+   * This is what the Action Bar refresh button and the Android foreground return
+   * both run. It deliberately reuses switchSession rather than reloading in
+   * place, because the in-place reload merges the DB rows into the existing
+   * array (rebuildFromDb) and PRESERVES the live streaming placeholder object.
+   * Frontend-only state the DB does not know about therefore survived a
+   * refresh — most visibly a stale "stuck" thinking block, which only ever
+   * disappeared after switching away and back (switchSession is the one path
+   * that starts with dispatch({type:'clear'})). Composing switchSession makes
+   * "identical to a session switch" true by construction instead of by
+   * convention, and it is why this also marks the session read and refreshes
+   * the session list.
+   *
+   * A same-id switch does NOT re-establish the WS subscription:
+   * clearSessionIdentity writes currentSessionId only once, at the end, so
+   * assigning the same value is a no-op for watch(currentSessionId) — the
+   * subscription was already torn down by switchSession's onDisconnectStream().
+   * The explicit resubscribe repairs it: the backend does not dedupe subscribe
+   * (events.go handleSubscribe re-runs OnSubscribe unconditionally), so a repeat
+   * subscribe re-emits the running stream's state (stream_start) exactly like
+   * switching away and back.
+   */
+  async function reopenCurrentSession() {
+    const sid = currentSessionId.value
+    if (!sid) return
+    await switchSession(sid)
+    // The user may have switched sessions while the reload was in flight.
+    // resubscribe() sends a real unsubscribe for whatever is currently
+    // subscribed, so applying it here would flip their NEW session's
+    // subscription onto the OLD one. Drop the stale result — the new session's
+    // own open already ran its own switchSession.
+    if (currentSessionId.value !== sid) {
+      appLog.i(TAG, `reopen: session changed during reload (${sid} -> ${currentSessionId.value}), skipping resubscribe`)
+      return
+    }
+    onResubscribeStream?.(sid)
   }
 
   async function createSession(agentId: string) {
@@ -1330,50 +1342,28 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
-   * Shared resync flow for both the WS reconnect and the manual refresh button.
+   * Lightweight resync of the current session for the WS reconnect path.
    * Refreshes runningSessions from the backend, then branches on session state.
    *
-   * force:false (WS reconnect) — lightweight, silent:
    * - still running: reload history (the placeholder is restored from the DB
    *   streaming=1 row via rebuildFromDb, or created by the live stream_start
    *   event); no explicit stream connect needed.
    * - finished while disconnected: clean up the stuck loading state, then reload
    *   history with skipIfUnchanged=true.
    * - idle: reload history with skipIfUnchanged=true (no UI churn if unchanged).
+   *
    * No switching overlay, no input lock, queued behind any in-flight loadHistory.
    *
-   * force:true (manual refresh / foreground return) — always authoritative:
-   * - still running: force a history reload (isRunning keeps loading=true, the
-   *   placeholder is restored from the DB streaming=1 row).
-   * - finished while disconnected: same cleanup, then force reload history.
-   * - idle: force reload history with skipIfUnchanged=false so the UI always
-   *   re-renders against the latest server state.
-   * Shows the switching overlay, locks input, and runs immediately (bypasses
-   * the loadHistory in-flight queue) so the user sees the full resync.
-   *
-   * The loadHistory parameters are derived from force in one place instead of
-   * being re-derived inside each branch: force → scrollBottom/showOverlay/
-   * immediate=true + skipIfUnchanged=false (authoritative); !force → the
-   * opposite (silent). The still-running branches differ only in the log
-   * message, so they share a single call site here.
+   * The authoritative reload (the Action Bar refresh button / foreground return)
+   * no longer goes through here — it runs reopenCurrentSession(), which clears
+   * the session first and therefore cannot share this flow (this one MERGES the
+   * DB rows in place via rebuildFromDb, preserving the live placeholder).
    */
-  async function runReload(opts: { force: boolean }) {
+  async function runReload() {
     if (!currentSessionId.value) return
-    const { force } = opts
 
-    // A lightweight (WS reconnect) resync is redundant when an authoritative
-    // reload just ran for this same return to the foreground — see
-    // AUTHORITATIVE_RELOAD_DEDUPE_MS. Bail before the unread-marking and the
-    // session-list fetch so the duplicate costs nothing at all. Only the
-    // force=false direction is suppressed; an explicit refresh always runs.
-    if (!force && Math.max(0, Date.now() - lastAuthoritativeReloadAt) < AUTHORITATIVE_RELOAD_DEDUPE_MS) {
-      appLog.i(TAG, `WS reconnect: skipping resync — an authoritative reload ran ${Date.now() - lastAuthoritativeReloadAt}ms ago`)
-      return
-    }
-
-    // WS reconnect only: if the app is in the foreground, the user has been
-    // looking at this session the whole time — a WS blip is not a reason to
-    // leave its unread badge lit.
+    // If the app is in the foreground, the user has been looking at this session
+    // the whole time — a WS blip is not a reason to leave its unread badge lit.
     //
     // Why this is needed even though the completion paths already mark read:
     // they are all gated on !isReplayingEvents, and a reconnect delivers the
@@ -1387,49 +1377,37 @@ export function useChatSession(options: UseChatSessionOptions) {
     // appInForeground is the correct discriminator: it separates "the app was
     // genuinely backgrounded when the reply landed" (badge must survive — the
     // Android floating window shows it) from "the socket merely hiccuped while
-    // the user was watching". The force path (manual refresh / foreground
-    // return) is excluded: onAppResume already marks read there, and a
-    // manual refresh is not itself evidence about what the user saw.
+    // the user was watching". The authoritative reload (refresh button /
+    // foreground return) does not go through here at all — it reopens the
+    // session, which marks read as part of the switch-session flow.
     //
     // Await before the loadSessionsOnce below so the session list reflects the
     // cleared unread state — same ordering requirement as switchSession.
-    if (!force && appInForeground.value) {
+    if (appInForeground.value) {
       await markSessionRead(currentSessionId.value).catch(() => {})
     }
 
     // Refresh runningSessions from the backend so the current-session decision
     // below reflects any change that happened on the server side.
     await loadSessionsOnceInner()
-    const source = force ? 'Manual refresh' : 'WS reconnect'
-    const scrollBottom = force
-    const showOverlay = force
-    const skipIfUnchanged = !force
-    const immediate = force
+    const source = 'WS reconnect'
+    const scrollBottom = false
+    const showOverlay = false
+    const skipIfUnchanged = true
+    const immediate = false
     if (loading.value) {
       if (runningSessions.value.has(currentSessionId.value)) {
-        // Still running — force a history reload. The isRunning branch keeps
+        // Still running — reload history. The isRunning branch keeps
         // loading=true, and the streaming placeholder is restored from the
-        // authoritative DB streaming=1 row (rebuildFromDb) — or, for a WS
-        // reconnect, re-subscribed via the live stream_start event / the
-        // watch(connected) re-subscribe in useChatStream — so the live stream
-        // resumes from the full message list. skipIfUnchanged keeps the
-        // reconnect path silent (no UI churn when nothing changed).
+        // authoritative DB streaming=1 row (rebuildFromDb) — or re-subscribed
+        // via the live stream_start event / the watch(connected) re-subscribe in
+        // useChatStream — so the live stream resumes from the full message list.
+        // skipIfUnchanged keeps this path silent (no UI churn when nothing
+        // changed).
         appLog.i(TAG, `${source}: session ${currentSessionId.value} still running — reload history`)
         try {
           await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
           onRenderUpdate(true)
-          // A manual refresh must also re-establish the WS stream subscription:
-          // the backend may have dropped it while the app was backgrounded (App
-          // mode disconnects the WS, and the StreamHub subscriber list dies with
-          // it). subscribe() dedupes the same session, so only an explicit
-          // resubscribe re-triggers the server's OnSubscribe → stream_start
-          // re-emit that resumes the live stream. The WS-reconnect path
-          // (force=false) is excluded — watch(connected) already re-subscribes
-          // there and a duplicate would be harmless but wasteful.
-          if (force) {
-            appLog.i(TAG, `${source}: re-subscribing stream for running session ${currentSessionId.value}`)
-            onResubscribeStream?.(currentSessionId.value)
-          }
         } catch {
           loading.value = false
         }
@@ -1466,10 +1444,10 @@ export function useChatSession(options: UseChatSessionOptions) {
         }
       }
       // The user may have switched sessions while the verification load was in
-      // flight. Everything below acts on ONE session — the resubscribe sends a
-      // real unsubscribe for whatever is currently subscribed — so applying it
-      // to a session the user has left would flip their NEW subscription onto
-      // the OLD session. Bail out; the new session's own load already ran.
+      // flight. Everything below acts on ONE session — the teardown sends a real
+      // unsubscribe for whatever is currently subscribed — so applying it to a
+      // session the user has left would tear down their NEW subscription. Bail
+      // out; the new session's own load already ran.
       if (currentSessionId.value !== sid) {
         appLog.i(TAG, `${source}: session changed during verification (${sid} -> ${currentSessionId.value}), dropping stale result`)
         return
@@ -1478,18 +1456,15 @@ export function useChatSession(options: UseChatSessionOptions) {
         // Either the run is genuinely still going, or the verification load
         // produced no answer (bailed/errored). Both mean "do not tear down":
         // keeping a possibly-live subscription is recoverable (the stream
-        // watchdog and a later refresh converge it), whereas sending a real
+        // watchdog and a later reconnect converge it), whereas sending a real
         // unsubscribe loses the rest of the turn's events for good. loadHistory
         // already restored the placeholder from the DB streaming=1 row.
         //
         // loading deliberately stays true in the "no answer" case: we do not
         // know the run ended, and clearing it would unlock the input and hide
         // the stop button for a turn that may still be live. Recovery comes from
-        // the stream watchdog, a WS reconnect, or a manual refresh.
+        // the stream watchdog or a later reconnect.
         appLog.i(TAG, `${source}: session ${sid} not confirmed finished (running=${lastAuthoritativeRunning}) — keeping stream subscription`)
-        if (force) {
-          onResubscribeStream?.(sid)
-        }
         return
       }
       // AI finished while the user was away — clean up the stuck loading state.
@@ -1501,26 +1476,10 @@ export function useChatSession(options: UseChatSessionOptions) {
       loading.value = false
     } else {
       // Session idle — reload history to reflect changes that occurred while
-      // disconnected. skipIfUnchanged avoids UI churn when nothing changed;
-      // a manual refresh forces the reload (skipIfUnchanged=false) so the UI
-      // always re-renders against the latest server state.
-      const wasIdle = !loading.value
+      // disconnected. skipIfUnchanged avoids UI churn when nothing changed.
       try {
         await loadHistory(scrollBottom, showOverlay, skipIfUnchanged, immediate)
         onRenderUpdate(true)
-        // The session was idle but the authoritative loadHistory just revealed
-        // a run is in progress (loading flipped true — a run started server-side
-        // while we were backgrounded): re-establish the WS subscription so the
-        // live stream events (stream_start re-emit → content) reach us. A plain
-        // subscribe() would dedup against the stale "already subscribed" flag,
-        // so use the force resubscribe — mirroring a session switch. Gate on the
-        // loadHistory's own loading transition (the freshest signal) rather than
-        // the runningSessions snapshot taken at the top of runReload, which can
-        // be stale for a run that just began.
-        if (force && wasIdle && loading.value) {
-          appLog.i(TAG, `${source}: re-subscribing stream for running session ${currentSessionId.value} (idle path)`)
-          onResubscribeStream?.(currentSessionId.value)
-        }
       } catch {
         // Non-critical — keep current view on failure.
       }
@@ -1528,39 +1487,23 @@ export function useChatSession(options: UseChatSessionOptions) {
   }
 
   /**
-   * Semantic single entry point for "resync the current session against the
-   * backend". Both public handlers below just pick the authority level:
-   * force=false for silent WS-reconnect resyncs, force=true for user-initiated
-   * authoritative refreshes.
-   *
-   * The authoritative timestamp is recorded here rather than inside runReload's
-   * branches: every force=true exit (running / not-confirmed / finished / idle)
-   * has just done the same authoritative work, and stamping it in one place
-   * cannot drift from the branches.
-   */
-  async function syncCurrentSessionOnReconnect(force: boolean) {
-    await runReload({ force })
-    if (force) lastAuthoritativeReloadAt = Date.now()
-  }
-
-  /**
    * Handle WS reconnection: resync the current session to reflect changes that
-   * occurred while disconnected. Lightweight variant — skips UI refresh when
-   * the message snapshot is unchanged, and re-subscribes a still-running stream
-   * in place.
+   * occurred while disconnected. Lightweight — skips the UI refresh when the
+   * message snapshot is unchanged. The stream subscription itself is repaired
+   * by watch(connected) in useChatStream, not here.
    */
-  const handleWsReconnect = () => syncCurrentSessionOnReconnect(false)
+  const handleWsReconnect = () => runReload()
 
   /**
-   * Manual refresh from the chat ActionBar refresh button (and on foreground
-   * return). Mirrors the WS reconnect resync flow but ALWAYS forces a
-   * loadHistory so every refresh re-renders against the authoritative server
-   * state — messages, stream subscription, mode/usage/commands all stay
-   * consistent with the backend. When the session is (still) running it also
-   * re-subscribes the WS stream (onResubscribeStream), repairing a
-   * server-side-dropped subscription that a plain HTTP reload cannot heal.
+   * Manual refresh from the chat ActionBar refresh button, and the Android
+   * foreground return. Re-opens the current session: clear it, then rebuild it
+   * authoritatively — the exact same flow as switching to it (see
+   * reopenCurrentSession). That makes the refresh behave like a cold restart:
+   * everything the DB does not know about (a stale thinking block, a placeholder
+   * left over from a dropped terminal event) is discarded, and the stream
+   * subscription is re-established.
    */
-  const handleManualRefresh = () => syncCurrentSessionOnReconnect(true)
+  const handleManualRefresh = () => reopenCurrentSession()
 
   /**
    * Check whether a continued session already exists for a task execution.

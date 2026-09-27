@@ -1,0 +1,69 @@
+/* ─── Shared copy-button feedback (global) ───────────────────────────────────
+   One definition of the "copied" state for every hand-built copy button.
+
+   Why this is global rather than scoped: the code-block, table-block and
+   tool-detail copy buttons are injected as HTML strings into `v-html` regions,
+   and scoped rules can never match injected markup (design-guide red line 1).
+   Those three also build their buttons outside Vue (useCodeBlockHeader.ts,
+   renderToolDetail.ts, exportMarkdownHtml.ts), so they cannot render
+   components/common/CopyButton.vue either — they share this instead.
+
+   The contract, for both this file and the component:
+     - feedback is an ICON SWAP (glyph -> check), never a text label
+     - the button's box must not change size while copied
+     - no toast; the check is the feedback
+
+   Every rule is keyed off `.is-copied`, the single class name for this state
+   app-wide (the older bare `.copied` variant has been retired).
+
+   What is deliberately NOT here: button geometry. Each host owns its own size
+   (22px in code headers, auto-width in the table dropdown which carries a
+   chevron as well, 24px in the code preview toolbar). The invariant this file
+   protects is only that the copied state does not CHANGE that geometry — the
+   old rules did exactly that (`width: auto; padding: 0 var(--space-2)`), which
+   is what made buttons jump and overlap their neighbours.
+   ------------------------------------------------------------------------- */
+
+/* Feedback colour.
+
+   The `button` element selector is load-bearing, not decoration. Hosts style
+   their copy button with a class that also sets an idle colour — and a SCOPED
+   host rule compiles to `.qq-copy-btn[data-v-xxxx]`, which is (0,2,0). A plain
+   `.copy-btn.is-copied` is also (0,2,0), so which one wins would come down to
+   CSS source order — and with `cssCodeSplit` the SFC chunks and these `<link>`ed
+   globals are emitted independently, so that order is not something to rely on.
+   Adding the element selector makes this (0,2,1) and the tint wins every time.
+
+   `--color-success` is defined by all 36 themes, so the check stays legible
+   everywhere. Do NOT substitute a fixed green hex. */
+button.copy-btn.is-copied,
+button.code-block-copy-btn.is-copied,
+button.table-block-copy-btn.is-copied,
+button.tool-content-copy-btn.is-copied {
+    color: var(--color-success, #16a34a);
+}
+
+/* Both glyphs occupy a fixed box so the swap cannot read as a resize. A check
+   is a thin stroke with no filled area and looks smaller than the copy glyph
+   at the same nominal size. */
+.copy-btn svg,
+.code-block-copy-btn svg,
+.table-block-copy-btn svg,
+.tool-content-copy-btn svg {
+    display: block;
+    flex-shrink: 0;
+}
+
+/* The table copy MENU ITEM is the one copy affordance that keeps its text: the
+   label IS the format identity (Markdown / HTML / TSV), so swapping it for a
+   check would hide which format was copied. The tint is the whole feedback.
+   It is listed here so every copy control's "copied" colour has one source. */
+button.table-block-copy-menu-item.is-copied {
+    color: var(--color-success, #16a34a);
+}
+
+/* The table copy dropdown is icon + chevron, so its width must stay driven by
+   its content in BOTH states. */
+.table-block-copy-btn.is-copied {
+    width: auto;
+}

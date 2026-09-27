@@ -317,10 +317,17 @@ export function resolveBingStatus(appearance: Record<string, unknown> | undefine
   return { ...EMPTY_BING_STATUS, ...bing }
 }
 
-/** Compute the effective panel opacity value (default 0.85). */
-export function resolvePanelOpacity(appearance: Record<string, unknown> | undefined): number {
-  const v = appearance?.panel_opacity
-  return typeof v === 'number' && Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.85
+/**
+ * Compute the effective panel opacity (default 0.85) from the stored local
+ * preference. Out-of-range or non-numeric values fall back to the default; the
+ * applier additionally clamps to the readable 0.5–1.0 range.
+ *
+ * This is a per-device display tweak stored in localStorage, alongside blur /
+ * edge-fade / wave speed — not a server config value.
+ */
+export function resolvePanelOpacity(value: unknown): number {
+  const v = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.85
 }
 
 /** Compute dark-ness from the resolved theme of the given stored theme value. */

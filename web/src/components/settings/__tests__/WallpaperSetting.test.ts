@@ -10,13 +10,14 @@ vi.mock('@/utils/appLog', () => ({
 }))
 
 // Module-level state shared by the mocked useSettingsConfig and the tests.
-const serverConfig = ref<Record<string, unknown>>({ appearance: { active_file: '', panel_opacity: 0.85 } })
+const serverConfig = ref<Record<string, unknown>>({ appearance: { active_file: '' } })
 // The component treats localConfig as the real module-level reactive singleton
 // (it writes localConfig.wallpaperBlur directly for live preview), so the mock
 // must be reactive — not a ref — for those direct writes to be observable.
 const localConfig = reactive<Record<string, string | number | boolean | null>>({
   theme: 'auto',
   locale: 'zh',
+  panelOpacity: 0.85,
   wallpaperBlur: 0,
   wallpaperEdgeFade: false,
 })
@@ -126,7 +127,6 @@ function localConfigWith(items: { file: string; name: string }[], selected: stri
   return {
     appearance: {
       active_file: selected,
-      panel_opacity: 0.85,
       wallpaper_mode: 'local',
       wallpaper_enabled: true,
       local: {
@@ -143,7 +143,6 @@ function bingConfigWith(overrides: Record<string, unknown> = {}) {
   return {
     appearance: {
       active_file: 'bing-20260910.jpg',
-      panel_opacity: 0.85,
       wallpaper_mode: 'bing',
       wallpaper_enabled: true,
       local: { selected: '', items: [] },
@@ -168,7 +167,6 @@ function waveConfig(overrides: Record<string, unknown> = {}) {
     appearance: {
       // The wave has no file on disk, so the server reports an empty active_file.
       active_file: '',
-      panel_opacity: 0.85,
       wallpaper_mode: 'wave',
       wallpaper_enabled: true,
       local: { selected: '', items: [] },
@@ -184,7 +182,7 @@ describe('WallpaperSetting', () => {
     vi.unstubAllGlobals()
     stubMatchMedia()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })))
-    serverConfig.value = { appearance: { active_file: '', panel_opacity: 0.85 } }
+    serverConfig.value = { appearance: { active_file: '' } }
     localConfig.wallpaperBlur = 0
     localConfig.wallpaperEdgeFade = false
     localConfig.theme = 'auto'
@@ -299,8 +297,7 @@ describe('WallpaperSetting', () => {
       serverConfig.value = {
         appearance: {
           active_file: '',
-          panel_opacity: 0.85,
-          wallpaper_mode: '',
+              wallpaper_mode: '',
           wallpaper_enabled: false,
           local: { selected: '', items: [] },
           bing: { enabled: false, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 0 },
@@ -724,7 +721,7 @@ describe('WallpaperSetting', () => {
       expect(ranges[1].attributes('disabled')).toBeDefined()
     })
 
-    it('persists panel opacity with a debounced PATCH on slider input', async () => {
+    it('persists panel opacity to localStorage, never to the server', async () => {
       serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
@@ -732,7 +729,10 @@ describe('WallpaperSetting', () => {
       await slider.setValue('0.75')
       await slider.trigger('input')
       await new Promise(r => setTimeout(r, 400))
-      expect(mockPatchConfig).toHaveBeenCalledWith({ appearance: { panel_opacity: 0.75 } })
+      // Panel opacity is a per-device display tweak — it must go through
+      // setLocalConfig (localStorage), never a config PATCH.
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('panelOpacity', 0.75)
+      expect(mockPatchConfig).not.toHaveBeenCalled()
     })
 
     it('exposes the relaxed 0.5 lower bound', async () => {

@@ -32,8 +32,13 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
 // a plain `const` declared below it. vi.hoisted runs before the mock and gives
 // the factory something initialised to reference.
 const { mockAppLogW } = vi.hoisted(() => ({ mockAppLogW: vi.fn() }))
-vi.mock('@/utils/appLog', () => ({
+vi.mock('@/utils/appLog', async (importOriginal) => ({
+  // Spread the real module so a NEW export is not undefined here (a hand-listed
+  // mock silently breaks every caller that uses one the list forgot), then stub
+  // diagLog: the real one POSTs, which would consume this file's fetch mocks.
+  ...(await importOriginal<typeof import('@/utils/appLog')>()),
   appLog: { d: vi.fn(), i: vi.fn(), w: (...args: unknown[]) => mockAppLogW(...args), e: vi.fn() },
+  diagLog: vi.fn(),
 }))
 
 // ── Mock useGlobalEvents (WS) ──
@@ -991,6 +996,96 @@ describe('useChatStream', () => {
 
       expect(options.onScrollBottom.mock.calls.length).toBeGreaterThan(scrollCallsBefore)
       expect(options.onToolResult).toHaveBeenCalledWith('tool-3')
+    })
+
+    // ── Chat-driven file refresh on ACP backends ──
+    //
+    // ACP maps a tool's TERMINAL update to `tool_result` (acp_tool.go:207-210:
+    // `if tool.Done { eventType = "tool_result" }`), and the initial ToolCall is
+    // emitted with Done:false. So on every acp-stdio backend — codebuddy,
+    // claude, codex, qoder, kimi, … i.e. everything except the CLI ones — the
+    // only event carrying `done:true` is `tool_result`. Hanging the refresh off
+    // the `tool_use`+done branch alone meant the preview never auto-refreshed
+    // for those backends; the fsnotify channel was the only thing left.
+
+    it('should call onFileModified for a FILE_MODIFYING_TOOLS tool_result (ACP terminal shape)', () => {
+      FILE_MODIFYING_TOOLS.add('Edit')
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      // Exactly what ACP emits: start (done:false) then terminal tool_result.
+      simulateWsEvent('tool_use', { name: 'Edit', id: 'acp-edit-1', done: false })
+      simulateWsEvent('tool_result', {
+        id: 'acp-edit-1',
+        name: 'Edit',
+        status: 'success',
+        file_path: '/tmp/acp-target.txt',
+      })
+
+      expect(options.onFileModified).toHaveBeenCalledWith('/tmp/acp-target.txt')
+
+      FILE_MODIFYING_TOOLS.delete('Edit')
+    })
+
+    it('falls back to the live block for name/file_path when tool_result omits them', () => {
+      FILE_MODIFYING_TOOLS.add('Write')
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      // The start event carries the path (slim WS events include file_path) and
+      // the terminal frame only reports id+status — the common ACP shape.
+      simulateWsEvent('tool_use', {
+        name: 'Write',
+        id: 'acp-write-1',
+        done: false,
+        file_path: '/tmp/from-block.txt',
+      })
+      simulateWsEvent('tool_result', { id: 'acp-write-1', status: 'success' })
+
+      expect(options.onFileModified).toHaveBeenCalledWith('/tmp/from-block.txt')
+
+      FILE_MODIFYING_TOOLS.delete('Write')
+    })
+
+    it('does not call onFileModified for a non-file-modifying tool_result', () => {
+      FILE_MODIFYING_TOOLS.add('Edit')
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      simulateWsEvent('tool_use', { name: 'Read', id: 'acp-read-1', done: false, file_path: '/tmp/read.txt' })
+      simulateWsEvent('tool_result', { id: 'acp-read-1', name: 'Read', status: 'success', file_path: '/tmp/read.txt' })
+
+      expect(options.onFileModified).not.toHaveBeenCalled()
+
+      FILE_MODIFYING_TOOLS.delete('Edit')
+    })
+
+    it('does not fire twice when a backend emits both done tool_use and tool_result', () => {
+      FILE_MODIFYING_TOOLS.add('Edit')
+
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+
+      connectStream('test-session-1')
+
+      // Some backends (CLI stream-json) mark the tool_use itself done AND the
+      // debouncer forwards a terminal frame; the preview must refresh once.
+      simulateWsEvent('tool_use', { name: 'Edit', id: 'both-1', done: false })
+      simulateWsEvent('tool_use', { name: 'Edit', id: 'both-1', done: true, file_path: '/tmp/both.txt' })
+      simulateWsEvent('tool_result', { id: 'both-1', name: 'Edit', status: 'success', file_path: '/tmp/both.txt' })
+
+      expect(options.onFileModified).toHaveBeenCalledTimes(1)
+
+      FILE_MODIFYING_TOOLS.delete('Edit')
     })
   })
 

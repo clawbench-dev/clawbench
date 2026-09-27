@@ -3,9 +3,7 @@
  * These have no Vue reactivity dependencies and can be tested in isolation.
  */
 import { baseName } from '@/utils/path.ts'
-import { gt } from '@/composables/useLocale'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
-import i18n from '@/i18n'
 
 /** Options for parseAssistantContent. */
 export interface ParseAssistantContentOptions {
@@ -189,29 +187,6 @@ export function toolCallSummary(block: { input?: Record<string, unknown>; name?:
  */
 export function hasImagesInContent(content: string | null | undefined): boolean {
   return !!content && content.includes('![')
-}
-
-/**
- * Format a timestamp into a relative time string (e.g., "5 min ago", "2d ago").
- * Falls back to "M/D HH:mm" for dates older than 7 days.
- */
-export function formatMessageTime(createdAt: string): string {
-  const date = new Date(createdAt)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-
-  if (diffMins < 1) return gt('time.justNow')
-  if (diffMins < 60) return gt('time.minutesAgo', { count: diffMins })
-
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return gt('time.hoursAgo', { count: diffHours })
-
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 7) return gt('time.daysAgo', { count: diffDays })
-
-  const d = new Date(createdAt)
-  return d.toLocaleDateString(i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 /**

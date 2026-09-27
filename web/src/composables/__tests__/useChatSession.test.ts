@@ -431,6 +431,7 @@ function createSessionInternal() {
     onScrollBottom: vi.fn(),
     onConnectStream: vi.fn(),
     onDisconnectStream: vi.fn(),
+    onResubscribeStream: vi.fn(),
     onOpen: vi.fn(),
     onEnsureStreamingPlaceholder: vi.fn(),
   }
@@ -1615,92 +1616,115 @@ describe('foreground return marks current session read', () => {
     })
   })
 
-  // ── Android double-resync dedupe ──
+  // ── Foreground return reopens the session ──
   //
-  // One physical return to the foreground produces both a resume (force=true)
-  // and, once the backgrounded socket reconnects, a WS-reconnect (force=false).
-  // Measured on the real client log the two land a median 0.11s apart. The
-  // lightweight one is a strict subset of the authoritative one, so it is
-  // skipped; the authoritative one is NEVER skipped (an explicit user refresh
-  // must always run).
+  // One physical return to the foreground runs the SAME reopen as the refresh
+  // button: clear the session, then rebuild it authoritatively. This is what
+  // makes a resume behave like switching away and back — the only path that
+  // discards frontend-only state (a stale thinking block) the DB does not know
+  // about. It is deliberately NOT deduped against the WS reconnect that follows:
+  // a reopen that failed (Android resumes before the radio is back) leaves an
+  // empty list, and the reconnect is the only thing that can heal it.
 
-  function createDedupeTestSession() {
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessionId: 'current-s1', messages: [], total: 0, running: false,
-      }),
+  it('reopens the session on resume, discarding frontend-only state the DB does not know about', async () => {
+    // The session is RUNNING and the DB snapshot carries no streaming row — the
+    // exact shape where the old in-place merge (rebuildFromDb) preserved the
+    // live placeholder. The reopen must instead clear it: only a real clear
+    // discards frontend-only state like a stale thinking block.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 'current-s1', running: true }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: true }),
+      })
     })
-    const { session, options } = createSessionInternal()
+    const session = createSession()
     mockState.currentSessionId = 'current-s1'
-    options.loading.value = false
-    return { session, options }
-  }
+    const options = lastSessionOptions!
+    // A stale streaming placeholder + thinking block that exists ONLY in the
+    // frontend. The old resume merged DB rows in place and kept it.
+    options.messages.value = [{
+      role: 'assistant', id: 'stale-1', streaming: true, content: '',
+      blocks: [{ type: 'thinking', text: 'stale reasoning', think_id: 'th_stale' }],
+      createdAt: '2026-01-01T00:00:00Z',
+    }]
+    const handlers = captureForegroundHandlers()
 
-  const chatFetchCount = () =>
-    (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
-      .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1')).length
+    handlers[handlers.length - 1]()
 
-  it('skips the WS-reconnect resync when an authoritative reload just ran', async () => {
-    const { session } = createDedupeTestSession()
-
-    await session.handleManualRefresh()
-    const afterRefresh = chatFetchCount()
-    expect(afterRefresh).toBeGreaterThan(0)
-
-    // The reconnect resync arrives moments later for the SAME return.
-    await session.handleWsReconnect()
-
-    // No additional history fetch: the authoritative pass already covered it.
-    expect(chatFetchCount()).toBe(afterRefresh)
+    await vi.waitFor(() => {
+      expect(options.messages.value).toHaveLength(0)
+    })
+    expect(session.currentSessionId.value).toBe('current-s1')
   })
 
-  it('does NOT skip an authoritative reload even when one just ran', async () => {
-    // The dedupe must never swallow an authoritative reload. Two manual
-    // refreshes in a row (or a resume right after a refresh) are two explicit
-    // user actions; the second must always run. This is what makes the guard
-    // asymmetric — dropping the `!force` condition must fail this test.
-    const { session } = createDedupeTestSession()
+  it('re-establishes the stream subscription on resume (a same-id reopen does not retrigger the watcher)', async () => {
+    const session = createForegroundTestSession()
+    const onResubscribeStream = lastSessionOptions!.onResubscribeStream as ReturnType<typeof vi.fn>
+    const handlers = captureForegroundHandlers()
 
-    await session.handleManualRefresh()
-    const afterFirst = chatFetchCount()
+    handlers[handlers.length - 1]()
 
-    await session.handleManualRefresh()
-
-    expect(chatFetchCount()).toBeGreaterThan(afterFirst)
+    await vi.waitFor(() => {
+      expect(onResubscribeStream).toHaveBeenCalledWith('current-s1')
+    })
+    expect(session.currentSessionId.value).toBe('current-s1')
   })
 
-  it('does NOT let a WS-reconnect resync arm the dedupe window for the next one', async () => {
-    // Only an authoritative reload may arm the window. If a lightweight resync
-    // armed it, a genuine later reconnect would be swallowed by an earlier,
-    // cheaper one — the resync would stop working for the rest of the window.
-    const { session } = createDedupeTestSession()
+  it('a failed reopen leaves an empty list, and the next WS reconnect heals it (not deduped)', async () => {
+    // Android resumes the app before the network/radio is back, so the reopen's
+    // history GET commonly rejects with a transport error. Because the session
+    // was cleared first, that leaves the message list EMPTY — and the only
+    // automatic heal is the WS reconnect. A resume/refresh dedupe window would
+    // swallow it, which is why the dedupe was removed.
+    const session = createForegroundTestSession()
+    const options = lastSessionOptions!
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 'm1', role: 'assistant', blocks: [], content: 'healed' },
+    ])
+    // A non-empty snapshot so the reconnect's skipIfUnchanged load is not
+    // treated as "unchanged" against the empty snapshot a cleared array yields.
+    mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-heal')
 
+    let chatFails = true
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      const u = String(url)
+      if (u.includes('/api/ai/chat?session_id=') || u.includes('/api/ai/chat?')) {
+        if (chatFails) return Promise.reject(new TypeError('Failed to fetch'))
+      }
+      if (u.includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 'current-s1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    // The reopen failed at the transport layer — no toast, empty list.
+    await vi.waitFor(() => {
+      const chatAttempts = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat'))
+      expect(chatAttempts.length).toBeGreaterThan(0)
+    })
+    expect(mockToastFn).not.toHaveBeenCalled()
+
+    // The socket comes back: the reconnect must run and repopulate the list.
+    chatFails = false
     await session.handleWsReconnect()
-    const afterFirst = chatFetchCount()
 
-    await session.handleWsReconnect()
-
-    expect(chatFetchCount()).toBeGreaterThan(afterFirst)
-  })
-
-  it('runs the WS-reconnect resync again once the dedupe window has passed', async () => {
-    // A later reconnect (e.g. the user backgrounded and returned again) is a
-    // genuinely new resync and must not be swallowed forever.
-    const { session } = createDedupeTestSession()
-
-    await session.handleManualRefresh()
-    const afterRefresh = chatFetchCount()
-
-    const realNow = Date.now()
-    const spy = vi.spyOn(Date, 'now').mockReturnValue(realNow + 60_000)
-    try {
-      await session.handleWsReconnect()
-    } finally {
-      spy.mockRestore()
-    }
-
-    expect(chatFetchCount()).toBeGreaterThan(afterRefresh)
+    expect(options.messages.value).toHaveLength(1)
   })
 })
 
@@ -4727,7 +4751,8 @@ describe('handleWsReconnect', () => {
     // The identity guard rejects a stale response for a different session. That
     // response carries `running:false` for SOMEONE ELSE — adopting it as
     // authoritative for our session would authorise a teardown on data that does
-    // not describe the run in question.
+    // not describe the run in question. This is the lightweight reconnect path,
+    // which must NOT tear down a possibly-live subscription.
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onResubscribeStream = vi.fn()
@@ -4752,25 +4777,25 @@ describe('handleWsReconnect', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
-      })
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      if (String(url).includes('/api/ai/chat/read')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+      }
       // Stale: describes s2, not the session we are looking at.
-      .mockResolvedValueOnce({
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's2', messages: [], total: 0, running: false,
-        }),
+        json: () => Promise.resolve({ sessionId: 's2', messages: [], total: 0, running: false }),
       })
+    })
 
-    await session.handleManualRefresh()
+    await session.handleWsReconnect()
 
     expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
-    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
@@ -4956,11 +4981,10 @@ describe('handleWsReconnect', () => {
     vi.restoreAllMocks()
   })
 
-  it('does NOT mark the session read on manual refresh (force path)', async () => {
-    // The force path is the manual refresh button / foreground return. A manual
-    // refresh is not evidence about what the user saw, and onAppResume
-    // already marks read on a genuine resume — so the reconnect
-    // mark-read must stay on the non-force path only.
+  it('marks the session read on manual refresh (it reopens the session)', async () => {
+    // The refresh button now runs the same reopen as a session switch, and a
+    // switch marks the session read (the user's explicit intent to look at it).
+    // This deliberately replaces the old "refresh does NOT mark read" contract.
     mockAppInForeground.value = true
     const loading = ref(false)
     const options = {
@@ -5004,7 +5028,7 @@ describe('handleWsReconnect', () => {
         url.startsWith('/api/ai/chat/read') &&
         (init as RequestInit | undefined)?.method === 'POST'
     )
-    expect(readCalls.length).toBe(0)
+    expect(readCalls.length).toBe(1)
 
     vi.restoreAllMocks()
   })
@@ -5024,7 +5048,7 @@ describe('handleManualRefresh', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('when loading=true and session still running: force reloads history which re-subscribes the stream', async () => {
+  it('reopens the session (clear + rebuild) and re-subscribes the stream when still running', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onConnectStream = vi.fn()
@@ -5051,41 +5075,57 @@ describe('handleManualRefresh', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // First fetch: loadSessionsOnce — s1 is still running.
-    // Second fetch: loadHistory — returns running:true so syncSessionState's
-    // isRunning branch re-subscribes the stream.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: true }],
-          totalCount: 1,
-        }),
-      })
-      .mockResolvedValueOnce({
+    // A frontend-only streaming placeholder the DB knows nothing about — the
+    // "stuck thinking block" shape. The OLD refresh merged DB rows in place
+    // (rebuildFromDb) and preserved this object whenever the session was still
+    // running and the snapshot carried no streaming row, which is exactly why
+    // the block survived a refresh and only went away on a session switch.
+    options.messages.value = [{
+      role: 'assistant', id: 'stale-1', streaming: true, content: '',
+      blocks: [{ type: 'thinking', text: 'stale reasoning', think_id: 'th_stale' }],
+      createdAt: '2026-01-01T00:00:00Z',
+    }]
+
+    // The reopen issues, in order: chat history (switchSession), mark-read,
+    // session list (loadSessionsOnce). parseMessages is mocked to [] so the
+    // authoritative snapshot has no rows at all.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: true }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's1', messages: [], total: 0, running: true,
         }),
       })
+    })
 
     await session.handleManualRefresh()
 
-    // loadHistory was executed (the fetch mock above also serves the chat fetch;
-    // assert a session-scoped fetch happened) — the running branch forces the
-    // history reload; the placeholder is restored from the DB streaming=1 row.
+    // The stale frontend-only placeholder is GONE — proof the session was
+    // cleared before the authoritative rebuild, not merged in place.
+    expect(options.messages.value).toHaveLength(0)
+    // switchSession always tears the old subscription down first...
+    expect(onDisconnectStream).toHaveBeenCalled()
     expect(onConnectStream).not.toHaveBeenCalled()
-    expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
-    // A manual refresh must re-establish the WS stream subscription (a plain
-    // loadHistory cannot heal a server-side-dropped StreamHub subscription).
+    // ...and a same-id reopen does NOT retrigger watch(currentSessionId), so the
+    // subscription must be re-established explicitly.
     expect(onResubscribeStream).toHaveBeenCalledTimes(1)
     expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
 
-  it('when loading=true and session no longer running: cleans up stuck loading, then reloads history (no resubscribe)', async () => {
+  it('reopen when the run finished while away: rebuilds from the DB and still resubscribes', async () => {
+    // A same-id reopen is not conditional on the run state: it always clears and
+    // rebuilds, and always re-establishes the subscription (the teardown is part
+    // of the switch-session flow). The DB row is authoritative, so the loading
+    // state converges to whatever the server reports.
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onResubscribeStream = vi.fn()
@@ -5112,32 +5152,28 @@ describe('handleManualRefresh', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // First fetch: loadSessionsOnce — s1 NOT running.
-    // Second fetch: loadHistory — the verification load; confirms running:false,
-    // which is what authorises the cleanup.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: false }],
-          totalCount: 1,
-        }),
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's1', messages: [], total: 0, running: false,
-        }),
-      })
+    })
 
     await session.handleManualRefresh()
 
+    // switchSession tears the old subscription down; the reopen then
+    // re-establishes it (the guard only skips it when the session CHANGED).
     expect(onDisconnectStream).toHaveBeenCalled()
-    expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
+    // syncSessionState reports the run is over, so loading converges to false.
     expect(loading.value).toBe(false)
-    // Session finished — nothing to re-subscribe to.
-    expect(onResubscribeStream).not.toHaveBeenCalled()
-    // The forced history reload must actually fire after the cleanup.
+    // The authoritative history reload fired.
     await vi.waitFor(() => {
       const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: any[]) => String(c[0]).includes('/api/ai/chat?session_id=s1'))
@@ -5147,113 +5183,12 @@ describe('handleManualRefresh', () => {
     vi.restoreAllMocks()
   })
 
-  it('when the running list is stale but history says running: keeps the stream (does NOT unsubscribe)', async () => {
-    // Regression for the "stuck mid-stream, refresh shows it was done" symptom.
-    // The session list is a separate request that can lag or fail; treating its
-    // "not running" as authoritative sent a REAL unsubscribe and dropped the
-    // live turn's content/done events server-side. The history response's own
-    // `running` field is the trustworthy signal.
-    const loading = ref(true)
-    const onDisconnectStream = vi.fn()
-    const onResubscribeStream = vi.fn()
-    const options = {
-      currentSessionId: ref('s1'),
-      messages: ref([]),
-      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
-      loading,
-      inputDisabled: ref(false),
-      blockTasks: {},
-      blockAskQuestions: {},
-      expandedTools: ref({}),
-      onParseAssistantContent: vi.fn(),
-      onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
-      onScrollBottom: vi.fn(),
-      onConnectStream: vi.fn(),
-      onDisconnectStream,
-      onResubscribeStream,
-      onOpen: vi.fn(),
-    }
-    lastSessionOptions = options
-    const session = useChatSession(options)
-
-    globalThis.fetch = vi.fn()
-      // Stale/empty list: s1 absent, so runningSessions.has('s1') is false.
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
-      })
-      // History is authoritative: the run is STILL going.
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's1', messages: [], total: 0, running: true,
-        }),
-      })
-
-    await session.handleManualRefresh()
-
-    expect(onDisconnectStream).not.toHaveBeenCalled()
-    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
-    expect(loading.value).toBe(true)
-    // The subscription must be actively re-established, not torn down.
-    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
-
-    vi.restoreAllMocks()
-  })
-
-  it('when the verification load gives no answer: keeps the stream (does NOT unsubscribe)', async () => {
-    // A loadHistory that bails (sequence guard / fetch error) yields no
-    // authoritative `running` value. Acting on "no information" by tearing the
-    // stream down is exactly the destructive mistake this guards against.
-    const loading = ref(true)
-    const onDisconnectStream = vi.fn()
-    const onResubscribeStream = vi.fn()
-    const options = {
-      currentSessionId: ref('s1'),
-      messages: ref([]),
-      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
-      loading,
-      inputDisabled: ref(false),
-      blockTasks: {},
-      blockAskQuestions: {},
-      expandedTools: ref({}),
-      onParseAssistantContent: vi.fn(),
-      onExtractScheduledTasks: vi.fn(),
-      onRenderUpdate: vi.fn(),
-      onScrollBottom: vi.fn(),
-      onConnectStream: vi.fn(),
-      onDisconnectStream,
-      onResubscribeStream,
-      onOpen: vi.fn(),
-    }
-    lastSessionOptions = options
-    const session = useChatSession(options)
-
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
-      })
-      // The history request fails outright — no `running` field is ever seen.
-      .mockRejectedValueOnce(new Error('network down'))
-
-    await session.handleManualRefresh()
-
-    expect(onDisconnectStream).not.toHaveBeenCalled()
-    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
-    expect(loading.value).toBe(true)
-    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
-
-    vi.restoreAllMocks()
-  })
-
-  it('when the user switches sessions during verification: does not flip the new session\'s subscription', async () => {
-    // The verification load is an await, so the user can switch sessions while
-    // it is in flight. The code below acts on ONE session — resubscribe sends a
-    // real unsubscribe for whatever is currently subscribed — so applying it to
-    // the session the user just left would unsubscribe their NEW session and
-    // subscribe the OLD one.
+  it('when the user switches sessions during the reopen: does not flip the new session\'s subscription', async () => {
+    // switchSession is an await, so the user can switch sessions while the
+    // reload is in flight. resubscribe() sends a REAL unsubscribe for whatever
+    // is currently subscribed, so applying the stale reopen to the session the
+    // user just left would unsubscribe their NEW session and subscribe the OLD
+    // one. The guard must drop the stale result.
     const loading = ref(true)
     const currentSessionId = ref('s1')
     const onDisconnectStream = vi.fn()
@@ -5283,7 +5218,7 @@ describe('handleManualRefresh', () => {
       if (String(url).includes('/api/ai/sessions')) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
       }
-      // Simulate the switch landing while the verification GET is in flight.
+      // Simulate the switch landing while the reopen's history GET is in flight.
       currentSessionId.value = 's2'
       return Promise.resolve({
         ok: true,
@@ -5293,9 +5228,8 @@ describe('handleManualRefresh', () => {
 
     await session.handleManualRefresh()
 
-    // The stale result must be dropped: no teardown, and crucially no
-    // resubscribe that would flip the subscription onto the abandoned session.
-    expect(onDisconnectStream).not.toHaveBeenCalled()
+    // The stale result must be dropped: no resubscribe that would flip the
+    // subscription onto the abandoned session.
     expect(onResubscribeStream).not.toHaveBeenCalled()
 
     vi.restoreAllMocks()
@@ -5359,13 +5293,21 @@ describe('handleManualRefresh', () => {
       const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
       expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
     })
-    // Session idle and not running — nothing to re-subscribe.
-    expect(onResubscribeStream).not.toHaveBeenCalled()
+    // Session idle and not running — the subscription is still re-established:
+    // a reopen is unconditional, and the WS may have been dropped while the app
+    // was backgrounded even if no turn was live.
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
 
-  it('when loading=false but the session IS running: idle refresh also re-subscribes the stream', async () => {
+  it('when the run started server-side while the UI was idle: re-subscribes so live events reach us', async () => {
+    // The "stuck stream" recovery case: the UI believed the session was idle
+    // (loading=false) but the backend has a run in progress. The reopen's
+    // authoritative loadHistory reveals it and flips loading=true; the
+    // resubscribe makes the server re-emit stream_start so the live turn
+    // resumes. The resubscribe must be unconditional — gating it on the stale
+    // pre-reload state is exactly what would leave the stream dead.
     const loading = ref(false)
     const onRenderUpdate = vi.fn()
     const onResubscribeStream = vi.fn()
@@ -5390,23 +5332,18 @@ describe('handleManualRefresh', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // loadSessionsOnce reports s1 as running (a run started server-side while
-    // loading was still false — the exact "stuck stream" recovery case), and
-    // the chat fetch confirms it with running:true.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: true }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: true }],
-          totalCount: 1,
-        }),
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: true }),
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's1', messages: [], total: 0, running: true,
-        }),
-      })
+    })
 
     await session.handleManualRefresh()
 

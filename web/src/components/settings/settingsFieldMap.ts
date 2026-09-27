@@ -238,9 +238,11 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // (WallpaperSetting.vue) rendered by SettingsCategory at the top of this
     // section; only the panel-opacity slider is a real data item here. The
     // slider item is NOT rendered through the generic row (its UI lives inside
-    // WallpaperSetting) — it exists so the section groups correctly and the
-    // value is readable in the config pipeline.
-    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'appearance.panel_opacity', type: 'slider', source: 'server', min: 0.5, max: 1, step: 0.01, defaultValue: 0.85, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
+    // WallpaperSetting) — it exists so the section card is created and the
+    // value flows through the same local-config pipeline as the other display
+    // tweaks. Panel opacity is a per-device preference (localStorage), like
+    // blur / edge fade / wave speed.
+    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'panelOpacity', type: 'slider', source: 'local', min: 0.5, max: 1, step: 0.01, defaultValue: 0.85, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
   ],
   agents: [],
   chat: [

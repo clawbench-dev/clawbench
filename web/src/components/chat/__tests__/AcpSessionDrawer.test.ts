@@ -69,6 +69,19 @@ vi.mock('vue-i18n', () => ({
   useI18n: () => ({ t: (key: string) => key }),
 }))
 
+// formatRelativeTime (used by the drawer for timestamps) resolves through the
+// app i18n singleton, so the module must exist even though the component itself
+// only uses the vue-i18n composable. Keys are echoed so assertions can target
+// the mapping rather than the translated string.
+vi.mock('@/i18n', () => ({
+  default: {
+    global: {
+      t: (key: string) => key,
+      locale: { value: 'en' },
+    },
+  },
+}))
+
 vi.mock('lucide-vue-next', () => ({
   Import: { name: 'ImportIcon', render: () => null },
   LoaderCircle: { name: 'LoaderCircleIcon', render: () => null },
@@ -453,36 +466,27 @@ describe('AcpSessionDrawer', () => {
     })
   })
 
-  describe('formatTime', () => {
-    it('returns relative time for recent, minute, hour and day ranges', () => {
+  describe('relative timestamp', () => {
+    it('renders through the shared formatter (whose keys the i18n mock echoes)', async () => {
+      mockSessions.value = [
+        { sessionId: 's1', title: 't', cwd: '/project', createdAt: '', updatedAt: new Date().toISOString() },
+      ]
       const wrapper = mountDrawer()
-      const vm = wrapper.vm as any
-      const now = Date.now()
-
-      expect(vm.formatTime(new Date(now - 30 * 1000).toISOString())).toBe('chat.acpSession.justNow')
-      expect(vm.formatTime(new Date(now - 10 * 60 * 1000).toISOString())).toBe('chat.acpSession.minutesAgo')
-      expect(vm.formatTime(new Date(now - 2 * 60 * 60 * 1000).toISOString())).toBe('chat.acpSession.hoursAgo')
-      expect(vm.formatTime(new Date(now - 5 * 24 * 60 * 60 * 1000).toISOString())).toBe('chat.acpSession.daysAgo')
+      await nextTick()
+      const el = wrapper.find('.acp-session-item-time')
+      // Per-range thresholds live in format.test.ts; this pins that the drawer
+      // routes the timestamp through the shared formatter rather than a local
+      // helper. The i18n mock echoes keys, so a "just now" timestamp surfaces
+      // as time.justNow here.
+      expect(el.exists()).toBe(true)
+      expect(el.text()).toBe('time.justNow')
     })
 
-    it('returns locale date for sessions older than 30 days', () => {
+    it('does not render a timestamp for a session without updatedAt', async () => {
+      mockSessions.value = [{ sessionId: 's1', title: 't', cwd: '/project', createdAt: '', updatedAt: '' }]
       const wrapper = mountDrawer()
-      const vm = wrapper.vm as any
-      const old = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000)
-      expect(vm.formatTime(old.toISOString())).toBe(old.toLocaleDateString())
-    })
-
-    it('does not throw for invalid dates', () => {
-      const wrapper = mountDrawer()
-      const vm = wrapper.vm as any
-      expect(typeof vm.formatTime('not-a-date')).toBe('string')
-    })
-
-    it('returns the raw value when the Date constructor throws', () => {
-      const wrapper = mountDrawer()
-      const vm = wrapper.vm as any
-      const sym = Symbol('boom')
-      expect(vm.formatTime(sym)).toBe(sym)
+      await nextTick()
+      expect(wrapper.find('.acp-session-item-time').exists()).toBe(false)
     })
   })
 })

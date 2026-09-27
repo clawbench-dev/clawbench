@@ -136,8 +136,6 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
-	// Appearance — panel opacity multiplier
-	"appearance.panel_opacity": true,
 	// Wallpaper source selection — plain scalars, no path component. File names
 	// (local.selected / local.items / bing.file) are deliberately absent: they
 	// are written only by the dedicated theme endpoints, which validate and
@@ -417,9 +415,10 @@ type configFonts struct {
 }
 
 // configAppearance exposes custom wallpaper settings to the settings panel.
+//
+// Panel translucency is absent by design: it is a per-device display tweak the
+// browser keeps in localStorage, so it never round-trips through the server.
 type configAppearance struct {
-	PanelOpacity float64 `json:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85)
-
 	WallpaperMode    string `json:"wallpaper_mode"`    // Active source: "local" or "bing"
 	WallpaperEnabled bool   `json:"wallpaper_enabled"` // Global wallpaper on/off switch
 	ActiveFile       string `json:"active_file"`       // Bare name of the wallpaper currently displayed ("" = none)
@@ -481,7 +480,6 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 	}
 
 	return configAppearance{
-		PanelOpacity:     cfg.Appearance.PanelOpacity,
 		WallpaperMode:    cfg.Appearance.WallpaperMode,
 		WallpaperEnabled: cfg.Appearance.WallpaperEnabled,
 		ActiveFile:       active,
@@ -656,7 +654,6 @@ var PatchableConfigPaths = map[string]bool{
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
-	"appearance.panel_opacity":          true,
 	"appearance.wallpaper_mode":         true,
 	"appearance.wallpaper_enabled":      true,
 	"appearance.bing.enabled":           true,
@@ -1281,24 +1278,16 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
-	// appearance — custom wallpaper. panel_opacity must be in the valid range.
-	// File names (local.selected / local.items / bing.file) are deliberately
-	// absent: they are written only by the dedicated theme endpoints, which
-	// validate and persist the file alongside the name.
+	// appearance — custom wallpaper. File names (local.selected / local.items /
+	// bing.file) are deliberately absent: they are written only by the dedicated
+	// theme endpoints, which validate and persist the file alongside the name.
+	// panel_opacity is absent too — it is a per-device browser preference, so a
+	// PATCH carrying it is rejected by the whitelist.
 	if appearance, ok := patch["appearance"].(map[string]any); ok {
 		// Strict type checks: a wrong-typed value would be silently ignored by
 		// applyConfigPatch's assertions yet still written to config.yaml by
 		// mergePatchIntoRaw, producing a file the typed config cannot parse
 		// (which makes the next startup fail).
-		if raw, present := appearance["panel_opacity"]; present {
-			v, ok := raw.(float64)
-			if !ok {
-				return fmt.Errorf("appearance.panel_opacity must be a number")
-			}
-			if v < 0.5 || v > 1.0 {
-				return fmt.Errorf("appearance.panel_opacity must be between 0.5 and 1.0")
-			}
-		}
 		if raw, present := appearance["wallpaper_mode"]; present {
 			v, ok := raw.(string)
 			if !ok {
@@ -1366,9 +1355,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if appearance, ok := patch["appearance"].(map[string]any); ok {
-		if v, ok := appearance["panel_opacity"].(float64); ok {
-			cfg.Appearance.PanelOpacity = v
-		}
 		if v, ok := appearance["wallpaper_mode"].(string); ok {
 			cfg.Appearance.WallpaperMode = v
 		}

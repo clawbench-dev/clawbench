@@ -95,7 +95,6 @@ vi.mock('@/composables/useTaskExecStream.ts', () => ({
 vi.mock('@/composables/useChatRender.ts', () => ({
   useChatRender: () => ({
     renderTextBlock: vi.fn(),
-    formatMessageTime: vi.fn(),
     toolCallSummary: vi.fn(),
     formatToolInput: vi.fn(),
     humanizeCron: vi.fn(),

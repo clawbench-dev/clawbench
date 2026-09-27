@@ -302,8 +302,71 @@ func (fw *FileWatcher) UpdateWatch(clientID, dirPath, filePath string, mediaPath
 	client.mediaPaths = newMedia
 	client.watchedDirs = held
 
-	// Cancel debounce timers for this client (old paths are stale)
-	fw.cancelClientTimers(clientID)
+	// Settle this client's in-flight debounce events against the NEW target.
+	//
+	// This used to be an unconditional cancelClientTimers, which silently
+	// deleted any event still inside the 200ms debounce window. The frontend
+	// re-targets whenever the set of on-screen images changes (useFileWatch
+	// watches mediaPaths, derived from the live DOM), and during an AI turn that
+	// happens constantly — so a file_change for the very file being edited was
+	// routinely thrown away and the preview stayed stale until a manual refresh.
+	//
+	// An event whose target is still covered by the new watch set is therefore
+	// DELIVERED now; only events for targets this client no longer watches are
+	// dropped.
+	fw.settleClientTimersLocked(clientID)
+}
+
+// settleClientTimersLocked resolves a client's pending debounce events after a
+// re-target: events still covered by the client's current target are flushed to
+// its push channel, the rest are cancelled. Must be called with fw.mu held and
+// after client.dirPath/filePath/mediaPaths have been updated.
+func (fw *FileWatcher) settleClientTimersLocked(clientID string) {
+	client, ok := fw.clients[clientID]
+	if !ok {
+		return
+	}
+
+	prefix := clientID + "|"
+	for key, timer := range fw.debounceTimers {
+		if len(key) < len(prefix) || key[:len(prefix)] != prefix {
+			continue
+		}
+		we, hasPending := fw.debouncePending[key]
+		if hasPending && fw.pendingEventStillWatchedLocked(client, we) {
+			// Covered by the new target: deliver instead of losing it. Reuses
+			// the locked variant so the timer/pending cleanup stays in one place.
+			fw.fireDebouncedEventLocked(clientID, key)
+			continue
+		}
+		timer.Stop()
+		delete(fw.debounceTimers, key)
+		delete(fw.debouncePending, key)
+	}
+}
+
+// pendingEventStillWatchedLocked reports whether a pending event's target is
+// still one this client watches, given its current (already updated) target.
+// Must be called with fw.mu held.
+func (fw *FileWatcher) pendingEventStillWatchedLocked(client *watchClient, we WatchEvent) bool {
+	switch we.Type {
+	case "file_change":
+		if we.Path == client.filePath {
+			return true
+		}
+		_, isMedia := client.mediaPaths[we.Path]
+		return isMedia
+	case "dir_change":
+		// dir_change paths are the browsed directory itself (a Rename/Remove of
+		// the dir) or a child path inside it (Create/Remove/Rename of an entry).
+		if client.dirPath == "" {
+			return false
+		}
+		return we.Path == client.dirPath ||
+			strings.HasPrefix(we.Path, client.dirPath+string(filepath.Separator))
+	default:
+		return false
+	}
 }
 
 // cancelClientTimers stops and removes all debounce timers for a client.
@@ -436,7 +499,14 @@ func (fw *FileWatcher) handleFsEvent(event fsnotify.Event) { //nolint:gocyclo //
 func (fw *FileWatcher) fireDebouncedEvent(clientID, debounceKey string) {
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
+	fw.fireDebouncedEventLocked(clientID, debounceKey)
+}
 
+// fireDebouncedEventLocked is fireDebouncedEvent for callers that already hold
+// fw.mu (a re-target settling its in-flight events). It pushes the pending event
+// to the client's channel and clears both the pending entry and its timer.
+// Must be called with fw.mu held.
+func (fw *FileWatcher) fireDebouncedEventLocked(clientID, debounceKey string) {
 	we, ok := fw.debouncePending[debounceKey]
 	if !ok {
 		return

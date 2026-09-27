@@ -377,6 +377,90 @@ describe('useChatContext', () => {
       expect(ctx.attachedFiles.value).toHaveLength(0)
     })
 
+    // ── Cross-session staging (the session picker's "add" path) ──
+    // These write into a session's STORED draft rather than the live input,
+    // because the user picked a session other than the one on screen.
+
+    it('stageQuoteIntoDraft writes to the target draft and leaves the live input alone', () => {
+      ctx.addStagedQuote({ text: 'live', filePath: '/live.ts', language: 'ts', startLine: 1, endLine: 1 })
+
+      const staged = ctx.stageQuoteIntoDraft('session-2', { text: 'x', filePath: '/x.ts', language: 'ts', startLine: 2, endLine: 2 }, 'note')
+
+      expect(staged).not.toBeNull()
+      // The live input must be untouched — the card belongs to another session.
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/live.ts'])
+
+      // Opening that session surfaces the card.
+      ctx.clearAll()
+      ctx.restoreAttachments('session-2')
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/x.ts'])
+      expect(ctx.stagedQuotes.value[0].note).toBe('note')
+    })
+
+    // The reachability bug this guards: restoreAttachments is a no-op when no
+    // snapshot exists, so staging into a never-opened session must CREATE one.
+    it('stageQuoteIntoDraft creates a draft for a session that has never been opened', () => {
+      ctx.stageQuoteIntoDraft('never-opened', { text: 'y', filePath: '/y.ts', language: 'ts', startLine: 1, endLine: 1 })
+      ctx.restoreAttachments('never-opened')
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/y.ts'])
+    })
+
+    it('stageQuoteIntoDraft dedupes by locator and updates the note in place', () => {
+      const q = { text: 'z', filePath: '/z.ts', language: 'ts', startLine: 1, endLine: 1 }
+      const first = ctx.stageQuoteIntoDraft('session-3', q, 'one')
+      const second = ctx.stageQuoteIntoDraft('session-3', q, 'two')
+      expect(second!.id).toBe(first!.id)
+      ctx.restoreAttachments('session-3')
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
+      expect(ctx.stagedQuotes.value[0].note).toBe('two')
+    })
+
+    it('stageQuoteIntoDraft with no session id is a no-op', () => {
+      expect(ctx.stageQuoteIntoDraft('', { text: 'a', filePath: '/a.ts', language: '', startLine: 0, endLine: 0 })).toBeNull()
+      ctx.restoreAttachments('')
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+    })
+
+    it('stageQuoteIntoDraft keeps per-session isolation', () => {
+      ctx.stageQuoteIntoDraft('s-a', { text: 'a', filePath: '/a.ts', language: '', startLine: 0, endLine: 0 })
+      ctx.stageQuoteIntoDraft('s-b', { text: 'b', filePath: '/b.ts', language: '', startLine: 0, endLine: 0 })
+      ctx.restoreAttachments('s-a')
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/a.ts'])
+      ctx.restoreAttachments('s-b')
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/b.ts'])
+    })
+
+    it('stageAttachmentIntoDraft stages a file into the target draft only', () => {
+      const added = ctx.stageAttachmentIntoDraft('session-4', { path: '/a.txt', isDir: false })
+      expect(added).toBe(true)
+      expect(ctx.attachedFiles.value).toHaveLength(0)
+
+      ctx.restoreAttachments('session-4')
+      expect(ctx.attachedFiles.value.map(f => f.path)).toEqual(['/a.txt'])
+    })
+
+    it('stageAttachmentIntoDraft reports false for a duplicate and for an empty path', () => {
+      ctx.stageAttachmentIntoDraft('session-5', { path: '/a.txt', isDir: false })
+      expect(ctx.stageAttachmentIntoDraft('session-5', { path: '/a.txt', isDir: false })).toBe(false)
+      expect(ctx.stageAttachmentIntoDraft('session-5', { path: '', isDir: false })).toBe(false)
+      expect(ctx.stageAttachmentIntoDraft('', { path: '/a.txt', isDir: false })).toBe(false)
+    })
+
+    it('stageAttachmentIntoDraft keeps a ranged entry separate from the whole-file entry', () => {
+      ctx.stageAttachmentIntoDraft('session-6', { path: '/a.txt', isDir: false })
+      ctx.stageAttachmentIntoDraft('session-6', { path: '/a.txt', isDir: false, startLine: 5, endLine: 9 })
+      ctx.restoreAttachments('session-6')
+      expect(ctx.attachedFiles.value).toHaveLength(2)
+    })
+
+    it('staging a quote and a file into the same session keeps both', () => {
+      ctx.stageQuoteIntoDraft('session-7', { text: 'q', filePath: '/q.ts', language: 'ts', startLine: 1, endLine: 1 })
+      ctx.stageAttachmentIntoDraft('session-7', { path: '/f.txt', isDir: false })
+      ctx.restoreAttachments('session-7')
+      expect(ctx.stagedQuotes.value.map(q => q.filePath)).toEqual(['/q.ts'])
+      expect(ctx.attachedFiles.value.map(f => f.path)).toEqual(['/f.txt'])
+    })
+
     it('restoreAttachments with no snapshot is a no-op', () => {
       ctx.addAttachedFile('/a.txt')
       ctx.restoreAttachments('never-snapshotted')

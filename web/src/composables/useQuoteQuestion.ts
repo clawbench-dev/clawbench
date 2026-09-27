@@ -6,6 +6,8 @@ import { closestElement, getLineInfo, getFileInfo, getQuoteSource, messageIdFrom
 import { buildMessageQuote } from '@/utils/quoteItem.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import type { QuoteData } from '@/composables/useChatContext.ts'
+import { requestTarget } from '@/composables/useConversationTarget.ts'
+import type { PendingQuote } from '@/composables/useConversationTarget.ts'
 
 /**
  * Context for the "composer" flow: an entry point (e.g. the forge issue/PR
@@ -59,7 +61,7 @@ const composerMode = computed(() => composerContext.value !== null)
  * The quote target the composer is about, derived from its context.
  *
  * This is only a *preview*: nothing is staged until the user commits (see
- * commitComposerQuote). Keeping it out of the chat context until then is the
+ * buildComposerQuote). Keeping it out of the chat context until then is the
  * whole point — the chat input renders its cards straight from stagedQuotes, so
  * staging on open put the file/issue in the chat the moment the button was
  * clicked, and dismissing the bar left it behind.
@@ -344,30 +346,31 @@ export function useQuoteQuestion() {
   }
 
   /**
-   * Stage the composer's target as a quote card.
+   * Build the quote payload the composer's target produces, without staging it.
    *
-   * Every entry point (file browser, issue/PR detail, CI run) now behaves
-   * exactly like quoting a text selection: it produces ONE quote card
-   * referencing the object, with the typed text as its annotation. It does NOT
-   * add a separate file/URL attachment chip, and does not inject the text into
-   * the chat input — both of which the old composer did and which made the same
-   * "quote" button behave differently depending on where it was clicked.
+   * Every entry point (file browser, issue/PR detail, CI run) behaves exactly
+   * like quoting a text selection: it produces ONE quote card referencing the
+   * object, with the typed text as its annotation. It does NOT add a separate
+   * file/URL attachment chip, and does not inject the text into the chat input.
    *
    * The selection, when there is one, becomes the card's quoted content; with
    * no selection the card references the whole object (empty text), which the
    * prompt renders as a path/address for the AI to read.
+   *
+   * Split from the staging so the session picker can hold the payload while the
+   * user chooses a destination — and so both delivery paths (live input vs.
+   * another session's draft) build the identical card.
    */
-  function commitComposerQuote(ctx: QuoteComposerContext | null, note = '') {
-    if (!ctx) return
+  function buildComposerQuote(ctx: QuoteComposerContext | null, note = ''): PendingQuote | null {
+    if (!ctx) return null
     const selection = quoteData.value
     if (selection) {
       // The user selected part of the object: that snippet is the content, and
       // it already carries the source label/lines/address.
-      addStagedQuote(selection, note)
-      return
+      return { ...selection, note, id: '' }
     }
     // No selection: reference the whole object.
-    addStagedQuote({
+    return {
       text: '',
       filePath: ctx.filePath || ctx.label,
       language: '',
@@ -375,7 +378,29 @@ export function useQuoteQuestion() {
       endLine: 0,
       sourceKind: ctx.url ? 'url' : 'file',
       ...(ctx.url ? { url: ctx.url } : {}),
-    }, note)
+      note,
+      id: '',
+    }
+  }
+
+  /**
+   * Tear down the composer's visible state (bar + pending target).
+   *
+   * Mirrors the old inline sequence in the commit paths. Note it is NOT
+   * `hideBar()`: that one deliberately refuses to touch `composerContext` (the
+   * editor fires a selectionchange on click, and clearing it there made the
+   * commit a silent no-op).
+   */
+  function clearComposerState() {
+    composerContext.value = null
+    setQuoteData(null)
+    barVisible.value = false
+    barPinned.value = false
+  }
+
+  /** A fresh id for a quote captured for deferred delivery. */
+  function mintPendingQuoteId(): string {
+    return `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
   }
 
   /** Close the composer without touching unrelated staged quotes. */
@@ -430,30 +455,54 @@ export function useQuoteQuestion() {
   function addToConversation(note = '') {
     if (composerContext.value) {
       const ctx = composerContext.value
-      // Stage the card BEFORE clearing composerContext/quoteData — the staging
+      // Build the card BEFORE clearing composerContext/quoteData — the builder
       // reads both (the target from ctx, any selection from quoteData), so
       // clearing first would silently produce no card at all.
-      commitComposerQuote(ctx, note)
-      composerContext.value = null
-      setQuoteData(null)
-      barVisible.value = false
-      barPinned.value = false
+      const quote = buildComposerQuote(ctx, note)
+      if (!quote) return
+      const onAdd = ctx.onAdd
+
+      // Destination is only ambiguous when the chat panel is off screen: with
+      // it visible the user would just switch it, so we keep the old behavior
+      // of dropping the card straight into the current session's input.
+      const needsPicker = requestTarget({
+        mode: 'add',
+        quotes: [{ ...quote, id: mintPendingQuoteId() }],
+        attachments: [],
+        text: '',
+      })
+
+      clearComposerState()
       // The user committed: the target becomes a quote card whose annotation is
       // whatever they typed. Nothing is injected into the chat input and no
       // separate attachment chip is created — this is the same "one card"
       // interaction as quoting a selection.
-      ctx.onAdd?.()
+      if (!needsPicker) {
+        addStagedQuote(quote, note)
+        onAdd?.()
+      }
       return
     }
 
     if (!quoteData.value) return
-    addStagedQuote(quoteData.value, note)
+    const quote = quoteData.value
     const sel = window.getSelection()
     if (sel) sel.removeAllRanges()
+
+    const needsPicker = requestTarget({
+      mode: 'add',
+      quotes: [{ ...quote, note, id: mintPendingQuoteId() }],
+      attachments: [],
+      text: '',
+    })
+
     setQuoteData(null)
     barVisible.value = false
     barPinned.value = false
-    toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    if (!needsPicker) {
+      addStagedQuote(quote, note)
+      toast.show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
+    }
   }
 
   /**
@@ -480,16 +529,22 @@ export function useQuoteQuestion() {
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
     const ctx = composerContext.value
-    // Stage the target as a quote card BEFORE clearing anything: the staging
-    // reads both composerContext (the target) and quoteData (any selection), so
-    // clearing first would silently produce no card. The registered ChatPanel
-    // handler reads stagedQuotes synchronously before its first await, so the
-    // card must be in place now.
-    commitComposerQuote(ctx, '')
-    composerContext.value = null
-    barVisible.value = false
-    barPinned.value = false
-    setQuoteData(null)
+    // Build the card BEFORE clearing anything: the builder reads both
+    // composerContext (the target) and quoteData (any selection), so clearing
+    // first would silently produce no card. The registered ChatPanel handler
+    // reads stagedQuotes synchronously before its first await, so the card must
+    // be in place before the send when we take the direct path.
+    const quote = buildComposerQuote(ctx, '')
+    const pendingQuotes = quote ? [{ ...quote, id: mintPendingQuoteId() }] : []
+    const needsPicker = requestTarget({ mode: 'send', quotes: pendingQuotes, attachments: [], text: input })
+
+    clearComposerState()
+
+    // Destination ambiguous → the payload is now held by the picker; the user's
+    // choice performs the send. Nothing goes to the current session meanwhile.
+    if (needsPicker) return
+
+    if (quote) addStagedQuote(quote)
 
     try {
       const sendPromise = sessionIdentity.sendMessage(input)
@@ -516,9 +571,6 @@ export function useQuoteQuestion() {
     if (!quoteData.value || !userMessage.trim()) return
 
     const q = quoteData.value
-    // Reuse the staging dedupe rule so reselecting an already staged range
-    // does not include the same quote twice in an immediate send.
-    addStagedQuote(q)
 
     // Capture animation coordinates BEFORE any await — the bar's handleSend()
     // sets expanded=false synchronously right after emit('send'), so the
@@ -528,11 +580,28 @@ export function useQuoteQuestion() {
     const animFrom = sendBtn?.getBoundingClientRect() ?? null
     const animTo = dockChatBtn?.getBoundingClientRect() ?? null
 
+    const needsPicker = requestTarget({
+      mode: 'send',
+      quotes: [{ ...q, note: '', id: mintPendingQuoteId() }],
+      attachments: [],
+      text: userMessage.trim(),
+    })
+
     // Keep the staged quotes for ChatPanelContent to materialise into cards.
     // They are deliberately NOT baked into the message text any more.
     barVisible.value = false
     barPinned.value = false
     setQuoteData(null)
+
+    if (needsPicker) {
+      const sel = window.getSelection()
+      if (sel) sel.removeAllRanges()
+      return
+    }
+
+    // Reuse the staging dedupe rule so reselecting an already staged range
+    // does not include the same quote twice in an immediate send.
+    addStagedQuote(q)
 
     // Delegate to session identity singleton — it routes to ChatPanel's
     // sendMessage if registered, otherwise falls back to a direct API call.

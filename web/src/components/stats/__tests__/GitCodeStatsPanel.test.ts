@@ -23,7 +23,7 @@ vi.mock('echarts/core', () => ({
   })),
 }))
 vi.mock('echarts/charts', () => ({ BarChart: {}, PieChart: {}, LineChart: {} }))
-vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {}, TitleComponent: {}, DataZoomComponent: {} }))
+vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {}, TitleComponent: {}, DataZoomComponent: {}, GraphicComponent: {} }))
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 import GitCodeStatsPanel from '@/components/stats/GitCodeStatsPanel.vue'

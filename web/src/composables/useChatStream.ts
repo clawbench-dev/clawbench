@@ -1,5 +1,5 @@
 import { onUnmounted, watch, type Ref } from 'vue'
-import { appLog } from '@/utils/appLog'
+import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
@@ -169,6 +169,24 @@ export function useChatStream(options: UseChatStreamOptions) {
     if (!lastProgressAt) { lastProgressAt = Date.now(); return }
     const silentFor = Date.now() - lastProgressAt
     if (silentFor < STREAM_STALL_MS) return
+    // DIAG (stuck top thinking block): the watchdog firing IS the definition of
+    // "stuck" — dump every thinking block's full decision state here, so the
+    // next report shows which shape it is without any further guessing:
+    //   done=false + in_progress  → backend never finished it (or its
+    //                               thinking_done was dropped in transit)
+    //   done=false + no flag      → frontend-created block the backend does not
+    //                               know about (so a reload drops it)
+    //   done=true  + no cached    → lazy-load never ran / 404'd
+    try {
+      const sm = findStreamingMsg(messages.value)
+      const thinks = (sm?.blocks || []).filter((b: ContentBlock) => b?.type === 'thinking')
+      diagLog(TAG, `stall: silent=${silentFor}ms sid=${currentSessionId.value} streamingMsg=${sm ? sm.id : 'none'} blocks=${sm?.blocks?.length ?? 0} thinking=${thinks.length}`)
+      thinks.forEach((b: ContentBlock, i: number) => {
+        diagLog(TAG, `stall block[${i}]: done=${b.done} in_progress=${b.in_progress} think_id=${b.think_id || '-'} textLen=${(typeof b.text === 'string' ? b.text : '').length} parent=${b.parent_tool_call_id || 'TOP'} _key=${b._key || '-'}`)
+      })
+    } catch (e) {
+      diagLog(TAG, `stall dump failed: ${e instanceof Error ? e.message : String(e)}`)
+    }
     if (stallRecoveries >= MAX_STALL_RECOVERIES) {
       // Logged once per turn, then silent: the budget is exhausted, stop
       // hammering. It is restored when a NEW turn starts — see the `loading`
@@ -493,6 +511,39 @@ export function useChatStream(options: UseChatStreamOptions) {
     }
   }
 
+  // ── Chat-driven file refresh ──
+  //
+  // Fires `onFileModified` when a file-modifying tool (Write/Edit) finishes, so
+  // the file preview can reload without waiting for the fsnotify channel.
+  //
+  // This is keyed on the TRANSITION into done, not on the event type, because
+  // the terminal frame's type depends on the backend:
+  //   - CLI / stream-json backends mark the `tool_use` event itself done
+  //     (`Done: true` in the parser), so it arrives as `tool_use`.
+  //   - ACP backends emit the initial ToolCall with Done:false and map the
+  //     terminal ToolCallUpdate to `tool_result` (see mapACPToolCallUpdate:
+  //     `if tool.Done { eventType = "tool_result" }`). Since every acp-stdio
+  //     backend (codebuddy, claude, codex, qoder, kimi, …) works this way, an
+  //     event-type check here silently disabled the refresh for all of them.
+  //
+  // `wasDone` guards the double-fire when a backend emits BOTH a done tool_use
+  // and a terminal tool_result for the same tool id (the debouncer can forward
+  // one while the parser already closed the block). Name and path fall back to
+  // the live block, because the terminal frame is often slim.
+  function maybeNotifyFileModified(
+    data: ToolUseEventData,
+    block: ContentBlock | undefined,
+    wasDone: boolean,
+  ) {
+    if (!onFileModified || wasDone) return
+    const name = data.name || block?.name
+    if (!name || !FILE_MODIFYING_TOOLS.has(name)) return
+    const filePath = data.file_path || block?.file_path
+    if (filePath) {
+      onFileModified(filePath)
+    }
+  }
+
   // ── WS event handler for chat_stream events ──
   // All 21+ event types from the backend are dispatched through this single
   // function. It is named (not an inline arrow) because replaying buffered
@@ -627,6 +678,11 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'tool_use', payload); noteDroppedEvent('tool_use', 'buffered until placeholder'); return }
         const data = payload as unknown as ToolUseEventData
+        // Snapshot the block's done state BEFORE the reducer applies this event,
+        // so a repeated done frame does not refresh the preview twice.
+        const wasDone = !!findStreamingMsg(messages.value)?.blocks?.find(
+          (b) => b.type === 'tool_use' && b.id === data.id,
+        )?.done
         dispatch({ type: 'ws_tool_use', data })
         // Side effects that depend on the block's updated state.
         const smAfter = findStreamingMsg(messages.value)
@@ -634,12 +690,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         const existing = blocksAfter.find((b) => b.type === 'tool_use' && b.id === data.id)
         if (data.done) {
           toolUseWatchdog.clear(data.id!)
-          if (data.name && FILE_MODIFYING_TOOLS.has(data.name) && onFileModified) {
-            const filePath = data.file_path || existing?.file_path
-            if (filePath) {
-              onFileModified(filePath)
-            }
-          }
+          maybeNotifyFileModified(data, existing, wasDone)
         } else if (!data.done) {
           // Progress event: reset the stall watchdog so long-running tools
           // that keep emitting updates are never falsely marked done.
@@ -667,8 +718,15 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'tool_result', payload); noteDroppedEvent('tool_result', 'buffered until placeholder'); return }
         const data = payload as unknown as ToolUseEventData
+        // Capture the pre-dispatch state: the reducer forces `done = true`, so
+        // this is the only place the "already finished" fact is still visible.
+        const existing = findStreamingMsg(messages.value)?.blocks?.find(
+          (b) => b.type === 'tool_use' && b.id === data.id,
+        )
+        const wasDone = !!existing?.done
         dispatch({ type: 'ws_tool_result', data })
         toolUseWatchdog.clear(data.id!)
+        maybeNotifyFileModified(data, existing, wasDone)
         onRenderNeeded()
         if (onToolResult && data.id) {
           onToolResult(data.id)

@@ -255,7 +255,7 @@
             :style="autoThemePreviewStyle"
             @click="selectTheme(TERMINAL_THEME_AUTO)"
           >
-            <span class="theme-item-check">{{ themeSelection === TERMINAL_THEME_AUTO ? '✓' : '' }}</span>
+            <span class="theme-swatch theme-swatch--auto" aria-hidden="true"></span>
             <span class="theme-item-name">{{ t('terminal.themeFollowApp') }}</span>
             <component :is="autoThemeIsDark ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
@@ -267,7 +267,7 @@
             :style="getTerminalThemePreviewStyle(id)"
             @click="selectTheme(id)"
           >
-            <span class="theme-item-check">{{ themeSelection === id ? '✓' : '' }}</span>
+            <span class="theme-swatch" aria-hidden="true"></span>
             <span class="theme-item-name">{{ formatThemeName(id) }}</span>
             <component :is="isTerminalThemeDark(id) ? Moon : Sun" :size="12" class="theme-item-base-icon" />
           </button>
@@ -576,14 +576,15 @@ watch(() => localConfig.terminalTheme, (selection) => {
   applyTheme(selection).catch(() => {})
 })
 
-// Theme preview helpers
+// Theme preview helpers. These feed assets/theme-picker.css, which renders a
+// neutral row carrying only a colour swatch and the sun/moon tint — so the
+// theme's foreground colour is not needed here.
 const autoThemeIsDark = computed(() => isAppDarkTheme())
 
 const autoThemePreviewStyle = computed(() => {
   const t = autoThemeIsDark.value ? darkTheme : lightTheme
   return {
     '--tterm-preview-bg': t.background,
-    '--tterm-preview-fg': t.foreground,
     '--tterm-preview-accent': t.cursor || t.foreground,
   }
 })
@@ -609,7 +610,6 @@ function getTerminalThemePreviewStyle(id: string): Record<string, string> | unde
   if (!t || !t.background) return undefined
   return {
     '--tterm-preview-bg': t.background,
-    '--tterm-preview-fg': t.foreground || (isTerminalThemeDark(id) ? '#e6edf3' : '#1f2328'),
     '--tterm-preview-accent': t.cursor || t.foreground || (isTerminalThemeDark(id) ? '#89b4fa' : '#1e66f5'),
   }
 }
@@ -1981,33 +1981,10 @@ defineExpose({ activate: () => {}, deactivate: () => {} })
 
 /* Terminal theme picker (unscoped because PopupMenu teleports to body).
    Container surface comes from PopupMenu appSurface; title uses the shared
-   .app-menu-title. The theme-item* entry rules below mirror AppHeader's copy —
-   both are global, so they must stay in sync (kept here so the terminal
-   picker renders identically even if the AppHeader styles are not loaded). */
+   .app-menu-title. The .theme-item row rules are shared with the app-header
+   picker and live in assets/theme-picker.css (both popups are teleported). */
 .theme-picker { min-width: 160px; }
 .theme-picker-status { padding: var(--space-5) var(--space-6); text-align: center; color: var(--text-muted); font-size: var(--font-size-sm); }
 .theme-picker-error { display: flex; flex-direction: column; gap: var(--space-4); align-items: center; }
 .theme-retry-btn { padding: var(--space-2) var(--space-6); border: 1px solid var(--border-color); border-radius: var(--radius-xs); background: transparent; color: var(--text-primary); cursor: pointer; font-size: var(--font-size-sm); }
-.theme-item + .theme-item { border-top: 1px solid var(--border-color); }
-.theme-item {
-  display: flex; align-items: center; gap: var(--space-3);
-  width: 100%; padding:5px var(--space-5); border: none; border-radius: 0;
-  background: var(--tterm-preview-bg, transparent);
-  color: var(--tterm-preview-fg, var(--text-primary));
-  font-size: var(--font-size-sm); text-align: left; cursor: pointer;
-  transition: background var(--duration-fast), box-shadow var(--duration-fast);
-}
-/* 预览底色不变，hover 加 accent 全边框高亮 */
-@media (hover: hover) {
-  .theme-item:hover {
-    background: var(--tterm-preview-bg, transparent);
-    box-shadow: inset 0 0 0 1px var(--accent-color);
-  }
-}
-.theme-item.active { background: var(--tterm-preview-bg, transparent); color: var(--tterm-preview-fg, var(--text-primary)); }
-.theme-item-check { flex-shrink: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; font-size: var(--font-size-2xs); border-radius: 50%; }
-.theme-item.active .theme-item-check { background: var(--accent-color); color: #fff; }
-.theme-item-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--font-weight-medium); }
-.theme-item-base-icon { flex-shrink: 0; color: var(--tterm-preview-accent, var(--text-muted)); }
-.theme-item.active .theme-item-base-icon { color: var(--tterm-preview-accent, var(--text-muted)); }
 </style>

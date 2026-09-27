@@ -23,7 +23,7 @@ vi.mock('echarts/core', () => ({
   })),
 }))
 vi.mock('echarts/charts', () => ({ BarChart: {}, PieChart: {}, LineChart: {} }))
-vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {}, TitleComponent: {}, DataZoomComponent: {} }))
+vi.mock('echarts/components', () => ({ GridComponent: {}, TooltipComponent: {}, LegendComponent: {}, TitleComponent: {}, DataZoomComponent: {}, GraphicComponent: {} }))
 vi.mock('echarts/renderers', () => ({ CanvasRenderer: {} }))
 
 import UsageStatsPanel from '@/components/stats/UsageStatsPanel.vue'
@@ -102,8 +102,10 @@ async function mountPanel() {
         RefreshButton: { template: '<button class="refresh-btn" @click="$emit(\'click\')" />' },
         LoadingIndicator: { template: '<span class="loading-stub" />' },
         UsageChart: {
+          name: 'UsageChart',
           template: '<div class="usage-chart-stub" />',
           props: ['option'],
+          emits: ['chart-click'],
           watch: {
             option: {
               handler(v: unknown) { chartOptions.push(v) },
@@ -268,6 +270,38 @@ describe('UsageStatsPanel', () => {
     expect(series?.type).toBe('pie')
     const values = series?.data?.map(d => d.value) ?? []
     expect(values).toEqual(expect.arrayContaining([300, 100]))
+  })
+
+  it('drilled cache donut centers on the input total, not hit+miss', async () => {
+    // Deliberately inconsistent totals: input exceeds hit+miss (the real shape
+    // for rows recorded before the cache columns existed). The drilled donut's
+    // hole must still show INPUT, so it agrees with the "输入 Tokens" card.
+    mockApiGet.mockResolvedValue(mockResponse({
+      totals: { input: 1000, output: 100, total: 1100, cacheHit: 700, cacheMiss: 200, credit: 0, costUsd: 0, messageCnt: 1 },
+      rows: [{ key: { model: 'glm' }, input: 1000, output: 100, total: 1100, cacheHit: 700, cacheMiss: 200, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    // Click the input slice of the overview donut to drill in. The stub is
+    // registered under the `UsageChart` key; find it by that component.
+    const donuts = wrapper.findAllComponents({ name: 'UsageChart' })
+    expect(donuts.length).toBeGreaterThan(0)
+    donuts[0].vm.$emit('chart-click', { componentType: 'series', name: '输入 Tokens' })
+    await nextTick()
+    // Several UsageChart instances share `chartOptions`; pick the one whose
+    // slices are the hit/miss pair rather than assuming it is the last push.
+    const cacheOption = chartOptions
+      .map(o => o as {
+        series?: { type?: string; data?: { name: string; value: number }[] }[]
+        graphic?: { style: { text: string } }[]
+      })
+      .find(o => {
+        const vals = o.series?.[0]?.data?.map(d => d.value) ?? []
+        return vals.includes(700) && vals.includes(200)
+      })
+    expect(cacheOption).toBeTruthy()
+    const centerTexts = (cacheOption!.graphic ?? []).map(g => g.style.text)
+    expect(centerTexts).toContain('1.0K') // input total 1000
+    expect(centerTexts).not.toContain('900') // 700+200 is wrong here
   })
 
   it('places the totals overview above the dimension filter card', async () => {

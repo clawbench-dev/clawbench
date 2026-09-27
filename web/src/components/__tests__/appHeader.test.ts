@@ -1644,4 +1644,71 @@ describe('AppHeader', () => {
     await framed.vm.$nextTick()
     expect(document.body.querySelector('.header')?.classList.contains('header--frameless')).toBe(false)
   })
+
+  // ── Theme picker row structure ──
+  // Regression: rows used to paint themselves with the previewed theme's own
+  // background/foreground, so the menu became a stack of unrelated colour
+  // blocks. The preview is now carried by a swatch + the accent-tinted
+  // sun/moon. The CSS itself is guarded in
+  // src/assets/__tests__/themePicker.css.test.ts; here we pin the DOM that the
+  // stylesheet relies on.
+
+  it('renders a colour swatch on every theme row, before the name', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    const rows = [...document.body.querySelectorAll<HTMLElement>('.theme-item')]
+    // 'auto' + the full theme list.
+    expect(rows.length).toBeGreaterThan(1)
+
+    for (const row of rows) {
+      const swatch = row.querySelector('.theme-swatch')
+      const name = row.querySelector('.theme-item-name')
+      expect(swatch, `row: ${row.textContent}`).toBeTruthy()
+      expect(name).toBeTruthy()
+      // Swatch must precede the name so the row reads "preview, then label".
+      expect(
+        swatch!.compareDocumentPosition(name!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
+  })
+
+  it('marks only the auto row with the split light/dark swatch', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    const autoSwatches = [...document.body.querySelectorAll('.theme-swatch--auto')]
+    // Exactly one: the "follow system" row.
+    expect(autoSwatches.length).toBe(1)
+    expect(autoSwatches[0].closest('.theme-item')?.textContent).toContain('Auto')
+  })
+
+  it('sets preview custom properties on the row without the removed foreground one', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    const row = document.body.querySelector<HTMLElement>('.theme-item:not(:first-child)')
+    expect(row).toBeTruthy()
+    const style = row!.getAttribute('style') || ''
+    expect(style).toContain('--tterm-preview-bg')
+    expect(style).toContain('--tterm-preview-accent')
+    // The row surface is neutral now, so the previewed foreground is unused.
+    expect(style).not.toContain('--tterm-preview-fg')
+  })
+
+  it('marks the active row and renders no check mark', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    // Exactly one row is selected, and it is identified by the class the rail /
+    // tint / weight rules key off — no trailing check glyph any more.
+    const active = document.body.querySelectorAll('.theme-item.active')
+    expect(active.length).toBe(1)
+    expect(document.body.querySelector('.theme-item-check')).toBeNull()
+    expect(document.body.textContent).not.toContain('✓')
+  })
 })

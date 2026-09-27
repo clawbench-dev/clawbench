@@ -150,7 +150,7 @@ describe('DialogOverlay', () => {
     wrapper = mountDialog()
     await nextTick()
 
-    const buttons = document.body.querySelectorAll('.dlg-btn')
+    const buttons = document.body.querySelectorAll('.dlg-actions .fbtn')
     expect(buttons.length).toBe(2)
     expect(buttons[0].textContent).toBe('Cancel')
     expect(buttons[1].textContent).toBe('Confirm')
@@ -365,13 +365,24 @@ describe('DialogOverlay', () => {
 
   // ── Dangerous style ──
 
-  it('applies dlg-danger class when dangerous is true', async () => {
+  it('applies fbtn-danger when dangerous is true', async () => {
     setDialogState({ type: 'confirm', message: 'Delete?', dangerous: true })
 
     wrapper = mountDialog()
     await nextTick()
 
-    expect($('.dlg-ok')?.classList.contains('dlg-danger')).toBe(true)
+    expect($('.dlg-ok')?.classList.contains('fbtn-danger')).toBe(true)
+    expect($('.dlg-ok')?.classList.contains('fbtn-primary')).toBe(false)
+  })
+
+  it('uses the primary variant for a non-dangerous confirm', async () => {
+    setDialogState({ type: 'confirm', message: 'Proceed?', dangerous: false })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    expect($('.dlg-ok')?.classList.contains('fbtn-primary')).toBe(true)
+    expect($('.dlg-ok')?.classList.contains('fbtn-danger')).toBe(false)
   })
 
   // ── Keyboard events ──

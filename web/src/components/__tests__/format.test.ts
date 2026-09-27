@@ -27,8 +27,11 @@ vi.mock('@/i18n', () => ({
         if (key === 'task.status.completed') return 'Completed'
         if (key === 'time.justNow') return 'Just now'
         if (key === 'time.minutesAgo') return `${params?.count} min ago`
+        if (key === 'time.minutesFromNow') return `${params?.count} min from now`
         if (key === 'time.hoursAgo') return `${params?.count}h ago`
+        if (key === 'time.hoursFromNow') return `${params?.count}h from now`
         if (key === 'time.daysAgo') return `${params?.count}d ago`
+        if (key === 'time.daysFromNow') return `${params?.count}d from now`
         if (key === 'cron.weekdayNames') return ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
         return key
       },
@@ -50,8 +53,10 @@ import {
 } from '@/utils/format.ts'
 
 describe('formatDuration', () => {
-  it('formats milliseconds', () => {
+  it('formats sub-second values as whole milliseconds', () => {
     expect(formatDuration(500)).toBe('500ms')
+    expect(formatDuration(1)).toBe('1ms')
+    expect(formatDuration(999)).toBe('999ms')
   })
 
   it('formats zero', () => {
@@ -66,55 +71,65 @@ describe('formatDuration', () => {
     expect(formatDuration(3000)).toBe('3.0s')
   })
 
-  it('formats minutes and seconds', () => {
-    expect(formatDuration(90000)).toBe('1m30s')
-  })
-
-  it('formats large duration', () => {
-    expect(formatDuration(3723000)).toBe('62m3s')
-  })
-
-  it('formats exactly 60 seconds as 1m0s', () => {
-    expect(formatDuration(60000)).toBe('1m0s')
-  })
-
-  it('formats 1ms', () => {
-    expect(formatDuration(1)).toBe('1ms')
-  })
-
-  it('formats 999ms', () => {
-    expect(formatDuration(999)).toBe('999ms')
-  })
-
-  it('formats 999.9s as 16m40s', () => {
-    expect(formatDuration(999900)).toBe('16m40s')
-  })
-
-  it('formats 30.5s with one decimal place', () => {
-    // toFixed(1) rounds 30.5 to "30.5"
-    expect(formatDuration(30500)).toBe('30.5s')
-  })
-
   it('formats 1 second exactly', () => {
     expect(formatDuration(1000)).toBe('1.0s')
   })
 
-  it('formats 59.9 seconds', () => {
+  it('formats 59.9 seconds still as seconds', () => {
     expect(formatDuration(59900)).toBe('59.9s')
   })
 
-  it('formats boundary at 1 minute', () => {
-    expect(formatDuration(60500)).toBe('1m1s')
+  // ── Minutes: largest unit, no seconds tail ──
+  it('formats exactly 60 seconds as minutes', () => {
+    expect(formatDuration(60000)).toBe('1.0m')
   })
 
-  it('formats 100 minutes', () => {
-    expect(formatDuration(6000000)).toBe('100m0s')
+  it('formats 90 seconds as 1.5m', () => {
+    expect(formatDuration(90000)).toBe('1.5m')
+  })
+
+  it('formats 999.9s as 16.7m (no seconds tail)', () => {
+    expect(formatDuration(999900)).toBe('16.7m')
+  })
+
+  it('promotes 100 minutes to hours', () => {
+    // 100 min ≥ 60 min, so it renders as 1.7h rather than the old "100m0s".
+    expect(formatDuration(6000000)).toBe('1.7h')
+  })
+
+  // ── Hours: the old formatter never promoted, so "62m3s" and "100m0s" leaked ──
+  it('promotes to hours past 60 minutes', () => {
+    expect(formatDuration(3723000)).toBe('1.0h')
+  })
+
+  it('formats 1.5 hours', () => {
+    expect(formatDuration(5400000)).toBe('1.5h')
+  })
+
+  it('formats a long multi-hour duration compactly', () => {
+    // The exact bug this rewrite fixes: 2h10m used to render as "130m0s".
+    expect(formatDuration(7800000)).toBe('2.2h')
+  })
+
+  it('returns empty for negative or non-finite input', () => {
+    expect(formatDuration(-1)).toBe('')
+    expect(formatDuration(NaN)).toBe('')
+    expect(formatDuration(Infinity)).toBe('')
   })
 })
 
 describe('formatRelativeTime', () => {
   it('returns empty string for empty input', () => {
     expect(formatRelativeTime('')).toBe('')
+  })
+
+  it('returns empty for null-like input', () => {
+    expect(formatRelativeTime(null)).toBe('')
+    expect(formatRelativeTime(undefined)).toBe('')
+  })
+
+  it('returns empty for an invalid date string', () => {
+    expect(formatRelativeTime('not-a-date')).toBe('')
   })
 
   it('returns "Just now" for dates less than 1 minute ago', () => {
@@ -141,6 +156,16 @@ describe('formatRelativeTime', () => {
     expect(formatRelativeTime(threeDaysAgo)).toBe('3d ago')
   })
 
+  // ── Future direction (task "next run") ──
+  it('uses "from now" wording for future timestamps', () => {
+    // A second of margin: the formatter reads its own Date.now(), so an exact
+    // offset would land just under the unit boundary and floor one lower.
+    const base = Date.now() + 1000
+    expect(formatRelativeTime(new Date(base + 5 * 60000))).toBe('5 min from now')
+    expect(formatRelativeTime(new Date(base + 3 * 3600000))).toBe('3h from now')
+    expect(formatRelativeTime(new Date(base + 3 * 86400000))).toBe('3d from now')
+  })
+
   it('returns locale date string for dates older than a week', () => {
     const now = new Date()
     const tenDaysAgo = new Date(now.getTime() - 10 * 86400000)
@@ -158,10 +183,6 @@ describe('formatRelativeTime', () => {
     const now = new Date()
     const twoMinutesAgo = new Date(now.getTime() - 2 * 60000).toISOString()
     expect(formatRelativeTime(twoMinutesAgo)).toBe('2 min ago')
-  })
-
-  it('returns empty for null-like input', () => {
-    expect(formatRelativeTime(null as any)).toBe('')
   })
 })
 

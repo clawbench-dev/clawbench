@@ -7,7 +7,6 @@ import {
   statusClass,
   statusLabel,
   statusLabelSimple,
-  formatTime,
   askQuestionSummary,
   extractAskQuestions,
   blockKey,
@@ -310,58 +309,6 @@ describe('statusLabelSimple', () => {
   it('shows paused', () => { expect(statusLabelSimple({ status: 'paused' }, t)).toBe('Paused') })
   it('shows completed', () => { expect(statusLabelSimple({ status: 'completed' }, t)).toBe('Completed') })
   it('returns raw status for unknown', () => { expect(statusLabelSimple({ status: 'error' }, t)).toBe('error') })
-})
-
-// ── formatTime ──
-describe('formatTime', () => {
-  const t = (key: string, params?: Record<string, any>) => {
-    if (key === 'chat.contentBlocks.justNow') return 'Just now'
-    if (key === 'chat.contentBlocks.minutesFromNow') return `${params?.count} min from now`
-    if (key === 'chat.contentBlocks.minutesAgo') return `${params?.count} min ago`
-    if (key === 'chat.contentBlocks.hoursFromNow') return `${params?.count}h from now`
-    if (key === 'chat.contentBlocks.hoursAgo') return `${params?.count}h ago`
-    return key
-  }
-
-  it('returns empty string for null', () => {
-    expect(formatTime(null, 'en', t)).toBe('')
-  })
-  it('returns empty string for undefined', () => {
-    expect(formatTime(undefined, 'en', t)).toBe('')
-  })
-  it('returns empty string for empty string', () => {
-    expect(formatTime('', 'en', t)).toBe('')
-  })
-  it('returns "just now" for timestamp within 1 minute', () => {
-    const now = new Date().toISOString()
-    expect(formatTime(now, 'en', t)).toBe('Just now')
-  })
-  it('returns "X min ago" for past timestamp within 1 hour', () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-    const result = formatTime(fiveMinAgo, 'en', t)
-    expect(result).toMatch(/min ago/)
-  })
-  it('returns "X min from now" for future timestamp within 1 hour', () => {
-    const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000).toISOString()
-    const result = formatTime(fiveMinFromNow, 'en', t)
-    expect(result).toMatch(/min from now/)
-  })
-  it('returns "Xh ago" for past timestamp within 1 day', () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString()
-    const result = formatTime(twoHoursAgo, 'en', t)
-    expect(result).toMatch(/h ago/)
-  })
-  it('returns locale date string for timestamp beyond 1 day', () => {
-    const twoDaysAgo = new Date(Date.now() - 2 * 86400 * 1000).toISOString()
-    const result = formatTime(twoDaysAgo, 'en', t)
-    // Should be a date string, not a relative time
-    expect(result).toMatch(/\d{4}/)
-  })
-  it('uses zh-CN locale for Chinese', () => {
-    const twoDaysAgo = new Date(Date.now() - 2 * 86400 * 1000).toISOString()
-    const result = formatTime(twoDaysAgo, 'zh', t)
-    expect(result).toBeTruthy()
-  })
 })
 
 // ── askQuestionSummary ──

@@ -33,8 +33,21 @@ vi.mock('@/composables/useLocale', () => ({
 // viewport, which the real singleton treats as wide-screen (isWideScreen=true),
 // and the wide-screen branch hides the bar on selection collapse — the opposite
 // of what these tests assert.
+//
+// This mock must ALSO provide `isChatPanelVisible`: the quote actions now route
+// through useConversationTarget, which consults it to decide whether to pop the
+// session picker. These tests all assume the chat panel is visible (so the
+// action goes straight to the current session), which the narrow layout gives
+// when activeTab is 'chat'.
 vi.mock('@/composables/useWideScreenLayout', () => ({
-  useWideScreenLayout: () => ({ isWideScreen: { value: false } }),
+  useWideScreenLayout: () => ({
+    isWideScreen: { value: false },
+    chatCollapsed: { value: false },
+  }),
+  isChatPanelVisible: (state: { isWideScreen: boolean; chatCollapsed: boolean; activeTab: string }) => {
+    if (!state.isWideScreen) return state.activeTab === 'chat'
+    return !state.chatCollapsed
+  },
 }))
 
 // Keep real quoteQuestionUtils for selectionchange tests (closestElement, getLineInfo, getFileInfo)
@@ -44,12 +57,18 @@ import { useChatContext } from '../useChatContext.ts'
 import { consumePendingChatInput, _resetChatInputInjectionForTesting } from '@/utils/chatInputInjection.ts'
 import { useQuoteQuestion } from '../useQuoteQuestion.ts'
 import type { QuoteData } from '../useChatContext.ts'
+import { setActiveTabGetter, cancelTarget, usePendingTarget } from '../useConversationTarget.ts'
 
 describe('useQuoteQuestion', () => {
   let ctx: ReturnType<typeof useChatContext>
 
   beforeEach(() => {
     ctx = useChatContext()
+    // These tests assume the chat panel is on screen, so an action goes
+    // straight to the current session instead of popping the session picker.
+    // In the app this getter is installed by App.vue at setup.
+    setActiveTabGetter(() => 'chat')
+    cancelTarget()
     // Fully reset module-level singleton state via closeSheet
     const qq = useQuoteQuestion()
     qq.closeSheet()
@@ -257,6 +276,29 @@ describe('useQuoteQuestion', () => {
       expect(mockSendMessage).not.toHaveBeenCalled()
     })
 
+    // ── Session picker gate ──
+
+    it('holds the send for the picker (and does not send) when the chat panel is hidden', async () => {
+      setActiveTabGetter(() => 'browse')
+      const qq = useQuoteQuestion()
+      qq.showBar({ text: 'some code', filePath: '/src/foo.ts', language: 'typescript', startLine: 10, endLine: 20 })
+      vi.advanceTimersByTime(400)
+
+      await qq.sendMessage('explain this')
+
+      // The send must NOT have gone to the current session — the user has not
+      // picked a destination yet.
+      expect(mockSendMessage).not.toHaveBeenCalled()
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value?.mode).toBe('send')
+      expect(pending.value?.text).toBe('explain this')
+      expect(pending.value?.quotes[0].filePath).toBe('/src/foo.ts')
+      // Nothing leaks into the current session's input.
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      expect(qq.visible.value).toBe(false)
+    })
+
     it('sends the typed message and stages the quote as a card', async () => {
       const qq = useQuoteQuestion()
       // ChatPanelContent reads stagedQuotes synchronously before its first
@@ -370,6 +412,43 @@ describe('useQuoteQuestion', () => {
       qq.addToConversation('  Why is this needed?  ')
 
       expect(ctx.stagedQuotes.value[0].note).toBe('Why is this needed?')
+    })
+
+    // ── Session picker gate ──
+    // When the chat panel is NOT visible the destination is ambiguous, so the
+    // action must hold the payload for the picker instead of dropping it into
+    // the current session.
+
+    it('opens the picker instead of staging when the chat panel is hidden', () => {
+      setActiveTabGetter(() => 'browse')
+      const qq = useQuoteQuestion()
+      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
+
+      qq.addToConversation('note')
+
+      // Nothing staged into the live input: the card belongs to a session the
+      // user has not chosen yet.
+      expect(ctx.stagedQuotes.value).toHaveLength(0)
+      const { pickerOpen, pending } = usePendingTarget()
+      expect(pickerOpen.value).toBe(true)
+      expect(pending.value?.mode).toBe('add')
+      expect(pending.value?.quotes).toHaveLength(1)
+      expect(pending.value?.quotes[0].filePath).toBe('/a.ts')
+      expect(pending.value?.quotes[0].note).toBe('note')
+      // The bar is dismissed so it cannot float above the dialog.
+      expect(qq.visible.value).toBe(false)
+      expect(ctx.quoteData.value).toBeNull()
+    })
+
+    it('does NOT open the picker when the chat panel is visible', () => {
+      setActiveTabGetter(() => 'chat')
+      const qq = useQuoteQuestion()
+      ctx.setQuoteData({ text: 'selected', filePath: '/a.ts', language: 'ts', startLine: 3, endLine: 4 })
+
+      qq.addToConversation('')
+
+      expect(usePendingTarget().pickerOpen.value).toBe(false)
+      expect(ctx.stagedQuotes.value).toHaveLength(1)
     })
   })
 

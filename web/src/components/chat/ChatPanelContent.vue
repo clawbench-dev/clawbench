@@ -836,6 +836,13 @@ const manager = useSessionManager({
 // Register identity actions — all paths now go through manager
 manager.registerIdentityActions({
   sendMessage: (text) => sendMessage(text),
+  // Send into ANOTHER session without switching. The registered sendMessage
+  // above is bound to the session on screen (it reads the live input's staged
+  // quotes and the current session id), so the session picker routes through
+  // the shared enqueue path instead: the backend starts a turn for an idle
+  // session or hands the message to the running drain loop.
+  enqueueToSession: (sessionId, text, entries, queueId) =>
+    manager.enqueueMessage(sessionId, text, entries, [], queueId),
   openChatPanel: () => emit('open'),
 })
 
@@ -864,7 +871,6 @@ const capsuleSliderStyle = computed(() => {
 
 provide('chatRender', {
   renderTextBlock: render.renderTextBlock,
-  formatMessageTime: render.formatMessageTime,
   toolCallSummary: render.toolCallSummary,
   formatToolInput: render.formatToolInput,
   truncate: render.truncate,
@@ -1523,11 +1529,12 @@ async function ensureMessageContent(msg) {
 
 
 // Reload/reopen the current session from the ActionBar refresh button.
-// Delegates to session.handleManualRefresh which mirrors the WS reconnect
-// resync flow (refresh runningSessions + branch on running state) but ALWAYS
-// forces a loadHistory so every refresh re-renders against the authoritative
-// server state — messages, stream subscription, mode/usage/commands all stay
-// consistent with the backend.
+// Delegates to session.handleManualRefresh, which re-opens the current session:
+// it CLEARS the message list and rebuilds it from the authoritative server
+// state, then re-establishes the WS stream subscription — the same flow as
+// switching to the session. Clearing first is what discards state the DB does
+// not know about (a stale thinking block left by a dropped terminal event);
+// an in-place reload merged the DB rows and kept it.
 const refreshingSession = ref(false)
 async function handleRefreshSession() {
   if (refreshingSession.value || !identity.currentSessionId.value) return

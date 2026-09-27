@@ -179,6 +179,40 @@ describe('forceCleanupStreamingState', () => {
     expect(messages[0].streaming).toBeUndefined()
   })
 
+  it('marks unfinished thinking as done, so its spinner stops', () => {
+    // The reported "stuck deep-thinking block at the top": the spinner is
+    // driven by isThinkingStreaming() = `!block.done && streaming`, and `done`
+    // normally comes from the backend's thinking_done event — which is emitted
+    // only on a TRANSITION (thinking → content, or thinking → tool_use). A turn
+    // that ENDS while reasoning never sends it, so the block kept
+    // done=undefined and spun forever.
+    //
+    // The backend already closes its own side (MarkAllThinkingDone in
+    // postProcessBlocks), so the persisted row is correct; only the live
+    // frontend block was left open. tool_use was handled here and thinking was
+    // not — this is that missing counterpart.
+    const messages: any[] = [
+      {
+        role: 'assistant',
+        content: '',
+        blocks: [
+          { type: 'thinking', text: 'the reasoning', _key: 'thinking-0' },
+          { type: 'thinking', think_id: 'th_x', in_progress: true },
+          { type: 'thinking', think_id: 'th_y', done: true },
+          { type: 'text', text: 'hello' },
+        ],
+        streaming: true,
+      },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    const [a, b, c, d] = messages[0].blocks
+    expect(a.done, 'a live thinking block must be closed out').toBe(true)
+    expect(b.done, 'an in_progress block must be closed out too').toBe(true)
+    expect(b.in_progress, 'and must stop claiming to be still coming').toBeUndefined()
+    expect(c.done, 'an already-done block stays done').toBe(true)
+    expect(d, 'non-thinking blocks are untouched').toEqual({ type: 'text', text: 'hello' })
+  })
+
   it('marks unfinished tool_use as done', () => {
     const messages = [
       {

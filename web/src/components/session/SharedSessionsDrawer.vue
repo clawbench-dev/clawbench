@@ -80,9 +80,11 @@
             >
               <ExternalLink :size="14" />
             </a>
-            <button class="shared-session-btn" :title="t('sharedSessions.copyLink')" @click="copyLink(item)">
-              <Copy :size="14" />
-            </button>
+            <CopyButton
+              :text="shareUrl(item)"
+              title-key="sharedSessions.copyLink"
+              class="shared-session-btn"
+            />
             <button
               class="shared-session-btn danger"
               :disabled="revokingToken === item.token"
@@ -100,15 +102,15 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { MessageSquareShare, Copy, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
+import { MessageSquareShare, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
-import { copyText } from '@/utils/clipboard.ts'
 import { openExternalUrl } from '@/utils/externalLink'
 import { useSessionShare } from '@/composables/useSessionShare'
 import { appLog } from '@/utils/appLog'
@@ -172,11 +174,6 @@ function openConversation(item) {
   drawer.close()
 }
 
-function copyLink(item) {
-  copyText(shareUrl(item), () => {
-    toast.show(t('sharedSessions.copied'), { icon: '✅', type: 'success', duration: 2000 })
-  })
-}
 
 async function revoke(item) {
   const name = item.title || t('share.sharedConversation')
@@ -309,13 +306,15 @@ defineExpose({ open: openDrawer })
   text-overflow: ellipsis;
 }
 
+/* Kept identical to SessionSearchDrawer's archived badge so the same state
+   reads the same in both lists. */
 .shared-session-badge {
   flex-shrink: 0;
   font-size: var(--font-size-2xs);
-  padding: 1px var(--space-3);
-  border-radius: var(--radius-sm);
-  background: rgba(128,128,128,.15);
-  color: var(--text-secondary, #57606a);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: rgba(230, 162, 60, 0.12);
+  color: var(--color-orange);
 }
 
 .shared-session-meta {
@@ -347,7 +346,7 @@ defineExpose({ open: openDrawer })
   cursor: pointer;
 }
 .shared-session-btn:hover { background: var(--bg-tertiary, #eaeef2); color: var(--accent-color, #0969da); }
-.shared-session-btn.danger:hover { color: #cf222e; background: #fef2f2; }
+.shared-session-btn.danger:hover { color: var(--color-red); background: color-mix(in srgb, var(--color-red) 10%, transparent); }
 .shared-session-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 .shared-sessions-clear {
@@ -361,7 +360,7 @@ defineExpose({ open: openDrawer })
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: #cf222e;
+  color: var(--color-red);
   font-size: var(--font-size-md);
   cursor: pointer;
   flex-shrink: 0;
@@ -373,21 +372,6 @@ defineExpose({ open: openDrawer })
   to { transform: rotate(360deg); }
 }
 @media (hover: hover) {
-  .shared-sessions-clear:not(:disabled):hover { background: #fef2f2; }
-}
-
-/* Dark themes: the light-pink hover surfaces above were tuned for light themes.
-   Keep the red tint but adapt it to the dark surface (same convention as the
-   shared-files drawer). */
-[data-theme-base="dark"] .shared-session-btn.danger:hover {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.15);
-}
-[data-theme-base="dark"] .shared-sessions-clear {
-  color: #fca5a5;
-}
-[data-theme-base="dark"] .shared-sessions-clear:not(:disabled):hover {
-  color: #fca5a5;
-  background: rgba(239, 68, 68, 0.15);
+  .shared-sessions-clear:not(:disabled):hover { background: color-mix(in srgb, var(--color-red) 10%, transparent); }
 }
 </style>

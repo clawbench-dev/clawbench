@@ -373,7 +373,7 @@ import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
 import { getShareToolCall } from '@/share/shareMode'
 import { apiGet } from '@/utils/api'
-import { appLog } from '@/utils/appLog'
+import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
 import { thinkingRenderSource } from '@/utils/chatStreamUtils.ts'
@@ -627,6 +627,11 @@ watch([() => props.streaming, () => props.startedAt], ([streaming]) => {
   elapsedTimer = setInterval(updateElapsed, 1000)
 }, { immediate: true })
 
+// Deliberately NOT formatDuration(): this is a live counter that ticks every
+// second, so it needs second-level precision to visibly move. formatDuration
+// caps at the largest unit (a 1h20m turn would read "1.3h" and appear frozen
+// for ~6 minutes at a time). Every *static* duration in the app goes through
+// formatDuration instead.
 const elapsedLabel = computed(() => {
   if (elapsedSeconds.value < 60) return `${elapsedSeconds.value}s`
   const minutes = Math.floor(elapsedSeconds.value / 60)
@@ -1133,6 +1138,10 @@ function stableBlockKey(bi: number, block: any) {
 
 function handleThinkingClick(block: any, bi: number) {
   const blockKey = stableBlockKey(bi, block)
+  // DIAG: the click path has no logging, and its fetch failures go through
+  // appLog.w (gated off by default), so a field report of "I tapped it and it
+  // stayed on the dots" was impossible to distinguish from "it never loaded".
+  diagLog(TAG, `thinking click: msgId=${props.msgId} bi=${bi} tid=${block.think_id || '-'} done=${block.done} inprog=${block.in_progress} collapsed=${isThinkingCollapsed(block, bi)} expandedDone=${isThinkingExpandedDone(block, bi)} hasText=${!!block.text} err=${!!(block.think_id && thinkingContent.errors.value[block.think_id])} cached=${block.think_id ? thinkingContent.cachedText(block.think_id) !== undefined : false}`)
   if (isThinkingCollapsed(block, bi)) {
     // Expand inline with animation
     expandingThinking.value[blockKey] = true
@@ -1141,7 +1150,10 @@ function handleThinkingClick(block: any, bi: number) {
     // Slim block (think_id, no text): lazy-load the thinking text on expand
     if (!block.text && block.think_id) {
       thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
-        .catch(() => { /* error surfaced via errors ref */ })
+        .then((text) => { diagLog(TAG, `thinking click load ok: msgId=${props.msgId} tid=${block.think_id} len=${text.length}`) })
+        .catch((e) => { diagLog(TAG, `thinking click load FAILED: msgId=${props.msgId} tid=${block.think_id} err=${e?.message || e}`) })
+    } else {
+      diagLog(TAG, `thinking click skipped load: msgId=${props.msgId} bi=${bi} hasText=${!!block.text} tid=${block.think_id || '-'}`)
     }
     // Clean up expanding state after animation
     const t = setTimeout(() => {
@@ -1600,8 +1612,6 @@ function getThinkingHtml(bi: number, block: any) {
     return getThinkingTextHtml(src, bi, block)
   }
   if (block.think_id) {
-    // Identified block with neither a live delta nor a cached prefix yet: the
-    // lazy-load is still in flight (or failed).
     if (thinkingContent.errors.value[block.think_id]) {
       return `<div class="thinking-load-error"><span>${t('chat.contentBlocks.thinkingLoadFailed')}</span><button class="thinking-retry-btn" onclick="this.closest('.chat-thinking').querySelector('.thinking-header').click()">${t('chat.contentBlocks.retry')}</button></div>`
     }
@@ -1721,70 +1731,106 @@ watch(() => props.active, (active) => {
   }
 })
 
-// Auto-load the prefix of thinking blocks that are STILL STREAMING.
+// Load the text of thinking blocks that must be visible NOW, without a click.
 //
-// A block's think_id is set in two ways: the backend's done marker (whose text
-// the user opens on demand), and — new — adoption of an in_progress marker on a
-// session switch. In the second case the block is the one currently streaming:
-// its already-emitted prefix lives in chat_thinking and MUST be fetched
-// immediately, or the user sees the block "continue from the middle" with the
-// front half missing. Waiting for a click is not an option — nobody clicks a
-// block that is still writing itself.
+// A thinking block's reasoning lives in chat_thinking, and the content row only
+// carries a slim {think_id} marker. getThinkingHtml renders that marker's block
+// from the lazy-load cache; with no cache entry it falls through to
+// placeholder-dots (three pulsing dots) — which the user reads as "this thinking
+// block is stuck and never finishes".
 //
-// Gated on in_progress on purpose: a DONE marker keeps its existing
-// lazy-load-on-expand behavior (handleThinkingClick), so a long conversation
-// does not fire one request per completed thinking block on every render. At
-// most one in-progress block per parent is live at a time.
+// Three shapes need a load, and all three were previously unhandled or handled
+// by a separate watcher:
 //
-// loadThinking is idempotent (cached value / shared in-flight request), so
-// re-firing on every blocks change is cheap.
+//   in_progress  — the block is still streaming. Its already-emitted prefix must
+//                  be fetched immediately or the block "continues from the
+//                  middle". The snapshot may be incomplete, so it is cached as
+//                  PROVISIONAL (see useThinkingContent) and replaced later.
+//   done + provisional — the block finished while holding a provisional
+//                  snapshot. That snapshot is a prefix of the finished
+//                  reasoning, so it must be refetched; nothing else would ever
+//                  replace it (the render path serves the cache whenever an
+//                  entry exists). Reported case: a 25131-char reasoning frozen
+//                  at its first 10175 chars.
+//   done + never loaded — the block finished before this client looked at it.
+//                  Every other path excluded it (in_progress does not match,
+//                  provisional does not apply) and a chip showing only dots
+//                  gives no reason to click. Observed 40120 times in one
+//                  session's client.log as
+//                  done=true cached=none loading=false err=none.
+//
+// Scoped to the blocks the live view actually renders OPEN — the ones being
+// streamed, plus any the user expanded. A finished conversation therefore does
+// not bulk-load hundreds of collapsed blocks, and the auto-load does not
+// preempt the click path (a user expanding a FAILED block to retry must not
+// silently receive the cached failure). Everything else keeps
+// lazy-load-on-click.
+//
+// An earlier version scoped this by POSITION instead — the last N blocks — and
+// that was the bug: a long streaming message has done thinking blocks all over
+// it, not just at the end, so anything outside the window never loaded.
+// Reported case msgId=54604: six done blocks (indices 0,5,7,10,14,17) sat
+// outside a 6-block window with their text in chat_thinking and were never
+// fetched. Visibility is the correct predicate; position is not.
 watch(
-  () => props.blocks
-    .filter((b: any) => b?.type === 'thinking' && b.think_id && b.in_progress)
-    .map((b: any) => b.think_id as string)
-    .join('|'),
-  (joined: string) => {
-    if (!joined) return
-    for (const thinkId of joined.split('|')) {
-      if (thinkingContent.errors.value[thinkId]) continue
-      // Skip only a FINAL cached value. A provisional snapshot must be
-      // refetched: it holds whatever chat_thinking had at that instant, which
-      // is a prefix of the reasoning, and the block may have grown since.
-      const cached = thinkingContent.cachedText(thinkId)
-      if (cached !== undefined && !thinkingContent.isProvisional(thinkId)) continue
-      // `provisional: true` — the block is still streaming, so this snapshot may
-      // be incomplete. It is cached for immediate rendering but flagged, so the
-      // final fetch below replaces it once the block finishes.
-      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId, true)
-        .catch(() => { /* error surfaced via errors ref */ })
-    }
-  },
-  { immediate: true },
-)
+  () => {
+    const blocks = props.blocks || []
+    const ids: string[] = []
+    for (let bi = 0; bi < blocks.length; bi++) {
+      const b = blocks[bi] as any
+      if (b?.type !== 'thinking' || !b.think_id) continue
+      if (thinkingContent.errors.value[b.think_id]) continue
+      // A block with live deltas still needs its prefix fetched: the render
+      // path stitches prefix+text, so without the prefix the front half is
+      // missing. (A block with text but no think_id has nothing to fetch.)
+      const cached = thinkingContent.cachedText(b.think_id)
+      const provisional = thinkingContent.isProvisional(b.think_id)
 
-// A thinking block that FINISHED while its cached text was a provisional
-// mid-stream snapshot must refetch the final reasoning.
-//
-// The auto-load above runs while the block streams, so its result is whatever
-// had been flushed to chat_thinking at that moment. Once the block is done that
-// snapshot is stale — and nothing else would ever replace it, because the render
-// path serves the cached value whenever one exists. The user saw the block stop
-// mid-sentence and never continue (a 25131-char reasoning frozen at its first
-// 10175 chars, in the reported case).
-//
-// Gated on isProvisional so a DONE block whose text was never fetched mid-stream
-// keeps its lazy-load-on-expand behavior — no request storm on a long history.
-watch(
-  () => props.blocks
-    .filter((b: any) => b?.type === 'thinking' && b.think_id && b.done && thinkingContent.isProvisional(b.think_id))
-    .map((b: any) => b.think_id as string)
-    .join('|'),
+      // Still streaming: always (re)load. loadThinking is idempotent for a
+      // provisional entry, so re-firing on every blocks change is cheap.
+      if (b.in_progress) { ids.push(`p:${b.think_id}`); continue }
+      if (!b.done) continue
+
+      // Finished. Reload when the cached text is a stale mid-stream snapshot
+      // (nothing else would replace it), or when nothing was ever loaded AND
+      // the block is actually rendered OPEN.
+      if (provisional) { ids.push(`f:${b.think_id}`); continue }
+      if (cached !== undefined) continue
+      // A block renders open only while it is streaming (isThinkingStreaming
+      // ignores `done`) or when the user expanded it. Load exactly those.
+      //
+      // This replaced a fixed tail window (the last N blocks), which was wrong:
+      // a long streaming message has done thinking blocks ALL OVER it, not just
+      // at the end. Reported case msgId=54604 had 6 done blocks outside a
+      // 6-block window (indices 0,5,7,10,14,17) whose text was in chat_thinking
+      // but was never fetched — expanding any of them showed the three dots
+      // forever. Visibility is the correct predicate; a position window is not.
+      //
+      // A block is loaded here only when it is open WITHOUT having been opened
+      // by a click. The click path (handleThinkingClick) already calls
+      // loadThinking itself, and `expandingThinking` is the flag it sets for the
+      // duration of the expand animation — so treating it as "handled" is what
+      // keeps the two from racing. Without this, the click's request and this
+      // one both fire; on a FAILED block the second consumes the retry's fresh
+      // response and the user sees the cached failure instead of the retry.
+      const key = stableBlockKey(bi, b)
+      if (expandingThinking.value[key]) continue
+      if (thinkingExpanded.value[key]) ids.push(`f:${b.think_id}`)
+    }
+    return ids.join('|')
+  },
   (joined: string) => {
     if (!joined) return
-    for (const thinkId of joined.split('|')) {
-      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId, false)
-        .then(() => { invalidateBlockHtml() })
-        .catch(() => { /* error surfaced via errors ref */ })
+    for (const entry of joined.split('|')) {
+      // `p:` — the block is still streaming, so the result is provisional.
+      const provisional = entry.startsWith('p:')
+      const thinkId = entry.slice(2)
+      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId, provisional)
+        .then((text) => {
+          diagLog(TAG, `thinking auto-load ok: msgId=${props.msgId} think_id=${thinkId} len=${text.length} provisional=${provisional}`)
+          invalidateBlockHtml()
+        })
+        .catch((e) => { diagLog(TAG, `thinking auto-load FAILED: msgId=${props.msgId} think_id=${thinkId} err=${e?.message || e}`) })
     }
   },
   { immediate: true },
