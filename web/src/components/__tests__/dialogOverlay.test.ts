@@ -216,20 +216,20 @@ describe('DialogOverlay', () => {
   })
 
   describe('Dangerous confirm', () => {
-    it('applies dlg-danger class when dangerous is true', async () => {
+    it('applies fbtn-danger class when dangerous is true', async () => {
       resetState({ visible: true, type: 'confirm', dangerous: true })
       mountDialog()
       await nextTick()
 
-      expect($('.dlg-ok')?.classList.contains('dlg-danger')).toBe(true)
+      expect($('.dlg-ok')?.classList.contains('fbtn-danger')).toBe(true)
     })
 
-    it('does not apply dlg-danger class when dangerous is false', async () => {
+    it('does not apply fbtn-danger class when dangerous is false', async () => {
       resetState({ visible: true, type: 'confirm', dangerous: false })
       mountDialog()
       await nextTick()
 
-      expect($('.dlg-ok')?.classList.contains('dlg-danger')).toBe(false)
+      expect($('.dlg-ok')?.classList.contains('fbtn-danger')).toBe(false)
     })
   })
 

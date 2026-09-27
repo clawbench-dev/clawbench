@@ -20,7 +20,7 @@
           </button>
         </div>
         <div class="install-actions">
-          <button class="dlg-btn dlg-cancel" @click="$emit('close')">{{ t('common.close') }}</button>
+          <button class="fbtn" @click="$emit('close')">{{ t('common.close') }}</button>
         </div>
       </div>
     </div>
@@ -32,6 +32,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PackagePlus } from 'lucide-vue-next'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import '@/assets/modal-footer-btn.css'
 
 const props = defineProps<{
   backendName: string
@@ -174,22 +175,8 @@ function copyCmd() {
   justify-content: flex-end;
 }
 
-.dlg-btn {
-  padding: var(--space-3) var(--space-7);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  border: none;
-  cursor: pointer;
-  transition: opacity var(--duration-base);
-}
-
-.dlg-btn:active { opacity: var(--opacity-soft); }
-
-.dlg-cancel {
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #555);
-}
+/* The Close button uses the shared .fbtn pill language
+   (assets/modal-footer-btn.css), the same as every other dialog footer. */
 </style>
 
 <style>
