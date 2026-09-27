@@ -5,7 +5,7 @@ import { createI18n } from 'vue-i18n'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import QueuedMessageBar from '../QueuedMessageBar.vue'
-import { queuedMessages, addQueued, setActiveQueueSession, resetQueuesForTest } from '@/composables/useMessageQueue'
+import { queuedMessages, addQueued, removeQueued, setActiveQueueSession, resetQueuesForTest } from '@/composables/useMessageQueue'
 import enLocale from '@/i18n/locales/en'
 
 // The panel reads the real store, so the store's reactivity contract is what is
@@ -38,18 +38,95 @@ describe('QueuedMessageBar (collapsed count)', () => {
 
     const wrapper = mount(Host, { global: { plugins: [i18n] } })
     await nextTick()
-    expect(wrapper.text(), 'one queued').toContain('Queued · 1')
+    expect(wrapper.find('.queued-bar-count').text(), 'one queued').toBe('1')
 
     // A second message must update the COLLAPSED header without expanding.
     addQueued('s1', { queueId: 'q2', text: 'two' })
     await nextTick()
-    expect(wrapper.text(), 'the collapsed count must show two').toContain('Queued · 2')
+    expect(wrapper.find('.queued-bar-count').text(), 'the collapsed count must show two').toBe('2')
     expect(wrapper.find('.queued-bar-list').exists(), 'the list stays collapsed').toBe(false)
 
     // And a third.
     addQueued('s1', { queueId: 'q3', text: 'three' })
     await nextTick()
-    expect(wrapper.text(), 'and three').toContain('Queued · 3')
+    expect(wrapper.find('.queued-bar-count').text(), 'and three').toBe('3')
+  })
+
+  it('renders the count as a badge, separate from the title and preview', async () => {
+    // The count must not be glued to the preview text ("排队中 2 看一下…" reads
+    // as one sentence). It is its own pill, between the title and the preview.
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: '看一下这个文件' })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    const badge = wrapper.find('.queued-bar-count')
+    expect(badge.exists(), 'the count must be its own element').toBe(true)
+    expect(badge.classes(), 'shape comes from the shared pill class').toContain('count-badge')
+    // Title and preview are separate elements, so the badge sits between them.
+    const status = wrapper.find('.queued-bar-status')
+    expect(status.exists()).toBe(true)
+    expect(status.find('.queued-bar-title').text()).toBe('Queued')
+    expect(status.find('.queued-bar-count').exists()).toBe(true)
+    expect(wrapper.find('.queued-bar-preview').text()).toBe('看一下这个文件')
+  })
+})
+
+/**
+ * Collapsed-header preview: the next message to be sent is shown next to the
+ * count, so the queue is readable without expanding. It must track the HEAD of
+ * the queue (the next one out), disappear once expanded (the list already shows
+ * every row), and degrade to the attachment label for an attachment-only entry.
+ */
+describe('QueuedMessageBar (collapsed next-message preview)', () => {
+  beforeEach(() => resetQueuesForTest())
+
+  it('shows the head of the queue while collapsed', async () => {
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'first message' })
+    addQueued('s1', { queueId: 'q2', text: 'second message' })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    const preview = wrapper.find('.queued-bar-preview')
+    expect(preview.exists(), 'collapsed header must show a preview').toBe(true)
+    expect(preview.text(), 'the NEXT message to be sent, not the last queued').toBe('first message')
+  })
+
+  it('advances to the new head when the first entry leaves the queue', async () => {
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'first message' })
+    addQueued('s1', { queueId: 'q2', text: 'second message' })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    expect(wrapper.find('.queued-bar-preview').text()).toBe('first message')
+
+    removeQueued('s1', 'q1')
+    await nextTick()
+    expect(wrapper.find('.queued-bar-preview').text(), 'preview must follow the head').toBe('second message')
+  })
+
+  it('falls back to the attachment label when the next entry has no text', async () => {
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: '', files: [{ path: 'a.png', isDir: false }] })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    expect(wrapper.find('.queued-bar-preview').text()).toBe('Attachment')
+  })
+
+  it('hides the preview when expanded (the list already shows every row)', async () => {
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'first message' })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    expect(wrapper.find('.queued-bar-preview').exists()).toBe(true)
+
+    await wrapper.find('.queued-bar-header').trigger('click')
+    expect(wrapper.find('.queued-bar-list').exists(), 'expanded').toBe(true)
+    expect(wrapper.find('.queued-bar-preview').exists(), 'no duplicate preview once expanded').toBe(false)
   })
 })
 
@@ -86,6 +163,49 @@ describe('QueuedMessageBar layout + labels (source contract)', () => {
     expect(m, 'chat.pending.insert must exist').not.toBeNull()
     expect(m![1], 'the insert label must stay short').toBe('插话')
     expect([...m![1]]).toHaveLength(2)
+  })
+
+  it('clips the collapsed preview to one line with an ellipsis, in a faint colour', () => {
+    // jsdom has no CSS engine, so the preview's two defining properties are
+    // pinned at the source: it must never wrap (a long message cannot grow the
+    // collapsed header) and must be dimmer than the title.
+    const m = src.match(/\.queued-bar-preview\s*\{([^}]*)\}/)
+    expect(m, '.queued-bar-preview rule must exist').not.toBeNull()
+    const rule = m![1]
+    expect(rule, 'one line only').toMatch(/white-space:\s*nowrap/)
+    expect(rule, 'overflowing text must be clipped').toMatch(/overflow:\s*hidden/)
+    expect(rule, 'clipping must show an ellipsis').toMatch(/text-overflow:\s*ellipsis/)
+    expect(rule, 'must be fainter than the title').toMatch(/color:\s*var\(--text-muted\)/)
+  })
+
+  it('the title no longer carries the count placeholder (the badge owns it)', () => {
+    // The count moved out of the label and into a pill. Leaving `{count}` in the
+    // locale would render it LITERALLY ("排队中 · {count}") because the template
+    // now calls t() with no params — and the literalKeys guard only checks that a
+    // key EXISTS, not that its placeholders are supplied.
+    for (const file of ['zh', 'en']) {
+      const locale = readFileSync(resolve(__dirname, `../../../i18n/locales/${file}.ts`), 'utf8')
+      const m = locale.match(/^\s*barTitle:\s*'([^']*)',/m)
+      expect(m, `${file}: chat.pending.barTitle must exist`).not.toBeNull()
+      expect(m![1], `${file}: the count is rendered by the badge, not the label`).not.toContain('{count}')
+    }
+  })
+
+  it('does not re-declare the badge geometry in the scoped rule', () => {
+    // .count-badge owns shape; a scoped border-radius would outrank it and
+    // square the pill off (see countBadge.css.test.ts).
+    const m = src.match(/\.queued-bar-count\s*\{([^}]*)\}/)
+    expect(m, '.queued-bar-count rule must exist').not.toBeNull()
+    expect(m![1]).not.toMatch(/border-radius:/)
+  })
+
+  it('pins the chevron to the right edge in both collapsed and expanded states', () => {
+    // The collapsed preview fills the row with flex:1, but it is absent once
+    // expanded — so the chevron needs its own `margin-left: auto` or it drifts
+    // left and the header stops matching the plan chip.
+    const m = src.match(/\.queued-bar-chevron\s*\{([^}]*)\}/)
+    expect(m, '.queued-bar-chevron rule must exist').not.toBeNull()
+    expect(m![1]).toMatch(/margin-left:\s*auto/)
   })
 })
 
