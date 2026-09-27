@@ -29,7 +29,7 @@
 // Bump on every behavioural change. The browser compares the script
 // byte-for-byte, so any edit here already triggers an update; this constant
 // exists to make the intent explicit and to give the log line something to say.
-const SW_VERSION = 'clawbench-sw-1';
+const SW_VERSION = 'clawbench-sw-2';
 
 /**
  * Paths that must never be served by the worker.
@@ -100,6 +100,21 @@ self.addEventListener('activate', (event) => {
 // responses — the request goes to the network exactly as if no worker existed.
 // Kept non-empty on purpose: Chrome ignores an empty fetch handler when
 // deciding whether the site is installable.
+//
+// GET-ONLY, and that guard is load-bearing. Re-issuing a request through
+// fetch() is not a no-op for bodies: WebKit drops the body of a re-fetched
+// multipart/form-data POST (WebKit bug 319396; earlier variants 187461), so
+// every iOS Safari upload arrived at the server with Content-Length: 0 and
+// ParseMultipartForm failed → 400 "FileTooLargeOrInvalid" in well under a
+// millisecond. Letting non-GET requests fall through untouched (no
+// respondWith → the browser's own network path) keeps the body intact.
+//
+// This is why NETWORK_ONLY_PATHS alone is not enough: its registerRouter
+// branch is Chromium-only, and Safari — the affected browser — has no Static
+// Routing API, so it always reaches this handler.
 self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') {
+    return;
+  }
   event.respondWith(fetch(event.request));
 });
