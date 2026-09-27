@@ -2930,6 +2930,55 @@ describe('openFilePath', () => {
       expect(parseFileUri('1,2,3').path).toBe('1,2,3')
       expect(parseFileUri('1,2,3').lineRanges).toEqual([])
     })
+
+    // AI-authored markdown routinely wraps a link destination in code
+    // decoration: `[.clawbench/x.html](`.clawbench/x.html`)`. CommonMark keeps
+    // the backticks as part of the destination, and marked percent-encodes them
+    // (`%60…%60`), so the annotation layer sees a path whose first and last
+    // characters are decoration rather than a real filename. Stripping a
+    // matching wrapping pair must happen BEFORE the line suffix is parsed —
+    // `:L10` is followed by a closing backtick, so the suffix regex would
+    // otherwise never match.
+    describe('wrapping decoration', () => {
+      it('strips a surrounding backtick pair', () => {
+        expect(parseFileUri('`.clawbench/generated/theme-picker-demo.html`').path)
+          .toBe('.clawbench/generated/theme-picker-demo.html')
+      })
+
+      it('strips percent-encoded backticks (%60…%60)', () => {
+        expect(parseFileUri('%60.clawbench/generated/theme-picker-demo.html%60').path)
+          .toBe('.clawbench/generated/theme-picker-demo.html')
+      })
+
+      it('strips a surrounding single- or double-quote pair', () => {
+        expect(parseFileUri("'src/main.go'").path).toBe('src/main.go')
+        expect(parseFileUri('"src/main.go"').path).toBe('src/main.go')
+        expect(parseFileUri('%22src/main.go%22').path).toBe('src/main.go')
+      })
+
+      it('parses the line suffix inside a wrapped path', () => {
+        expect(parseFileUri('`src/main.go:10-20`')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+        expect(parseFileUri('`src/main.go#L10`')).toMatchObject({ path: 'src/main.go', lineStart: 10 })
+        expect(parseFileUri('`src/main.go:L10-L20`')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+        expect(parseFileUri('%60src/main.go:10-20%60')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+      })
+
+      it('decodes a percent-encoded path inside wrapping decoration', () => {
+        expect(parseFileUri('`src/%E4%B8%AD%E6%96%87.go`').path).toBe('src/中文.go')
+      })
+
+      it('does not strip an unmatched decoration character', () => {
+        // Only a MATCHING pair is decoration; a lone leading/trailing backtick
+        // is part of the name (a real, if unusual, filename).
+        expect(parseFileUri('`src/main.go').path).toBe('`src/main.go')
+        expect(parseFileUri('src/main.go`').path).toBe('src/main.go`')
+        expect(parseFileUri('"src/main.go`').path).toBe('"src/main.go`')
+      })
+
+      it('does not strip a decoration pair spanning the whole string when only one char', () => {
+        expect(parseFileUri('`').path).toBe('`')
+      })
+    })
   })
 
   describe('DOM annotation consistency for :L line numbers', () => {
