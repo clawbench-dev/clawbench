@@ -2769,100 +2769,24 @@ func TestServeConfig_Patch_FontsDirRelativeRejected(t *testing.T) {
 
 // --- appearance (custom wallpaper): config response + PATCH plumbing ---
 
-func TestServeConfig_Get_Appearance(t *testing.T) {
+// --- appearance (wallpaper resources): config response + PATCH plumbing ---
+//
+// The wallpaper *choice* (source / on-off / selected image) is per-device
+// browser state, so it is neither exposed nor writable here. Only the shared
+// resources the server owns — the gallery list and the Bing cache — round-trip
+// through the config endpoint.
+
+func TestServeConfig_Get_AppearanceExposesGalleryAndBing(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
 	cfg := model.Config{}
-	cfg.Appearance.WallpaperMode = "bing"
-	cfg.Appearance.WallpaperEnabled = true
-	model.ConfigInstance = cfg
-
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-	appearance, ok := resp["appearance"].(map[string]any)
-	require.True(t, ok, "response should contain appearance section")
-	assert.Equal(t, "bing", appearance["wallpaper_mode"])
-	assert.Equal(t, true, appearance["wallpaper_enabled"])
-	// Panel opacity is a per-device browser preference — it must never be
-	// exposed in the config response, or clients would sync it across devices.
-	_, hasOpacity := appearance["panel_opacity"]
-	assert.False(t, hasOpacity, "panel_opacity must not appear in the config response")
-}
-
-// TestServeConfig_Patch_AppearancePanelOpacityRejected guards the migration of
-// panel opacity from a server config value to a per-device localStorage
-// preference: the key was removed from the PATCH whitelist, so an old client
-// still sending it must be rejected rather than silently writing config.yaml.
-func TestServeConfig_Patch_AppearancePanelOpacityRejected(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	model.ConfigInstance = cfg
-
-	body := `{"appearance":{"panel_opacity":0.75}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestServeConfig_Get_AppearanceExposesResolvedActiveFile(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Appearance.WallpaperMode = "local"
-	cfg.Appearance.WallpaperEnabled = true
-	cfg.Appearance.Local.Selected = "local-1-a.png"
 	cfg.Appearance.Local.Items = []model.LocalWallpaperItem{
 		{File: "local-1-a.png", Name: "a.png", UploadedAt: 5, Size: 6},
 	}
-	model.ConfigInstance = cfg
-
-	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]any
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-
-	appearance, ok := resp["appearance"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "local-1-a.png", appearance["active_file"])
-	assert.Equal(t, "local", appearance["wallpaper_mode"])
-	assert.Equal(t, true, appearance["wallpaper_enabled"])
-
-	local, ok := appearance["local"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "local-1-a.png", local["selected"])
-	items, ok := local["items"].([]any)
-	require.True(t, ok)
-	require.Len(t, items, 1)
-}
-
-func TestServeConfig_Get_AppearanceExposesBingStatus(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	cfg := model.Config{}
-	cfg.Appearance.WallpaperMode = "bing"
-	cfg.Appearance.WallpaperEnabled = true
-	cfg.Appearance.Bing.Enabled = true
 	cfg.Appearance.Bing.File = "bing-20260910.jpg"
-	cfg.Appearance.Bing.Copyright = "© Someone"
+	cfg.Appearance.Bing.Copyright = "\u00a9 Someone"
 	cfg.Appearance.Bing.Title = "A Title"
-	cfg.Appearance.Bing.Mkt = "zh-CN"
 	cfg.Appearance.Bing.LastError = "boom"
 	model.ConfigInstance = cfg
 
@@ -2875,169 +2799,73 @@ func TestServeConfig_Get_AppearanceExposesBingStatus(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 
 	appearance, ok := resp["appearance"].(map[string]any)
+	require.True(t, ok, "response should contain appearance section")
+
+	// The per-device choice must not be sent: a client reading these would sync
+	// one device's wallpaper onto every other device.
+	for _, key := range []string{"wallpaper_mode", "wallpaper_enabled", "active_file", "panel_opacity"} {
+		_, present := appearance[key]
+		assert.False(t, present, "appearance.%s must not appear in the config response", key)
+	}
+
+	local, ok := appearance["local"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "bing-20260910.jpg", appearance["active_file"])
+	_, hasSelected := local["selected"]
+	assert.False(t, hasSelected, "local.selected is per-device and must not be exposed")
+	items, ok := local["items"].([]any)
+	require.True(t, ok)
+	require.Len(t, items, 1)
 
 	bing, ok := appearance["bing"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, true, bing["enabled"])
 	assert.Equal(t, "bing-20260910.jpg", bing["file"])
-	assert.Equal(t, "© Someone", bing["copyright"])
 	assert.Equal(t, "A Title", bing["title"])
 	assert.Equal(t, "boom", bing["last_error"])
+	_, hasBingEnabled := bing["enabled"]
+	assert.False(t, hasBingEnabled, "bing.enabled no longer exists: the fetch is unconditional")
 }
 
-func TestServeConfig_Patch_WallpaperEnabledAllowed(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
+// TestServeConfig_Patch_WallpaperChoiceRejected guards the move of the wallpaper
+// choice to per-device localStorage: the keys were removed from the PATCH
+// whitelist, so a client still sending them must be rejected rather than
+// silently writing config.yaml.
+func TestServeConfig_Patch_WallpaperChoiceRejected(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"wallpaper_enabled", `{"appearance":{"wallpaper_enabled":false}}`},
+		{"wallpaper_mode", `{"appearance":{"wallpaper_mode":"bing"}}`},
+		{"wallpaper_mode wave", `{"appearance":{"wallpaper_mode":"wave"}}`},
+		{"panel_opacity", `{"appearance":{"panel_opacity":0.75}}`},
+		{"bing.enabled", `{"appearance":{"bing":{"enabled":true}}}`},
+		{"bing.mkt", `{"appearance":{"bing":{"mkt":"en-US"}}}`},
+		// Wrong-typed values of the same keys: rejected by the whitelist before
+		// type checking even matters.
+		{"wallpaper_enabled as object", `{"appearance":{"wallpaper_enabled":{}}}`},
+		{"wallpaper_mode as number", `{"appearance":{"wallpaper_mode":123}}`},
+		{"bing.mkt as object", `{"appearance":{"bing":{"mkt":{}}}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
 
-	origDataDir := model.DataDir
-	model.DataDir = t.TempDir()
-	defer func() { model.DataDir = origDataDir }()
+			origDataDir := model.DataDir
+			model.DataDir = t.TempDir()
+			defer func() { model.DataDir = origDataDir }()
+			model.ConfigInstance = model.Config{}
 
-	cfg := model.Config{}
-	cfg.Appearance.WallpaperEnabled = true
-	model.ConfigInstance = cfg
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
 
-	body := `{"appearance":{"wallpaper_enabled":false}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, model.ConfigInstance.Appearance.WallpaperEnabled)
-}
-
-func TestServeConfig_Patch_WallpaperModeAccepted(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origDataDir := model.DataDir
-	model.DataDir = t.TempDir()
-	defer func() { model.DataDir = origDataDir }()
-
-	model.ConfigInstance = model.Config{}
-
-	body := `{"appearance":{"wallpaper_mode":"bing"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "bing", model.ConfigInstance.Appearance.WallpaperMode)
-}
-
-func TestServeConfig_Patch_WallpaperModeWaveAccepted(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origDataDir := model.DataDir
-	model.DataDir = t.TempDir()
-	defer func() { model.DataDir = origDataDir }()
-
-	model.ConfigInstance = model.Config{}
-
-	// PATCH is a second write path to the same field as POST
-	// /api/theme/wallpaper; both must accept the animated wave.
-	body := `{"appearance":{"wallpaper_mode":"wave"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "wave", model.ConfigInstance.Appearance.WallpaperMode)
-}
-
-func TestServeConfig_Patch_WallpaperModeEnumValidated(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-
-	body := `{"appearance":{"wallpaper_mode":"nonsense"}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Empty(t, model.ConfigInstance.Appearance.WallpaperMode)
-}
-
-func TestServeConfig_Patch_BingEnabledAllowed(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	origDataDir := model.DataDir
-	model.DataDir = t.TempDir()
-	defer func() { model.DataDir = origDataDir }()
-
-	model.ConfigInstance = model.Config{}
-
-	body := `{"appearance":{"bing":{"enabled":true}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, model.ConfigInstance.Appearance.Bing.Enabled)
-}
-
-func TestServeConfig_Patch_BingMktEnumValidated(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-
-	body := `{"appearance":{"bing":{"mkt":"fr-FR"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Empty(t, model.ConfigInstance.Appearance.Bing.Mkt)
-}
-
-func TestServeConfig_Patch_LocalSelectedRejected(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-
-	// local.selected is a file name resolved inside <DataDir>/theme/local, so a
-	// direct PATCH would be a path-traversal entry point. It must be rejected by
-	// the whitelist even when nested inside the appearance object.
-	body := `{"appearance":{"local":{"selected":"../../etc/passwd"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Empty(t, model.ConfigInstance.Appearance.Local.Selected)
-}
-
-func TestServeConfig_Patch_BingFileRejected(t *testing.T) {
-	_, teardown := setupTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance = model.Config{}
-
-	// bing.file is likewise server-owned (the fetch worker writes it after
-	// storing the image) and must not be settable through PATCH.
-	body := `{"appearance":{"bing":{"file":"../../etc/passwd"}}}`
-	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeConfig, req)
-
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Empty(t, model.ConfigInstance.Appearance.Bing.File)
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body %s must be rejected", tc.body)
+			assert.NoFileExists(t, filepath.Join(model.DataDir, "config", "config.yaml"),
+				"a rejected patch must not write config.yaml")
+		})
+	}
 }
 
 func TestServeConfig_Patch_LocalItemsRejected(t *testing.T) {
@@ -3058,44 +2886,22 @@ func TestServeConfig_Patch_LocalItemsRejected(t *testing.T) {
 	assert.Empty(t, model.ConfigInstance.Appearance.Local.Items)
 }
 
-func TestServeConfig_Patch_WrongTypedValuesRejected(t *testing.T) {
+func TestServeConfig_Patch_BingFileRejected(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// A wrong-typed value is ignored by applyConfigPatch's assertions but would
-	// still be merged into config.yaml, producing a file the typed config cannot
-	// parse — which makes the next server startup fail outright. Every one of
-	// these must be rejected with 400 instead of silently corrupting the config.
-	cases := []struct {
-		name string
-		body string
-	}{
-		{"wallpaper_enabled as object", `{"appearance":{"wallpaper_enabled":{}}}`},
-		{"wallpaper_enabled as string", `{"appearance":{"wallpaper_enabled":"yes"}}`},
-		{"wallpaper_mode as number", `{"appearance":{"wallpaper_mode":123}}`},
-		{"wallpaper_mode as object", `{"appearance":{"wallpaper_mode":{}}}`},
-		{"bing.enabled as object", `{"appearance":{"bing":{"enabled":{}}}}`},
-		{"bing.mkt as number", `{"appearance":{"bing":{"mkt":5}}}`},
-		{"bing.mkt as object", `{"appearance":{"bing":{"mkt":{}}}}`},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			model.ConfigInstance = model.Config{}
-			origDataDir := model.DataDir
-			model.DataDir = t.TempDir()
-			defer func() { model.DataDir = origDataDir }()
+	model.ConfigInstance = model.Config{}
 
-			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
-			req.Header.Set("Content-Type", "application/json")
-			withAuthCookie(req, model.SessionToken)
-			w := callHandler(ServeConfig, req)
+	// bing.file is server-owned (the fetch worker writes it after storing the
+	// image) and must not be settable through PATCH.
+	body := `{"appearance":{"bing":{"file":"../../etc/passwd"}}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
 
-			assert.Equal(t, http.StatusBadRequest, w.Code, "body %s must be rejected", tc.body)
-			// Nothing may have been written.
-			assert.NoFileExists(t, filepath.Join(model.DataDir, "config", "config.yaml"),
-				"a rejected patch must not write config.yaml")
-		})
-	}
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Empty(t, model.ConfigInstance.Appearance.Bing.File)
 }
 
 func TestServeConfig_Get_ExposesFirstRun(t *testing.T) {

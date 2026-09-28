@@ -449,6 +449,21 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // preference, like blur/edgeFade — it is a per-device display tweak, not a
   // shared visual decision, so it stays out of the server config.
   wallpaperWaveSpeed: 50,
+  // ── Which wallpaper this device shows ──────────────────────────────────
+  // The whole wallpaper *choice* lives here, per device: whether it is on,
+  // which source, and (for the local source) which gallery image. The server
+  // owns only what it cannot give up — the gallery files on disk and the Bing
+  // daily fetch/cache — and never decides what this device displays. Two
+  // devices on the same server can therefore show different wallpapers.
+  //
+  // The wave is the factory default: a fresh device (or one whose storage was
+  // cleared) shows an animated background immediately, with no image needed.
+  wallpaperEnabled: true,
+  wallpaperMode: 'wave',
+  // Bare name of the selected gallery image, '' when nothing is selected. The
+  // name may point at a file another device deleted; the app self-heals on a
+  // 404 (see App.vue onWallpaperError) rather than trusting it forever.
+  wallpaperLocalSelected: '',
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -568,10 +583,6 @@ const serverDefaults: Record<string, unknown> = {
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',
-  'appearance.wallpaper_mode': '',
-  'appearance.wallpaper_enabled': false,
-  'appearance.bing.enabled': false,
-  'appearance.bing.mkt': 'zh-CN',
 }
 
 // ── Agent preference helpers ──────────────────────────────

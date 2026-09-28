@@ -16,15 +16,8 @@ import (
 // a restart of an existing install re-evaluates to false.
 var FirstRun bool
 
-// HealedBingFetch records that ApplyDefaults repaired an unrepresentable
-// appearance state — the wallpaper mode says Bing while the fetch switch is off
-// — so startup knows the repaired value needs writing to disk. ApplyDefaults
-// fixes the value in memory, so this flag is the only surviving evidence that a
-// write is needed.
-var HealedBingFetch bool
-
 // IsFreshInstall reports whether this is a brand-new installation, which is
-// what gates the out-of-box appearance defaults (Bing daily wallpaper).
+// what gates the out-of-box appearance defaults (the default theme).
 //
 // A missing config.yaml alone is not sufficient evidence: config.yaml is
 // optional and is never written at startup, so a long-running install that
@@ -113,45 +106,13 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 		cfg.Fonts.Dir = DefaultFontsDir()
 	}
 
-	// --- Appearance (custom wallpaper) ---
-	// Wallpaper source selection. Two independent sources exist (a local
-	// gallery and the Bing daily image) but only one is shown at a time.
-	//
-	// The wallpaper layer itself is OFF out of the box: WallpaperEnabled stays
-	// at its zero value for fresh installs too, so no image is downloaded or
-	// displayed until the user turns the switch on. What a fresh install does
-	// pre-select is the *source* (Bing daily) with its fetch switch on, so that
-	// flipping the switch shows the Bing image immediately rather than an empty
-	// panel with no source chosen.
-	//
-	// Existing installs are deliberately left alone: a user who never enabled a
-	// wallpaper must not have one appear after an upgrade.
-	//
-	// The decision is captured in FirstRun because the database file this check
-	// relies on is created later in startup, so it cannot be re-evaluated once
-	// the server is serving requests.
+	// --- First-run marker (NOT wallpaper-related) ---
+	// Captured in FirstRun because the database file this check relies on is
+	// created later in startup, so it cannot be re-evaluated once the server is
+	// serving requests. The frontend reads it as `first_run` to apply the
+	// out-of-box *theme*; nothing about wallpapers depends on it, so do not
+	// remove this line when trimming appearance code.
 	FirstRun = IsFreshInstall(presence)
-	if FirstRun {
-		if cfg.Appearance.WallpaperMode == "" {
-			cfg.Appearance.WallpaperMode = "bing"
-		}
-		cfg.Appearance.Bing.Enabled = true
-		if cfg.Appearance.Bing.Mkt == "" {
-			cfg.Appearance.Bing.Mkt = "zh-CN"
-		}
-	}
-
-	// Bing is the selected source, so its fetch switch must be on. This is
-	// normally kept in step by the mode endpoint, but configs written before
-	// that coupling existed can say mode=bing with the switch off — a state the
-	// settings UI cannot reach or repair, where the worker silently refuses to
-	// fetch and the sync button appears to do nothing.
-	if cfg.Appearance.WallpaperMode == "bing" {
-		// Record that the value needed repairing so startup persists it; the
-		// assignment below destroys the evidence.
-		HealedBingFetch = !cfg.Appearance.Bing.Enabled
-		cfg.Appearance.Bing.Enabled = true
-	}
 
 	// --- DevPort ---
 	// -1 = explicitly disabled; 0 = auto (Port+2 when TLS active, disabled otherwise)

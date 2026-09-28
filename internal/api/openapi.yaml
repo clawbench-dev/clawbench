@@ -380,8 +380,9 @@ paths:
       tags: [Config]
       summary: 读取服务端配置
       description: |
-        返回完整配置（密码等敏感字段被剥离）。`appearance.active_file` 由服务端
-        按 mode/enabled/选中项解析后下发。
+        返回完整配置（密码等敏感字段被剥离）。`appearance` 只含服务端持有的共享壁纸
+        资源（图库清单与 Bing 缓存）；来源 / 总开关 / 选中项是每台设备各自的浏览器
+        偏好，不在配置中。
       operationId: getConfig
       responses:
         "200":
@@ -391,8 +392,9 @@ paths:
       summary: 局部更新配置
       description: |
         仅白名单内的键可写；类型不符直接 400（避免写入后 `yaml.Unmarshal` 失败）。
-        文件名类键（`appearance.local.selected`/`local.items`/`bing.file`）不在白名单，
-        须经专用端点写入。
+        壁纸的共享资源（`appearance.local.items` / `appearance.bing.file`）不在白名单，
+        须经专用端点写入；每设备的壁纸选择（来源 / 开关 / 选中项）存在浏览器
+        localStorage，PATCH 会被白名单拒绝。
       operationId: patchConfig
       requestBody:
         required: true
@@ -505,61 +507,16 @@ paths:
             type: string
       responses:
         "200":
-          description: 删除后的壁纸状态
+          description: 删除后剩余的图库图片
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/WallpaperState"
-
-  /api/theme/local/select:
-    post:
-      tags: [Theme]
-      summary: 选中图库图片为当前壁纸
-      operationId: themeLocalSelect
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                name:
-                  type: string
-      responses:
-        "200":
-          description: 壁纸状态
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WallpaperState"
-
-  /api/theme/wallpaper:
-    post:
-      tags: [Theme]
-      summary: 切换壁纸来源 / 总开关
-      description: |
-        仅应用传入的字段。切到 `bing` 会同步打开抓取开关并立即触发一次抓取。
-        切到 `wave` 时 `active_file` 为空（动态波浪由客户端绘制，无磁盘文件）。
-      operationId: themeWallpaperMode
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                mode:
-                  type: string
-                  enum: [local, bing, wave]
-                enabled:
-                  type: boolean
-      responses:
-        "200":
-          description: 壁纸状态
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/WallpaperState"
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/GalleryItem"
 
   /api/theme/bing/sync:
     post:
@@ -4746,26 +4703,10 @@ components:
         size:
           type: integer
 
-    WallpaperState:
-      type: object
-      description: 壁纸变更端点统一返回的状态。
-      properties:
-        mode:
-          type: string
-          enum: [local, bing, wave]
-        enabled:
-          type: boolean
-        active_file:
-          type: string
-          description: 当前显示的图片文件名；`wave` 模式为空串（无磁盘文件）。
-        selected:
-          type: string
-
     BingStatus:
       type: object
+      description: 服务端缓存的 Bing 每日图片状态。市场参数由服务端语言推导，不单独下发。
       properties:
-        enabled:
-          type: boolean
         file:
           type: string
         last_success_date:
@@ -4773,8 +4714,6 @@ components:
         copyright:
           type: string
         title:
-          type: string
-        mkt:
           type: string
         last_error:
           type: string

@@ -30,7 +30,7 @@
 | 配色 | 从 `--accent-color` / `--bg-primary` 推导四色；主题可显式覆盖 |
 | 取色方式 | **每帧直读 CSS 变量，不缓存、不监听事件**（实测 0.0007ms/帧，理由见下） |
 | 面板半透明 | 复用现有 `wallpaper-active` + `--panel-alpha`，零新增机制 |
-| 模式存储 | 服务端 `appearance.wallpaper_mode = "wave"` |
+| 模式存储 | **本地偏好** `wallpaperMode`（后改为每设备独立：来源/开关/选中项全部 localStorage，服务端只保留图库与 Bing 缓存） |
 | 速度存储 | **本地偏好** `wallpaperWaveSpeed`（与 `wallpaperBlur` / `wallpaperEdgeFade` 同级） |
 | 暴露参数 | 仅一个速度滑块（10–100，50 = 1×，实际 0.2×–2×） |
 | 交互 | 纯环境动效，**不响应鼠标/触摸/滚动** |

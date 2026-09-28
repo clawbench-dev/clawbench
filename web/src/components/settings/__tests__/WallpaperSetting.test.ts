@@ -122,58 +122,28 @@ function stubMatchMedia() {
   }))
 }
 
-/** Server config with the local gallery active. */
-function localConfigWith(items: { file: string; name: string }[], selected: string) {
+/**
+ * Server config carrying only the shared wallpaper RESOURCES. The source, the
+ * on/off switch and the selection are this device's own local state, so they are
+ * driven through localConfig below, not through the server config.
+ */
+function serverWith(
+  items: { file: string; name: string }[] = [],
+  bing: Record<string, unknown> = {},
+) {
   return {
     appearance: {
-      active_file: selected,
-      wallpaper_mode: 'local',
-      wallpaper_enabled: true,
-      local: {
-        selected,
-        items: items.map((it, i) => ({ ...it, uploaded_at: i + 1, size: 100 })),
-      },
-      bing: { enabled: false, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 0 },
+      local: { items: items.map((it, i) => ({ ...it, uploaded_at: i + 1, size: 100 })) },
+      bing: { file: '', last_success_date: '', copyright: '', title: '', last_error: '', last_attempt_at: 0, ...bing },
     },
   }
 }
 
-/** Server config with the Bing daily image active. */
-function bingConfigWith(overrides: Record<string, unknown> = {}) {
-  return {
-    appearance: {
-      active_file: 'bing-20260910.jpg',
-      wallpaper_mode: 'bing',
-      wallpaper_enabled: true,
-      local: { selected: '', items: [] },
-      bing: {
-        enabled: true,
-        file: 'bing-20260910.jpg',
-        last_success_date: '20260910',
-        copyright: '© Photographer',
-        title: 'A Title',
-        mkt: 'zh-CN',
-        last_error: '',
-        last_attempt_at: 1,
-        ...overrides,
-      },
-    },
-  }
-}
-
-/** Server config with the animated wave active (no image file). */
-function waveConfig(overrides: Record<string, unknown> = {}) {
-  return {
-    appearance: {
-      // The wave has no file on disk, so the server reports an empty active_file.
-      active_file: '',
-      wallpaper_mode: 'wave',
-      wallpaper_enabled: true,
-      local: { selected: '', items: [] },
-      bing: { enabled: false, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 0 },
-      ...overrides,
-    },
-  }
+/** Set this device's wallpaper choice (the localStorage-backed half). */
+function chooseDevice(mode: 'local' | 'bing' | 'wave' | 'none', selected = '', enabled = true) {
+  localConfig.wallpaperMode = mode
+  localConfig.wallpaperLocalSelected = selected
+  localConfig.wallpaperEnabled = enabled
 }
 
 describe('WallpaperSetting', () => {
@@ -182,7 +152,8 @@ describe('WallpaperSetting', () => {
     vi.unstubAllGlobals()
     stubMatchMedia()
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })))
-    serverConfig.value = { appearance: { active_file: '' } }
+    serverConfig.value = serverWith()
+    chooseDevice('wave')
     localConfig.wallpaperBlur = 0
     localConfig.wallpaperEdgeFade = false
     localConfig.theme = 'auto'
@@ -191,35 +162,37 @@ describe('WallpaperSetting', () => {
   })
 
   describe('global switch', () => {
-    it('renders the enable switch reflecting the server state', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+    it('renders the enable switch reflecting this device\'s choice', async () => {
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const enableSwitch = wrapper.findAll('input[type="checkbox"]')[0]
       expect((enableSwitch.element as HTMLInputElement).checked).toBe(true)
     })
 
-    it('disables the wallpaper via POST /api/theme/wallpaper', async () => {
+    it('turns the wallpaper off locally, with no server round-trip', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      chooseDevice('local', 'local-1-a.png')
 
       const wrapper = mountSetting()
       await nextTick()
       const enableSwitch = wrapper.findAll('input[type="checkbox"]')[0]
       await enableSwitch.setValue(false)
 
-      const call = fetchMock.mock.calls.find(c => c[0] === '/api/theme/wallpaper')
-      expect(call).toBeTruthy()
-      expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({ enabled: false })
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperEnabled', false)
+      expect(localConfig.wallpaperEnabled).toBe(false)
+      // The choice is per-device: it must never reach the server.
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/wallpaper')).toBe(false)
+      expect(mockPatchConfig).not.toHaveBeenCalled()
     })
   })
 
   describe('source mode', () => {
-    it('highlights the active mode and switches on click', async () => {
+    it('highlights the active mode and switches locally on click', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      chooseDevice('local', 'local-1-a.png')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -229,12 +202,15 @@ describe('WallpaperSetting', () => {
       expect(bingBtn.classes()).not.toContain('wallpaper-mode__btn--active')
 
       await bingBtn.trigger('click')
-      const call = fetchMock.mock.calls.find(c => c[0] === '/api/theme/wallpaper')
-      expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({ mode: 'bing' })
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperMode', 'bing')
+      expect(localConfig.wallpaperMode).toBe('bing')
+      // Switching source is a per-device decision, never a server write.
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/wallpaper')).toBe(false)
     })
 
     it('shows the Bing block only in Bing mode', async () => {
-      serverConfig.value = bingConfigWith()
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
       const wrapper = mountSetting()
       await nextTick()
       const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
@@ -243,7 +219,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('shows the gallery only in local mode', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
@@ -254,7 +231,7 @@ describe('WallpaperSetting', () => {
     it('offers the animated wave as a third source', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      chooseDevice('local', 'local-1-a.png')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -262,12 +239,12 @@ describe('WallpaperSetting', () => {
       expect(waveBtn).toBeTruthy()
 
       await waveBtn!.trigger('click')
-      const call = fetchMock.mock.calls.find(c => c[0] === '/api/theme/wallpaper')
-      expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({ mode: 'wave' })
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperMode', 'wave')
+      expect(localConfig.wallpaperMode).toBe('wave')
     })
 
     it('marks the wave button active in wave mode', async () => {
-      serverConfig.value = waveConfig()
+      chooseDevice('wave')
       const wrapper = mountSetting()
       await nextTick()
       const waveBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Animated')!
@@ -277,10 +254,9 @@ describe('WallpaperSetting', () => {
     })
 
     it('shows the wave speed row and neither the gallery nor the Bing block', async () => {
-      // The wave must not fall through to the gallery. Note the gallery branch
-      // is a v-else (see the next test for why), so this passes because the
-      // wave branch is matched FIRST, not because the gallery is gated on local.
-      serverConfig.value = waveConfig()
+      // The wave must not fall through to the gallery. The gallery branch is a
+      // v-else, so this passes because the wave branch is matched FIRST.
+      chooseDevice('wave')
       const wrapper = mountSetting()
       await nextTick()
       const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
@@ -289,20 +265,11 @@ describe('WallpaperSetting', () => {
       expect(labels).not.toContain('Current image')
     })
 
-    it('still shows the gallery when no source has been chosen yet', async () => {
-      // Existing installs have wallpaper_mode "" (the server only defaults it to
-      // bing on a fresh install), which resolves to 'none'. The gallery must
-      // render there — it is the only way to pick an image. Gating the gallery
-      // on `mode === 'local'` would hide it for every existing user.
-      serverConfig.value = {
-        appearance: {
-          active_file: '',
-              wallpaper_mode: '',
-          wallpaper_enabled: false,
-          local: { selected: '', items: [] },
-          bing: { enabled: false, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 0 },
-        },
-      }
+    it('still shows the gallery when the mode is unset', async () => {
+      // 'none' resolves from an unset/unknown stored value. The gallery must
+      // render there — it is the only way to pick an image. Gating it on
+      // `mode === 'local'` would hide it.
+      chooseDevice('none')
       const wrapper = mountSetting()
       await nextTick()
       const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
@@ -314,7 +281,7 @@ describe('WallpaperSetting', () => {
       // outright rather than shown disabled — a control that can never apply to
       // the active background is noise. Panel opacity does apply (the wave shows
       // through the translucent panels), so it stays.
-      serverConfig.value = waveConfig()
+      chooseDevice('wave')
       const wrapper = mountSetting()
       await nextTick()
       const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
@@ -326,7 +293,8 @@ describe('WallpaperSetting', () => {
     it('keeps the image-only rows enabled for an image wallpaper', async () => {
       // The counterpart to the test above: the split must not disable them for
       // images, where blur/edge-fade genuinely apply.
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const rows = wrapper.findAll('.settings-item')
@@ -338,7 +306,7 @@ describe('WallpaperSetting', () => {
     })
 
     it('writes the wave speed to local config', async () => {
-      serverConfig.value = waveConfig()
+      chooseDevice('wave')
       const wrapper = mountSetting()
       await nextTick()
       const slider = wrapper.findAll('input[type="range"]').find(i => {
@@ -351,20 +319,20 @@ describe('WallpaperSetting', () => {
     })
 
     it('polls for the Bing preview after switching to Bing', async () => {
-      // The server starts a fetch when the source switches to Bing; the panel
-      // must poll so the preview appears without the user hitting 获取.
+      // The server fetches in the background; the panel must poll so the preview
+      // appears without the user hitting 获取.
       const fetchMock = vi.fn(async (url: string) => {
         if (url === '/api/theme/bing/status') {
           return {
             ok: true,
             status: 200,
-            json: async () => ({ enabled: true, file: 'bing-20260910.jpg', last_success_date: '20260910', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
+            json: async () => ({ file: 'bing-20260910.jpg', last_success_date: '20260910', copyright: '', title: '', last_error: '', last_attempt_at: 1 }),
           }
         }
         return { ok: true, status: 200, json: async () => ({}) }
       })
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      chooseDevice('local', 'local-1-a.png')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -375,40 +343,6 @@ describe('WallpaperSetting', () => {
         expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/bing/status')).toBe(true)
       }, { timeout: 5000 })
     }, 10000)
-    it('does not block the panel while the Bing image downloads', async () => {
-      // Regression: switching to Bing used to await the whole download poll
-      // while `busy` stayed set, leaving every control disabled for up to the
-      // poll budget. The switch must release the UI immediately.
-      let statusCalls = 0
-      const fetchMock = vi.fn(async (url: string) => {
-        if (url === '/api/theme/bing/status') {
-          statusCalls += 1
-          return {
-            ok: true,
-            status: 200,
-            // Never settles within the poll budget.
-            json: async () => ({ enabled: true, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
-          }
-        }
-        return { ok: true, status: 200, json: async () => ({}) }
-      })
-      vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
-
-      const wrapper = mountSetting()
-      await nextTick()
-      const bingBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Bing daily')!
-      await bingBtn.trigger('click')
-
-      // The panel must become interactive without waiting for the download poll.
-      // The status endpoint never settles here, so an awaited poll would keep
-      // the buttons disabled for the full 15-iteration budget.
-      const localBtn = wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Local gallery')!
-      await vi.waitFor(() => {
-        expect(localBtn.attributes('disabled')).toBeUndefined()
-      }, { timeout: 2000 })
-      expect(statusCalls).toBeLessThan(5)
-    }, 10000)
 
     it('does not poll when an image is already cached for today', async () => {
       // The server skips the fetch when today's image is cached, so polling
@@ -416,10 +350,10 @@ describe('WallpaperSetting', () => {
       const fetchMock = vi.fn(async () => ({
         ok: true,
         status: 200,
-        json: async () => ({ enabled: true, file: 'bing-today.jpg', last_success_date: todayStamp(), copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
+        json: async () => ({ file: 'bing-today.jpg', last_success_date: todayStamp(), copyright: '', title: '', last_error: '', last_attempt_at: 1 }),
       }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      chooseDevice('local', 'local-1-a.png')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -433,7 +367,13 @@ describe('WallpaperSetting', () => {
 
   describe('Bing', () => {
     it('shows the photographer credit and title in the panel', async () => {
-      serverConfig.value = bingConfigWith()
+      serverConfig.value = serverWith([], {
+        file: 'bing-20260910.jpg',
+        last_success_date: '20260910',
+        copyright: '© Photographer',
+        title: 'A Title',
+      })
+      chooseDevice('bing')
       const wrapper = mountSetting()
       await nextTick()
       expect(wrapper.find('.wallpaper-credit').text()).toContain('© Photographer')
@@ -441,7 +381,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('surfaces a sync error instead of hiding the wallpaper', async () => {
-      serverConfig.value = bingConfigWith({ last_error: 'network down' })
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_error: 'network down' })
+      chooseDevice('bing')
       const wrapper = mountSetting()
       await nextTick()
       const err = wrapper.find('.wallpaper-error')
@@ -457,13 +398,14 @@ describe('WallpaperSetting', () => {
           return {
             ok: true,
             status: 200,
-            json: async () => ({ enabled: true, file: 'bing-20260911.jpg', last_success_date: todayStamp(), copyright: 'c', title: 't', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
+            json: async () => ({ file: 'bing-20260911.jpg', last_success_date: todayStamp(), copyright: 'c', title: 't', last_error: '', last_attempt_at: 1 }),
           }
         }
         return { ok: true, status: 200, json: async () => ({}) }
       })
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = bingConfigWith()
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -486,13 +428,14 @@ describe('WallpaperSetting', () => {
             return {
               ok: true,
               status: 200,
-              json: async () => ({ enabled: true, file: '', last_success_date: '', copyright: '', title: '', mkt: 'zh-CN', last_error: '', last_attempt_at: 1 }),
+              json: async () => ({ file: '', last_success_date: '', copyright: '', title: '', last_error: '', last_attempt_at: 1 }),
             }
           }
           return { ok: true, status: 200, json: async () => ({}) }
         })
         vi.stubGlobal('fetch', fetchMock)
-        serverConfig.value = bingConfigWith({ file: '', last_success_date: '' })
+        serverConfig.value = serverWith([], { file: '', last_success_date: '' })
+        chooseDevice('bing')
 
         const wrapper = mountSetting()
         await vi.advanceTimersByTimeAsync(0)
@@ -514,10 +457,11 @@ describe('WallpaperSetting', () => {
 
   describe('gallery', () => {
     it('renders one tile per item with the selected one marked', async () => {
-      serverConfig.value = localConfigWith(
-        [{ file: 'local-1-a.png', name: 'a.png' }, { file: 'local-2-b.png', name: 'b.png' }],
-        'local-2-b.png',
-      )
+      serverConfig.value = serverWith([
+        { file: 'local-1-a.png', name: 'a.png' },
+        { file: 'local-2-b.png', name: 'b.png' },
+      ])
+      chooseDevice('local', 'local-2-b.png')
       const wrapper = mountSetting()
       await nextTick()
       const tiles = wrapper.findAll('.wallpaper-gallery__item')
@@ -529,7 +473,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('shows an empty state when the gallery has no items', async () => {
-      serverConfig.value = localConfigWith([], '')
+      serverConfig.value = serverWith([])
+      chooseDevice('local')
       const wrapper = mountSetting()
       await nextTick()
       expect(wrapper.find('.wallpaper-gallery-empty').exists()).toBe(true)
@@ -540,7 +485,8 @@ describe('WallpaperSetting', () => {
       // A missing file used to leave a broken-image glyph inside the tile, next
       // to the delete button. The tile itself must stay (it is still deletable),
       // so the image is hidden rather than the tile removed.
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], '')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local')
       const wrapper = mountSetting()
       await nextTick()
 
@@ -556,7 +502,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('hides a failed Bing preview thumbnail', async () => {
-      serverConfig.value = bingConfigWith()
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg' })
+      chooseDevice('bing')
       const wrapper = mountSetting()
       await nextTick()
 
@@ -567,37 +514,38 @@ describe('WallpaperSetting', () => {
       expect(wrapper.find('.wallpaper-thumb').classes()).toContain('local-media-hidden')
     })
 
-    it('selects a tile via POST /api/theme/local/select', async () => {
+    it('selects a tile locally, with no server round-trip', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith(
-        [{ file: 'local-1-a.png', name: 'a.png' }, { file: 'local-2-b.png', name: 'b.png' }],
-        'local-1-a.png',
-      )
+      serverConfig.value = serverWith([
+        { file: 'local-1-a.png', name: 'a.png' },
+        { file: 'local-2-b.png', name: 'b.png' },
+      ])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
 
       await wrapper.findAll('.wallpaper-gallery__thumb')[1].trigger('click')
-      const call = fetchMock.mock.calls.find(c => c[0] === '/api/theme/local/select')
-      expect(call).toBeTruthy()
-      expect(JSON.parse((call![1] as RequestInit).body as string)).toEqual({ name: 'local-2-b.png' })
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperLocalSelected', 'local-2-b.png')
+      expect(localConfig.wallpaperLocalSelected).toBe('local-2-b.png')
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/local/select')).toBe(false)
     })
 
     it('does not re-select an already-selected tile', async () => {
-      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
-      vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
 
       await wrapper.findAll('.wallpaper-gallery__thumb')[0].trigger('click')
-      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/local/select')).toBe(false)
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('wallpaperLocalSelected', 'local-1-a.png')
     })
 
     it('deletes a tile via DELETE /api/theme/local/item', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
 
@@ -608,6 +556,35 @@ describe('WallpaperSetting', () => {
       expect((call![1] as RequestInit).method).toBe('DELETE')
     })
 
+    it('clears the local selection when this device deletes the image it shows', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      await wrapper.find('.wallpaper-gallery__delete').trigger('click')
+      // The server no longer reselects a neighbour, so leaving the pointer set
+      // would leave this device showing a file that no longer exists.
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperLocalSelected', '')
+    })
+
+    it('keeps the local selection when a different image is deleted', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([
+        { file: 'local-1-a.png', name: 'a.png' },
+        { file: 'local-2-b.png', name: 'b.png' },
+      ])
+      chooseDevice('local', 'local-1-a.png')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      await wrapper.findAll('.wallpaper-gallery__delete')[1].trigger('click')
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('wallpaperLocalSelected', '')
+    })
+
     it('uploads multiple files in one request under the files field', async () => {
       const fetchMock = vi.fn(async () => ({
         ok: true,
@@ -615,7 +592,8 @@ describe('WallpaperSetting', () => {
         json: async () => ({ items: [{ file: 'local-1-a.png' }, { file: 'local-2-b.png' }], errors: [] }),
       }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([], '')
+      serverConfig.value = serverWith([])
+      chooseDevice('local')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -636,6 +614,58 @@ describe('WallpaperSetting', () => {
       expect(form.getAll('files')).toHaveLength(2)
     })
 
+    it('adopts the first uploaded image when nothing is selected yet', async () => {
+      // The server no longer auto-selects on upload, so if the panel did not do
+      // this the image would land in the gallery but the wallpaper would never
+      // change.
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [{ file: 'local-1-a.png' }], errors: [] }),
+      }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([])
+      chooseDevice('local', '')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const input = wrapper.find('input[type="file"]')
+      const file = new File(['a'], 'a.png')
+      Object.defineProperty(input.element, 'files', {
+        configurable: true,
+        value: { 0: file, length: 1, item: () => file },
+      })
+      await input.trigger('change')
+      await new Promise(r => setTimeout(r, 20))
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperLocalSelected', 'local-1-a.png')
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperMode', 'local')
+    })
+
+    it('does not steal the wallpaper on a second upload', async () => {
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ items: [{ file: 'local-9-z.png' }], errors: [] }),
+      }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const input = wrapper.find('input[type="file"]')
+      const file = new File(['a'], 'z.png')
+      Object.defineProperty(input.element, 'files', {
+        configurable: true,
+        value: { 0: file, length: 1, item: () => file },
+      })
+      await input.trigger('change')
+      await new Promise(r => setTimeout(r, 20))
+
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('wallpaperLocalSelected', 'local-9-z.png')
+    })
+
     it('reports a partial upload failure without discarding the successes', async () => {
       const fetchMock = vi.fn(async () => ({
         ok: true,
@@ -643,7 +673,8 @@ describe('WallpaperSetting', () => {
         json: async () => ({ items: [{ file: 'local-1-a.png' }], errors: [{ name: 'bad.png', error: 'nope' }] }),
       }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([], '')
+      serverConfig.value = serverWith([])
+      chooseDevice('local')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -666,7 +697,8 @@ describe('WallpaperSetting', () => {
     it('refuses more files than the per-request cap before uploading', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
-      serverConfig.value = localConfigWith([], '')
+      serverConfig.value = serverWith([])
+      chooseDevice('local')
 
       const wrapper = mountSetting()
       await nextTick()
@@ -688,7 +720,8 @@ describe('WallpaperSetting', () => {
 
     it('disables the upload button when the gallery is full', async () => {
       const items = Array.from({ length: 50 }, (_, i) => ({ file: `local-${i}-a.png`, name: `f${i}.png` }))
-      serverConfig.value = localConfigWith(items, 'local-0-a.png')
+      serverConfig.value = serverWith(items)
+      chooseDevice('local', 'local-0-a.png')
       const wrapper = mountSetting()
       await nextTick()
 
@@ -698,8 +731,9 @@ describe('WallpaperSetting', () => {
   })
 
   describe('display options', () => {
-    it('enables the sliders only when a wallpaper is actually displayed', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+    it('enables the sliders when an image wallpaper is displayed', async () => {
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const ranges = wrapper.findAll('input[type="range"]')
@@ -707,11 +741,9 @@ describe('WallpaperSetting', () => {
       expect(ranges[1].attributes('disabled')).toBeUndefined()
     })
 
-    it('disables the sliders when the wallpaper is globally disabled', async () => {
-      const cfg = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
-      cfg.appearance.wallpaper_enabled = false
-      cfg.appearance.active_file = ''
-      serverConfig.value = cfg
+    it('disables the sliders when this device turned the wallpaper off', async () => {
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png', false)
       const wrapper = mountSetting()
       await nextTick()
       const ranges = wrapper.findAll('input[type="range"]')
@@ -719,8 +751,22 @@ describe('WallpaperSetting', () => {
       expect(ranges[1].attributes('disabled')).toBeDefined()
     })
 
+    it('keeps panel opacity usable for the wave, which has no image', async () => {
+      // Blur/edge-fade are image-only, but panel translucency applies to the
+      // wave too — so the opacity slider must not follow the image rows.
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const opacity = wrapper.findAll('input[type="range"]').find(i => {
+        const el = i.element as HTMLInputElement
+        return el.min === '0.5'
+      })!
+      expect(opacity.attributes('disabled')).toBeUndefined()
+    })
+
     it('persists panel opacity to localStorage, never to the server', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const slider = wrapper.findAll('input[type="range"]')[0]
@@ -734,7 +780,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('exposes the relaxed 0.5 lower bound', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const slider = wrapper.findAll('input[type="range"]')[0]
@@ -743,7 +790,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('does not change the wallpaper image URL while dragging the opacity slider', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
 
@@ -763,7 +811,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('updates the local config live while dragging blur and persists debounced', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const blurSlider = wrapper.findAll('input[type="range"]')[1]
@@ -776,7 +825,8 @@ describe('WallpaperSetting', () => {
     })
 
     it('toggles edge fade through setLocalConfig', async () => {
-      serverConfig.value = localConfigWith([{ file: 'local-1-a.png', name: 'a.png' }], 'local-1-a.png')
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       // The last checkbox is the edge-fade switch.
@@ -785,27 +835,6 @@ describe('WallpaperSetting', () => {
       expect(edgeSwitch.attributes('disabled')).toBeUndefined()
       await edgeSwitch.setValue(true)
       expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperEdgeFade', true)
-    })
-  })
-
-  describe('locale following', () => {
-    it('syncs the Bing market when the panel opens in Bing mode', async () => {
-      serverConfig.value = bingConfigWith({ mkt: 'en-US' })
-      localConfig.locale = 'zh'
-      const wrapper = mountSetting()
-      await nextTick()
-      await nextTick()
-      // zh locale with an en-US market persisted → correct it to zh-CN.
-      expect(mockPatchConfig).toHaveBeenCalledWith({ appearance: { bing: { mkt: 'zh-CN' } } })
-    })
-
-    it('does not patch when the market already matches the locale', async () => {
-      serverConfig.value = bingConfigWith({ mkt: 'zh-CN' })
-      localConfig.locale = 'zh'
-      const wrapper = mountSetting()
-      await nextTick()
-      await nextTick()
-      expect(mockPatchConfig).not.toHaveBeenCalled()
     })
   })
 })

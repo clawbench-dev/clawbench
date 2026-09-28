@@ -136,14 +136,6 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
-	// Wallpaper source selection — plain scalars, no path component. File names
-	// (local.selected / local.items / bing.file) are deliberately absent: they
-	// are written only by the dedicated theme endpoints, which validate and
-	// persist the file alongside the name.
-	"appearance.wallpaper_mode":    true,
-	"appearance.wallpaper_enabled": true,
-	"appearance.bing.enabled":      true,
-	"appearance.bing.mkt":          true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -414,23 +406,21 @@ type configFonts struct {
 	Dir string `json:"dir"` // Resolved custom font directory (defaults to <DataDir>/fonts)
 }
 
-// configAppearance exposes custom wallpaper settings to the settings panel.
+// configAppearance exposes the shared wallpaper resources to the settings panel.
 //
-// Panel translucency is absent by design: it is a per-device display tweak the
-// browser keeps in localStorage, so it never round-trips through the server.
+// Which wallpaper a device displays is NOT here: the source, the on/off switch
+// and the selected gallery image are per-device choices in the browser's
+// localStorage, alongside panel translucency / blur / edge-fade / wave speed.
+// The server only reports what it owns — the gallery contents and the Bing
+// cache — so two devices on one server can show different wallpapers.
 type configAppearance struct {
-	WallpaperMode    string `json:"wallpaper_mode"`    // Active source: "local" or "bing"
-	WallpaperEnabled bool   `json:"wallpaper_enabled"` // Global wallpaper on/off switch
-	ActiveFile       string `json:"active_file"`       // Bare name of the wallpaper currently displayed ("" = none)
-
 	Local configLocalWallpaper `json:"local"`
 	Bing  configBingWallpaper  `json:"bing"`
 }
 
 // configLocalWallpaper exposes the uploaded wallpaper gallery.
 type configLocalWallpaper struct {
-	Selected string                     `json:"selected"` // Bare name of the selected gallery image ("" = none)
-	Items    []configLocalWallpaperItem `json:"items"`
+	Items []configLocalWallpaperItem `json:"items"`
 }
 
 // configLocalWallpaperItem is one gallery entry as sent to the client.
@@ -447,27 +437,23 @@ type configLocalWallpaperItem struct {
 	AbsPath string `json:"abs_path"`
 }
 
-// configBingWallpaper exposes the Bing daily wallpaper state, including the
+// configBingWallpaper exposes the cached Bing daily image, including the
 // photographer credit shown in the settings panel.
 type configBingWallpaper struct {
-	Enabled         bool   `json:"enabled"`
 	File            string `json:"file"`
 	LastSuccessDate string `json:"last_success_date"`
 	Copyright       string `json:"copyright"`
 	Title           string `json:"title"`
-	Mkt             string `json:"mkt"`
 	LastError       string `json:"last_error"`
 	LastAttemptAt   int64  `json:"last_attempt_at"`
 	// AbsPath mirrors configLocalWallpaperItem.AbsPath for the cached Bing image.
 	AbsPath string `json:"abs_path"`
 }
 
-// buildConfigAppearance renders the appearance section for GET /api/config.
-// active_file is resolved server-side so the client never has to reimplement
-// the mode/enabled precedence.
+// buildConfigAppearance renders the appearance section for GET /api/config —
+// the shared wallpaper resources only. The client combines these with its own
+// per-device mode/enabled/selection to decide what to display.
 func buildConfigAppearance(cfg model.Config) configAppearance {
-	active, _ := wallpaper.ResolveActive(&cfg)
-
 	items := make([]configLocalWallpaperItem, 0, len(cfg.Appearance.Local.Items))
 	for _, it := range cfg.Appearance.Local.Items {
 		items = append(items, configLocalWallpaperItem{
@@ -480,20 +466,14 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 	}
 
 	return configAppearance{
-		WallpaperMode:    cfg.Appearance.WallpaperMode,
-		WallpaperEnabled: cfg.Appearance.WallpaperEnabled,
-		ActiveFile:       active,
 		Local: configLocalWallpaper{
-			Selected: cfg.Appearance.Local.Selected,
-			Items:    items,
+			Items: items,
 		},
 		Bing: configBingWallpaper{
-			Enabled:         cfg.Appearance.Bing.Enabled,
 			File:            cfg.Appearance.Bing.File,
 			LastSuccessDate: cfg.Appearance.Bing.LastSuccessDate,
 			Copyright:       cfg.Appearance.Bing.Copyright,
 			Title:           cfg.Appearance.Bing.Title,
-			Mkt:             cfg.Appearance.Bing.Mkt,
 			LastError:       cfg.Appearance.Bing.LastError,
 			LastAttemptAt:   cfg.Appearance.Bing.LastAttemptAt,
 			AbsPath:         absWallpaperPath(cfg.Appearance.Bing.File),
@@ -654,10 +634,6 @@ var PatchableConfigPaths = map[string]bool{
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
-	"appearance.wallpaper_mode":         true,
-	"appearance.wallpaper_enabled":      true,
-	"appearance.bing.enabled":           true,
-	"appearance.bing.mkt":               true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -947,6 +923,14 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 			if PatchableConfigPaths[path] {
 				return nil, fmt.Errorf("field '%s' must be a scalar value, not an object", path)
 			}
+			// An object is only allowed when it can contain something
+			// configurable. Without this, an object with no whitelisted
+			// descendant — an empty one, or one whose keys were all removed
+			// from the whitelist — would recurse into nothing and be accepted,
+			// writing an unvalidated subtree into config.yaml.
+			if !hasPatchableDescendant(path) {
+				return nil, fmt.Errorf("field '%s' is not allowed", path)
+			}
 			nestedFields, err := validatePatchFields(nested, path)
 			if err != nil {
 				return nil, err
@@ -960,6 +944,19 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 		}
 	}
 	return fields, nil
+}
+
+// hasPatchableDescendant reports whether any whitelisted path lives under the
+// given object path, i.e. whether the object is a legitimate container rather
+// than an unknown or fully-removed subtree.
+func hasPatchableDescendant(path string) bool {
+	prefix := path + "."
+	for p := range PatchableConfigPaths {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
@@ -1278,47 +1275,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
-	// appearance — custom wallpaper. File names (local.selected / local.items /
-	// bing.file) are deliberately absent: they are written only by the dedicated
-	// theme endpoints, which validate and persist the file alongside the name.
-	// panel_opacity is absent too — it is a per-device browser preference, so a
-	// PATCH carrying it is rejected by the whitelist.
-	if appearance, ok := patch["appearance"].(map[string]any); ok {
-		// Strict type checks: a wrong-typed value would be silently ignored by
-		// applyConfigPatch's assertions yet still written to config.yaml by
-		// mergePatchIntoRaw, producing a file the typed config cannot parse
-		// (which makes the next startup fail).
-		if raw, present := appearance["wallpaper_mode"]; present {
-			v, ok := raw.(string)
-			if !ok {
-				return fmt.Errorf("appearance.wallpaper_mode must be a string")
-			}
-			if !model.IsValidWallpaperMode(v) {
-				return fmt.Errorf("appearance.wallpaper_mode must be \"local\", \"bing\" or \"wave\"")
-			}
-		}
-		if raw, present := appearance["wallpaper_enabled"]; present {
-			if _, ok := raw.(bool); !ok {
-				return fmt.Errorf("appearance.wallpaper_enabled must be a boolean")
-			}
-		}
-		if bing, ok := appearance["bing"].(map[string]any); ok {
-			if raw, present := bing["enabled"]; present {
-				if _, ok := raw.(bool); !ok {
-					return fmt.Errorf("appearance.bing.enabled must be a boolean")
-				}
-			}
-			if raw, present := bing["mkt"]; present {
-				v, ok := raw.(string)
-				if !ok {
-					return fmt.Errorf("appearance.bing.mkt must be a string")
-				}
-				if v != "zh-CN" && v != "en-US" {
-					return fmt.Errorf("appearance.bing.mkt must be \"zh-CN\" or \"en-US\"")
-				}
-			}
-		}
-	}
+	// appearance — the wallpaper *resources* (gallery items, Bing cache) are
+	// written only by the dedicated theme endpoints, never by a config PATCH.
+	// The per-device choices (source / on-off / selected image / panel opacity)
+	// are browser localStorage, so a PATCH carrying them is rejected by the
+	// whitelist rather than silently written.
 
 	return nil
 }
@@ -1351,23 +1312,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
-		}
-	}
-
-	if appearance, ok := patch["appearance"].(map[string]any); ok {
-		if v, ok := appearance["wallpaper_mode"].(string); ok {
-			cfg.Appearance.WallpaperMode = v
-		}
-		if v, ok := appearance["wallpaper_enabled"].(bool); ok {
-			cfg.Appearance.WallpaperEnabled = v
-		}
-		if bing, ok := appearance["bing"].(map[string]any); ok {
-			if v, ok := bing["enabled"].(bool); ok {
-				cfg.Appearance.Bing.Enabled = v
-			}
-			if v, ok := bing["mkt"].(string); ok {
-				cfg.Appearance.Bing.Mkt = v
-			}
 		}
 	}
 

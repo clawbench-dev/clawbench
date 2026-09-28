@@ -133,9 +133,8 @@
 
     <!-- ── Local gallery section ───────────────────────────────── -->
     <!-- Deliberately the final v-else, not `v-else-if="mode === 'local'"`:
-         an existing install that never picked a source has wallpaper_mode "",
-         which resolves to 'none'. The gallery must still render there — it is
-         how the user picks an image in the first place. -->
+         an unset stored mode resolves to 'none'. The gallery must still render
+         there — it is how the user picks an image in the first place. -->
     <template v-else>
       <div class="settings-item" :class="{ 'settings-item--disabled': !enabled || busy }">
         <div class="settings-item__left">
@@ -285,25 +284,20 @@ import { useToast } from '@/composables/useToast'
 import {
   uploadGalleryImages,
   deleteGalleryItem,
-  selectGalleryItem,
-  setWallpaperMode,
   syncBingNow,
   fetchBingStatus,
   galleryImageUrl,
   invalidateGalleryImageUrls,
-  resolveWallpaperState,
   resolveWallpaperMode,
-  resolveWallpaperEnabled,
   isWaveActive,
   resolveGalleryItems,
-  resolveGallerySelected,
   resolveBingStatus,
+  resolveActiveFile,
   type BingStatus,
   resolvePanelOpacity,
   applyWallpaper,
   applyWallpaperScrim,
   currentThemeIsDark,
-  bingMktForLocale,
   type WallpaperMode,
 } from '@/utils/themeBackground'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
@@ -313,7 +307,7 @@ defineProps<{ description?: string }>()
 
 const { t } = useI18n()
 const toast = useToast()
-const { serverConfig, localConfig, loadConfig, patchConfig, setLocalConfig } = useSettingsConfig()
+const { serverConfig, localConfig, loadConfig, setLocalConfig } = useSettingsConfig()
 
 /** Matches the server-side cap in internal/wallpaper (MaxGalleryItems). */
 const maxGalleryItems = 50
@@ -331,14 +325,22 @@ let unmounted = false
 
 const appearance = computed(() => serverConfig.value?.appearance as Record<string, unknown> | undefined)
 
-/** Wallpaper tri-state from the live server config. */
-const state = computed(() => resolveWallpaperState(appearance.value))
-const enabled = computed(() => resolveWallpaperEnabled(appearance.value))
-const mode = computed<WallpaperMode>(() => resolveWallpaperMode(appearance.value))
-const waveActive = computed(() => isWaveActive(appearance.value))
+/**
+ * The wallpaper choice is this device's own (localStorage), so mode / enabled /
+ * selection are read from localConfig. Only the gallery list and the Bing cache
+ * come from the server.
+ */
+const enabled = computed(() => localConfig.wallpaperEnabled !== false)
+const mode = computed<WallpaperMode>(() => resolveWallpaperMode(localConfig.wallpaperMode))
+const waveActive = computed(() => isWaveActive(mode.value, enabled.value))
 const galleryItems = computed(() => resolveGalleryItems(appearance.value))
-const selected = computed(() => resolveGallerySelected(appearance.value))
+const selected = computed(() => String(localConfig.wallpaperLocalSelected ?? ''))
 const bingStatus = computed(() => resolveBingStatus(appearance.value))
+
+/** The image this device is showing, resolved from local choice + Bing cache. */
+const activeFile = computed(() =>
+  resolveActiveFile(mode.value, selected.value, bingStatus.value.file),
+)
 
 const atLimit = computed(() => galleryItems.value.length >= maxGalleryItems)
 
@@ -366,13 +368,13 @@ function onThumbError(file: string) {
  * for an image (blur, edge fade) — the wave has neither, and leaving them
  * enabled there would let the user drag a slider with no visible effect.
  */
-const hasImageWallpaper = computed(() => state.value === 'set' && enabled.value)
+const hasImageWallpaper = computed(() => enabled.value && !!activeFile.value)
 
 /**
  * Whether ANY background is displayed (image or wave). Drives the rows that
  * apply to both — panel translucency is meaningful for the wave too.
  */
-const hasActiveBackground = computed(() => hasImageWallpaper.value || (waveActive.value && enabled.value))
+const hasActiveBackground = computed(() => hasImageWallpaper.value || waveActive.value)
 
 /** Panel opacity from the local preference (0.5..1.0). */
 const panelOpacity = computed(() => resolvePanelOpacity(localConfig.panelOpacity))
@@ -390,11 +392,11 @@ const waveSpeedDisplay = computed(() => `${(waveSpeed.value / 50).toFixed(2)}×`
 /** Re-apply the wallpaper effect with the current theme. */
 function refreshEffect() {
   applyWallpaper(
-    (appearance.value?.active_file as string) ?? '',
+    activeFile.value,
     resolvePanelOpacity(localConfig.panelOpacity),
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
     false,
-    isWaveActive(appearance.value),
+    waveActive.value,
   )
 }
 
@@ -411,19 +413,6 @@ async function reloadFromServer() {
   const removed = before.filter((f) => !after.has(f))
   if (removed.length > 0) invalidateGalleryImageUrls(removed)
   refreshEffect()
-}
-
-/** Keep the persisted Bing market in step with the UI language. */
-async function syncBingMktWithLocale() {
-  const desired = bingMktForLocale(String(localConfig.locale ?? 'zh'))
-  if (bingStatus.value.mkt === desired) return
-  try {
-    await patchConfig({ appearance: { bing: { mkt: desired } } })
-  } catch {
-    // A failed market sync must not surface as an error — the next fetch falls
-    // back to the server default.
-    appLog.w('Wallpaper', `failed to sync bing mkt to ${desired}`)
-  }
 }
 
 function triggerUpload() {
@@ -451,6 +440,15 @@ async function onFilesSelected(e: Event) {
   try {
     const result = await uploadGalleryImages(files)
     await reloadFromServer()
+    // The server no longer auto-selects on upload, so this device must adopt
+    // the new image itself — otherwise it lands in the gallery but the
+    // wallpaper never changes. Only adopt when nothing is selected yet, so a
+    // second upload does not steal the wallpaper the user already chose.
+    if (result.items.length > 0 && !selected.value) {
+      setLocalConfig('wallpaperLocalSelected', result.items[0].file)
+      setLocalConfig('wallpaperMode', 'local')
+      refreshEffect()
+    }
     if (result.errors.length > 0) {
       error.value = t('settings.items.wallpaperUploadPartial', {
         ok: result.items.length,
@@ -471,6 +469,13 @@ async function onDeleteItem(name: string) {
   error.value = ''
   try {
     await deleteGalleryItem(name)
+    // This device may be showing the image that was just deleted; clearing the
+    // selection is what stops it from pointing at a file that no longer exists.
+    // (Another device doing the same is healed by App.vue's 404 probe.)
+    if (selected.value === name) {
+      setLocalConfig('wallpaperLocalSelected', '')
+      refreshEffect()
+    }
     await reloadFromServer()
   } catch {
     error.value = t('settings.items.wallpaperRemoveFailed')
@@ -479,36 +484,18 @@ async function onDeleteItem(name: string) {
   }
 }
 
-async function onSelectItem(name: string) {
+/** Selecting a tile is now a purely local choice for this device. */
+function onSelectItem(name: string) {
   if (name === selected.value) return
-  busy.value = true
-  error.value = ''
-  try {
-    await selectGalleryItem(name)
-    await reloadFromServer()
-  } catch {
-    error.value = t('settings.items.wallpaperSetFailed')
-  } finally {
-    busy.value = false
-  }
+  setLocalConfig('wallpaperLocalSelected', name)
+  setLocalConfig('wallpaperMode', 'local')
+  refreshEffect()
 }
 
-async function onSelectMode(next: 'local' | 'bing' | 'wave') {
+function onSelectMode(next: 'local' | 'bing' | 'wave') {
   if (next === mode.value) return
-  busy.value = true
-  error.value = ''
-  try {
-    await setWallpaperMode({ mode: next })
-    await reloadFromServer()
-  } catch {
-    error.value = t('settings.items.wallpaperSaveFailed')
-  } finally {
-    // Release the UI as soon as the switch itself is done. The switch is a
-    // single fast config write; waiting for the image download here held the
-    // whole panel disabled for up to the poll budget, which is what made
-    // changing the source feel stuck.
-    busy.value = false
-  }
+  setLocalConfig('wallpaperMode', next)
+  refreshEffect()
   if (next === 'bing') {
     // Follow the fetch in the background: the preview fills in on its own once
     // the image lands, and the user can keep interacting meanwhile.
@@ -531,7 +518,6 @@ async function followBingFetch() {
   if (followingBing) return
   followingBing = true
   try {
-    await syncBingMktWithLocale()
     if (bingStatus.value.last_success_date === todayStamp()) return
     await pollBingUntilSettled()
     if (unmounted) return
@@ -545,19 +531,11 @@ async function followBingFetch() {
   }
 }
 
-async function onEnabledChange(e: Event) {
+/** Toggling the wallpaper is now a purely local choice for this device. */
+function onEnabledChange(e: Event) {
   const checked = (e.target as HTMLInputElement).checked
-  busy.value = true
-  error.value = ''
-  try {
-    await setWallpaperMode({ enabled: checked })
-    await reloadFromServer()
-    if (checked && mode.value === 'bing') await syncBingMktWithLocale()
-  } catch {
-    error.value = t('settings.items.wallpaperSaveFailed')
-  } finally {
-    busy.value = false
-  }
+  setLocalConfig('wallpaperEnabled', checked)
+  refreshEffect()
 }
 
 /**
@@ -582,7 +560,6 @@ async function onSyncBing() {
   syncing.value = true
   error.value = ''
   try {
-    await syncBingMktWithLocale()
     await syncBingNow()
     // The fetch runs in the background worker; poll for the outcome. A slow
     // fetch may outlast the budget, in which case the result is genuinely
@@ -617,7 +594,7 @@ function onOpacityInput(e: Event) {
   // prefs below. App.vue's watcher on localConfig re-applies the effect too,
   // but applying here keeps the drag responsive even before that flush.
   applyWallpaper(
-    (appearance.value?.active_file as string) ?? '',
+    activeFile.value,
     v,
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
   )
@@ -686,8 +663,6 @@ function onThemeChange() {
 
 onMounted(() => {
   window.addEventListener('clawbench-theme-change', onThemeChange)
-  // Follow the UI language for the Bing market once the panel is open.
-  if (mode.value === 'bing' && enabled.value) void syncBingMktWithLocale()
 })
 
 onUnmounted(() => {

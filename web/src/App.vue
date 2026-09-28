@@ -512,7 +512,7 @@ import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive, resolveWallpaperMode, resolveBingStatus, type WallpaperMode } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
@@ -1256,6 +1256,14 @@ const wallpaperEdgeFade = ref(false)
 const waveActive = ref(false)
 const wallpaperWaveSpeed = ref(50)
 /**
+ * This device's wallpaper choice, read straight from localStorage. Kept as
+ * computed (not copies) so the watcher below sees every change and the layer
+ * repaints without a server round-trip.
+ */
+const wallpaperEnabled = computed(() => localConfig.wallpaperEnabled !== false)
+const wallpaperMode = computed<WallpaperMode>(() => resolveWallpaperMode(localConfig.wallpaperMode))
+const wallpaperLocalSelected = computed(() => String(localConfig.wallpaperLocalSelected ?? ''))
+/**
  * The wallpaper file is missing / unreadable. The wallpaper is decoration, so
  * the correct degradation is to hide it and let .wallpaper-layer's
  * --bg-primary show through — NOT to show the content MediaLoadError card,
@@ -1265,9 +1273,47 @@ const wallpaperWaveSpeed = ref(50)
  */
 const wallpaperFailed = ref(false)
 
-function onWallpaperError() {
+/**
+ * Guards the self-heal probe below. An <img> that keeps failing would otherwise
+ * re-enter onWallpaperError on every re-render and hammer the endpoint.
+ */
+let healingDanglingSelection = false
+
+/**
+ * The wallpaper image failed to load. Two very different causes look identical
+ * to an <img> (its error event carries no status), so probe once with HEAD to
+ * tell them apart:
+ *
+ *   - 404 → the file is really gone. This device may be pointing at an image
+ *     another device deleted, so clear the local selection and let the next
+ *     config load offer the gallery again.
+ *   - anything else (network error, 5xx) → transient. Keep the selection: it
+ *     is still valid, and clearing it would silently lose the user's choice.
+ *
+ * Only the local source is healed this way. A missing Bing file is a
+ * server-side cache problem, not a stale pointer on this device — clearing the
+ * local selection there would discard an unrelated choice.
+ */
+async function onWallpaperError() {
   wallpaperFailed.value = true
   appLog.w(TAG, 'wallpaper image failed to load; falling back to solid background')
+
+  const url = wallpaperUrl.value
+  if (!url || healingDanglingSelection) return
+  if (wallpaperMode.value !== 'local') return
+  healingDanglingSelection = true
+  try {
+    const resp = await fetch(url, { method: 'HEAD' })
+    if (resp.status !== 404) return
+    appLog.w(TAG, 'wallpaper file is gone; clearing the stale local selection')
+    setSetting('wallpaperLocalSelected', '')
+    wallpaperFailed.value = false
+    await loadConfig()
+  } catch {
+    // Transport failure: the file may well still exist. Keep the selection.
+  } finally {
+    healingDanglingSelection = false
+  }
 }
 
 /** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
@@ -1277,19 +1323,23 @@ const wallpaperImageStyle = computed(() =>
     : undefined
 )
 
-/** Apply the wallpaper effect from the latest server config + theme state. */
+/**
+ * Apply the wallpaper effect from this device's own choice + the theme state.
+ *
+ * Unlike before, the decision is local: the server no longer knows which
+ * wallpaper this device wants, so mode/enabled/selection are read from
+ * localStorage and only the Bing file comes from the server cache.
+ */
 function refreshWallpaper() {
   const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
-  const state = resolveWallpaperState(appearance)
-  // The server resolves which image is active (mode + enabled + selection);
-  // an empty value means no image, including the globally-disabled case. The
-  // wave is the one background that has no file, so it is detected separately.
-  const file = resolveActiveFile(appearance)
-  const wave = isWaveActive(appearance)
+  const mode = wallpaperMode.value
+  const enabled = wallpaperEnabled.value
+  const file = resolveActiveFile(mode, wallpaperLocalSelected.value, resolveBingStatus(appearance).file)
+  const wave = isWaveActive(mode, enabled)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
   waveActive.value = wave
-  wallpaperActive.value = state === 'set' || wave
+  wallpaperActive.value = enabled && (wave || !!file)
   wallpaperBlurPx.value = Number(localConfig.wallpaperBlur || 0)
   wallpaperEdgeFade.value = !!localConfig.wallpaperEdgeFade
   wallpaperWaveSpeed.value = Number(localConfig.wallpaperWaveSpeed ?? 50)
@@ -1305,9 +1355,9 @@ function refreshWallpaper() {
   scheduleBingFirstImagePoll()
 }
 
-// On a fresh install the Bing wallpaper is enabled but its first fetch runs in
-// the background, so the initial config has no image yet. Poll briefly so the
-// factory wallpaper appears on its own instead of requiring a manual refresh.
+// The Bing image is fetched in the background, so the first config response can
+// have no file yet. Poll briefly so the image appears on its own instead of
+// requiring a manual refresh.
 let bingPollTimer: ReturnType<typeof setTimeout> | null = null
 let bingPollAttempts = 0
 const BING_POLL_MAX_ATTEMPTS = 20
@@ -1315,7 +1365,15 @@ const BING_POLL_INTERVAL_MS = 5000
 
 function scheduleBingFirstImagePoll() {
   if (bingPollTimer) return
-  if (!isBingFirstImagePending((serverConfig.value?.appearance ?? {}) as Record<string, unknown>)) return
+  const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
+  const configLoaded = serverConfig.value?.appearance !== undefined
+  const pending = isBingFirstImagePending(
+    wallpaperMode.value,
+    wallpaperEnabled.value,
+    resolveBingStatus(appearance).file,
+    configLoaded,
+  )
+  if (!pending) return
   if (bingPollAttempts >= BING_POLL_MAX_ATTEMPTS) return
 
   bingPollAttempts += 1
@@ -1330,13 +1388,26 @@ onUnmounted(() => {
 })
 
 // Apply whenever the server config (re)loads — covers cold start (after
-// loadConfig resolves), PATCH round-trips and project switches.
+// loadConfig resolves) and project switches. The Bing file lives there.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
-// Local display prefs (panel opacity / blur / edge fade / wave speed) change
-// instantly without a server round-trip. Wave speed only feeds a prop; the
-// component adjusts its own timeScale without rebuilding the canvas or
-// resetting the phase.
-watch(() => [localConfig.panelOpacity, localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade, localConfig.wallpaperWaveSpeed], refreshWallpaper)
+// Everything else that decides the wallpaper is local, so it repaints without a
+// server round-trip. `immediate` matters here: the factory default is the wave,
+// which needs no server data, so it must paint on the first render rather than
+// waiting for /api/config. Wave speed only feeds a prop; the component adjusts
+// its own timeScale without rebuilding the canvas or resetting the phase.
+watch(
+  () => [
+    wallpaperEnabled.value,
+    wallpaperMode.value,
+    wallpaperLocalSelected.value,
+    localConfig.panelOpacity,
+    localConfig.wallpaperBlur,
+    localConfig.wallpaperEdgeFade,
+    localConfig.wallpaperWaveSpeed,
+  ],
+  refreshWallpaper,
+  { immediate: true },
+)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
@@ -2321,11 +2392,14 @@ const {
   surfaceLabel,
 } = navCoordinator
 
-/** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
+/** FileHeader「设置为主题背景」：把当前图片拷进本机图库并设为背景。 */
 async function handleSetAsBackground(path: string) {
     try {
-        await setWallpaperFromPath(path)
-        await loadConfig()
+        // The selection is written to this device's local config, which the
+        // wallpaper watcher above picks up and repaints from — no loadConfig()
+        // round-trip needed (the gallery list itself is refreshed by the
+        // settings panel when it opens).
+        await setWallpaperFromPath(path, setSetting)
         toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
     } catch {
         toast.show(t('settings.items.wallpaperUploadFailed'), { icon: '⚠️', type: 'error', duration: 4000 })
