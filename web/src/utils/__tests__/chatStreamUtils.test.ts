@@ -181,6 +181,40 @@ describe('forceCleanupStreamingState', () => {
     expect(messages[0].streaming).toBeUndefined()
   })
 
+  it('closes a still-streaming thinking block when the turn ends', () => {
+    // `thinking_done` is not guaranteed per block (a turn ending on reasoning
+    // never gets one) and is never re-delivered to a client that was
+    // unsubscribed when it fired. A block that adopted an in_progress marker
+    // before a session switch therefore spun for the rest of the session:
+    // observed msgId=54774, th_03725d47 spinning at 11:06:30 with `inprog=true`
+    // while its DB row said done=true (a later db_load, 6 minutes on, finally
+    // converged it — but only because the user happened to switch again).
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_stuck', in_progress: true },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: false },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    const thinks = messages[0].blocks.filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'block kept').toHaveLength(1)
+    expect(thinks[0].done, 'marked finished so the spinner stops').toBe(true)
+    expect(thinks[0].in_progress, 'in_progress cleared').toBeUndefined()
+    // The tool_use path is untouched.
+    expect(messages[0].blocks.find((b: any) => b.type === 'tool_use').done).toBe(true)
+  })
+
+  it('leaves an already-finished thinking block alone', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', done: true, text: 'kept' },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    expect(messages[0].blocks[0].done).toBe(true)
+    expect(messages[0].blocks[0].text).toBe('kept')
+  })
+
   it('syncs the DB done flag onto the live block it owns', () => {
     // The reported "spinner keeps turning on a thinking block that has clearly
     // moved on to its tool calls". msgId=54674 / th_bb1f742720e: its DB row is
@@ -3601,6 +3635,74 @@ describe('queued message action (insert / interrupt) — reducer boundary', () =
 //
 // The placeholder must instead be recognised as THIS turn's row even without an
 // id match, so the live block flags survive.
+describe('rebuildFromDb: a live thinking block keeps its DB position', () => {
+  it('anchors by think_id instead of being pinned to index 0', () => {
+    // The reported "a thinking block still streaming at the TOP while the rest
+    // of the reply below it is already finished". Observed msgId=54774: the
+    // live placeholder held ONE block (already adopted to th_03725d47), and the
+    // merge rendered it at index 0 while its DB position was 46 of 114 — every
+    // DB-only block was spliced AFTER it.
+    //
+    // Cause: dbAnchorOfLiveBlock returned -1 for thinking (it only knew
+    // tool_use), so all extras were inserted after the live block. Anchoring on
+    // the exact think_id places it where the DB says it belongs.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54774, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_mid', in_progress: true, text: 'deltas' },
+      ] },
+    ]
+    const db: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54774, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_a', done: true },
+        { type: 'text', text: 'earlier text' },
+        { type: 'thinking', think_id: 'th_mid', in_progress: true },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true },
+        { type: 'text', text: 'later text' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db)
+    const blocks = merged.find((m) => m.role === 'assistant' && m.streaming)!.blocks as any[]
+
+    // Assert the FULL sequence, not just one index: the bug was an ordering
+    // inversion, and a single-index check can pass for the wrong reason.
+    expect(blocks.map((b: any) => b.type)).toEqual(['text', 'thinking', 'tool_use', 'text'])
+    const iThink = blocks.findIndex((b: any) => b.think_id === 'th_mid')
+    const iTool = blocks.findIndex((b: any) => b.type === 'tool_use' && b.id === 't1')
+    const iEarlier = blocks.findIndex((b: any) => b.type === 'text' && b.text === 'earlier text')
+    // The streaming block sits where the DB puts it: after the earlier text,
+    // before the tool that follows it. Before the fix it was at index 0, i.e.
+    // BEFORE the earlier text.
+    expect(iEarlier).toBeLessThan(iThink)
+    expect(iThink).toBeLessThan(iTool)
+
+    // Still exactly one block per think_id (no v-for key collision).
+    const ids = blocks.filter((b: any) => b.type === 'thinking' && b.think_id).map((b: any) => b.think_id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('leaves a thinking block with no DB counterpart at the end', () => {
+    // A genuinely new block the flush has not written yet has no anchor (-1);
+    // it must keep the previous behaviour and not be forced into the middle.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 9, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_brand_new', in_progress: true, text: 'x' },
+      ] },
+    ]
+    const db: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 9, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'db text' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db)
+    const blocks = merged.find((m) => m.role === 'assistant' && m.streaming)!.blocks as any[]
+    expect(blocks.some((b: any) => b.think_id === 'th_brand_new')).toBe(true)
+  })
+})
+
 describe('rebuildFromDb: live placeholder matching without an adopted id', () => {
   const streamingRow = (id: number) => ({
     role: 'assistant',

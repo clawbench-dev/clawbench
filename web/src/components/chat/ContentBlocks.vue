@@ -1146,9 +1146,13 @@ function handleThinkingClick(block: any, bi: number) {
     expandingThinking.value[blockKey] = true
     thinkingExpanded.value[blockKey] = true
     invalidateBlockHtml()
-    // Slim block (think_id, no text): lazy-load the thinking text on expand
+    // Slim block (think_id, no text): lazy-load the thinking text on expand.
+    // `provisional` mirrors the auto-load rule: while the turn is running the
+    // backend is still appending to chat_thinking, so whatever we read now is a
+    // prefix and must be refetched once the turn ends (otherwise expanding a
+    // still-running block would cache a truncated prefix forever).
     if (!block.text && block.think_id) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     }
     // Clean up expanding state after animation
@@ -1160,7 +1164,7 @@ function handleThinkingClick(block: any, bi: number) {
     // Retry failed lazy-load when clicking an error-state slim block;
     // otherwise collapse.
     if (!block.text && block.think_id && thinkingContent.errors.value[block.think_id]) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     } else {
       triggerThinkingCollapse(blockKey)
@@ -1833,6 +1837,7 @@ watch(
 watch(
   () => {
     const blocks = props.blocks || []
+    const turnOver = !props.streaming
     const tailStart = props.streaming ? Math.max(0, blocks.length - DONE_AUTOLOAD_TAIL) : blocks.length
     const ids: string[] = []
     for (let bi = 0; bi < blocks.length; bi++) {
@@ -1853,13 +1858,28 @@ watch(
       // Finished. Reload when the cached text is a stale mid-stream snapshot
       // (nothing else would replace it), or when nothing was ever loaded AND
       // the block is in the streaming tail the live view renders open.
-      if (provisional) { ids.push(`f:${b.think_id}`); continue }
+      //
+      // The provisional refetch waits for the turn to end. `thinking_done`
+      // reaches us BEFORE the backend commits the final chat_thinking text (the
+      // event is forwarded immediately; the DB flush is rate-limited and only
+      // rewritten in full at Finalize), so a refetch fired on `done` mid-turn
+      // can capture a PREFIX and — because it is a "final" request — clear the
+      // provisional flag, after which `cached !== undefined` skipped it forever.
+      // That is the reported truncated thinking text (cached 760 of final 844;
+      // another case 17124 of 18887). By the time the turn is over the DB is
+      // complete (verified: the terminal `done` is sent after Finalize).
+      if (provisional) { if (turnOver) ids.push(`f:${b.think_id}`); continue }
       if (cached !== undefined) continue
       // NOT for merely-expanded blocks: expanding one goes through
       // handleThinkingClick, which loads it itself. Auto-loading it here would
       // fire a second request that races the click's own — and on a FAILED
       // block it would swallow the retry's fresh request.
-      if (bi >= tailStart) ids.push(`f:${b.think_id}`)
+      //
+      // While the turn is still running, any snapshot we take is provisional by
+      // definition: the backend is still appending to chat_thinking. Marking it
+      // so is what lets the `done && provisional` branch above replace it with
+      // the final text once the turn ends.
+      if (bi >= tailStart) ids.push(`${turnOver ? 'f' : 'p'}:${b.think_id}`)
     }
     return ids.join('|')
   },

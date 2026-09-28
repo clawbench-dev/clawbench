@@ -367,6 +367,18 @@ export function forceCleanupStreamingState(
             block.output = ''
           }
         }
+        // Close out any thinking block still marked streaming. `thinking_done`
+        // is NOT guaranteed per block (a turn ending on reasoning never gets
+        // one) and is never re-delivered to a client that was unsubscribed when
+        // it fired — so a block that adopted an in_progress marker before a
+        // session switch would spin for the rest of the session. The turn is
+        // over here, so the reasoning is over too: dropping in_progress also
+        // lets the auto-load watcher take its `done && provisional` refetch
+        // path instead of looping on the in_progress branch.
+        if (block.type === 'thinking') {
+          if (!block.done) block.done = true
+          delete block.in_progress
+        }
       }
     }
     // Extract tasks from the just-finished message
@@ -818,13 +830,28 @@ function dbTextIndexAtOffset(
 }
 
 /** Index in `dbBlocks` of the block a live block corresponds to, or -1 when the
- *  DB flush has no counterpart (a live-only tool, an in-progress thinking the
- *  flush deliberately omits, a warning/error block). Used to anchor DB-only
+ *  DB flush has no counterpart (a live-only tool, a genuinely new thinking block
+ *  the flush has not written yet, a warning/error block). Used to anchor DB-only
  *  blocks: a block is spliced before the first base element whose DB index is
- *  greater than its own. */
+ *  greater than its own.
+ *
+ *  A live block that already carries a `think_id` (adoptThinkingMarkers gave it
+ *  one from the DB marker) anchors to that marker's index. Without this the live
+ *  block kept the -1 default, every DB-only block was spliced AFTER it, and the
+ *  block was pinned to index 0 — the reported "a thinking block still streaming
+ *  at the TOP while the rest of the reply below it is already finished". The DB
+ *  knew its real position all along (observed: index 46 of 114, rendered at 0).
+ *
+ *  This relocates nothing and matches on exact identity, so it is not the
+ *  rejected "prepend every DB-only non-text block" attempt (which stacked all
+ *  tools at the top). The DB marker itself is still dropped by `liveHasThinking`
+ *  in mergeOrderedBlocks, so there is no duplicate and no v-for key collision. */
 function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number {
   if (lb.type === 'tool_use' && lb.id) {
     return dbBlocks.findIndex((b) => b.type === 'tool_use' && b.id === lb.id)
+  }
+  if (lb.type === 'thinking' && lb.think_id) {
+    return dbBlocks.findIndex((b) => b.type === 'thinking' && b.think_id === lb.think_id)
   }
   return -1
 }

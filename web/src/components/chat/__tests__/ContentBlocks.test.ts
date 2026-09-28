@@ -2937,6 +2937,77 @@ describe('provisional thinking text is replaced on finish', () => {
 })
 
 describe('done thinking blocks auto-load their text', () => {
+  it('refetches the final text once the turn ends (mid-turn snapshots are provisional)', async () => {
+    // The reported truncated thinking text. `thinking_done` reaches the client
+    // BEFORE the backend commits the final chat_thinking text (the event is
+    // forwarded immediately; the DB is only rewritten in full at Finalize). A
+    // refetch fired on `done` mid-turn therefore captures a PREFIX — and
+    // because it was issued as a "final" request it cleared the provisional
+    // flag, after which `cached !== undefined` skipped the block forever.
+    // Observed: cached 760 of final 844; another case 17124 of 18887.
+    //
+    // Rule under test: while the message is streaming, any snapshot is
+    // provisional; the final refetch happens when the turn is over.
+    //
+    // Uses the REAL useThinkingContent (not mocked) so provisionalIds /
+    // isProvisional actually run — a hand-written mock would prove nothing.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_trunc', text: 'PARTIAL' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_trunc', text: 'PARTIAL-AND-REST' }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountBlocks({
+      msgId: 'm-trunc',
+      sessionId: 's-trunc',
+      streaming: true,
+      active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_trunc', done: true }],
+    })
+    await flushPromises(); await nextTick()
+
+    expect(fetchMock, 'first (provisional) fetch while the turn runs').toHaveBeenCalledTimes(1)
+    const firstBody = await (await fetchMock.mock.results[0].value).json()
+    expect(firstBody.text, 'mid-turn snapshot is only a prefix').toBe('PARTIAL')
+
+    // The turn ends: the DB is complete now, so the block must refetch.
+    await wrapper.setProps({ streaming: false })
+    await flushPromises(); await nextTick()
+
+    expect(fetchMock, 'one final refetch after the turn').toHaveBeenCalledTimes(2)
+    const secondBody = await (await fetchMock.mock.results[1].value).json()
+    expect(secondBody.text, 'final text replaces the truncated prefix').toBe('PARTIAL-AND-REST')
+    expect(String(fetchMock.mock.calls[1][0])).toContain('th_trunc')
+  })
+
+  it('does not refetch again once the final text is cached', async () => {
+    // Guards against a request storm. A collapsed block outside the streaming
+    // tail is not auto-loaded at all (that is the sibling test above); this one
+    // drives the tail path and asserts the second render is served from cache.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ think_id: 'th_final', text: 'COMPLETE' }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountBlocks({
+      msgId: 'm-final',
+      sessionId: 's-final',
+      streaming: true,
+      active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_final', done: true }],
+    })
+    await flushPromises(); await nextTick()
+    const after1 = fetchMock.mock.calls.length
+    expect(after1, 'the in-tail block loads once').toBeGreaterThan(0)
+
+    // Re-render with a new blocks array (same content) — must not refetch while
+    // the turn is still running: the snapshot is cached (provisionally) and the
+    // final refetch is deferred to turn end.
+    await wrapper.setProps({ blocks: [{ type: 'thinking', think_id: 'th_final', done: true }] })
+    await flushPromises(); await nextTick()
+
+    expect(fetchMock.mock.calls.length, 'no extra request while the turn runs').toBe(after1)
+  })
+
   it('does not load every collapsed done block (no request storm)', async () => {
     // A long conversation carries hundreds of done blocks. Only visible ones
     // (expanded, or the streaming tail) may load automatically.
