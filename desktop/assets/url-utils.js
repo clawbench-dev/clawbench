@@ -46,3 +46,23 @@ function parseServerInput(text) {
 
   return { protocol: protocol, host: host, port: port };
 }
+
+/**
+ * Build the canonical server URL from a single free-text address.
+ *
+ * Strict on purpose: the login form no longer has a protocol radio or a port
+ * field, so the address must carry BOTH explicitly. A bare host or a
+ * scheme-less `host:port` returns null and the caller shows "enter a full
+ * address" rather than guessing a scheme/port the user never chose.
+ *
+ * Normalisation the parser already gives us: scheme lowercased, path/query/
+ * fragment dropped, surrounding whitespace trimmed.
+ *
+ * Returns 'scheme://host:port', or null when the input is not a complete
+ * server address. Callers must treat null as "reject, do not save".
+ */
+function buildServerUrl(text) {
+  var parsed = parseServerInput(text);
+  if (!parsed || !parsed.protocol || !parsed.port) return null;
+  return parsed.protocol + '://' + parsed.host + ':' + parsed.port;
+}
