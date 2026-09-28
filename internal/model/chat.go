@@ -372,6 +372,12 @@ type ContentBlock struct {
 	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 }
 
+// randRead is the entropy source for GenerateThinkingID, as a package-level
+// seam. crypto/rand.Read cannot be made to fail from outside the process, so
+// the fallback below would otherwise be permanently dead as far as tests go.
+// Production never reassigns it.
+var randRead = rand.Read
+
 // GenerateThinkingID returns a think_id ("th_" + 32 hex chars).
 //
 // Lives in model, not service, because both internal/ai (which assigns the ID
@@ -380,7 +386,7 @@ type ContentBlock struct {
 // internal/service would cycle.
 func GenerateThinkingID() string {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
+	if _, err := randRead(b); err != nil {
 		return fmt.Sprintf("th_%d", time.Now().UnixNano())
 	}
 	return "th_" + hex.EncodeToString(b)
