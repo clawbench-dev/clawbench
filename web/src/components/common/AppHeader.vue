@@ -260,7 +260,7 @@
         :aria-label="t('appHeader.windowMinimize')"
         @click="minimizeWindow"
       >
-        <Minus :size="16" />
+        <Minus :size="14" />
       </button>
       <button
         class="window-control"
@@ -275,11 +275,11 @@
              radius here is 1.5 on a 16/24 box — squarer, and matched between the
              maximize and restore shapes so they do not look like two families.
              Two overlapping squares is the conventional "restore" glyph. -->
-        <svg v-if="isWindowMaximized" class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg v-if="isWindowMaximized" class="window-control-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="8" y="8" width="14" height="14" rx="1.5" />
           <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
         </svg>
-        <svg v-else class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg v-else class="window-control-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="4" y="4" width="16" height="16" rx="1.5" />
         </svg>
       </button>
@@ -290,7 +290,7 @@
         :aria-label="t('appHeader.windowClose')"
         @click="closeWindow"
       >
-        <X :size="16" />
+        <X :size="14" />
       </button>
     </div>
   </header>
@@ -1362,10 +1362,10 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     /* Equal thirds of the block, via one width on each button rather than a
        total on the parent: the three glyphs have different intrinsic widths (a
        `□` is not a `✕`), so content sizing would make them uneven.
-       40px (down from 46px) with a 16px glyph lands the ink density at ~20.6%,
-       close to the neighbouring icon buttons (~22%), instead of the sparse
-       14% the 46px/14px combination produced. */
-    width: 40px;
+       14px glyph on a 34px cell lands the ink density at ~18.6%, between the
+       neighbouring icon buttons (~22%) and the sparse 14% that the old
+       46px/14px pairing produced. */
+    width: 34px;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
