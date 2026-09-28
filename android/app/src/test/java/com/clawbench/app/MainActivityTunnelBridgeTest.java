@@ -4,16 +4,26 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import android.content.SharedPreferences;
+
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.Assert.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for the new WebAppInterface bridge methods:
@@ -31,6 +41,8 @@ public class MainActivityTunnelBridgeTest {
 
     private Object webAppInterface;
     private MainActivity activity;
+    private SharedPreferences mockPrefs;
+    private Map<String, Object> prefsData;
 
     @Before
     public void setUp() throws Exception {
@@ -48,6 +60,27 @@ public class MainActivityTunnelBridgeTest {
         Field forwarded = MainActivity.class.getDeclaredField("forwardedPorts");
         forwarded.setAccessible(true);
         forwarded.set(activity, new ConcurrentHashMap<Integer, String>());
+
+        // The tunnel-toggle bridge is backed by SharedPreferences, so the
+        // activity needs a stubbed prefs store (a real Context would NPE under
+        // Unsafe allocation). A missing key reads as the stored default, which
+        // is how the "default ssh" case stays honest.
+        prefsData = new HashMap<>();
+        mockPrefs = mock(SharedPreferences.class);
+        when(mockPrefs.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> {
+            String key = inv.getArgument(0);
+            return prefsData.containsKey(key) ? prefsData.get(key) : inv.getArgument(1);
+        });
+        when(mockPrefs.edit()).thenAnswer(inv -> {
+            SharedPreferences.Editor editor = mock(SharedPreferences.Editor.class);
+            when(editor.putBoolean(anyString(), anyBoolean())).thenAnswer(editInv -> {
+                prefsData.put(editInv.getArgument(0), editInv.getArgument(1));
+                return editor;
+            });
+            doNothing().when(editor).apply();
+            return editor;
+        });
+        doReturn(mockPrefs).when(activity).getSharedPreferences(anyString(), anyInt());
 
         // Set the static instance field
         Field instanceField = MainActivity.class.getDeclaredField("instance");
@@ -150,63 +183,34 @@ public class MainActivityTunnelBridgeTest {
     }
 
     // =====================================================
-    // setTunnelTransport / getTunnelTransport bridge
+    // setTunnelTransportH2Enabled / getTunnelTransport bridge
     // =====================================================
 
     @Test
-    public void setTunnelTransport_methodExists() throws Exception {
-        Method method = webAppInterface.getClass().getDeclaredMethod("setTunnelTransport", String.class);
-        assertNotNull("setTunnelTransport method should exist", method);
+    public void setTunnelTransportH2Enabled_methodExists() throws Exception {
+        Method method = webAppInterface.getClass().getDeclaredMethod(
+                "setTunnelTransportH2Enabled", boolean.class);
+        assertNotNull("setTunnelTransportH2Enabled method should exist", method);
         assertNotNull("Should have @JavascriptInterface annotation",
                 method.getAnnotation(android.webkit.JavascriptInterface.class));
     }
 
     @Test
-    public void setTunnelTransport_appliesThePreference() throws Exception {
-        // Reset to the default so a previous test class cannot leak in.
-        BackgroundService.setTransportPreference("ssh");
-        try {
-            invoke("setTunnelTransport", "h2");
-            assertEquals(com.clawbench.app.tunnel.PortForwardTransportKind.H2,
-                    BackgroundService.getTransportPreference());
-        } finally {
-            BackgroundService.setTransportPreference("ssh");
-        }
+    public void setTunnelTransportH2Enabled_writesThePreference() throws Exception {
+        invoke("setTunnelTransportH2Enabled", true);
+        assertTrue("true must persist tunnel_transport_h2_enabled",
+                BackgroundService.isTunnelTransportH2Enabled(activity));
+        invoke("setTunnelTransportH2Enabled", false);
+        assertFalse("false must persist tunnel_transport_h2_enabled",
+                BackgroundService.isTunnelTransportH2Enabled(activity));
     }
 
     @Test
-    public void setTunnelTransport_unknownValueKeepsTheDefault() throws Exception {
-        BackgroundService.setTransportPreference("ssh");
-        try {
-            invoke("setTunnelTransport", "gopher");
-            assertEquals("an unknown value must not switch transports",
-                    com.clawbench.app.tunnel.PortForwardTransportKind.SSH,
-                    BackgroundService.getTransportPreference());
-        } finally {
-            BackgroundService.setTransportPreference("ssh");
-        }
-    }
-
-    @Test
-    public void setTunnelTransport_acceptsNullWithoutThrowing() throws Exception {
-        BackgroundService.setTransportPreference("ssh");
-        try {
-            invoke("setTunnelTransport", (Object) null);
-            assertEquals(com.clawbench.app.tunnel.PortForwardTransportKind.SSH,
-                    BackgroundService.getTransportPreference());
-        } finally {
-            BackgroundService.setTransportPreference("ssh");
-        }
-    }
-
-    @Test
-    public void getTunnelTransport_reportsThePreference() throws Exception {
-        BackgroundService.setTransportPreference("both");
-        try {
-            assertEquals("both", invoke("getTunnelTransport"));
-        } finally {
-            BackgroundService.setTransportPreference("ssh");
-        }
+    public void getTunnelTransport_derivesFromTheLocalToggle() throws Exception {
+        invoke("setTunnelTransportH2Enabled", false);
+        assertEquals("ssh", invoke("getTunnelTransport"));
+        invoke("setTunnelTransportH2Enabled", true);
+        assertEquals("h2", invoke("getTunnelTransport"));
     }
 
     @Test
@@ -337,7 +341,7 @@ public class MainActivityTunnelBridgeTest {
 
     private Object invoke(String method, Object... args) throws Exception {
         Method m = webAppInterface.getClass().getDeclaredMethod(
-                method, method.equals("setTunnelTransport") ? new Class<?>[]{String.class}
+                method, method.equals("setTunnelTransportH2Enabled") ? new Class<?>[]{boolean.class}
                         : method.equals("removeForwardedPort")
                         || method.equals("removeReverseForwardedPort")
                         ? new Class<?>[]{int.class}

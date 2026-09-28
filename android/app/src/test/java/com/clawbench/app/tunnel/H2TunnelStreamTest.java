@@ -297,8 +297,8 @@ public class H2TunnelStreamTest {
         // H2TunnelStream:236-239 deliberately reuses a live same-host session
         // regardless of a changed `preferred`: reconnecting just to switch
         // transports would drop every forwarded connection. The service relies
-        // on this — setTransportPreference only writes the static field while a
-        // session is live (MainActivity:2714-2716, "takes effect on reconnect").
+        // on this — the h2 toggle only writes the preference while a session is
+        // live (MainActivity:2714-2716, "takes effect on reconnect").
         server.mode = FakeTunnelServer.Mode.DUPLEX;
         assertEquals(TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.H2C));
         int probesAfterFirst = server.requestsFor("/api/ssh/info").size();

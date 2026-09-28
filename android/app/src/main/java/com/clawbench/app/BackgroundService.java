@@ -28,7 +28,6 @@ import com.jcraft.jsch.Session;
 
 import com.clawbench.app.tunnel.H2PortForwardTransport;
 import com.clawbench.app.tunnel.PortForwardTransport;
-import com.clawbench.app.tunnel.PortForwardTransportKind;
 import com.clawbench.app.tunnel.SshPortForwardTransport;
 import com.clawbench.app.tunnel.TransportKind;
 import com.clawbench.app.tunnel.TunnelStream;
@@ -108,6 +107,12 @@ public class BackgroundService extends Service {
     private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
     private static final String KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled";
     private static final String KEY_LIVE_UPDATE_ENABLED = "live_update_enabled";
+    /**
+     * Local opt-in for the experimental h2 port-forward transport. Default
+     * false = SSH, so an install that never opts in behaves exactly as it did
+     * before the h2 tunnel existed.
+     */
+    private static final String KEY_TUNNEL_TRANSPORT_H2 = "tunnel_transport_h2_enabled";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -202,14 +207,6 @@ public class BackgroundService extends Service {
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
 
     // --- Port-forward transport selection (h2 tunnel, design doc §8) ---
-
-    /**
-     * Which transport port forwarding uses. Static and defaulting to SSH so the
-     * behavior of an install that never opts in is unchanged, and so the
-     * WebView bridge / T12 can set it before the Service exists (same shape as
-     * {@link #nativeWsNeeded}).
-     */
-    private static volatile PortForwardTransportKind transportPreference = PortForwardTransportKind.SSH;
 
     /**
      * The transport that owns the live forwards. {@code null} until a connect
@@ -430,6 +427,40 @@ public class BackgroundService extends Service {
         if (svc != null && isRunning) {
             svc.syncFloatingController();
         }
+    }
+
+    /**
+     * Check whether the experimental h2 port-forward transport is enabled.
+     *
+     * <p>This is the single source of truth for the transport: the value is
+     * persisted, so a cold start / {@code START_STICKY} restart keeps it, and
+     * {@link #ensureConnection()} reads it at use time. Defaults to false
+     * (SSH) — an install that never opts in is byte-for-byte the pre-tunnel
+     * behaviour.
+     */
+    public static boolean isTunnelTransportH2Enabled(Context context) {
+        if (context == null) return false;
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        // A stubbed/misbehaving context can hand back null; the safe answer is
+        // the pre-tunnel default (SSH), never a crash on a hot connect path.
+        if (prefs == null) return false;
+        return prefs.getBoolean(KEY_TUNNEL_TRANSPORT_H2, false);
+    }
+
+    /**
+     * Persist the h2 transport toggle.
+     *
+     * <p>Only writes the preference; the switch takes effect on the next
+     * reconnect ({@code forceReconnectAsync}), mirroring the desktop client's
+     * "takes effect on reconnect" behaviour. Deliberately does NOT tear down
+     * the live transport.
+     */
+    public static void setTunnelTransportH2Enabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_TUNNEL_TRANSPORT_H2, enabled)
+                .apply();
+        AppLog.i(TAG, "Tunnel: h2 transport enabled=" + enabled);
     }
 
     /**
@@ -1445,26 +1476,16 @@ public class BackgroundService extends Service {
      * Ensure the selected port-forward transport is established, and replay the
      * desired forwards onto it. MUST be called from a background thread.
      *
-     * <p>The selection is the server's {@code port_forward.transport} setting
-     * (design doc §8), defaulting to SSH so an install that never opted in keeps
-     * its old behavior. {@code both} probes h2 first and falls back to SSH, the
-     * same candidate order the desktop transport uses.
+     * <p>The selection is the local {@code tunnel_transport_h2_enabled}
+     * preference ({@link #isTunnelTransportH2Enabled}), defaulting to SSH so an
+     * install that never opted in keeps its old behavior. The preference is read
+     * here rather than cached in a field, so a cold start / restart naturally
+     * picks up the persisted value.
      */
     synchronized void ensureConnection() throws Exception {
-        PortForwardTransportKind preference = transportPreference;
-        if (preference == PortForwardTransportKind.H2) {
+        if (isTunnelTransportH2Enabled(this)) {
             ensureH2Connection();
             return;
-        }
-        if (preference == PortForwardTransportKind.BOTH) {
-            try {
-                ensureH2Connection();
-                return;
-            } catch (Exception e) {
-                // Falling back is the whole point of `both`: a server whose h2
-                // tunnel is unreachable may still expose an SSH port.
-                AppLog.w(TAG, "H2: connect failed under 'both', falling back to SSH: " + e.getMessage());
-            }
         }
         ensureSshConnection();
     }
@@ -1789,26 +1810,11 @@ public class BackgroundService extends Service {
         PortForwardTransport current = activeTransport;
         if (current != null) return current;
         // No session is live yet. Which transport a port operation should be
-        // issued against is decided by the preference, NOT by "SSH is the only
-        // one that can be live without activeTransport": under h2 the adapter
-        // still has to release listeners and unbind after a disconnect, and
-        // routing those through JSch would silently skip them.
-        return transportPreference == PortForwardTransportKind.H2 ? h2Transport() : sshTransport();
-    }
-
-    /**
-     * Set the transport preference (design doc §11). Static so the WebView
-     * bridge / T12 can apply the server's {@code port_forward.transport} before
-     * the Service starts, mirroring {@link #nativeWsNeeded}.
-     */
-    public static void setTransportPreference(String preference) {
-        transportPreference = PortForwardTransportKind.fromWire(preference);
-        AppLog.i(TAG, "Tunnel: transport preference set to " + transportPreference.wireName());
-    }
-
-    /** The current transport preference. */
-    public static PortForwardTransportKind getTransportPreference() {
-        return transportPreference;
+        // issued against is decided by the local preference, NOT by "SSH is the
+        // only one that can be live without activeTransport": under h2 the
+        // adapter still has to release listeners and unbind after a disconnect,
+        // and routing those through JSch would silently skip them.
+        return isTunnelTransportH2Enabled(this) ? h2Transport() : sshTransport();
     }
 
     /**
@@ -1831,8 +1837,8 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * True when the transport selected by {@link #transportPreference} has a
-     * live session.
+     * True when the transport selected by the local
+     * {@code tunnel_transport_h2_enabled} preference has a live session.
      *
      * <p>The preference decides what "connected" means: under h2 there is no
      * JSch session at all, so testing {@code sshSession} alone would report the
@@ -1840,7 +1846,7 @@ public class BackgroundService extends Service {
      * never builds an unused h2 transport just to answer a health check.
      */
     private boolean isSelectedTransportConnected() {
-        if (transportPreference == PortForwardTransportKind.H2) {
+        if (isTunnelTransportH2Enabled(this)) {
             return tunnelStream().isConnected();
         }
         return sshSession != null && sshSession.isConnected();

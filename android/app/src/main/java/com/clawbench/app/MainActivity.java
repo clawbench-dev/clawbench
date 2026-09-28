@@ -2699,32 +2699,28 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Apply the server's {@code port_forward.transport} setting
-         * ({@code "ssh" | "h2" | "both"}).
+         * Enable or disable the local h2 port-forward transport.
          *
-         * <p>The setting lives on the server, and only the WebView holds an
-         * authenticated config session, so the frontend reads
-         * {@code /api/config} and pushes the value here (see
-         * {@code useSettingsConfig.syncTunnelTransportToNative}). An unknown or
-         * null value is ignored by {@code PortForwardTransportKind.fromWire},
-         * which keeps the current preference rather than silently switching
-         * transports.
-         *
-         * <p>The preference is static on the Service so it applies before the
-         * Service exists and survives a restart; an already-connected tunnel
-         * keeps running until the next reconnect, which is the same
-         * "takes effect on reconnect" behaviour the desktop client has.
+         * <p>Backed by the {@code tunnel_transport_h2_enabled} SharedPreferences
+         * value ({@link BackgroundService#setTunnelTransportH2Enabled}), which is
+         * the single source of truth for the transport. Only the preference is
+         * written; an already-connected tunnel keeps running until the next
+         * reconnect, which is the same "takes effect on reconnect" behaviour the
+         * desktop client has.
          */
         @JavascriptInterface
-        public void setTunnelTransport(String pref) {
-            AppLog.i(TAG, "JSBridge: setTunnelTransport=" + pref);
-            BackgroundService.setTransportPreference(pref);
+        public void setTunnelTransportH2Enabled(boolean enabled) {
+            AppLog.i(TAG, "JSBridge: setTunnelTransportH2Enabled=" + enabled);
+            BackgroundService.setTunnelTransportH2Enabled(activity, enabled);
         }
 
-        /** The transport preference currently in effect, e.g. {@code "ssh"}. */
+        /**
+         * The transport preference currently in effect, derived from the local
+         * toggle: {@code "h2"} when enabled, {@code "ssh"} otherwise.
+         */
         @JavascriptInterface
         public String getTunnelTransport() {
-            return BackgroundService.getTransportPreference().wireName();
+            return BackgroundService.isTunnelTransportH2Enabled(activity) ? "h2" : "ssh";
         }
 
         /**

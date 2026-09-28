@@ -5,7 +5,6 @@ import android.content.SharedPreferences;
 
 import com.clawbench.app.tunnel.FakeTunnelStream;
 import com.clawbench.app.tunnel.PortForwardTransport;
-import com.clawbench.app.tunnel.PortForwardTransportKind;
 import com.jcraft.jsch.Session;
 
 import org.junit.After;
@@ -30,6 +29,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -119,6 +119,8 @@ public class BackgroundServiceTransportTest {
     private BackgroundService service;
     private SharedPreferences mockPrefs;
     private Map<String, Set<String>> prefsData;
+    /** Boolean preferences written through {@link #enableH2Preference} or the setter. */
+    private Map<String, Boolean> prefsBools;
     private ExecutorService testExecutor;
 
     /** The fake h2 adapter the service routes through in these tests. */
@@ -149,7 +151,6 @@ public class BackgroundServiceTransportTest {
         setField("monitorActive", false);
         setField("nativeWsActive", false);
         setField("sshScreenSuspended", false);
-        setField("transportPreference", PortForwardTransportKind.SSH);
         setField("activeTransport", null);
         setField("sshTransport", null);
         setField("h2PortForwardTransport", null);
@@ -176,6 +177,7 @@ public class BackgroundServiceTransportTest {
         setStaticField("lastError", null);
 
         prefsData = new HashMap<>();
+        prefsBools = new HashMap<>();
         mockPrefs = mock(SharedPreferences.class);
         when(mockPrefs.getStringSet(eq("forwarded_ports"), any())).thenAnswer(inv ->
                 prefsData.containsKey("forwarded_ports") ? prefsData.get("forwarded_ports") : inv.getArgument(1));
@@ -184,10 +186,21 @@ public class BackgroundServiceTransportTest {
                         ? prefsData.get("reverse_forwarded_ports") : inv.getArgument(1));
         when(mockPrefs.getString(eq("server_url"), anyString())).thenAnswer(inv ->
                 serverUrl != null ? serverUrl : inv.getArgument(1));
+        // Boolean reads honour the written value first, then the stored default
+        // (false for the h2 toggle). An absent key therefore answers the
+        // pre-tunnel default = SSH.
+        when(mockPrefs.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> {
+            String key = inv.getArgument(0);
+            return prefsBools.containsKey(key) ? prefsBools.get(key) : inv.getArgument(1);
+        });
         when(mockPrefs.edit()).thenAnswer(inv -> {
             SharedPreferences.Editor editor = mock(SharedPreferences.Editor.class);
             when(editor.putStringSet(anyString(), any())).thenAnswer(editInv -> {
                 prefsData.put(editInv.getArgument(0), editInv.getArgument(1));
+                return editor;
+            });
+            when(editor.putBoolean(anyString(), anyBoolean())).thenAnswer(editInv -> {
+                prefsBools.put(editInv.getArgument(0), editInv.getArgument(1));
                 return editor;
             });
             when(editor.remove(anyString())).thenAnswer(editInv -> {
@@ -207,12 +220,20 @@ public class BackgroundServiceTransportTest {
             setStaticField("isRunning", false);
             setStaticField("nativeWsNeeded", false);
             setStaticField("lastError", null);
-            // The preference is static: leaving it on H2 would leak into every
-            // other test class that assumes the SSH default.
-            setField("transportPreference", PortForwardTransportKind.SSH);
         } catch (Exception ignored) {
         }
         if (testExecutor != null) testExecutor.shutdownNow();
+    }
+
+    /**
+     * Make the service read {@code tunnel_transport_h2_enabled = true}.
+     *
+     * <p>Replaces the old {@code setField("transportPreference", H2)}: the
+     * preference is no longer a field, so it has to be driven through the
+     * SharedPreferences the service actually consults.
+     */
+    private void enableH2Preference() {
+        prefsBools.put("tunnel_transport_h2_enabled", true);
     }
 
     // ==================================================================
@@ -222,33 +243,28 @@ public class BackgroundServiceTransportTest {
     @Test
     public void defaultPreferenceIsSsh() {
         // The whole compatibility story: an install that never opts in must
-        // keep behaving exactly as before the tunnel existed.
-        assertEquals(PortForwardTransportKind.SSH, BackgroundService.getTransportPreference());
+        // keep behaving exactly as before the tunnel existed. The preference is
+        // now persisted, so the default is what an unstubbed SharedPreferences
+        // hands back for an absent key.
+        assertFalse(BackgroundService.isTunnelTransportH2Enabled(service));
     }
 
     @Test
-    public void setTransportPreference_parsesTheWireValue() {
-        BackgroundService.setTransportPreference("h2");
-        assertEquals(PortForwardTransportKind.H2, BackgroundService.getTransportPreference());
-        BackgroundService.setTransportPreference("both");
-        assertEquals(PortForwardTransportKind.BOTH, BackgroundService.getTransportPreference());
-    }
-
-    @Test
-    public void setTransportPreference_unknownValueFallsBackToSsh() {
-        // The value arrives from the server/JS bridge; anything this build does
-        // not understand must land on the safe, pre-tunnel default rather than
-        // leaving a transport selected that no code can serve.
-        BackgroundService.setTransportPreference("gopher");
-        assertEquals(PortForwardTransportKind.SSH, BackgroundService.getTransportPreference());
+    public void setTunnelTransportH2Enabled_persistsTheBoolean() {
+        // The setter is the only writer of the preference; it must round-trip
+        // through the same prefs the connect path reads.
+        BackgroundService.setTunnelTransportH2Enabled(service, true);
+        assertTrue(BackgroundService.isTunnelTransportH2Enabled(service));
+        BackgroundService.setTunnelTransportH2Enabled(service, false);
+        assertFalse(BackgroundService.isTunnelTransportH2Enabled(service));
     }
 
     @Test
     public void addPortForward_underH2_doesNotTouchTheSshSession() throws Exception {
+        enableH2Preference();
         Session session = mock(Session.class);
         when(session.isConnected()).thenReturn(true);
         setField("sshSession", session);
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
 
         invoke("addPortForward", 3080, 80, "127.0.0.1");
@@ -276,7 +292,6 @@ public class BackgroundServiceTransportTest {
         when(session.isConnected()).thenReturn(true);
         doReturn(0).when(session).setPortForwardingL(anyString(), anyInt(), anyString(), anyInt());
         setField("sshSession", session);
-        setField("transportPreference", PortForwardTransportKind.SSH);
         // Force the SSH adapter to be built from the session.
         setField("activeTransport", null);
 
@@ -287,7 +302,7 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addPortForward_nonLocalhostUnderH2_routesThroughTheServerProxy() throws Exception {
-        setField("transportPreference", PortForwardTransportKind.H2);
+        enableH2Preference();
         setField("activeTransport", null);
 
         invoke("addPortForward", 3080, 80, "10.0.0.1");
@@ -301,10 +316,10 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void removePortForward_underH2_releasesTheListenerWithoutJsch() throws Exception {
+        enableH2Preference();
         Session session = mock(Session.class);
         when(session.isConnected()).thenReturn(true);
         setField("sshSession", session);
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
         forwardedPorts().put(3080, new BackgroundService.PortInfo(80, ""));
 
@@ -317,9 +332,9 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void removePortForward_underH2_releasesEvenWhenTheTunnelIsDown() throws Exception {
+        enableH2Preference();
         // The listener outlives the session, so a removal must still run while
         // the tunnel is down — otherwise the local port stays bound forever.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
         h2.connected = false;
         forwardedPorts().put(3080, new BackgroundService.PortInfo(80, ""));
@@ -331,7 +346,7 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addPortForward_h2Failure_removesTheMappingAndReports() throws Exception {
-        setField("transportPreference", PortForwardTransportKind.H2);
+        enableH2Preference();
         setField("activeTransport", null);
         h2.addLocalFailure = new Exception("bind refused");
 
@@ -344,13 +359,13 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addPortForward_invalidPort_reachesTheTransportUnvalidated() throws Exception {
+        enableH2Preference();
         // Pins the validation asymmetry: addReversePortForward rejects
         // serverPort<=0 or >65535 (BackgroundService:2111) BEFORE touching the
         // transport, but addPortForward (:1866) does not — the bad port reaches
         // the transport, which for h2 means ServerSocket.bind. This test records
         // that the transport is asked with the raw value; the report flags the
         // asymmetry and whether port 0 is legitimate.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
 
         invoke("addPortForward", -1, 80, "127.0.0.1");
@@ -362,9 +377,9 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addReversePortForward_invalidPort_isRejectedBeforeTheTransport() throws Exception {
+        enableH2Preference();
         // The contrast to the test above: the reverse path validates up front,
         // so the transport is never asked with an impossible port.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
 
         invoke("addReversePortForward", 0, 3000, "");
@@ -402,7 +417,7 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void addReversePortForward_underH2_bindsThroughTheTransport() throws Exception {
-        setField("transportPreference", PortForwardTransportKind.H2);
+        enableH2Preference();
         setField("activeTransport", null);
 
         invoke("addReversePortForward", 9000, 3000, "192.168.1.5");
@@ -423,7 +438,7 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void removeReversePortForward_underH2_unbindsThroughTheTransport() throws Exception {
-        setField("transportPreference", PortForwardTransportKind.H2);
+        enableH2Preference();
         setField("activeTransport", null);
         reversePorts().put(9000, new BackgroundService.PortInfo(3000, "", true));
 
@@ -438,7 +453,6 @@ public class BackgroundServiceTransportTest {
         Session session = mock(Session.class);
         when(session.isConnected()).thenReturn(true);
         setField("sshSession", session);
-        setField("transportPreference", PortForwardTransportKind.SSH);
         setField("activeTransport", null);
 
         invoke("addReversePortForward", 9000, 3000, "");
@@ -462,11 +476,11 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void disconnectInternal_underH2_closesTheTransportAndListeners() throws Exception {
+        enableH2Preference();
         // The h2 adapter owns local listeners and in-flight streams the JSch
         // branch knows nothing about, so disconnectInternal must close it. The
         // real adapter is used here (the field is what disconnectInternal
         // closes); it never binds a socket because no listener was added.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("h2TransportOverride", null);
         com.clawbench.app.tunnel.H2PortForwardTransport adapter =
                 new com.clawbench.app.tunnel.H2PortForwardTransport(() -> tunnel);
@@ -481,11 +495,11 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void ensureConnection_underH2_connectsInlineWithoutTheNetworkExecutor() throws Exception {
+        enableH2Preference();
         // The h2 accept loops and stream pumps must never run on the
         // single-threaded networkExecutor: parking it would starve
         // ensureConnection/disconnect/WS reconnect. This asserts the connect
         // path completes on the caller's thread.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
 
         service.ensureConnection();
@@ -496,35 +510,12 @@ public class BackgroundServiceTransportTest {
     }
 
     @Test
-    public void ensureConnection_both_fallsBackToSshWhenH2Fails() throws Exception {
-        setField("transportPreference", PortForwardTransportKind.BOTH);
-        // Not already connected, and the connect attempt fails: ensureH2Connection
-        // must throw, which is what triggers the SSH fallback.
-        tunnel.connected = false;
-        tunnel.failConnect = true;
-        // Make the SSH branch fail fast and identifiably: with no server URL it
-        // throws before any network I/O, so the test does not depend on a live
-        // host. The point is that the SSH branch ran at all.
-        serverUrl = "";
-
-        String thrown = null;
-        try {
-            service.ensureConnection();
-        } catch (Exception expected) {
-            thrown = expected.getMessage();
-        }
-
-        assertEquals("the SSH fallback must be the branch that failed",
-                "Server URL not configured", thrown);
-    }
-
-    @Test
     public void ensureH2Connection_passesTheRememberedKindOnReconnect() throws Exception {
+        enableH2Preference();
         // BackgroundService:1642 passes lastH2Kind to connect(), and :1648
         // stores the result. This is the whole "remember the last successful
         // transport" wiring: without it a plaintext deployment pays a wasted
         // TLS rejection on every reconnect. It was previously unverified.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("activeTransport", null);
         tunnel.connected = false;
         tunnel.connectResult = com.clawbench.app.tunnel.TransportKind.TLS;
@@ -548,18 +539,17 @@ public class BackgroundServiceTransportTest {
     }
 
     @Test
-    public void setTransportPreference_whileConnected_doesNotTearDownTheLiveTransport() throws Exception {
-        // BackgroundService:1804 only writes the static field; an
-        // already-connected tunnel keeps running until the next reconnect
-        // (documented at MainActivity:2714-2716, "takes effect on reconnect").
+    public void setTunnelTransportH2Enabled_whileConnected_doesNotTearDownTheLiveTransport() throws Exception {
+        // The setter only writes the preference; an already-connected tunnel
+        // keeps running until the next reconnect (documented at
+        // MainActivity:2714-2716, "takes effect on reconnect").
         // transportForPortOps() (BackgroundService:1788-1790) keeps routing
-        // through the stale activeTransport, and connect() reuses a same-host
-        // session. The change must therefore be deferred, not applied eagerly.
-        setField("transportPreference", PortForwardTransportKind.H2);
+        // through the live activeTransport, so the change must be deferred, not
+        // applied eagerly.
         setField("activeTransport", h2);
         h2.connected = true;
 
-        BackgroundService.setTransportPreference("ssh");
+        BackgroundService.setTunnelTransportH2Enabled(service, false);
 
         assertSame("the live transport must survive a preference change",
                 h2, getField("activeTransport"));
@@ -575,12 +565,12 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void reconnect_replaysForwardAndReversePortsExactlyOnceOnH2() throws Exception {
+        enableH2Preference();
         // replayForwardedPortsOnActiveTransport():1698 and
         // replayReversePortsOnActiveTransport():1671. Pre-populate both maps,
         // drop the transport (a disconnect), then reconnect: each desired
         // mapping must be re-added exactly once. This is the exact-count test
         // that supersedes the >= 1 assertions on the add paths.
-        setField("transportPreference", PortForwardTransportKind.H2);
         forwardedPorts().put(3080, new BackgroundService.PortInfo(80, ""));
         forwardedPorts().put(3081, new BackgroundService.PortInfo(81, ""));
         reversePorts().put(9000, new BackgroundService.PortInfo(3000, "", true));
@@ -727,9 +717,9 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void suspendTunnelForScreenOff_closesTheH2Transport() throws Exception {
+        enableH2Preference();
         // The h2 adapter owns local listeners and in-flight streams; suspending
         // must release them, not just mark a flag.
-        setField("transportPreference", PortForwardTransportKind.H2);
         setField("h2TransportOverride", null);
         com.clawbench.app.tunnel.H2PortForwardTransport adapter =
                 new com.clawbench.app.tunnel.H2PortForwardTransport(() -> tunnel);
@@ -802,8 +792,8 @@ public class BackgroundServiceTransportTest {
     private void setField(String name, Object value) throws Exception {
         Field field = BackgroundService.class.getDeclaredField(name);
         field.setAccessible(true);
-        // transportPreference/lastError are static; setting them on the
-        // instance would silently leave the process-wide default in place.
+        // lastError is static; setting it on the instance would silently leave
+        // the process-wide value in place.
         if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) {
             field.set(null, value);
         } else {
