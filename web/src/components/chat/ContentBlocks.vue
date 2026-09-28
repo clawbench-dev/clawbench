@@ -1147,12 +1147,11 @@ function handleThinkingClick(block: any, bi: number) {
     thinkingExpanded.value[blockKey] = true
     invalidateBlockHtml()
     // Slim block (think_id, no text): lazy-load the thinking text on expand.
-    // `provisional` mirrors the auto-load rule: while the turn is running the
-    // backend is still appending to chat_thinking, so whatever we read now is a
-    // prefix and must be refetched once the turn ends (otherwise expanding a
-    // still-running block would cache a truncated prefix forever).
+    // Always a FINAL fetch: reaching here means the block is collapsed, which
+    // implies it is done (or the turn is over) — and the backend commits the
+    // text before it forwards thinking_done, so what we read is complete.
     if (!block.text && block.think_id) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
         .catch(() => { /* error surfaced via errors ref */ })
     }
     // Clean up expanding state after animation
@@ -1164,7 +1163,7 @@ function handleThinkingClick(block: any, bi: number) {
     // Retry failed lazy-load when clicking an error-state slim block;
     // otherwise collapse.
     if (!block.text && block.think_id && thinkingContent.errors.value[block.think_id]) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
         .catch(() => { /* error surfaced via errors ref */ })
     } else {
       triggerThinkingCollapse(blockKey)
@@ -1808,36 +1807,9 @@ watch(() => props.active, (active) => {
 // hundreds of collapsed blocks, and so the auto-load does not preempt the click
 // path (a user expanding a FAILED block to retry must not silently receive the
 // cached failure). Everything else keeps lazy-load-on-click.
-// DIAG (stuck top thinking block): dump EVERY thinking block's render state on
-// every blocks change. The stall watchdog only fires after 120s of silence, so a
-// block that spins while the turn keeps streaming is invisible to it — which is
-// exactly the reported shape ("the rest of the reply streams normally"). This
-// fires unconditionally and is throttled to 1/s so it stays readable.
-let _lastRenderDumpAt = 0
-watch(
-  () => props.blocks,
-  () => {
-    const now = Date.now()
-    if (now - _lastRenderDumpAt < 1000) return
-    _lastRenderDumpAt = now
-    const blocks = (props.blocks || []) as any[]
-    const thinks = blocks
-      .map((b, i) => ({ b, i }))
-      .filter(({ b }) => b?.type === 'thinking')
-    diagLog(TAG, `render dump: msgId=${props.msgId} streaming=${props.streaming} active=${props.active} blocks=${blocks.length} thinking=${thinks.length}`)
-    for (const { b, i } of thinks) {
-      const key = stableBlockKey(i, b)
-      const cached = b.think_id ? thinkingContent.cachedText(b.think_id) : undefined
-      diagLog(TAG, `render block[${i}]: tid=${b.think_id || '-'} done=${b.done} inprog=${b.in_progress} textLen=${typeof b.text === 'string' ? b.text.length : -1} cached=${cached === undefined ? 'none' : cached.length} err=${b.think_id ? !!thinkingContent.errors.value[b.think_id] : false} isStreaming=${isThinkingStreaming(b)} collapsed=${isThinkingCollapsed(b, i)} expanded=${!!thinkingExpanded.value[key]} expanding=${!!expandingThinking.value[key]}`)
-    }
-  },
-  { deep: true },
-)
-
 watch(
   () => {
     const blocks = props.blocks || []
-    const turnOver = !props.streaming
     const tailStart = props.streaming ? Math.max(0, blocks.length - DONE_AUTOLOAD_TAIL) : blocks.length
     const ids: string[] = []
     for (let bi = 0; bi < blocks.length; bi++) {
@@ -1859,27 +1831,21 @@ watch(
       // (nothing else would replace it), or when nothing was ever loaded AND
       // the block is in the streaming tail the live view renders open.
       //
-      // The provisional refetch waits for the turn to end. `thinking_done`
-      // reaches us BEFORE the backend commits the final chat_thinking text (the
-      // event is forwarded immediately; the DB flush is rate-limited and only
-      // rewritten in full at Finalize), so a refetch fired on `done` mid-turn
-      // can capture a PREFIX and — because it is a "final" request — clear the
-      // provisional flag, after which `cached !== undefined` skipped it forever.
-      // That is the reported truncated thinking text (cached 760 of final 844;
-      // another case 17124 of 18887). By the time the turn is over the DB is
-      // complete (verified: the terminal `done` is sent after Finalize).
-      if (provisional) { if (turnOver) ids.push(`f:${b.think_id}`); continue }
+      // A finished block's text is complete by the time we see `done`: the
+      // backend commits the block's chat_thinking BEFORE it forwards
+      // thinking_done, and the terminal `done` is sent after Finalize. So the
+      // refetch can fire immediately — no need to wait for the turn to end.
+      if (provisional) { ids.push(`f:${b.think_id}`); continue }
       if (cached !== undefined) continue
       // NOT for merely-expanded blocks: expanding one goes through
       // handleThinkingClick, which loads it itself. Auto-loading it here would
       // fire a second request that races the click's own — and on a FAILED
       // block it would swallow the retry's fresh request.
       //
-      // While the turn is still running, any snapshot we take is provisional by
-      // definition: the backend is still appending to chat_thinking. Marking it
-      // so is what lets the `done && provisional` branch above replace it with
-      // the final text once the turn ends.
-      if (bi >= tailStart) ids.push(`${turnOver ? 'f' : 'p'}:${b.think_id}`)
+      // `f:`, not `p:` — this block is done, so what we read is the final text.
+      // Only a still-streaming block (the `in_progress` branch above) reads a
+      // prefix that must be refetched later.
+      if (bi >= tailStart) ids.push(`f:${b.think_id}`)
     }
     return ids.join('|')
   },

@@ -4,7 +4,7 @@ import { useToast } from '@/composables/useToast.ts'
 import { useSessionIdentity } from '@/composables/useSessionIdentity.ts'
 import { useAppForeground, onAppResume } from '@/composables/useAppForeground'
 import { useGlobalEvents } from '@/composables/useGlobalEvents'
-import { appLog, diagLog } from '@/utils/appLog'
+import { appLog } from '@/utils/appLog'
 import { reportCancelRoundTrip } from '@/utils/cancelRoundTrip'
 
 const TAG = 'ChatSession'
@@ -15,7 +15,7 @@ import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populat
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
 import { isTransportError } from '@/utils/networkError'
-import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction, type ContentBlock } from '@/utils/chatStreamUtils.ts'
+import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
 import { syncFromHistory, clearQueue } from '@/composables/useMessageQueue.ts'
 
@@ -248,17 +248,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     // so they are buffered until a stream_start that already passed, leaving an
     // empty bubble with no spinner until a refresh. Only when the session is no
     // longer running is the DB genuinely final and the placeholder disposable.
-    // DIAG (stuck top thinking block): dump the state on BOTH sides of the
-    // switch-back rebuild, so the report shows what the live placeholder held
-    // and what the DB offered. This is the path the reported bug comes from
-    // ("switch away, switch back"), and it is otherwise invisible — rebuildFromDb
-    // is a pure function with no logging.
-    const liveMsg = messages.value.find((m) => m.role === 'assistant' && m.streaming) as ChatMessage | undefined
-    dumpThinkingState('db_load in', liveMsg?.blocks, `running=${isRunning}`)
-    dumpThinkingState('db_load db', (parsed as ChatMessage[]).filter((m) => m.role === 'assistant').slice(-1)[0]?.blocks)
     dispatch({ type: 'db_load', dbMessages: parsed as ChatMessage[], sessionRunning: isRunning })
-    const liveAfter = messages.value.find((m) => m.role === 'assistant' && m.streaming) as ChatMessage | undefined
-    dumpThinkingState('db_load out', liveAfter?.blocks)
     // The loaded-window cursor follows the authoritative DB snapshot: after a
     // db_load the oldest loaded row IS the snapshot's oldest DB row. This
     // update is idempotent for repeated loads of the same window, and a new
@@ -911,33 +901,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     reopenCurrentSession().catch(() => {})
   })
 
-/**
- * DIAG (stuck top thinking block): dump every thinking block's decision inputs.
- *
- * The stall watchdog only fires after 120s of silence, so a block that spins
- * while the turn keeps streaming is invisible to it — which is exactly the
- * reported shape ("the rest of the reply streams normally"). This fires on the
- * switch-back rebuild instead, where the bug appears.
- */
-function dumpThinkingState(label: string, blocks: readonly unknown[] | undefined, extra = ''): void {
-  try {
-    const thinks = (blocks || []).filter(
-      (b): b is ContentBlock => (b as ContentBlock | undefined)?.type === 'thinking',
-    )
-    diagLog(TAG, `${label}: ${extra}${extra ? ' ' : ''}blocks=${blocks?.length ?? 0} thinking=${thinks.length}`)
-    for (const [i, b] of thinks.entries()) {
-      diagLog(TAG, `${label}[${i}]: tid=${b.think_id || '-'} done=${b.done} inprog=${b.in_progress} textLen=${typeof b.text === 'string' ? b.text.length : -1}`)
-    }
-  } catch (e) {
-    diagLog(TAG, `${label} dump failed: ${e instanceof Error ? e.message : String(e)}`)
-  }
-}
-
   async function switchSession(sessionId: string, projectPath?: string) {
-    // DIAG (stuck top thinking block): mark the switch boundary. The reported
-    // bug only appears after leaving and re-entering a streaming session, so the
-    // log needs the "left here, came back there" pair to correlate the dumps.
-    diagLog(TAG, `switchSession: from=${currentSessionId.value || 'none'} to=${sessionId}`)
     // Bump loadHistorySeq so any in-flight loadHistory results are discarded
     // (switchSession takes priority over stale loadHistory responses).
     // loadHistory's own mySeq check handles the actual guard.
