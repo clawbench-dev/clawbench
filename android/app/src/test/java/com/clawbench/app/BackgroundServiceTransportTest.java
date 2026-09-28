@@ -228,9 +228,10 @@ public class BackgroundServiceTransportTest {
     /**
      * Make the service read {@code tunnel_transport_h2_enabled = true}.
      *
-     * <p>Replaces the old {@code setField("transportPreference", H2)}: the
-     * preference is no longer a field, so it has to be driven through the
-     * SharedPreferences the service actually consults.
+     * <p>The transport choice is a persisted preference, not a field, so it has
+     * to be driven through the {@link SharedPreferences} the service actually
+     * consults — this stubs the stored boolean that
+     * {@link BackgroundService#isTunnelTransportH2Enabled} reads.
      */
     private void enableH2Preference() {
         prefsBools.put("tunnel_transport_h2_enabled", true);
