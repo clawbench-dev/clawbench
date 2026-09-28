@@ -69,19 +69,6 @@ export interface ClawBenchNative {
   isTunnelConnected(): Promise<boolean>
   getTunnelError(): Promise<string>
   getTunnelErrorType(): Promise<string>
-  /**
-   * Tell the native layer which tunnel transport to use
-   * (`port_forward.transport`: 'ssh' | 'h2' | 'both').
-   *
-   * The setting lives on the SERVER; the web app reads `/api/config` and
-   * forwards it here so the native tunnel (which has no authenticated config
-   * client) follows the same value.
-   *
-   * Optional: older hosts predate the h2 transport, and the caller treats a
-   * missing method as "nothing to do" — such a host keeps using SSH, which is
-   * exactly what it already does.
-   */
-  setTunnelTransport?(pref: string): Promise<void> | void
   /** The transport preference the native layer is currently using. */
   getTunnelTransport?(): Promise<string> | string
   /**

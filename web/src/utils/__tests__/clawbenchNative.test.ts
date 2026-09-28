@@ -74,51 +74,16 @@ describe('clawbenchNative bridge wrapper', () => {
 })
 
 /**
- * The tunnel-transport bridge methods added by T8.
+ * The tunnel-transport bridge methods.
  *
- * These are declared optional in the contract, because Android's implementation
- * lands separately and older hosts predate the h2 transport entirely. The
- * caller's contract is therefore: "call if present, do nothing otherwise" — an
- * absent method must never throw, and must never be mistaken for a value. The
- * three branches (Electron, Android, legacy) are exercised below because a
- * host that implements only one of them is the realistic case, not a
- * hypothetical.
+ * Both are declared optional in the contract, because older hosts predate the
+ * h2 transport entirely. The caller's contract is therefore: "call if present,
+ * do nothing otherwise" — an absent method must never throw, and must never be
+ * mistaken for a value. The two branches (Electron Promise / Android sync, and
+ * legacy) are exercised below because a host that implements only one of them
+ * is the realistic case, not a hypothetical.
  */
 describe('clawbenchNative tunnel transport bridge', () => {
-  it('setTunnelTransport forwards the value on an Electron-style host', () => {
-    const setTunnelTransport = vi.fn()
-    setNative({ setTunnelTransport })
-
-    getNative()?.setTunnelTransport?.('both')
-
-    expect(setTunnelTransport).toHaveBeenCalledWith('both')
-  })
-
-  it('setTunnelTransport degrades to a no-op on a host that predates it', () => {
-    // A legacy Android build / older Electron shell: the method is simply
-    // absent. Optional chaining is the whole degradation story, and it must not
-    // throw — a throw here would abort the config load that calls it.
-    setNative({ isNativeApp: () => true })
-
-    expect(() => getNative()?.setTunnelTransport?.('h2')).not.toThrow()
-  })
-
-  it('setTunnelTransport degrades to a no-op with no bridge at all (web mode)', () => {
-    expect(() => getNative()?.setTunnelTransport?.('h2')).not.toThrow()
-  })
-
-  it('setTunnelTransport accepts a synchronous Android @JavascriptInterface method', () => {
-    // Android's bridge is synchronous: a void method, no Promise. Nothing in
-    // the call path may assume a thenable.
-    const setTunnelTransport = vi.fn()
-    setNative({ setTunnelTransport })
-
-    const result = getNative()?.setTunnelTransport?.('ssh')
-
-    expect(setTunnelTransport).toHaveBeenCalledWith('ssh')
-    expect(result).toBeUndefined()
-  })
-
   it('getTunnelTransport resolves an Electron Promise and an Android sync value alike', async () => {
     setNative({ getTunnelTransport: () => Promise.resolve('both') })
     expect(await getNative()?.getTunnelTransport?.()).toBe('both')
