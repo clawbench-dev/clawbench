@@ -97,9 +97,16 @@ describe('bridge: tunnel transport IPC', () => {
     expect(handlers.has('native:get-active-tunnel-transport')).toBe(true)
   })
 
-  it.each(['ssh', 'h2', 'both'])('forwards a valid preference %s to setTransportPreference', (pref) => {
+  it('forwards ssh to setTransportPreference', () => {
+    invoke('native:set-tunnel-transport', 'ssh')
+    expect(tunnelMock.setTransportPreference).toHaveBeenCalledWith('ssh')
+  })
+
+  // Electron is hard-wired to SSH: h2/both must be dropped at the IPC boundary
+  // so a stale renderer cannot switch the main process off SSH.
+  it.each(['h2', 'both'])('clamps %s to a no-op (Electron stays on ssh)', (pref) => {
     invoke('native:set-tunnel-transport', pref)
-    expect(tunnelMock.setTransportPreference).toHaveBeenCalledWith(pref)
+    expect(tunnelMock.setTransportPreference).not.toHaveBeenCalled()
   })
 
   it.each([

@@ -91,8 +91,13 @@ export function registerBridge(): void {
   // port_forward.transport: the renderer owns the server config read, so it
   // pushes the value down after loading /api/config (see the method docs in
   // preload/index.ts for why the main process does not fetch it itself).
+  //
+  // Electron is hard-wired to SSH: only 'ssh' reaches setTransportPreference,
+  // while 'h2'/'both' are ignored. The h2 path stays in tunnel.ts for a future
+  // enablement, but the bridge no longer forwards h2/both — this also blocks a
+  // stale (cached) renderer pushing 'both' after a server config change.
   ipcMain.handle('native:set-tunnel-transport', (_e, pref: unknown) => {
-    if (pref === 'ssh' || pref === 'h2' || pref === 'both') setTransportPreference(pref)
+    if (pref === 'ssh') setTransportPreference('ssh')
   })
   ipcMain.handle('native:get-tunnel-transport', () => getTransportPreference())
   // Which transport actually carried the last successful connect — distinct
