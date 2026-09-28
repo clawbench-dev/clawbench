@@ -87,6 +87,34 @@
       </template>
     </template>
 
+    <!-- Android-only h2 tunnel toggle. A dedicated row rather than a
+         commonFields entry: the truth source is Android SharedPreferences, so
+         it must not flow through usePanelSnapshot's save routing (which would
+         write localStorage for 'local' or 400 the whole save for 'server').
+         Rendered only once the async initial value has arrived, and hidden
+         entirely on a host that lacks the bridge method (see h2ToggleVisible). -->
+    <template v-if="h2ToggleVisible">
+      <SettingsItem
+        :label="t('settings.items.portForwardH2')"
+        :description="t('settings.items.portForwardH2Desc')"
+        type="switch"
+        :model-value="h2Enabled"
+        :no-divider="true"
+        @update:model-value="onH2Toggle"
+      />
+      <div class="group-panel__h2-hint">
+        <span>{{ t('settings.items.portForwardH2ReconnectHint') }}</span>
+        <button
+          type="button"
+          class="fbtn group-panel__h2-reconnect"
+          :disabled="h2Reconnecting"
+          @click="onReconnectTunnel"
+        >
+          {{ t('settings.items.portForwardH2Reconnect') }}
+        </button>
+      </div>
+    </template>
+
     <!-- Footer inside the card -->
     <div class="group-panel__footer">
       <div v-if="serverError" class="group-panel__error">{{ serverError }}</div>
@@ -199,6 +227,8 @@ import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useFrp } from '@/composables/useFrp'
+import { useAppMode } from '@/composables/useAppMode'
+import { getNative, reconnectTunnel } from '@/utils/clawbenchNative'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
 import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
@@ -550,6 +580,74 @@ const frpSshPortDisplay = computed(() => {
   const port = frpState.state === 'running' && frpState.sshRemotePort > 0 ? frpState.sshRemotePort : null
   return port
 })
+
+// ── Android-only h2 tunnel toggle ──
+
+const { isAppMode, isDesktopApp } = useAppMode()
+/**
+ * True only in the Android WebView shell. Both native hosts report
+ * isAppMode === true, so Electron must be excluded explicitly — the toggle is
+ * Android-only (Electron is clamped to SSH). Same definition as
+ * SettingsCategory.vue's `isAndroidApp`.
+ */
+const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
+
+const h2Enabled = ref(false)
+/** Set once the async initial value has been read; gates the row's v-if so it
+ *  never flashes a false "off" before the real value arrives. */
+const h2ToggleLoaded = ref(false)
+/** The host lacks the new bridge getter (an older APK) — hide the row instead
+ *  of showing a toggle that would not persist. */
+const h2ToggleUnsupported = ref(false)
+const h2Reconnecting = ref(false)
+
+const h2ToggleVisible = computed(() =>
+  isAndroidApp.value
+  && props.config.panelId === 'portForward'
+  && h2ToggleLoaded.value
+  && !h2ToggleUnsupported.value
+)
+
+onMounted(async () => {
+  if (!isAndroidApp.value || props.config.panelId !== 'portForward') return
+  const native = getNative()
+  // Legacy host: no persisted toggle exists, so there is nothing truthful to
+  // render. Keep it hidden (never fall back to the non-persisting
+  // setTunnelTransport).
+  if (!native?.getTunnelTransportH2Enabled) {
+    h2ToggleUnsupported.value = true
+    return
+  }
+  try {
+    h2Enabled.value = !!(await native.getTunnelTransportH2Enabled())
+  } catch {
+    h2ToggleUnsupported.value = true
+    return
+  }
+  h2ToggleLoaded.value = true
+})
+
+/** Persist the toggle. Takes effect on the next reconnect (the native setter
+ *  only writes SharedPreferences and does not touch the live transport), hence
+ *  the hint + reconnect button below the row. */
+function onH2Toggle(value: unknown) {
+  h2Enabled.value = !!value
+  try {
+    getNative()?.setTunnelTransportH2Enabled?.(h2Enabled.value)
+  } catch { /* not in app mode */ }
+}
+
+async function onReconnectTunnel() {
+  if (h2Reconnecting.value) return
+  h2Reconnecting.value = true
+  try {
+    if (await reconnectTunnel()) {
+      toast.show(t('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+    }
+  } finally {
+    h2Reconnecting.value = false
+  }
+}
 
 // ── Save ──
 
@@ -946,6 +1044,22 @@ watch(localValues, () => {
   color: var(--text-muted);
   text-align: center;
   margin-bottom: var(--space-3);
+}
+
+/* Android h2 toggle hint + reconnect action, shown directly under the switch
+   row. Aligned with the SettingsItem padding so the two read as one block. */
+.group-panel__h2-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-7) var(--space-4);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.group-panel__h2-reconnect {
+  flex-shrink: 0;
 }
 
 /* Layout only — visuals come from the shared .fbtn pills. */
