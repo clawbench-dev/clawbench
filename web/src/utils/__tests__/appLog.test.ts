@@ -394,13 +394,13 @@ describe('diagLog (ungated diagnostic channel)', () => {
     setLogCaptureEnabled(false)
     _clearBuffer()
 
-    diagLog('MotionEnv', 'env: reduce=false', { immediate: true })
+    diagLog('Diag', 'startup line', { immediate: true })
 
     // Must land inside the debounce window — that is the whole point. Waiting
     // for the default 250ms debounce would pass even with `immediate` ignored.
     await new Promise(r => setTimeout(r, 100))
     expect(fetchSpy, 'an immediate call must not wait out the debounce').toHaveBeenCalled()
-    expect(JSON.parse(fetchSpy.mock.calls[0][1].body).entries[0].msg).toBe('env: reduce=false')
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body).entries[0].msg).toBe('startup line')
   })
 
   it('keeps the debounce for non-immediate calls', async () => {

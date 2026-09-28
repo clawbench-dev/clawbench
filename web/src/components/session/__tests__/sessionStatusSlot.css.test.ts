@@ -11,23 +11,22 @@ import { readWebFile } from '@/testUtils/readWebFile'
  * blocked on your approval" were the same pixels. The fix has two halves, and
  * each is guarded here because each can silently rot:
  *
- *   1. Three visually distinct states, separated by MOTION (rotate / pulse /
- *      still) with hue only as a secondary channel. Motion is the primary
- *      channel because neither hue is safe on its own: a theme's accent and
- *      its orange are both theme properties and are free to sit close
- *      together, and a colour-vision-deficient reader gets nothing from hue.
+ *   1. Two visually distinct states, separated by MOTION (pulse / still) with
+ *      hue only as a secondary channel. Motion is the primary channel because
+ *      neither hue is safe on its own: a theme's accent and its orange are both
+ *      theme properties and are free to sit close together, and a
+ *      colour-vision-deficient reader gets nothing from hue.
  *   2. The comet stops while blocked. A travelling band means "progressing";
  *      showing it on a row that is waiting for the user claims progress that
  *      is not happening.
  *
- * The running state is a RING (a rotating arc over a faint track) while the
- * other two are filled dots — so shape carries one layer of separation and
- * motion carries the rest. The ring must stay a ring: a filled disc would make
- * it the unread dot at a larger size, and a `border` on the dot states would
- * make "waiting on you" look like a spinner.
+ * A RUNNING row shows NOTHING in the slot: its bottom-edge comet already
+ * carries "work is progressing", so a ring here said the same thing twice.
+ * There must be no `.is-running` rule, no spin keyframes and no ring tokens —
+ * the ring was removed on purpose and must not creep back (asserted below).
  *
- * The component-level priority rule (pending > running > unread) is asserted
- * in SessionList.test.ts, where the real template renders. This file owns the
+ * The component-level priority rule (pending > unread) is asserted in
+ * SessionList.test.ts, where the real template renders. This file owns the
  * stylesheet-level invariants: token derivation, per-theme visibility, and the
  * deliberate reduced-motion EXCEPTION (this slot does not opt out — see the
  * test for why).
@@ -144,9 +143,6 @@ describe('session status slot', () => {
     // wrong on the other 35 — the exact failure the running-band tokens were
     // introduced to fix.
     const derived: Record<string, RegExp> = {
-      // The running ring: the arc and its track both derive from the accent.
-      '--running-ring': /var\(--accent-color\)/,
-      '--running-ring-track': /var\(--accent-color\)/,
       '--status-dot': /var\(--accent-color\)/,
       '--status-dot-pending': /var\(--color-orange\)/,
       // The bottom-edge comet shares the row's "running" message, so it is
@@ -164,48 +160,44 @@ describe('session status slot', () => {
     }
   })
 
-  it('declares the ring tokens the running state consumes', () => {
-    // The running state is a ring, and it is drawn entirely from these two
-    // tokens. `--running-ring-track` is the low-alpha arc colour, not
-    // `--border-color`: on a running row the track must not read as a second,
-    // static ring competing with the rotating arc.
-    expect(rootVars['--running-ring'], '--running-ring must exist').toBeDefined()
-    expect(rootVars['--running-ring-track'], '--running-ring-track must exist').toBeDefined()
-    expect(rootVars['--running-ring-track'], 'the track must be translucent').toMatch(/transparent/)
-
-    // Only the RING tokens are required. The pending dot is a fill, not a ring,
-    // so it must not have picked up a ring token of its own — that is how the
-    // old pending ring would creep back in.
-    expect(rootVars['--pending-ring'], '--pending-ring should not exist').toBeUndefined()
-    expect(rootVars['--pending-ring-track'], '--pending-ring-track should not exist').toBeUndefined()
+  it('declares NO ring tokens — the slot is dots only', () => {
+    // A running row shows nothing in the slot (the bottom-edge comet carries
+    // that message), so the running ring was removed along with its tokens.
+    // This assertion is the guard against it creeping back: a leftover
+    // `--running-ring` is exactly the entry point for re-adding the ring, and
+    // it would then be dead-but-tempting rather than absent.
+    //
+    // `--pending-ring` never existed, but is asserted too: the pending state is
+    // a fill, never a ring, and "waiting on you" must not look like a spinner.
+    for (const token of [
+      '--running-ring',
+      '--running-ring-track',
+      '--pending-ring',
+      '--pending-ring-track',
+    ]) {
+      expect(rootVars[token], `${token} should not exist`).toBeUndefined()
+    }
   })
 
-  it('separates the live states by animation, not by hue', () => {
+  it('separates the two states by animation, not by hue', () => {
     // Measured: 3 of the 36 themes give `--accent-color` and `--color-orange`
     // the SAME value (ayu-light #ff9940, gruvbox-light #af3a03, gruvbox-dark
     // #fe8019). Both are theme properties, so this is not a bug to fix — it is
-    // the reason the design may not lean on colour. The live states must
-    // therefore differ in their ANIMATION, which is asserted here on the real
-    // rules rather than on the tokens.
-    const running = list.match(/\n\.session-status\.is-running\s*\{[^}]*\}/)?.[0]
+    // the reason the design may not lean on colour. The two states are the same
+    // shape and size, so they must differ in their ANIMATION; that is asserted
+    // here on the real rules rather than on the tokens.
     const pending = list.match(/\n\.session-status\.is-pending\s*\{[^}]*\}/)?.[0]
-    expect(running, 'the running rule should exist').toBeTruthy()
+    const unread = list.match(/\n\.session-status\.is-unread\s*\{[^}]*\}/)?.[0]
     expect(pending, 'the pending rule should exist').toBeTruthy()
+    expect(unread, 'the unread rule should exist').toBeTruthy()
 
-    const anim = (rule: string) => rule.match(/animation:\s*([\w-]+)/)?.[1]
-    const a = anim(running!)
-    const b = anim(pending!)
-    expect(a, 'running should animate').toBeTruthy()
-    expect(b, 'pending should animate').toBeTruthy()
     expect(
-      a,
-      'the two states must not share an animation — colour alone cannot carry it',
-    ).not.toBe(b)
-    // And they are not the same motion at different speeds: one rotates, one
-    // scales in place.
-    expect(list, '@keyframes session-status-spin should exist').toMatch(
-      /@keyframes session-status-spin/,
-    )
+      pending!.match(/animation:\s*([\w-]+)/)?.[1],
+      'pending must animate — that is the only thing separating it from unread',
+    ).toBe('session-status-pulse')
+    expect(unread, 'unread must NOT animate').not.toMatch(/animation\s*:/)
+
+    // The pulse scales in place; a translate would read as movement.
     expect(list, '@keyframes session-status-pulse should exist').toMatch(
       /@keyframes session-status-pulse/,
     )
@@ -292,7 +284,7 @@ describe('session status slot', () => {
     )
 
     // And the track turns to the amber under-bar, so the edge agrees with the
-    // pending ring on the other side of the row.
+    // pending dot in the status slot on the other side of the row.
     const edge = baseRule(list, '.session-running-line.is-blocked::before')
     expect(edge, 'a blocked track should be recoloured').toBeTruthy()
     expect(edge).toContain('var(--pending-track)')
@@ -307,55 +299,56 @@ describe('session status slot', () => {
 
   it('uses motion, not just colour, to separate the states', () => {
     // Motion is the load-bearing channel: it survives every theme and every
-    // reader. Assert each state's animation is the right SHAPE — a rotating
-    // ring for progress, an in-place pulse for "waiting on you", and nothing
-    // at all for unread.
-    const running = list.match(/\n\.session-status\.is-running\s*\{[^}]*\}/)?.[0]
-    expect(running, '.session-status.is-running should exist').toBeTruthy()
-    expect(running, 'running must rotate').toMatch(/animation:\s*session-status-spin/)
-    expect(running).toContain('var(--running-ring)')
-
+    // reader. Assert each state's animation is the right SHAPE — an in-place
+    // pulse for "waiting on you", and nothing at all for unread.
     const pending = list.match(/\n\.session-status\.is-pending\s*\{[^}]*\}/)?.[0]
     expect(pending, '.session-status.is-pending should exist').toBeTruthy()
     expect(pending, 'pending must pulse in place').toMatch(/animation:\s*session-status-pulse/)
     expect(pending).toContain('var(--status-dot-pending)')
-    // The whole distinction: a blocked row must NOT look like a busy one.
-    expect(pending, 'pending must not rotate — that would read as busy').not.toMatch(
-      /session-status-spin/,
-    )
 
     const unread = list.match(/\n\.session-status\.is-unread\s*\{[^}]*\}/)?.[0]
     expect(unread, '.session-status.is-unread should exist').toBeTruthy()
     expect(unread, 'unread is the quiet one — no animation').not.toMatch(/animation\s*:/)
     expect(unread).toContain('var(--status-dot)')
 
-    // The ring must be a ring: an arc over a faint track, not a filled disc.
-    // A fill would make running look like the unread dot at a larger size.
-    expect(running, 'the running state must be a ring (border)').toMatch(/border:\s*2px solid/)
-    expect(running, 'the arc must be distinguished from its track').toMatch(
-      /border-top-color:\s*var\(--running-ring\)/,
-    )
-
     // The pulse must scale in place; a translate would read as movement.
     const pulse = list.match(/@keyframes session-status-pulse\s*\{[^}]*\}[^}]*\}/)?.[0]
     expect(pulse, '@keyframes session-status-pulse should exist').toBeTruthy()
     expect(pulse).toMatch(/scale\(/)
     expect(pulse, 'a translating pulse would read as travel').not.toMatch(/translate/)
+
+    // A running row shows NOTHING in the slot — the bottom-edge comet carries
+    // that message, so a ring here was the same fact twice. Neither the rule
+    // nor its spin keyframes may exist.
+    expect(
+      list.match(/\n\.session-status\.is-running\s*\{[^}]*\}/)?.[0],
+      '.session-status.is-running must not exist — running shows no slot',
+    ).toBeUndefined()
+    expect(list, 'the spin keyframes must be gone').not.toMatch(
+      /@keyframes session-status-spin/,
+    )
+
+    // And no state may be a ring: a `border` is what the removed running ring
+    // was drawn with, so any `border` on the slot is that ring creeping back.
+    for (const cls of ['is-pending', 'is-unread']) {
+      const rule = list.match(new RegExp(`\\n\\.session-status\\.${cls}\\s*\\{[^}]*\\}`))?.[0]
+      expect(rule, `.session-status.${cls} should exist`).toBeTruthy()
+      expect(rule, `${cls} must be a fill, never a ring`).not.toMatch(/border:/)
+    }
   })
 
-  it('renders the running state as a single ring element, not child dots', () => {
-    // The running state is the slot itself (a `border` ring), so the template
-    // must NOT emit child elements. A leftover `v-for` dot container here would
-    // render three unstyled children inside a 14px ring — invisible in most
-    // themes but a real regression, and exactly the kind of leftover that
-    // survives a refactor unnoticed.
+  it('paints the slot as a single element, not child dots', () => {
+    // The slot is one painted element per state. A leftover `v-for` dot
+    // container would render unstyled children — invisible in most themes but a
+    // real regression, and exactly the kind of leftover that survives a
+    // refactor unnoticed.
     const template = list.slice(0, list.indexOf('<style'))
     expect(
       template,
-      'the running state must not render child dots — it is a ring on the slot',
+      'the slot must not render child dots — it paints itself',
     ).not.toMatch(/session-status-dot/)
     expect(template, 'no dot v-for should remain').not.toMatch(
-      /v-for="n in \((row|crossStatus)\.?[^)]*running[^)]*\)"/,
+      /v-for="n in \((row|rowStatus)\.?[^)]*running[^)]*\)"/,
     )
   })
 
@@ -371,8 +364,6 @@ describe('session status slot', () => {
     //     and size; only the pulse and the hue separate them. Frozen, they
     //     differ by hue alone — and a theme's accent and its orange may be
     //     identical (3 of the 36 themes), making them literally the same.
-    //   - a stopped ring is also the universal "stalled / broken" glyph, so
-    //     running would misread as stuck rather than quiet.
     //
     // It also has to match the rest of the app, which was the actual bug
     // report: every other loading indicator (RefreshButton, the bottom-edge
@@ -388,12 +379,8 @@ describe('session status slot', () => {
       'the status slot must not opt out of reduced-motion — see the CSS comment',
     ).toBeNull()
 
-    // And the animations it would have disabled must still be present, so this
-    // cannot pass merely because the animations were deleted outright.
-    const running = list.match(/\n\.session-status\.is-running\s*\{[^}]*\}/)?.[0]
-    expect(running, 'the running spin must still be declared').toMatch(
-      /animation:\s*session-status-spin/,
-    )
+    // And the animation it would have disabled must still be present, so this
+    // cannot pass merely because the animation was deleted outright.
     const pending = list.match(/\n\.session-status\.is-pending\s*\{[^}]*\}/)?.[0]
     expect(pending, 'the pending pulse must still be declared').toMatch(
       /animation:\s*session-status-pulse/,
@@ -495,18 +482,13 @@ describe('session status slot', () => {
     const pendingStop = Number(pending!.match(/(\d+(?:\.\d+)?)px,\s*transparent/)?.[1])
     expect(pendingStop, 'the pending dot should be the same size as the unread one').toBe(stop)
 
-    // The dot states must be FILLS, not rings — the ring belongs to running
-    // alone. A border here would make a "waiting" state look like a spinner.
+    // The dot states must be FILLS, not rings. A border here would make a
+    // "waiting" state look like a spinner — and it is also how the removed
+    // running ring was drawn, so a border anywhere is that ring creeping back.
     for (const cls of ['is-pending', 'is-unread']) {
       const rule = list.match(new RegExp(`\\n\\.session-status\\.${cls}\\s*\\{[^}]*\\}`))?.[0]
       expect(rule, `.session-status.${cls} should exist`).toBeTruthy()
       expect(rule, `${cls} must be a fill, not a ring`).not.toMatch(/border:/)
     }
-
-    // And running must be the opposite: a ring, never a gradient fill (a fill
-    // would make it the unread dot at a larger size).
-    const running = list.match(/\n\.session-status\.is-running\s*\{[^}]*\}/)?.[0]
-    expect(running, '.session-status.is-running should exist').toBeTruthy()
-    expect(running, 'running must be a ring, not a fill').not.toMatch(/radial-gradient/)
   })
 })

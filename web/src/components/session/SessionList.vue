@@ -133,11 +133,16 @@
                     >{{ tag.name }}</span>
                   </div>
                 </div>
-                <!-- Status slot. One element, three mutually exclusive states
-                     (see rowStatus): pending outranks running, running outranks
-                     unread. They used to share a single dot, which made "there
-                     is a reply" and "it is blocked waiting for your approval"
-                     look identical. -->
+                <!-- Status slot. One element, two mutually exclusive states
+                     (see rowStatus): pending outranks unread. They used to
+                     share a single dot, which made "there is a reply" and "it
+                     is blocked waiting for your approval" look identical.
+
+                     A running row shows NOTHING here: the bottom-edge comet
+                     already carries "work is progressing", so a second marker
+                     in the slot would say the same thing twice. With no status
+                     the element is not rendered at all, so the slot costs the
+                     row no width. -->
                 <span
                   v-if="row.status"
                   class="session-status"
@@ -177,8 +182,8 @@
               class="cross-session-row"
               :class="{ running: session.running }"
             >
-              <span v-if="session.running" class="session-running-line" :class="{ 'is-blocked': crossStatus(session) === 'pending' }">
-                <i v-if="crossStatus(session) === 'pending'" class="session-running-band"></i>
+              <span v-if="session.running" class="session-running-line" :class="{ 'is-blocked': rowStatus(session) === 'pending' }">
+                <i v-if="rowStatus(session) === 'pending'" class="session-running-band"></i>
                 <i v-else v-running-sweep class="session-running-band"></i>
               </span>
               <div class="cross-session-item" @click="selectCrossSession(session, group.name)">
@@ -193,11 +198,11 @@
                   </div>
                 </div>
                 <span
-                  v-if="crossStatus(session)"
+                  v-if="rowStatus(session)"
                   class="session-status"
-                  :class="`is-${crossStatus(session)}`"
-                  :title="statusLabel(crossStatus(session))"
-                  :aria-label="statusLabel(crossStatus(session))"
+                  :class="`is-${rowStatus(session)}`"
+                  :title="statusLabel(rowStatus(session))"
+                  :aria-label="statusLabel(rowStatus(session))"
                   role="img"
                 ></span>
               </div>
@@ -368,37 +373,30 @@ function expandGroupOf(sessionId) {
 /**
  * The single status a row shows, or null when it wants nothing from the user.
  *
- * Priority is pending > running > unread, and the order matters:
+ * Priority is pending > unread. They are mutually exclusive by construction
+ * (one slot, one state) so the two can never be confused for one another,
+ * which was the whole problem with the old shared dot.
  *
- *   - pending outranks running because a session blocked on an approval IS
- *     still running (the runner is alive, `running` stays true) — but the
- *     thing the user needs to know is "it is waiting on YOU", not "it is
- *     busy". Without this rule every approval request would be hidden behind
- *     the running state.
- *   - unread is last because it is the only one that is not live: it means
- *     "there is a reply you have not looked at", which is strictly less urgent
- *     than work in flight.
+ * `pending` outranks `unread` because a session blocked on an approval is the
+ * one case where the user is the blocker: it must not be hidden behind "there
+ * is a reply you have not looked at".
  *
- * They are mutually exclusive by construction (one slot, one state) so the
- * three can never be confused for one another, which was the whole problem
- * with the old shared dot.
+ * A RUNNING row returns null — the slot stays empty. "Work is progressing" is
+ * already carried by the row's bottom-edge comet, and a second marker here
+ * would say the same thing twice. Because the slot is `v-if`'d on this value,
+ * an empty result renders no element at all, so it costs the row no width.
+ * A running row that also has unread replies still shows the unread dot: the
+ * comet and the dot travel on separate channels.
  */
-function rowStatus(session, isRunning) {
+function rowStatus(session) {
   if (session.pendingApproval) return 'pending'
-  if (isRunning) return 'running'
   if (session.unreadCount > 0) return 'unread'
   return null
-}
-
-/** Status for a cross-project row, which carries its own `running` flag. */
-function crossStatus(session) {
-  return rowStatus(session, !!session.running)
 }
 
 /** Tooltip / aria label for a status slot. */
 function statusLabel(status) {
   if (status === 'pending') return t('session.statusPending')
-  if (status === 'running') return t('session.running')
   if (status === 'unread') return t('session.statusUnread')
   return ''
 }
@@ -434,7 +432,7 @@ const visibleRows = computed(() => {
         // child of its type.
         isLastInGroup: i === members.length - 1,
         running: props.runningSessionIds.has(member.session.id),
-        status: rowStatus(member.session, props.runningSessionIds.has(member.session.id)),
+        status: rowStatus(member.session),
       })
     })
   }
@@ -1256,8 +1254,8 @@ onUnmounted(() => {
 
 /* Blocked on an approval: the session is still running, but nothing is
    progressing, so the comet stops travelling. This is the one state where the
-   row must NOT look busy — see rowStatus(). The amber matches the status ring,
-   so the two halves of the same message agree.
+   row must NOT look busy — see rowStatus(). The amber matches the pending dot
+   in the status slot, so the two halves of the same message agree.
 
    The comet element becomes the full-width bar itself and breathes in place
    (recoloured to solid amber below), while the track turns to the amber
@@ -1445,22 +1443,22 @@ onUnmounted(() => {
 /* ── Status slot: the row's right-hand signal ──
    Replaces `.session-item-badge`, which painted ONE blue dot for both "unread"
    and "pendingApproval" — so "there is a reply" and "it is blocked waiting for
-   your approval" were literally the same pixels. The states are now different
-   shapes AND different motion, because neither channel alone is enough:
+   your approval" were literally the same pixels. The two states are now
+   separated by MOTION, because hue alone is not enough: a theme's accent and
+   its orange may sit close together, and a colour-vision-deficient reader gets
+   nothing from hue at all.
 
-     hue    — a theme's accent and its orange may sit close together, and a
-              colour-vision-deficient reader gets nothing from hue at all;
-     motion — survives every theme and every reader.
+   So: pending pulses in place (blocked on you), unread never moves (nothing is
+   happening). See rowStatus() for why only one is ever shown, and why a
+   RUNNING row shows nothing here at all (the bottom-edge comet already carries
+   that message).
 
-   So: running rotates (progress), pending pulses in place (blocked on you),
-   unread never moves (nothing is happening). See rowStatus() for why only one
-   is ever shown.
-
-   Sized at 14px so it matches the ring in the demo and stays visible without
-   the row's meta line growing. It is a flex child rather than absolutely
-   positioned (the old badge was `position:absolute` at top-right): a flex slot
-   cannot collide with the pinned wedge in the row's top-right corner, and it
-   gives the title a real boundary to ellipsise against.
+   A running row therefore renders no element, so the slot costs it no width.
+   Sized at 14px so it stays visible without the row's meta line growing. It is
+   a flex child rather than absolutely positioned (the old badge was
+   `position:absolute` at top-right): a flex slot cannot collide with the pinned
+   wedge in the row's top-right corner, and it gives the title a real boundary
+   to ellipsise against.
 
    `margin-left` is the title↔slot gap. Without it the slot's left edge lands
    exactly on the title's ellipsis boundary (measured 0px on the live 1440px
@@ -1476,42 +1474,25 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-/* Running — a rotating arc. The track is the arc colour at low alpha (see
-   --running-ring-track) so it reads as one ring in motion, not a static ring
-   with something spinning inside it. */
-.session-status.is-running {
-  border: 2px solid var(--running-ring-track);
-  border-top-color: var(--running-ring);
-  animation: session-status-spin 0.75s linear infinite;
-}
-
-/* Pending — one amber dot pulsing in place. Deliberately does NOT rotate:
-   "stopped and waiting for you" must not look like "busy", and motion
-   direction is the fastest thing a reader picks up. */
+/* Pending — one amber dot pulsing in place. */
 .session-status.is-pending {
   background: radial-gradient(circle, var(--status-dot-pending) 4px, transparent 4px);
   animation: session-status-pulse 1.6s ease-in-out infinite;
 }
 
-/* Unread — a plain dot, no animation. It is the quietest of the three, which
-   is what keeps a list with many unread rows calm.
+/* Unread — a plain dot, no animation. It is the quietest of the two, which is
+   what keeps a list with many unread rows calm.
 
-   The dot is 8px inside the 14px slot, NOT a 14px disc. A solid disc at the
-   ring's diameter carries far more visual weight than a 2px ring, so at equal
-   size the two read as unrelated indicators — the dot looked like a heavier,
-   oversized thing next to the ring. The Demo sizes them apart (15px ring vs
-   8px dot) and this matches it.
+   The dot is 8px inside the 14px slot, NOT a 14px disc: a full-slot disc
+   carries far more visual weight than the pending dot and the two would read
+   as unrelated indicators.
 
    Drawn as a radial-gradient rather than a nested element so the slot keeps its
    14px footprint: shrinking the element itself would let the title run 6px
-   further right on unread rows than on running ones, which shows up as a ragged
-   right edge when scanning the list. */
+   further right on unread rows than on pending ones, which shows up as a
+   ragged right edge when scanning the list. */
 .session-status.is-unread {
   background: radial-gradient(circle, var(--status-dot) 4px, transparent 4px);
-}
-
-@keyframes session-status-spin {
-  to { transform: rotate(360deg); }
 }
 
 @keyframes session-status-pulse {
@@ -1527,15 +1508,12 @@ onUnmounted(() => {
    Motion is not decoration here — it is a load-bearing channel, and freezing
    collapses states:
 
-     - "pending" (pulsing dot) and "unread" (still dot) are the SAME shape and
-       size; only the pulse and the hue separate them. Freeze the pulse and
-       they differ by hue alone — and a theme's accent and its orange are free
-       to be the same value (3 of the 36 themes), so on those themes the two
-       become literally identical. A reader with a colour-vision deficiency
-       gets nothing from the hue on ANY theme.
-     - "running" would survive on its shape alone (a 2px ring vs a filled dot),
-       but a stopped ring is also the universal "broken / stalled" glyph, so it
-       would misread as a stuck session rather than a quiet one.
+     "pending" (pulsing dot) and "unread" (still dot) are the SAME shape and
+     size; only the pulse and the hue separate them. Freeze the pulse and
+     they differ by hue alone — and a theme's accent and its orange are free
+     to be the same value (3 of the 36 themes), so on those themes the two
+     become literally identical. A reader with a colour-vision deficiency
+     gets nothing from the hue on ANY theme.
 
    An earlier version did freeze them, on the reasoning that the states are
    duplicated in the row's title and aria-label; that reasoning is wrong,

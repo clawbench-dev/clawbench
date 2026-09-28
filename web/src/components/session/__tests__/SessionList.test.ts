@@ -358,12 +358,16 @@ describe('SessionList', () => {
   // painted the SAME blue dot for `unreadCount > 0` and `pendingApproval` —
   // so "there is a reply waiting" and "this session is blocked on your
   // approval" were indistinguishable. Each state is now its own class, and the
-  // priority rule (pending > running > unread) is asserted directly.
+  // priority rule (pending > unread) is asserted directly.
   //
-  // These tests deliberately check all three states on separate rows in ONE
-  // mount: a per-state test would pass even if two states rendered the same
-  // class, which is precisely the bug being fixed.
-  it('renders a distinct status class per state, and none when idle', async () => {
+  // A RUNNING row shows NOTHING here: the bottom-edge comet already carries
+  // "work is progressing". So does an idle row. Both are asserted to have no
+  // slot at all — not an empty one, which would leave a 14px hole.
+  //
+  // These tests deliberately check the states on separate rows in ONE mount: a
+  // per-state test would pass even if two states rendered the same class, which
+  // is precisely the bug being fixed.
+  it('renders a distinct status class per state, and none when running or idle', async () => {
     const base = sessionsFixture()
     mockFetch.mockResolvedValue({
       ok: true,
@@ -382,55 +386,59 @@ describe('SessionList', () => {
     await flushPromises()
 
     const cls = (id: string) => wrapper.find(`[data-session-id="${id}"] .session-status`).classes()
-    expect(cls('run'), 'a running session gets the running ring').toContain('is-running')
     expect(cls('pend'), 'a pending approval gets the pending dot').toContain('is-pending')
     expect(cls('unread'), 'unread gets the static dot').toContain('is-unread')
-    // Idle rows carry no slot at all — not an empty one, which would leave a
+    // A running row carries no slot: the bottom-edge comet is its signal, so a
+    // marker here would say the same thing twice (and cost the row width).
+    expect(
+      wrapper.find('[data-session-id="run"] .session-status').exists(),
+      'a running row should have no status slot',
+    ).toBe(false)
+    // Idle rows carry no slot either — not an empty one, which would leave a
     // 14px hole and break the title's ellipsis width.
     expect(
       wrapper.find('[data-session-id="idle"] .session-status').exists(),
       'an idle row should have no status slot',
     ).toBe(false)
 
-    // The three must be mutually exclusive: the old bug was one element
+    // The two must be mutually exclusive: the old bug was one element
     // serving two states.
-    expect(cls('pend')).not.toContain('is-running')
-    expect(cls('run')).not.toContain('is-pending')
+    expect(cls('pend')).not.toContain('is-unread')
+    expect(cls('unread')).not.toContain('is-pending')
   })
 
   it('renders the slot as a single element with no child dots', async () => {
-    // The slot is one painted element per state, not a container of children.
-    // Running is a ring drawn with `border` on the slot itself; pending and
-    // unread are a radial-gradient paint on it. A stray child element here
-    // would be invisible (nothing styles it) but would still be a bug magnet,
-    // so the shape is pinned.
+    // The slot is one painted element per state, not a container of children —
+    // both dot states are a radial-gradient paint on the slot itself. A stray
+    // child element here would be invisible (nothing styles it) but would still
+    // be a bug magnet, so the shape is pinned.
     const base = sessionsFixture()
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
         sessions: [
-          { ...base.s1, id: 'run', title: 'Running', unreadCount: 0, pendingApproval: false },
           { ...base.s1, id: 'pend', title: 'Pending', unreadCount: 0, pendingApproval: true },
           { ...base.s1, id: 'unread', title: 'Unread', unreadCount: 2, pendingApproval: false },
         ],
         hasMore: false,
       }),
     })
-    const wrapper = await mountList({ runningSessionIds: new Set(['run']) })
+    const wrapper = await mountList()
     await wrapper.vm.loadSessions()
     await flushPromises()
 
-    for (const id of ['run', 'pend', 'unread']) {
+    for (const id of ['pend', 'unread']) {
       const slot = wrapper.find(`[data-session-id="${id}"] .session-status`)
       expect(slot.exists(), `${id} should have a status slot`).toBe(true)
       expect(slot.element.children.length, `${id} must be a single painted element`).toBe(0)
     }
   })
 
-  it('ranks pending above running, so an approval is never hidden by the spinner', async () => {
-    // A session blocked on an approval IS still running (the runner is alive),
-    // so both flags are true at once. The user must see "waiting for you", not
-    // "busy" — otherwise every approval request is invisible in the list.
+  it('ranks pending above unread, so an approval is never hidden', async () => {
+    // A session blocked on an approval is also still running (the runner is
+    // alive) and may have unread replies. The user must see "waiting for you",
+    // not "there is a reply" — otherwise every approval request is invisible in
+    // the list.
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({
@@ -444,7 +452,6 @@ describe('SessionList', () => {
 
     const row = wrapper.find('[data-session-id="both"]')
     expect(row.find('.session-status').classes()).toContain('is-pending')
-    expect(row.find('.session-status').classes()).not.toContain('is-running')
     expect(row.find('.session-status').classes()).not.toContain('is-unread')
     // The row is still `running` for the band, which is separate from the slot.
     expect(row.classes()).toContain('running')
@@ -503,26 +510,28 @@ describe('SessionList', () => {
       json: () => Promise.resolve({
         sessions: [
           { ...sessionsFixture().s1, id: 'pend', pendingApproval: true },
-          { ...sessionsFixture().s1, id: 'run' },
+          { ...sessionsFixture().s1, id: 'unread', unreadCount: 1 },
         ],
         hasMore: false,
       }),
     })
-    const wrapper = await mountList({ runningSessionIds: new Set(['run']) })
+    const wrapper = await mountList()
     await wrapper.vm.loadSessions()
     await flushPromises()
 
     const pend = wrapper.find('[data-session-id="pend"] .session-status')
     expect(pend.attributes('title')).toBe('session.statusPending')
     expect(pend.attributes('aria-label')).toBe('session.statusPending')
-    // Running reuses the existing label rather than adding a near-duplicate key.
-    expect(wrapper.find('[data-session-id="run"] .session-status').attributes('title'))
-      .toBe('session.running')
+    // Unread is the other labelled state. A running row has no slot, so it
+    // carries no label here at all.
+    expect(wrapper.find('[data-session-id="unread"] .session-status').attributes('title'))
+      .toBe('session.statusUnread')
   })
 
   it('shows the status slot on cross-project rows too', async () => {
     // The cross pane renders its own row markup, so the slot has to be wired
     // there as well — it is a separate template block, not a shared component.
+    // A running cross-project row follows the same rule as a local one: no slot.
     mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
     mockCrossState.groups.value = [{
       name: '/proj/other',
@@ -536,8 +545,11 @@ describe('SessionList', () => {
     const wrapper = await mountList({ activeTab: 'cross' })
     await flushPromises()
 
-    expect(wrapper.find('.cross-session-row .session-status.is-running').exists()).toBe(true)
     expect(wrapper.find('.cross-session-row .session-status.is-pending').exists()).toBe(true)
+    // The running cross-project row keeps its comet but no slot.
+    const runningRow = wrapper.find('.cross-session-row.running')
+    expect(runningRow.find('.session-status').exists(), 'a running cross row has no slot').toBe(false)
+    expect(runningRow.find('.session-running-band').exists(), 'but it keeps the comet').toBe(true)
   })
 
   it('emits archive after confirmation', async () => {
