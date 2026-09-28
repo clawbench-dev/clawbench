@@ -145,6 +145,7 @@ const i18n = createI18n({
     removeProjectConfirm: 'Remove "{name}" from recent projects?',
     projectRemoved: 'Project removed',
     removeProjectFailed: 'Failed to remove project',
+    cannotRemoveCurrentProject: 'The currently open project cannot be removed',
   }, login: { logout: 'Logout' }, systemResources: { title: 'System Resources' } } },
 })
 
@@ -746,6 +747,78 @@ describe('AppHeader', () => {
     await (wrapper.vm as any).removeRecent(item)
 
     expect(wrapper.vm.recentItems).toEqual([item])
+    vi.unstubAllGlobals()
+  })
+
+  // ── current project is not removable ──
+
+  it('removeRecent refuses to remove the currently open project', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
+    wrapper.vm.recentItems = [item]
+
+    await (wrapper.vm as any).removeRecent(item)
+
+    // No confirmation, no DELETE — and the row survives.
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/recent-projects', expect.objectContaining({
+      method: 'DELETE',
+    }))
+    expect(wrapper.vm.recentItems).toEqual([item])
+    vi.unstubAllGlobals()
+  })
+
+  it('isCurrentProject normalizes separators and trailing slashes', () => {
+    const wrapper = mountAndTrack({ projectRoot: 'C:\\Users\\x\\proj' })
+    const vm = wrapper.vm as any
+    const base = { name: 'proj', displayPath: 'proj', kind: 'plain' as const, groupKey: '', groupName: '' }
+
+    expect(vm.isCurrentProject({ ...base, path: 'C:\\Users\\x\\proj' })).toBe(true)
+    // Forward-slash form of the same path (backend may return either).
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/proj' })).toBe(true)
+    // Trailing slash tolerated.
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/proj/' })).toBe(true)
+    // A different project stays removable.
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/other' })).toBe(false)
+    // No project root known → nothing is "current".
+    const noRoot = mountAndTrack({ projectRoot: '' })
+    expect((noRoot.vm as any).isCurrentProject({ ...base, path: 'C:/Users/x/proj' })).toBe(false)
+  })
+
+  it('disables the remove button on the current project row and keeps the others enabled', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/project-a', kind: 'plain' }] },
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/project-b', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    await (wrapper.vm as any).loadRecentProjects()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const rows = Array.from(document.body.querySelectorAll('.app-menu-item--stacked')) as HTMLElement[]
+    expect(rows.length).toBe(2)
+    const currentBtn = rows[0].querySelector('.item-remove-btn') as HTMLButtonElement
+    const otherBtn = rows[1].querySelector('.item-remove-btn') as HTMLButtonElement
+
+    expect(currentBtn.disabled).toBe(true)
+    expect(currentBtn.classList.contains('is-disabled')).toBe(true)
+    // The reason is exposed via the title/aria-label, not just the dim styling.
+    expect(currentBtn.getAttribute('title')).toContain('cannot be removed')
+    expect(otherBtn.disabled).toBe(false)
+    expect(otherBtn.getAttribute('title')).toBe('Remove project')
+
+    // A programmatic click must not slip past the disabled attribute.
+    currentBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+
+    wrapper.vm.dropdownOpen = false
     vi.unstubAllGlobals()
   })
 

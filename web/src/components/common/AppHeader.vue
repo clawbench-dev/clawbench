@@ -91,11 +91,18 @@
                 <span class="item-path">{{ item.displayPath }}</span>
               </span>
               <HintTooltip :content="item.path" />
+              <!-- The currently open project cannot be removed: removing it also
+                   clears the server-side default-project flag, so a restart
+                   would silently fall back to the home directory. Kept visible
+                   but disabled (matching GitWorktreeCard) so the row's action
+                   column stays aligned and the reason is discoverable. -->
               <button
                 class="item-remove-btn"
                 type="button"
-                :title="t('appHeader.removeProject')"
-                :aria-label="t('appHeader.removeProject')"
+                :class="{ 'is-disabled': isCurrentProject(item) }"
+                :disabled="isCurrentProject(item)"
+                :title="isCurrentProject(item) ? t('appHeader.cannotRemoveCurrentProject') : t('appHeader.removeProject')"
+                :aria-label="isCurrentProject(item) ? t('appHeader.cannotRemoveCurrentProject') : t('appHeader.removeProject')"
                 @click.stop="removeRecent(item)"
               >
                 <X :size="14" />
@@ -881,7 +888,35 @@ async function selectRecent(item: RecentItem) {
     }
 }
 
+/**
+ * Whether `item` is the project currently open in the app.
+ *
+ * The comparison must be separator-normalized: `projectRoot` comes from
+ * GET /api/project and recent-project paths from the DB, and the two can carry
+ * different separators on Windows ("C:\\a\\b" vs "C:/a/b") — a raw `===` would
+ * then fail to recognize the open project and re-enable its remove button.
+ * A trailing slash is tolerated for the same reason. Case is NOT folded: the
+ * backend treats these as opaque strings elsewhere (e.g. `selectRecent`), and
+ * folding would be wrong on case-sensitive filesystems.
+ *
+ * `projectRoot` is a plain String prop and may be absent (the header renders
+ * before the project is known), so the normalization tolerates undefined rather
+ * than throwing inside the render.
+ */
+function isCurrentProject(item: RecentItem): boolean {
+    const norm = (p?: string) => (p || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    const path = norm(item.path)
+    // An empty path is never "the current project" — otherwise an item with no
+    // path would match an absent root.
+    return path !== '' && path === norm(props.projectRoot)
+}
+
 async function removeRecent(item: RecentItem) {
+    // The open project is not removable — its `is_default` flag is cleared
+    // server-side too, so a restart would silently fall back to the home
+    // directory. Guard the handler itself, not just the `disabled` attribute:
+    // a programmatic click still reaches it (same reasoning as GitWorktreeCard).
+    if (isCurrentProject(item)) return
     // Close the dropdown first: it is teleported with z-index 9999, higher than
     // the confirm dialog overlay (3000), so leaving it open would cover the dialog.
     dropdownOpen.value = false
@@ -1691,6 +1726,23 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 }
 
 .app-menu-item.active .item-remove-btn {
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* Current project row: the remove button stays visible (keeps the action column
+   aligned across rows) but is clearly unavailable. The native `:disabled` still
+   fires the button's `title` tooltip in Chromium, so the reason stays
+   discoverable. Mirrors GitWorktreeCard's non-removable delete button. */
+.app-menu-item .item-remove-btn.is-disabled,
+.app-menu-item .item-remove-btn:disabled {
+    opacity: var(--opacity-disabled);
+    cursor: not-allowed;
+}
+
+/* The active row is accent-filled, so the generic disabled dim would leave the
+   icon nearly invisible; keep it at a readable white like the enabled state. */
+.app-menu-item.active .item-remove-btn.is-disabled,
+.app-menu-item.active .item-remove-btn:disabled {
     color: rgba(255, 255, 255, 0.75);
 }
 

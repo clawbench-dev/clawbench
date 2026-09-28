@@ -309,6 +309,7 @@ export default {
     removeProjectConfirm: '确认从最近项目中移除“{name}”？\n不会删除项目文件夹或其中的内容。',
     projectRemoved: '项目已移除',
     removeProjectFailed: '移除项目失败',
+    cannotRemoveCurrentProject: '当前打开的项目不可移除',
     removeRecentFile: '从最近文件移除',
     repoKindMain: '主仓库',
     repoKindWorktree: '工作树',
