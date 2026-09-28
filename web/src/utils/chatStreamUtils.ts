@@ -361,24 +361,6 @@ export function forceCleanupStreamingState(
             block.output = ''
           }
         }
-        // Thinking blocks need the same close-out, and were missed here.
-        //
-        // The spinner is driven by isThinkingStreaming() = `!block.done &&
-        // props.streaming`, and `done` is normally set by the backend's
-        // thinking_done event — which is emitted only on a TRANSITION (thinking
-        // → content, or thinking → tool_use). A turn that ENDS while reasoning
-        // never sends it, so the last block kept done=undefined and spun
-        // forever: the reported "a stuck deep-thinking block at the top".
-        //
-        // The backend already closes this out on its own side (MarkAllThinkingDone
-        // in postProcessBlocks, applied to the persisted content), so the DB row
-        // is correct — only the live frontend block was left open. This is the
-        // frontend counterpart, and the reason the two must not diverge.
-        if (block.type === 'thinking' && !block.done) {
-          block.done = true
-          // It is finished, so it is no longer "still coming".
-          delete block.in_progress
-        }
       }
     }
     // Extract tasks from the just-finished message
