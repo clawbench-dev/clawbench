@@ -155,25 +155,25 @@
        properties), and a reader with a colour-vision deficiency gets nothing
        from the hue either. So:
 
-         running  — the ring ROTATES      (work is progressing)
-         pending  — the ring PULSES in place (work is blocked on you)
-         unread   — a dot that never moves  (nothing is happening)
+         running  — the ring ROTATES          (work is progressing)
+         pending  — one dot PULSES in place   (work is blocked on you)
+         unread   — one dot never moves       (nothing is happening)
 
        Motion is the primary channel and hue is the secondary one, which is
        what keeps the three apart on all 36 themes.
 
+       The running ring's track is the arc colour at low alpha rather than
+       `--border-color`: on a running row the track must not read as a second,
+       static ring competing with the rotating arc.
+
        `pending` uses `--color-orange` rather than the accent so it reads as a
        different *kind* of thing (needs you) rather than a different degree of
        the same thing (busy). It is a per-theme token, so it still follows the
-       user's palette instead of being a hardcoded amber.
-
-       The ring's track is the arc colour at low alpha rather than
-       `--border-color`: on a running row the track must not read as a second,
-       static ring competing with the rotating arc. ── */
+       user's palette instead of being a hardcoded amber. ── */
     --running-ring: var(--accent-color);
     --running-ring-track: color-mix(in srgb, var(--accent-color) 20%, transparent);
-    --pending-ring: var(--color-orange);
-    --pending-ring-track: color-mix(in srgb, var(--color-orange) 20%, transparent);
+    --status-dot: var(--accent-color);
+    --status-dot-pending: var(--color-orange);
 
     /* ── Custom wallpaper (applied at runtime when a wallpaper is set) ──
        --wallpaper-url: url(...) of the active wallpaper, or `none`.

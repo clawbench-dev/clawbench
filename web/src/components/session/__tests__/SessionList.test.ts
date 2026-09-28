@@ -383,7 +383,7 @@ describe('SessionList', () => {
 
     const cls = (id: string) => wrapper.find(`[data-session-id="${id}"] .session-status`).classes()
     expect(cls('run'), 'a running session gets the running ring').toContain('is-running')
-    expect(cls('pend'), 'a pending approval gets the pending ring').toContain('is-pending')
+    expect(cls('pend'), 'a pending approval gets the pending dot').toContain('is-pending')
     expect(cls('unread'), 'unread gets the static dot').toContain('is-unread')
     // Idle rows carry no slot at all — not an empty one, which would leave a
     // 14px hole and break the title's ellipsis width.
@@ -396,6 +396,35 @@ describe('SessionList', () => {
     // serving two states.
     expect(cls('pend')).not.toContain('is-running')
     expect(cls('run')).not.toContain('is-pending')
+  })
+
+  it('renders the slot as a single element with no child dots', async () => {
+    // The slot is one painted element per state, not a container of children.
+    // Running is a ring drawn with `border` on the slot itself; pending and
+    // unread are a radial-gradient paint on it. A stray child element here
+    // would be invisible (nothing styles it) but would still be a bug magnet,
+    // so the shape is pinned.
+    const base = sessionsFixture()
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessions: [
+          { ...base.s1, id: 'run', title: 'Running', unreadCount: 0, pendingApproval: false },
+          { ...base.s1, id: 'pend', title: 'Pending', unreadCount: 0, pendingApproval: true },
+          { ...base.s1, id: 'unread', title: 'Unread', unreadCount: 2, pendingApproval: false },
+        ],
+        hasMore: false,
+      }),
+    })
+    const wrapper = await mountList({ runningSessionIds: new Set(['run']) })
+    await wrapper.vm.loadSessions()
+    await flushPromises()
+
+    for (const id of ['run', 'pend', 'unread']) {
+      const slot = wrapper.find(`[data-session-id="${id}"] .session-status`)
+      expect(slot.exists(), `${id} should have a status slot`).toBe(true)
+      expect(slot.element.children.length, `${id} must be a single painted element`).toBe(0)
+    }
   })
 
   it('ranks pending above running, so an approval is never hidden by the spinner', async () => {

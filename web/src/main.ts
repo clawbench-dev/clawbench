@@ -18,6 +18,7 @@ import { LongPressDirective } from './directives/longPress.ts'
 import { RunningSweepDirective } from './directives/runningSweep.ts'
 import { configureMarkedRenderer } from './utils/markedConfig.ts'
 import { appLog } from './utils/appLog.ts'
+import { installMotionDiag } from './utils/motionDiag.ts'
 import { installAuthRedirectInterceptor } from './utils/authExpiry.ts'
 import { registerPwaServiceWorker } from './utils/pwaServiceWorker.ts'
 import { createSingleTabGuard } from './composables/useSingleTab.ts'
@@ -163,6 +164,11 @@ async function bootstrap() {
   })
 
   app.mount('#app')
+
+  // TEMPORARY: diagnose "running dots visible but not moving on one device".
+  // Emits to client.log regardless of the logCapture setting. Remove with the
+  // module once the report is explained.
+  installMotionDiag()
 
   // Register the PWA service worker, subject to the gates in the helper (secure
   // context, top-level frame, not the native app, and /sw.js actually served as

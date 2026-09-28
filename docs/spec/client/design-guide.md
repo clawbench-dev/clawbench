@@ -263,10 +263,12 @@
 - **keyframes 复用现成的**：`refresh-spin`（刷新，0.8s）、`check-in`（成功弹跳，0.4s）、`modal-fadeIn/scaleIn`、`bs-slideUp/Down`、`line-flash`（跳转闪烁）、`refresh-pulse-glow`（陈旧数据脉动）。
 - **新按钮不要自建旋转 keyframes**——统一用 `.refresh-spin` + `RefreshButton` 组件（19 处已收敛）。`RefreshButton` 用 WAAPI 驱动旋转并内联 `animation:none` 覆盖 CSS 动画。
 - **菜单淡入**：`opacity` + `transform: translateY(-4px)`，`--duration-base`。
-- **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`、`SessionList.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
+- **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
+  - ⚠️ **但「逐处处理」不是绝对的：如果动效承载了信息、不能靠别的东西替代，就不要 opt-out。** 会话行状态槽（`.session-status`）是**刻意的例外**，它**不**响应这个偏好。理由：冻结会**合并状态**——「待审批」（脉动点）与「未读」（静止点）形状尺寸完全相同，只靠脉动与色相区分，冻结后只剩色相，而 36 套主题里有 3 套 `--accent-color` 与 `--color-orange` 相同（色觉障碍读者在**任何**主题上都拿不到色相）；「运行中」虽然靠形状（2px 环 vs 实心点）还能区分，但**停住的环正是通用的「卡住/坏了」符号**，会误读成会话卡死。加回那条 media query 之前先读 `SessionList.vue` 里那段注释与 `sessionStatusSlot.css.test.ts` 的守卫。
+  - 一致性也是原因之一：**其余加载指示器都不受该偏好影响**——`RefreshButton` 与底边彗星都走 **WAAPI**（`Element.animate`），而 WAAPI **从不查这个偏好**。所以只在这里 opt-out 会让它成为全站唯一会停的指示器，用户看到的现象就是「为什么只有这个不动」。
 - 非 CSS 动效：running 彗星走 WAAPI 指令 `directives/runningSweep.ts`（1500ms，`cubic-bezier(.45,.05,.55,.95)`，与文档时间轴相位锁定）。
 - **会话行底边只有一层效果**：3px 平轨道 + 38% 彗星（`--running-track` / `--running-comet` / `--running-head`）。**不要再叠第二层**——曾经是「14px 带 mask 的光晕 + 80% 扫过光带」两层，看起来像两个效果打架、且光晕把光带糊成环境光。待审批时彗星停止并变成整条琥珀呼吸（`--pending-track` / `--pending-comet`）。**被阻塞的行必须换一个不带指令的元素**：指令用 WAAPI 写 `transform`，优先级高于普通 CSS `transform`，同一元素无法靠样式停下。守卫：`runningSweepTheme.css.test.ts`。
-- **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：运行中＝旋转环、待审批＝原地脉动环、未读＝静止圆点。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。优先级 pending > running > unread（`rowStatus()`），因为待审批的会话 runner 仍活着（`running` 为真），若 running 优先则审批请求会被完全隐藏。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。守卫：`sessionStatusSlot.css.test.ts`。
+- **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：运行中＝旋转环、待审批＝单点原地脉动、未读＝单点完全静止。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。**运行中是环、另外两个是填充点**：环由槽自身的 `border` 画成（`--running-ring` 弧 + `--running-ring-track` 淡轨），另两个是 14px 槽内的 8px `radial-gradient` 填充——形状本身就是一层区分（**待审批/未读不得用 `border`**，否则「等待」会看起来像转圈）。优先级 pending > running > unread（`rowStatus()`），因为待审批的会话 runner 仍活着（`running` 为真），若 running 优先则审批请求会被完全隐藏。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。**槽必须与标题保持间距**：`.session-status` 自带 `margin-left: var(--space-4)`，同时 `.session-item` / `.cross-session-item` 的右内边距收到 `var(--space-4)`（其余三边仍是 `var(--space-6)`）——原先 12px 右内边距 + 无 margin 会让槽的左边缘**正好落在标题省略号边界上**（线上实测 0px），而槽与 ⋮ 之间却空着 ~10px；现在两侧各约 11px。守卫：`sessionStatusSlot.css.test.ts`。
 
 ---
 
@@ -363,7 +365,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 - [ ] 时长用 `--duration-*` token
 - [ ] 优先复用现成 keyframes；刷新类一律用 `.refresh-spin` + `RefreshButton`
-- [ ] 处理 `prefers-reduced-motion`
+- [ ] 处理 `prefers-reduced-motion`——**除非该动效承载信息且无法替代**（如会话行状态槽，见「动效」一节）
 - [ ] 闪烁/跳转类加源码守卫测试
 
 ### 任何 UI 改动

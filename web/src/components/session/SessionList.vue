@@ -1167,7 +1167,13 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 44px;
-  padding: var(--space-5) var(--space-6);
+  /* The right inset is 8px, not the 12px the other three sides use: the status
+     slot adds its own 8px `margin-left`, and the slot is the last thing before
+     the trailing ⋮ cell. Measured on the live 1440px layout, 12px here put the
+     slot's left edge exactly on the title's ellipsis boundary (0px gap) while
+     leaving 10px unused on the ⋮ side — the dot read as crammed against the
+     text for no reason. 8px + 8px balances the two gaps at ~11px each. */
+  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
   cursor: pointer;
 }
 
@@ -1439,7 +1445,7 @@ onUnmounted(() => {
 /* ── Status slot: the row's right-hand signal ──
    Replaces `.session-item-badge`, which painted ONE blue dot for both "unread"
    and "pendingApproval" — so "there is a reply" and "it is blocked waiting for
-   your approval" were literally the same pixels. The two are now different
+   your approval" were literally the same pixels. The states are now different
    shapes AND different motion, because neither channel alone is enough:
 
      hue    — a theme's accent and its orange may sit close together, and a
@@ -1454,11 +1460,18 @@ onUnmounted(() => {
    the row's meta line growing. It is a flex child rather than absolutely
    positioned (the old badge was `position:absolute` at top-right): a flex slot
    cannot collide with the pinned wedge in the row's top-right corner, and it
-   gives the title a real boundary to ellipsise against. */
+   gives the title a real boundary to ellipsise against.
+
+   `margin-left` is the title↔slot gap. Without it the slot's left edge lands
+   exactly on the title's ellipsis boundary (measured 0px on the live 1440px
+   layout) — the slot was flush against the text while 10px sat unused on the
+   other side of it. See the padding-right on .session-item for the other half
+   of that move. */
 .session-status {
   flex-shrink: 0;
   width: 14px;
   height: 14px;
+  margin-left: var(--space-4);
   border-radius: 50%;
   box-sizing: border-box;
 }
@@ -1472,11 +1485,11 @@ onUnmounted(() => {
   animation: session-status-spin 0.75s linear infinite;
 }
 
-/* Pending — a full amber ring that pulses in place. Deliberately does NOT
-   rotate: "stopped and waiting for you" must not look like "busy", and motion
+/* Pending — one amber dot pulsing in place. Deliberately does NOT rotate:
+   "stopped and waiting for you" must not look like "busy", and motion
    direction is the fastest thing a reader picks up. */
 .session-status.is-pending {
-  border: 2px solid var(--pending-ring);
+  background: radial-gradient(circle, var(--status-dot-pending) 4px, transparent 4px);
   animation: session-status-pulse 1.6s ease-in-out infinite;
 }
 
@@ -1494,7 +1507,7 @@ onUnmounted(() => {
    further right on unread rows than on running ones, which shows up as a ragged
    right edge when scanning the list. */
 .session-status.is-unread {
-  background: radial-gradient(circle, var(--running-ring) 4px, transparent 4px);
+  background: radial-gradient(circle, var(--status-dot) 4px, transparent 4px);
 }
 
 @keyframes session-status-spin {
@@ -1506,16 +1519,38 @@ onUnmounted(() => {
   50% { transform: scale(1.18); opacity: 0.45; }
 }
 
-/* The three states are decorative duplicates of information already in the
-   DOM (the row's title/meta and the aria-label on this element), so freezing
-   them loses nothing. Without this the app ignores a user's OS-level motion
-   preference for the one element that is always moving. */
-@media (prefers-reduced-motion: reduce) {
-  .session-status.is-running,
-  .session-status.is-pending {
-    animation: none;
-  }
-}
+/* ── Deliberately NO `prefers-reduced-motion` opt-out here ──────────────────
+   This slot is an intentional exception to the project rule that animations
+   should respect the preference (design guide). Do not "fix" it by adding the
+   media query back without reading this.
+
+   Motion is not decoration here — it is a load-bearing channel, and freezing
+   collapses states:
+
+     - "pending" (pulsing dot) and "unread" (still dot) are the SAME shape and
+       size; only the pulse and the hue separate them. Freeze the pulse and
+       they differ by hue alone — and a theme's accent and its orange are free
+       to be the same value (3 of the 36 themes), so on those themes the two
+       become literally identical. A reader with a colour-vision deficiency
+       gets nothing from the hue on ANY theme.
+     - "running" would survive on its shape alone (a 2px ring vs a filled dot),
+       but a stopped ring is also the universal "broken / stalled" glyph, so it
+       would misread as a stuck session rather than a quiet one.
+
+   An earlier version did freeze them, on the reasoning that the states are
+   duplicated in the row's title and aria-label; that reasoning is wrong,
+   because the whole point of this slot is to be readable at a glance, without
+   reading anything. A frozen slot is a slot that says nothing.
+
+   This also matches the rest of the app, which is the consistency the user
+   asked for: every other loading indicator (RefreshButton, the bottom-edge
+   comet) is driven by the Web Animations API, and WAAPI does not consult the
+   preference at all. Those indicators keep spinning under reduced motion, so
+   opting out only here made this the single indicator that behaved
+   differently — a bug report of "why does only this one stop?".
+
+   If the states are ever made distinguishable WITHOUT motion, this exception
+   can go away — but that has to come first, not the media query. */
 
 /* The sweep's keyframes now live in v-running-sweep (directives/runningSweep.ts)
    rather than here: it drives them through the Web Animations API so every
@@ -1672,7 +1707,10 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
   min-height: 44px;
-  padding: var(--space-5) var(--space-6);
+  /* Right inset matched to .session-item so the status slot sits at the same
+     distance from the text on both panes — the cross pane has no ⋮ cell, so
+     without this the dot would land in a different place here. */
+  padding: var(--space-5) var(--space-4) var(--space-5) var(--space-6);
   border-top: 1px solid var(--border-color, #dee2e6);
   cursor: pointer;
   /* Subtle left rail marks rows as belonging to another project. */
