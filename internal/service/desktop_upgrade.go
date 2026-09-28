@@ -40,12 +40,15 @@ var desktopAssetBase = map[string]string{
 // against ~150MB). The client installs it over a clone of the shell it is
 // already running, so the runtime is never re-downloaded.
 //
+// This is NOT a GitHub release asset name. The payload ships only through npm
+// (see desktopPayloadNpmPkg); the map survives because it is the single place
+// deciding which platforms have a payload at all, and the npm package name is
+// derived from the basename so the two cannot drift.
+//
 // macOS is deliberately ABSENT. Replacing resources/app.asar inside a signed
 // .app breaks the code-signature seal, and Apple Silicon refuses to run with an
 // invalid signature; the client therefore stays on the full package there. The
 // key being absent (rather than an empty list) is what tells it so.
-//
-// Keep in sync with the payload `zip`/`Compress-Archive` steps in release.yml.
 var desktopPayloadAssetBase = map[string]string{
 	platformLinuxAMD64:   "clawbench-desktop-linux-x64-payload",
 	platformLinuxARM64:   "clawbench-desktop-linux-arm64-payload",
@@ -60,29 +63,15 @@ var desktopPayloadAssetBase = map[string]string{
 // there is no stable ".../latest/download/<name>" form for these assets, which
 // is why the download URLs are always built from the tag the server reports
 // rather than from a constant.
+//
+// Only the FULL package is a release asset. The payload has no counterpart
+// here: it is published to npm instead (see desktopPayloadNpmURLs).
 func desktopAssetName(osArch, tag string) string {
 	base, ok := desktopAssetBase[osArch]
 	if !ok {
 		return ""
 	}
-	return desktopAssetNameFromBase(base, tag)
-}
-
-// desktopAssetNameFromBase appends the tag to an asset basename. Both the full
-// package and the payload are named through here so the two cannot drift into
-// different conventions.
-func desktopAssetNameFromBase(base, tag string) string {
 	return base + "-" + tag + ".zip"
-}
-
-// desktopPayloadAssetName is desktopAssetName for the payload archive, or ""
-// when the platform has no payload (macOS).
-func desktopPayloadAssetName(osArch, tag string) string {
-	base, ok := desktopPayloadAssetBase[osArch]
-	if !ok {
-		return ""
-	}
-	return desktopAssetNameFromBase(base, tag)
 }
 
 // desktopNpmScope is the npm scope the published packages live under. Keep in
@@ -92,8 +81,8 @@ const desktopNpmScope = "@xulongzhe/"
 // desktopPayloadNpmPkg returns the npm package name carrying the payload
 // archive for a platform, or "" when the platform has no payload (macOS).
 //
-// Derived from the asset base rather than kept as a second map, so the two
-// cannot drift: the npm package for linux-x64 is exactly the release asset
+// Derived from the payload basename rather than kept as a second map, so the
+// two cannot drift: the npm package for linux-x64 is exactly the payload
 // basename plus the scope.
 func desktopPayloadNpmPkg(osArch string) string {
 	base, ok := desktopPayloadAssetBase[osArch]
@@ -137,25 +126,18 @@ func desktopPayloadNpmURLs(osArch, tag string) []string {
 	}
 }
 
-// desktopPayloadURLs returns every candidate URL for a platform's payload,
-// npm registry first for mainland China (where github.com is unreliable) and
-// the GitHub release assets first elsewhere.
+// desktopPayloadURLs returns every candidate URL for a platform's payload.
 //
-// npm is never the ONLY source: the mirror lags behind a fresh release and may
-// not have the version yet, in which case the candidate 404s and the client
-// walks on to the GitHub URL. That costs one round trip, not a failed upgrade.
+// npm is the ONLY source. The payload used to be attached to the GitHub Release
+// as well, but that put a ~3MB zip next to the ~150MB full package and misled
+// anyone browsing the release assets into thinking the small one was a usable
+// install. It now ships through npm alone, which also happens to be the faster
+// path in mainland China.
+//
+// An empty list means the platform has no payload (macOS), which the client
+// reads as "download the full package".
 func desktopPayloadURLs(osArch, tag string) []string {
-	npm := desktopPayloadNpmURLs(osArch, tag)
-	asset := desktopPayloadAssetName(osArch, tag)
-	if asset == "" {
-		return nil
-	}
-	github := releaseAssetURLs(tag, asset)
-
-	if platform.IsChinaMainland() {
-		return append(npm, github...)
-	}
-	return append(github, npm...)
+	return desktopPayloadNpmURLs(osArch, tag)
 }
 
 // desktopDownloadKey is the response key for each platform. It matches the
@@ -191,9 +173,10 @@ type DesktopLatestResult struct {
 	// rather than breaking it.
 	Downloads map[string][]string `json:"downloads"`
 	// Payloads maps a platform key to candidate URLs for the payload-only
-	// archive (the app without the Electron runtime). A key is ABSENT when the
-	// platform has no payload — macOS, for code-signing reasons — which the
-	// client reads as "download the full package". Never an empty list.
+	// archive (the app without the Electron runtime). Published to npm only —
+	// it is not a GitHub release asset. A key is ABSENT when the platform has
+	// no payload — macOS, for code-signing reasons — which the client reads as
+	// "download the full package". Never an empty list.
 	Payloads map[string][]string `json:"payloads"`
 }
 
@@ -243,9 +226,9 @@ func FetchDesktopLatest() (*DesktopLatestResult, error) {
 	// Payloads cover fewer platforms than the full package (see
 	// desktopPayloadAssetBase), so iterate that map rather than Downloads'.
 	//
-	// Payloads get the npm registry as an extra source; Downloads (the ~150MB
-	// full package) deliberately does not — the mirror is unreliable at that
-	// size, and the payload is the path most users take anyway.
+	// Payloads come from npm alone (see desktopPayloadURLs); Downloads (the
+	// ~150MB full package) stays GitHub-only, because the mirror is unreliable
+	// at that size.
 	for osArch := range desktopPayloadAssetBase {
 		res.Payloads[desktopDownloadKey[osArch]] = desktopPayloadURLs(osArch, tag)
 	}

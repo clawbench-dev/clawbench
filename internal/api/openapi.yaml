@@ -4553,6 +4553,10 @@ paths:
         `app.asar` 的平台**（linux-x64 / linux-arm64 / win32-x64）；macOS
         因替换会破坏 `.app` 的代码签名封条而不提供该键。键**缺席**（而非空
         数组）即表示该平台只能走全量下载。
+
+        载荷**只经 npm 分发**（不随 GitHub Release 发布——在 Release 资产里
+        放一个 3MB 的 zip 会让人误以为它可直接安装）。因此每个平台的候选
+        列表只有 npm tarball 一项。
       operationId: desktopLatest
       security: []
       responses:
@@ -4584,7 +4588,8 @@ paths:
                     description: |
                       平台键（仅 linux-x64 / linux-arm64 / win32-x64）到
                       **载荷包候选 URL 数组**。载荷包只含应用代码，客户端
-                      据此跳过 Electron 运行时的重复下载。macOS 与未知平台
+                      据此跳过 Electron 运行时的重复下载。**只经 npm 分发**，
+                      故候选只有 npm tarball 一项。macOS 与未知平台
                       **没有该键**——键缺席即表示只能全量下载。
                     additionalProperties:
                       type: array

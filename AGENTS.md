@@ -114,11 +114,13 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 **自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；`npm/desktop-main/bin/clawbench-desktop.js` 启动时读该指针决定运行哪个版本（指针缺失/目录不存在则回退到 npm 包自带版本），因此失败可回滚、旧版本保留。
 
-**分发以 GitHub Release 为准，npm 只是可选渠道**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + Release 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。这消除了对 npm 的依赖——Electron 44 的运行时让 tarball 达到 ~120MiB，逼近 npm 的体积上限。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
+**全量包以 GitHub Release 为准，载荷包只走 npm**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
+
+增量升级用的**载荷包**（应用自身，约 3MB）**只在 npm 发布**（`publish-npm-desktop`），不再作为 Release 资产——在 Release 资产里放一个 3MB 的 zip 会让人误以为它可直接安装（它缺 Electron 运行时，只能增量套用）。`payloads` 因此每平台只有 npm tarball 一个候选；macOS 无载荷（替换会破坏签名），该键缺席即走全量下载。
 
 `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、客户端隐藏下载入口——不要把它当错误处理。
 
-构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 仍发 `@xulongzhe/clawbench-desktop` 与 linux/win 平台包，但**带体积门控**（超 100MiB 跳过并 warning，不再让整个 release 失败）；darwin 从不发 npm。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
 
 ## 开发规则
 

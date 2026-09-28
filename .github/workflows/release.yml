@@ -720,23 +720,23 @@ jobs:
 
       - name: Build desktop payload (Linux)
         # The payload is the same app WITHOUT the Electron runtime (~3MB vs
-        # ~150MB), for the incremental-upgrade path. Archived from INSIDE the
-        # payload dir so entries are `payload.json` + `resources/…`: those share
-        # no top-level directory, which is what stops install.ts's extractZip
-        # from stripping a prefix (a zip of only `resources/…` would lose it and
-        # drop app.asar at the app root). Read desktop/scripts/stage-payload.mjs.
+        # ~150MB), for the incremental-upgrade path. It is NOT attached to the
+        # GitHub Release: the ~150MB full package is what a Release download is
+        # for, and offering the ~3MB payload beside it misleads anyone browsing
+        # the assets into thinking that small zip is a usable install. The
+        # payload is distributed only through npm (see publish-npm-desktop),
+        # which is also the path the client prefers in mainland China.
+        #
+        # Read desktop/scripts/stage-payload.mjs. The directory it stages is
+        # uploaded as an artifact below, which is what the npm job consumes.
         run: |
           cd desktop
           node scripts/stage-payload.mjs release/linux-unpacked
-          cd release/linux-unpacked-payload
-          zip -r "../clawbench-desktop-linux-x64-payload-${RELEASE_TAG}.zip" .
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: |
-            desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
-            desktop/release/clawbench-desktop-linux-x64-payload-${{ env.RELEASE_TAG }}.zip
+          files: desktop/release/clawbench-desktop-linux-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -801,20 +801,16 @@ jobs:
           zip -r "../clawbench-desktop-linux-arm64-${RELEASE_TAG}.zip" .
 
       - name: Build desktop payload (Linux arm64)
-        # Archived from inside the payload dir so the entries share no top-level
-        # directory — see the x64 payload step for why that matters.
+        # Staged for the npm publish job only — not attached to the Release.
+        # See the x64 payload step for the rationale.
         run: |
           cd desktop
           node scripts/stage-payload.mjs release/linux-arm64-unpacked
-          cd release/linux-arm64-unpacked-payload
-          zip -r "../clawbench-desktop-linux-arm64-payload-${RELEASE_TAG}.zip" .
 
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: |
-            desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
-            desktop/release/clawbench-desktop-linux-arm64-payload-${{ env.RELEASE_TAG }}.zip
+          files: desktop/release/clawbench-desktop-linux-arm64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -894,41 +890,40 @@ jobs:
         #
         # The payload dir is a SIBLING of win-unpacked, so the `-Path
         # win-unpacked/*` archive above cannot pick it up.
+        #
+        # Staged for the npm publish job only — not attached to the Release.
+        # See the Linux x64 payload step for the rationale.
         shell: pwsh
         run: |
           cd desktop
           node scripts/stage-payload.mjs release/win-unpacked
-          Compress-Archive -Path release/win-unpacked-payload/* -DestinationPath "release/clawbench-desktop-windows-x64-payload-$env:RELEASE_TAG.zip"
 
-      - name: Verify payload archive (Windows)
-        # Compress-Archive reports success even if it wrote an incomplete
-        # archive, and a partial payload installs cleanly then fails at runtime.
-        # Assert the entries the client depends on, including a dotfile (the
-        # case a PowerShell glob would have dropped) and the native modules.
+      - name: Verify payload directory (Windows)
+        # The payload is no longer zipped here, so this asserts the staged
+        # directory that the npm job packs. A partial payload installs cleanly
+        # then fails at runtime, and the entries it depends on include a dotfile
+        # (the case a PowerShell glob would have dropped) and the native
+        # modules, so check them explicitly.
         shell: pwsh
         run: |
-          $zip = [System.IO.Compression.ZipFile]::OpenRead("$PWD/desktop/release/clawbench-desktop-windows-x64-payload-$env:RELEASE_TAG.zip")
-          try {
-            $names = $zip.Entries | ForEach-Object { $_.FullName }
-            $required = @(
-              'payload.json',
-              'resources/app.asar',
-              'resources/login.html',
-              'resources/logo.png',
-              'resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node',
-              'resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node',
-              'resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js'
-            )
-            foreach ($r in $required) {
-              if ($names -notcontains $r) { throw "payload archive is missing $r" }
-            }
-            # The manifest must carry a shell fingerprint, or every client
-            # refuses the payload and silently falls back to the full download.
-            $manifest = ($zip.Entries | Where-Object { $_.FullName -eq 'payload.json' })
-            $json = [System.IO.StreamReader]::new($manifest.Open()).ReadToEnd() | ConvertFrom-Json
-            if (-not $json.shell) { throw 'payload.json has no shell fingerprint' }
-            Write-Host "payload archive OK: $($names.Count) entries, shell $($json.shell)"
-          } finally { $zip.Dispose() }
+          $dir = "$PWD/desktop/release/win-unpacked-payload"
+          $required = @(
+            'payload.json',
+            'resources/app.asar',
+            'resources/login.html',
+            'resources/logo.png',
+            'resources/app.asar.unpacked/node_modules/ssh2/lib/protocol/crypto/build/Release/sshcrypto.node',
+            'resources/app.asar.unpacked/node_modules/cpu-features/build/Release/cpufeatures.node',
+            'resources/app.asar.unpacked/node_modules/cpu-features/.eslintrc.js'
+          )
+          foreach ($r in $required) {
+            if (-not (Test-Path (Join-Path $dir $r))) { throw "payload is missing $r" }
+          }
+          # The manifest must carry a shell fingerprint, or every client
+          # refuses the payload and silently falls back to the full download.
+          $json = Get-Content (Join-Path $dir 'payload.json') -Raw | ConvertFrom-Json
+          if (-not $json.shell) { throw 'payload.json has no shell fingerprint' }
+          Write-Host "payload OK: shell $($json.shell)"
 
       - name: Verify full package (Windows)
         # The fingerprint sidecar must be IN the full package: an install
@@ -948,9 +943,7 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: false
-          files: |
-            desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
-            desktop/release/clawbench-desktop-windows-x64-payload-${{ env.RELEASE_TAG }}.zip
+          files: desktop/release/clawbench-desktop-windows-x64-${{ env.RELEASE_TAG }}.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -1264,11 +1257,12 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Publishes the desktop incremental-upgrade payloads to npm, so the client can
-  # fetch a ~1.2MB archive from an npm mirror (npmmirror in mainland China)
-  # instead of only from GitHub Release. The full ~150MB package deliberately
-  # stays GitHub-only: the mirror is unreliable at that size (a 110MB desktop
-  # tarball 404s while a 49MB one syncs).
+  # Publishes the desktop incremental-upgrade payloads to npm. This is the ONLY
+  # channel the payload ships through: the ~150MB full package is what a GitHub
+  # Release asset is for, and offering the ~3MB payload beside it misleads
+  # anyone browsing the assets into thinking that small zip is a usable install.
+  # npm also gives the client a fast path in mainland China (npmmirror), where
+  # the client already prefers the npm tarball over github.com.
   publish-npm-desktop:
     name: Publish desktop payloads to npm
     needs: [build-desktop-linux, build-desktop-linux-arm64, build-desktop-windows]
