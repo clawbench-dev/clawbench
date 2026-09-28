@@ -52,7 +52,17 @@
           @input="onSliderInput"
           @click.stop
         />
-        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" :disabled="disabled" @click.stop="resetSlider" :title="t('settings.resetToDefault')">↺</button>
+        <!-- Always rendered (when the row has a default) so the control cluster
+             keeps a constant width: a button that appeared only once the value
+             changed shifted the slider and its value label on every reset.
+             At the default it stays visible but inert. -->
+        <button
+          v-if="defaultValue !== undefined"
+          class="settings-item__slider-reset"
+          :disabled="disabled || modelValue === defaultValue"
+          @click.stop="resetSlider"
+          :title="t('settings.resetToDefault')"
+        >↺</button>
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
@@ -878,6 +888,15 @@ function confirmEdit() {
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
   line-height: 1;
+}
+
+/* Inert at the default value. Reserved (not hidden) so the control cluster
+   width is constant — the button disappearing on reset was the layout shift.
+   Dimmed via the "unusable" token and given the not-allowed cursor, matching
+   the other disabled controls in the settings panel. */
+.settings-item__slider-reset:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
 }
 
 .settings-item__slider-reset:active {

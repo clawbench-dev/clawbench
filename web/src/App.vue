@@ -1347,7 +1347,7 @@ function refreshWallpaper() {
   const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
   const mode = wallpaperMode.value
   const enabled = wallpaperEnabled.value
-  const file = resolveActiveFile(mode, wallpaperLocalSelected.value, resolveBingStatus(appearance).file)
+  const file = resolveActiveFile(mode, enabled, wallpaperLocalSelected.value, resolveBingStatus(appearance).file)
   const wave = isWaveActive(mode, enabled)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 

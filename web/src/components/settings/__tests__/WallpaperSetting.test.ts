@@ -217,6 +217,31 @@ describe('WallpaperSetting', () => {
       expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/wallpaper')).toBe(false)
       expect(mockPatchConfig).not.toHaveBeenCalled()
     })
+
+    it('clears the translucent panels when the wallpaper is switched off', async () => {
+      // Switching the wallpaper off must remove the IMAGE *and* the panel
+      // translucency. The image is hidden by the layer condition, but the
+      // translucent rules hang off the `wallpaper-active` class, which is
+      // driven by the resolved file — so a disabled wallpaper that still
+      // resolved to a name left every work panel see-through over an empty
+      // background.
+      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+      chooseDevice('local', 'local-1-a.png')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      // Prime the DOM the way a live app would: an image wallpaper has turned
+      // the translucent-panel rules on.
+      const { applyWallpaper } = await import('@/utils/themeBackground')
+      applyWallpaper('local-1-a.png', 0.7, false)
+      const html = document.documentElement
+      expect(html.classList.contains('wallpaper-active')).toBe(true)
+
+      const enableSwitch = wrapper.findAll('input[type="checkbox"]')[0]
+      await enableSwitch.setValue(false)
+
+      expect(html.classList.contains('wallpaper-active')).toBe(false)
+    })
   })
 
   describe('source mode', () => {
@@ -968,17 +993,23 @@ describe('WallpaperSetting', () => {
       expect(getAnimatedStyleParams('xmb').lam).toBe(max)
     })
 
-    it('shows a reset button only once a param differs from its default', async () => {
+    it('keeps the per-param reset in place, inert until the param is changed', async () => {
+      // Constant layout: the button stays in flow at the default (disabled)
+      // instead of appearing, which used to shift the slider on every reset.
       chooseDevice('wave')
       const wrapper = mountSetting()
       await nextTick()
-      expect(rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset').exists()).toBe(false)
+      const resetAtDefault = rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset')
+      expect(resetAtDefault.exists()).toBe(true)
+      expect(resetAtDefault.attributes('disabled')).toBeDefined()
 
       const slider = rowFor(wrapper, 'Wavelength')!.find('input[type="range"]')
       await slider.setValue('150')
       await slider.trigger('input')
       await nextTick()
-      expect(rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset').exists()).toBe(true)
+      const resetAfterChange = rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset')
+      expect(resetAfterChange.exists()).toBe(true)
+      expect(resetAfterChange.attributes('disabled')).toBeUndefined()
     })
 
     it('the per-param reset restores that param only', async () => {

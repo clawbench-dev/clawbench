@@ -266,7 +266,17 @@ export function isWaveActive(mode: WallpaperMode, enabled: boolean): boolean {
  * The Bing name comes from the server's cache; the local name from this
  * device's own selection.
  */
-export function resolveActiveFile(mode: WallpaperMode, localSelected: string, bingFile: string): string {
+export function resolveActiveFile(
+  mode: WallpaperMode,
+  enabled: boolean,
+  localSelected: string,
+  bingFile: string,
+): string {
+  // The switch gates every source. It must be checked HERE rather than left to
+  // callers: a file name is what turns the translucent-panel rules on (see
+  // applyWallpaper), so returning one for a disabled wallpaper left the panels
+  // translucent over an empty background after the image was switched off.
+  if (!enabled) return ''
   if (mode === 'local') return localSelected
   if (mode === 'bing') return bingFile
   return '' // 'wave' / 'none' have no file

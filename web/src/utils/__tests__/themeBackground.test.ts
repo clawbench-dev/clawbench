@@ -106,16 +106,28 @@ describe('themeBackground', () => {
 
   describe('resolveActiveFile', () => {
     it('resolves the local source from this device\'s own selection', () => {
-      expect(resolveActiveFile('local', 'local-1-a.png', 'bing-1.jpg')).toBe('local-1-a.png')
+      expect(resolveActiveFile('local', true, 'local-1-a.png', 'bing-1.jpg')).toBe('local-1-a.png')
     })
 
     it('resolves the Bing source from the server cache', () => {
-      expect(resolveActiveFile('bing', 'local-1-a.png', 'bing-1.jpg')).toBe('bing-1.jpg')
+      expect(resolveActiveFile('bing', true, 'local-1-a.png', 'bing-1.jpg')).toBe('bing-1.jpg')
     })
 
     it('is empty for wave / none, which have no file', () => {
-      expect(resolveActiveFile('wave', 'local-1-a.png', 'bing-1.jpg')).toBe('')
-      expect(resolveActiveFile('none', 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('wave', true, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('none', true, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+    })
+
+    it('is empty for every source while the wallpaper is switched off', () => {
+      // The returned name is what activates the translucent-panel rules, so a
+      // disabled wallpaper must resolve to no file: otherwise turning the
+      // wallpaper off hid the image but left the panels see-through over an
+      // empty background. The server-side ResolveActive this replaced checked
+      // the switch before resolving any source.
+      expect(resolveActiveFile('local', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('bing', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('wave', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('none', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
     })
   })
 

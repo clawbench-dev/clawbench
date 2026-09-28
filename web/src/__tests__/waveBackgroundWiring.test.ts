@@ -66,6 +66,18 @@ describe('wave background wiring', () => {
     expect(src).toMatch(/wallpaperActive\.value\s*=\s*enabled\s*&&\s*\(wave\s*\|\|\s*!!file\)/)
   })
 
+  it('gates the resolved file on the enable switch, so switching off also clears translucency', () => {
+    // The enable flag must reach resolveActiveFile. It gates the translucent
+    // panels (they hang off the wallpaper-active class, which applyWallpaper
+    // derives from this file), so leaving it out hid the image but left every
+    // work panel see-through over an empty background. Asserted at the source
+    // level because App.vue has no mount test.
+    const src = readWebFile(APP)
+    const call = src.match(/resolveActiveFile\([\s\S]*?\)/)
+    if (!call) throw new Error('resolveActiveFile call not found in App.vue')
+    expect(call[0]).toMatch(/resolveActiveFile\(\s*mode\s*,\s*enabled\s*,/)
+  })
+
   it('passes the wave flag through to applyWallpaper', () => {
     const src = readWebFile(APP)
     // Without the 5th argument the translucent panels never turn on for the

@@ -234,6 +234,15 @@
 - 深色主题下 hover 用 `--text-primary` 提亮而非换灰，否则浅色文字压在同色底上。
 - **复用自 `<a>` 的类必须显式 `border: none`**，图标按钮同理（`components.css:129`）——`<a>` 的 UA 边框不会自己消失。
 
+### 行内重置按钮（`.settings-item__slider-reset`）
+
+滑块行右侧的 ↺ 重置按钮**常驻显示**，不用 `v-if` 按「当前值 ≠ 默认值」开关。
+
+- **为什么**：按值出现/消失会让控件簇宽度变化——重置的瞬间按钮消失，滑块和数值标签横向跳动（用户实测「很难受」）。
+- **做法**：`:disabled="当前值 === 默认值"`，CSS 用 `opacity: var(--opacity-disabled)` + `cursor: not-allowed` 灰显。按钮留在文档流里，宽度恒定。
+- **唯一允许的 `v-if` 是 `defaultValue !== undefined`**：整行没有可重置的目标时，按钮应当是**不存在**而不是永久禁用（永不生效的控件是噪音，同 §壁纸那条）。判据是「该控件**能否**生效」，不是「此刻**是否**已生效」。
+- 两份实现：`SettingsItem.vue`（共享行）与 `WallpaperSetting.vue`（手写行）各有一份同名类，改一处必须改另一处。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
+
 ### 角标
 
 **`.count-badge`**（`components.css:39`）两档：默认 16px 高 / `--font-size-2xs`，`.count-badge--md` 18px / `--font-size-xs`。高度来自 `line-height` 而非固定 `height`，所以塞进 spinner 等更富内容时会撑开而不是裁掉。
@@ -403,6 +412,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/git/__tests__/gitHistoryChrome.css.test.ts` | git 历史 chrome 全局 |
 | `components/settings/__tests__/settingsRowTypography.css.test.ts` | 设置行字号层级 |
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
+| `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |

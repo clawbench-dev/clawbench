@@ -107,7 +107,7 @@
             @input="onWaveSpeedInput"
             @click.stop
           />
-          <button v-if="waveSpeed !== 50" class="settings-item__slider-reset" @click.stop="resetWaveSpeed" :title="t('settings.resetToDefault')">↺</button>
+          <button :disabled="waveSpeed === 50" class="settings-item__slider-reset" @click.stop="resetWaveSpeed" :title="t('settings.resetToDefault')">↺</button>
         </div>
         <div class="settings-item__desc">{{ t('settings.items.wallpaperWaveSpeedDesc') }}</div>
       </div>
@@ -136,7 +136,7 @@
               @click.stop
             />
             <button
-              v-if="styleParamValue(p.key) !== p.defaultValue"
+              :disabled="styleParamValue(p.key) === p.defaultValue"
               class="settings-item__slider-reset"
               @click.stop="resetStyleParam(p)"
               :title="t('settings.resetToDefault')"
@@ -309,7 +309,7 @@
           @input="onOpacityInput"
           @click.stop
         />
-        <button v-if="panelOpacity !== 0.7" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
+        <button :disabled="panelOpacity === 0.7" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
       </div>
       <div class="settings-item__desc">{{ t('settings.items.wallpaperPanelOpacityDesc') }}</div>
     </div>
@@ -337,7 +337,7 @@
             @input="onBlurInput"
             @click.stop
           />
-          <button v-if="wallpaperBlur !== 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
+          <button :disabled="wallpaperBlur === 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
         </div>
         <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
       </div>
@@ -440,7 +440,7 @@ const bingStatus = computed(() => resolveBingStatus(appearance.value))
 
 /** The image this device is showing, resolved from local choice + Bing cache. */
 const activeFile = computed(() =>
-  resolveActiveFile(mode.value, selected.value, bingStatus.value.file),
+  resolveActiveFile(mode.value, enabled.value, selected.value, bingStatus.value.file),
 )
 
 const atLimit = computed(() => galleryItems.value.length >= maxGalleryItems)
@@ -976,6 +976,14 @@ onUnmounted(() => {
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
   line-height: 1;
+}
+/* Inert at the default value. Kept in flow (not removed) so the row's control
+   cluster keeps a constant width — a button that vanished on reset made the
+   slider and value label jump. Dimmed + not-allowed, matching the other
+   disabled controls in this panel. Mirrors SettingsItem. */
+.settings-item__slider-reset:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
 }
 .settings-item__slider-reset:active {
   color: var(--accent-color);
