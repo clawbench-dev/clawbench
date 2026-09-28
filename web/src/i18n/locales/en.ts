@@ -306,7 +306,6 @@ export default {
     removeProjectConfirm: "Remove '{name}' from recent projects?\nThe project folder and its contents will not be deleted.",
     projectRemoved: 'Project removed',
     removeProjectFailed: 'Failed to remove project',
-    cannotRemoveCurrentProject: 'The currently open project cannot be removed',
     removeRecentFile: 'Remove from recent files',
     repoKindMain: 'Main',
     repoKindWorktree: 'Worktree',
