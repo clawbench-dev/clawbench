@@ -1753,6 +1753,7 @@ export default {
     createdSession: '已创建会话并发送',
     addAndOpen: '添加并打开',
     openAndCreated: '已创建会话并打开',
+    createAndOpen: '创建并打开',
     drawerTitle: '引用详情',
     quotedContent: '引用内容',
     annotation: '批注',

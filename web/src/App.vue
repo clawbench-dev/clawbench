@@ -372,6 +372,7 @@
         @select="confirmTarget({ kind: 'session', id: $event })"
         @select-and-open="confirmTarget({ kind: 'session', id: $event }, { openAfter: true })"
         @create="confirmTarget({ kind: 'create' })"
+        @create-and-open="confirmTarget({ kind: 'create' }, { openAfter: true })"
         @close="cancelTarget()"
       />
 

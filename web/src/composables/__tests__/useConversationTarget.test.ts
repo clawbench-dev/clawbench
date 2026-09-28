@@ -362,6 +362,38 @@ describe('useConversationTarget', () => {
       expect(mockChatContext.stageQuoteIntoDraft).toHaveBeenCalledWith('s-new', expect.anything(), '')
       expect(mockChatContext.addStagedQuote).not.toHaveBeenCalled()
     })
+
+    it('add mode does NOT open the new session (plain create = stay put)', async () => {
+      await dispatchToTarget({ kind: 'create' }, request({ mode: 'add', text: '' }))
+
+      expect(mockIdentity.createSessionInBackground).toHaveBeenCalled()
+      expect(mockOpenSession).not.toHaveBeenCalled()
+      // The toast must not claim it was opened.
+      expect(mockToastShow).toHaveBeenCalledWith('quoteBar.createdSession', expect.anything())
+      expect(mockToastShow).not.toHaveBeenCalledWith('quoteBar.openAndCreated', expect.anything())
+    })
+
+    it('add mode opens the new session when openAfter is set (create and open)', async () => {
+      await dispatchToTarget({ kind: 'create' }, request({ mode: 'add', text: '', openAfter: true }))
+
+      expect(mockOpenSession).toHaveBeenCalledWith('s-new')
+      expect(mockToastShow).toHaveBeenCalledWith('quoteBar.openAndCreated', expect.anything())
+    })
+
+    it('a created session never takes the live-input path, even if ids collide', async () => {
+      // Defensive: if the new id happened to equal currentSessionId, the card
+      // must still land in that session's draft (which is then opened), not in
+      // the live input of a different session.
+      mockIdentity.currentSessionId.value = 's-new'
+      await dispatchToTarget({ kind: 'create' }, request({
+        mode: 'add',
+        text: '',
+        quotes: [{ id: 'q1', text: 't', note: '', filePath: '/x.ts', language: 'ts', startLine: 1, endLine: 1, sourceKind: 'file' }],
+      }))
+
+      expect(mockChatContext.stageQuoteIntoDraft).toHaveBeenCalledWith('s-new', expect.anything(), '')
+      expect(mockChatContext.addStagedQuote).not.toHaveBeenCalled()
+    })
   })
 
   // ── confirmTarget ────────────────────────────────────────────

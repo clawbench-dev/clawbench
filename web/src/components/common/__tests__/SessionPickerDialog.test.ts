@@ -172,6 +172,17 @@ describe('SessionPickerDialog', () => {
     expect(css).toMatch(/\.sp-row:first-child\s*\{\s*border-top:\s*none/)
   })
 
+  it('labels the create row as 新会话', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const create = wrapper.find('.sp-row-create')
+    // quoteBar.newSession is the "新会话" wording (session.newSession, used by
+    // the session-list header, stays "新建会话").
+    expect(create.text()).toContain('quoteBar.newSession')
+    expect(create.text()).not.toContain('session.newSession')
+  })
+
   it('marks and pins the currently-open session to the top', async () => {
     currentIdRef().value = 's-3'
     const wrapper = mountPicker()
@@ -214,27 +225,38 @@ describe('SessionPickerDialog', () => {
     const wrapper = mountPicker()
     await flushPromises()
     expect(wrapper.findAll('.sp-row:not(.sp-row-create) .sp-goto').length).toBe(3)
-    // The create row is a different action, so it has no goto BUTTON. It shows a
-    // decorative arrow instead — assert it is not a button so it cannot be
-    // mistaken for (or focus into) a second action.
-    expect(wrapper.find('.sp-row-create .sp-goto').exists()).toBe(false)
-    const arrow = wrapper.find('.sp-row-create .sp-create-arrow')
-    expect(arrow.exists()).toBe(true)
-    expect(arrow.element.tagName).toBe('SPAN')
-    expect(arrow.attributes('aria-hidden')).toBe('true')
+    // The create row now carries its own goto button too — same pair.
+    expect(wrapper.find('.sp-row-create .sp-goto').exists()).toBe(true)
   })
 
-  it('labels the create row as 新会话 and keeps it a single action', async () => {
+  it('emits create-and-open when the create row\'s arrow is clicked', async () => {
     const wrapper = mountPicker()
     await flushPromises()
 
-    const create = wrapper.find('.sp-row-create')
-    // quoteBar.newSession is the "新会话" wording (session.newSession, used by
-    // the session-list header, stays "新建会话").
-    expect(create.text()).toContain('quoteBar.newSession')
-    expect(create.text()).not.toContain('session.newSession')
-    // One action: the arrow is not interactive, so the whole row is the target.
-    expect(create.findAll('button').length).toBe(0)
+    await wrapper.find('.sp-row-create .sp-goto').trigger('click')
+
+    expect(wrapper.emitted('create-and-open')).toBeTruthy()
+    // Must not also fire the plain create (the arrow is the "and open" half).
+    expect(wrapper.emitted('create')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('the create row click still emits plain create (no open)', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    await wrapper.find('.sp-row-create .sp-title').trigger('click')
+
+    expect(wrapper.emitted('create')).toBeTruthy()
+    expect(wrapper.emitted('create-and-open')).toBeFalsy()
+  })
+
+  it('the create row arrow is labelled for assistive tech', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    const btn = wrapper.find('.sp-row-create .sp-goto')
+    expect(btn.attributes('aria-label')).toBe('quoteBar.createAndOpen')
+    expect(btn.attributes('title')).toBe('quoteBar.createAndOpen')
   })
 
   it('emits select-and-open (not select) when the goto button is clicked', async () => {

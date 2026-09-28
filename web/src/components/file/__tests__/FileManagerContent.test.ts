@@ -3637,8 +3637,7 @@ describe('FileManagerContent — context menu actions', () => {
     expect(mockDownloadFileByPath).toHaveBeenCalledWith('test.ts', 'test.ts')
   })
 
-  it('doAttachToChat adds the file to chat when not attached', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
+  it('doAttachToChat adds the file to chat', async () => {
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
     wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
@@ -3649,7 +3648,10 @@ describe('FileManagerContent — context menu actions', () => {
     expect(mockToastShow).toHaveBeenCalled()
   })
 
-  it('doAttachToChat removes the file from chat when already attached', async () => {
+  it('doAttachToChat is add-only (no toggle-to-remove any more)', async () => {
+    // The per-file paperclip badge was removed: with an arbitrary target session
+    // no single icon could represent "attached", so the context menu no longer
+    // doubles as a remove. Assert it always adds, never removes.
     mockHasAttachedFile.mockReturnValue(true)
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
@@ -3657,23 +3659,8 @@ describe('FileManagerContent — context menu actions', () => {
     await nextTick()
     await wrapper.vm.doAttachToChat()
 
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
-  })
-
-  it('toggleAttach adds the file to chat when not attached', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
-    const wrapper = mountContent()
-    await wrapper.vm.toggleAttach('test.ts')
-
     expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
-  })
-
-  it('toggleAttach removes the file from chat when already attached', async () => {
-    mockHasAttachedFile.mockReturnValue(true)
-    const wrapper = mountContent()
-    await wrapper.vm.toggleAttach('test.ts')
-
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
+    expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
   })
 
   it('doArchiveDir archives a directory via context menu', async () => {

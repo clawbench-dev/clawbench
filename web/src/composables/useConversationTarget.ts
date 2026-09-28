@@ -239,8 +239,11 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
   }
 
   // mode === 'add'
-  if (isCurrent) {
+  if (isCurrent && !isNew) {
     // Nothing to restore later — the card belongs in the live input right now.
+    // (A freshly created session can never be the one already on screen, hence
+    // the `!isNew` guard: it must take the draft path so the payload is waiting
+    // when the session opens.)
     for (const q of request.quotes) chatContext.addStagedQuote(q, q.note)
     for (const f of request.attachments) chatContext.addAttachedFile(f.path, f.isDir, f.startLine, f.endLine)
     useToast().show(gt('quoteBar.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
@@ -265,8 +268,12 @@ export async function dispatchToTarget(target: SessionTarget, request: PendingRe
   }
 
   // Say where it went: the card is not on screen, so a bare "added" would look
-  // like nothing happened.
-  useToast().show(gt('quoteBar.addedToSessionDraft'), { icon: '📎', type: 'success', duration: 2000 })
+  // like nothing happened. The create row's plain click reaches here too, and
+  // it must NOT claim the session was opened.
+  useToast().show(
+    gt(isNew ? 'quoteBar.createdSession' : 'quoteBar.addedToSessionDraft'),
+    { icon: '📎', type: 'success', duration: 2000 },
+  )
   return true
 }
 

@@ -233,7 +233,10 @@ describe('FileManagerContent — doAttachToChat', () => {
     expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
   })
 
-  it('shows info toast when file is already attached', async () => {
+  it('is add-only: an already-attached file is added again, not removed', async () => {
+    // The per-file paperclip badge and its toggle were removed — with an
+    // arbitrary target session no single icon could represent "attached", so the
+    // context menu no longer doubles as a remove.
     mockHasAttachedFile.mockReturnValue(true)
     const wrapper = mountContent()
 
@@ -243,49 +246,12 @@ describe('FileManagerContent — doAttachToChat', () => {
 
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).not.toHaveBeenCalled()
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'info' }),
-    )
-  })
-})
-
-describe('FileManagerContent — toggleAttach', () => {
-  it('removes file and shows info toast when already attached', async () => {
-    mockHasAttachedFile.mockReturnValue(true)
-    const wrapper = mountContent()
-
-    await wrapper.vm.toggleAttach('test.ts')
-
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'info' }),
-    )
-  })
-
-  it('adds file and shows success toast when not attached', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
-    const wrapper = mountContent()
-
-    await wrapper.vm.toggleAttach('test.ts')
-
     expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
+    expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'success' }),
     )
-  })
-
-  it('attaches a directory with isDir=true', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
-    const wrapper = mountContent()
-
-    await wrapper.vm.toggleAttach('src', true)
-
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
   })
 })
 

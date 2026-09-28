@@ -56,9 +56,8 @@
         <!-- Create a session with the DEFAULT agent and send the payload there.
              Deliberately no agent choice: the user is picking a destination for
              an already-composed message, not configuring a conversation.
-             The trailing arrow is decorative, not a second action — the row
-             itself is the only target, and the arrow just says "leads
-             somewhere" in the same visual slot the session rows use. -->
+             Same pair as the session rows: the row adds without leaving, the
+             trailing button adds and opens the new session. -->
         <div
           class="sp-row sp-row-create"
           role="button"
@@ -69,9 +68,15 @@
         >
           <Plus :size="15" />
           <span class="sp-title">{{ t('quoteBar.newSession') }}</span>
-          <span class="sp-create-arrow" aria-hidden="true">
+          <button
+            class="sp-goto"
+            type="button"
+            :title="t('quoteBar.createAndOpen')"
+            :aria-label="t('quoteBar.createAndOpen')"
+            @click.stop="handleCreateAndOpen"
+          >
             <ArrowRight :size="14" />
-          </span>
+          </button>
         </div>
       </template>
     </div>
@@ -99,6 +104,7 @@ import { appLog } from '@/utils/appLog'
  * Two explicit actions per row, so the user never has to remember a mode:
  *  - clicking the row ADDS to that session and keeps the current screen;
  *  - the trailing button ADDS and then OPENS that session.
+ * The create row follows the same pair ("add and send" vs "create and open").
  *
  * The row language is the app's simplest: one line, agent icon, ellipsised
  * title, and a trailing spinner while a session is running. The session
@@ -122,6 +128,8 @@ const emit = defineEmits<{
   /** Add to this session, then open it. */
   (e: 'select-and-open', sessionId: string): void
   (e: 'create'): void
+  /** Create a session, then open it. */
+  (e: 'create-and-open'): void
   (e: 'close'): void
 }>()
 
@@ -212,6 +220,11 @@ function handleSelectAndOpen(sessionId: string) {
 
 function handleCreate() {
   emit('create')
+  handleClose()
+}
+
+function handleCreateAndOpen() {
+  emit('create-and-open')
   handleClose()
 }
 
@@ -375,21 +388,16 @@ function handleClose() {
   color: var(--text-muted);
 }
 
-/* Trailing arrow on the create row: the same visual slot the session rows put
-   their goto button in, but always visible (it is decoration, not an action),
-   and muted so it does not read as a second tap target. */
-.sp-create-arrow {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: var(--text-muted);
+/* The create row's trailing button is always visible: unlike a session row
+   (where the arrow is an optional shortcut past the row's own action), "create
+   and open" is the ONLY way to reach the new session, so hiding it behind a
+   hover would make it undiscoverable. */
+.sp-row-create .sp-goto {
+  opacity: 1;
 }
 
-.sp-create-arrow svg {
-  flex-shrink: 0;
+.sp-row-create .sp-goto svg {
+  color: inherit;
 }
 
 .sp-empty {

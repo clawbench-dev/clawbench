@@ -1753,6 +1753,7 @@ export default {
     createdSession: 'Session created and sent',
     addAndOpen: 'Add and open',
     openAndCreated: 'Session created and opened',
+    createAndOpen: 'Create and open',
     drawerTitle: 'Quote details',
     quotedContent: 'Quoted content',
     annotation: 'Annotation',
