@@ -797,6 +797,30 @@ function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number
  * out markers whose think_id a live block now carries.
  */
 function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): void {
+  // A live thinking block that never received its think_id renders as a
+  // PERPETUAL SPINNER. isThinkingStreaming() is `!block.done && props.streaming`
+  // and such a block has neither `done` nor an id, so no lazy-load path
+  // recognizes it either (they all key off think_id).
+  //
+  // The reported shape: switch away mid-turn, switch back, and a block appears
+  // stuck at the TOP of the assistant message whose text never grows while the
+  // rest of the reply streams normally. Observed three times in one client.log:
+  //
+  //   stall block[0]: done=undefined in_progress=undefined think_id=- textLen=13397
+  //   stall block[2]: done=undefined in_progress=undefined think_id=- textLen=475
+  //   stall block[75]: done=undefined in_progress=undefined think_id=- textLen=7028
+  //
+  // Why switching is what triggers it: the switch drops the WS subscription, so
+  // the backend's `thinking_done` for that block is never delivered. By the time
+  // the client comes back the DB row is already done=true — but only an
+  // in_progress marker was ever adoptable here, and a done marker is not one. The
+  // live block therefore stayed anonymous and unfinished forever.
+  //
+  // (Its text stops growing for a second reason, which is why the block looks
+  // frozen rather than merely spinning: findBlockByTypeBackward treats a
+  // tool_use as a boundary, so later deltas open a NEW block instead of
+  // extending this one. Closing it out is what makes it render as a finished
+  // chip with the text it does have.)
   const inProgressByParent = new Map<string, ContentBlock[]>()
   for (const db of dbBlocks) {
     if (db.type !== 'thinking' || !db.think_id || !db.in_progress) continue
@@ -824,6 +848,57 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
     // Still streaming: more deltas are coming, so it must not render as a
     // finished chip. (The prefix is lazy-loaded and merged at render time.)
     target.in_progress = true
+  }
+
+  // Done markers: a live block whose turn moved on while the client was away.
+  // Same problem as above, but the DB block is already finished, so the id is
+  // adopted together with `done` (not `in_progress`) and the spinner stops.
+  //
+  // Matched by POSITION, not by scanning for "the last id-less block": several
+  // done markers can share one parent, so pairing them by order is the only
+  // unambiguous rule. Walk the live id-less thinking blocks and the DB done
+  // markers of the same parent together, in order, and give each live block the
+  // next marker. An id-less live block with no marker left over is left alone
+  // (it may be genuinely new and still streaming).
+  //
+  // Guarded to markers whose think_id no live block already carries, so a
+  // repeated db_load cannot hand the same identity to two blocks (that would
+  // collide in the v-for key and make the wrong block lazy-load the text).
+  const doneByParent = new Map<string, ContentBlock[]>()
+  for (const db of dbBlocks) {
+    if (db.type !== 'thinking' || !db.think_id || db.in_progress || !db.done) continue
+    const key = db.parent_tool_call_id || ''
+    const list = doneByParent.get(key)
+    if (list) list.push(db)
+    else doneByParent.set(key, [db])
+  }
+  if (doneByParent.size === 0) return
+
+  const liveIdlessByParent = new Map<string, ContentBlock[]>()
+  for (const lb of liveBlocks) {
+    if (lb.type !== 'thinking' || lb.think_id) continue
+    // Only blocks that are still UNFINISHED need rescuing. A live block that
+    // already has done=true renders as a finished chip; handing it a marker
+    // would rewrite a block the live path already resolved (and, in the
+    // continuous-stream case, replace its full text with the DB's stale
+    // prefix).
+    if (lb.done) continue
+    const key = lb.parent_tool_call_id || ''
+    const list = liveIdlessByParent.get(key)
+    if (list) list.push(lb)
+    else liveIdlessByParent.set(key, [lb])
+  }
+
+  for (const [parent, liveIdless] of liveIdlessByParent) {
+    const markers = (doneByParent.get(parent) || []).filter(
+      (m) => !liveBlocks.some((lb) => lb.think_id === m.think_id),
+    )
+    const n = Math.min(liveIdless.length, markers.length)
+    for (let i = 0; i < n; i++) {
+      liveIdless[i].think_id = markers[i].think_id
+      liveIdless[i].done = true
+      delete liveIdless[i].in_progress
+    }
   }
 }
 

@@ -3042,10 +3042,20 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(thinks[1].in_progress).toBe(true)
   })
 
-  it('does not adopt a done marker onto a live block (keeps existing dedup behavior)', () => {
-    // Only in_progress markers are positional-safe to adopt. A done marker is
-    // handled by the existing liveHasThinking dedup, which drops the DB block
-    // rather than identifying the live one.
+  it('adopts a done marker onto an unfinished live block, keeping its text', () => {
+    // This test previously asserted the opposite (think_id stays undefined),
+    // on the premise that "a done marker is handled by the liveHasThinking
+    // dedup". That premise was the bug: the dedup DROPS the DB block but never
+    // gives the live block its identity or its `done` — so a block whose turn
+    // moved on while the client was away stayed an anonymous perpetual spinner.
+    //
+    // Reported shape: switch away mid-turn, switch back, and a block sits stuck
+    // at the TOP of the assistant message, its text never growing while the rest
+    // of the reply streams (observed three times as
+    // `stall block[0]: done=undefined in_progress=undefined think_id=-`).
+    //
+    // Adoption must NOT overwrite the live text with the DB marker's stale
+    // prefix — the marker has no text at all. Only identity + done are taken.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       streamingMsg([{ type: 'thinking', text: 'reasoned' }]),
@@ -3060,8 +3070,33 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     const merged = rebuildFromDb(messages, dbMsgs as any)
     const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
     const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'no duplicate chip').toHaveLength(1)
+    expect(thinks[0].think_id, 'the live block adopts the DB identity').toBe('th_done')
+    expect(thinks[0].done, 'and is closed out, so the spinner stops').toBe(true)
+    expect(thinks[0].text, 'its own text is preserved').toBe('reasoned')
+  })
+
+  it('leaves a live block that is already done alone', () => {
+    // The guard that keeps the continuous-stream case working: a live block
+    // with done=true renders as a finished chip, so it must not be rewritten
+    // (adopting a marker would replace its full text with the DB's stale
+    // prefix).
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'reasoned', done: true }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
     expect(thinks).toHaveLength(1)
-    expect(thinks[0].think_id).toBeUndefined()
+    expect(thinks[0].think_id, 'an already-finished live block is not rewritten').toBeUndefined()
     expect(thinks[0].text).toBe('reasoned')
   })
 
