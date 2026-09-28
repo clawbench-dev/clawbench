@@ -208,4 +208,42 @@ describe('mergeStreamingWithHistory', () => {
       { type: 'text', text: 'c' },
     ])
   })
+
+  it('drops a DB tool_use whose id the live stream already carries', () => {
+    // Same key-collision class as thinking: the renderer keys tool_use by its
+    // tool-call id (computeStableBlockKey), and the DB row flushed mid-turn
+    // already contains that tool. Two blocks with one key corrupt the keyed diff.
+    const dbMsg: MsgLike = {
+      blocks: [
+        { type: 'text', text: 'earlier' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true },
+      ],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'tool_use', name: 'Read', id: 't1', done: true }],
+      streaming: true,
+    }
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    const toolIds = result.blocks.filter((b: any) => b.type === 'tool_use').map((b: any) => b.id)
+    expect(new Set(toolIds).size, 'tool id must not repeat').toBe(toolIds.length)
+    expect(result.blocks).toHaveLength(2)
+    expect(result.blocks[0]).toEqual({ type: 'text', text: 'earlier' })
+  })
+
+  it('keeps a DB tool_use the live stream does NOT have', () => {
+    const dbMsg: MsgLike = {
+      blocks: [
+        { type: 'tool_use', name: 'Read', id: 't1', done: true },
+        { type: 'tool_use', name: 'Write', id: 't2', done: true },
+      ],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'tool_use', name: 'Write', id: 't2', done: true }],
+      streaming: true,
+    }
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    expect(result.blocks.map((b: any) => b.id)).toEqual(['t1', 't2'])
+  })
 })

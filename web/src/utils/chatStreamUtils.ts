@@ -886,6 +886,11 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
     // would rewrite a block the live path already resolved (and, in the
     // continuous-stream case, replace its full text with the DB's stale
     // prefix).
+    //
+    // Safe because a finished live block always has text: neither layer opens a
+    // block for an empty delta (AccumulateBlock returns early; the ws_thinking
+    // reducer returns on `!action.text`), so a done block with no text cannot
+    // exist to be stranded here without an id to lazy-load its prefix from.
     if (lb.done) continue
     const key = lb.parent_tool_call_id || ''
     const list = liveIdlessByParent.get(key)
@@ -1694,7 +1699,17 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // frame but the accumulator sees raw events, so both layers guard.
       if (!action.text) return state
       const existing = findBlockByTypeBackward(blocks, 'thinking', parent)
-      if (existing) {
+      // Only append to a block that is the SAME block. The backend mints one
+      // think_id per block and sends it on every delta, so two different ids are
+      // two different blocks by the backend's own definition — appending would
+      // merge them (wrong text under one v-for key). Without this check the
+      // target is found purely by position, which silently relies on the
+      // frontend's scan boundary matching the backend's forever.
+      //
+      // A missing id on either side stays compatible: that is the old-server /
+      // DB-marker case, where position is all there is to go on.
+      const sameBlock = !!existing && (!action.thinkId || !existing.think_id || existing.think_id === action.thinkId)
+      if (existing && sameBlock) {
         // A slim marker (adopted from the DB on a session switch) carries no
         // text: its prefix lives in chat_thinking and is lazy-loaded at render
         // time. Appending with `+=` on an absent text would produce the literal

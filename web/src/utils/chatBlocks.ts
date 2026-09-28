@@ -214,12 +214,18 @@ export function truncate(str: string | null | undefined, len: number): string {
  * detail view.
  *
  * The DB row is flushed every 500ms WHILE the turn runs, so for a running
- * execution its content already carries a slim `{think_id}` marker for the very
- * block the live stream is appending to. Concatenating blindly would emit that
- * `think_id` twice, and the renderer keys thinking blocks by `think_id`
- * (`computeStableBlockKey`) — a duplicate key corrupts Vue's keyed diff.
- * DB thinking markers whose think_id a live block already carries are dropped
- * (mirrors mergeStreamBlocks in chatStreamUtils).
+ * execution its content already carries the very same blocks the live stream is
+ * appending to — a slim `{think_id}` marker for a thinking block, or a full
+ * `tool_use` with the same tool-call `id`. Concatenating blindly emits those
+ * twice, and the renderer keys blocks by exactly those fields
+ * (`computeStableBlockKey`: tool_use by `id`, thinking by `think_id`) — a
+ * duplicate key corrupts Vue's keyed diff.
+ *
+ * So a DB block is dropped when a live block already carries its identity:
+ *   - thinking → same `think_id`
+ *   - tool_use → same `id`
+ * Blocks with no identity (text, or a thinking block without a think_id) are
+ * always kept from both sides; they key by index, which cannot collide.
  *
  * Order is preserved: DB history first (earlier content), then live increments.
  */
@@ -228,14 +234,23 @@ export function mergeDbBlocksWithLive<T extends Record<string, unknown>>(
   liveBlocks: T[],
 ): T[] {
   if (!dbBlocks || dbBlocks.length === 0) return liveBlocks
+
   const liveThinkIDs = new Set(
     liveBlocks
       .filter((b) => b?.type === 'thinking' && b.think_id)
       .map((b) => b.think_id as string),
   )
-  if (liveThinkIDs.size === 0) return [...dbBlocks, ...liveBlocks]
-  const dbOnly = dbBlocks.filter(
-    (b) => !(b?.type === 'thinking' && b.think_id && liveThinkIDs.has(b.think_id as string)),
+  const liveToolIDs = new Set(
+    liveBlocks
+      .filter((b) => b?.type === 'tool_use' && b.id)
+      .map((b) => b.id as string),
   )
+  if (liveThinkIDs.size === 0 && liveToolIDs.size === 0) return [...dbBlocks, ...liveBlocks]
+
+  const dbOnly = dbBlocks.filter((b) => {
+    if (b?.type === 'thinking' && b.think_id) return !liveThinkIDs.has(b.think_id as string)
+    if (b?.type === 'tool_use' && b.id) return !liveToolIDs.has(b.id as string)
+    return true
+  })
   return [...dbOnly, ...liveBlocks]
 }

@@ -3041,24 +3041,53 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(blocks[0].text).toBe('reasoning')
   })
 
-  it('backfills a missing think_id on a later delta without overwriting one', () => {
+  it('backfills a missing think_id on a later delta', () => {
     // VERSION-SKEW GUARD, not coverage of the live path. With a current server
-    // every block carries its id from the opening delta, so the backfill branch
-    // never fires; with an old server the payload has no id, so it also never
-    // fires. It exists for a block that somehow got an id-less start (a payload
-    // from an older server that later reconnects through a newer one). What it
-    // must never do is REPLACE an existing id — that would relabel a block
-    // mid-stream and merge two blocks' prefixes under one key.
+    // every block carries its id from the opening delta, so this branch never
+    // fires; with an old server the payload has no id, so it also never fires.
+    // It covers a block that got an id-less start and later receives an id.
     let s = [streamingMsg([])]
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a', key: 'thinking-0' })
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b', thinkId: 'th_first' } as any)
-    let blocks = s[0].blocks!
-    expect(blocks[0].think_id, 'backfilled').toBe('th_first')
+    expect(s[0].blocks![0].think_id, 'no id yet').toBeUndefined()
 
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'c', thinkId: 'th_other' } as any)
-    blocks = s[0].blocks!
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b', thinkId: 'th_first' } as any)
+    const blocks = s[0].blocks!
     expect(blocks, 'still one block').toHaveLength(1)
-    expect(blocks[0].think_id, 'the original id is not overwritten').toBe('th_first')
+    expect(blocks[0].think_id, 'backfilled from the delta').toBe('th_first')
+    expect(blocks[0].text).toBe('ab')
+  })
+
+  it('starts a NEW block when the delta carries a different think_id', () => {
+    // A different think_id means the backend considers it a different block —
+    // appending would merge two blocks' text under one v-for key. The reducer
+    // must use the wire identity, not just position, to decide its target.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first block', thinkId: 'th_one' } as any)
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'second block', thinkId: 'th_two' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'two distinct blocks').toHaveLength(2)
+    expect(blocks[0]).toMatchObject({ think_id: 'th_one', text: 'first block' })
+    expect(blocks[1]).toMatchObject({ think_id: 'th_two', text: 'second block' })
+    // Distinct keys — no v-for collision.
+    expect(new Set(blocks.map((b: any) => b.think_id)).size).toBe(2)
+
+    // A further delta of the NEWEST block still appends to it.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '+more', thinkId: 'th_two' } as any)
+    const after = s[0].blocks!
+    expect(after).toHaveLength(2)
+    expect(after[0]).toMatchObject({ think_id: 'th_one', text: 'first block' })
+    expect(after[1]).toMatchObject({ think_id: 'th_two', text: 'second block+more' })
+  })
+
+  it('keeps appending by position when ids are absent (old server)', () => {
+    // No ids on the wire: position is the only signal, and the old behaviour
+    // must be preserved exactly.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b' })
+    const blocks = s[0].blocks!
+    expect(blocks, 'one coalesced block').toHaveLength(1)
+    expect(blocks[0].text).toBe('ab')
   })
 
   it('does NOT re-open a finished live block with an in_progress marker', () => {

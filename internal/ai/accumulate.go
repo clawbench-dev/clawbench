@@ -11,11 +11,11 @@ import (
 // Both text and thinking events are coalesced into the most recent block of
 // the same type; tool_use events are deduplicated by ID.
 //
-// It reports the identity of a thinking block so the caller can put it on the
-// outbound event: thinkID is the block's stable think_id and created is true
-// only when this call OPENED the block. The executor forwards the event to WS
-// clients after accumulating, so a client learns a block's identity the moment
-// it appears rather than having to infer it later from a DB snapshot.
+// It returns the identity of a thinking block so the caller can put it on the
+// outbound event: thinkID is the block's stable think_id, or empty for any
+// other event. The executor forwards the event to WS clients after
+// accumulating, so a client learns a block's identity the moment it appears
+// rather than having to infer it later from a DB snapshot.
 //
 // The return value may be ignored (most call sites do); only the streaming
 // executor needs it.
@@ -35,7 +35,7 @@ import (
 // interleave on the wire, so they are interleaving noise, not separators.
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
-func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID string, created bool) {
+func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID string) {
 	// findLastBlockOfType searches backward for the most recent block of the
 	// given type, stopping at tool_use boundaries (natural separators).
 	//
@@ -89,9 +89,9 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 		// Coalesce incremental thinking deltas into the most recent thinking block.
 		if idx, found := findLastBlockOfType("thinking", parent); found {
 			// Same block: report its identity so the caller stamps every delta
-			// of this block with it (created=false — the block already existed).
+			// of this block with it.
 			(*blocks)[idx].Text += event.Content
-			return (*blocks)[idx].ThinkID, false
+			return (*blocks)[idx].ThinkID
 		}
 		// A new block. Mint its identity HERE, at the moment it opens, so the
 		// event that opens it can carry the id and the client never has to
@@ -106,7 +106,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 			ThinkID:          id,
 			ParentToolCallID: parent,
 		})
-		return id, true
+		return id
 	case "thinking_done":
 		// Mark the most recent thinking block OF THIS PARENT as done — the
 		// thinking content is complete. Without this, the frontend spinner stays
@@ -248,7 +248,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 			ErrorDetail: event.ErrorDetail,
 		})
 	}
-	return "", false
+	return ""
 }
 
 // MarkAllThinkingDone flags every thinking block as complete. Call it on a

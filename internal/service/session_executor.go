@@ -581,7 +581,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// before forwarding because forwardEvent fans out to WS clients and must
 	// not run under e.mu.
 	e.mu.Lock()
-	thinkID, _ := ai.AccumulateBlock(&e.blocks, event)
+	thinkID := ai.AccumulateBlock(&e.blocks, event)
 	// Queue tool-call upserts for the next flush window instead of writing per
 	// event — a burst of incremental tool_use updates would otherwise issue one
 	// SQLite write per event and stall the consumer.
