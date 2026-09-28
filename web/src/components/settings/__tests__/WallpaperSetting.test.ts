@@ -3,6 +3,8 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
 import WallpaperSetting from '@/components/settings/WallpaperSetting.vue'
+import { getAnimatedStyle } from '@/utils/animatedWallpapers'
+import { getAnimatedStyleParams, resetAllAnimatedStyleParams, setAnimatedStyleParam } from '@/composables/useAnimatedWallpaperParams'
 
 // appLog relays to native/server; keep it inert in unit tests.
 vi.mock('@/utils/appLog', () => ({
@@ -93,6 +95,31 @@ const i18n = createI18n({
           wallpaperModeWave: 'Animated',
           wallpaperWaveSpeed: 'Animation speed',
           wallpaperWaveSpeedDesc: 'Desc',
+          wallpaperAnimatedStyle: 'Animated style',
+          wallpaperAnimatedStyleDesc: 'Desc',
+          wallpaperStyleXmb: 'XMB wave',
+          wallpaperStyleSilk: 'Silk starfield',
+          wallpaperStyleReset: 'Reset this style',
+          wallpaperStyleResetDesc: 'Desc',
+          wallpaperStyleXmbLam: 'Wavelength',
+          wallpaperStyleXmbAmp: 'Amplitude',
+          wallpaperStyleXmbBand: 'In-band fade',
+          wallpaperStyleXmbEdge: 'Edge crispness',
+          wallpaperStyleXmbTilt: 'Tilt',
+          wallpaperStyleXmbIrr: 'Irregularity',
+          wallpaperStyleXmbContrast: 'Gradient strength',
+          wallpaperStyleXmbFadeEdges: 'Fade edges',
+          wallpaperStyleXmbFadeEdgesDesc: 'Desc',
+          wallpaperStyleSilkThick: 'Band thickness',
+          wallpaperStyleSilkAmp: 'Wave amplitude',
+          wallpaperStyleSilkLam: 'Horizontal stretch',
+          wallpaperStyleSilkHaze: 'Haze strength',
+          wallpaperStyleSilkFil: 'Silk contrast',
+          wallpaperStyleSilkSpread: 'Haze width',
+          wallpaperStyleSilkGain: 'Overall brightness',
+          wallpaperStyleSilkDensity: 'Star count',
+          wallpaperStyleSilkPsize: 'Star size',
+          wallpaperStyleSilkPglow: 'Star glow',
           resetToDefault: 'Reset',
         },
       },
@@ -154,6 +181,10 @@ describe('WallpaperSetting', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })))
     serverConfig.value = serverWith()
     chooseDevice('wave')
+    localConfig.wallpaperAnimatedStyle = 'xmb'
+    // The style-param store is module-level state; without this, one test's
+    // tuning leaks into the next.
+    resetAllAnimatedStyleParams()
     localConfig.wallpaperBlur = 0
     localConfig.wallpaperEdgeFade = false
     localConfig.theme = 'auto'
@@ -823,6 +854,196 @@ describe('WallpaperSetting', () => {
       await new Promise(r => setTimeout(r, 300))
       expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperBlur', 30)
     })
+
+  describe('animated style picker', () => {
+    /** The style picker buttons, which are the mode buttons in the first row of
+     *  the animated section (the source picker is the second). */
+    function styleButtons(wrapper: ReturnType<typeof mountSetting>) {
+      return wrapper.findAll('.wallpaper-mode__btn')
+        .filter(b => ['XMB wave', 'Silk starfield'].includes(b.text()))
+    }
+
+    it('renders one button per registered style', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const labels = styleButtons(wrapper).map(b => b.text())
+      expect(labels).toEqual(['XMB wave', 'Silk starfield'])
+    })
+
+    it('marks the active style', async () => {
+      localConfig.wallpaperAnimatedStyle = 'silk'
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const silk = styleButtons(wrapper).find(b => b.text() === 'Silk starfield')!
+      const xmb = styleButtons(wrapper).find(b => b.text() === 'XMB wave')!
+      expect(silk.classes()).toContain('wallpaper-mode__btn--active')
+      expect(xmb.classes()).not.toContain('wallpaper-mode__btn--active')
+    })
+
+    it('switching style writes the preference locally, with no server round-trip', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetchMock)
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      await styleButtons(wrapper).find(b => b.text() === 'Silk starfield')!.trigger('click')
+
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperAnimatedStyle', 'silk')
+      expect(localConfig.wallpaperAnimatedStyle).toBe('silk')
+      expect(mockPatchConfig).not.toHaveBeenCalled()
+    })
+
+    it('falls back to the default style for an unknown stored id', async () => {
+      // A stored id can outlive its style; the picker must not end up with no
+      // active button.
+      localConfig.wallpaperAnimatedStyle = 'ghost-style'
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const xmb = styleButtons(wrapper).find(b => b.text() === 'XMB wave')!
+      expect(xmb.classes()).toContain('wallpaper-mode__btn--active')
+    })
+  })
+
+  describe('per-style parameters', () => {
+    /** Slider rows inside the animated section, identified by their label. */
+    function rowFor(wrapper: ReturnType<typeof mountSetting>, label: string) {
+      return wrapper.findAll('.settings-item').find(
+        r => r.find('.settings-item__label').exists() && r.find('.settings-item__label').text() === label,
+      )
+    }
+
+    it('renders the active style params', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      expect(rowFor(wrapper, 'Wavelength')).toBeTruthy()
+      expect(rowFor(wrapper, 'Gradient strength')).toBeTruthy()
+      // A silk-only param must not appear for xmb.
+      expect(rowFor(wrapper, 'Band thickness')).toBeUndefined()
+    })
+
+    it('renders the other style params after switching', async () => {
+      localConfig.wallpaperAnimatedStyle = 'silk'
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      expect(rowFor(wrapper, 'Band thickness')).toBeTruthy()
+      expect(rowFor(wrapper, 'Star count')).toBeTruthy()
+      expect(rowFor(wrapper, 'Wavelength')).toBeUndefined()
+    })
+
+    it('renders a switch for a switch-spec param', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      // xmb has one switch param (fadeEdges) alongside its sliders.
+      const row = rowFor(wrapper, 'Fade edges')!
+      expect(row.find('input[type="checkbox"]').exists()).toBe(true)
+    })
+
+    it('writes a param change to the style store', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const slider = rowFor(wrapper, 'Wavelength')!.find('input[type="range"]')
+      await slider.setValue('150')
+      await slider.trigger('input')
+      expect(getAnimatedStyleParams('xmb').lam).toBe(150)
+    })
+
+    it('clamps a param to its spec range', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const slider = rowFor(wrapper, 'Wavelength')!.find('input[type="range"]')
+      // The DOM input already clamps, but the handler must too (a programmatic
+      // event, or a stale range, could deliver an out-of-range value).
+      ;(slider.element as HTMLInputElement).value = '9999'
+      await slider.trigger('input')
+      const max = (getAnimatedStyle('xmb').params.find(p => p.key === 'lam') as { max: number }).max
+      expect(getAnimatedStyleParams('xmb').lam).toBe(max)
+    })
+
+    it('shows a reset button only once a param differs from its default', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      expect(rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset').exists()).toBe(false)
+
+      const slider = rowFor(wrapper, 'Wavelength')!.find('input[type="range"]')
+      await slider.setValue('150')
+      await slider.trigger('input')
+      await nextTick()
+      expect(rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset').exists()).toBe(true)
+    })
+
+    it('the per-param reset restores that param only', async () => {
+      setAnimatedStyleParam('xmb', 'lam', 150)
+      setAnimatedStyleParam('xmb', 'amp', 180)
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      await rowFor(wrapper, 'Wavelength')!.find('.settings-item__slider-reset').trigger('click')
+
+      expect(getAnimatedStyleParams('xmb').lam).toBe(100)
+      expect(getAnimatedStyleParams('xmb').amp).toBe(180)
+    })
+
+    it('the style reset restores every param of the active style', async () => {
+      setAnimatedStyleParam('xmb', 'lam', 150)
+      setAnimatedStyleParam('xmb', 'fadeEdges', false)
+      setAnimatedStyleParam('silk', 'thick', 180)
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      const resetBtn = wrapper.findAll('button').find(b => b.text() === 'Reset this style')!
+      // Vue renders a true boolean attr as '' and omits it when false. There is
+      // something to reset here, so the button must be ENABLED (no attribute).
+      expect(resetBtn.attributes('disabled')).toBeUndefined()
+      await resetBtn.trigger('click')
+
+      expect(getAnimatedStyleParams('xmb').lam).toBe(100)
+      expect(getAnimatedStyleParams('xmb').fadeEdges).toBe(true)
+      // Only the active style is cleared.
+      expect(getAnimatedStyleParams('silk').thick).toBe(180)
+    })
+
+    it('disables the style reset when everything is already default', async () => {
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+      const resetBtn = wrapper.findAll('button').find(b => b.text() === 'Reset this style')!
+      expect(resetBtn.attributes('disabled')).toBe('')
+    })
+
+    it('disables the param rows when the wallpaper is off', async () => {
+      chooseDevice('wave', '', false)
+      const wrapper = mountSetting()
+      await nextTick()
+      expect(rowFor(wrapper, 'Wavelength')!.classes()).toContain('settings-item--disabled')
+      expect(rowFor(wrapper, 'Wavelength')!.find('input[type="range"]').attributes('disabled')).toBeDefined()
+    })
+
+    it('keeps each style tuning when switching away and back', async () => {
+      setAnimatedStyleParam('xmb', 'lam', 150)
+      chooseDevice('wave')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      await wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'Silk starfield')!.trigger('click')
+      await nextTick()
+      await wrapper.findAll('.wallpaper-mode__btn').find(b => b.text() === 'XMB wave')!.trigger('click')
+      await nextTick()
+
+      expect(getAnimatedStyleParams('xmb').lam).toBe(150)
+    })
+  })
 
     it('toggles edge fade through setLocalConfig', async () => {
       serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])

@@ -61,8 +61,33 @@
       <div class="settings-item__desc">{{ t('settings.items.wallpaperSourceDesc') }}</div>
     </div>
 
-    <!-- ── Animated wave section ───────────────────────────────── -->
+    <!-- ── Animated styles section ─────────────────────────────── -->
     <template v-if="mode === 'wave'">
+      <!-- Style picker. Rendered from the registry, so a new style needs no UI
+           change here — see utils/animatedWallpapers. -->
+      <div class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperAnimatedStyle') }}</span>
+          </div>
+        </div>
+        <div class="settings-item__right">
+          <div class="wallpaper-mode">
+            <button
+              v-for="s in animatedStyles"
+              :key="s.id"
+              class="wallpaper-mode__btn"
+              :class="{ 'wallpaper-mode__btn--active': s.id === animatedStyleId }"
+              :disabled="!enabled"
+              @click.stop="onSelectAnimatedStyle(s.id)"
+            >
+              {{ t(s.labelKey) }}
+            </button>
+          </div>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperAnimatedStyleDesc') }}</div>
+      </div>
+
       <div class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
         <div class="settings-item__left">
           <div class="settings-item__text">
@@ -85,6 +110,75 @@
           <button v-if="waveSpeed !== 50" class="settings-item__slider-reset" @click.stop="resetWaveSpeed" :title="t('settings.resetToDefault')">↺</button>
         </div>
         <div class="settings-item__desc">{{ t('settings.items.wallpaperWaveSpeedDesc') }}</div>
+      </div>
+
+      <!-- Per-style parameters, rendered from the active style's own spec list.
+           Sliders and switches share this loop; a new style's params appear here
+           automatically. -->
+      <template v-for="p in animatedStyleParams" :key="p.key">
+        <div v-if="p.kind === 'slider'" class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+          <div class="settings-item__left">
+            <div class="settings-item__text">
+              <span class="settings-item__label">{{ t(p.labelKey) }}</span>
+            </div>
+          </div>
+          <div class="settings-item__right">
+            <span class="settings-item__slider-value">{{ formatStyleParam(p) }}</span>
+            <input
+              type="range"
+              class="settings-item__slider"
+              :value="styleParamValue(p.key)"
+              :min="p.min"
+              :max="p.max"
+              :step="p.step"
+              :disabled="!enabled"
+              @input="onStyleParamInput(p, $event)"
+              @click.stop
+            />
+            <button
+              v-if="styleParamValue(p.key) !== p.defaultValue"
+              class="settings-item__slider-reset"
+              @click.stop="resetStyleParam(p)"
+              :title="t('settings.resetToDefault')"
+            >↺</button>
+          </div>
+          <div v-if="p.descriptionKey" class="settings-item__desc">{{ t(p.descriptionKey) }}</div>
+        </div>
+
+        <div v-else class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+          <div class="settings-item__left">
+            <div class="settings-item__text">
+              <span class="settings-item__label">{{ t(p.labelKey) }}</span>
+            </div>
+          </div>
+          <div class="settings-item__right">
+            <label class="settings-item__switch">
+              <input
+                type="checkbox"
+                class="settings-item__switch-input"
+                :checked="styleParamValue(p.key) === true"
+                :disabled="!enabled"
+                @change="onStyleSwitchChange(p, $event)"
+                @click.stop
+              />
+              <span class="settings-item__switch-track"></span>
+            </label>
+          </div>
+          <div v-if="p.descriptionKey" class="settings-item__desc">{{ t(p.descriptionKey) }}</div>
+        </div>
+      </template>
+
+      <div class="settings-item">
+        <div class="settings-item__right settings-item__right--start">
+          <button
+            class="settings-item__action"
+            :disabled="!enabled || styleParamsAreDefault"
+            @click.stop="onResetStyleParams"
+          >
+            {{ t('settings.items.wallpaperStyleReset') }}
+          </button>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperStyleResetDesc') }}</div>
       </div>
     </template>
 
@@ -289,6 +383,7 @@ import {
   galleryImageUrl,
   invalidateGalleryImageUrls,
   resolveWallpaperMode,
+  resolveAnimatedStyleId,
   isWaveActive,
   resolveGalleryItems,
   resolveBingStatus,
@@ -300,6 +395,12 @@ import {
   currentThemeIsDark,
   type WallpaperMode,
 } from '@/utils/themeBackground'
+import { ANIMATED_STYLES, getAnimatedStyle, type ParamSpec, type ParamValue } from '@/utils/animatedWallpapers'
+import {
+  getAnimatedStyleParams,
+  resetAnimatedStyleParams,
+  setAnimatedStyleParam,
+} from '@/composables/useAnimatedWallpaperParams'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { appLog } from '@/utils/appLog'
 
@@ -388,6 +489,85 @@ const blurDisplay = computed(() => (wallpaperBlur.value > 0 ? `${wallpaperBlur.v
 /** Wave animation speed (local pref, 10–100 where 50 = 1x). */
 const waveSpeed = computed(() => Number(localConfig.wallpaperWaveSpeed ?? 50))
 const waveSpeedDisplay = computed(() => `${(waveSpeed.value / 50).toFixed(2)}×`)
+
+// ── Animated style picker + per-style parameters ───────────────────────────
+
+/** Every registered style, for the picker. Order comes from the registry. */
+const animatedStyles = ANIMATED_STYLES
+
+/** The style this device renders (unknown stored ids resolve to the default). */
+const animatedStyleId = computed(() => resolveAnimatedStyleId(localConfig.wallpaperAnimatedStyle))
+
+/** Param specs of the active style, rendered as rows. */
+const animatedStyleParams = computed<ParamSpec[]>(() => getAnimatedStyle(animatedStyleId.value).params)
+
+/**
+ * A local mirror of the params being dragged, so the slider stays responsive.
+ *
+ * The store is the source of truth and is written on every input (it is just a
+ * reactive object + localStorage), but reading through a mirror keeps the row's
+ * value binding stable while the debounced write settles.
+ */
+const styleParamsDraft = reactive<Record<string, ParamValue>>({})
+
+/** Effective value for one param: the in-flight draft, else the store. */
+function styleParamValue(key: string): ParamValue {
+  if (key in styleParamsDraft) return styleParamsDraft[key]
+  return getAnimatedStyleParams(animatedStyleId.value)[key]
+}
+
+/** True when every param of the active style is at its default. */
+const styleParamsAreDefault = computed(() => {
+  const current = getAnimatedStyleParams(animatedStyleId.value)
+  return animatedStyleParams.value.every((p) => current[p.key] === p.defaultValue)
+})
+
+/** `100` renders as `1.00×`; switches have no numeric display. */
+function formatStyleParam(p: ParamSpec): string {
+  if (p.kind !== 'slider') return ''
+  const v = styleParamValue(p.key)
+  const n = typeof v === 'number' ? v : p.defaultValue
+  return p.format === 'percent' ? `${Math.round(n)}%` : `${(n / 100).toFixed(2)}×`
+}
+
+function onStyleParamInput(p: ParamSpec, e: Event) {
+  if (p.kind !== 'slider') return
+  const raw = Number((e.target as HTMLInputElement).value)
+  if (!Number.isFinite(raw)) return
+  const clamped = Math.min(p.max, Math.max(p.min, raw))
+  // Write through immediately (live preview: the renderer reads params every
+  // frame) and mirror it for the row's own binding.
+  styleParamsDraft[p.key] = clamped
+  setAnimatedStyleParam(animatedStyleId.value, p.key, clamped)
+}
+
+function onStyleSwitchChange(p: ParamSpec, e: Event) {
+  if (p.kind !== 'switch') return
+  const checked = (e.target as HTMLInputElement).checked
+  styleParamsDraft[p.key] = checked
+  setAnimatedStyleParam(animatedStyleId.value, p.key, checked)
+}
+
+function resetStyleParam(p: ParamSpec) {
+  styleParamsDraft[p.key] = p.defaultValue
+  setAnimatedStyleParam(animatedStyleId.value, p.key, p.defaultValue)
+}
+
+/** Clear this style's overrides, so every row returns to the shipped default. */
+function onResetStyleParams() {
+  resetAnimatedStyleParams(animatedStyleId.value)
+  // Drop the draft mirror, or stale in-flight values would keep showing.
+  for (const key of Object.keys(styleParamsDraft)) delete styleParamsDraft[key]
+}
+
+/** Switching style is a per-device choice; each style keeps its own tuning. */
+function onSelectAnimatedStyle(id: string) {
+  if (id === animatedStyleId.value) return
+  // The draft belongs to the outgoing style — clear it so the new style's rows
+  // read from their own (possibly customised) stored values.
+  for (const key of Object.keys(styleParamsDraft)) delete styleParamsDraft[key]
+  setLocalConfig('wallpaperAnimatedStyle', id)
+}
 
 /** Re-apply the wallpaper effect with the current theme. */
 function refreshEffect() {

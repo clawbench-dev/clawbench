@@ -178,12 +178,19 @@
 
 - 后端 `internal/wallpaper/`（校验/缩放/编码），前端 `web/src/utils/themeBackground.ts`（运行时）。
 - 四种模式：`none` / `local` / `bing` / `wave`。**选择是每设备独立的**（localStorage）：来源 / 总开关 / 本地选中项都不进服务端配置，服务端只持有共享资源（图库文件、Bing 缓存）。
+  - `wave` 读作「**动态**」而非某一种动态风格：它下面还有 `wallpaperAnimatedStyle`（`xmb` / `silk`）选具体风格。模式值刻意保留 `'wave'`（改它会作废所有已存值，而它本来就是「动态」的意思）。
+- **动态壁纸是多风格的注册表**（`web/src/utils/animatedWallpapers/`）：一个风格 = 一个模块（`id` / `labelKey` / `params` / `speedRange` / 纯函数 `draw(frame)`）。**加一种风格只做三件事**：新建模块、注册进 `index.ts`、补 i18n 标签。设置面板的风格选择器与全部滑块都由 `params` 渲染，渲染组件按 `id` 派发，二者都不用改。
+  - **生命周期属于宿主组件**（`AnimatedWallpaper.vue`：rAF 30fps 上限 / `MAX_DT` / visibilitychange 暂停 / ResizeObserver / reduced-motion 单帧 / 固定 1.5× 超采样），`draw` 只有绘制。这样新风格不会漏掉生命周期，也不会泄漏循环。
+  - **风格参数存在独立 localStorage 模块**（`useAnimatedWallpaperParams`，`Record<styleId, Record<key, number|boolean>>`），**不走 `localConfig`**——后者是 `string|boolean|number|null` 标量管线，存对象会被 legacy 分支写成 `"[object Object]"`。
+  - `draw` 的**三条硬性守卫**（原型里踩过的真实缺陷）：`cssW<=0` 必须提前 return（否则 `u=x/cssW` 变 NaN，`createLinearGradient` 抛错中断整帧）；坐标必须 `Number.isFinite` 检查（canvas 对 NaN 路径**静默丢弃**，表现为「风格凭空消失」且控制台干净）；颜色解析必须回退（canvas 对非法 `fillStyle` 静默保留上一次的值）。
+  - 两种风格的**速度倍率上限不同**（`xmb` 0.2–2.0× = 线上既有手感，`silk` 0.25–2.5× = 原型值），所以 `speedRange` 是**每风格**的，共用同一个 10–100 速度滑块。
+  - XMB 的 `fadeEdges` 是 canvas 的 `destination-in` 横向渐变，**与图片壁纸的「边缘柔化」（`wallpaperEdgeFade`，CSS `mask-image`）是两回事**，故键名与标签都分开（两者 mode 互斥，不会同时出现）。
 - 壁纸渲染成 **`<img>`**（不是 CSS `background-image`）——Android WebView 里 `<img>` 换 `src` 能可靠重解码，而 CSS 自定义属性驱动的 `background-image` 换图可能静默留在旧帧直到重启。
 - 层次（`base.css:39`）：`.wallpaper-layer` 在 `z-index:0`，`.main-content` / `.bottom-dock-wrapper` 被提到 `z-index:1`。
 - **新增 `.app-container` 的直接子元素必须补进 `base.css:99` 那条 `z-index:1` 规则**，否则会被壁纸盖住。
 - 开启壁纸后，工作面板通过 `--panel-alpha` 半透明；**整页根节点转为全透明**，只留 `.tab-panel` 一层可见表面——避免多层 alpha 叠乘。
 - 遮罩强度：深色 `rgba(0,0,0,0.35)`，浅色 `rgba(0,0,0,0.12)`；面板不透明度默认 0.7，滑块范围 0–100%。
-- 设置面板的**高斯模糊 / 边缘柔化只作用于图片**：wave 模式下这两行**整行移除**（不是置灰）——对当前背景永不生效的控件是噪音。面板不透明度对 wave 同样有效，保留。
+- 设置面板的**高斯模糊 / 边缘柔化只作用于图片**：动态模式下这两行**整行移除**（不是置灰）——对当前背景永不生效的控件是噪音。面板不透明度对动态壁纸同样有效，保留；动态风格自己的参数行只在动态模式下出现，且**按 `params` 渲染**（加风格不加 UI 代码）。
 
 ---
 

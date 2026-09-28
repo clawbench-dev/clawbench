@@ -23,6 +23,7 @@
 import { appLog } from '@/utils/appLog'
 import { buildLocalFileUrl } from '@/utils/download'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
+import { DEFAULT_ANIMATED_STYLE, isKnownAnimatedStyle } from '@/utils/animatedWallpapers'
 
 export type WallpaperState = 'unknown' | 'set' | 'unset'
 
@@ -231,10 +232,27 @@ export function resolveWallpaperMode(value: unknown): WallpaperMode {
 }
 
 /**
- * Whether the animated wave is the active background.
+ * Resolve the stored animated-style id.
  *
- * The wave has no file, so this cannot be derived from the active file — it
- * must read the mode. `enabled` still gates it.
+ * Kept separate from `resolveWallpaperMode`: the mode says *that* an animated
+ * background is wanted, the style id says *which* one. A stored id can outlive
+ * its style (removed, or hand-edited storage), so unknown values fall back to the
+ * registry default rather than rendering nothing.
+ */
+export function resolveAnimatedStyleId(value: unknown): string {
+  return typeof value === 'string' && isKnownAnimatedStyle(value) ? value : DEFAULT_ANIMATED_STYLE
+}
+
+/**
+ * Whether an ANIMATED background is active.
+ *
+ * The animated styles have no file, so this cannot be derived from the active
+ * file — it must read the mode. `enabled` still gates it.
+ *
+ * Deliberately named for the category, not one style: the mode value `'wave'`
+ * predates the style picker and is kept as-is (it means "animated", and the
+ * chosen style id lives in a separate preference), so changing it would strand
+ * every stored value for no benefit.
  */
 export function isWaveActive(mode: WallpaperMode, enabled: boolean): boolean {
   return mode === 'wave' && enabled

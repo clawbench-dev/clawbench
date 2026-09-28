@@ -30,7 +30,12 @@
           @error="onWallpaperError"
           @load="wallpaperFailed = false"
         />
-        <WaveBackground v-else-if="waveActive" :speed="wallpaperWaveSpeed" />
+        <AnimatedWallpaper
+          v-else-if="waveActive"
+          :style-id="wallpaperAnimatedStyle"
+          :speed="wallpaperWaveSpeed"
+          :params="wallpaperStyleParams"
+        />
         <div class="wallpaper-scrim"></div>
       </div>
       <WelcomeOverlay ref="welcomeOverlay" />
@@ -512,11 +517,12 @@ import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive, resolveWallpaperMode, resolveBingStatus, type WallpaperMode } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive, resolveWallpaperMode, resolveAnimatedStyleId, resolveBingStatus, type WallpaperMode } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
 import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
@@ -532,7 +538,7 @@ import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
-import WaveBackground from './components/WaveBackground.vue'
+import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
   loadingComponent: AsyncComponentLoader,
@@ -1263,6 +1269,13 @@ const wallpaperWaveSpeed = ref(50)
 const wallpaperEnabled = computed(() => localConfig.wallpaperEnabled !== false)
 const wallpaperMode = computed<WallpaperMode>(() => resolveWallpaperMode(localConfig.wallpaperMode))
 const wallpaperLocalSelected = computed(() => String(localConfig.wallpaperLocalSelected ?? ''))
+// Which animated style the 'wave' mode renders. Reactive so switching it in the
+// settings panel repaints the layer without a server round-trip.
+const wallpaperAnimatedStyle = computed(() => resolveAnimatedStyleId(localConfig.wallpaperAnimatedStyle))
+// Resolved params for the active style (stored overrides + spec defaults). Read
+// fresh each frame by the renderer, so a slider drag needs no watcher; it is also
+// in the watcher array below for the reduced-motion static path.
+const wallpaperStyleParams = useAnimatedWallpaperParams(() => wallpaperAnimatedStyle.value)
 /**
  * The wallpaper file is missing / unreadable. The wallpaper is decoration, so
  * the correct degradation is to hide it and let .wallpaper-layer's
@@ -1391,14 +1404,16 @@ onUnmounted(() => {
 // loadConfig resolves) and project switches. The Bing file lives there.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
 // Everything else that decides the wallpaper is local, so it repaints without a
-// server round-trip. `immediate` matters here: the factory default is the wave,
-// which needs no server data, so it must paint on the first render rather than
-// waiting for /api/config. Wave speed only feeds a prop; the component adjusts
-// its own timeScale without rebuilding the canvas or resetting the phase.
+// server round-trip. `immediate` matters here: the factory default is an animated
+// style, which needs no server data, so it must paint on the first render rather
+// than waiting for /api/config. Speed and the style params only feed props; the
+// renderer reads them per frame, so changing either never rebuilds the canvas or
+// resets the phase (the params also matter for the reduced-motion static frame).
 watch(
   () => [
     wallpaperEnabled.value,
     wallpaperMode.value,
+    wallpaperAnimatedStyle.value,
     wallpaperLocalSelected.value,
     localConfig.panelOpacity,
     localConfig.wallpaperBlur,

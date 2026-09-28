@@ -445,9 +445,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // migrated a legacy value) get the soft blended border out of the box.
   // Previously persisted `false` values are left untouched (no forced override).
   wallpaperEdgeFade: true,
-  // Animated-wave speed: 10–100 where 50 is 1x (see WaveBackground). Local
-  // preference, like blur/edgeFade — it is a per-device display tweak, not a
-  // shared visual decision, so it stays out of the server config.
+  // Animated-wallpaper speed: 10–100 where 50 is 1x. Shared by every animated
+  // style; each maps it into its own time-scale bounds (see
+  // animatedWallpapers/types.ts speedRange). Local preference, like
+  // blur/edgeFade — a per-device display tweak, not a shared visual decision.
   wallpaperWaveSpeed: 50,
   // ── Which wallpaper this device shows ──────────────────────────────────
   // The whole wallpaper *choice* lives here, per device: whether it is on,
@@ -460,6 +461,11 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // cleared) shows an animated background immediately, with no image needed.
   wallpaperEnabled: true,
   wallpaperMode: 'wave',
+  // Which animated style the 'wave' mode renders. Kept as a separate preference
+  // so the mode value stays a stable 4-way union and switching styles never
+  // touches the source selection. Must name a registered style; an unknown value
+  // resolves to the registry default (see resolveAnimatedStyleId).
+  wallpaperAnimatedStyle: 'xmb',
   // Bare name of the selected gallery image, '' when nothing is selected. The
   // name may point at a file another device deleted; the app self-heals on a
   // 404 (see App.vue onWallpaperError) rather than trusting it forever.

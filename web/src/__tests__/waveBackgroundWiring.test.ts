@@ -38,9 +38,25 @@ describe('wave background wiring', () => {
     expect(imgTag(src)).toContain('v-if="wallpaperUrl"')
   })
 
-  it('mounts the wave only when no image is shown', () => {
+  it('mounts the animated renderer only when no image is shown', () => {
     const src = readWebFile(APP)
-    expect(src).toMatch(/<WaveBackground\s+v-else-if="waveActive"/)
+    expect(src).toMatch(/<AnimatedWallpaper\s+v-else-if="waveActive"/)
+  })
+
+  it('passes the selected style and its params to the renderer', () => {
+    // Without these the renderer would always draw the default style with no
+    // user tuning, i.e. the picker and every slider would be inert.
+    const src = readWebFile(APP)
+    const tag = src.match(/<AnimatedWallpaper\s[\s\S]*?\/>/)
+    if (!tag) throw new Error('AnimatedWallpaper tag not found')
+    expect(tag[0]).toContain(':style-id="wallpaperAnimatedStyle"')
+    expect(tag[0]).toContain(':params="wallpaperStyleParams"')
+    expect(tag[0]).toContain(':speed="wallpaperWaveSpeed"')
+  })
+
+  it('resolves the style id through the registry, so a stale value cannot blank the layer', () => {
+    const src = readWebFile(APP)
+    expect(src).toMatch(/resolveAnimatedStyleId\(localConfig\.wallpaperAnimatedStyle\)/)
   })
 
   it('drives layer visibility from the device choice, not from a server file', () => {
@@ -65,7 +81,7 @@ describe('wave background wiring', () => {
     const src = readWebFile(APP)
     const watcher = src.match(/watch\(\s*\(\)\s*=>\s*\[[\s\S]*?wallpaperMode[\s\S]*?\]/)
     if (!watcher) throw new Error('local wallpaper watcher not found in App.vue')
-    for (const key of ['wallpaperEnabled', 'wallpaperMode', 'wallpaperLocalSelected']) {
+    for (const key of ['wallpaperEnabled', 'wallpaperMode', 'wallpaperAnimatedStyle', 'wallpaperLocalSelected']) {
       expect(watcher[0]).toContain(key)
     }
   })
