@@ -1751,6 +1751,7 @@ export default {
     sentToSession: 'Sent to session',
     sendFailed: 'Send failed: {error}',
     chooseSession: 'Choose a session',
+    current: 'Current',
     addedToSessionDraft: 'Added to that session’s input',
     createdSession: 'Session created and sent',
     addAndOpen: 'Add and open',

@@ -161,6 +161,43 @@ describe('SessionPickerDialog', () => {
     expect(last.classList.contains('sp-row-create')).toBe(true)
   })
 
+  // ── Vertical rhythm ──
+  // "Too cramped" was the complaint, and the fix is row HEIGHT (32 → 40), not
+  // gutters: the list itself must stay flush so the rows run edge to edge. Both
+  // halves are asserted, because re-adding a gutter would waste the height the
+  // rows just gained. jsdom has no layout engine, so this is a source-level
+  // assertion like the separator test below.
+
+  it('carries the vertical rhythm in the row height, not in list gutters', () => {
+    const src = readWebFile('src/components/common/SessionPickerDialog.vue')
+    const css = src.slice(src.indexOf('<style'))
+    // A bare 32px here was the cramped value; pin the floor, not the exact
+    // number, so a later bump to 44 is not rejected.
+    const row = css.match(/(?:^|\n)\.sp-row\s*\{[^}]*\}/)?.[0]
+    expect(row, '.sp-row should exist').toBeTruthy()
+    const minHeight = row!.match(/min-height:\s*(\d+)px/)?.[1]
+    expect(Number(minHeight)).toBeGreaterThanOrEqual(40)
+    // The list is flush top and bottom — no vertical padding of any form.
+    const list = css.match(/(?:^|\n)\.session-picker-list\s*\{[^}]*\}/)?.[0]
+    expect(list, '.session-picker-list should exist').toBeTruthy()
+    expect(list).toMatch(/padding:\s*0;/)
+    expect(list, 'a vertical gutter reopens the cramped read').not.toMatch(
+      /padding:\s*(?:var\(--space-\d+\)|\d+px)\s+0/,
+    )
+  })
+
+  it('styles the current chip so it reads as a chip, not bare text', () => {
+    // jsdom does not apply the component's scoped CSS, so an unstyled chip
+    // (correct DOM, no rule) would pass every behavioural test above while
+    // rendering as a stray word glued to the title.
+    const src = readWebFile('src/components/common/SessionPickerDialog.vue')
+    const css = src.slice(src.indexOf('<style'))
+    const rule = css.match(/(?:^|\n)\.sp-current-chip\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.sp-current-chip should exist').toBeTruthy()
+    expect(rule).toMatch(/color:\s*var\(--accent-color/)
+    expect(rule).toMatch(/background:\s*color-mix\(in srgb, var\(--accent-color\)/)
+  })
+
   it('draws the row separator as a top border, suppressed on the first row', () => {
     // jsdom does not apply the component's scoped CSS, so assert the rules
     // themselves — a silent drop would leave the list undivided.
@@ -181,6 +218,36 @@ describe('SessionPickerDialog', () => {
     // the session-list header, stays "新建会话").
     expect(create.text()).toContain('quoteBar.newSession')
     expect(create.text()).not.toContain('session.newSession')
+  })
+
+  // ── Current-session label ──
+  // The tint + rail alone said "this row is special" but not WHY. The row is
+  // simultaneously the session you are in and a destination you can pick, so
+  // the chip is what disambiguates it from a merely highlighted row.
+
+  it('labels the currently-open session row with the current chip', async () => {
+    currentIdRef().value = 's-2'
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const chips = wrapper.findAll('.sp-current-chip')
+    expect(chips.length).toBe(1)
+    expect(chips[0].text()).toBe('quoteBar.current')
+    // It must be on the row that owns the current id, not merely the first row.
+    expect(chips[0].element.closest('.sp-row')!.textContent).toContain('Second session')
+  })
+
+  it('renders no current chip when there is no open session', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.findAll('.sp-current-chip').length).toBe(0)
+  })
+
+  it('keeps the current chip out of the create row', async () => {
+    currentIdRef().value = 's-1'
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.find('.sp-row-create .sp-current-chip').exists()).toBe(false)
   })
 
   it('marks and pins the currently-open session to the top', async () => {

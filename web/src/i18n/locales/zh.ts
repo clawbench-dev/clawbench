@@ -1751,6 +1751,7 @@ export default {
     sentToSession: '已发送到会话',
     sendFailed: '发送失败: {error}',
     chooseSession: '选择会话',
+    current: '当前',
     addedToSessionDraft: '已加入该会话的输入框',
     createdSession: '已创建会话并发送',
     addAndOpen: '添加并打开',
