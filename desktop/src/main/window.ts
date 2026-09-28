@@ -8,6 +8,13 @@ import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
 import { createSplashController, type SplashController } from './splash'
+import {
+  beginNavigation,
+  checkVersionGate,
+  getActiveGate,
+  installServerVersion,
+  setActiveGate,
+} from './versionGate'
 import { nextZoomFactor, type ZoomAction } from './zoom'
 import { shouldUseFramelessWindow } from './windowChrome'
 import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
@@ -40,6 +47,59 @@ export function dismissSplash(): void {
  */
 export function cancelSplash(): void {
   splash?.cancel()
+}
+
+/**
+ * Check the desktop/server version consistency for a navigation to `url` and,
+ * on a mismatch, raise the blocking gate. Fire-and-forget: the check is
+ * asynchronous and its result is applied only if the navigation is still the
+ * current one.
+ */
+export function checkVersionGateFor(url: string): void {
+  const gen = beginNavigation()
+  void checkVersionGate(url, gen)
+    .then((info) => {
+      if (!info) {
+        // No mismatch (or nothing to compare): make sure a gate from an earlier
+        // navigation cannot be acted on.
+        setActiveGate(null)
+        return
+      }
+      setActiveGate(info)
+      splash?.showVersionMismatch(info)
+    })
+    .catch(() => { /* a gate check must never break a connection */ })
+}
+
+/** Dismiss the version gate (the overlay's "continue" action). */
+export function continueVersionGate(): void {
+  setActiveGate(null)
+  splash?.continueGate()
+}
+
+/**
+ * Abandon any version-gate work for the current navigation.
+ *
+ * Bumps the navigation generation so an in-flight check cannot raise the gate
+ * afterwards, and clears any gate already up. Used when the connection fails or
+ * the user returns to the login page, where a gate would be meaningless.
+ */
+export function abortVersionGate(): void {
+  beginNavigation()
+  setActiveGate(null)
+  splash?.continueGate()
+}
+
+/**
+ * Install the server's version from the gate ("download" action). The gate
+ * stays up on failure; on success the app restarts into the new version (or the
+ * gate closes when the user defers the restart, so it stops offering a download
+ * of the version already on disk).
+ */
+export async function downloadVersionFromGate(): Promise<void> {
+  const info = getActiveGate()
+  if (!info) return
+  if (await installServerVersion(info, mainWindow)) continueVersionGate()
 }
 
 export function getMainWindow(): BrowserWindow | null { return mainWindow }
@@ -248,6 +308,9 @@ export function createMainWindow(): BrowserWindow {
     // page, so the overlay covers it here too.
     showSplashFor(serverUrl)
     mainWindow.loadURL(serverUrl)
+    // The version gate runs alongside the load; on a mismatch it replaces the
+    // loading overlay with the blocking gate.
+    checkVersionGateFor(serverUrl)
   } else {
     // First run: no server configured — show a built-in login page to enter the server URL.
     // No overlay: the login page is a local document with nothing to wait for.
@@ -267,6 +330,10 @@ export function createMainWindow(): BrowserWindow {
     // The server is unreachable, so the overlay's premise (something is
     // loading) no longer holds — drop it before showing the login page.
     dismissSplash()
+    // And abandon any version-gate check for this navigation: a mismatch against
+    // an unreachable server is not actionable, and its result must not cover the
+    // login page the user is about to see.
+    abortVersionGate()
     // Server page failed to load (unreachable) — fall back to the server-selection
     // login page so the user can pick another server instead of a blank page.
     // loadFile resolves once the page is ready, so the failure can then be
@@ -317,6 +384,9 @@ export function showLoginPage(): void {
     // notification deep-link fallback. The overlay must come down, or it would
     // sit on top of the login page the user just asked for.
     dismissSplash()
+    // A version gate is meaningless on the login page; drop it and invalidate
+    // any in-flight check so it cannot reappear here.
+    abortVersionGate()
     mainWindow.loadFile(loginPagePath())
   }
 }

@@ -40,7 +40,16 @@
       splash_rendering: 'Rendering…',
       splash_initializing: 'Initializing app…',
       splash_cancel: 'Cancel connection',
-      window_close: 'Close'
+      window_close: 'Close',
+      // Version-mismatch gate. The desktop and server versions differ in either
+      // direction, so the wording must not assume the app is the older side —
+      // the two `_older`/`_newer` variants cover that.
+      version_mismatch_title: 'Version mismatch',
+      version_mismatch_body: 'Desktop version: %1\nServer version: %2\n\nThe two versions may be incompatible: some features may behave unexpectedly or stop working.',
+      version_mismatch_older: 'The desktop app is older than the server. Updating is recommended.',
+      version_mismatch_newer: 'The desktop app is newer than the server. Downloading will align it to the server version (a downgrade).',
+      version_mismatch_download: 'Download',
+      version_mismatch_continue: 'Continue anyway'
     },
     zh: {
       slogan: '从终端到桌面',
@@ -75,7 +84,15 @@
       splash_rendering: '正在渲染…',
       splash_initializing: '正在初始化应用…',
       splash_cancel: '取消连接',
-      window_close: '关闭'
+      window_close: '关闭',
+      // Version-mismatch gate. See the en block for why the wording is split by
+      // direction rather than assuming the app is older.
+      version_mismatch_title: '版本不一致',
+      version_mismatch_body: '桌面端版本: %1\n服务器版本: %2\n\n两者可能不兼容：部分功能可能异常或无法使用。',
+      version_mismatch_older: '桌面端版本低于服务器，建议更新。',
+      version_mismatch_newer: '桌面端版本高于服务器，下载将对齐到服务器版本（降级）。',
+      version_mismatch_download: '下载',
+      version_mismatch_continue: '仍然继续'
     }
   };
   var LANG = 'en';
@@ -1428,6 +1445,94 @@
     background: var(--bg-tertiary);
     color: var(--text-primary);
   }
+
+  /* ── Version-mismatch gate ──────────────────────────────────────────────
+     Replaces the loading splash when the desktop/server versions differ. Like
+     the splash it is hidden unless a body class is set (added by
+     __versionMismatchShow), so the same document can serve the login form, the
+     splash and the gate. Styled as a card, mirroring the app's DialogOverlay so
+     the prompt reads as the same UI as the in-app dialogs. */
+  .gate { display: none; }
+
+  body.gate-mode .gate {
+    position: fixed;
+    inset: 0;
+    /* Above the splash: the gate replaces it, but both may be display:flex at
+       once (the page is reused and the main process does not always clear
+       splash-mode), so the gate must win the paint order. */
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 20px;
+    background: var(--bg-primary);
+  }
+
+  body.gate-mode .content { display: none; }
+
+  .gate-card {
+    width: 100%;
+    max-width: 360px;
+    padding: 18px 20px 14px;
+    background: var(--bg-secondary);
+    border-radius: 14px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.16), 0 14px 44px rgba(0, 0, 0, 0.3);
+  }
+
+  .gate-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .gate-body {
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    white-space: pre-line;
+    word-break: break-word;
+  }
+
+  .gate-direction {
+    margin-top: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+
+  .gate-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .gate-btn {
+    padding: 7px 14px;
+    font-size: 13px;
+    font-family: inherit;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: opacity 150ms ease, background 150ms ease, color 150ms ease;
+  }
+
+  .gate-continue {
+    color: var(--text-secondary);
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+  }
+  .gate-continue:hover {
+    color: var(--text-primary);
+  }
+
+  .gate-download {
+    color: #fff;
+    background: var(--accent-color);
+    border: none;
+    font-weight: 600;
+  }
+  .gate-download:hover { opacity: 0.9; }
 </style>
 </head>
 <body>
@@ -1442,6 +1547,22 @@
     <div class="splash-title">ClawBench</div>
     <div class="splash-stage" id="splashStage" data-i18n="splash_connecting">正在连接…</div>
     <button type="button" class="splash-cancel" id="splashCancel" data-i18n="splash_cancel">取消连接</button>
+  </div>
+
+  <!-- Version-mismatch gate. Shown by the main process (see splash.ts /
+       versionGate.ts) INSTEAD of the loading splash when the desktop and server
+       versions differ in either direction. Blocking: it has no cancel button, so
+       the only ways out are "download" and "continue". -->
+  <div class="gate" id="versionGate">
+    <div class="gate-card">
+      <div class="gate-title" id="gateTitle" data-i18n="version_mismatch_title">版本不一致</div>
+      <div class="gate-body" id="gateBody"></div>
+      <div class="gate-direction" id="gateDirection"></div>
+      <div class="gate-actions">
+        <button type="button" class="gate-btn gate-continue" id="gateContinue" data-i18n="version_mismatch_continue">仍然继续</button>
+        <button type="button" class="gate-btn gate-download" id="gateDownload" data-i18n="version_mismatch_download">下载</button>
+      </div>
+    </div>
   </div>
 
   <div class="bg-gradient"></div>
@@ -1633,6 +1754,37 @@
     if (el) el.classList.remove('is-fading');
   };
 
+  // ── Version-mismatch gate ───────────────────────────────────────────────
+  // Shown INSTEAD of the loading splash when the desktop and server versions
+  // differ in either direction (see desktop/src/main/versionGate.ts). The main
+  // process calls __versionMismatchShow with the two versions and which side is
+  // newer; the buttons report the user's choice back through the native bridge.
+  //
+  // The direction decides the wording: "newer" means the desktop app is AHEAD,
+  // where downloading aligns DOWN to the server — so "update" would be wrong.
+  /** Fill the gate with the version details. Called from the main process. */
+  window.__versionMismatchShow = function(info) {
+    if (!info) return;
+    var body = document.getElementById('gateBody');
+    if (body) {
+      body.textContent = t('version_mismatch_body')
+        .replace('%1', info.clientVersion || '')
+        .replace('%2', info.serverVersion || '');
+    }
+    var dir = document.getElementById('gateDirection');
+    if (dir) {
+      dir.textContent = t(info.direction === 'newer'
+        ? 'version_mismatch_newer'
+        : 'version_mismatch_older');
+    }
+    document.body.classList.add('gate-mode');
+  };
+
+  /** Clear the gate state. The page is REUSED, so this runs before every show. */
+  window.__versionMismatchReset = function() {
+    document.body.classList.remove('gate-mode');
+  };
+
   if (SPLASH_MODE) {
     document.body.classList.add('splash-mode');
   }
@@ -1667,6 +1819,20 @@
       if (cancelBtn) {
         cancelBtn.addEventListener('click', function() {
           try { ClawBenchNative.cancelSplash(); } catch(e) {}
+        });
+      }
+      // Version-gate buttons. Wired here (not in the show hook) so they work
+      // even if the gate is shown after the page has already loaded.
+      var continueBtn = document.getElementById('gateContinue');
+      if (continueBtn) {
+        continueBtn.addEventListener('click', function() {
+          try { ClawBenchNative.versionContinue(); } catch(e) {}
+        });
+      }
+      var downloadBtn = document.getElementById('gateDownload');
+      if (downloadBtn) {
+        downloadBtn.addEventListener('click', function() {
+          try { ClawBenchNative.versionDownload(); } catch(e) {}
         });
       }
       return;

@@ -150,7 +150,10 @@ flowchart TD
 versionName 参与的下游判断：
 
 - 服务端 `/api/health` 返回的 `version`，供[应用自升级](self-upgrade.md)做版本检查
-- Android 原生层在加载 WebView **之前**用 `VersionCompare.shouldShowMismatch` 对比 APK 与服务器版本（走 versionName，任一侧不可解析则 fail-open）
+- **客户端版本一致性拦截**：客户端与服务器版本**任一方向不一致**即提示（不只是客户端落后——客户端较新也可能依赖服务器没有的功能）。两端形态不同：
+  - **Android**：原生层在加载 WebView **之前**用 `VersionCompare.shouldShowMismatch` 对比 APK 与服务器版本（走 versionName，任一侧不可解析则 fail-open），不一致则弹阻塞式原生对话框（`isClientNewer` 决定文案方向）。
+  - **桌面端（Electron）**：主进程复用启动 splash 的原生遮罩（`desktop/src/main/versionGate.ts` + `splash.ts`），判定用 `desktop/src/shared/version.ts` 的 `shouldGate`，连服务器时（冷启动与 `connect-to-server`）各检查一次。未打包（`app.isPackaged === false`）的开发壳豁免，避免仓库内占位版本 `0.1.0` 被误判。
+  - 三端比较语义同源：`internal/version/compare.go`（Go）、`web/src/utils/version.ts`、`android/.../VersionCompare.java`、`desktop/src/shared/version.ts` 互为镜像（剥 `v` 前缀与 `-MMDDHHMM` 构建后缀；同核心时带 pre-release 后缀者更新）。
 
 ## 发布资产文件名
 

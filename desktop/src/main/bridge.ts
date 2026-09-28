@@ -13,6 +13,7 @@ import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
   showSplashFor, dismissSplash, cancelSplash,
+  checkVersionGateFor, continueVersionGate, downloadVersionFromGate,
   minimizeMainWindow, toggleMaximizeMainWindow, closeMainWindow, isMainWindowMaximized,
 } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
@@ -89,6 +90,10 @@ export function registerBridge(): void {
       // whole connect + boot period. Mirrors Android's connectToServer().
       showSplashFor(url)
       w.loadURL(url)
+      // Check the desktop/server version consistency for this connection. On a
+      // mismatch the gate replaces the loading overlay; every connect is checked
+      // (the skip is not remembered), matching Android.
+      checkVersionGateFor(url)
     } else { createMainWindow() }
   })
 
@@ -98,6 +103,10 @@ export function registerBridge(): void {
   ipcMain.on('native:dismiss-splash', () => dismissSplash())
   // The overlay page's cancel button. Navigates back to the login page.
   ipcMain.on('native:splash-cancel', () => cancelSplash())
+  // Version-gate actions. "continue" proceeds on the current version;
+  // "download" installs the server's version (the gate stays up on failure).
+  ipcMain.on('native:version-continue', () => continueVersionGate())
+  ipcMain.on('native:version-download', () => { void downloadVersionFromGate() })
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))
   ipcMain.handle('native:test-port-reachable', (_e, p: number) => testPortReachable(p))

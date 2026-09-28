@@ -1366,8 +1366,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Navigate to {@code url}, unless the installed APK is older than the server — in
-     * which case show the blocking upgrade dialog first and only navigate if the user
+     * Navigate to {@code url}, unless the installed APK and the server versions differ —
+     * in which case show the blocking upgrade dialog first and only navigate if the user
      * force-skips.
      *
      * <p>Must be called on the UI thread (it may construct an AlertDialog). Fails open:
@@ -1387,18 +1387,25 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Blocking dialog shown before the WebView loads when the APK is older than the
-     * server. Uses the web-style card ({@link WebStyleDialog}) so the prompt reads as
-     * the same UI as the in-app dialogs, with locale-aware strings; not cancelable so
-     * BACK/tap-outside cannot bypass it.
+     * Blocking dialog shown before the WebView loads when the APK and server versions
+     * differ (either direction). Uses the web-style card ({@link WebStyleDialog}) so the
+     * prompt reads as the same UI as the in-app dialogs, with locale-aware strings; not
+     * cancelable so BACK/tap-outside cannot bypass it.
+     *
+     * <p>The direction picks the wording: an APK NEWER than the server is told that
+     * downloading installs the server's version (a downgrade), since calling that an
+     * update would be misleading.
      *
      * @param onSkip navigation to run when the user chooses to continue on the old APK
      */
     void showVersionMismatchDialog(String url, String appVersion, String serverVersion, Runnable onSkip) {
         if (isFinishing() || isDestroyed()) return;
+        String direction = VersionCompare.isClientNewer(appVersion, serverVersion)
+                ? userLangString(R.string.version_mismatch_newer)
+                : userLangString(R.string.version_mismatch_older);
         WebStyleDialog.show(this,
                 userLangString(R.string.version_mismatch_title),
-                userLangString(R.string.version_mismatch_message, appVersion, serverVersion),
+                userLangString(R.string.version_mismatch_message, appVersion, serverVersion, direction),
                 userLangString(R.string.version_mismatch_download),
                 userLangString(R.string.version_mismatch_skip),
                 () -> onVersionMismatchDownload(url),
