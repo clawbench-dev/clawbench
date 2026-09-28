@@ -99,6 +99,7 @@
       :acpSyncing="acpSyncing"
       :active="props.active"
       @send="sendMessage"
+      @btw="handleBtw"
       @cancel="stream.cancelStream"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
@@ -190,6 +191,21 @@
     :session-id="sessionShareId"
     @close="sessionShareOpen = false"
   />
+
+  <!-- /btw side-question answer. Mounted here (not in ChatInputBar) so it
+       inherits this component's chatRender/chatSession/chatUI/autoSpeech
+       provides, and the answer renders through the exact same pipeline as a
+       chat message. -->
+  <BtwAnswerDrawer
+    ref="btwDrawerRef"
+    :question="btwQuestion"
+    :answer="btwAnswer"
+    :answer-id="btwAnswerId"
+    :expanded-tools="render.expandedTools"
+    :block-tasks="render.blockTasks"
+    :block-ask-questions="render.blockAskQuestions"
+    :static-block-cache="render.staticBlockCache"
+  />
 </template>
 
 <script setup>
@@ -203,6 +219,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailDrawer from './ToolDetailDrawer.vue'
 import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
+import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
@@ -1050,6 +1067,49 @@ function persistSessionUpdate(fields) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(fields),
   }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
+}
+
+// ── /btw side question ──
+// The question is answered by the summary model from a compressed snapshot of
+// this session. It is deliberately NOT routed through sendMessage: it must not
+// be queued, must not start the agent, and must not touch the session's
+// loading state (a /btw question is useful precisely while the agent is busy).
+const btwDrawerRef = ref(null)
+const btwQuestion = ref('')
+const btwAnswer = ref('')
+const btwAnswerId = ref(0)
+
+async function handleBtw(question) {
+  const sid = identity.currentSessionId.value
+  if (!sid) {
+    toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
+    return
+  }
+
+  // Clear the composer up front: the question is consumed by this request.
+  inputBarRef.value?.clearInput()
+  inputBarRef.value?.setBtwLoading?.(true)
+
+  try {
+    const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question })
+    const answer = data?.answer || ''
+    if (!answer) {
+      toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
+      return
+    }
+    btwQuestion.value = question
+    btwAnswer.value = answer
+    btwAnswerId.value += 1
+    btwDrawerRef.value?.open()
+  } catch (err) {
+    // Errors (model not configured, request failure) surface as a toast — an
+    // empty drawer would be worse than no drawer.
+    appLog.w(TAG, 'btw question failed', err)
+    const msg = err?.message || t('chat.btw.failed')
+    toast.show(msg, { icon: '⚠️', type: 'error' })
+  } finally {
+    inputBarRef.value?.setBtwLoading?.(false)
+  }
 }
 
 async function sendMessage(text) {

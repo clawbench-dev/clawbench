@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -66,6 +67,88 @@ func TestRecommendNextStep_UnsupportedBackend(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "does not support") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestAskAboutContext_UnsupportedBackend(t *testing.T) {
+	// The "simple" summarizer cannot answer one-shot questions.
+	_, err := AskAboutContext(context.Background(), NewSimple(), "sys", "ctx", "q", 8192)
+	if !errors.Is(err, ErrOneShotUnsupported) {
+		t.Fatalf("expected ErrOneShotUnsupported, got: %v", err)
+	}
+}
+
+func TestAskAboutContext_OpenAIUsesGivenMaxTokens(t *testing.T) {
+	var received openaiChatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"side answer"}}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
+	out, err := AskAboutContext(context.Background(), s, "sys", "compressed history", "why?", 8192)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "side answer" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+	if received.MaxTokens != 8192 {
+		t.Fatalf("expected max_tokens 8192, got %d", received.MaxTokens)
+	}
+	// system + stable context + question
+	if len(received.Messages) != 3 {
+		t.Fatalf("expected 3 messages, got %d", len(received.Messages))
+	}
+	if received.Messages[1].Content != "compressed history" {
+		t.Fatalf("stable context not sent as its own message: %+v", received.Messages)
+	}
+	if received.Messages[2].Content != "why?" {
+		t.Fatalf("question not sent as the rolling tail: %+v", received.Messages)
+	}
+}
+
+// TestAskAboutContext_ZeroMaxTokensFallsBack guards that callers which do not
+// care about the cap still get the recommendation default rather than 0 (which
+// OpenAI-compatible endpoints reject).
+func TestAskAboutContext_ZeroMaxTokensFallsBack(t *testing.T) {
+	var received openaiChatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
+	if _, err := AskAboutContext(context.Background(), s, "sys", "", "q", 0); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if received.MaxTokens != recommendMaxTokens {
+		t.Fatalf("expected fallback to %d, got %d", recommendMaxTokens, received.MaxTokens)
+	}
+}
+
+// TestDoRecommendPass_KeepsRecommendTokens guards that routing the
+// recommendation pass through the shared ask implementation did not change its
+// output cap.
+func TestDoRecommendPass_KeepsRecommendTokens(t *testing.T) {
+	var received openaiChatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&received)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"next"}}]}`))
+	}))
+	defer srv.Close()
+
+	s := NewOpenAI(srv.URL, "key", "gpt-4o-mini")
+	if _, err := s.DoRecommendPass(context.Background(), "sys", "", "rolling"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if received.MaxTokens != 1024 {
+		t.Fatalf("expected recommend max_tokens 1024, got %d", received.MaxTokens)
 	}
 }
 

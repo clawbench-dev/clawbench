@@ -76,7 +76,8 @@ const i18n = createI18n({
           edit: 'Edit',
         },
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
-        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage' },
+        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage', btwDesc: 'Side question' },
+        btw: { title: 'By the way', answering: 'Answering…', failed: 'Failed' },
         slashCommand: { title: 'Slash' },
         completion: {
           source: {
@@ -1013,6 +1014,79 @@ describe('ChatInputBar', () => {
     wrapper.vm.handleQuickSendClick(item)
     expect(wrapper.emitted('send')).toBeTruthy()
     expect(wrapper.emitted('send')![0]).toEqual(['/test'])
+  })
+
+  // ── /btw side question ──
+  // Every send entry point must route /btw to its own event instead of 'send',
+  // so the question never reaches the agent or the queue. The three cases below
+  // cover the three entry points, because a /btw typed and then submitted with
+  // the button must behave identically to one submitted with Enter.
+
+  it('routes /btw through the send button to the btw event, not send', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw 为什么并发一高就慢'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    expect(wrapper.emitted('send')).toBeFalsy()
+    expect(wrapper.emitted('btw')).toBeTruthy()
+    expect(wrapper.emitted('btw')![0]).toEqual(['为什么并发一高就慢'])
+  })
+
+  it('routes /btw entered with the Enter key to the btw event', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw 连接池是多大？'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeFalsy()
+    expect(wrapper.emitted('btw')).toBeTruthy()
+    expect(wrapper.emitted('btw')![0]).toEqual(['连接池是多大？'])
+  })
+
+  it('routes a /btw quick-send command to the btw event', () => {
+    const wrapper = mountBar()
+    wrapper.vm.handleQuickSendClick({ id: '1', label: 'Btw', command: '/btw 总结一下' })
+    expect(wrapper.emitted('send')).toBeFalsy()
+    expect(wrapper.emitted('btw')).toBeTruthy()
+    expect(wrapper.emitted('btw')![0]).toEqual(['总结一下'])
+  })
+
+  it('does not fire a bare /btw with no question', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    // The incomplete command stays in the input for the user to finish.
+    expect(wrapper.emitted('btw')).toBeFalsy()
+    expect(wrapper.emitted('send')).toBeFalsy()
+  })
+
+  it('does not intercept a message that merely mentions btw', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'what does /btw do?'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    expect(wrapper.emitted('btw')).toBeFalsy()
+    expect(wrapper.emitted('send')![0]).toEqual(['what does /btw do?'])
+  })
+
+  it('offers /btw in the slash command menu', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    // The candidate list is what the completion menu renders from.
+    const keys = wrapper.vm.commandMenuItems.map(i => i.key)
+    expect(keys).toContain('/btw')
+  })
+
+  it('shows the spinner and disables the input while a btw request is in flight', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.setBtwLoading(true)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chat-send-btn').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.chat-textarea').attributes('disabled')).toBeDefined()
+    wrapper.vm.setBtwLoading(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.chat-textarea').attributes('disabled')).toBeUndefined()
   })
 
   it('quick-send menu items disable text selection', async () => {
@@ -2205,9 +2279,9 @@ describe('ChatInputBar', () => {
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // ClawBench has 3 items: /cb-chatsearch (0), /cb-task (1), /cb-usage (2);
-    // ArrowUp wraps to the last, index 2.
-    expect(wrapper.vm.commandMenuIndex).toBe(2)
+    // Wraps to the LAST built-in. Derived from the candidate list rather than a
+    // literal so adding a built-in command does not silently break this test.
+    expect(wrapper.vm.commandMenuIndex).toBe(wrapper.vm.commandMenuItems.length - 1)
   })
 
   it('keyboard nav scrolls highlighted command item into view even when menu is teleported', async () => {
@@ -2245,8 +2319,11 @@ describe('ChatInputBar', () => {
     // watchers and mocks alive and corrupts the tests that follow.
     try {
       const items = wrapper.findAll('.completion-item')
-      // 3 ClawBench built-ins + 2 deduped agent commands
-      expect(items).toHaveLength(5)
+      // All ClawBench built-ins + the 2 deduped agent commands (mmx-cli is
+      // reported twice and must collapse to one entry). Derived from the
+      // rendered candidate count so adding a built-in does not break this.
+      const builtinCount = wrapper.vm.clawbenchCommands.length
+      expect(items).toHaveLength(builtinCount + 2)
       const labels = items.map(i => i.find('.completion-label').text())
       expect(labels.some(l => l.startsWith('//'))).toBe(false)
       expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)

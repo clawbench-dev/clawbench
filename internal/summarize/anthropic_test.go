@@ -246,6 +246,30 @@ func TestAnthropicDoRecommendPass_CacheableStable(t *testing.T) {
 	assert.Equal(t, "ephemeral", received.Messages[0].Content[0].CacheControl.Type)
 }
 
+// TestAnthropicAskAboutContext_SetsMaxTokens guards that the /btw output cap
+// reaches Anthropic's required max_tokens field.
+func TestAnthropicAskAboutContext_SetsMaxTokens(t *testing.T) {
+	var received anthropicRecommendRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropicResponse{
+			Content: []anthropicContentBlock{{Type: "text", Text: "旁路回答。"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewAnthropic(server.URL, "key", "claude-3-5-haiku-latest")
+	out, err := AskAboutContext(context.Background(), s, "sys", "history", "why?", 8192)
+	assert.NoError(t, err)
+	assert.Equal(t, "旁路回答。", out)
+	assert.Equal(t, 8192, received.MaxTokens)
+	assert.Len(t, received.Messages, 1)
+	assert.Len(t, received.Messages[0].Content, 2)
+	assert.Equal(t, "history", received.Messages[0].Content[0].Text)
+	assert.Equal(t, "why?", received.Messages[0].Content[1].Text)
+}
+
 func TestAnthropicDoRecommendPass_SmallStable(t *testing.T) {
 	var received anthropicRecommendRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -333,6 +333,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/acp-load", ServeACPLoadSession)
 	register("/api/ai/session/acp-sync", ServeACPSyncSession)
 	register("/api/ai/session/fork", ServeForkSession)
+	register("/api/ai/session/btw", ServeBtwQuestion)
 	register("/api/ai/session/reset", ServeSessionReset)
 	register("/api/ai/session/rewind", ServeSessionRewind)
 	// Path kept as "user-messages" for compatibility: the frontend is served from

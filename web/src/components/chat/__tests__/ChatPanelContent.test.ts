@@ -563,6 +563,55 @@ describe('ChatPanelContent — send failure always toasts', () => {
   })
 })
 
+// ── /btw side question ──
+// /btw must not share the send path: it must not queue, must not start the
+// agent, and must not touch the session's loading state.
+describe('ChatPanelContent — /btw side question', () => {
+  async function sourceRegion(start: string, end: string) {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    return source.slice(source.indexOf(start), source.indexOf(end))
+  }
+
+  it('posts to the dedicated btw endpoint instead of the chat endpoint', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/apiPost\(\s*'\/api\/ai\/session\/btw'/)
+    // It must NOT go through the chat send pipeline (queue / agent start).
+    expect(region).not.toMatch(/sendMessageNow\(/)
+    expect(region).not.toMatch(/enqueueAndMaybeStart\(/)
+  })
+
+  it('never writes to the session loading flag', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    // loading drives the queue decision and the stop button; a side question
+    // must leave it alone so it stays usable while the agent is running.
+    expect(region).not.toMatch(/loading\.value\s*=/)
+  })
+
+  it('opens the drawer only after a non-empty answer arrives', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    // Guard against an empty answer before opening.
+    expect(region).toMatch(/if\s*\(!answer\)/)
+    expect(region).toMatch(/btwDrawerRef\.value\?\.open\(\)/)
+  })
+
+  it('toasts instead of opening an empty drawer when the request fails', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/catch\s*\(err\)[\s\S]*?toast\.show\(/)
+  })
+
+  it('clears the btw loading state in a finally block', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/finally\s*\{[\s\S]*?setBtwLoading\?\.\(false\)/)
+  })
+
+  it('wires the input bar btw event to handleBtw', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/@btw="handleBtw"/)
+  })
+})
+
 // ── First-open scroll-to-bottom ──
 // Root cause: the active watch passed forceScrollBottom=false on EVERY open.
 // On first app launch there is no prior scroll position (fresh DOM, scrollTop=0),

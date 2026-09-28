@@ -466,6 +466,14 @@ export default {
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage tasks',
       usageDesc: 'View token usage',
+      btwDesc: 'Ask a side question (answered by the summary model, without disturbing this session)',
+    },
+    btw: {
+      title: 'By the way',
+      answering: 'Answering…',
+      questionRequired: 'A question is required after /btw',
+      failed: 'Failed to answer',
+      close: 'Close',
     },
     slashCommand: {
       title: 'Commands',

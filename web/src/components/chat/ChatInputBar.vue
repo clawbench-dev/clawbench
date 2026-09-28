@@ -122,7 +122,7 @@
           :key="inputEpoch"
           ref="textareaRef"
           v-model="inputText"
-          :disabled="inputDisabled"
+          :disabled="inputDisabled || btwLoading"
           :placeholder="dynamicPlaceholder"
           rows="1"
           @keydown="onTextareaKeydown"
@@ -135,9 +135,11 @@
           @touchend="onTextareaTouchEnd"
           @touchcancel="onTextareaTouchCancel"
           ></textarea>
-        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
+        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent && !btwLoading }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :disabled="btwLoading" :title="btwLoading ? t('chat.btw.answering') : !hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
+          <!-- /btw request in flight -->
+          <LoadingIndicator v-if="btwLoading" class="send-btn-spinner" size="sm" inline />
           <!-- Empty input: green lightning (quick-menu shortcut) -->
-          <Zap v-if="!hasInputContent" :size="15" />
+          <Zap v-else-if="!hasInputContent" :size="15" />
           <!-- Queue mode: inbox with down arrow (enqueue) -->
           <Inbox v-else-if="loading" :size="15" />
           <!-- Normal mode: paper plane (send) -->
@@ -600,6 +602,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'send',
+  'btw',
   'cancel',
   'add-attached',
   'remove-attached',
@@ -966,8 +969,28 @@ const clawbenchCommands = computed(() => {
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
     { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
     { key: '/cb-usage', label: '/cb-usage', description: t('chat.clawbenchCommand.usageDesc') },
+    { key: '/btw', label: '/btw', description: t('chat.clawbenchCommand.btwDesc') },
   ]
 })
+
+// ── /btw side question ──
+// "/btw <question>" is answered by ClawBench itself (the AI summary model) from
+// a compressed snapshot of the session — it never reaches the session's agent
+// and is never queued, so it stays available while the agent is busy.
+const BTW_PREFIX = '/btw'
+
+/** Returns the question text when text is a /btw invocation, else null. */
+function parseBtwCommand(text) {
+  const trimmed = (text || '').trim()
+  if (trimmed === BTW_PREFIX) return ''
+  if (trimmed.startsWith(BTW_PREFIX + ' ')) return trimmed.slice(BTW_PREFIX.length).trim()
+  return null
+}
+
+// True while the /btw request is in flight. Deliberately separate from the
+// session's `loading`: a /btw question must work while the agent is running.
+const btwLoading = ref(false)
+function setBtwLoading(v) { btwLoading.value = v }
 
 // Slash candidates. Command names arrive inconsistently: CodeBuddy ACP reports
 // skills slashless ("mmx-cli"), while pre-scanned names may keep a leading "/".
@@ -1430,8 +1453,30 @@ function onTextareaKeydown(e) {
   // Default: Enter (without modifier) sends
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
-    emit('send', inputText.value.trim())
+    dispatchSend(inputText.value.trim())
   }
+}
+
+/**
+ * The single send path for every entry point (send button, Enter, quick menu).
+ *
+ * "/btw <question>" is intercepted here and emitted as its own event instead of
+ * 'send': the question is answered by ClawBench's summary model, not the
+ * session's agent, so it must not reach the normal send/queue pipeline. Routing
+ * every caller through this function keeps the three entry points from drifting
+ * (a /btw typed then submitted with the send button must behave identically to
+ * one submitted with Enter).
+ */
+function dispatchSend(text) {
+  const btwQuestion = parseBtwCommand(text)
+  if (btwQuestion !== null) {
+    // A bare "/btw" carries no question; leave it in the input so the user can
+    // finish typing rather than firing an empty request.
+    if (!btwQuestion) return
+    emit('btw', btwQuestion)
+    return
+  }
+  emit('send', text)
 }
 
 // Keyboard detection for iOS (no adjustResize) — activates visualViewport monitoring
@@ -1854,7 +1899,7 @@ function handleSendClick() {
     return
   }
   if (inputText.value.trim()) {
-    emit('send', inputText.value.trim())
+    dispatchSend(inputText.value.trim())
   } else if (props.attachedFiles.length > 0 || quoteItems.value.length > 0) {
     emit('send', '')
   } else {
@@ -1865,7 +1910,7 @@ function handleSendClick() {
 // — Quick-send actions →
 function handleQuickSendClick(item) {
   showQuickMenu.value = false
-  emit('send', item.command)
+  dispatchSend(item.command)
 }
 
 function handleQuickSendInject(item) {
@@ -2021,6 +2066,7 @@ defineExpose({
   handleQuickSendInject,
   handleArchive,
   measureActionLabels,
+  setBtwLoading,
 })
 </script>
 
@@ -2369,6 +2415,11 @@ defineExpose({
 
 /* Cancelling state of the stop button — spinner inside the danger-tinted pill */
 .chat-stop-btn .stop-spinner {
+  --li-color: currentColor;
+}
+
+/* /btw side question in flight — spinner replaces the send/queue glyph */
+.chat-send-btn .send-btn-spinner {
   --li-color: currentColor;
 }
 

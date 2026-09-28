@@ -1490,6 +1490,29 @@ paths:
         "200":
           description: 新会话
 
+  /api/ai/session/btw:
+    post:
+      tags: [Sessions]
+      summary: 旁路问答（/btw）
+      description: >-
+        用会话历史（复用分叉压缩）向 AI 摘要模型提一个旁路问题，返回答案。不经过当前会话的
+        agent，不写入任何历史。sessionId 缺省时回退到查询参数 / 会话 Cookie。
+      operationId: sessionBtw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                question:
+                  type: string
+      responses:
+        "200":
+          description: 摘要模型的回答
+
   /api/ai/session/reset:
     post:
       tags: [Sessions]

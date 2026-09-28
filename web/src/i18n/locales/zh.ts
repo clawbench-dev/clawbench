@@ -469,6 +469,14 @@ export default {
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理任务',
       usageDesc: '查看 token 用量',
+      btwDesc: '顺便问一句（用摘要模型回答，不打扰当前会话）',
+    },
+    btw: {
+      title: '顺便问一句',
+      answering: '正在回答…',
+      questionRequired: '/btw 后面需要跟随一个问题',
+      failed: '回答失败',
+      close: '关闭',
     },
     slashCommand: {
       title: '命令',

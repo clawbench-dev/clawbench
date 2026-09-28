@@ -32,6 +32,8 @@ PathTraversal: 检测到路径穿越攻击
 InternalError: 内部服务器错误
 SessionNotFound: 会话未找到
 SummaryModelNotConfigured: 尚未配置 AI 摘要模型
+BtwQuestionRequired: /btw 后面需要跟随一个问题
+BtwFailed: 回答旁路问题失败
 NoUserMessagesToSummarize: 没有可总结的用户消息
 GenerateTitleFailed: 生成标题失败
 TagNameRequired: 标签名为必填项

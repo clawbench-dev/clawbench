@@ -62,6 +62,16 @@ type openaiChatMessage struct {
 // tail, so providers with automatic prefix caching (OpenAI, DeepSeek, etc.) can
 // reuse the stable prefix across turns without reprocessing the whole window.
 func (s *OpenAISummarizer) DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error) {
+	return s.DoAskPass(ctx, systemPrompt, stable, rolling, recommendMaxTokens)
+}
+
+// DoAskPass performs a one-shot question call with an explicit output cap. It is
+// the shared implementation behind DoRecommendPass (maxTokens = recommendMaxTokens)
+// and AskAboutContext (the /btw path, which passes a larger cap).
+func (s *OpenAISummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error) {
+	if maxTokens <= 0 {
+		maxTokens = recommendMaxTokens
+	}
 	messages := make([]openaiChatMessage, 0, 3)
 	messages = append(messages, openaiChatMessage{Role: "system", Content: systemPrompt})
 	if stable != "" {
@@ -73,7 +83,7 @@ func (s *OpenAISummarizer) DoRecommendPass(ctx context.Context, systemPrompt, st
 		Model:       s.Model,
 		Messages:    messages,
 		Temperature: 0.3,
-		MaxTokens:   1024,
+		MaxTokens:   maxTokens,
 	}
 
 	jsonBody, err := json.Marshal(reqBody)
