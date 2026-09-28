@@ -121,7 +121,7 @@ sequenceDiagram
 `transport` 与两个服务端事实的关系：
 
 - **SSH 监听器只由 `port_forward.enabled` 控制**（`cmd/server/main.go` 的 `ssh.NewServer` 分支），`transport` 不参与。因此 **`transport: h2` 时 SSH 仍监听 `mainPort+1`**。
-- **h2 的两个端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）只要注册表存在就始终可用**，与 `transport` 取值无关。因此 **`transport: ssh` 时 h2 端点仍然可用**（不会因 `transport` 而关闭）。
+- **h2 的两个端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）只要注册表存在就始终可用**，与 `transport` 取值无关。因此 **`transport: ssh` 时 h2 端点仍然可用**（不会因 `transport` 而关闭）。**注意 `POST /api/tunnel/control` 仅接受 HTTP/2**：认领流的作用域是 `Binding.ConnID = r.RemoteAddr`，只有在 h2 上多条流共享同一会话时才正确标识对端；h1 下控制流独占其 TCP 连接，认领流必然另开连接、`RemoteAddr` 不同，认领会被判为「他人 token」而得到 403。服务端因此在 h1 上直接返回 **`426 Upgrade Required`**，而不是等到认领阶段才 403。`-R` 在 HTTP/1.1 下请走 SSH 传输。
 - 注册表是否需要创建由 `shouldCreateProxyRegistry` 决定（见下文「端口守卫与注册表门控」）：`cfg.PortForward.Enabled || cfg.PortForward.Transport != model.TransportSSH`。**唯一让 h2 端点返回 `503 PortForwardUnavailable` 的组合是 `enabled:false && transport:ssh`**（此时注册表为 nil）。
 
 **默认值 `both`**（`model.DefaultPortForwardTransport`，`internal/model/defaults.go` 的 `ApplyDefaults` 在值非法或缺失时收敛到它）。对已启用 SSH 的用户行为不变，同时提供 h2；`transport` 不进入已持久化的端口行，因此**无 DB / SharedPreferences 迁移**。

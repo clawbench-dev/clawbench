@@ -29,6 +29,15 @@ const tunnelControlWriteTimeout = 10 * time.Second
 // request — the same class of reader as the Race-1 globals.
 var tunnelClaimTimeout = tunnel.DefaultClaimTimeout
 
+// tunnelBindReservedHook, when non-nil, runs in handleBind after ListenReverse
+// has reserved the port and before startAcceptLoop arms the registry's Active
+// flag. It is a test seam (nil in production, and the nil check is the only
+// cost): it lets a test deterministically park a bind inside the exact window
+// between the reservation and the Active flip, which is where a concurrent
+// Close used to be able to strand Active=true forever. See
+// TestControlSession_CloseDuringBindLeavesNoActiveFlag.
+var tunnelBindReservedHook func()
+
 // Reverse-tunnel registries. They are process-wide because a reverse bind
 // outlives the request that created it and a claim arrives on a different HTTP
 // request than its control stream, so no single handler invocation can own the
@@ -162,14 +171,23 @@ func (s *controlSession) handleBind(port int) {
 		return
 	}
 
-	// Drive the registry's Active flag, exactly as the SSH server does after a
-	// successful tcpip-forward (internal/ssh/server.go:534). Unknown ports are
-	// ignored by SetReverseBound, so a manual bind for an unregistered port
-	// still works. Setting it here (before the loop is registered) keeps the
-	// ordering safe: if Close has already run, startAcceptLoop below reports it
-	// and the release path clears the flag again.
-	if s.proxy != nil {
-		s.proxy.SetReverseBound(actual, true)
+	if tunnelBindReservedHook != nil {
+		tunnelBindReservedHook()
+	}
+
+	// Starting the accept loop (and, with it, arming the registry's Active flag)
+	// must be serialized against Close: otherwise this wg.Add can race Close's
+	// wg.Wait (sync.WaitGroup misuse, flagged on wg.sema), and an Add after
+	// Wait has returned would leave a listener the teardown already closed but
+	// whose reservation Close never saw. See startAcceptLoop for why the Active
+	// flip lives there rather than here.
+	if !s.startAcceptLoop(ln, actual) {
+		// Teardown began between the bind and here. Release the reservation so
+		// the port does not leak, and start no loop Wait would miss. No Active
+		// flag was set (startAcceptLoop observed closing), so there is nothing
+		// to clear here even though Release reports false.
+		s.releaseReverseBind(actual)
+		return
 	}
 
 	slog.Info("tunnel: reverse bind established", slog.Int("port", actual))
@@ -180,26 +198,46 @@ func (s *controlSession) handleBind(port int) {
 		s.releaseReverseBind(actual)
 		return
 	}
-
-	// Starting the accept loop must be serialized against Close: otherwise this
-	// wg.Add can race Close's wg.Wait (sync.WaitGroup misuse, flagged on
-	// wg.sema), and an Add after Wait has returned would leave a listener the
-	// teardown already closed but whose reservation Close never saw.
-	if !s.startAcceptLoop(ln, actual) {
-		// Teardown began between the bind and here. Release the reservation so
-		// the port does not leak, and start no loop Wait would miss.
-		s.releaseReverseBind(actual)
-	}
 }
 
 // startAcceptLoop registers an accept loop for ln under wgMu and starts it. It
 // returns false when Close has already begun, in which case the caller must
 // release the bind rather than start a loop Close's wg.Wait would miss.
+//
+// The registry's Active flag is armed HERE, under wgMu, not by the caller
+// before this call. That ordering is what keeps Active from being stranded:
+//
+//   - Close's release scan and its `closing = true` flip are one critical
+//     section under the same mutex. So this call either runs BEFORE that
+//     section (its reservation, made earlier on this goroutine, is visible to
+//     the scan, which then clears the flag) or AFTER it (closing is observed
+//     and no flag is set, because this call returns before reaching the flip).
+//   - If the flag were armed outside wgMu — as it was until this fix — a Close
+//     landing between the reservation and the arm could scan, release the
+//     reservation and clear Active, and only THEN let this goroutine run
+//     SetReverseBound(port, true). The reservation is gone, so the later
+//     releaseReverseBind's binds.Release returns false and returns early,
+//     leaving Active stuck true for a port nothing is listening on. Reverse
+//     mappings are never dial-probed (see checkAllPorts in service/proxy.go),
+//     so Active is the UI's only signal and the panel would show a live port
+//     forever.
+//
+// Arming the flag before startAcceptLoop returns also preserves the ordering
+// the registry lifecycle relies on: `bound` is written by the caller only after
+// this returns true, so Active is always true by the time the client sees the
+// acknowledgement (TestTunnelControl_RegistryActiveLifecycle).
 func (s *controlSession) startAcceptLoop(ln net.Listener, port int) bool {
 	s.wgMu.Lock()
 	defer s.wgMu.Unlock()
 	if s.closing {
 		return false
+	}
+	// Drive the registry's Active flag, exactly as the SSH server does after a
+	// successful tcpip-forward (internal/ssh/server.go:538). Unknown ports are
+	// ignored by SetReverseBound, so a manual bind for an unregistered port
+	// still works.
+	if s.proxy != nil {
+		s.proxy.SetReverseBound(port, true)
 	}
 	s.wg.Add(1)
 	go s.acceptLoop(ln, port)
@@ -368,8 +406,16 @@ func tunnelGuard() tunnel.PortGuard {
 //
 // Auth runs in middleware.Auth before this handler (registered via `register`).
 //
+// HTTP/2 is REQUIRED: this handler answers 426 (Upgrade Required) on HTTP/1.1.
+// The claim stream is scoped to Binding.ConnID = r.RemoteAddr, which only
+// identifies the peer correctly when many streams share one h2 session. On h1
+// the control stream owns its TCP connection outright, so the claim request
+// cannot share its RemoteAddr and would be rejected as a foreign claim (403) —
+// a misleading error. See the ProtoMajor guard below for the full reasoning.
+//
 // Error mapping (documented in internal/api/openapi.yaml):
 //   - 401 handled by middleware.Auth
+//   - 426 the request is not HTTP/2 (see above)
 //   - 503 no port registry configured (no forwarding enabled at all)
 //
 // Per-command failures (reserved port, duplicate bind, listen failure) are NOT
@@ -388,10 +434,29 @@ func TunnelControl(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// `-R` needs HTTP/2, and refusing h1 here makes that failure clear and
+	// early. The reason is tunnelBinding: a claim is scoped to
+	// Binding.ConnID = r.RemoteAddr, which on h2 is the whole multiplexed
+	// session (the claim stream rides the same connection as its control
+	// stream). On h1 the control stream is a long-lived duplex request that
+	// OWNS its TCP connection, so the client's claim request necessarily opens
+	// a second connection with a different RemoteAddr and can never match —
+	// the client would get a bare 403 at claim time, which reads as "denied"
+	// rather than "unsupported". Rejecting up front turns that into an
+	// explicit, diagnosable error. Both bundled native clients (Electron and
+	// Android) use h2 for this transport; SSH remains the h1-capable path.
+	if r.ProtoMajor < 2 {
+		slog.Debug("tunnel: control stream refused on HTTP/1.1", slog.String("proto", r.Proto))
+		writeLocalizedErrorf(w, r, http.StatusUpgradeRequired, "TunnelReverseRequiresHTTP2")
+		return
+	}
+
 	rc := http.NewResponseController(w)
-	// h1 fallback only: without this net/http consumes the unread request body
-	// before the handler may write (net/http/server.go:1392). On h2 it is a
-	// documented no-op (net/http/h2_bundle.go:6856).
+	// Only h2 reaches this point (h1 is refused above), where this is a
+	// documented no-op (net/http/h2_bundle.go:6856). Kept as a guard so the
+	// handler stays correct if the protocol check above is ever relaxed: on h1
+	// net/http would otherwise consume the unread request body before the
+	// handler may write (net/http/server.go:1392).
 	if err := rc.EnableFullDuplex(); err != nil {
 		slog.Debug("tunnel: EnableFullDuplex unsupported on control stream", slog.String("err", err.Error()))
 	}

@@ -34,8 +34,10 @@ const (
 	// BindErrNotAllowed corresponds to 403: the port is outside allowed_ports.
 	BindErrNotAllowed = 2
 	// BindErrReservedOrTaken corresponds to 409: the port is reserved for
-	// ClawBench itself, already bound by another control stream, or held by an
-	// unrelated process.
+	// ClawBench itself or already bound by another control stream. A port held
+	// by an unrelated process is NOT this code: cross-platform errno handling
+	// is unreliable, so it is reported as BindErrListenFailed instead (see
+	// ListenReverse in bind.go).
 	BindErrReservedOrTaken = 3
 	// BindErrListenFailed is a bind failure that is not "address in use"
 	// (e.g. permission denied).

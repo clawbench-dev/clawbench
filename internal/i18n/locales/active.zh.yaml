@@ -132,3 +132,4 @@ RAGRebuildAccepted: 重建已在后台启动
 AutoContinue: 继续
 PortForwardUnavailable: 端口转发不可用
 TunnelTargetUnreachable: 隧道目标不可达
+TunnelReverseRequiresHTTP2: 反向转发需要 HTTP/2；HTTP/1.1 下请使用 SSH 传输

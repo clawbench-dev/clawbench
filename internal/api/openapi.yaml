@@ -4123,6 +4123,12 @@ paths:
 
         失败语义：**单条命令失败不会断开控制流**（回 `bind_err`，流继续）；畸形行被忽略。
         控制流断开或 `unbind` 会释放 listener、关闭所有挂起连接并清除注册表 `Active` 标记。
+
+        **必须使用 HTTP/2**：认领流的作用域是 `Binding.ConnID = r.RemoteAddr`，只有在 h2 上
+        多条流共享同一会话时它才正确标识对端。h1 下控制流独占其 TCP 连接，认领流必然另开
+        连接、`RemoteAddr` 不同，认领会被判为「他人 token」而得到 403 —— 语义误导。因此
+        服务端在 HTTP/1.1 上直接返回 `426 Upgrade Required`（而非等到认领阶段才 403）。
+        Electron 与 Android 客户端在该传输上都走 h2；HTTP/1.1 场景请使用 SSH 传输。
       operationId: tunnelControl
       responses:
         "200":
@@ -4130,6 +4136,8 @@ paths:
             控制流已建立。响应体为 server→client 的 NDJSON 事件，客户端可持续写命令。
         "401":
           description: 未鉴权。
+        "426":
+          description: 请求不是 HTTP/2（`-R` 需要 h2，见上方说明）。
         "503":
           description: 未启用端口转发（`ProxyService == nil`），无白名单可执行。
 

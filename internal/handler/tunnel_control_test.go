@@ -229,6 +229,35 @@ func TestTunnelControl_NilProxyServiceIsUnavailable(t *testing.T) {
 		"without a registry there is no whitelist, so the control stream must be refused")
 }
 
+// TestTunnelControl_HTTP1IsRefusedWith426 pins M2: `-R` needs HTTP/2, and the
+// handler must say so up front instead of letting the client discover it as a
+// bare 403 at claim time.
+//
+// On h1 the control stream owns its TCP connection, so the claim request can
+// never share Binding.ConnID (= RemoteAddr) and would be rejected as a foreign
+// claim. 426 makes the actual reason explicit. The server is h1+h2c so this
+// exercises the real protocol split rather than a synthetic request.
+//
+// The body is empty rather than a live io.Pipe: the 426 is decided from
+// r.ProtoMajor before any body is read, and a never-ending h1 request body
+// would wedge the server's post-handler drain (and with it httptest's Close).
+func TestTunnelControl_HTTP1IsRefusedWith426(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	req, err := http.NewRequest(http.MethodPost, base+"/api/tunnel/control", http.NoBody)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-ndjson")
+
+	resp, err := h1TunnelClient().Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Equal(t, 1, resp.ProtoMajor, "this case must exercise the HTTP/1.1 path")
+	assert.Equal(t, http.StatusUpgradeRequired, resp.StatusCode,
+		"an h1 control stream must be refused with 426, not accepted")
+}
+
 // ---------- bind guard parity ----------
 
 func TestTunnelControl_RejectsReservedPorts(t *testing.T) {
@@ -1364,6 +1393,92 @@ func TestControlSession_CloseDoesNotHangOnReservationInScanWindow(t *testing.T) 
 	}
 
 	assert.False(t, tunnelBinds.IsBound(port), "the in-window bind must have been released, not leaked")
+	waitPortFree(t, port)
+}
+
+// TestControlSession_CloseDuringBindLeavesNoActiveFlag is the regression guard
+// for the Active-flag leak that survived the WaitGroup fix.
+//
+// A bind reserves its port in ListenReverse (outside wgMu) and only later arms
+// the registry's Active flag. On the unfixed code that arm happened OUTSIDE
+// wgMu, so a Close landing in the window could scan the reservation, clear
+// Active and flip `closing` — and the bind would then run
+// SetReverseBound(port, true) against a reservation that no longer existed. Its
+// own releaseReverseBind then saw binds.Release return false and returned
+// early, so nothing ever cleared the flag: Active stayed true for a port with
+// no listener. Reverse mappings are never dial-probed
+// (service/proxy.go checkAllPorts), so Active is the UI's only signal and a
+// stranded true is permanent — the panel shows a green port that does not
+// exist.
+//
+// The test parks a bind inside exactly that window with tunnelBindReservedHook
+// (after the reservation, before the Active arm), runs Close to completion,
+// then lets the bind resume. On the fixed code startAcceptLoop observes
+// `closing` under wgMu and never arms the flag; on the unfixed code the arm
+// runs unconditionally and the final assertion fails.
+func TestControlSession_CloseDuringBindLeavesNoActiveFlag(t *testing.T) {
+	_, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	// Register a reverse mapping so SetReverseBound has a port to flag. The
+	// bind will request the exact free port the registry allocated, so the
+	// mapping's server-side port is the one under test.
+	port := freeLoopbackPort(t)
+	allocated, err := service.ProxyService.RegisterPort(port, "", "race", "http", model.DirectionReverse)
+	require.NoError(t, err)
+	require.Equal(t, port, allocated, "the free port must be allocated as-is")
+	require.False(t, isActive(allocated), "a reverse mapping starts inactive")
+
+	binding := tunnel.Binding{AuthID: "a", ConnID: "active-race"}
+	s := newControlSession(binding, io.Discard, nil)
+
+	// Park handleBind after ListenReverse reserved the port and before
+	// startAcceptLoop arms Active: the exact window the bug lived in.
+	reserved := make(chan struct{})
+	proceed := make(chan struct{})
+	origHook := tunnelBindReservedHook
+	tunnelBindReservedHook = func() {
+		close(reserved)
+		<-proceed
+	}
+	t.Cleanup(func() { tunnelBindReservedHook = origHook })
+
+	handleDone := make(chan struct{})
+	go func() {
+		s.handleBind(port)
+		close(handleDone)
+	}()
+
+	// The port being reserved proves the bind is genuinely inside the window
+	// (reservation made, Active not yet armed).
+	require.Eventually(t, func() bool { return tunnelBinds.IsBound(port) }, 2*time.Second, 10*time.Millisecond,
+		"the bind must have reserved its port")
+	<-reserved
+
+	// Close to completion while the bind is parked: its scan sees the
+	// reservation and flips `closing`.
+	closed := make(chan struct{})
+	go func() {
+		s.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Close hung while a bind was parked in the reservation window")
+	}
+
+	// Let the bind resume. Teardown has begun, so it must not arm Active.
+	close(proceed)
+	select {
+	case <-handleDone:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handleBind hung after Close")
+	}
+
+	assert.False(t, isActive(allocated),
+		"a bind torn down mid-flight must not leave the reverse mapping Active=true")
+	assert.False(t, tunnelBinds.IsBound(port), "the reservation must not leak")
 	waitPortFree(t, port)
 }
 
