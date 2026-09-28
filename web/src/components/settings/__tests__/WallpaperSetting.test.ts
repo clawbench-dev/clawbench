@@ -309,20 +309,18 @@ describe('WallpaperSetting', () => {
       expect(labels).toContain('Local gallery')
     })
 
-    it('disables the image-only rows in wave mode but keeps panel opacity usable', async () => {
-      // Blur and edge fade have no effect on the wave, so leaving them enabled
-      // would let the user drag a slider that does nothing. Panel opacity does
-      // apply (the wave shows through the translucent panels).
+    it('hides the image-only rows in wave mode but keeps panel opacity', async () => {
+      // Blur and edge fade have no effect on the wave, so they are removed
+      // outright rather than shown disabled — a control that can never apply to
+      // the active background is noise. Panel opacity does apply (the wave shows
+      // through the translucent panels), so it stays.
       serverConfig.value = waveConfig()
       const wrapper = mountSetting()
       await nextTick()
-      const rows = wrapper.findAll('.settings-item')
-      const rowFor = (label: string) =>
-        rows.find(r => r.find('.settings-item__label').exists() && r.find('.settings-item__label').text() === label)!
-
-      expect(rowFor('Panel opacity').classes()).not.toContain('settings-item--disabled')
-      expect(rowFor('Gaussian blur').classes()).toContain('settings-item--disabled')
-      expect(rowFor('Edge fade').classes()).toContain('settings-item--disabled')
+      const labels = wrapper.findAll('.settings-item__label').map(l => l.text())
+      expect(labels).toContain('Panel opacity')
+      expect(labels).not.toContain('Gaussian blur')
+      expect(labels).not.toContain('Edge fade')
     })
 
     it('keeps the image-only rows enabled for an image wallpaper', async () => {

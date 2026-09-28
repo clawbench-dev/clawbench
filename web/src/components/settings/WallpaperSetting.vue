@@ -221,52 +221,56 @@
       <div class="settings-item__desc">{{ t('settings.items.wallpaperPanelOpacityDesc') }}</div>
     </div>
 
-    <!-- Blur and edge fade only affect an image; the wave has neither. -->
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
-      <div class="settings-item__left">
-        <div class="settings-item__text">
-          <span class="settings-item__label">{{ t('settings.items.wallpaperBlur') }}</span>
+    <!-- Blur and edge fade only affect an image; the wave has neither. They are
+         removed outright in wave mode rather than shown disabled: a control that
+         can never apply to the active background is noise, not information. -->
+    <template v-if="mode !== 'wave'">
+      <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperBlur') }}</span>
+          </div>
         </div>
-      </div>
-      <div class="settings-item__right">
-        <span class="settings-item__slider-value">{{ blurDisplay }}</span>
-        <input
-          type="range"
-          class="settings-item__slider"
-          :value="wallpaperBlur"
-          min="0"
-          max="60"
-          step="1"
-          :disabled="!hasImageWallpaper"
-          @input="onBlurInput"
-          @click.stop
-        />
-        <button v-if="wallpaperBlur !== 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
-      </div>
-      <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
-    </div>
-
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
-      <div class="settings-item__left">
-        <div class="settings-item__text">
-          <span class="settings-item__label">{{ t('settings.items.wallpaperEdgeFade') }}</span>
-        </div>
-      </div>
-      <div class="settings-item__right">
-        <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasImageWallpaper }">
+        <div class="settings-item__right">
+          <span class="settings-item__slider-value">{{ blurDisplay }}</span>
           <input
-            type="checkbox"
-            class="settings-item__switch-input"
-            :checked="!!wallpaperEdgeFade"
+            type="range"
+            class="settings-item__slider"
+            :value="wallpaperBlur"
+            min="0"
+            max="60"
+            step="1"
             :disabled="!hasImageWallpaper"
-            @change="onEdgeFadeChange"
+            @input="onBlurInput"
             @click.stop
           />
-          <span class="settings-item__switch-track"></span>
-        </label>
+          <button v-if="wallpaperBlur !== 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
       </div>
-      <div class="settings-item__desc">{{ t('settings.items.wallpaperEdgeFadeDesc') }}</div>
-    </div>
+
+      <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperEdgeFade') }}</span>
+          </div>
+        </div>
+        <div class="settings-item__right">
+          <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasImageWallpaper }">
+            <input
+              type="checkbox"
+              class="settings-item__switch-input"
+              :checked="!!wallpaperEdgeFade"
+              :disabled="!hasImageWallpaper"
+              @change="onEdgeFadeChange"
+              @click.stop
+            />
+            <span class="settings-item__switch-track"></span>
+          </label>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperEdgeFadeDesc') }}</div>
+      </div>
+    </template>
 
     <div v-if="error" class="settings-item">
       <div class="wallpaper-error">{{ error }}</div>
