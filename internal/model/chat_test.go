@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -511,4 +512,58 @@ func TestContentBlockParentToolCallIDOmittedWhenEmpty(t *testing.T) {
 	if strings.Contains(string(data), "parent_tool_call_id") {
 		t.Errorf("empty parent link should be omitted, got %s", data)
 	}
+}
+
+// TestGenerateThinkingID covers the happy path here in the owning package; the
+// service-level test only exercises its thin wrapper. Both call sites
+// (internal/ai assigns the ID when a block opens, internal/service persists by
+// it) rely on the format being "th_" + 32 lowercase hex chars — the frontend
+// and the slim-marker reader both key off the prefix.
+func TestGenerateThinkingID(t *testing.T) {
+	id := GenerateThinkingID()
+	if len(id) != 3+32 {
+		t.Fatalf("id length = %d (%q), want 35", len(id), id)
+	}
+	if id[:3] != "th_" {
+		t.Errorf("id = %q, want the th_ prefix", id)
+	}
+	for _, c := range id[3:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("id = %q: non-hex character %q after the prefix", id, c)
+			break
+		}
+	}
+
+	// Two calls must not collide; the ID is the DB key for a thinking block.
+	seen := map[string]bool{id: true}
+	for range 100 {
+		other := GenerateThinkingID()
+		if seen[other] {
+			t.Fatalf("duplicate id generated: %q", other)
+		}
+		seen[other] = true
+	}
+}
+
+// TestGenerateThinkingID_EntropyFailureFallsBack covers the rand.Read error
+// branch. crypto/rand.Read cannot be made to fail from outside the process, so
+// the package-level seam is the only way to reach it — and the branch matters:
+// an empty return would leave a thinking block with no DB key, so the ID must
+// degrade to a usable timestamp form rather than vanish.
+func TestGenerateThinkingID_EntropyFailureFallsBack(t *testing.T) {
+	orig := randRead
+	randRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	defer func() { randRead = orig }()
+
+	id := GenerateThinkingID()
+	if id == "" {
+		t.Fatal("a failed entropy read must still produce an ID, not an empty string")
+	}
+	if !strings.HasPrefix(id, "th_") {
+		t.Errorf("fallback id = %q, want the th_ prefix", id)
+	}
+	// Deliberately NOT asserting that two consecutive fallback ids differ: the
+	// fallback is the wall clock, and UnixNano's resolution is coarse enough on
+	// macOS that back-to-back calls legitimately return the same value. The
+	// branch's contract is "non-empty and prefixed", not "unique".
 }

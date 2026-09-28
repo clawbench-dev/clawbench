@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"net/url"
 	"strings"
 )
 
@@ -11,6 +12,79 @@ import (
 func IsAnthropicURL(u string) bool {
 	return strings.Contains(u, "anthropic.com") ||
 		strings.HasSuffix(strings.TrimRight(u, "/"), "/v1/messages")
+}
+
+// Standard endpoint paths. Exported so the connectivity test handler completes
+// URLs with exactly the paths the summarizers call — the two must never
+// disagree about which URL a configuration resolves to.
+const (
+	// OpenAIChatCompletionsPath is the standard OpenAI-compatible completion path.
+	OpenAIChatCompletionsPath = "/v1/chat/completions"
+	// AnthropicMessagesPath is the standard Anthropic Messages API path.
+	AnthropicMessagesPath = "/v1/messages"
+)
+
+// BuildEndpointURL resolves a configured base URL to the full endpoint URL for
+// defaultPath. It accepts every shape a user might reasonably configure:
+//
+//   - "https://api.openai.com"                     → "https://api.openai.com/v1/chat/completions"
+//   - "https://api.openai.com/v1"                  → "https://api.openai.com/v1/chat/completions"
+//   - "https://openrouter.ai/api/v1"               → "https://openrouter.ai/api/v1/chat/completions"
+//   - "https://api.openai.com/v1/chat/completions" → unchanged
+//   - "https://host/v1/text/chatcompletion_v2"     → unchanged (custom endpoint)
+//
+// The rule: an empty path is a bare base; a path ending with defaultPath is
+// already complete; a path ending with a leading run of defaultPath's segments
+// (e.g. "/v1", "/api/v1") is a partial base and gets the remainder appended.
+// Anything else is the user's explicit custom endpoint and is used verbatim —
+// blindly appending would turn a provider-specific path like MiniMax's
+// "/v1/text/chatcompletion_v2" into a 404.
+//
+// This is the single implementation shared by the summarizer constructors and
+// the connectivity test. They used to disagree: the test completed a bare host
+// while the real request posted to it verbatim — so a bare host passed "test
+// connection" and then 404'd on the actual call.
+func BuildEndpointURL(baseURL, defaultPath string) string {
+	u := strings.TrimRight(baseURL, "/")
+	if u == "" {
+		return ""
+	}
+	dp := ensureLeadingSlash(defaultPath)
+	parsed, err := url.Parse(u)
+	if err != nil {
+		// Let http.NewRequest surface the malformed URL rather than guessing.
+		return u
+	}
+	path := parsed.Path
+
+	// A bare host (no path) is a base to complete.
+	if path == "" || path == "/" {
+		return u + dp
+	}
+	// Already the target endpoint.
+	if strings.HasSuffix(path, dp) {
+		return u
+	}
+	// A partial base ending in a leading run of defaultPath's segments, e.g.
+	// "/v1" or "/api/v1" for "/v1/chat/completions". Longest run wins so the
+	// remainder appended is the shortest.
+	segments := strings.Split(strings.TrimLeft(dp, "/"), "/")
+	for i := len(segments) - 1; i >= 1; i-- {
+		prefix := "/" + strings.Join(segments[:i], "/")
+		if strings.HasSuffix(path, prefix) {
+			return u + strings.TrimPrefix(dp, prefix)
+		}
+	}
+	// A provider-specific endpoint the user typed in full.
+	return u
+}
+
+// ensureLeadingSlash prefixes path with "/" unless it already has one.
+func ensureLeadingSlash(path string) string {
+	if strings.HasPrefix(path, "/") {
+		return path
+	}
+	return "/" + path
 }
 
 const (

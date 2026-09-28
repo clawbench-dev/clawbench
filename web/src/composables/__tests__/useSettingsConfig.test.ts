@@ -133,15 +133,20 @@ describe('useSettingsConfig', () => {
     expect('swipeSession' in localConfig).toBe(true)
   })
 
-  it('serverDefaults exposes the wallpaper source keys', () => {
-    // These back the wallpaper mode/Bing controls before /api/config resolves,
-    // so the settings panel renders meaningful values on first paint.
-    const { getServerValueWithDefault } = useSettingsConfig()
+  it('localDefaults carries the per-device wallpaper choice', () => {
+    // The wallpaper source / on-off / selection are per-device browser state,
+    // so they must live in localConfig — not in serverDefaults, which would
+    // imply the server owns them and sync them across devices.
+    const { localConfig, getServerValueWithDefault } = useSettingsConfig()
 
-    expect(getServerValueWithDefault('appearance.wallpaper_mode')).toBe('')
-    expect(getServerValueWithDefault('appearance.wallpaper_enabled')).toBe(false)
-    expect(getServerValueWithDefault('appearance.bing.enabled')).toBe(false)
-    expect(getServerValueWithDefault('appearance.bing.mkt')).toBe('zh-CN')
+    expect(localConfig.wallpaperEnabled).toBe(true)
+    expect(localConfig.wallpaperMode).toBe('wave')
+    expect(localConfig.wallpaperLocalSelected).toBe('')
+
+    expect(getServerValueWithDefault('appearance.wallpaper_mode')).toBeUndefined()
+    expect(getServerValueWithDefault('appearance.wallpaper_enabled')).toBeUndefined()
+    expect(getServerValueWithDefault('appearance.bing.enabled')).toBeUndefined()
+    expect(getServerValueWithDefault('appearance.bing.mkt')).toBeUndefined()
   })
 
   it('serverDefaults mirrors the backend default for chat.system_prompt_interval', () => {

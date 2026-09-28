@@ -49,12 +49,17 @@ vi.mock('@/utils/icons', () => ({
 // `detectedPaths` (unlike renderTextBlock, which schedules verification). Tests
 // that need annotated thinking markup override this. Options are forwarded so
 // tests can pin WHICH pipeline mode the thinking renderer asked for.
-const { mockRenderMarkdownHtml } = vi.hoisted(() => ({
+const { mockRenderMarkdownHtml, mockRenderMermaidInElement } = vi.hoisted(() => ({
   mockRenderMarkdownHtml: vi.fn((text: string, _opts?: unknown) => `<p>${text}</p>`),
+  mockRenderMermaidInElement: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdown: (text: string) => `<p>${text}</p>`,
   renderMarkdownHtml: (text: string, opts?: unknown) => mockRenderMarkdownHtml(text, opts),
+  // The component self-heals Mermaid blocks written into the DOM after the
+  // one-shot chat render pass (see renderPendingMermaid). A hand-listed mock
+  // that omits this export makes the call site throw, not just no-op.
+  renderMermaidInElement: (...args: unknown[]) => mockRenderMermaidInElement(...args),
 }))
 
 vi.mock('@/utils/appLog', async (importOriginal) => ({
@@ -106,7 +111,6 @@ vi.mock('@/utils/contentBlocks.ts', () => ({
   },
   statusClass: (task: any) => `status-${task.status}`,
   statusLabel: (task: any, t: any) => task.status,
-  statusLabelSimple: (task: any, t: any) => task.status,
   askQuestionSummary: (input: any) => input?.question || '',
   extractAskQuestions: (input: any) => {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return []
@@ -2785,6 +2789,103 @@ describe('path verification after a cache hit', () => {
   })
 })
 
+// ── Mermaid blocks written into the DOM after the one-shot chat render pass ──
+//
+// The chat Mermaid pass renders once, on a `nextTick` scheduled by
+// `updateRenderedContents(true)` (useChatRender.ts), and only picks up
+// `pre.mermaid:not([data-rendered])`. Any `<pre class="mermaid">` inserted into
+// the DOM AFTER that pass therefore stays as raw source forever.
+//
+// Two writers reliably land late: `listKey` embeds `messages.length`, so a new
+// message remounts the whole list (recreating every block from cached HTML),
+// and the newest message's text block is re-patched by a late `v-html` write.
+// Measured on a real session: every cold load ended with exactly ONE leftover
+// `pre.mermaid`, always in the LAST assistant message — the diagram the user
+// had just asked for. The component self-heals its own subtree.
+describe('mermaid blocks inserted after the render pass', () => {
+  const MERMAID_HTML = '<pre class="mermaid">flowchart TD\n  A-->B</pre>'
+
+  it('renders a pending mermaid block on mount', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'diagram' }],
+      renderTextBlock: () => MERMAID_HTML,
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockRenderMermaidInElement).toHaveBeenCalled()
+    const [container, prefix] = mockRenderMermaidInElement.mock.calls.at(-1)!
+    expect(prefix).toBe('chat-mermaid-block')
+    // Scoped to this component's own subtree, so concurrent instances never
+    // race for the same element.
+    expect((container as HTMLElement).classList.contains('content-blocks')).toBe(true)
+    expect(wrapper.element.contains(container as HTMLElement)).toBe(true)
+  })
+
+  it('renders a pending mermaid block that appears in a later update', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    // Mount with no diagram, then a re-render writes one into the DOM — the
+    // shape a late v-html patch or a list remount produces. The stub is
+    // stateful so the second pass really emits the block.
+    let html = '<p>plain</p>'
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'plain' }],
+      renderTextBlock: () => html,
+    })
+    await nextTick()
+    await nextTick()
+    expect(mockRenderMermaidInElement).not.toHaveBeenCalled()
+
+    html = MERMAID_HTML
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'diagram' }] })
+    await nextTick()
+    await nextTick()
+
+    expect(mockRenderMermaidInElement).toHaveBeenCalled()
+  })
+
+  it('does not re-render a block already marked data-rendered', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    // `data-rendered` is the renderer's own idempotence marker: a block that
+    // already carries it must not be handed over again, or every update would
+    // restart the 608KB render for every diagram on screen.
+    mountBlocks({
+      blocks: [{ type: 'text', text: 'diagram' }],
+      renderTextBlock: () => '<pre class="mermaid" data-rendered="1">flowchart TD\n  A-->B</pre>',
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockRenderMermaidInElement).not.toHaveBeenCalled()
+  })
+
+  it('does not render mermaid while the turn is still streaming', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    // Mid-stream the fence is incomplete — rendering it produces errors. The
+    // post-streaming pass owns the first render, and the hook must not preempt
+    // it (nor pull the 608KB chunk in on every streaming frame).
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'diagram' }],
+      streaming: true,
+      renderTextBlock: () => MERMAID_HTML,
+    })
+    await nextTick()
+    await nextTick()
+    expect(mockRenderMermaidInElement).not.toHaveBeenCalled()
+
+    // ...and it takes over once the turn ends.
+    await wrapper.setProps({ streaming: false })
+    await nextTick()
+    await nextTick()
+    expect(mockRenderMermaidInElement).toHaveBeenCalled()
+  })
+})
+
 describe('provisional thinking text is replaced on finish', () => {
   it('refetches the full reasoning when a block that was fetched mid-stream finishes', async () => {
     // The auto-prefix-load runs while the block streams, so its result is
@@ -2836,65 +2937,74 @@ describe('provisional thinking text is replaced on finish', () => {
 })
 
 describe('done thinking blocks auto-load their text', () => {
-  it('loads a done block that is expanded, instead of leaving dots forever', async () => {
-    // The reported "stuck thinking block": a block carrying a think_id but no
-    // cached text renders three pulsing dots, because every automatic path
-    // excluded it — the in_progress watcher (it is done) and the provisional
-    // refetch (its text was never fetched mid-stream).
+  it('a done block that KEEPS GROWING is refetched with the final text at turn end', async () => {
+    // `done` does not mean the text is final. The backend flushes before
+    // forwarding thinking_done (so the text is complete AS OF that event), but
+    // the accumulator has no done check: thinking → thinking_done → content →
+    // thinking yields ONE block whose text grows after done (verified in Go).
     //
-    // A COLLAPSED one is fine to defer to a click (that is the intended lazy
-    // path). The bug was that expanding did not reliably produce a load either:
-    // an earlier version scoped the auto-load to a fixed tail window, so a done
-    // block early in a long streaming message (msgId=54604: indices
-    // 0,5,7,10,14,17) never loaded no matter what the user did. Visibility is
-    // now the predicate.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ think_id: 'th_stuck', text: 'the reasoning' }),
-    })
+    // So a mid-turn fetch must be provisional; otherwise it caches a prefix,
+    // clears the flag, and `cached !== undefined` skips it forever — the
+    // reported truncated reasoning (cached 760 of final 844).
+    //
+    // Uses the REAL useThinkingContent so provisionalIds actually run.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_grow', text: 'PART1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_grow', text: 'PART1PART2' }) })
     vi.stubGlobal('fetch', fetchMock)
 
-    const w = mountBlocks({
-      msgId: '54368', sessionId: 's1', streaming: true, active: true,
-      blocks: [{ type: 'thinking', think_id: 'th_stuck', done: true }],
+    const wrapper = mountBlocks({
+      msgId: 'm-grow',
+      sessionId: 's-grow',
+      streaming: true, // mid-turn: the block is `done` but may still grow
+      active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_grow', done: true }],
     })
     await flushPromises(); await nextTick()
-    await w.vm.$forceUpdate(); await nextTick()
 
-    // Expand it: the visible block must now load and show real content.
-    await w.find('.thinking-header').trigger('click')
+    // Mid-turn: only the prefix exists, and the fetch must be provisional.
+    expect(fetchMock, 'one mid-turn fetch').toHaveBeenCalledTimes(1)
+    const firstBody = await (await fetchMock.mock.results[0].value).json()
+    expect(firstBody.text).toBe('PART1')
+
+    // Turn ends: the DB is now complete, so the block must be refetched.
+    await wrapper.setProps({ streaming: false })
     await flushPromises(); await nextTick()
-    await w.vm.$forceUpdate(); await nextTick()
 
-    expect(fetchMock, 'an expanded done block must load').toHaveBeenCalled()
-    const html = w.find('.thinking-inline-content').html()
-    expect(html).toContain('the reasoning')
-    expect(html).not.toContain('placeholder-dots')
+    expect(fetchMock, 'a final refetch once the turn is over').toHaveBeenCalledTimes(2)
+    const secondBody = await (await fetchMock.mock.results[1].value).json()
+    expect(secondBody.text, 'the grown tail must not be lost').toBe('PART1PART2')
   })
 
-  it('loads a done block far from the tail once it is expanded', async () => {
-    // Regression for msgId=54604: a done thinking block at index 0 of a long
-    // streaming message must load when expanded, even though it is nowhere near
-    // the tail (the old position window excluded it forever).
+
+
+  it('does not refetch again once the final text is cached', async () => {
+    // Guards against a request storm. A collapsed block outside the streaming
+    // tail is not auto-loaded at all (that is the sibling test above); this one
+    // drives the tail path and asserts the second render is served from cache.
     const fetchMock = vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ think_id: 'th_head', text: 'head reasoning' }),
+      ok: true, json: async () => ({ think_id: 'th_final', text: 'COMPLETE' }),
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const blocks: any[] = [{ type: 'thinking', think_id: 'th_head', done: true }]
-    for (let i = 0; i < 30; i++) blocks.push({ type: 'tool_use', name: 'Read', done: true })
-
-    const w = mountBlocks({
-      msgId: '54604', sessionId: 's1', streaming: true, active: true, blocks,
+    const wrapper = mountBlocks({
+      msgId: 'm-final',
+      sessionId: 's-final',
+      streaming: true,
+      active: true,
+      blocks: [{ type: 'thinking', think_id: 'th_final', done: true }],
     })
     await flushPromises(); await nextTick()
-    await w.vm.$forceUpdate(); await nextTick()
+    const after1 = fetchMock.mock.calls.length
+    expect(after1, 'the in-tail block loads once').toBeGreaterThan(0)
 
-    await w.find('.thinking-header').trigger('click')
+    // Re-render with a new blocks array (same content) — must not refetch while
+    // the turn is still running: the snapshot is cached (provisionally) and the
+    // final refetch is deferred to turn end.
+    await wrapper.setProps({ blocks: [{ type: 'thinking', think_id: 'th_final', done: true }] })
     await flushPromises(); await nextTick()
-    await w.vm.$forceUpdate(); await nextTick()
 
-    expect(fetchMock, 'a non-tail done block must load when expanded').toHaveBeenCalled()
-    expect(w.find('.thinking-inline-content').html()).toContain('head reasoning')
+    expect(fetchMock.mock.calls.length, 'no extra request while the turn runs').toBe(after1)
   })
 
   it('does not load every collapsed done block (no request storm)', async () => {

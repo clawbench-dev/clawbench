@@ -235,6 +235,39 @@ var acpBackends = []acpTestConfig{
 			AcpCodeWhaleMultiTurnResume:  true,
 		},
 	},
+	// Pi — ACP bridge adapter (pi-acp).
+	//
+	// Pi was removed from ACP on 2026-07-26 ("Pi 无 ACP 支持（已移除，降级 CLI）",
+	// commit 81524b65a) with no recorded defect. The adapter used then was the
+	// now-abandoned fork @touchtechclub/pi-acp (last publish 2026-06-11); upstream
+	// svkozak/pi-acp is actively maintained and has since fixed the issues that
+	// would have caused instability:
+	//   - 0.0.33 "fix(acp): wait for Pi session settlement" (prompt resolves only
+	//     after Pi has fully settled — prevents truncated streams)
+	//   - 0.0.34 "merge upstream usage with model thinking discovery"
+	//   - 0.0.23 "Implement thinking_delta support" (README's "no thought stream"
+	//     limitation is stale)
+	//
+	// Capability shape (verified against v0.0.34):
+	//   - thinking levels are exposed AS modes (off/minimal/low/medium/high), and
+	//     also as the `thought_level` config option — there is no `mode` config
+	//     option, so mode-switch semantics differ from other backends.
+	//   - `model` config option carries ~50 models.
+	//   - LoadSession + SessionCapabilities.List are advertised.
+	//   - No `fs/*` or `terminal/*` delegation (Pi reads/writes locally).
+	//   - No session/steer (mid-turn injection is not available over ACP).
+	{
+		ID:             "pi",
+		Backend:        "pi",
+		AcpCommand:     "npx -y pi-acp@latest",
+		DefaultCmd:     "pi",
+		Timeout:        120 * time.Second,
+		HasThinking:    true,
+		SupportsConfig: true,
+		DefaultModel:   "minimax-cn/MiniMax-M3",
+		ThinkingLevels: []string{"off", "minimal", "low", "medium", "high"},
+		SupportedTests: allACPTestPoints(),
+	},
 }
 
 // buildACPAgent creates a model.Agent from an acpTestConfig.
@@ -2329,8 +2362,16 @@ func testACPUnrecoverableSessionError(t *testing.T, cfg acpTestConfig) {
 		t.Log("Session succeeded (ResumeSession worked) — this is acceptable")
 	} else if len(errorEvents) > 0 {
 		t.Logf("Error event received (expected for unrecoverable session): %v", errorEvents[0].Error)
-		assert.Contains(t, errorEvents[0].Error, "ResumeSession",
-			"error message should mention ResumeSession failure, not silent amnesia")
+		// The invariant is "no silent amnesia": the failure must surface as an
+		// error rather than silently starting a fresh session. Which recovery
+		// RPC was attempted depends on what the agent implements —
+		// recoverExistingSession tries session/resume first and falls back to
+		// the standard session/load only on a -32601 Method not found response
+		// (pi-acp implements neither resume nor load for an unknown id, so its
+		// error names LoadSession).
+		// Asserting one specific method name would over-specify that choice.
+		assert.Regexp(t, `(ResumeSession|LoadSession)`, errorEvents[0].Error,
+			"error message should name the failed recovery attempt, not silently start a new session")
 	} else {
 		t.Fatal("expected either done or error event, got neither")
 	}

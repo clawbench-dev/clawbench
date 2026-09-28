@@ -6,7 +6,6 @@ import {
   getErrorSourceLabel,
   statusClass,
   statusLabel,
-  statusLabelSimple,
   askQuestionSummary,
   extractAskQuestions,
   blockKey,
@@ -285,30 +284,19 @@ describe('statusLabel', () => {
   it('shows running when runningCount > 0', () => {
     expect(statusLabel({ status: 'active', runCount: 5, runningCount: 1 }, t)).toBe('Running (5 runs)')
   })
-  it('shows paused', () => {
-    expect(statusLabel({ status: 'paused', runCount: 0, runningCount: 0 }, t)).toBe('Paused')
+  // The count must survive the task stopping. Emitting it only while active made
+  // the number vanish exactly when the user asks "how many times did it run?".
+  it('keeps the execution count when paused', () => {
+    expect(statusLabel({ status: 'paused', runCount: 4, runningCount: 0 }, t)).toBe('Paused (4 runs)')
   })
-  it('shows completed', () => {
-    expect(statusLabel({ status: 'completed', runCount: 2, runningCount: 0 }, t)).toBe('Completed')
+  it('keeps the execution count when completed', () => {
+    expect(statusLabel({ status: 'completed', runCount: 2, runningCount: 0 }, t)).toBe('Completed (2 runs)')
   })
+  // An unknown status has no localized label, so there is nothing to qualify —
+  // the raw status is returned rather than an unexplained "(0 runs)".
   it('returns raw status for unknown', () => {
     expect(statusLabel({ status: 'error', runCount: 0, runningCount: 0 }, t)).toBe('error')
   })
-})
-
-// ── statusLabelSimple ──
-describe('statusLabelSimple', () => {
-  const t = (key: string) => {
-    if (key === 'chat.contentBlocks.statusActive') return 'Active'
-    if (key === 'chat.contentBlocks.statusPaused') return 'Paused'
-    if (key === 'chat.contentBlocks.statusCompleted') return 'Completed'
-    return key
-  }
-
-  it('shows active', () => { expect(statusLabelSimple({ status: 'active' }, t)).toBe('Active') })
-  it('shows paused', () => { expect(statusLabelSimple({ status: 'paused' }, t)).toBe('Paused') })
-  it('shows completed', () => { expect(statusLabelSimple({ status: 'completed' }, t)).toBe('Completed') })
-  it('returns raw status for unknown', () => { expect(statusLabelSimple({ status: 'error' }, t)).toBe('error') })
 })
 
 // ── askQuestionSummary ──

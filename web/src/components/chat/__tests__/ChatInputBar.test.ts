@@ -290,6 +290,15 @@ vi.mock('@/utils/chatInputUtils.ts', () => ({
   isImeCompositionEvent: (e: any) => !!(e && e.isComposing) || (e && e.keyCode === 229),
 }))
 
+// Visual-row measurement needs real layout, which jsdom has none of, so the
+// default fake reports "unmeasurable" and the component falls back to counting
+// newlines exactly as before. Cases that exercise the soft-wrap guard override
+// the return value to model a wrapped draft.
+const mockCaretVisualRows = vi.hoisted(() => vi.fn((): { caretRow: number; totalRows: number } | null => null))
+vi.mock('@/utils/textareaVisualRows.ts', () => ({
+  measureCaretVisualRows: mockCaretVisualRows,
+}))
+
 vi.mock('@/utils/fileIcon.ts', () => ({
   getFileIcon: () => 'FileText',
   getFileIconColor: () => '#999',
@@ -453,6 +462,9 @@ afterEach(() => {
   // The text draft store is module-level (survives component remounts on
   // purpose), so drafts must be cleared between tests or they leak across cases.
   _resetChatDraftsForTesting()
+  // Reset to the "unmeasurable" default: a `mockReturnValue` set by one case
+  // would otherwise decide the caret row for every case after it.
+  mockCaretVisualRows.mockReturnValue(null)
 })
 
 const stubs = {
@@ -2567,6 +2579,87 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
+    it('does not navigate history while the caret has soft-wrapped rows above it', async () => {
+      // A long single line with NO newline still wraps onto several visual rows.
+      // Counting newlines would call this a one-row draft and steal ArrowUp for
+      // history; the measured caret row must keep the key for caret movement.
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const draft = 'a very long draft that soft wraps without any newline at all'
+      wrapper.vm.inputText = draft
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(draft.length, draft.length)
+      // Caret on the LAST visual row (row 2 of 3).
+      mockCaretVisualRows.mockReturnValue({ caretRow: 2, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      // History must not have replaced the draft
+      expect(wrapper.vm.inputText).toBe(draft)
+      wrapper.unmount()
+    })
+
+    it('navigates history from the first visual row of a soft-wrapped draft', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const draft = 'a very long draft that soft wraps without any newline at all'
+      wrapper.vm.inputText = draft
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(0, 0)
+      // Caret on the FIRST visual row (row 0 of 3) — now history takes over.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 0, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown keeps the caret inside a soft-wrapped history entry instead of leaving it', async () => {
+      // Regression shape: the user has stepped into history (so ArrowDown WOULD
+      // normally step back out), the loaded entry soft-wraps, and the caret sits
+      // mid-entry with rows below. ArrowDown must move the caret, not abandon the
+      // entry. Counting newlines sees a one-row entry and leaves; the measured
+      // caret row is what stops it.
+      const longEntry = 'x'.repeat(120)
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: longEntry }],
+      })
+      const ta = wrapper.find('.chat-textarea')
+      // Step into history from the first visual row.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 0, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe(longEntry)
+      // Caret is now mid-entry (row 1 of 3) — there is a row below it.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 1, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowDown' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      // History navigation must NOT have run: the entry stays loaded.
+      expect(wrapper.vm.inputText).toBe(longEntry)
+      wrapper.unmount()
+    })
+
+    it('falls back to logical rows when the visual row is unmeasurable', async () => {
+      // jsdom has no layout, so this is the real default: measurement returns
+      // null and the newline count decides. A multiline draft with the caret on
+      // the second line must still protect the caret.
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(9, 9)
+      expect(mockCaretVisualRows()).toBeNull()
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('line one\nline two')
+      wrapper.unmount()
+    })
+
     it('swipe left/right on the inactive textarea steps history one entry per gesture', async () => {
       const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       const ta = wrapper.find('.chat-textarea')
@@ -3148,15 +3241,79 @@ describe('ChatInputBar', () => {
     wrapper.unmount()
   })
 
-  // ── Accept confirmation animation (采纳确认动效) ──────────
+  // ── Restore after the accepted text is cleared ──
+  //
+  // Accepting moves the suggestion into the input box and hides the banner. If
+  // the user then empties the box, the suggestion is no longer applied — hiding
+  // it would silently lose it, so it must come back.
+
+  it('brings the recommendation back when the accepted text is cleared', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('继续实现功能')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+
+    // Clear the box the way the user would.
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+    expect(wrapper.vm.recommendation).toBe('继续实现功能')
+
+    wrapper.unmount()
+  })
+
+  it('keeps the recommendation hidden while the accepted text is still there', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Editing the filled text must NOT resurrect the banner — only emptying it.
+    wrapper.vm.inputText = '继续实现功能 并补充测试'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('does not resurrect the recommendation when the input is cleared after sending', async () => {
+    // Sending empties the input too. `loading` flips true in the same tick,
+    // which invalidates the session's slot outright, so nothing may resurface.
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Send: text is cleared and streaming starts in the same tick.
+    wrapper.vm.inputText = ''
+    await wrapper.setProps({ loading: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    expect(wrapper.vm.recommendation).toBe('')
+
+    wrapper.unmount()
+  })
+
+  // ── Accept handoff animation (采纳确认动效) ──────────
   //
   // Accepting used to be observable only as "the chip vanished": the text
   // landing in the input box is easy to miss, and rec.accept() dismisses the
   // entry synchronously, so the banner was already gone by the next paint. The
-  // confirmation is a held window during which the banner stays up showing a
-  // checkmark.
+  // banner is now held through a handoff flight — green + flying down into the
+  // input box — which the stylesheet drives; these tests pin the state machine
+  // that holds it open for exactly that long.
 
-  it('holds the banner with a checkmark while confirming, then retires it', async () => {
+  it('holds the banner through the accept flight, then retires it', async () => {
     vi.useFakeTimers()
     const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()
@@ -3188,7 +3345,7 @@ describe('ChatInputBar', () => {
     // It cannot be accepted twice.
     expect(acceptBtn.attributes('disabled')).toBeDefined()
 
-    vi.advanceTimersByTime(650)
+    vi.advanceTimersByTime(300)
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.recommendationAccepting).toBe(false)
     expect(wrapper.vm.showRecommendationBanner).toBe(false)
@@ -3230,7 +3387,7 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.displayedRecommendation).toBe('第二条')
 
     // The superseded timer must not fire later and tear the new banner down.
-    vi.advanceTimersByTime(650)
+    vi.advanceTimersByTime(300)
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.showRecommendationBanner).toBe(true)
     expect(wrapper.vm.displayedRecommendation).toBe('第二条')
@@ -3293,7 +3450,7 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     const acceptIds = setTimeoutSpy.mock.calls
       .map((c, i) => ({ ms: c[1], id: setTimeoutSpy.mock.results[i].value }))
-      .filter(x => x.ms === 650)
+      .filter(x => x.ms === 300)
     expect(acceptIds, 'accept must schedule exactly one confirmation timer').toHaveLength(1)
 
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
@@ -3316,10 +3473,19 @@ describe('ChatInputBar', () => {
     expect(zh.global.t('tool.askUser.recommendationFilled')).toBe('已填入')
   })
 
-  it('drops the motion but keeps the static confirmation under reduced motion', async () => {
+  it('drops the decorative motion but keeps the chip flight under reduced motion', async () => {
     // jsdom has no CSS engine, so this is a source guard — the same pattern the
-    // flash family uses. The green button/checkmark is functional feedback and
-    // must survive; the pop and the ring pulse are decorative and must not.
+    // flash family uses.
+    //
+    // The button pop and the ring pulse are decorative and must be dropped. The
+    // chip's flight must NOT be: the flight IS the information ("the text moved
+    // into the box"), and there is no other channel carrying it. Opting it out
+    // also made the whole feature invisible to anyone with OS-level animations
+    // disabled — which is how it was reported (Windows, reduce=true).
+    //
+    // This assertion is INVERTED on purpose (same precedent as the session row
+    // status slot, see sessionStatusSlot.css.test.ts). Do not "restore" it to
+    // expecting `animation: none` without reading the stylesheet comment.
     const mod = await import('../ChatInputBar.vue?raw')
     const source = String(mod.default)
     // Slice from the LAST reduced-motion media query: an earlier one (the banner
@@ -3330,9 +3496,57 @@ describe('ChatInputBar', () => {
     const block = source.slice(start)
     expect(block).toMatch(/\.recommendation-accept\.accepted\s*\{[^}]*animation: none/)
     expect(block).toMatch(/\.chat-input-container\.accept-pulse\s*\{[^}]*animation: none/)
+    // The flight is deliberately exempt from the preference.
+    expect(block, 'the chip flight must NOT be opted out of reduced motion')
+      .not.toMatch(/\.recommendation-chip\.accepted\s*\{[^}]*animation: none/)
     // The static green confirmation is NOT disabled by the reduced-motion block.
     expect(source).toContain('.recommendation-accept.accepted {')
     expect(source).toContain('background: var(--color-success')
+    // ...and the flight itself is still declared, so this cannot pass by the
+    // animation having been deleted outright.
+    expect(source).toContain('animation: recommendation-chip-fly')
+  })
+
+  it('flies the chip DOWN into the input box on accept (the handoff reads as a fill)', async () => {
+    // jsdom has no CSS engine, so this is a source guard. The whole point of the
+    // accept feedback is that the text reads as *moved into the input box*: the
+    // chip must translate downward, and it must be the chip (not the slot) that
+    // carries the motion — the slot owns the height collapse, and putting the
+    // flight on the same element would make the collapse pull up against it.
+    const mod = await import('../ChatInputBar.vue?raw')
+    const source = String(mod.default)
+
+    const flightRule = source.match(/\.recommendation-chip\.accepted\s*\{([^}]*)\}/)
+    expect(flightRule, '.recommendation-chip.accepted must exist').not.toBeNull()
+    expect(flightRule[1]).toMatch(/animation:\s*recommendation-chip-fly/)
+
+    const keyframes = source.match(/@keyframes recommendation-chip-fly\s*\{([\s\S]*?)\n\}/)
+    expect(keyframes, 'the flight keyframes must exist').not.toBeNull()
+    // A positive translateY is downward (the input box sits below the chip).
+    // Capture the sign explicitly so a reversed flight fails on the direction
+    // assertion rather than on an unexpected non-match.
+    const end = keyframes[1].match(/100%\s*\{[^}]*translateY\(\s*(-?\d+)px/)
+    expect(end, 'the flight must end with a translateY offset').not.toBeNull()
+    expect(Number(end[1]), 'the chip must fly DOWN into the input box').toBeGreaterThan(0)
+    // It must also fade out, otherwise the chip would still be visible when the
+    // height collapse retires it.
+    expect(keyframes[1]).toMatch(/100%\s*\{[^}]*opacity:\s*0/)
+
+    // The slot is the Transition target and must NOT carry the flight.
+    expect(source).toContain('.recommendation-slot {')
+    expect(source).not.toMatch(/\.recommendation-slot\s*\{[^}]*recommendation-chip-fly/)
+
+    // The flight must be visible OVER the input box, not behind it.
+    // `.chat-input-container` is `position: relative` (for `.paste-overlay`), and
+    // a positioned element paints after an in-flow non-positioned sibling — so
+    // the banner needs its own stacking position or the chip disappears behind
+    // the input box mid-flight (reported from a real browser).
+    const slotRule = source.match(/\.recommendation-slot\s*\{([^}]*)\}/)
+    expect(slotRule, '.recommendation-slot must exist').not.toBeNull()
+    expect(slotRule[1], 'the banner must be positioned to paint over the input box')
+      .toMatch(/position:\s*relative/)
+    expect(slotRule[1], 'the banner needs a stacking order above the input container')
+      .toMatch(/z-index:\s*\d+/)
   })
 
   it('ignores recommendation with empty text', async () => {

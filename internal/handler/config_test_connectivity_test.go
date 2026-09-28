@@ -238,11 +238,7 @@ func TestTestRAG_InvalidScheme(t *testing.T) {
 }
 
 func TestTestRAG_MissingSchemeNormalized(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/v1/models", r.URL.Path)
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
-	})
+	srv := ragTestServer(t, nil)
 	defer srv.Close()
 
 	// Strip the scheme to exercise missing-scheme auto-completion.
@@ -255,12 +251,13 @@ func TestTestRAG_MissingSchemeNormalized(t *testing.T) {
 	assert.Contains(t, result.Message, "succeeded")
 }
 
-func TestTestRAG_ReachableWithModel(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Contains(t, r.URL.Path, "/v1/models")
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"},{"id":"nomic-embed"}]}`)
-	})
+// The connectivity check probes /v1/embeddings directly and must never
+// precheck /v1/models: a gateway that doesn't implement the models list (or
+// doesn't enumerate every model) still serves embeddings, and the old precheck
+// reported it as broken. ragTestServer fails the test on any non-embeddings
+// request, so this also proves no models probe is issued.
+func TestTestRAG_ProbesEmbeddingsNotModels(t *testing.T) {
+	srv := ragTestServer(t, nil)
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -271,25 +268,18 @@ func TestTestRAG_ReachableWithModel(t *testing.T) {
 	assert.Contains(t, result.Message, "succeeded")
 }
 
-func TestTestRAG_ReachableModelNotFound(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+// A gateway that answers /v1/models with 404 (e.g. some Ollama versions) or
+// 403 (auth-scoped model listing) must not be reported as broken when
+// embeddings work. This is the exact scenario the precheck got wrong.
+func TestTestRAG_ModelsEndpoint404StillSucceeds(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/v1/models") {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"nomic-embed"}]}`)
-	})
-	defer srv.Close()
-
-	result := testRAG(context.Background(), map[string]any{
-		"rag.base_url": srv.URL,
-		"rag.model":    "bge-m3",
-	})
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "not found")
-}
-
-func TestTestRAG_ModelsNotSupported(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
+		_, _ = fmt.Fprintln(w, `{"data":[{"embedding":[0.1,0.2,0.3],"index":0}]}`)
+	}))
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -297,7 +287,7 @@ func TestTestRAG_ModelsNotSupported(t *testing.T) {
 		"rag.model":    "bge-m3",
 	})
 	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "not implement /v1/models")
+	assert.Contains(t, result.Message, "succeeded")
 }
 
 func TestTestRAG_Unreachable(t *testing.T) {
@@ -305,21 +295,32 @@ func TestTestRAG_Unreachable(t *testing.T) {
 		"rag.base_url": "http://127.0.0.1:19999",
 	})
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "unreachable")
+	assert.Contains(t, result.Message, "embedding failed")
 }
 
-// ragTestServer wraps a handler that answers the /v1/models probe, and also
-// answers POST /v1/embeddings with a valid embedding vector.
-func ragTestServer(t *testing.T, modelsHandler http.HandlerFunc) *httptest.Server {
+// ragTestServer answers POST /v1/embeddings with a valid vector. embedHandler,
+// when non-nil, runs for the embedding request so a test can assert its shape
+// or return a custom response.
+//
+// A request to any other path fails the test: the RAG connectivity check must
+// probe the real embeddings endpoint, never precheck /v1/models. Gateways
+// (e.g. OneAPI) often don't list every model — or implement /v1/models at all —
+// while serving embeddings fine, so a models precheck reports a working service
+// as broken.
+func ragTestServer(t *testing.T, embedHandler http.HandlerFunc) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/embeddings" || strings.HasSuffix(r.URL.Path, "/v1/embeddings"):
+		if r.URL.Path == "/v1/embeddings" || strings.HasSuffix(r.URL.Path, "/v1/embeddings") {
+			if embedHandler != nil {
+				embedHandler(w, r)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintln(w, `{"data":[{"embedding":[0.1,0.2,0.3],"index":0}]}`)
-		default:
-			modelsHandler(w, r)
+			return
 		}
+		t.Errorf("unexpected request to %s: the RAG test must not precheck /v1/models", r.URL.Path)
+		http.NotFound(w, r)
 	}))
 }
 
@@ -404,31 +405,6 @@ func TestTestTTS_EdgeReachable(t *testing.T) {
 	result := testTTSEdge(context.Background(), map[string]any{})
 	// We can't assert true/false since it depends on network, but it shouldn't panic
 	_ = result
-}
-
-// ── buildEndpointURL tests ────────────────────────────────────
-
-func TestBuildEndpointURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		baseURL     string
-		defaultPath string
-		expected    string
-	}{
-		{"full URL no path", "https://api.openai.com", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"URL with /v1", "https://api.openai.com/v1", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"URL already complete", "https://api.openai.com/v1/chat/completions", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"URL with trailing slash", "https://api.openai.com/v1/", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"Anthropic no path", "https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-		{"Anthropic with /v1", "https://api.anthropic.com/v1", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-		{"Anthropic already complete", "https://api.anthropic.com/v1/messages", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildEndpointURL(tt.baseURL, tt.defaultPath)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
 }
 
 // ── resolveStringValue tests ─────────────────────────────────
@@ -786,10 +762,7 @@ func TestTestOpenAIAPI_NoAPIKey(t *testing.T) {
 // ── RAG additional tests ──────────────────────────────────────
 
 func TestTestRAG_DefaultModel(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
-	})
+	srv := ragTestServer(t, nil)
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -799,52 +772,11 @@ func TestTestRAG_DefaultModel(t *testing.T) {
 	assert.True(t, result.Success)
 }
 
-func TestTestRAG_PrefixMatch(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3:latest"}]}`)
-	})
-	defer srv.Close()
-
-	result := testRAG(context.Background(), map[string]any{
-		"rag.base_url": srv.URL,
-		"rag.model":    "bge-m3",
-	})
-	assert.True(t, result.Success)
-}
-
-func TestTestRAG_ParseError(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `not valid json for models list`)
-	})
-	defer srv.Close()
-
-	result := testRAG(context.Background(), map[string]any{
-		"rag.base_url": srv.URL,
-	})
-	assert.True(t, result.Success)
-	assert.Contains(t, result.Message, "not implement /v1/models")
-}
-
-func TestTestRAG_OtherHTTPError(t *testing.T) {
-	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	})
-	defer srv.Close()
-
-	result := testRAG(context.Background(), map[string]any{
-		"rag.base_url": srv.URL,
-	})
-	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "HTTP 403")
-}
-
 func TestTestRAG_WithAPIKey(t *testing.T) {
 	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer test-api-key", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
+		_, _ = fmt.Fprintln(w, `{"data":[{"embedding":[0.1,0.2,0.3],"index":0}]}`)
 	})
 	defer srv.Close()
 
@@ -858,8 +790,8 @@ func TestTestRAG_WithAPIKey(t *testing.T) {
 
 func TestTestRAG_EmbeddingFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = fmt.Fprintln(w, `model not found`)
 	}))
 	defer srv.Close()
 
@@ -872,15 +804,10 @@ func TestTestRAG_EmbeddingFailure(t *testing.T) {
 }
 
 func TestTestRAG_EmbeddingEmptyVector(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/v1/models") {
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = fmt.Fprintln(w, `{"data":[{"id":"bge-m3"}]}`)
-			return
-		}
+	srv := ragTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintln(w, `{"data":[{"embedding":[],"index":0}]}`)
-	}))
+	})
 	defer srv.Close()
 
 	result := testRAG(context.Background(), map[string]any{
@@ -940,13 +867,6 @@ func TestTestFRP_DefaultPort(t *testing.T) {
 		// No port — should default to 7000
 	})
 	assert.True(t, result.Success)
-}
-
-// ── buildEndpointURL additional tests ─────────────────────────
-
-func TestBuildEndpointURL_NoSlashInPath(t *testing.T) {
-	result := buildEndpointURL("https://api.example.com", "chat")
-	assert.Equal(t, "https://api.example.com/chat", result)
 }
 
 // ── Feishu tests ──────────────────────────────────────────────────

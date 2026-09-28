@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
@@ -1084,6 +1085,12 @@ type ACPConn struct {
 	// Invoked with the resolved wire config id so tests can assert which id a
 	// given internal category maps to for the connection's agent.
 	setConfigOptionFn func(ctx context.Context, acpSessionID, configID, value string) error
+
+	// resumeSessionFnForTest / loadSessionFnForTest override the two recovery
+	// RPCs so recoverExistingSession's fallback can be unit-tested without a live
+	// agent. Nil means use the real ACP call. Production code must not set these.
+	resumeSessionFnForTest func(ctx context.Context, acpSID, cwd string) (*acp.ResumeSessionResponse, error)
+	loadSessionFnForTest   func(ctx context.Context, acpSID, cwd string) (*acp.LoadSessionResponse, error)
 
 	// metaMu guards accumulated per-agent _meta extensions for the current
 	// turn. Unlike c.mu, it is safe to acquire from the ACP notification
@@ -2338,7 +2345,25 @@ func (c *ACPConn) SetAliveForTest() {
 	c.mu.Unlock()
 }
 
-// KillProcessForTest kills the agent subprocess for integration testing.
+// KillProcessForTest kills the agent subprocess tree for integration testing.
+//
+// It deliberately mirrors what production does when it disposes of a connection
+// (reapProcess → killProcessGroup): killing only the direct child is not enough
+// for npx-launched agents, whose tree is deeper than one level:
+//
+//	npm exec pi-acp@latest   ← cmd.Process (direct child)
+//	  └── sh -c "pi-acp"
+//	        └── node .../pi-acp   ← the actual ACP agent, holds the stdio pipes
+//
+// Killing just the direct child leaves that grandchild alive holding stdout
+// open, so conn.Done() never fires and IsAlive() stays true — which is exactly
+// what the ProcessCrash integration tests poll for, hence their 5s timeout.
+// The process group is safe to signal because spawnLocked calls
+// setProcessGroup (Setsid), making the child a group leader.
+//
+// This mirrors reapProcess's group kill, but not the rest of teardown: it skips
+// oldFilter.Close() and waitProcessExitOnce so the caller can still observe the
+// death transition (reaping here would race that observation).
 func (c *ACPConn) KillProcessForTest() error {
 	c.mu.Lock()
 	if c.cmd == nil || c.cmd.Process == nil {
@@ -2347,7 +2372,18 @@ func (c *ACPConn) KillProcessForTest() error {
 	}
 	p := c.cmd.Process
 	c.mu.Unlock()
-	return p.Kill()
+	// killProcessGroup returns nothing, so surface the direct child's signal
+	// error — otherwise this always returns nil and a caller asserting on the
+	// error (e.g. killConnProcess's require.NoError) checks nothing.
+	killProcessGroup(p)
+	if err := p.Signal(syscall.Signal(0)); err != nil {
+		// ESRCH means it is gone, which is the goal. Any other error is real.
+		if errors.Is(err, os.ErrProcessDone) || errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // SetListSessionsFnForTest overrides the ListSessions implementation for testing.
@@ -2364,6 +2400,20 @@ func (c *ACPConn) SetListSessionsFnForTest(fn func(ctx context.Context, cursor *
 func (c *ACPConn) SetConfigOptionFnForTest(fn func(ctx context.Context, acpSessionID, configID, value string) error) {
 	c.mu.Lock()
 	c.setConfigOptionFn = fn
+	c.mu.Unlock()
+}
+
+// SetRecoveryRPCsFnForTest overrides the session/resume and session/load RPCs so
+// the crash-recovery fallback (recoverExistingSession) can be unit-tested without
+// a live agent process. Either fn may be nil to fall through to the real call.
+// Production code must not use this.
+func (c *ACPConn) SetRecoveryRPCsFnForTest(
+	resume func(ctx context.Context, acpSID, cwd string) (*acp.ResumeSessionResponse, error),
+	load func(ctx context.Context, acpSID, cwd string) (*acp.LoadSessionResponse, error),
+) {
+	c.mu.Lock()
+	c.resumeSessionFnForTest = resume
+	c.loadSessionFnForTest = load
 	c.mu.Unlock()
 }
 

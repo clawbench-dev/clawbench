@@ -927,3 +927,57 @@ func TestServeAISessionUpdate_ThinkingEffort_FallbackWhenUnadvertised(t *testing
 	defer mu.Unlock()
 	assert.Equal(t, []string{"thinkingEffort"}, sent, "unadvertised agent keeps the historical wire id")
 }
+
+// ── newUnnamedSessionTitle ───────────────────────────────────────────────────
+
+// TestNewUnnamedSessionTitle_NumberedPerProject covers the success path: an
+// existing unnamed session titled with the localized base pushes the next
+// number to 2, and the number is per project.
+func TestNewUnnamedSessionTitle_NumberedPerProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	// Numbering is derived from existing titles matching "<base> <n>", so seed a
+	// session whose title is exactly what this function would have produced.
+	base := T(req, "NewSession")
+	_, err := service.CreateSession(env.ProjectDir, "claude", base+" 1", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	got := newUnnamedSessionTitle(req, env.ProjectDir)
+	assert.Equal(t, base+" 2", got, "the next unnamed session must be numbered 2")
+
+	// A different project has its own sequence and starts at 1.
+	otherProject := t.TempDir()
+	otherReq := newRequest(t, http.MethodGet, "/api/ai/chat", nil)
+	otherReq = withProjectCookie(otherReq, otherProject)
+	assert.Equal(t, base+" 1", newUnnamedSessionTitle(otherReq, otherProject),
+		"numbering is per project, so an untouched project starts at 1")
+}
+
+// TestNewUnnamedSessionTitle_DBFailureFallsBackToUnnumbered is the guard for the
+// error branch: when the numbering query fails, the title must degrade to the
+// plain localized "NewSession" label rather than surfacing an error or an empty
+// title. A blank title would leave the session unnamed in the UI with no way to
+// identify it.
+func TestNewUnnamedSessionTitle_DBFailureFallsBackToUnnumbered(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Force the read pool (used by NextSessionNumber) to fail.
+	closedDB, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	_ = closedDB.Close()
+	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	defer cleanup()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+
+	got := newUnnamedSessionTitle(req, env.ProjectDir)
+	assert.NotEmpty(t, got, "a failed numbering query must still yield a usable title")
+	assert.Equal(t, T(req, "NewSession"), got,
+		"the fallback must be the unnumbered localized label, not an error string")
+}

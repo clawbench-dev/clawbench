@@ -29,6 +29,13 @@ const execDetailOpen = ref(false)
 const formViewOpen = ref(false)
 const formMode = ref<'create' | 'edit'>('create')
 
+// Whether the task list has been fetched successfully for the current project.
+// The store starts empty, so "task id not in store" is ambiguous between
+// "not loaded yet" and "deleted" — only the latter may be reported as missing
+// (same rule as useChatRender's empty-list handling). Flipped on the first
+// successful loadTasks() and reset on project switch (resetTaskTabState).
+const tasksLoaded = ref(false)
+
 // AbortController for loadTasks — aborts previous in-flight request
 let loadTasksAbortController: AbortController | null = null
 
@@ -66,6 +73,7 @@ export function resetTaskTabState() {
     execDetailOpen.value = false
     formViewOpen.value = false
     formMode.value = 'create'
+    tasksLoaded.value = false
 }
 
 /** Called when a task execution completes (runningCount drops to 0) */
@@ -185,6 +193,10 @@ async function loadTasks() {
         if (!tasksUnchanged) {
             store.state.tasks = newTasks as unknown as Array<Record<string, unknown>>
         }
+        // The list is now authoritative for this project: a task absent from it
+        // is genuinely deleted, not merely unloaded. The detail view keys its
+        // "task no longer exists" fallback on this.
+        tasksLoaded.value = true
     } catch (e: unknown) {
         // AbortError is expected when a newer request supersedes this one
         if (e instanceof Error && e.name === 'AbortError') return
@@ -332,6 +344,9 @@ export function useTaskTab() {
         execDetailOpen,
         formViewOpen,
         formMode: formMode as Ref<'create' | 'edit'>,
+        // True once the list has loaded successfully for the current project —
+        // callers use it to tell "deleted" apart from "not fetched yet".
+        tasksLoaded,
 
         // Navigation methods
         navigateToTaskSettings,

@@ -290,39 +290,42 @@ describe('SessionList fork-group tree rail', () => {
     // consecutive members into one continuous line (`├─`).
   })
 
-  it('compensates the rail for the selected row accent border', async () => {
-    // `.session-row.active` adds a `border-left`, and an absolutely-positioned
-    // box is offset from the PADDING box (inside the border). Without a
-    // compensation the rail on the selected member sits one border-width further
-    // right than its neighbours, so the tree visibly breaks at that row.
-    // Measured in Chrome: rail at x=12 unselected, x=16 selected.
+  it('has no accent border on the selected row, so no alignment coupling', async () => {
+    // The selected row used to paint a 4px accent `border-left`. It was removed
+    // as a fifth redundant signal (the 10% fill, the 35% outline, the inset glow
+    // and the accent title already say "selected") AND because a border
+    // displaces the content box: keeping the row from shifting needed two
+    // matching compensations — `padding-left` on `.session-item.active` for the
+    // text, and a `left` override on the fork-member tree rail. Both are gone.
+    //
+    // This is the regression guard: re-adding the border without its
+    // compensations would silently shift the text and break the tree rail's
+    // alignment on exactly one row.
     const src = await sessionListSource()
-    const fix = src.match(/\.session-row\.is-fork-member\.active::before\s*\{[^}]*\}/)?.[0]
-    expect(fix, 'the selected-member rail compensation should exist').toBeTruthy()
-    expect(fix).toMatch(/left:\s*calc\(/)
-    expect(fix, 'the offset must subtract the border width').toMatch(/-\s*var\(--row-active-border\)/)
-  })
-
-  it('derives the accent border width and both compensations from one variable', async () => {
-    // Three declarations must agree on the border width: the border itself, the
-    // rail compensation, and the text compensation. A literal in any of them can
-    // drift from the others and silently misalign the row.
-    const src = await sessionListSource()
-    // Declared once, on the list container.
-    expect(src).toMatch(/--row-active-border:\s*4px/)
-    // The border uses it rather than a literal.
-    const activeRow = src.match(/\.session-row\.active\s*\{[^}]*\}/)?.[0]
-    expect(activeRow, '.session-row.active should exist').toBeTruthy()
-    expect(activeRow).toMatch(/border-left:\s*var\(--row-active-border\)/)
-    expect(activeRow, 'no literal border width').not.toMatch(/border-left:\s*\d+px/)
-    // The text compensation does too.
+    expect(src, 'the border width variable should be gone').not.toMatch(/--row-active-border/)
+    expect(src, 'the tree-rail compensation should be gone').not.toMatch(
+      /\.session-row\.is-fork-member\.active\s*\{/,
+    )
     // Anchored at line start: an unanchored match also hits the JS
     // `row.querySelector('.session-item.active')` inside scrollActiveRowIntoView,
-    // whose following `{` is a function body — the regex would then "find" a
-    // padding-left that does not exist.
-    const activeItem = src.match(/(?:^|\n)\.session-item\.active\s*\{[^}]*\}/)?.[0]
-    expect(activeItem, '.session-item.active should exist').toBeTruthy()
-    expect(activeItem).toMatch(/padding-left:\s*calc\([^;]*var\(--row-active-border\)/)
+    // whose following `{` is a function body.
+    expect(src, 'the text compensation should be gone').not.toMatch(
+      /(?:^|\n)\.session-item\.active\s*\{/,
+    )
+
+    // And the row itself must not carry a left border of any kind.
+    const activeRow = src.match(/\.session-row\.active\s*\{[^}]*\}/)?.[0]
+    expect(activeRow, '.session-row.active should exist').toBeTruthy()
+    expect(activeRow, 'no left border on the selected row').not.toMatch(/border-left\s*:/)
+
+    // The selection must still be clearly signalled — otherwise this would pass
+    // by simply deleting the selected state. All four remaining channels.
+    expect(activeRow, 'the fill').toMatch(/background-image:/)
+    expect(activeRow, 'the outline').toMatch(/border-right\s*:/)
+    expect(activeRow, 'the outline').toMatch(/border-top\s*:/)
+    expect(activeRow, 'the outline').toMatch(/border-bottom\s*:/)
+    expect(activeRow, 'the inset glow').toMatch(/box-shadow:\s*inset/)
+    expect(src, 'the accent title').toMatch(/\.session-item\.active \.session-item-title\s*\{/)
   })
 
   it('marks the last member of a group in the row classes', async () => {

@@ -58,4 +58,55 @@ describe('wallpaper failure handling', () => {
     const base = readWebFile(BASE_CSS)
     expect(base).toMatch(/\.wallpaper-layer\s*\{[^}]*background-color:\s*var\(--bg-primary\)/)
   })
+
+  /**
+   * Self-heal for a dangling selection.
+   *
+   * The selected gallery image is this device's own pointer, but the file lives
+   * on the server where another device can delete it. Nothing notifies us, so
+   * the pointer goes stale and the <img> fails. An <img>'s error event carries
+   * no status, so the two causes — "the file is gone" (heal) and "the network
+   * hiccuped" (keep) — must be told apart with a HEAD probe.
+   */
+  describe('dangling selection self-heal', () => {
+    function errorHandler(src: string): string {
+      const m = src.match(/async function onWallpaperError\(\)[\s\S]*?\n\}/)
+      if (!m) throw new Error('onWallpaperError not found in App.vue')
+      return m[0]
+    }
+
+    it('probes with HEAD, which is the only way to learn the status', () => {
+      // A bare @error handler cannot distinguish 404 from a transport failure.
+      expect(errorHandler(readWebFile(APP))).toMatch(/method:\s*'HEAD'/)
+    })
+
+    it('clears the local selection only on a 404', () => {
+      const handler = errorHandler(readWebFile(APP))
+      expect(handler).toMatch(/status\s*!==\s*404/)
+      expect(handler).toContain("setSetting('wallpaperLocalSelected', '')")
+    })
+
+    it('keeps the selection on a transport failure', () => {
+      // A thrown fetch (offline, DNS) must fall through to the catch without
+      // clearing: the file may well still exist, and clearing would silently
+      // lose the user's choice.
+      const handler = errorHandler(readWebFile(APP))
+      const catchBlock = handler.slice(handler.indexOf('catch'))
+      expect(catchBlock).not.toContain("setSetting('wallpaperLocalSelected'")
+    })
+
+    it('heals only the local source, never the Bing cache', () => {
+      // A missing Bing file is a server-side cache problem, not a stale pointer
+      // on this device — clearing the local selection there would discard an
+      // unrelated choice.
+      expect(errorHandler(readWebFile(APP))).toMatch(/wallpaperMode\.value\s*!==\s*'local'/)
+    })
+
+    it('does not re-enter while a probe is in flight', () => {
+      // Without the guard, an <img> that keeps failing re-probes on every
+      // re-render and hammers the endpoint.
+      const handler = errorHandler(readWebFile(APP))
+      expect(handler).toMatch(/if\s*\(!url\s*\|\|\s*healingDanglingSelection\)\s*return/)
+    })
+  })
 })

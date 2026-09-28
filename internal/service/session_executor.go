@@ -477,7 +477,7 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
 //
-//nolint:gocyclo // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
+//nolint:gocyclo,gocognit // one branch per event type (content_reset, tool, metadata, context-state, flush gate); the dispatch is inherently a flat switch and splitting it would scatter the ordering invariants documented inline
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// No flush-before-dispatch here on purpose. Every client-visible emission in
 	// this executor goes through forwardEvent → coalescer.add, and the coalescer
@@ -570,13 +570,18 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.trackToolDuration(&event)
 	}
 
-	// Forward event to WS clients via StreamHub
-	e.forwardEvent(event)
-
-	// Accumulate block. Guarded so FlushStreamingNow (shutdown goroutine) can
-	// read e.blocks concurrently without a data race.
+	// Accumulate block BEFORE forwarding, so a thinking block's freshly minted
+	// think_id can ride the very event that opens it. Guarded so
+	// FlushStreamingNow (shutdown goroutine) can read e.blocks concurrently
+	// without a data race.
+	//
+	// Reordering is safe for event ordering: what guarantees a client sees
+	// events in order is the coalescer (a non-delta flushes buffered text
+	// before emitting), not the order of these two calls. The lock is released
+	// before forwarding because forwardEvent fans out to WS clients and must
+	// not run under e.mu.
 	e.mu.Lock()
-	ai.AccumulateBlock(&e.blocks, event)
+	thinkID := ai.AccumulateBlock(&e.blocks, event)
 	// Queue tool-call upserts for the next flush window instead of writing per
 	// event — a burst of incremental tool_use updates would otherwise issue one
 	// SQLite write per event and stall the consumer.
@@ -586,6 +591,36 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		}
 	}
 	e.mu.Unlock()
+
+	// Stamp the block's identity onto the event: the one that opens the block
+	// and every delta of it, so the coalescer can tell blocks apart. Empty for
+	// all other event types.
+	if thinkID != "" {
+		event.ThinkID = thinkID
+	}
+
+	// Commit this block's thinking text BEFORE telling clients it is done.
+	//
+	// thinking_done is a client's cue to fetch the full reasoning from
+	// chat_thinking. The periodic flush is rate-limited to 500ms, so without
+	// this the event routinely arrives first and the client caches a PREFIX of
+	// the block — the reported truncated reasoning (observed: 760 of 844 chars
+	// cached; another case 17124 of 18887), which then never refetched because
+	// the cache looked populated.
+	//
+	// Safe here: AccumulateBlock (above) has already seen every delta — the
+	// coalescer only merges the OUTBOUND frames and never writes e.blocks — so
+	// flushing now writes the block's complete text. A separate lock scope is
+	// required because forwardEvent must not run under e.mu; flushPendingThinking
+	// takes no lock of its own (its callers hold e.mu), so this cannot deadlock.
+	if event.Type == "thinking_done" {
+		e.mu.Lock()
+		e.flushPendingThinking()
+		e.mu.Unlock()
+	}
+
+	// Forward event to WS clients via StreamHub
+	e.forwardEvent(event)
 
 	// metadata capture
 	if event.Type == contentKeyMetadata && event.Meta != nil {
@@ -972,6 +1007,13 @@ func (e *SessionExecutor) flushPendingContextState() {
 // slimThinkingInContent (blocks that already carry think_id are not
 // regenerated), so no orphan rows and no duplicates.
 func (e *SessionExecutor) flushPendingThinking() {
+	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
+	// is nothing to persist to. Existing callers are all behind the same guard
+	// in flushStreamingLocked, but the thinking_done path calls this directly, so
+	// the check must live here too or that path panics on a DB-less executor.
+	if db == nil {
+		return
+	}
 	if e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" {
 		return
 	}

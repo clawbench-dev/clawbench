@@ -167,12 +167,34 @@ func TestACPInitRegistration(t *testing.T) {
 
 	t.Run("pi", func(t *testing.T) {
 		p := mustLookup(t, "pi")
-		// Pi ACP is disabled (unstable) — ACP plugin should be nil.
-		if p.ACP != nil {
-			t.Fatal("expected pi ACP to be nil (ACP disabled)")
+		ACP := mustACP(t, p)
+
+		// Pi reaches ACP through the upstream pi-acp bridge. The adapter forwards
+		// Pi's native tool arguments, so rawInput is `path` + camelCase edit
+		// fields rather than the generic snake_case shape.
+		if p.Spec.AcpCommand != "npx -y pi-acp@latest" {
+			t.Errorf("expected AcpCommand npx -y pi-acp@latest, got %q", p.Spec.AcpCommand)
 		}
-		if p.Spec.AcpCommand != "" {
-			t.Errorf("expected pi AcpCommand to be empty (ACP disabled), got %q", p.Spec.AcpCommand)
+		// pi-acp advertises loadSession and implements session/load, so the
+		// explicit acp-load endpoint must be allowed to use it. (Its lack of the
+		// non-standard session/resume RPC is a separate capability and is handled
+		// at runtime by the automatic recovery fallback, not by this flag.)
+		if !p.Spec.ACPLoadSession {
+			t.Error("expected ACPLoadSession=true for pi (pi-acp implements session/load)")
+		}
+		// The table stays minimal on purpose: nested edits[] cannot be handled by
+		// the flat generic ACP remap, so Pi uses a tool-aware parser in internal/ai
+		// instead (see parsePiACPToolCall / normalizePiACPInput).
+		expected := map[string]string{
+			"path": "file_path",
+		}
+		for k, v := range expected {
+			if ACP.InputRemaps[k] != v {
+				t.Errorf("InputRemaps[%q] = %q, want %q", k, ACP.InputRemaps[k], v)
+			}
+		}
+		if len(ACP.InputRemaps) != len(expected) {
+			t.Errorf("InputRemaps has %d entries, want %d", len(ACP.InputRemaps), len(expected))
 		}
 	})
 

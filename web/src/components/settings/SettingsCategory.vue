@@ -8,6 +8,7 @@
     v-else-if="categoryId.startsWith('agents:')"
     :agent-id="categoryId.slice(7)"
     @deleted="$emit('navigate', 'agents')"
+    @back="$emit('navigate', 'agents')"
   />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">

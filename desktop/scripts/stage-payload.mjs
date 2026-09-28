@@ -19,11 +19,12 @@
  * package would silently grow a redundant ~4MB copy of the payload — and it
  * would only be caught by whichever step happened to run first.
  *
- * The archive must be built from INSIDE this directory so its entries are
- * `payload.json` and `resources/…`. Those share no top-level directory, which
- * is what stops install.ts's extractZip from stripping a prefix — a zip whose
- * entries were all under `resources/` would have that prefix removed and
- * `app.asar` would land at the app root instead of inside `resources/`.
+ * The payload ships to npm only, so this directory is no longer zipped for a
+ * GitHub Release. `npm pack` puts its entries under a `package/` wrapper, which
+ * install.ts's commonTopLevelDir strips; `payload.json` and `resources/` must
+ * still share no top-level directory of their own, or a zip built from this
+ * directory would have that prefix stripped and `app.asar` would land at the
+ * app root instead of inside `resources/`.
  *
  * Usage: node scripts/stage-payload.mjs <unpackedDir>
  */

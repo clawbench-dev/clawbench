@@ -2,13 +2,13 @@ package service
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // ThinkingRecord represents a row in the chat_thinking table.
@@ -26,12 +26,11 @@ type ThinkingRecord struct {
 }
 
 // generateThinkingID returns a think_id ("th_" + 32 hex chars).
+//
+// Delegates to model.GenerateThinkingID so the executor (which assigns IDs when
+// a block opens) and this package mint identical IDs from one definition.
 func generateThinkingID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("th_%d", time.Now().UnixNano())
-	}
-	return "th_" + hex.EncodeToString(b)
+	return model.GenerateThinkingID()
 }
 
 // thinkingBatchChunkRows bounds how many rows go into a single INSERT. SQLite

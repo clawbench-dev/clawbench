@@ -32,7 +32,10 @@
               <div class="server-info">
                 <span class="server-indicator"></span>
                 <Server :size="14" class="server-icon" />
-                <span class="server-url">{{ formatServerHost(srv.url) }}</span>
+                <!-- Named servers show the name; unnamed fall back to the
+                     address. The full address stays available as a tooltip so
+                     a named row is still identifiable. -->
+                <span class="server-url" :title="srv.url">{{ getLabel(srv) }}</span>
               </div>
               <button class="server-delete" @click.stop="deleteServer(srv.url)" :title="t('login.deleteServer')">
                 <X :size="12" />
@@ -73,6 +76,17 @@
         <!-- Add server form -->
         <form v-else @submit.prevent="handleAddServer">
           <div class="input-group">
+            <Tag :size="18" class="input-icon" />
+            <input
+              type="text"
+              v-model="newServerName"
+              :placeholder="t('login.serverNamePlaceholder')"
+              maxlength="40"
+              autocomplete="off"
+              :disabled="loading"
+            />
+          </div>
+          <div class="input-group" style="margin-top: var(--space-5);">
             <Server :size="18" class="input-icon" />
             <input
               type="url"
@@ -148,8 +162,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
 import { useServerList } from '@/composables/useServerList'
 import { useDialog } from '@/composables/useDialog'
-import { formatServerHost } from '@/utils/url'
-import { Server, X, Plus, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
+import { Server, X, Plus, Tag, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
 import LoadingIndicator from './common/LoadingIndicator.vue'
 import { downloadByUrl } from '@/utils/download'
@@ -161,7 +174,7 @@ const dialog = useDialog()
 const pwaInstall = usePwaInstall()
 const emit = defineEmits(['loginSuccess'])
 
-const { servers, load: loadServers, save: saveServer, remove: removeServer, getPassword } = useServerList()
+const { servers, load: loadServers, save: saveServer, remove: removeServer, getPassword, getLabel, findNameConflict } = useServerList()
 
 const password = ref('')
 const loading = ref(false)
@@ -170,6 +183,7 @@ const networkError = ref(false)
 const selectedServerUrl = ref('')
 const showAddForm = ref(false)
 const newServerUrl = ref('')
+const newServerName = ref('')
 const newServerPassword = ref('')
 const showIosSheet = ref(false)
 const showPasswordField = ref(true)
@@ -247,8 +261,16 @@ async function handleLogin() {
 
 async function handleAddServer() {
   if (!newServerUrl.value) return
-  loading.value = true
   error.value = ''
+
+  // Names are unique labels. Checked before touching the network so a
+  // duplicate is rejected without a pointless connection attempt.
+  if (findNameConflict(servers.value, newServerName.value)) {
+    error.value = t('login.duplicateServerName')
+    return
+  }
+
+  loading.value = true
 
   // Normalize URL
   let url = newServerUrl.value.trim()
@@ -257,7 +279,7 @@ async function handleAddServer() {
   }
 
   // Save to native server list first (so it persists even if connection fails later)
-  await saveServer(url, newServerPassword.value)
+  await saveServer(url, newServerPassword.value, newServerName.value)
 
   // Use native connectToServer for pre-auth, CORS bypass, SSL handling, and error recovery
   if (getNative()?.connectToServer) {

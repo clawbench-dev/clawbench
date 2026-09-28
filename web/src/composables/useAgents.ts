@@ -58,6 +58,13 @@ const agents = ref<AgentRecord[]>([])
 const defaultAgentId = ref('')
 let loadPromise: Promise<void> | null = null
 
+// Whether the agent list has been fetched successfully. The list starts empty,
+// so "id not in list" is ambiguous between "not loaded yet" and "deleted" —
+// only the latter may be reported as missing (same rule as useTaskTab's
+// tasksLoaded). A view that gates on an agent looked up from this list keys its
+// "agent no longer exists" fallback on this flag.
+const agentsLoaded = ref(false)
+
 // Cached ACP states from /api/agents — used by createSession to restore
 // mode/thinking/command chips after clearing state for a new session.
 // Without this cache, chips only reappear after the first message triggers
@@ -85,6 +92,7 @@ export function resetAgents(): void {
     defaultAgentId.value = ''
     acpStatesCache = {}
     loadPromise = null
+    agentsLoaded.value = false
     _updateAvailableModes = null
     _updateAvailableThinkingEfforts = null
     _updateCommandState = null
@@ -103,6 +111,10 @@ async function loadAgents(force = false): Promise<void> {
             // cliModels. The client renders what it is given; it keeps no
             // baseline of its own.
             agents.value = data.agents || []
+            // The list is now authoritative: an id absent from it is genuinely
+            // gone, not merely unloaded. Views that gate on a looked-up agent
+            // use this to tell "deleted" apart from "not fetched yet".
+            agentsLoaded.value = true
             if (data.defaultAgent) {
                 defaultAgentId.value = data.defaultAgent
             }
@@ -534,6 +546,9 @@ export function useAgents() {
     return {
         agents,
         defaultAgentId,
+        // True once the list has loaded successfully — callers use it to tell
+        // "agent deleted" apart from "not fetched yet".
+        agentsLoaded,
         loadAgents,
         getAgentBackend,
         getAgentName,

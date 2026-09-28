@@ -292,14 +292,11 @@
           :data-path="pathOf(entry)"
           :title="entryTitle(entry)"
         >
-          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+          <div class="file-icon-wrap" :ref="(el) => thumbObserve(el, entry)">
             <img v-if="entry.type !== 'dir' && shouldMountThumb(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
             <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
-            </span>
-            <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
-              <Paperclip :size="12" />
             </span>
           </div>
           <div class="file-info">
@@ -366,14 +363,11 @@
         :data-path="pathOf(entry)"
         :title="entryTitle(entry)"
       >
-        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+        <div class="grid-thumb" :ref="(el) => thumbObserve(el, entry)">
           <img v-if="shouldMountThumb(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
-          </span>
-          <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
-            <Paperclip :size="12" />
           </span>
         </div>
         <div class="grid-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></div>
@@ -515,7 +509,7 @@
           </div>
           <div class="context-menu-item" @click.stop="doAttachToChat">
             <Paperclip :size="14" />
-            {{ ctxMenu.entry && hasAttachedFile(ctxMenu.entry.path) ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
+            {{ t('chat.actions.attachToChat') }}
           </div>
           <div class="context-menu-item danger" @click.stop="doDelete">
             <Trash2 :size="14" />
@@ -840,7 +834,7 @@ const sharedDrawerRef = ref(null)
 function onSharedFileOpen(path) {
   emit('selectFile', path)
 }
-const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
+const { addAttachedFile } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 const { isWideScreen } = useWideScreenLayout()
@@ -2497,11 +2491,11 @@ function doAttachToChat() {
     const path = ctxMenu.entry.path
     const isDir = ctxMenu.entry.type === 'dir'
     closeCtxMenu()
-    if (hasAttachedFile(path)) {
-        removeAttachedFileByPath(path)
-        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
-        return
-    }
+    // Add-only: there is no per-file "attached" indicator any more (the target
+    // session can be any session, so no single icon could represent it), hence
+    // no toggle-to-remove branch here. Removal lives in the chat input's own
+    // attachment strip, where the user can see which session holds it.
+    //
     // Destination is only ambiguous when the chat panel is off screen; with it
     // visible the file goes straight into the current session's input.
     if (requestAttachmentTarget({ path, isDir })) return
@@ -2518,16 +2512,6 @@ function doAttachToChat() {
                 to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
             }
         }))
-    }
-}
-
-function toggleAttach(path, isDir = false) {
-    if (hasAttachedFile(path)) {
-        removeAttachedFileByPath(path)
-        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
-    } else {
-        addAttachedFile(path, isDir)
-        toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
 }
 
@@ -3295,29 +3279,6 @@ function scrollSelectedIntoView(path) {
     height: 28px;
 }
 
-.attach-badge {
-    position: absolute;
-    bottom: -5px;
-    left: -5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-    border-radius: 50%;
-    padding: var(--space-1);
-    cursor: pointer;
-    z-index: 2;
-    transition: transform var(--duration-base), background var(--duration-base);
-}
-
-@media (hover: hover) {
-    .attach-badge:hover {
-        transform: scale(1.2);
-        background: #ef4444;
-    }
-}
-
 .symlink-badge {
     position: absolute;
     top: -5px;
@@ -3487,29 +3448,6 @@ function scrollSelectedIntoView(path) {
     background: var(--bg-tertiary, #f5f5f5);
     position: relative;
     transition: background var(--duration-base), box-shadow var(--duration-base);
-}
-
-.grid-thumb .attach-badge {
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-    border-radius: 50%;
-    padding: var(--space-1);
-    cursor: pointer;
-    z-index: 2;
-    transition: transform var(--duration-base), background var(--duration-base);
-}
-
-@media (hover: hover) {
-    .grid-thumb .attach-badge:hover {
-        transform: scale(1.2);
-        background: #ef4444;
-    }
 }
 
 .grid-thumb img {

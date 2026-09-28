@@ -142,6 +142,12 @@ function isJsonContent(c: string): boolean {
 /** SSE event data for thinking events */
 export interface ThinkingEventData {
   text?: string
+  /**
+   * The block's stable identity, minted by the backend when the block opens.
+   * Carried on every delta of the block. Absent when the server predates this
+   * field, in which case the block gets its id later from a DB snapshot.
+   */
+  think_id?: string
   /** Parent Agent tool-call id when this thinking belongs to a sub-agent. */
   parent_tool_call_id?: string
 }
@@ -361,22 +367,16 @@ export function forceCleanupStreamingState(
             block.output = ''
           }
         }
-        // Thinking blocks need the same close-out, and were missed here.
-        //
-        // The spinner is driven by isThinkingStreaming() = `!block.done &&
-        // props.streaming`, and `done` is normally set by the backend's
-        // thinking_done event — which is emitted only on a TRANSITION (thinking
-        // → content, or thinking → tool_use). A turn that ENDS while reasoning
-        // never sends it, so the last block kept done=undefined and spun
-        // forever: the reported "a stuck deep-thinking block at the top".
-        //
-        // The backend already closes this out on its own side (MarkAllThinkingDone
-        // in postProcessBlocks, applied to the persisted content), so the DB row
-        // is correct — only the live frontend block was left open. This is the
-        // frontend counterpart, and the reason the two must not diverge.
-        if (block.type === 'thinking' && !block.done) {
-          block.done = true
-          // It is finished, so it is no longer "still coming".
+        // Close out any thinking block still marked streaming. `thinking_done`
+        // is NOT guaranteed per block (a turn ending on reasoning never gets
+        // one) and is never re-delivered to a client that was unsubscribed when
+        // it fired — so a block that adopted an in_progress marker before a
+        // session switch would spin for the rest of the session. The turn is
+        // over here, so the reasoning is over too: dropping in_progress also
+        // lets the auto-load watcher take its `done && provisional` refetch
+        // path instead of looping on the in_progress branch.
+        if (block.type === 'thinking') {
+          if (!block.done) block.done = true
           delete block.in_progress
         }
       }
@@ -622,7 +622,7 @@ export type ChatMessageAction =
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   | { type: 'ws_content'; text: string; parentToolCallId?: string }
-  | { type: 'ws_thinking'; text: string; key?: string; parentToolCallId?: string }
+  | { type: 'ws_thinking'; text: string; key?: string; thinkId?: string; parentToolCallId?: string }
   | { type: 'ws_thinking_done'; parentToolCallId?: string }
   | { type: 'ws_content_reset' }
   | { type: 'ws_tool_use'; data: ToolUseEventData }
@@ -656,6 +656,85 @@ function joinTextBlocks(blocks: ContentBlock[]): string {
     .filter((b) => b.type === 'text' && typeof b.text === 'string')
     .map((b) => b.text as string)
     .join('')
+}
+
+/**
+ * Find the thinking block a delta belongs to, and report whether it may be
+ * extended.
+ *
+ * The wire id is the authority: the backend mints one think_id per block and
+ * sends it on every delta of that block, so a block carrying this id IS the
+ * target wherever it sits in the array.
+ *
+ * A positional scan alone is not enough, and the difference is exactly the
+ * reported "top thinking block frozen forever": the array can hold a finished
+ * `tool_use` AFTER the live thinking block (mergeStreamBlocks splices DB blocks
+ * in; a sub-agent's tool_use is interleaved on the raw wire). A later delta then
+ * hits the tool_use boundary in the positional scan, finds nothing, and the
+ * caller opens a SECOND block — while stamping it with the same think_id. Two
+ * blocks, one v-for key: the head one keeps its stale text and spins while the
+ * new one takes the stream.
+ *
+ * So: id lookup first, positional scan only as the fallback for a block with no
+ * id yet (an older server that never sends one, or a block adopted from a
+ * position-only DB marker).
+ *
+ * Returns the target block, or undefined when the caller must open a new one.
+ * Both callers (the chat reducer and the task-execution stream) MUST use this —
+ * they diverged once and the task stream kept the duplicate-id bug.
+ */
+export function findThinkingTarget(
+  blocks: ContentBlock[],
+  thinkId: string | undefined,
+  findPositional: () => ContentBlock | undefined,
+): ContentBlock | undefined {
+  const existing = thinkId
+    ? (blocks.find((b) => b.type === 'thinking' && b.think_id === thinkId) ?? findPositional())
+    : findPositional()
+  // Only the SAME block may be extended. Two different ids are two different
+  // blocks by the backend's own definition — appending would merge them (wrong
+  // text under one v-for key). A missing id on either side stays compatible:
+  // that is the old-server / DB-marker case, where position is all there is.
+  if (!existing) return undefined
+  if (thinkId && existing.think_id && existing.think_id !== thinkId) return undefined
+  return existing
+}
+
+/**
+ * Append a thinking delta to its block, opening one when none matches.
+ *
+ * Shared by the chat reducer and the task-execution stream so the two can never
+ * diverge again (they did, and the task stream kept creating a second block with
+ * the same think_id).
+ */
+export function appendThinkingDelta(
+  blocks: ContentBlock[],
+  text: string,
+  thinkId: string | undefined,
+  parent: string | undefined,
+  findPositional: () => ContentBlock | undefined,
+  extra?: Partial<ContentBlock>,
+): void {
+  const target = findThinkingTarget(blocks, thinkId, findPositional)
+  if (target) {
+    // A slim marker (adopted from the DB on a session switch) carries no text:
+    // its prefix lives in chat_thinking and is lazy-loaded at render time.
+    // Appending with `+=` on an absent text would produce the literal
+    // "undefined…", so seed an empty string instead. The prefix is merged back
+    // in by mergeThinkingPrefix when rendering.
+    target.text = (typeof target.text === 'string' ? target.text : '') + text
+    // Backfill identity if this block never got one. Never overwrite a
+    // different id — that would merge two blocks' prefixes under one key.
+    if (thinkId && !target.think_id) target.think_id = thinkId
+    return
+  }
+  blocks.push({
+    type: 'thinking',
+    text,
+    ...(thinkId ? { think_id: thinkId } : {}),
+    ...(parent ? { parent_tool_call_id: parent } : {}),
+    ...extra,
+  } as ContentBlock)
 }
 
 /**
@@ -751,13 +830,28 @@ function dbTextIndexAtOffset(
 }
 
 /** Index in `dbBlocks` of the block a live block corresponds to, or -1 when the
- *  DB flush has no counterpart (a live-only tool, an in-progress thinking the
- *  flush deliberately omits, a warning/error block). Used to anchor DB-only
+ *  DB flush has no counterpart (a live-only tool, a genuinely new thinking block
+ *  the flush has not written yet, a warning/error block). Used to anchor DB-only
  *  blocks: a block is spliced before the first base element whose DB index is
- *  greater than its own. */
+ *  greater than its own.
+ *
+ *  A live block that already carries a `think_id` (adoptThinkingMarkers gave it
+ *  one from the DB marker) anchors to that marker's index. Without this the live
+ *  block kept the -1 default, every DB-only block was spliced AFTER it, and the
+ *  block was pinned to index 0 — the reported "a thinking block still streaming
+ *  at the TOP while the rest of the reply below it is already finished". The DB
+ *  knew its real position all along (observed: index 46 of 114, rendered at 0).
+ *
+ *  This relocates nothing and matches on exact identity, so it is not the
+ *  rejected "prepend every DB-only non-text block" attempt (which stacked all
+ *  tools at the top). The DB marker itself is still dropped by `liveHasThinking`
+ *  in mergeOrderedBlocks, so there is no duplicate and no v-for key collision. */
 function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number {
   if (lb.type === 'tool_use' && lb.id) {
     return dbBlocks.findIndex((b) => b.type === 'tool_use' && b.id === lb.id)
+  }
+  if (lb.type === 'thinking' && lb.think_id) {
+    return dbBlocks.findIndex((b) => b.type === 'thinking' && b.think_id === lb.think_id)
   }
   return -1
 }
@@ -797,6 +891,30 @@ function dbAnchorOfLiveBlock(lb: ContentBlock, dbBlocks: ContentBlock[]): number
  * out markers whose think_id a live block now carries.
  */
 function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): void {
+  // A live thinking block that never received its think_id renders as a
+  // PERPETUAL SPINNER. isThinkingStreaming() is `!block.done && props.streaming`
+  // and such a block has neither `done` nor an id, so no lazy-load path
+  // recognizes it either (they all key off think_id).
+  //
+  // The reported shape: switch away mid-turn, switch back, and a block appears
+  // stuck at the TOP of the assistant message whose text never grows while the
+  // rest of the reply streams normally. Observed three times in one client.log:
+  //
+  //   stall block[0]: done=undefined in_progress=undefined think_id=- textLen=13397
+  //   stall block[2]: done=undefined in_progress=undefined think_id=- textLen=475
+  //   stall block[75]: done=undefined in_progress=undefined think_id=- textLen=7028
+  //
+  // Why switching is what triggers it: the switch drops the WS subscription, so
+  // the backend's `thinking_done` for that block is never delivered. By the time
+  // the client comes back the DB row is already done=true — but only an
+  // in_progress marker was ever adoptable here, and a done marker is not one. The
+  // live block therefore stayed anonymous and unfinished forever.
+  //
+  // (Its text stops growing for a second reason, which is why the block looks
+  // frozen rather than merely spinning: findBlockByTypeBackward treats a
+  // tool_use as a boundary, so later deltas open a NEW block instead of
+  // extending this one. Closing it out is what makes it render as a finished
+  // chip with the text it does have.)
   const inProgressByParent = new Map<string, ContentBlock[]>()
   for (const db of dbBlocks) {
     if (db.type !== 'thinking' || !db.think_id || !db.in_progress) continue
@@ -816,6 +934,22 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
     let target: ContentBlock | undefined
     for (const lb of liveBlocks) {
       if (lb.type !== 'thinking' || lb.think_id) continue
+      // A block the live path already FINISHED must not be re-opened. Its
+      // `done` came from a real thinking_done for that very block; re-tagging it
+      // with the in_progress marker (and forcing in_progress back on) makes a
+      // completed chip spin forever, with its text frozen at whatever it had.
+      //
+      // This is the reported "top of the assistant message, never finishes,
+      // text never grows". Observed msgId=54716: block[0] finished at 09:53:29
+      // with done=true and 66 chars; the 09:56:05 switch-back adopted the
+      // in_progress marker of a DIFFERENT block (th_a14f9884, 174512 chars) onto
+      // it, leaving `tid=th_a14f9884 inprog=true textLen=66` spinning forever
+      // while the real streaming block opened separately.
+      //
+      // The marker's own block is still out there and must be adopted by
+      // someone else (or prepended from the DB as an extra) — just not onto this
+      // one.
+      if (lb.done) continue
       if ((lb.parent_tool_call_id || '') !== parent) continue
       target = lb // keep scanning: the streaming block is the last one
     }
@@ -824,6 +958,102 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
     // Still streaming: more deltas are coming, so it must not render as a
     // finished chip. (The prefix is lazy-loaded and merged at render time.)
     target.in_progress = true
+  }
+
+  // Done markers: a live block whose turn moved on while the client was away.
+  // Same problem as above, but the DB block is already finished, so the id is
+  // adopted together with `done` (not `in_progress`) and the spinner stops.
+  //
+  // Matched by POSITION, not by scanning for "the last id-less block": several
+  // done markers can share one parent, so pairing them by order is the only
+  // unambiguous rule. Walk the live id-less thinking blocks and the DB done
+  // markers of the same parent together, in order, and give each live block the
+  // next marker. An id-less live block with no marker left over is left alone
+  // (it may be genuinely new and still streaming).
+  //
+  // Guarded to markers whose think_id no live block already carries, so a
+  // repeated db_load cannot hand the same identity to two blocks (that would
+  // collide in the v-for key and make the wrong block lazy-load the text).
+  const doneByParent = new Map<string, ContentBlock[]>()
+  for (const db of dbBlocks) {
+    if (db.type !== 'thinking' || !db.think_id || db.in_progress || !db.done) continue
+    const key = db.parent_tool_call_id || ''
+    const list = doneByParent.get(key)
+    if (list) list.push(db)
+    else doneByParent.set(key, [db])
+  }
+  if (doneByParent.size === 0) return
+
+  const liveIdlessByParent = new Map<string, ContentBlock[]>()
+  for (const lb of liveBlocks) {
+    if (lb.type !== 'thinking' || lb.think_id) continue
+    // Only blocks that are still UNFINISHED need rescuing. A live block that
+    // already has done=true renders as a finished chip; handing it a marker
+    // would rewrite a block the live path already resolved (and, in the
+    // continuous-stream case, replace its full text with the DB's stale
+    // prefix).
+    //
+    // Safe because a finished live block always has text: neither layer opens a
+    // block for an empty delta (AccumulateBlock returns early; the ws_thinking
+    // reducer returns on `!action.text`), so a done block with no text cannot
+    // exist to be stranded here without an id to lazy-load its prefix from.
+    if (lb.done) continue
+    const key = lb.parent_tool_call_id || ''
+    const list = liveIdlessByParent.get(key)
+    if (list) list.push(lb)
+    else liveIdlessByParent.set(key, [lb])
+  }
+
+  for (const [parent, liveIdless] of liveIdlessByParent) {
+    const markers = (doneByParent.get(parent) || []).filter(
+      (m) => !liveBlocks.some((lb) => lb.think_id === m.think_id),
+    )
+    const n = Math.min(liveIdless.length, markers.length)
+    for (let i = 0; i < n; i++) {
+      liveIdless[i].think_id = markers[i].think_id
+      liveIdless[i].done = true
+      delete liveIdless[i].in_progress
+    }
+  }
+}
+
+/**
+ * Copy the DB's finish state onto the live thinking blocks it owns.
+ *
+ * mergeStreamBlocks drops every DB thinking block once live has any (they are
+ * the same block seen from two sides; keeping both duplicates the chip). That is
+ * right for CONTENT but it also discarded the one fact only the DB has: whether
+ * the block has FINISHED. The live block then kept `in_progress` / an unset
+ * `done`, which isThinkingStreaming() renders as a spinner — so a block that had
+ * visibly moved on to its tool calls still spun.
+ *
+ * Observed: msgId=54674 / th_bb1f742720e. Its DB row is done=true, and the
+ * auto-load log shows the live block fetched as `provisional=true` three times
+ * running (4499 → 7782 → 9127 chars, the last already the final text) and never
+ * once as a final fetch — the live block never learned it was done. The DB is
+ * authoritative for this flag; live stays authoritative for content.
+ *
+ * Must run here, next to adoptThinkingMarkers, NOT inside mergeOrderedBlocks:
+ * a stretch of pure thinking/tool_use (no text on either side) makes every case
+ * in mergeStreamBlocks fall through to "leave live alone" and return before
+ * mergeOrderedBlocks is ever called — which is exactly the reported shape.
+ *
+ * Matched by think_id, the identity both sides share; a live block without one
+ * yet is handled by adoptThinkingMarkers above. Only ever moves forward
+ * (in-progress → done): the DB flush lags the live stream, so a not-yet-done DB
+ * row must never downgrade a block the live path has already finished.
+ */
+function syncThinkingDoneFromDb(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): void {
+  const doneIds = new Set<string>()
+  for (const db of dbBlocks) {
+    if (db.type === 'thinking' && db.think_id && db.done) doneIds.add(db.think_id)
+  }
+  if (doneIds.size === 0) return
+  for (const lb of liveBlocks) {
+    if (lb.type !== 'thinking' || !lb.think_id || lb.done) continue
+    if (!doneIds.has(lb.think_id)) continue
+    lb.done = true
+    delete lb.in_progress
   }
 }
 
@@ -952,6 +1182,7 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // on either side (a thinking-only stretch) every case falls through to "leave
   // live alone", which is exactly when a switch-back loses the prefix.
   adoptThinkingMarkers(dbBlocks, liveBlocks)
+  syncThinkingDoneFromDb(dbBlocks, liveBlocks)
 
   const dbText = joinTextBlocks(dbBlocks)
   const liveText = joinTextBlocks(liveBlocks)
@@ -1573,20 +1804,20 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // Mirrors AccumulateBlock's guard — the backend coalescer filters the WS
       // frame but the accumulator sees raw events, so both layers guard.
       if (!action.text) return state
-      const existing = findBlockByTypeBackward(blocks, 'thinking', parent)
-      if (existing) {
-        // A slim marker (adopted from the DB on a session switch) carries no
-        // text: its prefix lives in chat_thinking and is lazy-loaded at render
-        // time. Appending with `+=` on an absent text would produce the literal
-        // "undefined…", so seed an empty string instead. The prefix is merged
-        // back in by mergeThinkingPrefix when rendering.
-        existing.text = (typeof existing.text === 'string' ? existing.text : '') + action.text
-        // Deltas arrived for this block, so it is still streaming. Clear a stale
-        // done flag only when the block was reopened — never downgrade a block
-        // the backend already finished.
-      } else {
-        blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}), ...(parent ? { parent_tool_call_id: parent } : {}) })
-      }
+      // Locate the target by wire id first, falling back to the positional scan
+      // only for a block with no id yet. See findThinkingTarget for why a pure
+      // positional scan created a second block with the same think_id — the
+      // reported "top thinking block frozen forever".
+      appendThinkingDelta(
+        blocks,
+        action.text,
+        action.thinkId,
+        parent,
+        () => findBlockByTypeBackward(blocks, 'thinking', parent),
+        // `_key` remains the fallback identity for a server that does not send
+        // think_id yet (see computeStableBlockKey).
+        action.key ? { _key: action.key } : undefined,
+      )
       return state
     }
     case 'ws_error': {

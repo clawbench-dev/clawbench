@@ -66,15 +66,20 @@
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
     </div>
-    <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
+    <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space.
+         Two elements, two motions: the outer slot owns the height collapse (so retiring the banner doesn't
+         jolt the message area) while the inner chip owns the accept flight into the input box. Putting both
+         on one element would make the collapse pull up while the flight pushes down. -->
     <Transition name="recommend-slide">
-      <div v-if="showRecommendationBanner" class="recommendation-chip" :class="{ accepted: recommendationAccepting }">
-        <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
-        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ displayedRecommendation }}</span>
-        <button class="recommendation-accept" :class="{ accepted: recommendationAccepting }" :disabled="recommendationAccepting" @click.stop="acceptRecommendation" :title="recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill')">
-          <Check v-if="recommendationAccepting" :size="12" :stroke-width="3" class="recommendation-accept-check" />
-          {{ recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill') }}
-        </button>
+      <div v-if="showRecommendationBanner" class="recommendation-slot">
+        <div class="recommendation-chip" :class="{ accepted: recommendationAccepting }">
+          <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
+          <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ displayedRecommendation }}</span>
+          <button class="recommendation-accept" :class="{ accepted: recommendationAccepting }" :disabled="recommendationAccepting" @click.stop="acceptRecommendation" :title="recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill')">
+            <Check v-if="recommendationAccepting" :size="12" :stroke-width="3" class="recommendation-accept-check" />
+            {{ recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill') }}
+          </button>
+        </div>
       </div>
     </Transition>
     <!-- Input container -->
@@ -332,6 +337,7 @@ import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from
 import { useI18n } from 'vue-i18n'
 import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
+import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
@@ -670,14 +676,22 @@ const recommendationExpanded = ref(false)
 // vanished" — the text appearing in the input box is easy to miss, especially
 // on a narrow screen. `rec.accept()` also *immediately* marks the entry
 // dismissed (so `recommendation` goes empty), which is exactly what makes the
-// banner disappear before the user can register the click. So the confirmation
-// is a short window during which the banner is held on screen showing a
-// checkmark, and only then released.
+// banner disappear before the user can register the click.
+//
+// So the banner is held for the length of a handoff flight: it turns green
+// (confirming the click landed) and flies down into the input box while fading
+// out, so the click reads as "the text moved into the box". The text itself is
+// filled *immediately* (see acceptRecommendation), not on arrival — deferring
+// the fill would leave a pending write that has to be dropped on session
+// switch / streaming start, with no way to put the text back.
 //
 // `recommendationAcceptedText` is the snapshot that keeps the chip's text
 // rendered while the underlying slot is already dismissed; without it the
 // banner would blank out its own label mid-animation.
-const ACCEPT_FEEDBACK_MS = 650
+//
+// Must stay in sync with the `.recommendation-chip.accepted` animation duration
+// in the stylesheet (0.3s) — this timer is what retires the banner.
+const ACCEPT_FLIGHT_MS = 300
 const recommendationAccepting = ref(false)
 const recommendationAcceptedText = ref('')
 let recommendationAcceptTimer = null
@@ -721,12 +735,12 @@ function acceptRecommendation() {
   const text = rec.accept()
   if (!text) return
   inputText.value = text
-  // Hold the banner with a checkmark so the click reads as a confirmation, then
-  // let the existing slide-out transition retire it.
+  // Hold the banner through its handoff flight (green + flying into the input
+  // box), then let the existing slide-out transition retire it.
   recommendationAcceptedText.value = text
   recommendationAccepting.value = true
   recommendationExpanded.value = false
-  recommendationAcceptTimer = setTimeout(endAcceptFeedback, ACCEPT_FEEDBACK_MS)
+  recommendationAcceptTimer = setTimeout(endAcceptFeedback, ACCEPT_FLIGHT_MS)
   // Land the caret at the end of the filled text so the user can keep typing
   // (or hit send) without repositioning. Focusing is also what makes the
   // handoff clean: the pulse ring animates box-shadow for its 0.6s, and when it
@@ -764,6 +778,22 @@ watch(lastAssistantMsgId, (mid) => {
   const sid = props.currentSessionId
   if (!sid || mid === undefined) return
   void rec.ensureFetched(sid, mid)
+})
+
+// ── Restore the recommendation when the accepted text is cleared ──
+// Accepting moves the suggestion into the input box and dismisses the banner.
+// If the user then empties the box the suggestion is no longer applied, so
+// hiding it would silently lose it — bring it back.
+//
+// This only reacts to the input *becoming* empty, and the other clear paths are
+// already safe: sending sets `loading` in the same tick (the loading watcher
+// calls rec.invalidate, deleting the slot outright, so nothing can resurface),
+// and a session switch re-derives the banner from the new session's slot.
+// A cleared-but-empty slot no-ops in undismiss(), so this can't resurrect a
+// stale recommendation.
+watch(inputText, (text) => {
+  if (text.trim()) return
+  rec.undismiss()
 })
 
 // ── Voice input (ASR) ───────────────────────────────
@@ -1227,7 +1257,11 @@ function resetInputHistory() {
   historyDraft.value = { text: '', files: [] }
 }
 
-function textareaCursorRow(el) {
+// Logical row of the caret: the count of explicit newlines before it. Only a
+// fallback — a soft-wrapped line has one logical row but several visual ones,
+// and the caret guard below is about visual rows. Used when the layout cannot
+// be measured (see measureCaretVisualRows).
+function textareaLogicalCursorRow(el) {
   const text = el.value
   const pos = el.selectionStart ?? text.length
   let row = 0
@@ -1246,14 +1280,22 @@ function stepHistory(isUp, isGesture = false) {
   const el = textareaRef.value
   if (!el) return false
   const text = inputText.value
-  const rows = (text.match(/\n/g) || []).length + 1
   // In a multiline input, ArrowUp navigates history only from the first row and
   // ArrowDown only from the last row; elsewhere the arrows move the caret. A
   // swipe gesture has no caret conflict, so this guard applies to keyboard only.
-  if (!isGesture && rows > 1) {
-    const row = textareaCursorRow(el)
-    if (isUp && row > 0) return false
-    if (!isUp && row < rows - 1) return false
+  //
+  // "Row" must mean VISUAL row, not logical: a long line with no `\n` wraps and
+  // still has rows above the caret, so counting newlines would let ArrowUp jump
+  // to history mid-draft. Measure the real wrapping, and only fall back to the
+  // logical count when the layout is unmeasurable (jsdom, hidden textarea).
+  if (!isGesture) {
+    const measured = measureCaretVisualRows(el)
+    const caretRow = measured ? measured.caretRow : textareaLogicalCursorRow(el)
+    const lastRow = measured
+      ? measured.totalRows - 1
+      : (inputText.value.match(/\n/g) || []).length
+    if (isUp && caretRow > 0) return false
+    if (!isUp && caretRow < lastRow) return false
   }
   if (historyInputs.value.length === 0) return false
 
@@ -2427,14 +2469,29 @@ defineExpose({
 }
 
 /* Conversation recommendation banner (推荐回复) — rendered above the input box.
-   Shorter than the original (tight line box instead of the inherited 1.6 body
+   Height-collapse wrapper: it owns the bottom margin so the chip can fly out of
+   its layout box on accept without dragging the margin with it, and it is the
+   element the `recommend-slide` Transition animates (see above).
+
+   `position`/`z-index` are load-bearing, not decoration: `.chat-input-container`
+   is `position: relative` (for `.paste-overlay`), and a positioned element paints
+   after an in-flow non-positioned sibling — so without this the chip flies
+   *behind* the input box instead of over it. Raising the wrapper lifts the whole
+   banner, which is what the flight needs. */
+.recommendation-slot {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 var(--space-3);
+}
+
+/* Shorter than the original (tight line box instead of the inherited 1.6 body
    leading) but still airy: the padding keeps a full 6px above and below, so the
    single line of text does not touch the border. */
 .recommendation-chip {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin: 0 0 var(--space-3);
+  margin: 0;
   padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -2485,7 +2542,9 @@ defineExpose({
 .recommendation-accept.accepted {
   background: var(--color-success, #16a34a);
   cursor: default;
-  animation: recommendation-accept-pop 0.4s ease-out;
+  /* Matches the chip flight below — a longer pop would be cut off when the
+     banner is retired. */
+  animation: recommendation-accept-pop 0.3s ease-out;
 }
 
 /* A disabled button must not inherit a global reduced-opacity rule — the
@@ -2504,11 +2563,36 @@ defineExpose({
   100% { transform: scale(1); }
 }
 
-/* The chip tints green alongside its button so the whole banner reads as
-   "accepted" rather than just the button. */
+/* Accept handoff (采纳): the chip flies down into the input box while fading
+   out, so the click reads as "the text moved into the box" rather than "the
+   chip blinked". The downward offset is a fixed value, not a measured distance
+   to the input box — the chip already sits directly above the input container,
+   so clearing its own height plus the 6px gap lands it on the box's top edge,
+   and a fixed value keeps this animation free of layout reads.
+   `animation` (not `transition`) because this is a one-shot acknowledgement,
+   and `forwards` holds the faded-out end state until the timer retires the
+   element — without it the chip would snap back to full opacity for a frame. */
 .recommendation-chip.accepted {
+  /* The chip tints green alongside its button so the whole banner reads as
+     "accepted" rather than just the button. */
   background: color-mix(in srgb, var(--color-success, #16a34a) 12%, transparent);
   border-color: color-mix(in srgb, var(--color-success, #16a34a) 35%, transparent);
+  animation: recommendation-chip-fly 0.3s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes recommendation-chip-fly {
+  0% { transform: translateY(0) scale(1); opacity: 1; }
+  100% { transform: translateY(34px) scale(0.94); opacity: 0; }
+}
+
+/* Retiring the banner drops the `.accepted` class, which would snap the chip
+   back to full opacity for the whole collapse. Keep it invisible for the
+   duration of the leave so the flight can never flash back into view. This also
+   means a non-accept dismissal (sending a message, switching session) collapses
+   the empty slot rather than fading the chip's text out with it. */
+.recommend-slide-leave-active .recommendation-chip {
+  opacity: 0;
 }
 
 .recommendation-chip.accepted .recommendation-icon {
@@ -2530,9 +2614,15 @@ defineExpose({
   100% { box-shadow: 0 0 0 9px transparent; }
 }
 
-/* Reduced motion: keep the static confirmations (green button + checkmark) and
-   drop the motion, per the project's "keep functional feedback, drop decorative
-   motion" convention. The pulse is decorative, so it goes entirely. */
+/* Reduced motion: the button pop and the ring pulse are decorative, so they go.
+   The chip's flight is deliberately NOT opted out (same precedent as the session
+   row status slot): the flight IS the message. Its whole job is to say "the text
+   moved into the box", and there is no other channel carrying that — the green
+   button alone reads as "the chip was clicked", which is the ambiguity this
+   animation was added to remove. Suppressing it also made the feature invisible
+   to anyone with OS-level animations disabled, which is exactly how it was
+   reported. Add a `.recommendation-chip.accepted { animation: none }` here only
+   if the flight stops carrying information. */
 @media (prefers-reduced-motion: reduce) {
   .recommendation-accept.accepted {
     animation: none;

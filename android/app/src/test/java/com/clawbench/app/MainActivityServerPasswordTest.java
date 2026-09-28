@@ -205,11 +205,111 @@ public class MainActivityServerPasswordTest {
     }
 
     // =====================================================
+    // Server display names
+    // =====================================================
+
+    @Test
+    public void saveServerNamed_storesTheName() throws Exception {
+        invokeSaveServerNamed(URL_A, "pw", "Home NAS");
+
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        assertEquals(1, list.length());
+        assertEquals("Home NAS", list.getJSONObject(0).optString("name", ""));
+    }
+
+    @Test
+    public void saveServerNamed_trimsTheName() throws Exception {
+        invokeSaveServerNamed(URL_A, "pw", "  Home NAS  ");
+
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        assertEquals("Home NAS", list.getJSONObject(0).optString("name", ""));
+    }
+
+    @Test
+    public void saveServerNamed_clearingTheNameRemovesTheField() throws Exception {
+        invokeSaveServerNamed(URL_A, "pw", "Home NAS");
+        invokeSaveServerNamed(URL_A, "pw", "");
+
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        // Absent, not an empty string: an unnamed entry must look exactly like
+        // one written before names existed.
+        assertFalse(list.getJSONObject(0).has("name"));
+    }
+
+    @Test
+    public void saveServerNamed_whitespaceOnlyNameRemovesTheField() throws Exception {
+        invokeSaveServerNamed(URL_A, "pw", "Home");
+        invokeSaveServerNamed(URL_A, "pw", "   ");
+
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        assertFalse(list.getJSONObject(0).has("name"));
+    }
+
+    @Test
+    public void saveServerNamed_keepsThePassword() throws Exception {
+        invokeSaveServerNamed(URL_A, "secret", "Home");
+
+        assertEquals("secret", savedPasswordFor(URL_A));
+    }
+
+    @Test
+    public void saveServerNamed_renamingKeepsOneEntry() throws Exception {
+        invokeSaveServerNamed(URL_A, "pw", "Home");
+        invokeSaveServerNamed(URL_A, "pw", "Office");
+
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        assertEquals(1, list.length());
+        assertEquals("Office", list.getJSONObject(0).optString("name", ""));
+    }
+
+    @Test
+    public void saveServerNamed_legacyTwoArgSaveLeavesNameIntact() throws Exception {
+        invokeSaveServerNamed(URL_A, "pw", "Home");
+        // An older page calls the 2-arg variant; it must not wipe the name.
+        invokeSaveServer(URL_A, "newpw");
+
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        assertEquals("Home", list.getJSONObject(0).optString("name", ""));
+        assertEquals("newpw", savedPasswordFor(URL_A));
+    }
+
+    @Test
+    public void saveServerNamed_doesNotDisturbOtherEntries() throws Exception {
+        invokeSaveServerNamed(URL_A, "pass-a", "Home");
+        invokeSaveServerNamed(URL_B, "pass-b", "Office");
+
+        assertEquals("pass-a", savedPasswordFor(URL_A));
+        assertEquals("pass-b", savedPasswordFor(URL_B));
+        assertEquals("Office", nameFor(URL_B));
+    }
+
+    // =====================================================
     // Helpers
     // =====================================================
 
     private void setServerList(String json) {
         putString("server_list", json);
+    }
+
+    private String nameFor(String url) throws Exception {
+        org.json.JSONArray list = new org.json.JSONArray(prefs.getString("server_list", "[]"));
+        for (int i = 0; i < list.length(); i++) {
+            org.json.JSONObject entry = list.getJSONObject(i);
+            if (url.equals(entry.optString("url", ""))) return entry.optString("name", "");
+        }
+        return "";
+    }
+
+    private void invokeSaveServerNamed(String url, String password, String name) throws Exception {
+        Method m = findMethod(webAppInterface.getClass(), "saveServerNamed", String.class, String.class, String.class);
+        m.setAccessible(true);
+        m.invoke(webAppInterface, url, password, name);
+    }
+
+    private void invokeSaveServer(String url, String password) throws Exception {
+        Method m = findMethod(webAppInterface.getClass(), "saveServer", String.class, String.class);
+        m.setAccessible(true);
+        m.invoke(webAppInterface, url, password);
     }
 
     private void putString(String key, String value) {

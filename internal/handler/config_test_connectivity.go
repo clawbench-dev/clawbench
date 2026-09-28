@@ -92,42 +92,6 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-// buildEndpointURL constructs a full API endpoint URL from a base URL and a default path.
-// If the base URL already ends with the target suffix (e.g., "/chat/completions"), it's used as-is.
-// If the base URL already ends with a path component that overlaps with the default path,
-// only the remaining suffix is appended.
-// Examples for defaultPath="/v1/chat/completions":
-//   - "https://api.openai.com" → "https://api.openai.com/v1/chat/completions"
-//   - "https://api.openai.com/v1" → "https://api.openai.com/v1/chat/completions"
-//   - "https://api.openai.com/v1/chat/completions" → "https://api.openai.com/v1/chat/completions"
-func buildEndpointURL(baseURL, defaultPath string) string {
-	u := strings.TrimRight(baseURL, "/")
-	// Extract the final path component (e.g., "/chat/completions")
-	lastSlash := strings.LastIndex(defaultPath, "/")
-	if lastSlash < 0 {
-		return u + "/" + defaultPath
-	}
-	suffix := defaultPath[lastSlash:] // e.g., "/chat/completions"
-
-	// If URL already ends with the full suffix, it's complete
-	if strings.HasSuffix(u, suffix) {
-		return u
-	}
-
-	// Check for partial overlap: split defaultPath into segments and find the longest match
-	segments := strings.Split(strings.TrimLeft(defaultPath, "/"), "/")
-	// Try matching from longest prefix to shortest
-	for i := len(segments) - 1; i >= 1; i-- {
-		prefix := "/" + strings.Join(segments[:i], "/")
-		if strings.HasSuffix(u, prefix) {
-			remaining := "/" + strings.Join(segments[i:], "/")
-			return u + remaining
-		}
-	}
-
-	return u + defaultPath
-}
-
 // resolveStringValue returns the value from the test request if present and not empty,
 // otherwise falls back to the current config value.
 // Empty strings fall back to config since the frontend may send "" for
@@ -236,7 +200,7 @@ func testAPISummarizer(ctx context.Context, baseURL, apiKey, modelName string) C
 
 func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, modelName string) ConnectivityTestResult {
 	// Build the full chat completions URL
-	reqURL := buildEndpointURL(baseURL, "/v1/chat/completions")
+	reqURL := summarize.BuildEndpointURL(baseURL, summarize.OpenAIChatCompletionsPath)
 
 	reqBody := map[string]any{
 		"model":      modelName,
@@ -281,7 +245,7 @@ func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, mo
 
 func testAnthropicAPI(ctx context.Context, client *http.Client, baseURL, apiKey, modelName string) ConnectivityTestResult {
 	// Build the full messages URL
-	reqURL := buildEndpointURL(baseURL, "/v1/messages")
+	reqURL := summarize.BuildEndpointURL(baseURL, summarize.AnthropicMessagesPath)
 
 	reqBody := map[string]any{
 		"model":      modelName,
@@ -344,18 +308,13 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 	}
 	baseURL = normalized
 
-	// First probe /v1/models to verify the server is reachable and the configured
-	// model is available, so a model-not-found error is reported distinctly from
-	// an actual embedding failure. Some servers (older Ollama) don't implement
-	// /v1/models and return 404 — we treat that as reachable and continue to the
-	// real embedding probe below.
-	modelStatus := probeRAGModels(ctx, baseURL, ragModel, apiKey)
-	if modelStatus.Err != "" {
-		return ConnectivityTestResult{Success: false, Message: modelStatus.Err}
-	}
-
-	// Actually run a real embedding to verify the endpoint returns a valid vector,
-	// not just that the host is reachable.
+	// Probe with a real embedding request instead of a /v1/models listing.
+	// Gateways (e.g. OneAPI) often don't enumerate every model in the models
+	// list — or don't implement /v1/models at all — even though the embeddings
+	// endpoint accepts them, so a models precheck reports a working service as
+	// broken. A direct probe against /v1/embeddings is authoritative for the
+	// exact endpoint + model + auth the feature will actually use. (STT follows
+	// the same rule for /v1/audio/transcriptions.)
 	client := rag.NewEmbeddingClient(baseURL, ragModel, apiKey)
 	vector, err := client.Embed(ctx, "connectivity test")
 	if err != nil {
@@ -368,63 +327,10 @@ func testRAG(ctx context.Context, values map[string]any) ConnectivityTestResult 
 		return ConnectivityTestResult{Success: false, Message: "RAG embedding returned an empty vector"}
 	}
 
-	msg := fmt.Sprintf("RAG embedding succeeded for model '%s' (dim %d)", ragModel, len(vector))
-	if !modelStatus.ModelChecked {
-		msg += " (server does not implement /v1/models)"
+	return ConnectivityTestResult{
+		Success: true,
+		Message: fmt.Sprintf("RAG embedding succeeded for model '%s' (dim %d)", ragModel, len(vector)),
 	}
-	return ConnectivityTestResult{Success: true, Message: msg}
-}
-
-// ragModelStatus reports whether the /v1/models probe confirmed the model.
-type ragModelStatus struct {
-	Err          string // non-empty means the probe failed hard (unreachable / HTTP error)
-	ModelChecked bool   // true when the model list was successfully queried and matched
-}
-
-// probeRAGModels issues GET <baseURL>/v1/models and verifies the model is listed.
-// A 404 (server without /v1/models) is treated as reachable-but-unverifiable.
-func probeRAGModels(ctx context.Context, baseURL, ragModel, apiKey string) ragModelStatus {
-	url := strings.TrimRight(baseURL, "/") + "/v1/models"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
-	if err != nil {
-		return ragModelStatus{Err: fmt.Sprintf("Failed to create request: %v", err)}
-	}
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return ragModelStatus{Err: fmt.Sprintf("RAG service unreachable at %s", baseURL)}
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode == http.StatusNotFound {
-		// Server doesn't implement /v1/models (some Ollama versions).
-		return ragModelStatus{ModelChecked: false}
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return ragModelStatus{Err: fmt.Sprintf("RAG service returned HTTP %d", resp.StatusCode)}
-	}
-
-	var modelsResp struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&modelsResp); err != nil {
-		return ragModelStatus{ModelChecked: false}
-	}
-
-	for _, m := range modelsResp.Data {
-		if m.ID == ragModel || strings.HasPrefix(m.ID, ragModel+":") {
-			return ragModelStatus{ModelChecked: true}
-		}
-	}
-
-	return ragModelStatus{Err: fmt.Sprintf("RAG service reachable at %s, but model '%s' not found", baseURL, ragModel)}
 }
 
 // ── STT ──────────────────────────────────────────────────────

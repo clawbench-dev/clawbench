@@ -177,12 +177,20 @@
 ### 壁纸
 
 - 后端 `internal/wallpaper/`（校验/缩放/编码），前端 `web/src/utils/themeBackground.ts`（运行时）。
-- 四种模式：`none` / `local` / `bing` / `wave`。
+- 四种模式：`none` / `local` / `bing` / `wave`。**选择是每设备独立的**（localStorage）：来源 / 总开关 / 本地选中项都不进服务端配置，服务端只持有共享资源（图库文件、Bing 缓存）。
+  - `wave` 读作「**动态**」而非某一种动态风格：它下面还有 `wallpaperAnimatedStyle`（`xmb` / `silk`）选具体风格。模式值刻意保留 `'wave'`（改它会作废所有已存值，而它本来就是「动态」的意思）。
+- **动态壁纸是多风格的注册表**（`web/src/utils/animatedWallpapers/`）：一个风格 = 一个模块（`id` / `labelKey` / `params` / `speedRange` / 纯函数 `draw(frame)`）。**加一种风格只做三件事**：新建模块、注册进 `index.ts`、补 i18n 标签。设置面板的风格选择器与全部滑块都由 `params` 渲染，渲染组件按 `id` 派发，二者都不用改。
+  - **生命周期属于宿主组件**（`AnimatedWallpaper.vue`：rAF 30fps 上限 / `MAX_DT` / visibilitychange 暂停 / ResizeObserver / reduced-motion 单帧 / 固定 1.5× 超采样），`draw` 只有绘制。这样新风格不会漏掉生命周期，也不会泄漏循环。
+  - **风格参数存在独立 localStorage 模块**（`useAnimatedWallpaperParams`，`Record<styleId, Record<key, number|boolean>>`），**不走 `localConfig`**——后者是 `string|boolean|number|null` 标量管线，存对象会被 legacy 分支写成 `"[object Object]"`。
+  - `draw` 的**三条硬性守卫**（原型里踩过的真实缺陷）：`cssW<=0` 必须提前 return（否则 `u=x/cssW` 变 NaN，`createLinearGradient` 抛错中断整帧）；坐标必须 `Number.isFinite` 检查（canvas 对 NaN 路径**静默丢弃**，表现为「风格凭空消失」且控制台干净）；颜色解析必须回退（canvas 对非法 `fillStyle` 静默保留上一次的值）。
+  - 两种风格的**速度倍率上限不同**（`xmb` 0.2–2.0× = 线上既有手感，`silk` 0.25–2.5× = 原型值），所以 `speedRange` 是**每风格**的，共用同一个 10–100 速度滑块。
+  - XMB 的 `fadeEdges` 是 canvas 的 `destination-in` 横向渐变，**与图片壁纸的「边缘柔化」（`wallpaperEdgeFade`，CSS `mask-image`）是两回事**，故键名与标签都分开（两者 mode 互斥，不会同时出现）。
 - 壁纸渲染成 **`<img>`**（不是 CSS `background-image`）——Android WebView 里 `<img>` 换 `src` 能可靠重解码，而 CSS 自定义属性驱动的 `background-image` 换图可能静默留在旧帧直到重启。
 - 层次（`base.css:39`）：`.wallpaper-layer` 在 `z-index:0`，`.main-content` / `.bottom-dock-wrapper` 被提到 `z-index:1`。
 - **新增 `.app-container` 的直接子元素必须补进 `base.css:99` 那条 `z-index:1` 规则**，否则会被壁纸盖住。
 - 开启壁纸后，工作面板通过 `--panel-alpha` 半透明；**整页根节点转为全透明**，只留 `.tab-panel` 一层可见表面——避免多层 alpha 叠乘。
-- 遮罩强度：深色 `rgba(0,0,0,0.35)`，浅色 `rgba(0,0,0,0.12)`；面板不透明度默认 0.85，钳制 0.5–1.0。
+- 遮罩强度：深色 `rgba(0,0,0,0.35)`，浅色 `rgba(0,0,0,0.12)`；面板不透明度默认 0.7，滑块范围 0–100%。
+- 设置面板的**高斯模糊 / 边缘柔化只作用于图片**：动态模式下这两行**整行移除**（不是置灰）——对当前背景永不生效的控件是噪音。面板不透明度对动态壁纸同样有效，保留；动态风格自己的参数行只在动态模式下出现，且**按 `params` 渲染**（加风格不加 UI 代码）。
 
 ---
 
@@ -226,6 +234,15 @@
 - 深色主题下 hover 用 `--text-primary` 提亮而非换灰，否则浅色文字压在同色底上。
 - **复用自 `<a>` 的类必须显式 `border: none`**，图标按钮同理（`components.css:129`）——`<a>` 的 UA 边框不会自己消失。
 
+### 行内重置按钮（`.settings-item__slider-reset`）
+
+滑块行右侧的 ↺ 重置按钮**常驻显示**，不用 `v-if` 按「当前值 ≠ 默认值」开关。
+
+- **为什么**：按值出现/消失会让控件簇宽度变化——重置的瞬间按钮消失，滑块和数值标签横向跳动（用户实测「很难受」）。
+- **做法**：`:disabled="当前值 === 默认值"`，CSS 用 `opacity: var(--opacity-disabled)` + `cursor: not-allowed` 灰显。按钮留在文档流里，宽度恒定。
+- **唯一允许的 `v-if` 是 `defaultValue !== undefined`**：整行没有可重置的目标时，按钮应当是**不存在**而不是永久禁用（永不生效的控件是噪音，同 §壁纸那条）。判据是「该控件**能否**生效」，不是「此刻**是否**已生效」。
+- 两份实现：`SettingsItem.vue`（共享行）与 `WallpaperSetting.vue`（手写行）各有一份同名类，改一处必须改另一处。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
+
 ### 角标
 
 **`.count-badge`**（`components.css:39`）两档：默认 16px 高 / `--font-size-2xs`，`.count-badge--md` 18px / `--font-size-xs`。高度来自 `line-height` 而非固定 `height`，所以塞进 spinner 等更富内容时会撑开而不是裁掉。
@@ -262,10 +279,13 @@
 - **keyframes 复用现成的**：`refresh-spin`（刷新，0.8s）、`check-in`（成功弹跳，0.4s）、`modal-fadeIn/scaleIn`、`bs-slideUp/Down`、`line-flash`（跳转闪烁）、`refresh-pulse-glow`（陈旧数据脉动）。
 - **新按钮不要自建旋转 keyframes**——统一用 `.refresh-spin` + `RefreshButton` 组件（19 处已收敛）。`RefreshButton` 用 WAAPI 驱动旋转并内联 `animation:none` 覆盖 CSS 动画。
 - **菜单淡入**：`opacity` + `transform: translateY(-4px)`，`--duration-base`。
-- **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`、`SessionList.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
+- **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
+  - ⚠️ **但「逐处处理」不是绝对的：如果动效承载了信息、不能靠别的东西替代，就不要 opt-out。** 会话行状态槽（`.session-status`）是**刻意的例外**，它**不**响应这个偏好。理由：冻结会**合并状态**——「待审批」（脉动点）与「未读」（静止点）形状尺寸完全相同，只靠脉动与色相区分，冻结后只剩色相，而 36 套主题里有 3 套 `--accent-color` 与 `--color-orange` 相同（色觉障碍读者在**任何**主题上都拿不到色相）。加回那条 media query 之前先读 `SessionList.vue` 里那段注释与 `sessionStatusSlot.css.test.ts` 的守卫。
+  - **第二处刻意的例外：推荐回复采纳时的「飞入输入框」动效**（`ChatInputBar.vue` 的 `.recommendation-chip.accepted` / `recommendation-chip-fly`）。飞行**本身**就是信息（「文字被填进了这个框」），没有别的通道承载它——只剩绿色按钮的话，读作「按钮被点了」，正是这个动效要消除的歧义。曾给它加过 opt-out，后果是**所有在系统里关闭动画的用户完全看不到这个功能**（线上 Windows `reduce=true` 实测：与改动前无差异）。`ChatInputBar.test.ts` 的守卫**已反转**为断言该 opt-out 不存在（同 `sessionStatusSlot.css.test.ts` 的先例）；**不要**在未确认飞行不再承载信息的情况下「修复」回去。
+  - 一致性也是原因之一：**其余加载指示器都不受该偏好影响**——`RefreshButton` 与底边彗星都走 **WAAPI**（`Element.animate`），而 WAAPI **从不查这个偏好**。所以只在这里 opt-out 会让它成为全站唯一会停的指示器，用户看到的现象就是「为什么只有这个不动」。
 - 非 CSS 动效：running 彗星走 WAAPI 指令 `directives/runningSweep.ts`（1500ms，`cubic-bezier(.45,.05,.55,.95)`，与文档时间轴相位锁定）。
 - **会话行底边只有一层效果**：3px 平轨道 + 38% 彗星（`--running-track` / `--running-comet` / `--running-head`）。**不要再叠第二层**——曾经是「14px 带 mask 的光晕 + 80% 扫过光带」两层，看起来像两个效果打架、且光晕把光带糊成环境光。待审批时彗星停止并变成整条琥珀呼吸（`--pending-track` / `--pending-comet`）。**被阻塞的行必须换一个不带指令的元素**：指令用 WAAPI 写 `transform`，优先级高于普通 CSS `transform`，同一元素无法靠样式停下。守卫：`runningSweepTheme.css.test.ts`。
-- **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：运行中＝旋转环、待审批＝原地脉动环、未读＝静止圆点。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。优先级 pending > running > unread（`rowStatus()`），因为待审批的会话 runner 仍活着（`running` 为真），若 running 优先则审批请求会被完全隐藏。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。守卫：`sessionStatusSlot.css.test.ts`。
+- **会话行状态槽（`.session-status`）用「动效」而非「颜色」区分状态**：待审批＝单点原地脉动、未读＝单点完全静止。理由是可测量的——36 套主题里有 3 套（ayu-light / gruvbox-light / gruvbox-dark）的 `--accent-color` 与 `--color-orange` **完全相同**，色相本就无法承载区分；且色觉障碍读者拿不到色相信息。两个状态都是 14px 槽内的 8px `radial-gradient` 填充（`--status-dot` / `--status-dot-pending`），**不得用 `border`**——那正是已移除的环的画法。**运行中在槽里什么都不显示**：底边彗星已经在表达「正在推进」，右侧再放一个环是同一事实说两遍（这也是槽原先唯一需要 `border` 的原因）；且槽是 `v-if` 的，无状态即不渲染元素，不占宽度（「没有东西展示时该空间不要占地方」）。因此**没有 `--running-ring` / `--running-ring-track` 这两个 token，也不得有 `.session-status.is-running` 规则或 `session-status-spin` keyframes**（守卫显式断言它们不存在）。优先级 pending > unread（`rowStatus()`）；运行中 + 有未读的行会显示未读点，因为彗星与点走两条通道。被阻塞时底部彗星停止并变为整条琥珀呼吸，且**必须换一个不带指令的元素**（`v-if`/`v-else` 两个 `<i>`）——指令用 WAAPI 写 `transform`，`transform:none` 压不过它。**槽必须与标题保持间距**：`.session-status` 自带 `margin-left: var(--space-4)`，同时 `.session-item` / `.cross-session-item` 的右内边距收到 `var(--space-4)`（其余三边仍是 `var(--space-6)`）——原先 12px 右内边距 + 无 margin 会让槽的左边缘**正好落在标题省略号边界上**（线上实测 0px），而槽与 ⋮ 之间却空着 ~10px；现在两侧各约 11px。守卫：`sessionStatusSlot.css.test.ts`。
 
 ---
 
@@ -362,7 +382,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 - [ ] 时长用 `--duration-*` token
 - [ ] 优先复用现成 keyframes；刷新类一律用 `.refresh-spin` + `RefreshButton`
-- [ ] 处理 `prefers-reduced-motion`
+- [ ] 处理 `prefers-reduced-motion`——**除非该动效承载信息且无法替代**（如会话行状态槽，见「动效」一节）
 - [ ] 闪烁/跳转类加源码守卫测试
 
 ### 任何 UI 改动
@@ -393,6 +413,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/git/__tests__/gitHistoryChrome.css.test.ts` | git 历史 chrome 全局 |
 | `components/settings/__tests__/settingsRowTypography.css.test.ts` | 设置行字号层级 |
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
+| `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |

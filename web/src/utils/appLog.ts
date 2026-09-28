@@ -226,13 +226,38 @@ export const appLog = {
  * site safe, so the cost of a diagnostic is bounded by how long the burst lasts
  * rather than by how many lines it emits.
  *
+ * ⚠️ `immediate` exists for STARTUP diagnostics and is not an optimisation.
+ * The relay's ring buffer holds 200 entries and drops the OLDEST on overflow,
+ * so a line written at startup sits at the very front of a buffer that a busy
+ * chat view then floods (measured peaks: ~2450 lines/second while streaming).
+ * Within the 250ms debounce window that is >600 lines, so the line is trimmed
+ * away before it is ever sent — it silently never arrives. Measured on a real
+ * session: 14 page loads produced only 2 lines.
+ *
+ * Pass `immediate: true` when the line is written before the app is busy. Do
+ * NOT pass it from a render/per-delta path — that is the flood this debounce
+ * was introduced to prevent.
+ *
  * Intended to be temporary — remove once the bug is understood.
  */
 const DIAG_FLUSH_DEBOUNCE_MS = 250
 let diagFlushTimer: ReturnType<typeof setTimeout> | null = null
 
-export function diagLog(tag: string, msg: string): void {
+export function diagLog(tag: string, msg: string, opts?: { immediate?: boolean }): void {
   buffer.push({ level: 'W', tag: `DIAG:${tag}`, msg, ts: Date.now(), source: 'js' })
+
+  // A startup line must not wait: the buffer it is sitting in is about to be
+  // flooded past its 200-entry cap, and overflow drops from the front — i.e.
+  // exactly this entry. Cancel any pending debounce and send now.
+  if (opts?.immediate) {
+    if (diagFlushTimer) {
+      clearTimeout(diagFlushTimer)
+      diagFlushTimer = null
+    }
+    void doFlushForced()
+    return
+  }
+
   if (diagFlushTimer) return // a flush is already scheduled; this line rides along
   diagFlushTimer = setTimeout(() => {
     diagFlushTimer = null

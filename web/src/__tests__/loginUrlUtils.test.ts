@@ -97,6 +97,147 @@ describe.each([
   }
 })
 
+/**
+ * buildServerUrl is the contract behind the single address field: it is the
+ * ONLY thing that turns typed text into a saved URL, and it must reject
+ * anything that does not carry both a scheme and a port explicitly. The old UI
+ * filled those two in with defaults (https / 20000); the form no longer has
+ * them, so "reject and tell the user" is the replacement for "guess".
+ */
+type UrlBuilder = (text: string) => string | null
+
+function builderFor(rel: string): UrlBuilder {
+  const sandbox: Record<string, unknown> = {}
+  createContext(sandbox)
+  runInContext(readRepoFile(rel), sandbox, { filename: rel })
+  const fn = sandbox.buildServerUrl
+  if (typeof fn !== 'function') throw new Error(`${rel} did not define buildServerUrl`)
+  return fn as UrlBuilder
+}
+
+const BUILD_CASES: Array<[string, string | null]> = [
+  // Complete addresses pass through, normalised.
+  ['https://192.168.1.100:20000', 'https://192.168.1.100:20000'],
+  ['http://example.com:8080', 'http://example.com:8080'],
+  // Scheme is lowercased, path/query/fragment dropped, whitespace trimmed.
+  ['HTTPS://Host:8443', 'https://Host:8443'],
+  ['  https://example.com:20000/chat?x=1  ', 'https://example.com:20000'],
+  ['https://host:8443/', 'https://host:8443'],
+  // Missing scheme -> rejected (no default scheme any more).
+  ['192.168.1.100:20000', null],
+  ['example.com:20000', null],
+  // Missing port -> rejected (no default port any more).
+  ['https://192.168.1.100', null],
+  ['http://example.com', null],
+  ['192.168.1.100', null],
+  // Garbage / unsupported forms.
+  ['', null],
+  ['   ', null],
+  ['not a url', null],
+  ['http://', null],
+  ['ftp://host:21', null],
+  ['https://user:pass@host:8443', null],
+  ['[::1]:8080', null],
+]
+
+describe.each([
+  ['android', ANDROID_UTILS],
+  ['desktop', DESKTOP_UTILS],
+])('buildServerUrl (%s copy)', (_label, rel) => {
+  for (const [input, expected] of BUILD_CASES) {
+    it(`${JSON.stringify(input)} -> ${JSON.stringify(expected)}`, () => {
+      expect(builderFor(rel)(input)).toBe(expected)
+    })
+  }
+})
+
+/**
+ * findServerNameConflict / normalizeServerName are the uniqueness rule shared
+ * by both login pages. Names are labels, so they must be unique; the rule has
+ * three subtleties the table below pins down: case-insensitive matching, empty
+ * names never colliding, and the edited entry being exempt from matching
+ * itself.
+ */
+interface NameServer {
+  url: string
+  name?: string
+}
+
+interface NameSandbox {
+  normalizeServerName: (t: unknown) => string
+  findServerNameConflict: (servers: NameServer[], name: string, exceptUrl?: string) => NameServer | null
+}
+
+function nameHelpersFor(rel: string): NameSandbox {
+  const sandbox: Record<string, unknown> = {}
+  createContext(sandbox)
+  runInContext(readRepoFile(rel), sandbox, { filename: rel })
+  const normalize = sandbox.normalizeServerName
+  const find = sandbox.findServerNameConflict
+  if (typeof normalize !== 'function') throw new Error(`${rel} did not define normalizeServerName`)
+  if (typeof find !== 'function') throw new Error(`${rel} did not define findServerNameConflict`)
+  return sandbox as unknown as NameSandbox
+}
+
+const SERVERS: NameServer[] = [
+  { url: 'https://a:20000', name: 'Home NAS' },
+  { url: 'https://b:20000', name: 'Office' },
+  { url: 'https://c:20000' },
+]
+
+describe.each([
+  ['android', ANDROID_UTILS],
+  ['desktop', DESKTOP_UTILS],
+])('server-name uniqueness (%s copy)', (_label, rel) => {
+  const normalizeCases: Array<[unknown, string]> = [
+    ['  Home  ', 'Home'],
+    ['', ''],
+    ['   ', ''],
+    [null, ''],
+    [undefined, ''],
+    [42, ''],
+  ]
+  for (const [input, expected] of normalizeCases) {
+    it(`normalizeServerName(${JSON.stringify(input)}) -> ${JSON.stringify(expected)}`, () => {
+      expect(nameHelpersFor(rel).normalizeServerName(input)).toBe(expected)
+    })
+  }
+
+  const conflictCases: Array<[string, string | undefined, string | null]> = [
+    // An existing name collides, regardless of case or surrounding space.
+    ['Office', undefined, 'https://b:20000'],
+    ['office', undefined, 'https://b:20000'],
+    ['  OFFICE  ', undefined, 'https://b:20000'],
+    // A fresh name is fine.
+    ['Lab', undefined, null],
+    // Empty never collides — unnamed servers are not a shared label.
+    ['', undefined, null],
+    ['   ', undefined, null],
+    // The entry being edited is exempt, so leaving its name unchanged is fine.
+    ['Home NAS', 'https://a:20000', null],
+    // ...but it still collides with a DIFFERENT server's name.
+    ['Office', 'https://a:20000', 'https://b:20000'],
+    // An unnamed existing server cannot be matched by an empty name.
+    ['', 'https://a:20000', null],
+  ]
+  for (const [name, exceptUrl, expectedUrl] of conflictCases) {
+    const label = `name=${JSON.stringify(name)} except=${JSON.stringify(exceptUrl)}`
+    it(`${label} -> ${JSON.stringify(expectedUrl)}`, () => {
+      const found = nameHelpersFor(rel).findServerNameConflict(SERVERS, name, exceptUrl)
+      expect(found ? found.url : null).toBe(expectedUrl)
+    })
+  }
+
+  it('returns null for a non-array server list', () => {
+    expect(
+      nameHelpersFor(rel).findServerNameConflict(
+        undefined as unknown as NameServer[],
+        'Home NAS',
+      ),
+    ).toBeNull()
+  })
+})
+
 const ANDROID_LOGIN = 'android/app/src/main/assets/login.html'
 const DESKTOP_LOGIN = 'desktop/assets/login.html'
 
@@ -112,52 +253,116 @@ describe('login.html wiring', () => {
     ['android', ANDROID_LOGIN],
     ['desktop', DESKTOP_LOGIN],
   ] as const) {
-    it(`${label} loads url-utils.js, wires a blur listener on #addHost, and defines hideError`, () => {
+    it(`${label} loads url-utils.js, wires the address field, and defines hideError`, () => {
       const html = readRepoFile(rel)
       expect(html).toContain('<script src="url-utils.js"></script>')
-      expect(html).toMatch(/getElementById\('addHost'\)\.addEventListener\('blur'/)
-      expect(html).toContain('parseServerInput')
-      // The listener calls hideError('addErrorMsg') *before* it writes the host,
+      // The blur listener is bound to the single address field.
+      expect(html).toMatch(/getElementById\('addAddress'\)\.addEventListener\('blur'/)
+      expect(html).toContain('buildServerUrl')
+      // The listener calls hideError('addErrorMsg') *before* it writes the field,
       // so deleting or renaming the page's real top-level hideError makes that
       // call throw and aborts the whole normalization. The behaviour tests below
       // inject their own stub, so only this static check can catch that.
       expect(html).toMatch(/function hideError\s*\(/)
     })
 
-    /**
-     * The functional test above builds its own DOM_FIXTURE, so renaming an id in
-     * the real page (while leaving the JS untouched) would keep every test green
-     * and still break the page at runtime: getElementById returns null and the
-     * listener throws. Parse the real markup and assert the ids/values the
-     * listener actually dereferences.
-     */
-    it(`${label} declares the element ids and radio values the listener needs`, () => {
+    it(`${label} declares the element ids the handlers dereference`, () => {
       const doc = new DOMParser().parseFromString(readRepoFile(rel), 'text/html')
 
-      const host = doc.getElementById('addHost')
-      expect(host, '#addHost must exist (the blur listener is bound to it)').not.toBeNull()
+      const address = doc.getElementById('addAddress')
+      expect(address, '#addAddress must exist (the blur listener is bound to it)').not.toBeNull()
+      // The sample placeholder is the affordance that teaches the strict format
+      // now that the protocol radio and port field are gone.
+      expect(address!.getAttribute('placeholder')).toBe('https://192.168.1.100:20000')
 
-      const port = doc.getElementById('addPort')
-      expect(port, '#addPort must exist (the listener writes parsed.port here)').not.toBeNull()
-      // The design's "default 20000" behaviour depends on this exact value: a
-      // scheme-less input leaves the field alone, so the default is what ships.
-      expect(port!.getAttribute('value')).toBe('20000')
-
-      // The listener flips these by value selector; a renamed value would make
-      // the protocol silently fail to update.
       expect(
-        doc.querySelector('input[name="addProtocol"][value="https"]'),
-        'an addProtocol radio with value="https" must exist',
+        doc.getElementById('addPassword'),
+        '#addPassword must exist (edit prefills it, submit reads it)',
       ).not.toBeNull()
-      expect(
-        doc.querySelector('input[name="addProtocol"][value="http"]'),
-        'an addProtocol radio with value="http" must exist',
-      ).not.toBeNull()
-
       expect(
         doc.getElementById('addErrorMsg'),
         '#addErrorMsg must exist (the listener calls hideError(\'addErrorMsg\'))',
       ).not.toBeNull()
+      // Title element reused to show "Edit Server" when editing.
+      expect(doc.getElementById('addFormTitle'), '#addFormTitle must exist').not.toBeNull()
+
+      const name = doc.getElementById('addName')
+      expect(name, '#addName must exist (optional display name)').not.toBeNull()
+      // The name is a label, not free-form text: cap its length so it cannot
+      // overflow the row it renders into.
+      expect(name!.getAttribute('maxlength')).toBe('40')
+    })
+
+    /**
+     * The list row must show the NAME when there is one and fall back to the
+     * address otherwise, with the full address in the tooltip. Asserting on the
+     * render site (the concatenated `html +=` line), not on any CSS rule.
+     */
+    it(`${label} labels rows by name with the address as a tooltip`, () => {
+      const html = readRepoFile(rel)
+      expect(html).toMatch(/normalizeServerName\(srv\.name\)\s*\|\|\s*formatHost\(srv\.url\)/)
+      expect(html).toMatch(/title="' \+ escHtml\(srv\.url\) \+ '"/)
+    })
+
+    it(`${label} refuses a duplicate name`, () => {
+      const submitSrc = extractSubmitHandler(rel)
+      expect(submitSrc).toContain('findServerNameConflict')
+      expect(submitSrc).toContain("t('duplicate_name')")
+      // The edited entry must be exempt, or renaming an entry without touching
+      // its name would collide with itself.
+      expect(submitSrc).toMatch(/findServerNameConflict\(savedServers,\s*name,\s*editingUrl\)/)
+      // The name travels with the save, not through a separate call.
+      expect(submitSrc).toMatch(/saveServerNamed\(url,\s*password,\s*name\)/)
+    })
+
+    /**
+     * The old UI had a protocol radio and a port field; the whole point of the
+     * rework is that those are gone and the address is one string. If a refactor
+     * reintroduces them (or leaves them behind), the form silently goes back to
+     * two sources of truth for the URL.
+     */
+    it(`${label} has no protocol radio or port field`, () => {
+      const doc = new DOMParser().parseFromString(readRepoFile(rel), 'text/html')
+      expect(doc.querySelector('input[name="addProtocol"]')).toBeNull()
+      expect(doc.getElementById('addPort')).toBeNull()
+      expect(doc.getElementById('addHost')).toBeNull()
+    })
+
+    /**
+     * Every server row must offer BOTH actions. The pencil is wired through an
+     * inline onclick (like the existing delete button), so a missing SVG or a
+     * renamed handler ships silently — the button renders but does nothing.
+     */
+    it(`${label} renders an edit button on each server row`, () => {
+      const html = readRepoFile(rel)
+      // Match the render site, not the stylesheet: the CSS rule
+      // `.server-edit-btn` would satisfy a bare toContain() even after the
+      // button's class was changed in the markup. The quoted class + onclick
+      // pair only appears where the row is built.
+      expect(html).toMatch(/class="server-edit-btn"[^>]*onclick="event\.stopPropagation\(\); editServer\(/)
+      expect(html).toContain('SVG_PENCIL')
+      expect(html).toMatch(/function editServer\s*\(/)
+    })
+
+    /**
+     * Saving must not connect. Before this rework the add form called
+     * connectToServer(); now both add and edit only persist. Asserting the
+     * submit path's own text (sliced between its comment and the next handler)
+     * keeps this from being satisfied by the unrelated connect form's call.
+     */
+    it(`${label} saves without connecting`, () => {
+      const submitSrc = extractSubmitHandler(rel)
+      expect(submitSrc).toContain('buildServerUrl')
+      expect(submitSrc).toContain('saveServerNamed')
+      expect(submitSrc).not.toContain('connectToServer')
+      // Renaming must retire the old URL, but only when it actually changed.
+      expect(submitSrc).toMatch(/editingUrl\s*!==\s*url/)
+      expect(submitSrc).toContain('removeServer')
+      // The busy state must not reuse setConnecting: saving does not
+      // authenticate, and "Authenticating..." would misdescribe it.
+      expect(submitSrc).toContain('setSaving')
+      expect(submitSrc).not.toContain('setConnecting')
+      expect(readRepoFile(rel)).toMatch(/function setSaving\s*\(/)
     })
   }
 })
@@ -217,42 +422,86 @@ describe('desktop packaging', () => {
  * refactor renames or moves the block the test fails loudly instead of quietly
  * asserting nothing.
  */
-const BLUR_COMMENT = '// Event: blur on the host field'
+const BLUR_COMMENT = '// Event: blur on the address field'
 
 /**
- * Pull the blur listener's source out of a login.html. Robust anchors:
+ * Pull one handler's source out of a login.html, anchored on its `// Event:`
+ * comment. Robust anchors:
  *  - the comment marker must exist;
- *  - the first `});` after it must close the listener (no `// Event:` comment
- *    may intervene — the next handler starts with one);
- *  - the slice must contain the addEventListener('blur' call.
+ *  - the first `});` after it must close the handler (no further `// Event:`
+ *    comment may intervene — the next handler starts with one).
  * Throws with a specific reason when an anchor moved, so a future refactor is
  * caught rather than silently passing.
  */
-function extractBlurListener(rel: string): string {
+function extractHandler(rel: string, comment: string): string {
   const html = readRepoFile(rel)
-  const markerIdx = html.indexOf(BLUR_COMMENT)
+  const markerIdx = html.indexOf(comment)
   if (markerIdx < 0) {
-    throw new Error(`blur listener comment ${JSON.stringify(BLUR_COMMENT)} not found in ${rel}`)
+    throw new Error(`handler comment ${JSON.stringify(comment)} not found in ${rel}`)
   }
-  const nextEventIdx = html.indexOf('// Event:', markerIdx + BLUR_COMMENT.length)
+  const nextEventIdx = html.indexOf('// Event:', markerIdx + comment.length)
   const closeIdx = html.indexOf('});', markerIdx)
   if (closeIdx < 0) {
-    throw new Error(`no closing '});' after the blur listener comment in ${rel}`)
+    throw new Error(`no closing '});' after ${JSON.stringify(comment)} in ${rel}`)
   }
   if (nextEventIdx !== -1 && nextEventIdx < closeIdx) {
     throw new Error(
-      `the blur listener block in ${rel} does not end before the next '// Event:' comment ` +
+      `the handler block in ${rel} does not end before the next '// Event:' comment ` +
         `(close=${closeIdx}, nextEvent=${nextEventIdx}) — extraction anchors moved`,
     )
   }
   const src = html.slice(markerIdx, closeIdx + '});'.length)
-  if (!src.includes("addEventListener('blur'")) {
-    throw new Error(`extracted block from ${rel} is not the blur listener (no addEventListener('blur')`)
-  }
   if (!src.endsWith('});')) {
     throw new Error(`extracted block from ${rel} does not end with '});'`)
   }
   return src
+}
+
+/** The blur listener specifically, with an extra shape assertion. */
+function extractBlurListener(rel: string): string {
+  const src = extractHandler(rel, BLUR_COMMENT)
+  if (!src.includes("addEventListener('blur'")) {
+    throw new Error(`extracted block from ${rel} is not the blur listener (no addEventListener('blur')`)
+  }
+  return src
+}
+
+const SUBMIT_COMMENT = '// Event: save the add/edit form'
+
+/**
+ * Pull the add/edit submit handler out of a login.html.
+ *
+ * This one cannot use extractHandler's "first `});` closes the handler"
+ * shortcut: its body contains a nested `savedServers.some(function(){...})`,
+ * whose own `});` would end the slice early and hide the rest of the handler
+ * from the assertions. Instead, count braces from the `function(e) {` opening
+ * until they balance.
+ */
+function extractSubmitHandler(rel: string): string {
+  const html = readRepoFile(rel)
+  const markerIdx = html.indexOf(SUBMIT_COMMENT)
+  if (markerIdx < 0) {
+    throw new Error(`handler comment ${JSON.stringify(SUBMIT_COMMENT)} not found in ${rel}`)
+  }
+  const openIdx = html.indexOf('function(e) {', markerIdx)
+  if (openIdx < 0) {
+    throw new Error(`no 'function(e) {' after ${JSON.stringify(SUBMIT_COMMENT)} in ${rel}`)
+  }
+  let depth = 0
+  for (let i = openIdx + 'function(e) {'.length - 1; i < html.length; i++) {
+    const ch = html[i]
+    if (ch === '{') depth++
+    else if (ch === '}') {
+      depth--
+      if (depth === 0) {
+        // Include the trailing `);` that closes addEventListener(...).
+        const end = html.indexOf(');', i)
+        if (end < 0) throw new Error(`unterminated addEventListener in ${rel}`)
+        return html.slice(markerIdx, end + 2)
+      }
+    }
+  }
+  throw new Error(`unbalanced braces in the submit handler of ${rel}`)
 }
 
 /**
@@ -271,14 +520,11 @@ describe('login.html blur listener copies', () => {
 })
 
 /**
- * Minimal DOM the blur listener touches. Values mirror the real login page:
- * #addPort defaults to 20000 and the https radio is checked by default.
+ * Minimal DOM the blur listener touches: just the single address field and the
+ * error container. Mirrors the real login page.
  */
 const DOM_FIXTURE = `
-  <input type="text" id="addHost">
-  <input type="number" id="addPort" value="20000">
-  <input type="radio" name="addProtocol" value="https" checked>
-  <input type="radio" name="addProtocol" value="http">
+  <input type="text" id="addAddress">
   <div id="addErrorMsg"></div>
 `
 
@@ -286,14 +532,14 @@ const DOM_FIXTURE = `
  * End-to-end wiring guard: actually executes the extracted listener against a
  * real jsdom document. Robolectric cannot run JS, so this is the only place the
  * blur handler's behaviour (not just its text) is exercised. Registered via
- * indirect eval so the listener's free identifiers (document, parseServerInput,
+ * indirect eval so the listener's free identifiers (document, buildServerUrl,
  * hideError) resolve in global scope exactly as they do in the page.
  */
 describe.each([
   ['android', ANDROID_LOGIN, ANDROID_UTILS],
   ['desktop', DESKTOP_LOGIN, DESKTOP_UTILS],
 ])('blur listener behaviour (%s page)', (_label, loginRel, utilsRel) => {
-  let host: HTMLInputElement
+  let address: HTMLInputElement
 
   beforeEach(() => {
     document.body.innerHTML = DOM_FIXTURE
@@ -302,12 +548,12 @@ describe.each([
     ;(globalThis as unknown as Record<string, unknown>).hideError = (id: string) => {
       document.getElementById(id)?.classList.remove('visible')
     }
-    // url-utils.js defines parseServerInput as a global function.
+    // url-utils.js defines buildServerUrl as a global function.
     ;(0, eval)(readRepoFile(utilsRel))
-    // Register the listener on the real #addHost element.
+    // Register the listener on the real #addAddress element.
     ;(0, eval)(extractBlurListener(loginRel))
-    host = document.getElementById('addHost') as HTMLInputElement
-    if (!host) throw new Error(`${loginRel} fixture did not create #addHost`)
+    address = document.getElementById('addAddress') as HTMLInputElement
+    if (!address) throw new Error(`${loginRel} fixture did not create #addAddress`)
   })
 
   afterEach(() => {
@@ -315,75 +561,41 @@ describe.each([
   })
 
   function blur(text: string): void {
-    host.value = text
-    // blur does not bubble, but the listener is bound directly on #addHost, so a
-    // non-bubbling event dispatched on the element itself still reaches it.
-    host.dispatchEvent(new Event('blur'))
+    address.value = text
+    // blur does not bubble, but the listener is bound directly on #addAddress,
+    // so a non-bubbling event dispatched on the element itself still reaches it.
+    address.dispatchEvent(new Event('blur'))
   }
 
-  function portValue(): string {
-    return (document.getElementById('addPort') as HTMLInputElement).value
-  }
-
-  function checkedProtocol(): string | null {
-    const el = document.querySelector<HTMLInputElement>('input[name="addProtocol"]:checked')
-    return el ? el.value : null
-  }
-
-  function setProtocol(value: 'http' | 'https'): void {
-    const el = document.querySelector<HTMLInputElement>(`input[name="addProtocol"][value="${value}"]`)
-    if (el) el.checked = true
-  }
-
-  it('fills host, port and protocol from a full https URL', () => {
-    // Start on http so the flip to https is meaningful.
-    setProtocol('http')
-    blur('https://192.168.1.100:8443')
-    expect(host.value).toBe('192.168.1.100')
-    expect(portValue()).toBe('8443')
-    expect(checkedProtocol()).toBe('https')
+  it('normalizes a full address in place', () => {
+    blur('HTTPS://Host:8443/chat?x=1')
+    // Scheme lowercased, path/query dropped.
+    expect(address.value).toBe('https://Host:8443')
   })
 
-  it('fills host from a scheme-only http URL and leaves the default port untouched', () => {
-    blur('http://example.com')
-    expect(host.value).toBe('example.com')
-    expect(portValue()).toBe('20000')
-    expect(checkedProtocol()).toBe('http')
-  })
-
-  it('fills host and port for a scheme-less URL but leaves the protocol radio alone', () => {
-    blur('192.168.1.100:8080')
-    expect(host.value).toBe('192.168.1.100')
-    expect(portValue()).toBe('8080')
-    // No scheme in the input -> radio must stay at its default (https).
-    expect(checkedProtocol()).toBe('https')
-  })
-
-  it('leaves an unparseable value exactly as typed and does not hide the error', () => {
+  it('leaves an incomplete address exactly as typed and keeps the error visible', () => {
     const err = document.getElementById('addErrorMsg') as HTMLElement
     err.classList.add('visible')
-    blur('not a url')
-    expect(host.value).toBe('not a url')
-    expect(portValue()).toBe('20000')
-    // Unparseable -> the listener returns before hideError, so a shown error
+    // Missing port -> not a complete address.
+    blur('https://192.168.1.100')
+    expect(address.value).toBe('https://192.168.1.100')
+    // Incomplete -> the listener returns before hideError, so a shown error
     // must stay visible.
     expect(err.classList.contains('visible')).toBe(true)
   })
 
-  it('leaves a plain host untouched and is idempotent across repeated blurs', () => {
-    // Start on http so "unchanged" is distinguishable from the default.
-    setProtocol('http')
-    blur('192.168.1.100')
-    // No explicit port -> the port field must never be written, and re-blurring
-    // (which happens often, e.g. when the form is hidden) must be harmless.
-    expect(host.value).toBe('192.168.1.100')
-    expect(portValue()).toBe('20000')
-    expect(checkedProtocol()).toBe('http')
+  it('leaves a scheme-less address untouched (no default scheme is guessed)', () => {
+    blur('192.168.1.100:20000')
+    expect(address.value).toBe('192.168.1.100:20000')
+  })
 
-    blur('192.168.1.100')
-    expect(host.value).toBe('192.168.1.100')
-    expect(portValue()).toBe('20000')
-    expect(checkedProtocol()).toBe('http')
+  it('is idempotent across repeated blurs', () => {
+    blur('https://192.168.1.100:20000')
+    expect(address.value).toBe('https://192.168.1.100:20000')
+    // Re-blurring (which happens often, e.g. when the form is hidden) must be
+    // harmless.
+    blur(address.value)
+    expect(address.value).toBe('https://192.168.1.100:20000')
   })
 
   it('hides the error message on a successful parse (proves hideError ran)', () => {

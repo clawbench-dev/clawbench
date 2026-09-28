@@ -250,3 +250,34 @@ func TestBuildPiStreamArgs_ScheduledStillUsesNoSession(t *testing.T) {
 	assert.Contains(t, args, "--no-session",
 		"scheduled executions should still use --no-session")
 }
+
+// TestPiACPInputRemaps_MatchesAdapterRawInput pins the ACP remap table against
+// the rawInput shapes pi-acp 0.0.34 actually sends.
+//
+// The previous registration shipped an EMPTY remap with a comment claiming "Pi
+// uses the standard ACP field names". That is false: pi-acp forwards Pi's native
+// tool arguments, so `path` reached ClawBench unremapped and the frontend could
+// not resolve the click-to-open target.
+//
+// This table is deliberately minimal. Nested `edits[].oldText/newText` are NOT
+// handled here because the generic ACP normalizer is a flat single-pass remap —
+// those entries would be dead. Pi's nested edit handling lives in internal/ai's
+// Pi-specific ACP parser instead; see pi_acp_tool_test.go for that coverage.
+func TestPiACPInputRemaps_MatchesAdapterRawInput(t *testing.T) {
+	// Shapes captured from a live pi-acp session.
+	readRaw := `{"path":"probe-target.txt"}`
+
+	for name, raw := range map[string]string{"read": readRaw} {
+		out, err := ai.NormalizeToolInputForTest([]byte(raw), PiACPInputRemaps)
+		assert.NoError(t, err, name)
+		assert.Contains(t, string(out), `"file_path":`, "%s: path must be remapped to file_path (out=%s)", name, out)
+		assert.NotContains(t, string(out), `"path":`, "%s: raw `path` must not survive (out=%s)", name, out)
+	}
+
+	// The table must stay flat: any camelCase edit key here would be dead code,
+	// because normalizeToolInput never recurses into edits[].
+	for k := range PiACPInputRemaps {
+		assert.Equal(t, "path", k,
+			"only `path` belongs in the flat ACP table; nested edit keys are handled by the Pi ACP parser")
+	}
+}

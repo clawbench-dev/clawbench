@@ -34,14 +34,14 @@ vi.mock('electron-store', () => ({
 
 import {
   savePasswordFor, getPasswordFor, removePasswordFor, savePassword, getPassword,
-  migratePasswords, getServersForRenderer,
+  migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
 import { initStore } from './store'
 
 const URL_A = 'https://a.example.com:20000'
 const URL_B = 'https://b.example.com:20000'
 
-interface RawEntry { url: string; password?: string; passwordEncrypted?: string }
+interface RawEntry { url: string; name?: string; password?: string; passwordEncrypted?: string }
 
 function entries(): RawEntry[] {
   return storeData.servers as RawEntry[]
@@ -248,5 +248,76 @@ describe('secrets: renderer-facing server list', () => {
   it('reports an empty password for a server with none stored', () => {
     storeData.servers = [{ url: URL_A }]
     expect(getServersForRenderer()).toEqual([{ url: URL_A, password: '' }])
+  })
+
+  it('passes the name through and omits it when absent', () => {
+    storeData.servers = [{ url: URL_A, name: 'Home' }, { url: URL_B }]
+    expect(getServersForRenderer()).toEqual([
+      { url: URL_A, password: '', name: 'Home' },
+      { url: URL_B, password: '' },
+    ])
+  })
+})
+
+describe('secrets: server names', () => {
+  beforeEach(() => {
+    cryptoState.available = true
+    resetStore()
+    initStore()
+  })
+
+  it('creates an entry for a name-only save', () => {
+    // Adding a passwordless server: savePasswordFor() deliberately writes
+    // nothing for an empty password, so the name must be able to create the
+    // entry on its own or the server would vanish.
+    saveServerName(URL_A, 'Home')
+
+    expect(entries()).toEqual([{ url: URL_A, name: 'Home' }])
+  })
+
+  it('trims the stored name', () => {
+    saveServerName(URL_A, '  Home NAS  ')
+    expect(entries()[0].name).toBe('Home NAS')
+  })
+
+  it('renames an existing entry without disturbing its password', () => {
+    savePasswordFor(URL_A, 'secret')
+    saveServerName(URL_A, 'Home')
+
+    expect(entries()[0].name).toBe('Home')
+    expect(getPasswordFor(URL_A)).toBe('secret')
+  })
+
+  it('removes the field for an empty name', () => {
+    saveServerName(URL_A, 'Home')
+    saveServerName(URL_A, '')
+
+    expect(entries()[0].name).toBeUndefined()
+    // Still present as a server — only the label went away.
+    expect(entries()).toHaveLength(1)
+  })
+
+  it('treats a whitespace-only name as empty', () => {
+    saveServerName(URL_A, 'Home')
+    saveServerName(URL_A, '   ')
+    expect(entries()[0].name).toBeUndefined()
+  })
+
+  it('does not create an entry with neither name nor password', () => {
+    saveServerName(URL_A, '')
+    expect(entries()).toHaveLength(0)
+  })
+
+  it('is a no-op for an empty url', () => {
+    saveServerName('', 'Home')
+    expect(entries()).toHaveLength(0)
+  })
+
+  it('allows the same name on different servers (uniqueness is a UI rule)', () => {
+    // The login page refuses duplicates, but the store must not silently drop
+    // a second entry: enforcing it here would lose data on a race.
+    saveServerName(URL_A, 'Home')
+    saveServerName(URL_B, 'Home')
+    expect(entries().map((e) => e.name)).toEqual(['Home', 'Home'])
   })
 })

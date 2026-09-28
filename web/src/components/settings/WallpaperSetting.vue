@@ -61,8 +61,33 @@
       <div class="settings-item__desc">{{ t('settings.items.wallpaperSourceDesc') }}</div>
     </div>
 
-    <!-- ── Animated wave section ───────────────────────────────── -->
+    <!-- ── Animated styles section ─────────────────────────────── -->
     <template v-if="mode === 'wave'">
+      <!-- Style picker. Rendered from the registry, so a new style needs no UI
+           change here — see utils/animatedWallpapers. -->
+      <div class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperAnimatedStyle') }}</span>
+          </div>
+        </div>
+        <div class="settings-item__right">
+          <div class="wallpaper-mode">
+            <button
+              v-for="s in animatedStyles"
+              :key="s.id"
+              class="wallpaper-mode__btn"
+              :class="{ 'wallpaper-mode__btn--active': s.id === animatedStyleId }"
+              :disabled="!enabled"
+              @click.stop="onSelectAnimatedStyle(s.id)"
+            >
+              {{ t(s.labelKey) }}
+            </button>
+          </div>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperAnimatedStyleDesc') }}</div>
+      </div>
+
       <div class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
         <div class="settings-item__left">
           <div class="settings-item__text">
@@ -82,9 +107,78 @@
             @input="onWaveSpeedInput"
             @click.stop
           />
-          <button v-if="waveSpeed !== 50" class="settings-item__slider-reset" @click.stop="resetWaveSpeed" :title="t('settings.resetToDefault')">↺</button>
+          <button :disabled="waveSpeed === 50" class="settings-item__slider-reset" @click.stop="resetWaveSpeed" :title="t('settings.resetToDefault')">↺</button>
         </div>
         <div class="settings-item__desc">{{ t('settings.items.wallpaperWaveSpeedDesc') }}</div>
+      </div>
+
+      <!-- Per-style parameters, rendered from the active style's own spec list.
+           Sliders and switches share this loop; a new style's params appear here
+           automatically. -->
+      <template v-for="p in animatedStyleParams" :key="p.key">
+        <div v-if="p.kind === 'slider'" class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+          <div class="settings-item__left">
+            <div class="settings-item__text">
+              <span class="settings-item__label">{{ t(p.labelKey) }}</span>
+            </div>
+          </div>
+          <div class="settings-item__right">
+            <span class="settings-item__slider-value">{{ formatStyleParam(p) }}</span>
+            <input
+              type="range"
+              class="settings-item__slider"
+              :value="styleParamValue(p.key)"
+              :min="p.min"
+              :max="p.max"
+              :step="p.step"
+              :disabled="!enabled"
+              @input="onStyleParamInput(p, $event)"
+              @click.stop
+            />
+            <button
+              :disabled="styleParamValue(p.key) === p.defaultValue"
+              class="settings-item__slider-reset"
+              @click.stop="resetStyleParam(p)"
+              :title="t('settings.resetToDefault')"
+            >↺</button>
+          </div>
+          <div v-if="p.descriptionKey" class="settings-item__desc">{{ t(p.descriptionKey) }}</div>
+        </div>
+
+        <div v-else class="settings-item" :class="{ 'settings-item--disabled': !enabled }">
+          <div class="settings-item__left">
+            <div class="settings-item__text">
+              <span class="settings-item__label">{{ t(p.labelKey) }}</span>
+            </div>
+          </div>
+          <div class="settings-item__right">
+            <label class="settings-item__switch">
+              <input
+                type="checkbox"
+                class="settings-item__switch-input"
+                :checked="styleParamValue(p.key) === true"
+                :disabled="!enabled"
+                @change="onStyleSwitchChange(p, $event)"
+                @click.stop
+              />
+              <span class="settings-item__switch-track"></span>
+            </label>
+          </div>
+          <div v-if="p.descriptionKey" class="settings-item__desc">{{ t(p.descriptionKey) }}</div>
+        </div>
+      </template>
+
+      <div class="settings-item">
+        <div class="settings-item__right settings-item__right--start">
+          <button
+            class="settings-item__action"
+            :disabled="!enabled || styleParamsAreDefault"
+            @click.stop="onResetStyleParams"
+          >
+            {{ t('settings.items.wallpaperStyleReset') }}
+          </button>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperStyleResetDesc') }}</div>
       </div>
     </template>
 
@@ -133,9 +227,8 @@
 
     <!-- ── Local gallery section ───────────────────────────────── -->
     <!-- Deliberately the final v-else, not `v-else-if="mode === 'local'"`:
-         an existing install that never picked a source has wallpaper_mode "",
-         which resolves to 'none'. The gallery must still render there — it is
-         how the user picks an image in the first place. -->
+         an unset stored mode resolves to 'none'. The gallery must still render
+         there — it is how the user picks an image in the first place. -->
     <template v-else>
       <div class="settings-item" :class="{ 'settings-item--disabled': !enabled || busy }">
         <div class="settings-item__left">
@@ -209,64 +302,68 @@
           type="range"
           class="settings-item__slider"
           :value="panelOpacity"
-          min="0.5"
+          min="0"
           max="1"
           step="0.01"
           :disabled="!hasActiveBackground"
           @input="onOpacityInput"
           @click.stop
         />
-        <button v-if="panelOpacity !== 0.85" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
+        <button :disabled="panelOpacity === 0.7" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
       </div>
       <div class="settings-item__desc">{{ t('settings.items.wallpaperPanelOpacityDesc') }}</div>
     </div>
 
-    <!-- Blur and edge fade only affect an image; the wave has neither. -->
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
-      <div class="settings-item__left">
-        <div class="settings-item__text">
-          <span class="settings-item__label">{{ t('settings.items.wallpaperBlur') }}</span>
+    <!-- Blur and edge fade only affect an image; the wave has neither. They are
+         removed outright in wave mode rather than shown disabled: a control that
+         can never apply to the active background is noise, not information. -->
+    <template v-if="mode !== 'wave'">
+      <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperBlur') }}</span>
+          </div>
         </div>
-      </div>
-      <div class="settings-item__right">
-        <span class="settings-item__slider-value">{{ blurDisplay }}</span>
-        <input
-          type="range"
-          class="settings-item__slider"
-          :value="wallpaperBlur"
-          min="0"
-          max="60"
-          step="1"
-          :disabled="!hasImageWallpaper"
-          @input="onBlurInput"
-          @click.stop
-        />
-        <button v-if="wallpaperBlur !== 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
-      </div>
-      <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
-    </div>
-
-    <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
-      <div class="settings-item__left">
-        <div class="settings-item__text">
-          <span class="settings-item__label">{{ t('settings.items.wallpaperEdgeFade') }}</span>
-        </div>
-      </div>
-      <div class="settings-item__right">
-        <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasImageWallpaper }">
+        <div class="settings-item__right">
+          <span class="settings-item__slider-value">{{ blurDisplay }}</span>
           <input
-            type="checkbox"
-            class="settings-item__switch-input"
-            :checked="!!wallpaperEdgeFade"
+            type="range"
+            class="settings-item__slider"
+            :value="wallpaperBlur"
+            min="0"
+            max="60"
+            step="1"
             :disabled="!hasImageWallpaper"
-            @change="onEdgeFadeChange"
+            @input="onBlurInput"
             @click.stop
           />
-          <span class="settings-item__switch-track"></span>
-        </label>
+          <button :disabled="wallpaperBlur === 0" class="settings-item__slider-reset" @click.stop="resetBlur" :title="t('settings.resetToDefault')">↺</button>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperBlurDesc') }}</div>
       </div>
-      <div class="settings-item__desc">{{ t('settings.items.wallpaperEdgeFadeDesc') }}</div>
-    </div>
+
+      <div class="settings-item" :class="{ 'settings-item--disabled': !hasImageWallpaper }">
+        <div class="settings-item__left">
+          <div class="settings-item__text">
+            <span class="settings-item__label">{{ t('settings.items.wallpaperEdgeFade') }}</span>
+          </div>
+        </div>
+        <div class="settings-item__right">
+          <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasImageWallpaper }">
+            <input
+              type="checkbox"
+              class="settings-item__switch-input"
+              :checked="!!wallpaperEdgeFade"
+              :disabled="!hasImageWallpaper"
+              @change="onEdgeFadeChange"
+              @click.stop
+            />
+            <span class="settings-item__switch-track"></span>
+          </label>
+        </div>
+        <div class="settings-item__desc">{{ t('settings.items.wallpaperEdgeFadeDesc') }}</div>
+      </div>
+    </template>
 
     <div v-if="error" class="settings-item">
       <div class="wallpaper-error">{{ error }}</div>
@@ -281,27 +378,29 @@ import { useToast } from '@/composables/useToast'
 import {
   uploadGalleryImages,
   deleteGalleryItem,
-  selectGalleryItem,
-  setWallpaperMode,
   syncBingNow,
   fetchBingStatus,
   galleryImageUrl,
   invalidateGalleryImageUrls,
-  resolveWallpaperState,
   resolveWallpaperMode,
-  resolveWallpaperEnabled,
+  resolveAnimatedStyleId,
   isWaveActive,
   resolveGalleryItems,
-  resolveGallerySelected,
   resolveBingStatus,
+  resolveActiveFile,
   type BingStatus,
   resolvePanelOpacity,
   applyWallpaper,
   applyWallpaperScrim,
   currentThemeIsDark,
-  bingMktForLocale,
   type WallpaperMode,
 } from '@/utils/themeBackground'
+import { ANIMATED_STYLES, getAnimatedStyle, type ParamSpec, type ParamValue } from '@/utils/animatedWallpapers'
+import {
+  getAnimatedStyleParams,
+  resetAnimatedStyleParams,
+  setAnimatedStyleParam,
+} from '@/composables/useAnimatedWallpaperParams'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { appLog } from '@/utils/appLog'
 
@@ -309,7 +408,7 @@ defineProps<{ description?: string }>()
 
 const { t } = useI18n()
 const toast = useToast()
-const { serverConfig, localConfig, loadConfig, patchConfig, setLocalConfig } = useSettingsConfig()
+const { serverConfig, localConfig, loadConfig, setLocalConfig } = useSettingsConfig()
 
 /** Matches the server-side cap in internal/wallpaper (MaxGalleryItems). */
 const maxGalleryItems = 50
@@ -327,14 +426,22 @@ let unmounted = false
 
 const appearance = computed(() => serverConfig.value?.appearance as Record<string, unknown> | undefined)
 
-/** Wallpaper tri-state from the live server config. */
-const state = computed(() => resolveWallpaperState(appearance.value))
-const enabled = computed(() => resolveWallpaperEnabled(appearance.value))
-const mode = computed<WallpaperMode>(() => resolveWallpaperMode(appearance.value))
-const waveActive = computed(() => isWaveActive(appearance.value))
+/**
+ * The wallpaper choice is this device's own (localStorage), so mode / enabled /
+ * selection are read from localConfig. Only the gallery list and the Bing cache
+ * come from the server.
+ */
+const enabled = computed(() => localConfig.wallpaperEnabled !== false)
+const mode = computed<WallpaperMode>(() => resolveWallpaperMode(localConfig.wallpaperMode))
+const waveActive = computed(() => isWaveActive(mode.value, enabled.value))
 const galleryItems = computed(() => resolveGalleryItems(appearance.value))
-const selected = computed(() => resolveGallerySelected(appearance.value))
+const selected = computed(() => String(localConfig.wallpaperLocalSelected ?? ''))
 const bingStatus = computed(() => resolveBingStatus(appearance.value))
+
+/** The image this device is showing, resolved from local choice + Bing cache. */
+const activeFile = computed(() =>
+  resolveActiveFile(mode.value, enabled.value, selected.value, bingStatus.value.file),
+)
 
 const atLimit = computed(() => galleryItems.value.length >= maxGalleryItems)
 
@@ -362,13 +469,13 @@ function onThumbError(file: string) {
  * for an image (blur, edge fade) — the wave has neither, and leaving them
  * enabled there would let the user drag a slider with no visible effect.
  */
-const hasImageWallpaper = computed(() => state.value === 'set' && enabled.value)
+const hasImageWallpaper = computed(() => enabled.value && !!activeFile.value)
 
 /**
  * Whether ANY background is displayed (image or wave). Drives the rows that
  * apply to both — panel translucency is meaningful for the wave too.
  */
-const hasActiveBackground = computed(() => hasImageWallpaper.value || (waveActive.value && enabled.value))
+const hasActiveBackground = computed(() => hasImageWallpaper.value || waveActive.value)
 
 /** Panel opacity from the local preference (0.5..1.0). */
 const panelOpacity = computed(() => resolvePanelOpacity(localConfig.panelOpacity))
@@ -383,14 +490,93 @@ const blurDisplay = computed(() => (wallpaperBlur.value > 0 ? `${wallpaperBlur.v
 const waveSpeed = computed(() => Number(localConfig.wallpaperWaveSpeed ?? 50))
 const waveSpeedDisplay = computed(() => `${(waveSpeed.value / 50).toFixed(2)}×`)
 
+// ── Animated style picker + per-style parameters ───────────────────────────
+
+/** Every registered style, for the picker. Order comes from the registry. */
+const animatedStyles = ANIMATED_STYLES
+
+/** The style this device renders (unknown stored ids resolve to the default). */
+const animatedStyleId = computed(() => resolveAnimatedStyleId(localConfig.wallpaperAnimatedStyle))
+
+/** Param specs of the active style, rendered as rows. */
+const animatedStyleParams = computed<ParamSpec[]>(() => getAnimatedStyle(animatedStyleId.value).params)
+
+/**
+ * A local mirror of the params being dragged, so the slider stays responsive.
+ *
+ * The store is the source of truth and is written on every input (it is just a
+ * reactive object + localStorage), but reading through a mirror keeps the row's
+ * value binding stable while the debounced write settles.
+ */
+const styleParamsDraft = reactive<Record<string, ParamValue>>({})
+
+/** Effective value for one param: the in-flight draft, else the store. */
+function styleParamValue(key: string): ParamValue {
+  if (key in styleParamsDraft) return styleParamsDraft[key]
+  return getAnimatedStyleParams(animatedStyleId.value)[key]
+}
+
+/** True when every param of the active style is at its default. */
+const styleParamsAreDefault = computed(() => {
+  const current = getAnimatedStyleParams(animatedStyleId.value)
+  return animatedStyleParams.value.every((p) => current[p.key] === p.defaultValue)
+})
+
+/** `100` renders as `1.00×`; switches have no numeric display. */
+function formatStyleParam(p: ParamSpec): string {
+  if (p.kind !== 'slider') return ''
+  const v = styleParamValue(p.key)
+  const n = typeof v === 'number' ? v : p.defaultValue
+  return p.format === 'percent' ? `${Math.round(n)}%` : `${(n / 100).toFixed(2)}×`
+}
+
+function onStyleParamInput(p: ParamSpec, e: Event) {
+  if (p.kind !== 'slider') return
+  const raw = Number((e.target as HTMLInputElement).value)
+  if (!Number.isFinite(raw)) return
+  const clamped = Math.min(p.max, Math.max(p.min, raw))
+  // Write through immediately (live preview: the renderer reads params every
+  // frame) and mirror it for the row's own binding.
+  styleParamsDraft[p.key] = clamped
+  setAnimatedStyleParam(animatedStyleId.value, p.key, clamped)
+}
+
+function onStyleSwitchChange(p: ParamSpec, e: Event) {
+  if (p.kind !== 'switch') return
+  const checked = (e.target as HTMLInputElement).checked
+  styleParamsDraft[p.key] = checked
+  setAnimatedStyleParam(animatedStyleId.value, p.key, checked)
+}
+
+function resetStyleParam(p: ParamSpec) {
+  styleParamsDraft[p.key] = p.defaultValue
+  setAnimatedStyleParam(animatedStyleId.value, p.key, p.defaultValue)
+}
+
+/** Clear this style's overrides, so every row returns to the shipped default. */
+function onResetStyleParams() {
+  resetAnimatedStyleParams(animatedStyleId.value)
+  // Drop the draft mirror, or stale in-flight values would keep showing.
+  for (const key of Object.keys(styleParamsDraft)) delete styleParamsDraft[key]
+}
+
+/** Switching style is a per-device choice; each style keeps its own tuning. */
+function onSelectAnimatedStyle(id: string) {
+  if (id === animatedStyleId.value) return
+  // The draft belongs to the outgoing style — clear it so the new style's rows
+  // read from their own (possibly customised) stored values.
+  for (const key of Object.keys(styleParamsDraft)) delete styleParamsDraft[key]
+  setLocalConfig('wallpaperAnimatedStyle', id)
+}
+
 /** Re-apply the wallpaper effect with the current theme. */
 function refreshEffect() {
   applyWallpaper(
-    (appearance.value?.active_file as string) ?? '',
+    activeFile.value,
     resolvePanelOpacity(localConfig.panelOpacity),
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
     false,
-    isWaveActive(appearance.value),
+    waveActive.value,
   )
 }
 
@@ -407,19 +593,6 @@ async function reloadFromServer() {
   const removed = before.filter((f) => !after.has(f))
   if (removed.length > 0) invalidateGalleryImageUrls(removed)
   refreshEffect()
-}
-
-/** Keep the persisted Bing market in step with the UI language. */
-async function syncBingMktWithLocale() {
-  const desired = bingMktForLocale(String(localConfig.locale ?? 'zh'))
-  if (bingStatus.value.mkt === desired) return
-  try {
-    await patchConfig({ appearance: { bing: { mkt: desired } } })
-  } catch {
-    // A failed market sync must not surface as an error — the next fetch falls
-    // back to the server default.
-    appLog.w('Wallpaper', `failed to sync bing mkt to ${desired}`)
-  }
 }
 
 function triggerUpload() {
@@ -447,6 +620,15 @@ async function onFilesSelected(e: Event) {
   try {
     const result = await uploadGalleryImages(files)
     await reloadFromServer()
+    // The server no longer auto-selects on upload, so this device must adopt
+    // the new image itself — otherwise it lands in the gallery but the
+    // wallpaper never changes. Only adopt when nothing is selected yet, so a
+    // second upload does not steal the wallpaper the user already chose.
+    if (result.items.length > 0 && !selected.value) {
+      setLocalConfig('wallpaperLocalSelected', result.items[0].file)
+      setLocalConfig('wallpaperMode', 'local')
+      refreshEffect()
+    }
     if (result.errors.length > 0) {
       error.value = t('settings.items.wallpaperUploadPartial', {
         ok: result.items.length,
@@ -467,6 +649,13 @@ async function onDeleteItem(name: string) {
   error.value = ''
   try {
     await deleteGalleryItem(name)
+    // This device may be showing the image that was just deleted; clearing the
+    // selection is what stops it from pointing at a file that no longer exists.
+    // (Another device doing the same is healed by App.vue's 404 probe.)
+    if (selected.value === name) {
+      setLocalConfig('wallpaperLocalSelected', '')
+      refreshEffect()
+    }
     await reloadFromServer()
   } catch {
     error.value = t('settings.items.wallpaperRemoveFailed')
@@ -475,36 +664,18 @@ async function onDeleteItem(name: string) {
   }
 }
 
-async function onSelectItem(name: string) {
+/** Selecting a tile is now a purely local choice for this device. */
+function onSelectItem(name: string) {
   if (name === selected.value) return
-  busy.value = true
-  error.value = ''
-  try {
-    await selectGalleryItem(name)
-    await reloadFromServer()
-  } catch {
-    error.value = t('settings.items.wallpaperSetFailed')
-  } finally {
-    busy.value = false
-  }
+  setLocalConfig('wallpaperLocalSelected', name)
+  setLocalConfig('wallpaperMode', 'local')
+  refreshEffect()
 }
 
-async function onSelectMode(next: 'local' | 'bing' | 'wave') {
+function onSelectMode(next: 'local' | 'bing' | 'wave') {
   if (next === mode.value) return
-  busy.value = true
-  error.value = ''
-  try {
-    await setWallpaperMode({ mode: next })
-    await reloadFromServer()
-  } catch {
-    error.value = t('settings.items.wallpaperSaveFailed')
-  } finally {
-    // Release the UI as soon as the switch itself is done. The switch is a
-    // single fast config write; waiting for the image download here held the
-    // whole panel disabled for up to the poll budget, which is what made
-    // changing the source feel stuck.
-    busy.value = false
-  }
+  setLocalConfig('wallpaperMode', next)
+  refreshEffect()
   if (next === 'bing') {
     // Follow the fetch in the background: the preview fills in on its own once
     // the image lands, and the user can keep interacting meanwhile.
@@ -527,7 +698,6 @@ async function followBingFetch() {
   if (followingBing) return
   followingBing = true
   try {
-    await syncBingMktWithLocale()
     if (bingStatus.value.last_success_date === todayStamp()) return
     await pollBingUntilSettled()
     if (unmounted) return
@@ -541,19 +711,11 @@ async function followBingFetch() {
   }
 }
 
-async function onEnabledChange(e: Event) {
+/** Toggling the wallpaper is now a purely local choice for this device. */
+function onEnabledChange(e: Event) {
   const checked = (e.target as HTMLInputElement).checked
-  busy.value = true
-  error.value = ''
-  try {
-    await setWallpaperMode({ enabled: checked })
-    await reloadFromServer()
-    if (checked && mode.value === 'bing') await syncBingMktWithLocale()
-  } catch {
-    error.value = t('settings.items.wallpaperSaveFailed')
-  } finally {
-    busy.value = false
-  }
+  setLocalConfig('wallpaperEnabled', checked)
+  refreshEffect()
 }
 
 /**
@@ -578,7 +740,6 @@ async function onSyncBing() {
   syncing.value = true
   error.value = ''
   try {
-    await syncBingMktWithLocale()
     await syncBingNow()
     // The fetch runs in the background worker; poll for the outcome. A slow
     // fetch may outlast the budget, in which case the result is genuinely
@@ -613,7 +774,7 @@ function onOpacityInput(e: Event) {
   // prefs below. App.vue's watcher on localConfig re-applies the effect too,
   // but applying here keeps the drag responsive even before that flush.
   applyWallpaper(
-    (appearance.value?.active_file as string) ?? '',
+    activeFile.value,
     v,
     currentThemeIsDark(String(localConfig.theme ?? 'auto')),
   )
@@ -626,7 +787,7 @@ function onOpacityInput(e: Event) {
 }
 
 function resetOpacity() {
-  onOpacityInput({ target: { value: '0.85' } } as unknown as Event)
+  onOpacityInput({ target: { value: '0.7' } } as unknown as Event)
 }
 
 /** Local display prefs change instantly (live preview) and persist debounced.
@@ -682,8 +843,6 @@ function onThemeChange() {
 
 onMounted(() => {
   window.addEventListener('clawbench-theme-change', onThemeChange)
-  // Follow the UI language for the Bing market once the panel is open.
-  if (mode.value === 'bing' && enabled.value) void syncBingMktWithLocale()
 })
 
 onUnmounted(() => {
@@ -817,6 +976,14 @@ onUnmounted(() => {
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
   line-height: 1;
+}
+/* Inert at the default value. Kept in flow (not removed) so the row's control
+   cluster keeps a constant width — a button that vanished on reset made the
+   slider and value label jump. Dimmed + not-allowed, matching the other
+   disabled controls in this panel. Mirrors SettingsItem. */
+.settings-item__slider-reset:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
 }
 .settings-item__slider-reset:active {
   color: var(--accent-color);

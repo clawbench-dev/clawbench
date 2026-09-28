@@ -70,7 +70,13 @@ function jobs(src: string): Record<string, string> {
 /** Desktop jobs that publish a payload archive. */
 const PAYLOAD_JOBS = ['build-desktop-linux', 'build-desktop-linux-arm64', 'build-desktop-windows']
 
-/** Payload asset basenames the Go server maps to a platform. */
+/**
+ * Payload basenames the Go server maps to a platform.
+ *
+ * These are npm package-name components now, not release asset names — the
+ * payload ships through npm only. The map is still the single place deciding
+ * which platforms have a payload.
+ */
 function payloadBasesInGo(): string[] {
   const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
   const block = /desktopPayloadAssetBase\s*=\s*map\[string\]string\{([\s\S]*?)\n\}/.exec(go)?.[1] ?? ''
@@ -143,9 +149,10 @@ describe('release.yml — every published asset carries the version', () => {
     // A step whose `files:` pattern matches nothing uploads nothing and stays
     // green, so an empty extraction means the parser (or the workflow) lost a
     // target — fail loudly rather than pass vacuously. The floor is the current
-    // count (11 release steps, one of which uploads two macOS archives); it only
-    // needs to rise, never to match exactly, so adding a platform does not
-    // require editing this number.
+    // count (11 release steps, one of which uploads two macOS archives = 12
+    // assets); it only needs to rise, never to match exactly, so adding a
+    // platform does not require editing this number. It dropped by three when
+    // the desktop payloads stopped being release assets (they are npm-only).
     const targets = releaseUploadTargets(releaseYml())
     expect(targets.length).toBeGreaterThanOrEqual(12)
   })
@@ -159,8 +166,8 @@ describe('release.yml — every published asset carries the version', () => {
   it('names every packaged archive with the tag', () => {
     // The other half of the contract: the file the packaging step writes must
     // itself be versioned, not just the path the upload looks for. The floor is
-    // the current count (10 `zip`/`Compress-Archive` invocations plus the APK
-    // copy); it only needs to rise.
+    // the current count (11 `zip -r` / `Compress-Archive` invocations); it only
+    // needs to rise. It dropped by three along with the payload zips.
     const targets = packagingTargets(releaseYml())
     expect(targets.length).toBeGreaterThanOrEqual(11)
     for (const target of targets) {
@@ -216,35 +223,51 @@ describe('desktop asset names match the Go download URLs', () => {
 
 /**
  * Payload archives (the incremental-upgrade path) are the same app without the
- * Electron runtime. They are published by the desktop jobs and advertised by
- * the Go server, so the basenames have to agree across the language boundary.
+ * Electron runtime. They are staged by the desktop jobs, published to npm, and
+ * advertised by the Go server.
  *
- * The failure mode is nastier than for the full package: the client treats any
- * payload problem as "fall back to the full download", so a name mismatch does
- * not 404 loudly — it silently makes every upgrade re-download ~150MB again,
- * which is exactly the cost this feature exists to remove. Hence a direct
- * comparison of the two sides rather than a tag-presence check.
+ * They are deliberately NOT GitHub release assets. Attaching a ~3MB payload zip
+ * beside the ~150MB full package misleads anyone browsing the release assets
+ * into thinking the small one is a usable install, so the payload is npm-only.
+ *
+ * That makes this guard the inverse of the full-package one: the failure mode
+ * is a payload zip creeping back into a `files:` list, and the cross-language
+ * contract that remains is between the Go basenames and the npm manifests.
  */
-describe('payload asset names agree between release.yml and the Go server', () => {
-  /** Basenames the workflow zips, e.g. "clawbench-desktop-linux-x64-payload". */
-  function payloadBasesInWorkflow(): string[] {
-    return packagingTargets(releaseYml())
-      .map((t) => /([a-z0-9-]*clawbench-desktop-[a-z0-9-]*-payload)-/.exec(t)?.[1] ?? '')
-      .filter((b) => b !== '')
-  }
+describe('payloads ship through npm only, never as release assets', () => {
+  it('attaches no payload archive to any GitHub release', () => {
+    for (const target of releaseUploadTargets(releaseYml())) {
+      expect(target, `payload must not be a release asset: ${target}`).not.toContain('-payload')
+    }
+  })
+
+  it('zips no payload archive anywhere in the workflow', () => {
+    // The payload dir is staged and uploaded as an artifact for the npm job;
+    // packaging it as a .zip is what the old release path did, and any payload
+    // archive name reappearing in a packaging command means that path returned.
+    for (const target of packagingTargets(releaseYml())) {
+      expect(target, `payload must not be packaged for a release: ${target}`).not.toContain('-payload')
+    }
+  })
 
   it('publishes a payload for every non-macOS platform, and only those', () => {
-    // Three desktop jobs build a payload; macOS deliberately does not (it would
+    // Three platforms get a payload; macOS deliberately does not (it would
     // break the .app code-signature seal).
-    expect(payloadBasesInWorkflow().sort()).toEqual([
+    expect(payloadBasesInGo()).toEqual([
       'clawbench-desktop-linux-arm64-payload',
       'clawbench-desktop-linux-x64-payload',
       'clawbench-desktop-windows-x64-payload',
     ])
   })
 
-  it('uses exactly the basenames the Go server advertises', () => {
-    expect(payloadBasesInGo()).toEqual(payloadBasesInWorkflow().sort())
+  it('builds the Go payload URLs from the npm derivation, not a release asset', () => {
+    // desktopPayloadURLs is the only thing FetchDesktopLatest calls for
+    // payloads. If it ever gains a releaseAssetURLs call, a payload candidate
+    // would point at a GitHub asset that no longer exists.
+    const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
+    const fn = /func desktopPayloadURLs\([\s\S]*?\n\}/.exec(go)?.[0] ?? ''
+    expect(fn, 'desktopPayloadURLs not found').toContain('desktopPayloadNpmURLs')
+    expect(fn, 'desktopPayloadURLs must not build a GitHub asset URL').not.toContain('releaseAssetURLs')
   })
 
   it('excludes macOS from the payload map', () => {
@@ -317,12 +340,12 @@ describe('shell fingerprint is wired into the desktop release jobs', () => {
 })
 
 /**
- * The payload is also published to an npm registry mirror, so the client can
- * fetch ~1.2MB from npmmirror in mainland China instead of only from GitHub.
- * That adds a second naming contract across three places — the Go URL builder,
- * the npm package manifests, and the CI job that publishes them — and a
- * mismatch is silent: the npm candidate 404s, the client falls through to the
- * GitHub URL, and every upgrade quietly loses the mirror benefit.
+ * The payload is published to npm, which is now its ONLY channel — the GitHub
+ * Release carries the full package alone. That makes npm the sole distribution
+ * contract, spanning the Go URL builder, the npm package manifests, and the CI
+ * job that publishes them; a mismatch is silent: the npm candidate 404s, and
+ * because the payload falls back to the full package every upgrade quietly
+ * re-downloads ~150MB.
  */
 describe('npm payload packages match the Go URL derivation', () => {
   /** Package names declared by the checked-in payload manifests. */
@@ -341,9 +364,9 @@ describe('npm payload packages match the Go URL derivation', () => {
     ])
   })
 
-  it('derives those names from the release asset basenames, as Go does', () => {
-    // Go builds the npm name as scope + asset base (desktopPayloadNpmPkg), and
-    // the tarball URL from it. Pinning the relationship here means adding a
+  it('derives those names from the payload basenames, as Go does', () => {
+    // Go builds the npm name as scope + payload base (desktopPayloadNpmPkg),
+    // and the tarball URL from it. Pinning the relationship here means adding a
     // platform cannot leave the npm side behind.
     const go = readFileSync(repoPath('internal/service/desktop_upgrade.go'), 'utf8')
     expect(go).toMatch(/desktopNpmScope\s*\+\s*base/)

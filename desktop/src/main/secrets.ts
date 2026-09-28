@@ -177,10 +177,46 @@ export function migratePasswords(): void {
  * Server list for the renderer, with each entry's password resolved (decrypted)
  * so the login page can prefill it. `passwordEncrypted` never leaves the main
  * process — the returned copies carry only the plaintext `password`.
+ *
+ * `name` is passed through (dropped when empty) so the login page can label
+ * rows by name.
  */
 export function getServersForRenderer(): ServerEntry[] {
-  return getStore().get('servers').map((s) => ({
-    url: s.url,
-    password: getPasswordFor(s.url),
-  }))
+  return getStore().get('servers').map((s) => {
+    const out: ServerEntry = { url: s.url, password: getPasswordFor(s.url) }
+    if (s.name) out.name = s.name
+    return out
+  })
+}
+
+/**
+ * Upsert a server entry's name, independent of its password.
+ *
+ * Kept separate from savePasswordFor() because the two have different
+ * existence rules: a name-only save (adding a passwordless server, or
+ * renaming one) must still CREATE the entry, while savePasswordFor
+ * deliberately writes nothing for an empty password on an unknown URL.
+ *
+ * An empty `name` removes the field so an unnamed entry looks exactly like one
+ * written before names existed.
+ */
+export function saveServerName(url: string, name: string): void {
+  if (!url) return
+  const trimmed = (name ?? '').trim()
+  const store = getStore()
+  const servers = store.get('servers')
+  const idx = servers.findIndex((s) => s.url === url)
+
+  if (idx < 0) {
+    // No entry yet: create one. A brand-new server with neither password nor
+    // name is not worth persisting — there would be nothing to show.
+    if (!trimmed) return
+    store.set('servers', [{ url, name: trimmed }, ...servers])
+    return
+  }
+
+  const entry = servers[idx]
+  if (trimmed) entry.name = trimmed
+  else delete entry.name
+  store.set('servers', servers)
 }

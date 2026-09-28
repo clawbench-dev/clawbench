@@ -2,6 +2,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FILE_MODIFYING_TOOLS,
   findLastBlockOfType,
+  findThinkingTarget,
+  appendThinkingDelta,
   forceCleanupStreamingState,
   findStreamingMsg,
   finalizeStreamingForDrain,
@@ -179,38 +181,79 @@ describe('forceCleanupStreamingState', () => {
     expect(messages[0].streaming).toBeUndefined()
   })
 
-  it('marks unfinished thinking as done, so its spinner stops', () => {
-    // The reported "stuck deep-thinking block at the top": the spinner is
-    // driven by isThinkingStreaming() = `!block.done && streaming`, and `done`
-    // normally comes from the backend's thinking_done event — which is emitted
-    // only on a TRANSITION (thinking → content, or thinking → tool_use). A turn
-    // that ENDS while reasoning never sends it, so the block kept
-    // done=undefined and spun forever.
-    //
-    // The backend already closes its own side (MarkAllThinkingDone in
-    // postProcessBlocks), so the persisted row is correct; only the live
-    // frontend block was left open. tool_use was handled here and thinking was
-    // not — this is that missing counterpart.
+  it('closes a still-streaming thinking block when the turn ends', () => {
+    // `thinking_done` is not guaranteed per block (a turn ending on reasoning
+    // never gets one) and is never re-delivered to a client that was
+    // unsubscribed when it fired. A block that adopted an in_progress marker
+    // before a session switch therefore spun for the rest of the session:
+    // observed msgId=54774, th_03725d47 spinning at 11:06:30 with `inprog=true`
+    // while its DB row said done=true (a later db_load, 6 minutes on, finally
+    // converged it — but only because the user happened to switch again).
     const messages: any[] = [
-      {
-        role: 'assistant',
-        content: '',
-        blocks: [
-          { type: 'thinking', text: 'the reasoning', _key: 'thinking-0' },
-          { type: 'thinking', think_id: 'th_x', in_progress: true },
-          { type: 'thinking', think_id: 'th_y', done: true },
-          { type: 'text', text: 'hello' },
-        ],
-        streaming: true,
-      },
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_stuck', in_progress: true },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: false },
+      ] },
     ]
     forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
-    const [a, b, c, d] = messages[0].blocks
-    expect(a.done, 'a live thinking block must be closed out').toBe(true)
-    expect(b.done, 'an in_progress block must be closed out too').toBe(true)
-    expect(b.in_progress, 'and must stop claiming to be still coming').toBeUndefined()
-    expect(c.done, 'an already-done block stays done').toBe(true)
-    expect(d, 'non-thinking blocks are untouched').toEqual({ type: 'text', text: 'hello' })
+    const thinks = messages[0].blocks.filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'block kept').toHaveLength(1)
+    expect(thinks[0].done, 'marked finished so the spinner stops').toBe(true)
+    expect(thinks[0].in_progress, 'in_progress cleared').toBeUndefined()
+    // The tool_use path is untouched.
+    expect(messages[0].blocks.find((b: any) => b.type === 'tool_use').done).toBe(true)
+  })
+
+  it('leaves an already-finished thinking block alone', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', done: true, text: 'kept' },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    expect(messages[0].blocks[0].done).toBe(true)
+    expect(messages[0].blocks[0].text).toBe('kept')
+  })
+
+  it('syncs the DB done flag onto the live block it owns', () => {
+    // The reported "spinner keeps turning on a thinking block that has clearly
+    // moved on to its tool calls". msgId=54674 / th_bb1f742720e: its DB row is
+    // done=true, yet the live block kept in_progress and spun. The auto-load log
+    // confirms the block fetched as `provisional=true` three times in a row
+    // (4499 → 7782 → 9127 chars) and never as a final fetch — the live block
+    // never learned it was finished.
+    //
+    // Cause: mergeOrderedBlocks drops every DB thinking block once live has any
+    // (`liveHasThinking`). Correct for CONTENT (they are the same blocks; keeping
+    // both duplicates the chip) but it also discarded the one fact only the DB
+    // has — whether the block FINISHED. The DB is authoritative for that flag;
+    // live is authoritative for content.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54674, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', in_progress: true },
+        { type: 'tool_use', name: 'Read', id: 'r1', done: true },
+        { type: 'thinking', think_id: 'th_live', in_progress: true },
+      ] },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54674, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', done: true },
+        { type: 'tool_use', name: 'Read', id: 'r1', done: true },
+        { type: 'thinking', think_id: 'th_live', in_progress: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.streaming)!
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(2, 'no duplicate chips')
+    const finished = thinks.find((b: any) => b.think_id === 'th_done')
+    expect(finished.done, 'the DB-finished block must stop spinning').toBe(true)
+    expect(finished.in_progress).toBeUndefined()
+    const running = thinks.find((b: any) => b.think_id === 'th_live')
+    expect(running.in_progress, 'a genuinely-streaming block is untouched').toBe(true)
+    expect(running.done, 'and must NOT be marked done').toBeFalsy()
   })
 
   it('marks unfinished tool_use as done', () => {
@@ -3001,10 +3044,204 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(thinks[1].in_progress).toBe(true)
   })
 
-  it('does not adopt a done marker onto a live block (keeps existing dedup behavior)', () => {
-    // Only in_progress markers are positional-safe to adopt. A done marker is
-    // handled by the existing liveHasThinking dedup, which drops the DB block
-    // rather than identifying the live one.
+  it('keys a thinking block with the think_id the backend sent', () => {
+    // The backend mints a block's identity when it opens and puts it on the WS
+    // event, so the client knows it from birth. Before this, the block had no
+    // id until a DB snapshot arrived and the client matched them up by
+    // POSITION — which mispaired blocks across a session switch (the reported
+    // "top block spins forever with its text frozen").
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first', thinkId: 'th_abc' } as any)
+
+    // Assert on the OPENING delta. A later delta would take the coalescing
+    // branch, whose backfill would supply the id even if the push had not —
+    // masking a regression in exactly the line under test.
+    expect(s[0].blocks![0].think_id, 'id set by the push that opened the block').toBe('th_abc')
+
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' second', thinkId: 'th_abc' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'one block, coalesced').toHaveLength(1)
+    expect(blocks[0].think_id, 'carries the backend identity').toBe('th_abc')
+    expect(blocks[0].text).toBe('first second')
+  })
+
+  it('still works when the server sends no think_id (older server)', () => {
+    // Version-skew guard: the payload may lack think_id. The block must still be
+    // created and still get a usable key from _key, so a new client against an
+    // old server behaves exactly as before.
+    const s = chatMessageReducer([streamingMsg([])], { type: 'ws_thinking', text: 'reasoning', key: 'thinking-0' })
+    const blocks = s[0].blocks!
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].think_id, 'no id invented').toBeUndefined()
+    expect(blocks[0]._key, 'the fallback key survives').toBe('thinking-0')
+    expect(blocks[0].text).toBe('reasoning')
+  })
+
+  it('backfills a missing think_id on a later delta', () => {
+    // VERSION-SKEW GUARD, not coverage of the live path. With a current server
+    // every block carries its id from the opening delta, so this branch never
+    // fires; with an old server the payload has no id, so it also never fires.
+    // It covers a block that got an id-less start and later receives an id.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a', key: 'thinking-0' })
+    expect(s[0].blocks![0].think_id, 'no id yet').toBeUndefined()
+
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b', thinkId: 'th_first' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'still one block').toHaveLength(1)
+    expect(blocks[0].think_id, 'backfilled from the delta').toBe('th_first')
+    expect(blocks[0].text).toBe('ab')
+  })
+
+  it('findThinkingTarget prefers the wire id over position (shared by both streams)', () => {
+    // Both the chat reducer and the task-execution stream call this, so the two
+    // cannot diverge again. The id lookup must win even when the positional scan
+    // would stop short at a tool_use boundary.
+    const blocks: any[] = [
+      { type: 'thinking', think_id: 'th_X', text: 'TOP' },
+      { type: 'tool_use', name: 'Bash', id: 'sub1', done: true },
+    ]
+    // A positional scan that stops at the tool_use boundary (the real
+    // findLastBlockOfType behaviour) finds nothing...
+    const positionalStopsAtToolUse = () => {
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'thinking') return blocks[i]
+        if (blocks[i].type === 'tool_use') return undefined
+      }
+      return undefined
+    }
+    expect(positionalStopsAtToolUse()).toBeUndefined()
+    // ...but the id lookup finds the block, so the caller extends it.
+    expect(findThinkingTarget(blocks, 'th_X', positionalStopsAtToolUse)).toBe(blocks[0])
+  })
+
+  it('findThinkingTarget refuses a DIFFERENT id but allows an id-less block', () => {
+    const other: any[] = [{ type: 'thinking', think_id: 'th_A', text: 'a' }]
+    // Different id → must not be extended (would merge two blocks under one key).
+    expect(findThinkingTarget(other, 'th_B', () => other[0])).toBeUndefined()
+
+    const idless: any[] = [{ type: 'thinking', text: 'a' }]
+    // No id on the block → positional match is all there is (old-server path).
+    expect(findThinkingTarget(idless, 'th_B', () => idless[0])).toBe(idless[0])
+  })
+
+  it('appends to its own block even when a tool_use sits after it', () => {
+    // The reported "top thinking block frozen forever". After a switch-back,
+    // mergeStreamBlocks splices the DB flush's blocks in, so a FINISHED tool_use
+    // can land right after the live thinking block. A later delta of that same
+    // block then hits the tool_use boundary in findBlockByTypeBackward, finds
+    // nothing, and used to open a SECOND block — while stamping it with the same
+    // think_id. Two blocks, one v-for key: the head one kept its stale text and
+    // spun while the new one took the stream.
+    //
+    // Observed live: block[0] and block[15] both th_2ddda639, textLen frozen at
+    // 100 vs growing 55→929→2028→3161.
+    const msg: any = {
+      role: 'assistant', id: 54910, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_2ddda639', in_progress: true, text: 'x'.repeat(100) },
+        { type: 'tool_use', name: 'Bash', id: 'call_00_Ldy5', done: true },
+        { type: 'text', text: 'db tail' },
+      ],
+    }
+    let s = [msg]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'y'.repeat(55), thinkId: 'th_2ddda639' } as any)
+
+    const blocks = s[0].blocks as any[]
+    const thinks = blocks.filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'the delta extends the existing block, it does not open another').toHaveLength(1)
+    expect(thinks[0].text, 'stale head text + new delta').toBe('x'.repeat(100) + 'y'.repeat(55))
+
+    const ids = thinks.map((b: any) => b.think_id)
+    expect(new Set(ids).size, 'think_id must not repeat (v-for key collision)').toBe(ids.length)
+
+    // The tool_use and text blocks keep their places.
+    expect(blocks.map((b: any) => b.type)).toEqual(['thinking', 'tool_use', 'text'])
+  })
+
+  it('starts a NEW block when the delta carries a different think_id', () => {
+    // A different think_id means the backend considers it a different block —
+    // appending would merge two blocks' text under one v-for key. The reducer
+    // must use the wire identity, not just position, to decide its target.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first block', thinkId: 'th_one' } as any)
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'second block', thinkId: 'th_two' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'two distinct blocks').toHaveLength(2)
+    expect(blocks[0]).toMatchObject({ think_id: 'th_one', text: 'first block' })
+    expect(blocks[1]).toMatchObject({ think_id: 'th_two', text: 'second block' })
+    // Distinct keys — no v-for collision.
+    expect(new Set(blocks.map((b: any) => b.think_id)).size).toBe(2)
+
+    // A further delta of the NEWEST block still appends to it.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '+more', thinkId: 'th_two' } as any)
+    const after = s[0].blocks!
+    expect(after).toHaveLength(2)
+    expect(after[0]).toMatchObject({ think_id: 'th_one', text: 'first block' })
+    expect(after[1]).toMatchObject({ think_id: 'th_two', text: 'second block+more' })
+  })
+
+  it('keeps appending by position when ids are absent (old server)', () => {
+    // No ids on the wire: position is the only signal, and the old behaviour
+    // must be preserved exactly.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b' })
+    const blocks = s[0].blocks!
+    expect(blocks, 'one coalesced block').toHaveLength(1)
+    expect(blocks[0].text).toBe('ab')
+  })
+
+  it('does NOT re-open a finished live block with an in_progress marker', () => {
+    // The reported "top of the assistant message, never finishes, text never
+    // grows" (msgId=54716). block[0] had already finished normally
+    // (done=true, 66 chars — it IS the DB's short block th_fe1c10f0). On the
+    // 09:56:05 switch-back, adoptThinkingMarkers handed it the in_progress
+    // marker of a DIFFERENT block (th_a14f9884, 174512 chars) and forced
+    // in_progress back on: `tid=th_a14f9884 inprog=true textLen=66`, spinning
+    // forever while the real streaming block opened separately.
+    //
+    // A block's `done` came from a real thinking_done for that very block, so it
+    // must not be undone by a marker belonging to another one.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54716, content: '', streaming: true, blocks: [
+        { type: 'thinking', text: 'finished thought', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'b1', done: true },
+      ] },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54716, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_short', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'b1', done: true },
+        { type: 'thinking', think_id: 'th_long', in_progress: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.streaming)!
+    const finished = (reply.blocks || []).find(
+      (b: any) => b.type === 'thinking' && b.text === 'finished thought',
+    )
+    expect(finished, 'the finished block survives').toBeDefined()
+    expect(finished.done, 'it stays finished').toBe(true)
+    expect(finished.in_progress, 'and is NOT re-opened as streaming').toBeUndefined()
+    expect(finished.think_id, 'nor given another block identity').toBeUndefined()
+  })
+
+  it('adopts a done marker onto an unfinished live block, keeping its text', () => {
+    // This test previously asserted the opposite (think_id stays undefined),
+    // on the premise that "a done marker is handled by the liveHasThinking
+    // dedup". That premise was the bug: the dedup DROPS the DB block but never
+    // gives the live block its identity or its `done` — so a block whose turn
+    // moved on while the client was away stayed an anonymous perpetual spinner.
+    //
+    // Reported shape: switch away mid-turn, switch back, and a block sits stuck
+    // at the TOP of the assistant message, its text never growing while the rest
+    // of the reply streams (observed three times as
+    // `stall block[0]: done=undefined in_progress=undefined think_id=-`).
+    //
+    // Adoption must NOT overwrite the live text with the DB marker's stale
+    // prefix — the marker has no text at all. Only identity + done are taken.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       streamingMsg([{ type: 'thinking', text: 'reasoned' }]),
@@ -3019,8 +3256,33 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     const merged = rebuildFromDb(messages, dbMsgs as any)
     const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
     const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'no duplicate chip').toHaveLength(1)
+    expect(thinks[0].think_id, 'the live block adopts the DB identity').toBe('th_done')
+    expect(thinks[0].done, 'and is closed out, so the spinner stops').toBe(true)
+    expect(thinks[0].text, 'its own text is preserved').toBe('reasoned')
+  })
+
+  it('leaves a live block that is already done alone', () => {
+    // The guard that keeps the continuous-stream case working: a live block
+    // with done=true renders as a finished chip, so it must not be rewritten
+    // (adopting a marker would replace its full text with the DB's stale
+    // prefix).
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'reasoned', done: true }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
     expect(thinks).toHaveLength(1)
-    expect(thinks[0].think_id).toBeUndefined()
+    expect(thinks[0].think_id, 'an already-finished live block is not rewritten').toBeUndefined()
     expect(thinks[0].text).toBe('reasoned')
   })
 
@@ -3373,6 +3635,74 @@ describe('queued message action (insert / interrupt) — reducer boundary', () =
 //
 // The placeholder must instead be recognised as THIS turn's row even without an
 // id match, so the live block flags survive.
+describe('rebuildFromDb: a live thinking block keeps its DB position', () => {
+  it('anchors by think_id instead of being pinned to index 0', () => {
+    // The reported "a thinking block still streaming at the TOP while the rest
+    // of the reply below it is already finished". Observed msgId=54774: the
+    // live placeholder held ONE block (already adopted to th_03725d47), and the
+    // merge rendered it at index 0 while its DB position was 46 of 114 — every
+    // DB-only block was spliced AFTER it.
+    //
+    // Cause: dbAnchorOfLiveBlock returned -1 for thinking (it only knew
+    // tool_use), so all extras were inserted after the live block. Anchoring on
+    // the exact think_id places it where the DB says it belongs.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54774, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_mid', in_progress: true, text: 'deltas' },
+      ] },
+    ]
+    const db: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54774, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_a', done: true },
+        { type: 'text', text: 'earlier text' },
+        { type: 'thinking', think_id: 'th_mid', in_progress: true },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true },
+        { type: 'text', text: 'later text' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db)
+    const blocks = merged.find((m) => m.role === 'assistant' && m.streaming)!.blocks as any[]
+
+    // Assert the FULL sequence, not just one index: the bug was an ordering
+    // inversion, and a single-index check can pass for the wrong reason.
+    expect(blocks.map((b: any) => b.type)).toEqual(['text', 'thinking', 'tool_use', 'text'])
+    const iThink = blocks.findIndex((b: any) => b.think_id === 'th_mid')
+    const iTool = blocks.findIndex((b: any) => b.type === 'tool_use' && b.id === 't1')
+    const iEarlier = blocks.findIndex((b: any) => b.type === 'text' && b.text === 'earlier text')
+    // The streaming block sits where the DB puts it: after the earlier text,
+    // before the tool that follows it. Before the fix it was at index 0, i.e.
+    // BEFORE the earlier text.
+    expect(iEarlier).toBeLessThan(iThink)
+    expect(iThink).toBeLessThan(iTool)
+
+    // Still exactly one block per think_id (no v-for key collision).
+    const ids = blocks.filter((b: any) => b.type === 'thinking' && b.think_id).map((b: any) => b.think_id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('leaves a thinking block with no DB counterpart at the end', () => {
+    // A genuinely new block the flush has not written yet has no anchor (-1);
+    // it must keep the previous behaviour and not be forced into the middle.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 9, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_brand_new', in_progress: true, text: 'x' },
+      ] },
+    ]
+    const db: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 9, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'db text' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db)
+    const blocks = merged.find((m) => m.role === 'assistant' && m.streaming)!.blocks as any[]
+    expect(blocks.some((b: any) => b.think_id === 'th_brand_new')).toBe(true)
+  })
+})
+
 describe('rebuildFromDb: live placeholder matching without an adopted id', () => {
   const streamingRow = (id: number) => ({
     role: 'assistant',

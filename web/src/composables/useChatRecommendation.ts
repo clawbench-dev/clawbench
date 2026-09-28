@@ -123,11 +123,30 @@ export function useChatRecommendation(opts: UseChatRecommendationOptions) {
     return ''
   }
 
+  /**
+   * Un-dismiss the active session's recommendation so it surfaces again.
+   *
+   * `accept()` dismisses the entry because the suggestion has been moved into
+   * the input box; if the user then clears that text the suggestion is no longer
+   * applied, so hiding it would silently lose the recommendation. The entry text
+   * is never dropped, so it can simply be shown again.
+   *
+   * Deliberately does NOT re-check message-id staleness: `matchesCurrent()` is
+   * the single gate for both `show` and `current`, so un-dismissing a stale
+   * entry still cannot surface it. A second check here would be a guard that
+   * looks load-bearing but can never fire (mirrors `dismiss()` above).
+   */
+  function undismiss() {
+    const id = opts.activeSessionId()
+    const e = id ? cache.get(id) : undefined
+    if (e) e.dismissed = false
+  }
+
   /** Reset all recommendation state (e.g. on logout/teardown). */
   function clear() {
     cache.clear()
     generation.clear()
   }
 
-  return { current, show, upsert, ensureFetched, invalidate, dismiss, accept, clear }
+  return { current, show, upsert, ensureFetched, invalidate, dismiss, accept, undismiss, clear }
 }

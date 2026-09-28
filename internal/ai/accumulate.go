@@ -11,6 +11,15 @@ import (
 // Both text and thinking events are coalesced into the most recent block of
 // the same type; tool_use events are deduplicated by ID.
 //
+// It returns the identity of a thinking block so the caller can put it on the
+// outbound event: thinkID is the block's stable think_id, or empty for any
+// other event. The executor forwards the event to WS clients after
+// accumulating, so a client learns a block's identity the moment it appears
+// rather than having to infer it later from a DB snapshot.
+//
+// The return value may be ignored (most call sites do); only the streaming
+// executor needs it.
+//
 // When AI models (e.g. GLM-5.1) interleave thinking_delta and text_delta events,
 // the last block may not be the same type as the incoming event. Instead of only
 // checking the last block, we search backward for the most recent block of the
@@ -26,7 +35,7 @@ import (
 // interleave on the wire, so they are interleaving noise, not separators.
 //
 //nolint:gocognit,gocyclo // complex stream parsing logic
-func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
+func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID string) {
 	// findLastBlockOfType searches backward for the most recent block of the
 	// given type, stopping at tool_use boundaries (natural separators).
 	//
@@ -75,14 +84,31 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		// at Finalize (a lazy-load that 404s). Merging into an existing block is
 		// also a no-op for an empty delta, so skipping is strictly better.
 		if event.Content == "" {
-			return
+			// Explicit "" rather than a bare return: the function has a named
+			// result, so a naked return here would trip nakedret.
+			return ""
 		}
 		// Coalesce incremental thinking deltas into the most recent thinking block.
 		if idx, found := findLastBlockOfType("thinking", parent); found {
+			// Same block: report its identity so the caller stamps every delta
+			// of this block with it.
 			(*blocks)[idx].Text += event.Content
-		} else {
-			*blocks = append(*blocks, model.ContentBlock{Type: "thinking", Text: event.Content, ParentToolCallID: parent})
+			return (*blocks)[idx].ThinkID
 		}
+		// A new block. Mint its identity HERE, at the moment it opens, so the
+		// event that opens it can carry the id and the client never has to
+		// infer it. Assigning at flush time (the old behavior) meant the id
+		// only reached the client via a DB snapshot, which it had to match back
+		// to a live block by position — and mispaired whenever the two sides
+		// disagreed on ordering.
+		id := model.GenerateThinkingID()
+		*blocks = append(*blocks, model.ContentBlock{
+			Type:             "thinking",
+			Text:             event.Content,
+			ThinkID:          id,
+			ParentToolCallID: parent,
+		})
+		return id
 	case "thinking_done":
 		// Mark the most recent thinking block OF THIS PARENT as done — the
 		// thinking content is complete. Without this, the frontend spinner stays
@@ -224,6 +250,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			ErrorDetail: event.ErrorDetail,
 		})
 	}
+	return ""
 }
 
 // MarkAllThinkingDone flags every thinking block as complete. Call it on a

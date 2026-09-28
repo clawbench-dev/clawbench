@@ -369,7 +369,7 @@ import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2 } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
 import { getShareToolCall } from '@/share/shareMode'
 import { apiGet } from '@/utils/api'
@@ -1092,8 +1092,11 @@ function handleSummaryToolClick(tool: any, ti: number) {
 
 /** Generate a stable key for a block, used for v-for :key and animation state.
  *  tool_use: block.id (unique tool call ID from backend)
- *  thinking: block.think_id (stable backend-assigned ID, survives re-opens),
- *            falling back to block._key (key assigned at creation/parsing)
+ *  thinking: block.think_id (the identity the backend mints when the block
+ *            opens and sends on the WS event), falling back to block._key for a
+ *            live block built from a payload that carried no think_id (a server
+ *            older than that field, e.g. the disk-served frontend running
+ *            against an un-restarted binary).
  *  text: text-${bi} (text blocks merge so index is stable)
  *  other: type-bi (fallback)
  *  The index fallback uses the ABSOLUTE root index (absIdx) so a nested
@@ -1138,22 +1141,18 @@ function stableBlockKey(bi: number, block: any) {
 
 function handleThinkingClick(block: any, bi: number) {
   const blockKey = stableBlockKey(bi, block)
-  // DIAG: the click path has no logging, and its fetch failures go through
-  // appLog.w (gated off by default), so a field report of "I tapped it and it
-  // stayed on the dots" was impossible to distinguish from "it never loaded".
-  diagLog(TAG, `thinking click: msgId=${props.msgId} bi=${bi} tid=${block.think_id || '-'} done=${block.done} inprog=${block.in_progress} collapsed=${isThinkingCollapsed(block, bi)} expandedDone=${isThinkingExpandedDone(block, bi)} hasText=${!!block.text} err=${!!(block.think_id && thinkingContent.errors.value[block.think_id])} cached=${block.think_id ? thinkingContent.cachedText(block.think_id) !== undefined : false}`)
   if (isThinkingCollapsed(block, bi)) {
     // Expand inline with animation
     expandingThinking.value[blockKey] = true
     thinkingExpanded.value[blockKey] = true
     invalidateBlockHtml()
-    // Slim block (think_id, no text): lazy-load the thinking text on expand
+    // Slim block (think_id, no text): lazy-load the thinking text on expand.
+    // Provisional while the turn runs: a block can be `done` and still grow (the
+    // accumulator has no done check), so reading now may only get a prefix —
+    // flagged so the auto-load refetches the final text once the turn ends.
     if (!block.text && block.think_id) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
-        .then((text) => { diagLog(TAG, `thinking click load ok: msgId=${props.msgId} tid=${block.think_id} len=${text.length}`) })
-        .catch((e) => { diagLog(TAG, `thinking click load FAILED: msgId=${props.msgId} tid=${block.think_id} err=${e?.message || e}`) })
-    } else {
-      diagLog(TAG, `thinking click skipped load: msgId=${props.msgId} bi=${bi} hasText=${!!block.text} tid=${block.think_id || '-'}`)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
+        .catch(() => { /* error surfaced via errors ref */ })
     }
     // Clean up expanding state after animation
     const t = setTimeout(() => {
@@ -1164,7 +1163,7 @@ function handleThinkingClick(block: any, bi: number) {
     // Retry failed lazy-load when clicking an error-state slim block;
     // otherwise collapse.
     if (!block.text && block.think_id && thinkingContent.errors.value[block.think_id]) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     } else {
       triggerThinkingCollapse(blockKey)
@@ -1379,6 +1378,44 @@ function reverifyAnnotations() {
 onMounted(() => nextTick(reverifyAnnotations))
 onUpdated(() => nextTick(reverifyAnnotations))
 
+/**
+ * Render any Mermaid blocks this component still holds as raw source.
+ *
+ * The chat Mermaid pass is a ONE-SHOT render: `updateRenderedContents(true)`
+ * schedules a single `renderMermaidInElement` on a `nextTick`
+ * (useChatRender.ts), and that function only picks up
+ * `pre.mermaid:not([data-rendered])`. Any `<pre class="mermaid">` written into
+ * the DOM AFTER that pass is therefore never rendered and stays visible as raw
+ * source. Two writers reliably land late:
+ *
+ *  - `listKey` embeds `messages.length` (ChatMessageList.vue), so a new message
+ *    remounts the whole list, recreating every `pre.mermaid` from cached HTML.
+ *  - The newest message's text block is re-patched by a late `v-html` write
+ *    (throttled flush / cache upgrade), inserting its block after the pass.
+ *
+ * Measured on a real session: every cold load ended with exactly ONE leftover
+ * `pre.mermaid`, always in the LAST assistant message — i.e. the diagram the
+ * user had just asked for. Any later render pass converted it (which is why a
+ * theme switch or session re-open appeared to "fix" it).
+ *
+ * Same shape as `reverifyAnnotations` above: scoped to this component's subtree
+ * (so concurrent instances never race for the same element) and idempotent.
+ * `onMounted` covers the list-remount path, where `onUpdated` never fires.
+ *
+ * Deliberately skipped while `streaming`: the fence is still incomplete
+ * mid-stream, and the post-streaming pass owns that first render. The
+ * synchronous guard keeps the lazy 608KB Mermaid import out of the update path
+ * when there is nothing to do.
+ */
+function renderPendingMermaid() {
+  if (props.streaming) return
+  const root = contentRootRef.value
+  if (!root || !root.querySelector('pre.mermaid:not([data-rendered])')) return
+  void renderMermaidInElement(root, 'chat-mermaid-block')
+}
+onMounted(() => nextTick(renderPendingMermaid))
+onUpdated(() => nextTick(renderPendingMermaid))
+
 // ── Throttled streaming render ──
 // Rendered-HTML cache for streaming text/thinking blocks, keyed by stable block
 // key. Deliberately a `shallowRef<Map>` rather than a `ref<Record>`:
@@ -1405,6 +1442,12 @@ const _blockHtmlSource = new Map<string, string>()
 let _throttleTimer: ReturnType<typeof setTimeout> | null = null
 let _throttlePending = false
 const THROTTLE_MS = 300
+// How many trailing blocks count as "currently visible" while streaming, for
+// the done-block auto-load. The live path keeps the newest reasoning rendered
+// open, so those must load without a click; anything further back is a
+// collapsed chip and loads on expand instead. Keeps a long turn from firing one
+// request per finished block on every render.
+const DONE_AUTOLOAD_TAIL = 6
 const _blockFlushScheduler = new StreamFrameScheduler()
 
 /**
@@ -1759,22 +1802,16 @@ watch(() => props.active, (active) => {
 //                  session's client.log as
 //                  done=true cached=none loading=false err=none.
 //
-// Scoped to the blocks the live view actually renders OPEN — the ones being
-// streamed, plus any the user expanded. A finished conversation therefore does
-// not bulk-load hundreds of collapsed blocks, and the auto-load does not
-// preempt the click path (a user expanding a FAILED block to retry must not
-// silently receive the cached failure). Everything else keeps
-// lazy-load-on-click.
-//
-// An earlier version scoped this by POSITION instead — the last N blocks — and
-// that was the bug: a long streaming message has done thinking blocks all over
-// it, not just at the end, so anything outside the window never loaded.
-// Reported case msgId=54604: six done blocks (indices 0,5,7,10,14,17) sat
-// outside a 6-block window with their text in chat_thinking and were never
-// fetched. Visibility is the correct predicate; position is not.
+// Scoped to the blocks the live view actually renders open — an expanded block,
+// or (while streaming) the tail — so a finished conversation does not bulk-load
+// hundreds of collapsed blocks, and so the auto-load does not preempt the click
+// path (a user expanding a FAILED block to retry must not silently receive the
+// cached failure). Everything else keeps lazy-load-on-click.
 watch(
   () => {
     const blocks = props.blocks || []
+    const turnOver = !props.streaming
+    const tailStart = props.streaming ? Math.max(0, blocks.length - DONE_AUTOLOAD_TAIL) : blocks.length
     const ids: string[] = []
     for (let bi = 0; bi < blocks.length; bi++) {
       const b = blocks[bi] as any
@@ -1793,29 +1830,28 @@ watch(
 
       // Finished. Reload when the cached text is a stale mid-stream snapshot
       // (nothing else would replace it), or when nothing was ever loaded AND
-      // the block is actually rendered OPEN.
-      if (provisional) { ids.push(`f:${b.think_id}`); continue }
+      // the block is in the streaming tail the live view renders open.
+      //
+      // `done` does NOT mean the text is final, so the final fetch waits for the
+      // turn to end. The backend flushes before forwarding thinking_done, so the
+      // text is complete AS OF that event — but the accumulator keeps appending
+      // later deltas to the SAME block (it has no done check: a thinking →
+      // thinking_done → content → thinking sequence yields one block whose text
+      // grows after done). A "final" fetch on done would therefore cache a
+      // prefix and clear the provisional flag, after which `cached !== undefined`
+      // skipped it forever — the reported truncated reasoning (cached 760 of
+      // final 844; another case 17124 of 18887). At turn end the row is complete
+      // (the terminal `done` is sent after Finalize), so that is when we refetch.
+      if (provisional) { if (turnOver) ids.push(`f:${b.think_id}`); continue }
       if (cached !== undefined) continue
-      // A block renders open only while it is streaming (isThinkingStreaming
-      // ignores `done`) or when the user expanded it. Load exactly those.
+      // NOT for merely-expanded blocks: expanding one goes through
+      // handleThinkingClick, which loads it itself. Auto-loading it here would
+      // fire a second request that races the click's own — and on a FAILED
+      // block it would swallow the retry's fresh request.
       //
-      // This replaced a fixed tail window (the last N blocks), which was wrong:
-      // a long streaming message has done thinking blocks ALL OVER it, not just
-      // at the end. Reported case msgId=54604 had 6 done blocks outside a
-      // 6-block window (indices 0,5,7,10,14,17) whose text was in chat_thinking
-      // but was never fetched — expanding any of them showed the three dots
-      // forever. Visibility is the correct predicate; a position window is not.
-      //
-      // A block is loaded here only when it is open WITHOUT having been opened
-      // by a click. The click path (handleThinkingClick) already calls
-      // loadThinking itself, and `expandingThinking` is the flag it sets for the
-      // duration of the expand animation — so treating it as "handled" is what
-      // keeps the two from racing. Without this, the click's request and this
-      // one both fire; on a FAILED block the second consumes the retry's fresh
-      // response and the user sees the cached failure instead of the retry.
-      const key = stableBlockKey(bi, b)
-      if (expandingThinking.value[key]) continue
-      if (thinkingExpanded.value[key]) ids.push(`f:${b.think_id}`)
+      // Mid-turn the snapshot is provisional (the block may still grow), so the
+      // refetch above can replace it with the final text once the turn ends.
+      if (bi >= tailStart) ids.push(`${turnOver ? 'f' : 'p'}:${b.think_id}`)
     }
     return ids.join('|')
   },

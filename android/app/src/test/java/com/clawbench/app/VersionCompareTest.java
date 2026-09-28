@@ -198,13 +198,20 @@ public class VersionCompareTest {
     }
 
     @Test
-    public void shouldShowMismatch_falseWhenApkNewerThanServer() {
-        assertFalse(VersionCompare.shouldShowMismatch("v2.0.0", "v1.0.0"));
+    public void shouldShowMismatch_trueWhenApkNewerThanServer() {
+        // Bidirectional: a newer APK may rely on features the server lacks, so it
+        // is flagged too (previously it proceeded silently).
+        assertTrue(VersionCompare.shouldShowMismatch("v2.0.0", "v1.0.0"));
     }
 
     @Test
     public void shouldShowMismatch_trueForOlderDevBuild() {
         assertTrue(VersionCompare.shouldShowMismatch("v0.65.0-10-gabc", "v0.66.0-5-g7702c473"));
+    }
+
+    @Test
+    public void shouldShowMismatch_trueForNewerDevBuild() {
+        assertTrue(VersionCompare.shouldShowMismatch("v0.67.0-1-gabc", "v0.66.0-5-g7702c473"));
     }
 
     @Test
@@ -236,5 +243,29 @@ public class VersionCompareTest {
     public void shouldShowMismatch_handlesBuildTimeSuffix() {
         assertFalse(VersionCompare.shouldShowMismatch("v1.0.0", "v1.0.0-07291030"));
         assertTrue(VersionCompare.shouldShowMismatch("v1.0.0", "v2.0.0-07291030"));
+    }
+
+    // ── isClientNewer ─────────────────────────────────────────────────
+
+    @Test
+    public void isClientNewer_trueWhenApkAheadOfServer() {
+        assertTrue(VersionCompare.isClientNewer("v2.0.0", "v1.0.0"));
+        assertTrue(VersionCompare.isClientNewer("v0.67.0-1-gabc", "v0.66.0-5-g7702c473"));
+    }
+
+    @Test
+    public void isClientNewer_falseWhenApkOlderOrEqual() {
+        assertFalse(VersionCompare.isClientNewer("v1.0.0", "v2.0.0"));
+        assertFalse(VersionCompare.isClientNewer("v1.0.0", "v1.0.0"));
+        // Same base, differing pre-release: equal, so not "newer".
+        assertFalse(VersionCompare.isClientNewer("v0.66.0-3-gabc", "v0.66.0-5-g7702c473"));
+    }
+
+    @Test
+    public void isClientNewer_failsOpenOnUnparseableVersions() {
+        assertFalse(VersionCompare.isClientNewer(null, "v1.0.0"));
+        assertFalse(VersionCompare.isClientNewer("v1.0.0", null));
+        assertFalse(VersionCompare.isClientNewer("dev", "v1.0.0"));
+        assertFalse(VersionCompare.isClientNewer("v1.0.0", "a0f87a96"));
     }
 }

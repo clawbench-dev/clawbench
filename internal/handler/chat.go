@@ -71,7 +71,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 					writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
 					return
 				}
-				sessionID, err = service.CreateSession(projectPath, sessionBackend2, T(r, "NewSession"), agentID, "", "default", "chat")
+				sessionID, err = service.CreateSession(projectPath, sessionBackend2, newUnnamedSessionTitle(r, projectPath), agentID, "", "default", "chat")
 				if err != nil {
 					model.WriteError(w, model.Internal(fmt.Errorf("failed to create session")))
 					return

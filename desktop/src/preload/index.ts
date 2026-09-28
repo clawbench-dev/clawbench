@@ -73,6 +73,11 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Backs the overlay's cancel button, which the overlay page wires to
   // ClawBenchNative.cancelSplash() in splash mode.
   cancelSplash: () => { ipcRenderer.send('native:splash-cancel') },
+  // Version-mismatch gate actions. The gate overlay (shown by the main process
+  // when the desktop and server versions differ) calls these: "continue"
+  // proceeds on the current version, "download" installs the server's version.
+  versionContinue: () => { ipcRenderer.send('native:version-continue') },
+  versionDownload: () => { ipcRenderer.send('native:version-download') },
   stopBackgroundService: () => { /* desktop has no Android foreground service */ },
   setVolumeKeyMode: () => { /* desktop has no hardware volume keys */ },
   setTerminalSessionCount: () => { /* desktop has no status-bar terminal badge */ },
@@ -98,6 +103,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
 
   // async writes
   saveServer: (u: string, p: string) => invoke('native:save-server', u, p),
+  saveServerNamed: (u: string, p: string, n: string) => invoke('native:save-server-named', u, p, n),
   removeServer: (u: string) => invoke('native:remove-server', u),
   setSSHPassword: (p: string) => invoke('native:set-ssh-password', p),
   connectToServer: (u: string, p: string) => invoke('native:connect-to-server', u, p),

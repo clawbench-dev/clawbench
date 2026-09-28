@@ -379,6 +379,53 @@ describe('diagLog (ungated diagnostic channel)', () => {
     _clearBuffer()
   })
 
+  it('flushes immediately when asked, so a startup line cannot be trimmed away', async () => {
+    // The relay's ring buffer holds 200 entries and drops the OLDEST on
+    // overflow. A diagnostic written at startup therefore sits at the front of
+    // a buffer that a busy chat view then floods (measured ~2450 lines/second
+    // while streaming) — far more than 200 within the 250ms debounce, so the
+    // line was trimmed before it was ever sent. Measured on a real session: 14
+    // page loads produced only 2 lines, which made the diagnostic look broken.
+    //
+    // `immediate` is the fix: send before the flood arrives, not after a
+    // debounce that the flood will overrun.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchSpy.mockResolvedValue({ ok: true })
+    setLogCaptureEnabled(false)
+    _clearBuffer()
+
+    diagLog('Diag', 'startup line', { immediate: true })
+
+    // Must land inside the debounce window — that is the whole point. Waiting
+    // for the default 250ms debounce would pass even with `immediate` ignored.
+    await new Promise(r => setTimeout(r, 100))
+    expect(fetchSpy, 'an immediate call must not wait out the debounce').toHaveBeenCalled()
+    expect(JSON.parse(fetchSpy.mock.calls[0][1].body).entries[0].msg).toBe('startup line')
+  })
+
+  it('keeps the debounce for non-immediate calls', async () => {
+    // `immediate` must stay opt-in: the flood it guards against is the same
+    // flood the debounce exists to coalesce. If this ever became the default,
+    // a per-render diagnostic would go back to one request per line.
+    //
+    // The wait must be long enough to observe the ABSENCE of an immediate
+    // flush. A synchronous `not.toHaveBeenCalled()` proves nothing, because
+    // doFlushForced is async and would not have called fetch yet either way —
+    // that version of this test passed even with `immediate` ignored entirely.
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    fetchSpy.mockResolvedValue({ ok: true })
+    setLogCaptureEnabled(false)
+    _clearBuffer()
+
+    diagLog('ContentBlocks', 'line 0')
+    // Well past the point an immediate flush would have fired, still inside the
+    // 250ms debounce window.
+    await new Promise(r => setTimeout(r, 100))
+    expect(fetchSpy, 'a non-immediate call must wait out the debounce').not.toHaveBeenCalled()
+
+    await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled(), { timeout: 3000 })
+  })
+
   it('coalesces a burst into a single request', async () => {
     // A diagnostic on a render or per-delta path fires thousands of times per
     // turn. An earlier version POSTed on every call, and one session produced

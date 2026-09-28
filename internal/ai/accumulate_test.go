@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -23,6 +24,57 @@ func TestAccumulateBlock_Thinking(t *testing.T) {
 	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " more"})
 	assert.Len(t, blocks, 1)
 	assert.Equal(t, "Think more", blocks[0].Text)
+}
+
+func TestAccumulateBlock_ThinkingMintsStableID(t *testing.T) {
+	// The block's identity is minted when it OPENS and reported to the caller, so
+	// the executor can put it on the very event that opens the block. Every later
+	// delta of the same block reports the same id, which is what
+	// lets the WS coalescer tell two consecutive blocks apart.
+	blocks := []model.ContentBlock{}
+
+	id1 := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "first"})
+	require.NotEmpty(t, id1, "a thinking block must get an identity when it opens")
+	require.Len(t, blocks, 1, "the opening delta appends a block")
+	assert.Equal(t, id1, blocks[0].ThinkID, "the id must be stored on the block")
+	assert.True(t, strings.HasPrefix(id1, "th_"), "id format, got %q", id1)
+
+	id2 := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " second"})
+	assert.Equal(t, id1, id2, "every delta of one block reports the same id")
+	assert.Len(t, blocks, 1)
+	assert.Equal(t, "first second", blocks[0].Text)
+
+	// A tool_use separates blocks: the next thinking delta opens a NEW block and
+	// must get a DIFFERENT id, or the two would merge under one key.
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Read", ID: "t1"}})
+	id3 := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "third"})
+	assert.NotEqual(t, id1, id3, "a new block must not reuse the previous block's id")
+	assert.Len(t, blocks, 3)
+}
+
+func TestAccumulateBlock_NonThinkingEventsReportNoID(t *testing.T) {
+	// Only thinking carries an identity; everything else must leave the event's
+	// ThinkID empty so it is not stamped onto unrelated frames.
+	blocks := []model.ContentBlock{}
+
+	id := AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "text"})
+	assert.Empty(t, id)
+
+	id = AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done"})
+	assert.Empty(t, id)
+
+	id = AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Read", ID: "t1"}})
+	assert.Empty(t, id)
+}
+
+func TestAccumulateBlock_EmptyThinkingDeltaDoesNotMintID(t *testing.T) {
+	// An empty delta must not open a block (it would render as an empty spinner),
+	// so it must not mint an identity either — a stray id would key a block that
+	// has no content behind it.
+	blocks := []model.ContentBlock{}
+	id := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: ""})
+	assert.Empty(t, id)
+	assert.Empty(t, blocks)
 }
 
 func TestAccumulateBlock_ToolUseStart(t *testing.T) {

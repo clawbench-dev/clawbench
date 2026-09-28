@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -826,4 +827,191 @@ func TestExecutor_DoneAndInProgressThinking_SameFlush(t *testing.T) {
 	assert.Equal(t, true, inProgBlock["in_progress"], "the unfinished block must be marked in_progress")
 	assert.NotEqual(t, true, inProgBlock["done"])
 	assert.NotContains(t, content, "second ongoing", "in-progress block's text must not be in content")
+}
+
+// TestExecutor_ForwardedThinkingCarriesThinkID pins the ORDER of the two calls
+// in handleNonTerminalEvent: the block must be accumulated (which mints its
+// think_id) BEFORE the event is forwarded, and the id must be stamped onto the
+// forwarded event.
+//
+// Without this test the reorder is unguarded: every other test either stops at
+// AccumulateBlock (id on the block) or hand-builds the WS payload. Moving
+// AccumulateBlock back after forwardEvent would leave all of them passing while
+// the event that OPENS a thinking block silently lost its id — re-introducing
+// the position-matching the field exists to remove.
+func TestExecutor_ForwardedThinkingCarriesThinkID(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID := getStreamingMsgIDForTest(t, sid)
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: msgID,
+	})
+	defer executor.unregisterActiveStream()
+
+	// Capture what the executor actually hands to the WS fan-out, without
+	// standing up a real hub connection. emitStreamEvent is the coalescer's
+	// emit target, so this observes the exact event that would reach a client.
+	var forwarded []ai.StreamEvent
+	executor.coalescer = &streamCoalescer{emit: func(ev ai.StreamEvent) {
+		forwarded = append(forwarded, ev)
+	}}
+
+	// Drive a thinking event through the executor, then flush the coalescer so
+	// the buffered delta is actually emitted.
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "reasoning"})
+	executor.flushCoalesced()
+
+	require.Len(t, forwarded, 1, "one thinking delta must reach the fan-out")
+	got := forwarded[0]
+	assert.Equal(t, "thinking", got.Type)
+	assert.Equal(t, "reasoning", got.Content)
+	require.NotEmpty(t, got.ThinkID, "the forwarded event must carry the block id")
+	assert.True(t, strings.HasPrefix(got.ThinkID, "th_"), "id format, got %q", got.ThinkID)
+
+	// The wire id must equal the id on the accumulated block, or the client
+	// would key a different block than the one that is streaming.
+	executor.mu.Lock()
+	require.Len(t, executor.blocks, 1)
+	stored := executor.blocks[0].ThinkID
+	executor.mu.Unlock()
+	assert.Equal(t, stored, got.ThinkID, "wire id must equal the accumulated block's id")
+
+	// A coalescing delta of the SAME block must report the same id (that is what
+	// lets the coalescer tell two consecutive blocks apart).
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: " more"})
+	executor.flushCoalesced()
+	require.Len(t, forwarded, 2)
+	assert.Equal(t, got.ThinkID, forwarded[1].ThinkID)
+}
+
+// TestExecutor_ThinkingDoneFlushesTextBeforeForwarding pins the ORDER that makes
+// the client's lazy-load correct: the block's full reasoning must be committed
+// to chat_thinking BEFORE thinking_done reaches the wire.
+//
+// thinking_done is the client's cue to fetch the reasoning text. The periodic
+// flush is rate-limited to 500ms, so without an explicit flush here the event
+// routinely arrives first and the client caches a PREFIX — the reported
+// truncated reasoning (observed: 760 of 844 chars cached; another case 17124 of
+// 18887), which never refetched because the cache looked populated.
+//
+// The capture harness observes the fan-out: whatever the DB holds when the emit
+// fires is exactly what a real client would read.
+func TestExecutor_ThinkingDoneFlushesTextBeforeForwarding(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID := getStreamingMsgIDForTest(t, sid)
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: msgID,
+	})
+	defer executor.unregisterActiveStream()
+
+	// Accumulate two deltas of one block, with NO flush in between (mirroring a
+	// real turn, where the periodic flush has not fired yet).
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "part1"})
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "part2"})
+
+	executor.mu.Lock()
+	require.Len(t, executor.blocks, 1)
+	thinkID := executor.blocks[0].ThinkID
+	executor.mu.Unlock()
+	require.NotEmpty(t, thinkID)
+
+	// Precondition: the DB holds only a PREFIX. The first event trips the
+	// rate-limited flush (lastFlush starts at zero), so "part1" is persisted;
+	// the second event must land INSIDE the 500ms window and not be persisted.
+	// Pin lastFlush to now so a scheduler stall between the two events cannot
+	// trip a second periodic flush and make this assertion flake.
+	executor.mu.Lock()
+	executor.lastFlush = time.Now()
+	executor.mu.Unlock()
+	rec, err := GetThinking(thinkID, msgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.Equal(t, "part1", rec.Text,
+		"precondition: only a prefix is persisted before thinking_done")
+
+	// Capture the DB contents AT THE MOMENT the event is forwarded. This is the
+	// whole point: a client reading on thinking_done must see the full text.
+	var textAtForward string
+	var sawDone bool
+	executor.coalescer = &streamCoalescer{emit: func(ev ai.StreamEvent) {
+		if ev.Type != "thinking_done" {
+			return
+		}
+		sawDone = true
+		r, e := GetThinking(thinkID, msgID)
+		if e == nil && r != nil {
+			textAtForward = r.Text
+		}
+	}}
+
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking_done"})
+
+	require.True(t, sawDone, "thinking_done must reach the fan-out")
+	assert.Equal(t, "part1part2", textAtForward,
+		"the block's FULL text must be committed before thinking_done is forwarded")
+}
+
+// TestExecutor_ThinkingDoneWithoutDBDoesNotPanic guards the flush added to the
+// thinking_done path: flushPendingThinking's callers are otherwise all behind a
+// db==nil guard, so the check must live inside it too. An isolated executor
+// must not crash.
+//
+// `db` is a package global, so a test that merely skips setupExecutorDB would
+// still see whatever DB an earlier test left behind — the guard would never be
+// reached and the test would pass vacuously. Nil it explicitly.
+func TestExecutor_ThinkingDoneWithoutDBDoesNotPanic(t *testing.T) {
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	restoreDB := SetDBForTest(nil, nil)
+	defer restoreDB()
+
+	// The message id is set so that, without the guard, the flush would proceed
+	// past the config check and dereference the nil DB.
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          "sid-no-db",
+		AgentID:            "test-agent",
+		StreamingMessageID: 42,
+	})
+	defer executor.unregisterActiveStream()
+	executor.coalescer = &streamCoalescer{emit: func(ai.StreamEvent) {}}
+
+	assert.NotPanics(t, func() {
+		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "x"})
+		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking_done"})
+	})
+
+	// Direct call: the thinking_done path calls this without the surrounding
+	// flushStreamingLocked guard, so pin it in isolation too.
+	assert.NotPanics(t, func() {
+		executor.mu.Lock()
+		executor.flushPendingThinking()
+		executor.mu.Unlock()
+	})
 }

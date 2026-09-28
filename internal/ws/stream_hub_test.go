@@ -1142,3 +1142,34 @@ func TestStreamHub_EmitLiveRunState_NothingStreaming(t *testing.T) {
 
 	assert.Empty(t, sub.GetBufferedEvents(), "nothing streaming → nothing to re-emit")
 }
+
+func TestSimpleTextPayload_CarriesThinkID(t *testing.T) {
+	// A thinking event carries the block's identity so the client can key the
+	// block from the moment it appears, instead of inferring it from a later DB
+	// snapshot (which mispaired blocks when the two sides disagreed on order).
+	payload, ok := simpleTextPayload(ai.StreamEvent{
+		Type: "thinking", Content: "reasoning", ThinkID: "th_abc123",
+	}).(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "reasoning", payload["text"])
+	assert.Equal(t, "th_abc123", payload["think_id"])
+}
+
+func TestSimpleTextPayload_OmitsEmptyThinkID(t *testing.T) {
+	// A thinking event from a backend that does not assign ids must not emit an
+	// empty think_id — the client treats "absent" as "infer it later", and an
+	// empty string would look like a real (and shared) identity.
+	payload, ok := simpleTextPayload(ai.StreamEvent{
+		Type: "thinking", Content: "reasoning",
+	}).(map[string]string)
+	require.True(t, ok)
+	assert.NotContains(t, payload, "think_id")
+
+	// Non-thinking events never carry it, even if the field were set.
+	payload, ok = simpleTextPayload(ai.StreamEvent{
+		Type: "content", Content: "text", ThinkID: "th_abc123",
+	}).(map[string]string)
+	require.True(t, ok)
+	assert.Equal(t, "text", payload["content"])
+	assert.NotContains(t, payload, "think_id")
+}

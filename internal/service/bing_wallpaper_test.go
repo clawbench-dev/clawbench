@@ -64,9 +64,6 @@ func bingTestEnv(t *testing.T) (*[]wallpaper.BingState, func()) {
 		}
 		b.Copyright = s.Copyright
 		b.Title = s.Title
-		if s.Mkt != "" {
-			b.Mkt = s.Mkt
-		}
 		b.LastError = s.LastError
 		b.LastAttemptAt = s.LastAttemptAt
 		return nil
@@ -143,9 +140,6 @@ func TestBingWorker_FetchSuccess_WritesFileAndState(t *testing.T) {
 	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-	model.ConfigInstance.Appearance.Bing.Mkt = "zh-CN"
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -168,8 +162,8 @@ func TestBingWorker_FetchSuccess_WritesFileAndState(t *testing.T) {
 	if state.File == "" {
 		t.Fatal("File is empty, want a cached file name")
 	}
-	if state.Mkt != "zh-CN" {
-		t.Errorf("Mkt = %q, want zh-CN", state.Mkt)
+	if state.Mkt != "en-US" {
+		t.Errorf("Mkt = %q, want en-US (the test env's server language)", state.Mkt)
 	}
 
 	// The image must actually be on disk.
@@ -182,24 +176,25 @@ func TestBingWorker_FetchSuccess_WritesFileAndState(t *testing.T) {
 	}
 }
 
-func TestBingWorker_SkipsWhenDisabled(t *testing.T) {
+func TestBingWorker_FetchesUnconditionally(t *testing.T) {
+	// There is no enable switch: the cached image is a shared server resource
+	// and the worker keeps it fresh for whoever wants it. A run with nothing
+	// pre-set must still reach out and persist the outcome.
 	persisted, cleanup := bingTestEnv(t)
 	defer cleanup()
 
-	// A server that fails the test if it is ever reached.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t.Error("worker must not fetch while disabled")
-	}))
-	defer srv.Close()
+	img := bingTestImage(t)
+	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = false
 
 	w := NewBingWallpaperWorker()
 	w.work()
 
-	if len(*persisted) != 0 {
-		t.Errorf("persisted %d states while disabled, want 0", len(*persisted))
+	if len(*persisted) != 1 {
+		t.Fatalf("persisted %d states, want 1 (the worker fetches with no gating)", len(*persisted))
+	}
+	if (*persisted)[0].LastError != "" {
+		t.Errorf("LastError = %q, want empty", (*persisted)[0].LastError)
 	}
 }
 
@@ -213,7 +208,6 @@ func TestBingWorker_SkipsWhenAlreadySyncedToday(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 	model.ConfigInstance.Appearance.Bing.LastSuccessDate = time.Now().Format("20060102")
 	model.ConfigInstance.Appearance.Bing.File = "bing-" + time.Now().Format("20060102") + ".jpg"
 
@@ -236,7 +230,6 @@ func TestBingWorker_FetchFailure_KeepsCachedFileAndSetsError(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 	// A previously cached image from an earlier successful fetch.
 	model.ConfigInstance.Appearance.Bing.File = "bing-20260901.jpg"
 	model.ConfigInstance.Appearance.Bing.LastSuccessDate = "20260901"
@@ -262,43 +255,35 @@ func TestBingWorker_FetchFailure_KeepsCachedFileAndSetsError(t *testing.T) {
 	}
 }
 
-func TestBingWorker_UsesPersistedMkt(t *testing.T) {
-	_, cleanup := bingTestEnv(t)
-	defer cleanup()
+// TestBingWorker_MktFollowsServerLanguage pins that the market is derived from
+// the server's UI language rather than a separate wallpaper setting.
+func TestBingWorker_MktFollowsServerLanguage(t *testing.T) {
+	for _, tc := range []struct {
+		language string
+		want     string
+	}{
+		{"en", "en-US"},
+		{"zh", "zh-CN"},
+		{"", "en-US"}, // unknown language falls back to the market that always has an image
+	} {
+		t.Run("language="+tc.language, func(t *testing.T) {
+			_, cleanup := bingTestEnv(t)
+			defer cleanup()
 
-	var seenMkt string
-	img := bingTestImage(t)
-	srv := stubBingServer(t, img, &seenMkt)
-	pointBingAt(t, srv)
+			var seenMkt string
+			img := bingTestImage(t)
+			srv := stubBingServer(t, img, &seenMkt)
+			pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-	model.ConfigInstance.Appearance.Bing.Mkt = "en-US"
+			model.ConfigInstance.Language = tc.language
 
-	w := NewBingWallpaperWorker()
-	w.work()
+			w := NewBingWallpaperWorker()
+			w.work()
 
-	if seenMkt != "en-US" {
-		t.Errorf("requested mkt = %q, want en-US", seenMkt)
-	}
-}
-
-func TestBingWorker_DefaultsMktWhenUnset(t *testing.T) {
-	_, cleanup := bingTestEnv(t)
-	defer cleanup()
-
-	var seenMkt string
-	img := bingTestImage(t)
-	srv := stubBingServer(t, img, &seenMkt)
-	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-	model.ConfigInstance.Appearance.Bing.Mkt = ""
-
-	w := NewBingWallpaperWorker()
-	w.work()
-
-	if seenMkt != "zh-CN" {
-		t.Errorf("requested mkt = %q, want the zh-CN fallback", seenMkt)
+			if seenMkt != tc.want {
+				t.Errorf("requested mkt = %q, want %q for language %q", seenMkt, tc.want, tc.language)
+			}
+		})
 	}
 }
 
@@ -322,8 +307,6 @@ func TestBingWorker_FallsBackToUrlBase(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -439,8 +422,6 @@ func TestBingWorker_FallsBackWhenUHDFails(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -475,8 +456,6 @@ func TestBingWorker_KeepsNativeResolution(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -514,8 +493,6 @@ func TestBingWorker_EmptyImageListIsError(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -536,8 +513,6 @@ func TestBingWorker_MalformedJSONIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -565,8 +540,6 @@ func TestBingWorker_RejectsNonImagePayload(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -603,8 +576,6 @@ func TestBingWorker_DownloadSizeGuard(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -635,8 +606,6 @@ func TestBingWorker_PrunesOldBingFiles(t *testing.T) {
 		require(wallpaper.WriteAtomic(wallpaper.BingDir(), n, []byte("x")))
 	}
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -665,8 +634,6 @@ func TestBingWorker_TriggerRunsImmediately(t *testing.T) {
 	img := bingTestImage(t)
 	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := newBingWallpaperWorkerForTest()
 	w.Start()
@@ -709,8 +676,6 @@ func TestBingWorker_TriggerBypassesStartupDelay(t *testing.T) {
 	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
 	w := newBingWallpaperWorkerForTest()
 	// A startup delay far longer than the test's patience: only the trigger can
 	// produce a fetch in time.
@@ -735,7 +700,6 @@ func TestBingWorker_Lifecycle_StartStopIdempotent(t *testing.T) {
 	defer cleanup()
 
 	// Disabled so the startup run is a no-op and never touches the network.
-	model.ConfigInstance.Appearance.Bing.Enabled = false
 
 	w := newBingWallpaperWorkerForTest()
 	w.Start()
@@ -752,8 +716,6 @@ func TestBingWorker_Lifecycle_StartStopIdempotent(t *testing.T) {
 func TestBingWorker_GlobalSingletonLifecycle(t *testing.T) {
 	_, cleanup := bingTestEnv(t)
 	defer cleanup()
-
-	model.ConfigInstance.Appearance.Bing.Enabled = false
 
 	StartBingWallpaperWorker()
 	StartBingWallpaperWorker() // idempotent
@@ -779,8 +741,6 @@ func TestBingWorker_PersistErrorDoesNotPanic(t *testing.T) {
 	persistBingStateFn = func(wallpaper.BingState) error {
 		return fmt.Errorf("disk full")
 	}
-
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -813,7 +773,6 @@ func TestBingWorker_DoesNotPruneWhenPersistFails(t *testing.T) {
 	persistBingStateFn = func(wallpaper.BingState) error {
 		return fmt.Errorf("config unwritable")
 	}
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -845,7 +804,6 @@ func TestBingWorker_PruneRetainsConfigReferencedFile(t *testing.T) {
 		model.ConfigInstance.Appearance.Bing.File = "bing-20260101.jpg"
 		return nil
 	}
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 	model.ConfigInstance.Appearance.Bing.File = "bing-20260101.jpg"
 
 	w := NewBingWallpaperWorker()

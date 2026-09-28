@@ -125,22 +125,14 @@ func TestFetchDesktopLatest_PayloadsCoverOnlySignablePlatforms(t *testing.T) {
 		require.Truef(t, ok, "missing payload for %q", key)
 		require.NotEmptyf(t, urls, "payload for %q has no candidate URLs", key)
 
-		// Every candidate must be one of the two known sources. A payload from
-		// an unknown host would be an unvetted download, so assert the set
-		// rather than merely that the list is non-empty.
-		var hasGitHub, hasNpm bool
+		// Every candidate must be an npm tarball. The payload is no longer a
+		// GitHub release asset, so a github.com URL here would 404 and silently
+		// fall back to the ~150MB full download.
 		for _, u := range urls {
-			switch {
-			case strings.Contains(u, "github.com/clawbench-dev/clawbench/releases/download/v0.98.0/"):
-				hasGitHub = true
-			case strings.Contains(u, "registry.npmjs.org/@xulongzhe/clawbench-desktop-") && strings.HasSuffix(u, ".tgz"):
-				hasNpm = true
-			default:
-				t.Errorf("platform %q: unexpected candidate %q", key, u)
-			}
+			assert.Truef(t, strings.Contains(u, "registry.npmjs.org/@xulongzhe/clawbench-desktop-") && strings.HasSuffix(u, ".tgz"),
+				"platform %q: payload must be an npm tarball, got %q", key, u)
+			assert.NotContainsf(t, u, "github.com", "platform %q: payload must not point at a GitHub release asset: %q", key, u)
 		}
-		assert.Truef(t, hasGitHub, "platform %q: github release must always be a candidate", key)
-		assert.Truef(t, hasNpm, "platform %q: npm registry must be a candidate", key)
 	}
 
 	// ABSENT, not an empty list: the client distinguishes "no payload for this
@@ -148,33 +140,6 @@ func TestFetchDesktopLatest_PayloadsCoverOnlySignablePlatforms(t *testing.T) {
 	for _, key := range []string{"darwin-x64", "darwin-arm64"} {
 		_, ok := res.Payloads[key]
 		assert.Falsef(t, ok, "macOS must not advertise a payload (%q)", key)
-	}
-}
-
-func TestFetchDesktopLatest_PayloadAssetNamesMatchCI(t *testing.T) {
-	// Same contract as the full-package names: the GitHub asset must match the
-	// payload `zip`/`Compress-Archive` steps in release.yml exactly or every
-	// payload download 404s — and because the client falls back to the full
-	// package, that failure would be invisible.
-	//
-	// The region is pinned because npm sorts ahead of github in China, so the
-	// .zip is no longer necessarily urls[0].
-	withVersion(t, "v0.98.0")
-	withChina(t, false)
-
-	res, err := FetchDesktopLatest()
-	require.NoError(t, err)
-
-	want := map[string]string{
-		"linux-x64":   "clawbench-desktop-linux-x64-payload-v0.98.0.zip",
-		"linux-arm64": "clawbench-desktop-linux-arm64-payload-v0.98.0.zip",
-		"win32-x64":   "clawbench-desktop-windows-x64-payload-v0.98.0.zip",
-	}
-	for key, asset := range want {
-		urls := res.Payloads[key]
-		require.NotEmptyf(t, urls, "missing %q", key)
-		assert.Truef(t, strings.HasSuffix(urls[0], "/"+asset),
-			"platform %q: expected asset %q first outside China, got %q", key, asset, urls[0])
 	}
 }
 
@@ -223,23 +188,26 @@ func TestDesktopPayloadNpmURLs_ExcludesServerSidePrivateMirror(t *testing.T) {
 	}
 }
 
-func TestDesktopPayloadURLs_OrderingFollowsRegion(t *testing.T) {
-	// npm first in China (github.com is unreliable there), github first
-	// elsewhere. Both directions are asserted with the region pinned, so this
-	// cannot pass merely because the test machine happens to be in one region.
+func TestDesktopPayloadURLs_NpmOnly(t *testing.T) {
+	// The payload is published to npm only — it is not attached to the GitHub
+	// Release (a ~3MB zip beside the ~150MB full package misleads anyone
+	// browsing the assets). Both regions must therefore yield the npm tarball
+	// and nothing else, so a reintroduced github.com candidate fails here.
 	const tag = "v0.98.0"
 
 	withChina(t, true)
 	cn := desktopPayloadURLs("linux/amd64", tag)
-	require.NotEmpty(t, cn)
-	assert.True(t, strings.HasSuffix(cn[0], ".tgz"), "China: npm tarball should be first, got %q", cn[0])
-	assert.Contains(t, cn[len(cn)-1], "github.com", "China: github must remain the final fallback")
+	require.Len(t, cn, 1)
+	assert.True(t, strings.HasSuffix(cn[0], ".tgz"), "China: expected the npm tarball, got %q", cn[0])
+	assert.Contains(t, cn[0], platform.NpmMirrorRegistry+"/")
 
 	withChina(t, false)
 	row := desktopPayloadURLs("linux/amd64", tag)
-	require.NotEmpty(t, row)
-	assert.Contains(t, row[0], "github.com", "elsewhere: direct github should be first, got %q", row[0])
-	assert.True(t, strings.HasSuffix(row[len(row)-1], ".tgz"), "elsewhere: npm should be last, got %q", row[len(row)-1])
+	require.Len(t, row, 1)
+	assert.Contains(t, row[0], "registry.npmjs.org", "elsewhere: expected the npm tarball, got %q", row[0])
+	for _, u := range row {
+		assert.NotContains(t, u, "github.com", "the payload must never point at a GitHub release asset: %q", u)
+	}
 }
 
 func TestDesktopPayloadURLs_EmptyWhenPlatformHasNoPayload(t *testing.T) {
@@ -252,20 +220,11 @@ func TestDesktopPayloadURLs_EmptyWhenPlatformHasNoPayload(t *testing.T) {
 	assert.Empty(t, desktopPayloadURLs("plan9/386", "v0.98.0"))
 }
 
-func TestDesktopPayloadAssetName_CarriesTheTag(t *testing.T) {
-	name := desktopPayloadAssetName("linux/amd64", "v0.99.1")
-	assert.Equal(t, "clawbench-desktop-linux-x64-payload-v0.99.1.zip", name)
-	assert.Contains(t, name, "v0.99.1", "the tag must appear in the payload name")
-
-	// macOS and unknown platforms have no payload.
-	assert.Empty(t, desktopPayloadAssetName("darwin/arm64", "v0.99.1"))
-	assert.Empty(t, desktopPayloadAssetName("plan9/386", "v0.99.1"))
-}
-
 func TestDesktopAssetNameFromBase_SharedByBothArchives(t *testing.T) {
-	// Both archive kinds are named through one helper so the two cannot drift
-	// into different conventions (which releaseAssets.test.ts also pins).
-	assert.Equal(t, "base-v1.0.0.zip", desktopAssetNameFromBase("base", "v1.0.0"))
+	// The full package name is built by appending the tag; the payload has no
+	// release asset name any more (it is npm-only), so only this shape is
+	// asserted.
+	assert.Equal(t, "clawbench-desktop-linux-x64-v1.0.0.zip", desktopAssetName("linux/amd64", "v1.0.0"))
 }
 
 func TestReleaseAssetURLs_AlwaysIncludesDirectGitHub(t *testing.T) {

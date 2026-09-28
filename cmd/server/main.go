@@ -585,15 +585,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// InitDB creates moments from now, so a restart before the first config
 	// write would otherwise classify this install as pre-existing and silently
 	// drop the factory wallpaper.
-	// Persist the appearance values derived (fresh install) or normalized (a
-	// Bing mode with the fetch switch off) during ApplyDefaults. Both exist only
-	// in memory at this point and must survive a restart; ordinary existing
-	// installs write nothing here.
-	if err := handler.PersistStartupAppearance(); err != nil {
-		// Not fatal: the in-memory values still apply for this process.
-		slog.Warn("failed to persist startup appearance", slog.String("err", err.Error()))
-	}
-
 	// Reclaim gallery images left on disk but no longer referenced by config
 	// (e.g. an upload that failed between writing the file and recording it).
 	knownGalleryFiles := make([]string, 0, len(model.ConfigInstance.Appearance.Local.Items))
@@ -1530,14 +1521,6 @@ func hotReloadReconfigure(port int) {
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
 	hotReloadFeishu(cfg)
-
-	// --- Bing wallpaper: fetch immediately when enabled ---
-	// The worker runs continuously and re-reads the enabled flag, so enabling
-	// the feature only needs a nudge — otherwise the user would wait up to 24h
-	// for the first image.
-	if cfg.Appearance.Bing.Enabled {
-		service.TriggerBingSync()
-	}
 }
 
 // hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.

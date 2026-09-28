@@ -60,9 +60,10 @@ type bingArchiveResponse struct {
 // it on disk, so every client sees the same image without each one reaching out
 // to Bing.
 //
-// The worker runs for the lifetime of the process even when the feature is
-// disabled: work() re-reads the enabled flag on every run, so toggling the
-// setting only needs Trigger() to take effect immediately rather than a
+// It runs unconditionally for the lifetime of the process — there is no enable
+// switch, because the cached image is a shared server resource and which device
+// displays it is a per-device choice made in the browser. Trigger() requests an
+// immediate fetch (used by the settings panel's sync button) rather than a
 // stop/start cycle.
 type BingWallpaperWorker struct {
 	stopCh   chan struct{}
@@ -168,24 +169,25 @@ func (w *BingWallpaperWorker) run() {
 }
 
 // work performs one fetch attempt. Every run re-reads the live config so a
-// settings change is picked up without restarting the worker.
+// language change is picked up without restarting the worker.
+//
+// There is no enable switch: the server keeps one fresh Bing image cached on
+// disk for whoever wants it. A failure leaves the previously cached image and
+// its attribution untouched, so the last good image keeps serving.
 func (w *BingWallpaperWorker) work() {
 	// Read the live config the same way other service code does (see
 	// session_runtime.go); config writes are serialized by the handler's mutex.
 	bing := model.ConfigInstance.Appearance.Bing
-	if !bing.Enabled {
-		return
-	}
 
 	today := time.Now().Format("20060102")
 	if bing.LastSuccessDate == today && bing.File != "" {
 		return // already have today's image
 	}
 
-	mkt := bing.Mkt
-	if mkt == "" {
-		mkt = "zh-CN"
-	}
+	// The market follows the server's UI language: there is no separate
+	// wallpaper market setting to keep in step, and a per-device choice would
+	// not make sense for a single shared cache.
+	mkt := wallpaper.BingMktForLocale(model.ConfigInstance.Language)
 
 	state, err := fetchBingWallpaper(mkt, today)
 	state.Mkt = mkt

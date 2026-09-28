@@ -13,9 +13,10 @@
       password_label: 'Password',
       password_placeholder: 'Password',
       connect: 'Connect',
-      protocol: 'Protocol',
       server_address: 'Server Address',
-      add_connect: 'Add & Connect',
+      add: 'Add',
+      save: 'Save',
+      edit_server: 'Edit Server',
       cancel: 'Cancel',
       add_server: 'Add Server',
       confirm: 'Confirm',
@@ -24,8 +25,13 @@
       delete_server_msg: 'Delete this server?',
       saved_servers: 'Saved Servers',
       authenticating: 'Authenticating...',
+      saving: 'Saving...',
+      name_label: 'Name (optional)',
+      name_placeholder: 'e.g. Home NAS',
+      duplicate_name: 'That name is already used',
       enter_password: 'Please enter password',
-      enter_address: 'Please enter server address',
+      enter_full_address: 'Enter a full address with http:// or https:// and a port, e.g. https://192.168.1.100:20000',
+      duplicate_server: 'That address is already saved',
       connection_failed: 'Connection failed: ',
       connect_error: 'Unable to connect. Check address and network.',
       wrong_password: 'Wrong password',
@@ -37,9 +43,10 @@
       password_label: '登录密码',
       password_placeholder: '密码',
       connect: '连 接',
-      protocol: '协议',
       server_address: '服务器地址',
-      add_connect: '添 加 并 连 接',
+      add: '添 加',
+      save: '保 存',
+      edit_server: '编辑服务器',
       cancel: '取 消',
       add_server: '添加服务器',
       confirm: '确认',
@@ -48,8 +55,13 @@
       delete_server_msg: '删除此服务器？',
       saved_servers: '已保存服务器',
       authenticating: '认证中...',
+      saving: '保存中...',
+      name_label: '名称（选填）',
+      name_placeholder: '例如 家里的 NAS',
+      duplicate_name: '该名称已被使用',
       enter_password: '请输入密码',
-      enter_address: '请输入服务器地址',
+      enter_full_address: '请输入完整地址，包含 http:// 或 https:// 与端口，例如 https://192.168.1.100:20000',
+      duplicate_server: '该地址已存在',
       connection_failed: '连接失败: ',
       connect_error: '无法连接到服务器，请检查地址和网络。',
       wrong_password: '密码错误',
@@ -902,6 +914,16 @@
     font-weight: 500;
   }
 
+  /* Row actions: edit + delete, kept in one group so the info block can
+     stretch without pushing the icons apart. */
+  .server-item-actions {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .server-edit-btn,
   .server-delete-btn {
     flex-shrink: 0;
     border: none;
@@ -916,13 +938,24 @@
     transition: background 0.1s, color 0.1s;
   }
 
+  .server-edit-btn:hover {
+    background: rgba(var(--accent-rgb), 0.12);
+    color: var(--accent-color);
+  }
+
   .server-delete-btn:hover {
     background: rgba(220, 38, 38, 0.1);
     color: var(--color-red);
   }
 
+  .server-item.active .server-edit-btn,
   .server-item.active .server-delete-btn {
     color: var(--text-muted);
+  }
+
+  .server-item.active .server-edit-btn:hover {
+    color: var(--accent-color);
+    background: rgba(var(--accent-rgb), 0.15);
   }
 
   .server-item.active .server-delete-btn:hover {
@@ -945,69 +978,12 @@
     margin-bottom: 6px;
   }
 
-  /* Protocol radio */
-  .protocol-group {
-    display: flex;
-    gap: 20px;
-    margin-bottom: 16px;
-  }
-
-  .protocol-group label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
+  /* Title shown above the add form when it is reused for editing */
+  .form-title {
+    font-size: 15px;
+    font-weight: 600;
     color: var(--text-primary);
-    cursor: pointer;
-  }
-
-  .protocol-group input[type="radio"] {
-    appearance: none;
-    -webkit-appearance: none;
-    width: 18px;
-    height: 18px;
-    border: 2px solid var(--border-color);
-    border-radius: 50%;
-    position: relative;
-    cursor: pointer;
-    transition: border-color 0.2s;
-  }
-
-  .protocol-group input[type="radio"]:checked {
-    border-color: var(--accent-color);
-  }
-
-  .protocol-group input[type="radio"]:checked::after {
-    content: '';
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--accent-color);
-  }
-
-  /* Host + Port row */
-  .host-row {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-  }
-
-  .host-row input:first-child {
-    flex: 1;
-  }
-
-  .host-row .colon {
-    color: var(--text-muted);
-    font-size: 18px;
-    line-height: 44px;
-  }
-
-  .host-row input:last-child {
-    width: 90px;
-    flex-shrink: 0;
+    margin-bottom: 14px;
   }
 
   /* Input fields — matches LoginView.vue input style */
@@ -1315,31 +1291,20 @@
         </div>
       </form>
 
-      <!-- Add server form (hidden by default) -->
+      <!-- Add / edit server form (hidden by default) -->
       <form id="addServerForm" onsubmit="return false;" style="display:none;">
-        <!-- Protocol -->
+        <div class="form-title" id="addFormTitle" style="display:none;"></div>
+
+        <!-- Optional display name -->
         <div class="field-group">
-          <span class="field-label" data-i18n="protocol">协议</span>
-          <div class="protocol-group">
-            <label>
-              <input type="radio" name="addProtocol" value="https" checked>
-              HTTPS
-            </label>
-            <label>
-              <input type="radio" name="addProtocol" value="http">
-              HTTP
-            </label>
-          </div>
+          <span class="field-label" data-i18n="name_label">名称（选填）</span>
+          <input type="text" id="addName" data-i18n-placeholder="name_placeholder" placeholder="例如 家里的 NAS" maxlength="40" autocorrect="off" autocapitalize="sentences" spellcheck="false">
         </div>
 
-        <!-- Host + Port -->
+        <!-- Server address (protocol + host + port in one field) -->
         <div class="field-group">
           <span class="field-label" data-i18n="server_address">服务器地址</span>
-          <div class="host-row">
-            <input type="text" id="addHost" placeholder="192.168.1.100" autocorrect="off" autocapitalize="none" spellcheck="false">
-            <span class="colon">:</span>
-            <input type="number" id="addPort" value="20000" inputmode="numeric">
-          </div>
+          <input type="text" id="addAddress" placeholder="https://192.168.1.100:20000" autocorrect="off" autocapitalize="none" spellcheck="false" inputmode="url">
         </div>
 
         <!-- Password -->
@@ -1355,7 +1320,7 @@
         </div>
 
         <button type="submit" class="connect-btn" id="addConnectBtn">
-          <span id="addBtnText" data-i18n="add_connect">添 加 并 连 接</span>
+          <span id="addBtnText" data-i18n="add">添 加</span>
         </button>
         <button type="button" class="cancel-btn" id="cancelAddBtn" data-i18n="cancel">取 消</button>
 
@@ -1399,6 +1364,7 @@
   // SVG icons
   var SVG_SERVER = '<svg class="server-item-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><circle cx="6" cy="6" r="1"/><circle cx="6" cy="18" r="1"/></svg>';
   var SVG_X = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  var SVG_PENCIL = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 
   function applyI18n() {
     document.querySelectorAll('[data-i18n]').forEach(function(el) {
@@ -1453,60 +1419,73 @@
       }
     });
 
-    // Event: add and connect to new server
+    // Event: save the add/edit form. Both "Add Server" and the row pencil land
+    // here; the form's editUrl data attribute is what distinguishes them.
+    // Saving never connects — the user picks the server and presses Connect.
     document.getElementById('addServerForm').addEventListener('submit', function(e) {
       e.preventDefault();
       if (connecting) return;
       hideError('addErrorMsg');
 
-      var host = document.getElementById('addHost').value.trim();
-      var port = document.getElementById('addPort').value.trim();
-      var password = document.getElementById('addPassword').value;
-      var protocol = document.querySelector('input[name="addProtocol"]:checked').value;
-
-      if (!host) {
-        showError('addErrorMsg', t('enter_address'));
-        document.getElementById('addHost').focus();
+      var url = buildServerUrl(document.getElementById('addAddress').value);
+      if (!url) {
+        showError('addErrorMsg', t('enter_full_address'));
+        document.getElementById('addAddress').focus();
         return;
       }
-      if (!port) {
-        port = (protocol === 'https') ? '443' : '80';
+      var password = document.getElementById('addPassword').value;
+      var name = normalizeServerName(document.getElementById('addName').value);
+      // The URL this form is editing ('' when adding). Captured before save so
+      // the rename branch can retire the old entry afterwards.
+      var editingUrl = document.getElementById('addServerForm').getAttribute('data-edit-url') || '';
+
+      // Renaming onto another saved server would silently overwrite that
+      // server's password (saveServer keys on URL). Refuse instead.
+      var clash = savedServers.some(function(s) {
+        return s.url === url && s.url !== editingUrl;
+      });
+      if (clash) {
+        showError('addErrorMsg', t('duplicate_server'));
+        return;
+      }
+      // Names are unique labels. The edited entry is exempt from matching
+      // itself; unnamed servers never collide with each other.
+      if (findServerNameConflict(savedServers, name, editingUrl)) {
+        showError('addErrorMsg', t('duplicate_name'));
+        return;
       }
 
-      var url = protocol + '://' + host + ':' + port;
-      if (url.endsWith('/')) url = url.substring(0, url.length - 1);
-
-      setConnecting(true, true);
+      setSaving(true);
       try {
-        // Save to native list first
-        ClawBenchNative.saveServer(url, password);
-        ClawBenchNative.connectToServer(url, password);
+        ClawBenchNative.saveServerNamed(url, password, name);
+        // URL changed while editing -> the old entry is now a different server,
+        // so retire it. Only when it actually differs: deleting the same URL
+        // would drop the entry we just saved.
+        if (editingUrl && editingUrl !== url) {
+          ClawBenchNative.removeServer(editingUrl);
+        }
       } catch(e) {
         showError('addErrorMsg', t('connection_failed') + e.message);
-        setConnecting(false, true);
+        setSaving(false);
+        return;
       }
+      // Nothing async to wait for on Android: refresh the list and return to it.
+      setSaving(false);
+      hideAddForm();
     });
 
-    // Event: blur on the host field -> normalize a full URL into protocol + port.
-    // Blur, not paste/input: the field is only rewritten after the user leaves it,
-    // so typing is never disturbed mid-keystroke. Reading .value (rather than
-    // clipboard data) also sidesteps WebView clipboard restrictions.
-    document.getElementById('addHost').addEventListener('blur', function() {
-      var parsed = parseServerInput(document.getElementById('addHost').value);
-      // Not a URL we understand -> leave the field exactly as the user typed it.
-      if (!parsed) return;
+    // Event: blur on the address field -> normalize a full address in place.
+    // Blur, not paste/input: the field is only rewritten after the user leaves
+    // it, so typing is never disturbed mid-keystroke. Reading .value (rather
+    // than clipboard data) also sidesteps WebView clipboard restrictions.
+    document.getElementById('addAddress').addEventListener('blur', function() {
+      var url = buildServerUrl(document.getElementById('addAddress').value);
+      // Incomplete address -> leave the field exactly as the user typed it; the
+      // submit handler reports what is missing.
+      if (!url) return;
 
       hideError('addErrorMsg');
-      document.getElementById('addHost').value = parsed.host;
-      // Only override the port when the URL carried one explicitly; the field
-      // keeps its default (20000) otherwise.
-      if (parsed.port !== null) {
-        document.getElementById('addPort').value = parsed.port;
-      }
-      // No scheme in the input -> leave the radio untouched.
-      if (parsed.protocol !== null) {
-        document.querySelector('input[name="addProtocol"][value="' + parsed.protocol + '"]').checked = true;
-      }
+      document.getElementById('addAddress').value = url;
     });
 
     // Event: show add form
@@ -1550,15 +1529,24 @@
     var html = '';
     savedServers.forEach(function(srv, idx) {
       var isActive = (idx === 0);
+      // A named server shows its name; an unnamed one falls back to the
+      // address. The full address always stays in the title tooltip, so a
+      // named row is still identifiable (and copying it is possible).
+      var label = normalizeServerName(srv.name) || formatHost(srv.url);
       html += '<div class="server-item' + (isActive ? ' active' : '') + '" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
       html += '  <div class="server-item-info">';
       html += '    <span class="server-indicator"></span>';
       html += '    ' + SVG_SERVER;
-      html += '    <span class="server-item-url">' + escHtml(formatHost(srv.url)) + '</span>';
+      html += '    <span class="server-item-url" title="' + escHtml(srv.url) + '">' + escHtml(label) + '</span>';
       html += '  </div>';
-      html += '  <button class="server-delete-btn" onclick="event.stopPropagation(); deleteServer(\'' + escJs(srv.url) + '\')" title="' + t('delete') + '">';
-      html += '    ' + SVG_X;
-      html += '  </button>';
+      html += '  <div class="server-item-actions">';
+      html += '    <button class="server-edit-btn" onclick="event.stopPropagation(); editServer(\'' + escJs(srv.url) + '\')" title="' + t('edit_server') + '">';
+      html += '      ' + SVG_PENCIL;
+      html += '    </button>';
+      html += '    <button class="server-delete-btn" onclick="event.stopPropagation(); deleteServer(\'' + escJs(srv.url) + '\')" title="' + t('delete') + '">';
+      html += '      ' + SVG_X;
+      html += '    </button>';
+      html += '  </div>';
       html += '</div>';
     });
 
@@ -1671,17 +1659,59 @@
     });
   }
 
+  /**
+   * Show the form for adding a NEW server: empty fields, "Add" button.
+   */
   function showAddForm() {
+    var form = document.getElementById('addServerForm');
+    // Empty data-edit-url is what marks this as an add, not an edit.
+    form.setAttribute('data-edit-url', '');
+    document.getElementById('addFormTitle').style.display = 'none';
+    document.getElementById('addName').value = '';
+    document.getElementById('addAddress').value = '';
+    document.getElementById('addPassword').value = '';
+    document.getElementById('addBtnText').textContent = t('add');
+
     document.getElementById('serverListSection').style.display = 'none';
     document.getElementById('connectForm').style.display = 'none';
     document.getElementById('addServerBtn').style.display = 'none';
-    document.getElementById('addServerForm').style.display = 'block';
+    form.style.display = 'block';
+  }
+
+  /**
+   * Reuse the add form to edit an existing server. data-edit-url holds the
+   * entry being edited so submit can tell the two modes apart and retire the
+   * old URL when the address changes.
+   */
+  function editServer(url) {
+    var srv = savedServers.find(function(s) { return s.url === url; });
+    if (!srv) return;
+
+    var form = document.getElementById('addServerForm');
+    form.setAttribute('data-edit-url', url);
+    var title = document.getElementById('addFormTitle');
+    title.textContent = t('edit_server');
+    title.style.display = 'block';
+    document.getElementById('addName').value = normalizeServerName(srv.name);
+    document.getElementById('addAddress').value = srv.url;
+    // Prefill the saved password so saving without retyping keeps it.
+    document.getElementById('addPassword').value = srv.password || '';
+    document.getElementById('addBtnText').textContent = t('save');
+
+    document.getElementById('serverListSection').style.display = 'none';
+    document.getElementById('connectForm').style.display = 'none';
+    document.getElementById('addServerBtn').style.display = 'none';
+    form.style.display = 'block';
+    hideError('addErrorMsg');
+    document.getElementById('addAddress').focus();
   }
 
   function hideAddForm() {
     document.getElementById('addServerForm').style.display = 'none';
     document.getElementById('addErrorMsg').classList.remove('visible');
-    renderServerList();
+    // Reload from native rather than re-rendering the stale in-memory array:
+    // saving changed the list (new entry, promoted head, renamed URL).
+    loadServerList();
   }
 
   function formatHost(url) {
@@ -1722,10 +1752,28 @@
     } else {
       btn.disabled = false;
       if (isAddForm) {
-        btn.innerHTML = '<span id="addBtnText">' + t('add_connect') + '</span>';
+        // The form doubles as add and edit, so restore whichever label its
+        // current mode calls for rather than always "Add".
+        var editing = document.getElementById('addServerForm').getAttribute('data-edit-url');
+        btn.innerHTML = '<span id="addBtnText">' + t(editing ? 'save' : 'add') + '</span>';
       } else {
         btn.innerHTML = '<span id="btnText">' + t('connect') + '</span>';
       }
+    }
+  }
+
+  /**
+   * Busy state for the add/edit form's own Save/Add button. Separate from
+   * setConnecting because saving does not authenticate: showing "Authenticating"
+   * would misdescribe what is happening.
+   */
+  function setSaving(saving) {
+    var btn = document.getElementById('addConnectBtn');
+    if (saving) {
+      btn.disabled = true;
+      btn.innerHTML = '<div class="spinner"></div><span>' + t('saving') + '</span>';
+    } else {
+      setConnecting(false, true);
     }
   }
 

@@ -62,8 +62,6 @@ function nativeDownloadWithProgress(id: number, path: string, name: string): voi
         void native?.downloadFile(path)
         return
     }
-    const download = native.downloadFileWithProgress
-
     let settled = false
     let cancelled = false
     let sawEvent = false
@@ -114,7 +112,10 @@ function nativeDownloadWithProgress(id: number, path: string, name: string): voi
     //    undefined immediately, so its Promise would resolve instantly; there
     //    the terminal signal is the `done` event instead. Finishing on the
     //    promise there would hide the bar the moment it appeared.
-    const result = download(path, name, id) as unknown
+    // Must be called as a method on the bridge object, not through a detached
+    // local: Android's WebView JS bridge rejects a call whose receiver is not
+    // the injected object ("can't be invoked on a non-injected object").
+    const result = native.downloadFileWithProgress(path, name, id) as unknown
     if (result && typeof (result as Promise<void>).then === 'function') {
         ;(result as Promise<void>).then(() => finish(true)).catch(() => finish(false))
     }

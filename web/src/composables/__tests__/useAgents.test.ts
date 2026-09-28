@@ -42,7 +42,7 @@ vi.mock('@/composables/usePlanProgress', () => ({
 }))
 
 describe('useAgents', () => {
-  const { agents, defaultAgentId, loadAgents, getAgentBackend, getAgentName,
+  const { agents, defaultAgentId, agentsLoaded, loadAgents, getAgentBackend, getAgentName,
     isDefaultAgent, getDefaultModelId, getAgentModels, isMultiModel,
     getAgent, getAgentModel, getAgentDefaultModelName, agentHeaderTitle,
     syncModelFromAgent, getAgentThinkingEffortLevels, hasThinkingEffortLevels,
@@ -119,6 +119,27 @@ describe('useAgents', () => {
 
     it('sets defaultAgentId from API response', async () => {
       expect(defaultAgentId.value).toBe('claude')
+    })
+
+    // agentsLoaded is the authority signal the agent detail view uses to tell a
+    // removed agent from a not-yet-fetched one. It must only flip on success.
+    it('marks the list as loaded after a successful fetch', async () => {
+      expect(agentsLoaded.value).toBe(true)
+    })
+
+    it('does NOT mark the list as loaded when the fetch fails', async () => {
+      resetAgents()
+      expect(agentsLoaded.value).toBe(false)
+
+      mockApiGet.mockRejectedValue(new Error('Network error'))
+      await loadAgents()
+      expect(agentsLoaded.value).toBe(false)
+    })
+
+    it('clears the loaded flag on reset', () => {
+      expect(agentsLoaded.value).toBe(true)
+      resetAgents()
+      expect(agentsLoaded.value).toBe(false)
     })
 
     it('caches result and does not re-fetch', async () => {

@@ -161,6 +161,43 @@ describe('SessionPickerDialog', () => {
     expect(last.classList.contains('sp-row-create')).toBe(true)
   })
 
+  // ── Vertical rhythm ──
+  // "Too cramped" was the complaint, and the fix is row HEIGHT (32 → 40), not
+  // gutters: the list itself must stay flush so the rows run edge to edge. Both
+  // halves are asserted, because re-adding a gutter would waste the height the
+  // rows just gained. jsdom has no layout engine, so this is a source-level
+  // assertion like the separator test below.
+
+  it('carries the vertical rhythm in the row height, not in list gutters', () => {
+    const src = readWebFile('src/components/common/SessionPickerDialog.vue')
+    const css = src.slice(src.indexOf('<style'))
+    // A bare 32px here was the cramped value; pin the floor, not the exact
+    // number, so a later bump to 44 is not rejected.
+    const row = css.match(/(?:^|\n)\.sp-row\s*\{[^}]*\}/)?.[0]
+    expect(row, '.sp-row should exist').toBeTruthy()
+    const minHeight = row!.match(/min-height:\s*(\d+)px/)?.[1]
+    expect(Number(minHeight)).toBeGreaterThanOrEqual(40)
+    // The list is flush top and bottom — no vertical padding of any form.
+    const list = css.match(/(?:^|\n)\.session-picker-list\s*\{[^}]*\}/)?.[0]
+    expect(list, '.session-picker-list should exist').toBeTruthy()
+    expect(list).toMatch(/padding:\s*0;/)
+    expect(list, 'a vertical gutter reopens the cramped read').not.toMatch(
+      /padding:\s*(?:var\(--space-\d+\)|\d+px)\s+0/,
+    )
+  })
+
+  it('styles the current chip so it reads as a chip, not bare text', () => {
+    // jsdom does not apply the component's scoped CSS, so an unstyled chip
+    // (correct DOM, no rule) would pass every behavioural test above while
+    // rendering as a stray word glued to the title.
+    const src = readWebFile('src/components/common/SessionPickerDialog.vue')
+    const css = src.slice(src.indexOf('<style'))
+    const rule = css.match(/(?:^|\n)\.sp-current-chip\s*\{[^}]*\}/)?.[0]
+    expect(rule, '.sp-current-chip should exist').toBeTruthy()
+    expect(rule).toMatch(/color:\s*var\(--accent-color/)
+    expect(rule).toMatch(/background:\s*color-mix\(in srgb, var\(--accent-color\)/)
+  })
+
   it('draws the row separator as a top border, suppressed on the first row', () => {
     // jsdom does not apply the component's scoped CSS, so assert the rules
     // themselves — a silent drop would leave the list undivided.
@@ -170,6 +207,47 @@ describe('SessionPickerDialog', () => {
     // Without this the header's bottom border and the first row's top border
     // stack into a visibly heavier double line.
     expect(css).toMatch(/\.sp-row:first-child\s*\{\s*border-top:\s*none/)
+  })
+
+  it('labels the create row as 新会话', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const create = wrapper.find('.sp-row-create')
+    // quoteBar.newSession is the "新会话" wording (session.newSession, used by
+    // the session-list header, stays "新建会话").
+    expect(create.text()).toContain('quoteBar.newSession')
+    expect(create.text()).not.toContain('session.newSession')
+  })
+
+  // ── Current-session label ──
+  // The tint + rail alone said "this row is special" but not WHY. The row is
+  // simultaneously the session you are in and a destination you can pick, so
+  // the chip is what disambiguates it from a merely highlighted row.
+
+  it('labels the currently-open session row with the current chip', async () => {
+    currentIdRef().value = 's-2'
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    const chips = wrapper.findAll('.sp-current-chip')
+    expect(chips.length).toBe(1)
+    expect(chips[0].text()).toBe('quoteBar.current')
+    // It must be on the row that owns the current id, not merely the first row.
+    expect(chips[0].element.closest('.sp-row')!.textContent).toContain('Second session')
+  })
+
+  it('renders no current chip when there is no open session', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.findAll('.sp-current-chip').length).toBe(0)
+  })
+
+  it('keeps the current chip out of the create row', async () => {
+    currentIdRef().value = 's-1'
+    const wrapper = mountPicker()
+    await flushPromises()
+    expect(wrapper.find('.sp-row-create .sp-current-chip').exists()).toBe(false)
   })
 
   it('marks and pins the currently-open session to the top', async () => {
@@ -214,27 +292,38 @@ describe('SessionPickerDialog', () => {
     const wrapper = mountPicker()
     await flushPromises()
     expect(wrapper.findAll('.sp-row:not(.sp-row-create) .sp-goto').length).toBe(3)
-    // The create row is a different action, so it has no goto BUTTON. It shows a
-    // decorative arrow instead — assert it is not a button so it cannot be
-    // mistaken for (or focus into) a second action.
-    expect(wrapper.find('.sp-row-create .sp-goto').exists()).toBe(false)
-    const arrow = wrapper.find('.sp-row-create .sp-create-arrow')
-    expect(arrow.exists()).toBe(true)
-    expect(arrow.element.tagName).toBe('SPAN')
-    expect(arrow.attributes('aria-hidden')).toBe('true')
+    // The create row now carries its own goto button too — same pair.
+    expect(wrapper.find('.sp-row-create .sp-goto').exists()).toBe(true)
   })
 
-  it('labels the create row as 新会话 and keeps it a single action', async () => {
+  it('emits create-and-open when the create row\'s arrow is clicked', async () => {
     const wrapper = mountPicker()
     await flushPromises()
 
-    const create = wrapper.find('.sp-row-create')
-    // quoteBar.newSession is the "新会话" wording (session.newSession, used by
-    // the session-list header, stays "新建会话").
-    expect(create.text()).toContain('quoteBar.newSession')
-    expect(create.text()).not.toContain('session.newSession')
-    // One action: the arrow is not interactive, so the whole row is the target.
-    expect(create.findAll('button').length).toBe(0)
+    await wrapper.find('.sp-row-create .sp-goto').trigger('click')
+
+    expect(wrapper.emitted('create-and-open')).toBeTruthy()
+    // Must not also fire the plain create (the arrow is the "and open" half).
+    expect(wrapper.emitted('create')).toBeFalsy()
+    expect(wrapper.emitted('close')).toBeTruthy()
+  })
+
+  it('the create row click still emits plain create (no open)', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+
+    await wrapper.find('.sp-row-create .sp-title').trigger('click')
+
+    expect(wrapper.emitted('create')).toBeTruthy()
+    expect(wrapper.emitted('create-and-open')).toBeFalsy()
+  })
+
+  it('the create row arrow is labelled for assistive tech', async () => {
+    const wrapper = mountPicker()
+    await flushPromises()
+    const btn = wrapper.find('.sp-row-create .sp-goto')
+    expect(btn.attributes('aria-label')).toBe('quoteBar.createAndOpen')
+    expect(btn.attributes('title')).toBe('quoteBar.createAndOpen')
   })
 
   it('emits select-and-open (not select) when the goto button is clicked', async () => {

@@ -40,7 +40,7 @@ const FADE_OUT_MS = 200
 export interface SplashController {
   /**
    * Show the overlay for a navigation to `url`, if that navigation warrants it.
-   * Returns whether the overlay was shown.
+   * Returns whether the overlay was shown. Never clobbers an active version gate.
    */
   show(url: string): boolean
   /** Hide the overlay. Idempotent, and safe after the window is gone. */
@@ -51,6 +51,29 @@ export interface SplashController {
   destroy(): void
   /** Whether the overlay is currently shown. */
   isVisible(): boolean
+  /**
+   * Replace the loading overlay with the blocking version-mismatch gate. The
+   * page renders the client/server versions and two actions (download /
+   * continue); the main process owns what those actions do.
+   */
+  showVersionMismatch(info: GateOverlayInfo): void
+  /** Dismiss the gate because the user chose to continue on the current version. */
+  continueGate(): void
+  /** Whether the blocking version gate is up. */
+  isGated(): boolean
+}
+
+/** The version details the gate overlay renders. */
+export interface GateOverlayInfo {
+  /** The running desktop version. */
+  clientVersion: string
+  /** The version the server reports for itself. */
+  serverVersion: string
+  /**
+   * Which side is newer, so the overlay can word itself correctly. `newer`
+   * means the client is AHEAD of the server, where "download" aligns DOWN.
+   */
+  direction: 'older' | 'newer'
 }
 
 export interface SplashOptions {
@@ -93,6 +116,28 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
   view.setVisible(false)
   win.contentView.addChildView(view)
 
+  /**
+   * What the overlay is currently doing.
+   *
+   *  - `idle`  — hidden, nothing pending.
+   *  - `splash`— the loading overlay (stages, connection timeout, fail-safe).
+   *  - `gate`  — the blocking version-mismatch gate. It must survive the app's
+   *              own `dismissSplash()` call (the app finishes booting BEHIND the
+   *              gate), so `dismiss()` defers instead of hiding, and the boot
+   *              fail-safe is disabled — the gate's buttons are the only exit.
+   */
+  type Mode = 'idle' | 'splash' | 'gate'
+  let mode: Mode = 'idle'
+  /**
+   * Set by EVERY `dismiss()` call, including ones that arrive while the gate is
+   * up. Without it, a dismiss that lands during the gate would be lost: after
+   * the gate closes the overlay would stay hidden only by accident, and a
+   * subsequent `show()` could not tell whether the app was already done.
+   */
+  let dismissRequested = false
+  /** A gate requested before the overlay page was ready, replayed on load. */
+  let pendingMismatch: GateOverlayInfo | null = null
+
   let visible = false
   let destroyed = false
   /** Whether the overlay's own document has parsed and can take commands. */
@@ -124,6 +169,9 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
 
   /** Push `stage` into the overlay, unless it would move the text backwards. */
   function setStage(stage: SplashStage): void {
+    // The gate is a different screen; a stale loading stage must not repaint
+    // over it (the overlay page is reused, so this is a real path).
+    if (mode !== 'splash') return
     if (!isForwardStage(currentStage, stage)) return
     currentStage = stage
     if (!pageReady || !isAlive()) return
@@ -136,12 +184,16 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
    * Arm the fail-safe: the JS app dismisses the overlay itself once its
    * initialization resolves, but if that never happens (init threw, or the
    * bridge is unavailable) the overlay would cover the app forever.
+   *
+   * Never armed for the gate: its buttons are the deliberate exit, and a timer
+   * that revealed the app underneath would defeat the whole point of blocking.
    */
   function armFailSafe(): void {
+    if (mode !== 'splash') return
     failSafeTimer = clearTimer(failSafeTimer)
     failSafeTimer = setTimeout(() => {
       failSafeTimer = null
-      if (!visible || !isAlive()) return
+      if (mode !== 'splash' || !visible || !isAlive()) return
       record('W', TAG, `fail-safe fired after ${SPLASH_FAILSAFE_MS}ms — JS never called dismissSplash(); forcing overlay hidden`)
       dismiss()
     }, SPLASH_FAILSAFE_MS)
@@ -161,13 +213,15 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
 
   function hideNow(): void {
     cancelTimers()
+    mode = 'idle'
     visible = false
     currentStage = null
+    pendingMismatch = null
     if (isAlive()) view.setVisible(false)
   }
 
-  function dismiss(): void {
-    if (!visible || !isAlive()) return
+  /** Fade the overlay out (used by the normal dismiss path). */
+  function fadeOut(): void {
     cancelTimers()
     visible = false
     currentStage = null
@@ -184,9 +238,77 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
     }, FADE_OUT_MS)
   }
 
+  function dismiss(): void {
+    // Record the request even when the gate defers it: the app HAS finished
+    // booting, and once the gate closes the overlay must not reappear.
+    dismissRequested = true
+    // While the gate is up the app finishes booting behind it; hiding here would
+    // reveal the very app the gate exists to hold back. `continueGate()` does
+    // the hiding instead.
+    if (mode === 'gate') return
+    if (!visible || !isAlive()) return
+    mode = 'idle'
+    fadeOut()
+  }
+
+  /** Hand the gate details to the overlay page. Assumes the page is ready. */
+  function applyMismatch(info: GateOverlayInfo): void {
+    if (!pageReady || !isAlive()) return
+    // Reset first: the page is reused, so a previous gate's fade class (or a
+    // prior splash state) would otherwise leave it transparent.
+    view.webContents
+      .executeJavaScript('window.__versionMismatchReset && window.__versionMismatchReset()')
+      .then(() => view.webContents.executeJavaScript(
+        `window.__versionMismatchShow && window.__versionMismatchShow(${JSON.stringify(info)})`,
+      ))
+      .catch(() => { /* overlay went away mid-call */ })
+  }
+
+  /**
+   * Show the blocking version-mismatch gate.
+   *
+   * Called from the main process when the version check resolves — possibly
+   * AFTER the app already called `dismiss()`. That is why this re-shows the view
+   * and cancels timers rather than assuming the splash is still up: a pending
+   * 200ms fade from the app's dismiss would otherwise hide the gate right after
+   * it appears.
+   */
+  function showVersionMismatch(info: GateOverlayInfo): void {
+    if (!isAlive()) return
+    // Already gating: keep the first one. A second check (e.g. a reconnect) must
+    // not restart the animation or drop the user's in-progress download.
+    if (mode === 'gate') return
+
+    // Drop any pending fade/hide from a dismiss or a finished splash.
+    cancelTimers()
+    mode = 'gate'
+    visible = true
+    currentStage = null
+    syncBounds()
+    view.setVisible(true)
+
+    if (!pageReady) {
+      // First use: load the overlay content; did-finish-load replays the gate.
+      pendingMismatch = info
+      void view.webContents
+        .loadFile(loginPagePath(), { query: { splash: '1' } })
+        .catch((err) => record('E', TAG, `overlay failed to load: ${String(err)}`))
+      return
+    }
+    applyMismatch(info)
+  }
+
   // ── Overlay page lifecycle ────────────────────────────────────────────────
   view.webContents.on('did-finish-load', () => {
     pageReady = true
+    // A gate may have been requested before the page could take commands (the
+    // check races the very first load). Replay it now.
+    if (pendingMismatch) {
+      const info = pendingMismatch
+      pendingMismatch = null
+      applyMismatch(info)
+      return
+    }
     // The page may have finished loading after show() already set a stage.
     if (currentStage) {
       const stage = currentStage
@@ -228,11 +350,15 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
       // A local file (the first-run login page) has nothing to wait for, so an
       // overlay would be a one-frame flash of the logo.
       if (!shouldShowSplash(url)) return false
+      // Never clobber the blocking version gate with a loading overlay.
+      if (mode === 'gate') return false
       if (visible) return true
 
       // Drop any fade-out still pending from a previous dismiss, or it would
       // fire mid-way through this show and hide the overlay again.
       cancelTimers()
+      mode = 'splash'
+      dismissRequested = false
       visible = true
       syncBounds()
       view.setVisible(true)
@@ -260,6 +386,8 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
 
     cancel(): void {
       if (!isAlive()) return
+      // Only the loading overlay has a cancel button; the gate's markup omits it.
+      if (mode === 'gate') return
       record('I', TAG, 'user cancelled the connection')
       // Stop the in-flight navigation before hiding, or the server page could
       // still replace the login page the caller is about to show.
@@ -283,6 +411,22 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
 
     isVisible(): boolean {
       return visible
+    },
+
+    showVersionMismatch,
+
+    continueGate(): void {
+      if (mode !== 'gate') return
+      mode = 'idle'
+      dismissRequested = false
+      // Unconditional: the gate is the thing being dismissed, so it must come
+      // down even though the app's own dismiss was deferred while it was up.
+      if (isAlive()) fadeOut()
+      else { visible = false }
+    },
+
+    isGated(): boolean {
+      return mode === 'gate'
     },
   }
 }

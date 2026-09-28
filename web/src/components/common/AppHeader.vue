@@ -91,7 +91,14 @@
                 <span class="item-path">{{ item.displayPath }}</span>
               </span>
               <HintTooltip :content="item.path" />
+              <!-- The currently open project has no remove button at all: it is
+                   not removable (removing it also clears the server-side
+                   default-project flag, so a restart would silently fall back to
+                   the home directory), and rendering a permanently dead control
+                   is just noise. The row stays marked `active`, which already
+                   says "you are here". -->
               <button
+                v-if="!isCurrentProject(item)"
                 class="item-remove-btn"
                 type="button"
                 :title="t('appHeader.removeProject')"
@@ -260,7 +267,7 @@
         :aria-label="t('appHeader.windowMinimize')"
         @click="minimizeWindow"
       >
-        <Minus :size="16" />
+        <Minus :size="14" />
       </button>
       <button
         class="window-control"
@@ -275,11 +282,11 @@
              radius here is 1.5 on a 16/24 box — squarer, and matched between the
              maximize and restore shapes so they do not look like two families.
              Two overlapping squares is the conventional "restore" glyph. -->
-        <svg v-if="isWindowMaximized" class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg v-if="isWindowMaximized" class="window-control-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="8" y="8" width="14" height="14" rx="1.5" />
           <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
         </svg>
-        <svg v-else class="window-control-glyph" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg v-else class="window-control-glyph" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="4" y="4" width="16" height="16" rx="1.5" />
         </svg>
       </button>
@@ -290,7 +297,7 @@
         :aria-label="t('appHeader.windowClose')"
         @click="closeWindow"
       >
-        <X :size="16" />
+        <X :size="14" />
       </button>
     </div>
   </header>
@@ -881,7 +888,35 @@ async function selectRecent(item: RecentItem) {
     }
 }
 
+/**
+ * Whether `item` is the project currently open in the app.
+ *
+ * Used to hide the row's remove button (and to refuse a programmatic call).
+ *
+ * The comparison must be separator-normalized: `projectRoot` comes from
+ * GET /api/project and recent-project paths from the DB, and the two can carry
+ * different separators on Windows ("C:\\a\\b" vs "C:/a/b") — a raw `===` would
+ * then fail to recognize the open project and leave its remove button visible.
+ * A trailing slash is tolerated for the same reason. Case is NOT folded: the
+ * backend treats these as opaque strings elsewhere (e.g. `selectRecent`), and
+ * folding would be wrong on case-sensitive filesystems.
+ *
+ * `projectRoot` is a plain String prop and may be absent (the header renders
+ * before the project is known), so the normalization tolerates undefined rather
+ * than throwing inside the render.
+ */
+function isCurrentProject(item: RecentItem): boolean {
+    const norm = (p?: string) => (p || '').replace(/\\/g, '/').replace(/\/+$/, '')
+    const path = norm(item.path)
+    // An empty path is never "the current project" — otherwise an item with no
+    // path would match an absent root.
+    return path !== '' && path === norm(props.projectRoot)
+}
+
 async function removeRecent(item: RecentItem) {
+    // The open project is not removable (no button is rendered for it), but
+    // guard the handler too: a programmatic call must not slip past the UI.
+    if (isCurrentProject(item)) return
     // Close the dropdown first: it is teleported with z-index 9999, higher than
     // the confirm dialog overlay (3000), so leaving it open would cover the dialog.
     dropdownOpen.value = false
@@ -1362,10 +1397,10 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     /* Equal thirds of the block, via one width on each button rather than a
        total on the parent: the three glyphs have different intrinsic widths (a
        `□` is not a `✕`), so content sizing would make them uneven.
-       40px (down from 46px) with a 16px glyph lands the ink density at ~20.6%,
-       close to the neighbouring icon buttons (~22%), instead of the sparse
-       14% the 46px/14px combination produced. */
-    width: 40px;
+       14px glyph on a 34px cell lands the ink density at ~18.6%, between the
+       neighbouring icon buttons (~22%) and the sparse 14% that the old
+       46px/14px pairing produced. */
+    width: 34px;
     flex: 0 0 auto;
     display: flex;
     align-items: center;

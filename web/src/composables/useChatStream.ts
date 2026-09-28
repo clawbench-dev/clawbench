@@ -656,7 +656,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking', payload); noteDroppedEvent('thinking', 'buffered until placeholder'); return }
         const thinkingData = payload as unknown as ThinkingEventData
-        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, parentToolCallId: thinkingData.parent_tool_call_id })
+        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id })
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
         debouncedRender()

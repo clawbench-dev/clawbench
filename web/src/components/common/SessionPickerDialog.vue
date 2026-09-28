@@ -31,6 +31,13 @@
             :size="16"
           />
           <span class="sp-title">{{ session.title || t('session.unnamed') }}</span>
+          <!-- The current session gets an explicit label, not just the tint/rail:
+               "which one am I already in?" was the one question the row could not
+               answer at a glance. It sits next to the title so it is read with it,
+               before the trailing spinner/arrow. -->
+          <span v-if="session.id === currentSessionId" class="sp-current-chip">
+            {{ t('quoteBar.current') }}
+          </span>
           <!-- Running cue: a trailing spinner, no text. The row's title carries
                the meaning for assistive tech, and the spinner itself is
                decorative (one live region per row would be noise). -->
@@ -56,9 +63,8 @@
         <!-- Create a session with the DEFAULT agent and send the payload there.
              Deliberately no agent choice: the user is picking a destination for
              an already-composed message, not configuring a conversation.
-             The trailing arrow is decorative, not a second action — the row
-             itself is the only target, and the arrow just says "leads
-             somewhere" in the same visual slot the session rows use. -->
+             Same pair as the session rows: the row adds without leaving, the
+             trailing button adds and opens the new session. -->
         <div
           class="sp-row sp-row-create"
           role="button"
@@ -69,9 +75,15 @@
         >
           <Plus :size="15" />
           <span class="sp-title">{{ t('quoteBar.newSession') }}</span>
-          <span class="sp-create-arrow" aria-hidden="true">
+          <button
+            class="sp-goto"
+            type="button"
+            :title="t('quoteBar.createAndOpen')"
+            :aria-label="t('quoteBar.createAndOpen')"
+            @click.stop="handleCreateAndOpen"
+          >
             <ArrowRight :size="14" />
-          </span>
+          </button>
         </div>
       </template>
     </div>
@@ -99,6 +111,7 @@ import { appLog } from '@/utils/appLog'
  * Two explicit actions per row, so the user never has to remember a mode:
  *  - clicking the row ADDS to that session and keeps the current screen;
  *  - the trailing button ADDS and then OPENS that session.
+ * The create row follows the same pair ("add and send" vs "create and open").
  *
  * The row language is the app's simplest: one line, agent icon, ellipsised
  * title, and a trailing spinner while a session is running. The session
@@ -122,6 +135,8 @@ const emit = defineEmits<{
   /** Add to this session, then open it. */
   (e: 'select-and-open', sessionId: string): void
   (e: 'create'): void
+  /** Create a session, then open it. */
+  (e: 'create-and-open'): void
   (e: 'close'): void
 }>()
 
@@ -215,6 +230,11 @@ function handleCreate() {
   handleClose()
 }
 
+function handleCreateAndOpen() {
+  emit('create-and-open')
+  handleClose()
+}
+
 function handleClose() {
   emit('close')
 }
@@ -224,10 +244,11 @@ function handleClose() {
 .session-picker-list {
   display: flex;
   flex-direction: column;
-  /* Breathing room above/below the list so the rows do not crowd the header and
-     the sheet edge. The rows themselves stay tight — the density is the point,
-     the padding is what keeps it from reading as cramped. */
-  padding: var(--space-5) 0;
+  /* No vertical padding: the rows run edge to edge between the header and the
+     sheet bottom. The row height carries the breathing room instead, and the
+     first row's separator is already suppressed (see below) so the flush top
+     does not read as a stray edge. */
+  padding: 0;
   overflow-y: auto;
 }
 
@@ -241,7 +262,11 @@ function handleClose() {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  min-height: 32px;
+  /* 40px, not the previous 32px: 32 was tighter than every other tappable list
+     row in the app and left no room for the current-session chip without the
+     title and the chip colliding. Still under the 44px session-list row — this
+     picker is a short, one-shot list, not the main navigation. */
+  min-height: 40px;
   padding: 0 var(--space-6);
   border: none;
   border-top: 1px solid var(--border-color, #dee2e6);
@@ -283,14 +308,18 @@ function handleClose() {
   background: color-mix(in srgb, var(--text-primary) 7%, transparent);
 }
 
-/* The already-open session. A 2px accent rail + tint (the theme picker's
-   selected language) — the rail is load-bearing: the tint alone is ~1.09:1
-   against the panel in light themes and reads as nothing.
+/* The already-open session. Three cues, because the row has to answer "which
+   one am I already in?" while also being a button that does something else:
+   1. the label chip (`.sp-current-chip`, below) — the unambiguous part;
+   2. a 3px accent rail (the theme picker's selected language) — the rail is
+      load-bearing, the tint alone is ~1.09:1 against the panel in light themes
+      and reads as nothing;
+   3. the accent tint.
    The rail spans the FULL row height, matching .theme-item.active::before. A
    shorter centred dash was tried and read as a stray floating mark rather than
    a selection edge. */
 .sp-row-current {
-  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
 }
 
 .sp-row-current::before {
@@ -299,8 +328,23 @@ function handleClose() {
   left: 0;
   top: 0;
   bottom: 0;
-  width: 2px;
+  width: 3px;
   background: var(--accent-color);
+}
+
+/* "Current" chip on the open session's row. The tint + rail say "special", the
+   chip says WHICH kind of special — the row is both the session you are in and
+   a destination you can pick, and only the word disambiguates the two. Sized
+   from the fork-generation chip so the two read as the same family. */
+.sp-current-chip {
+  flex-shrink: 0;
+  font-size: var(--font-size-2xs);
+  line-height: 16px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-xs);
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 14%, transparent);
+  white-space: nowrap;
 }
 
 /* Running cue: the shared LoadingIndicator spinner, parked on the trailing
@@ -375,21 +419,16 @@ function handleClose() {
   color: var(--text-muted);
 }
 
-/* Trailing arrow on the create row: the same visual slot the session rows put
-   their goto button in, but always visible (it is decoration, not an action),
-   and muted so it does not read as a second tap target. */
-.sp-create-arrow {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  color: var(--text-muted);
+/* The create row's trailing button is always visible: unlike a session row
+   (where the arrow is an optional shortcut past the row's own action), "create
+   and open" is the ONLY way to reach the new session, so hiding it behind a
+   hover would make it undiscoverable. */
+.sp-row-create .sp-goto {
+  opacity: 1;
 }
 
-.sp-create-arrow svg {
-  flex-shrink: 0;
+.sp-row-create .sp-goto svg {
+  color: inherit;
 }
 
 .sp-empty {

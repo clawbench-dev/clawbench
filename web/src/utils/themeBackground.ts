@@ -23,6 +23,7 @@
 import { appLog } from '@/utils/appLog'
 import { buildLocalFileUrl } from '@/utils/download'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
+import { DEFAULT_ANIMATED_STYLE, isKnownAnimatedStyle } from '@/utils/animatedWallpapers'
 
 export type WallpaperState = 'unknown' | 'set' | 'unset'
 
@@ -38,9 +39,8 @@ let lastImageUrl: string | null = null
 let imageUrlNonce = 0
 
 /**
- * Build the wallpaper image URL for a bare file name (the server-resolved
- * `active_file`). Only meaningful when a wallpaper file is set; otherwise
- * returns an empty string.
+ * Build the wallpaper image URL for a bare file name. Only meaningful when a
+ * wallpaper file is resolved; otherwise returns an empty string.
  *
  * Served from the gallery/Bing image endpoint, which resolves the name to its
  * theme subdirectory (local/ or bing/) — the same endpoint gallery thumbnails
@@ -141,7 +141,7 @@ export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): s
 /**
  * Apply (or clear) the wallpaper effect for the given state.
  * `wallpaperFile` — active file name from server config ('' = none).
- * `panelOpacity`  — 0.5..1.0 opacity multiplier (clamped).
+ * `panelOpacity`  — 0..1 opacity multiplier (clamped).
  * `dark`          — current resolved theme is dark (drives scrim strength).
  * `forceBust`     — when true, regenerate the image URL even if the file name is
  *                   unchanged. Pass after an upload/replace that reuses the same
@@ -174,7 +174,7 @@ export function applyWallpaper(
   el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
   el.style.setProperty('--wallpaper-scrim', hasImage ? wallpaperScrim(dark) : 'transparent')
 
-  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.5, panelOpacity)) : 0.85
+  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0, panelOpacity)) : 0.7
   // Store the panel opacity as a <percentage> so the CSS color-mix stops are
   // plain percentages (calc() inside color-mix trips some CSS minifiers).
   el.style.setProperty('--panel-alpha', `${Math.round(alpha * 1000) / 10}%`)
@@ -198,67 +198,88 @@ export function applyWallpaperScrim(dark: boolean): void {
 }
 
 /**
- * Resolve the wallpaper tri-state against the current server config.
- * The `appearance` section exists only after GET /api/config completes.
- *
- * The server resolves which image is active (mode + enabled + selection) and
- * exposes it as `active_file`, so the client reads that rather than
- * reimplementing the precedence.
- */
-/**
- * Whether an *image* wallpaper is displayed, per the server's `active_file`.
+ * Whether an *image* wallpaper is displayed on this device.
  *
  * Careful with the name: `'unset'` means "no image file", NOT "no background".
- * The animated wave (`wallpaper_mode: 'wave'`) is drawn on the client and has
- * no file, so it reports `'unset'` here while still being a live background.
- * Use isWaveActive() to detect that case, and resolveWallpaperMode() when you
- * need to distinguish "no background at all" from "wave".
+ * The animated wave has no file, so it reports `'unset'` here while still being
+ * a live background — check the mode for that.
+ *
+ * All three inputs are per-device (mode and enabled from localStorage, the
+ * Bing file from the server's cache), so unlike before this is not a question
+ * the server answers. The one asynchronous input left is the Bing cache: until
+ * /api/config has been read we cannot know whether the Bing image exists yet,
+ * which is what `'unknown'` now means.
  */
-export function resolveWallpaperState(appearance: Record<string, unknown> | undefined): WallpaperState {
-  if (!appearance) return 'unknown'
-  // Treat "key absent" as unknown rather than "no wallpaper", so the UI does
-  // not briefly show an empty state while config is still loading.
-  if (appearance.active_file === undefined) return 'unknown'
-  return resolveActiveFile(appearance) ? 'set' : 'unset'
+export function resolveWallpaperState(
+  mode: WallpaperMode,
+  enabled: boolean,
+  activeFile: string,
+  configLoaded: boolean,
+): WallpaperState {
+  if (!enabled) return 'unset'
+  if (mode === 'wave') return 'unset' // a live background, but not an image
+  if (mode === 'bing' && !configLoaded) return 'unknown'
+  return activeFile ? 'set' : 'unset'
 }
 
 /** Wallpaper source currently in effect. */
 export type WallpaperMode = 'none' | 'local' | 'bing' | 'wave'
 
-/** Resolve the active wallpaper source from the server config. */
-export function resolveWallpaperMode(appearance: Record<string, unknown> | undefined): WallpaperMode {
-  const mode = appearance?.wallpaper_mode
-  if (mode === 'local' || mode === 'bing' || mode === 'wave') return mode
+/** Resolve the stored wallpaper source, falling back to 'none'. */
+export function resolveWallpaperMode(value: unknown): WallpaperMode {
+  if (value === 'local' || value === 'bing' || value === 'wave') return value
   return 'none'
 }
 
 /**
- * Whether the animated wave is currently the active background.
+ * Resolve the stored animated-style id.
  *
- * The wave has no file, so this cannot be derived from `active_file` — it must
- * read the mode. `enabled` still gates it, matching how the server clears
- * `active_file` when the global wallpaper switch is off.
+ * Kept separate from `resolveWallpaperMode`: the mode says *that* an animated
+ * background is wanted, the style id says *which* one. A stored id can outlive
+ * its style (removed, or hand-edited storage), so unknown values fall back to the
+ * registry default rather than rendering nothing.
  */
-export function isWaveActive(appearance: Record<string, unknown> | undefined): boolean {
-  return resolveWallpaperMode(appearance) === 'wave' && resolveWallpaperEnabled(appearance)
-}
-
-/** Whether the wallpaper layer is globally enabled (default: enabled). */
-export function resolveWallpaperEnabled(appearance: Record<string, unknown> | undefined): boolean {
-  if (!appearance || appearance.wallpaper_enabled === undefined) return true
-  return appearance.wallpaper_enabled !== false
+export function resolveAnimatedStyleId(value: unknown): string {
+  return typeof value === 'string' && isKnownAnimatedStyle(value) ? value : DEFAULT_ANIMATED_STYLE
 }
 
 /**
- * Bare name of the wallpaper currently displayed, or '' when none is active.
+ * Whether an ANIMATED background is active.
  *
- * `active_file` is authoritative, including an empty string, which is how the
- * server reports "no wallpaper" (globally disabled, nothing selected, or
- * nothing cached yet).
+ * The animated styles have no file, so this cannot be derived from the active
+ * file — it must read the mode. `enabled` still gates it.
+ *
+ * Deliberately named for the category, not one style: the mode value `'wave'`
+ * predates the style picker and is kept as-is (it means "animated", and the
+ * chosen style id lives in a separate preference), so changing it would strand
+ * every stored value for no benefit.
  */
-export function resolveActiveFile(appearance: Record<string, unknown> | undefined): string {
-  const active = appearance?.active_file
-  return typeof active === 'string' ? active : ''
+export function isWaveActive(mode: WallpaperMode, enabled: boolean): boolean {
+  return mode === 'wave' && enabled
+}
+
+/**
+ * Bare name of the wallpaper this device should display, or '' when none.
+ *
+ * The client resolves this itself now: the server no longer knows which device
+ * wants which wallpaper, so it cannot compute an authoritative "active file".
+ * The Bing name comes from the server's cache; the local name from this
+ * device's own selection.
+ */
+export function resolveActiveFile(
+  mode: WallpaperMode,
+  enabled: boolean,
+  localSelected: string,
+  bingFile: string,
+): string {
+  // The switch gates every source. It must be checked HERE rather than left to
+  // callers: a file name is what turns the translucent-panel rules on (see
+  // applyWallpaper), so returning one for a disabled wallpaper left the panels
+  // translucent over an empty background after the image was switched off.
+  if (!enabled) return ''
+  if (mode === 'local') return localSelected
+  if (mode === 'bing') return bingFile
+  return '' // 'wave' / 'none' have no file
 }
 
 /** One entry in the local wallpaper gallery, as returned by GET /api/config. */
@@ -278,21 +299,12 @@ export function resolveGalleryItems(appearance: Record<string, unknown> | undefi
   return Array.isArray(items) ? (items as GalleryItem[]) : []
 }
 
-/** Bare name of the selected gallery image, or ''. */
-export function resolveGallerySelected(appearance: Record<string, unknown> | undefined): string {
-  const local = appearance?.local as Record<string, unknown> | undefined
-  const selected = local?.selected
-  return typeof selected === 'string' ? selected : ''
-}
-
 /** Bing wallpaper state, as returned by GET /api/config or the status endpoint. */
 export interface BingStatus {
-  enabled: boolean
   file: string
   last_success_date: string
   copyright: string
   title: string
-  mkt: string
   last_error: string
   last_attempt_at: number
   /** Absolute path, for GET /api/fs/thumb. */
@@ -300,12 +312,10 @@ export interface BingStatus {
 }
 
 const EMPTY_BING_STATUS: BingStatus = {
-  enabled: false,
   file: '',
   last_success_date: '',
   copyright: '',
   title: '',
-  mkt: '',
   last_error: '',
   last_attempt_at: 0,
 }
@@ -318,16 +328,20 @@ export function resolveBingStatus(appearance: Record<string, unknown> | undefine
 }
 
 /**
- * Compute the effective panel opacity (default 0.85) from the stored local
- * preference. Out-of-range or non-numeric values fall back to the default; the
- * applier additionally clamps to the readable 0.5–1.0 range.
+ * Compute the effective panel opacity (default 0.7) from the stored local
+ * preference. Non-numeric values fall back to the default; the whole 0–1 range
+ * is accepted (the applier clamps too, so a hand-edited out-of-range value
+ * cannot produce an invalid color-mix stop).
  *
  * This is a per-device display tweak stored in localStorage, alongside blur /
  * edge-fade / wave speed — not a server config value.
  */
 export function resolvePanelOpacity(value: unknown): number {
+  // `null`/`''` must fall back to the default rather than coerce to 0: Number()
+  // turns both into 0, which is a legitimate opacity now that the range is 0–1.
+  if (value === null || value === undefined || value === '') return 0.7
   const v = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.85
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.7
 }
 
 /** Compute dark-ness from the resolved theme of the given stored theme value. */
@@ -336,17 +350,21 @@ export function currentThemeIsDark(storedTheme: string | undefined): boolean {
 }
 
 /**
- * Whether the Bing wallpaper is enabled but has no cached image yet.
+ * Whether this device wants the Bing wallpaper but no image is cached yet.
  *
- * This is the state right after a fresh install: the server enables the Bing
- * wallpaper at startup and fetches its first image in the background, so the
- * first config response has no image. Callers use this to poll briefly so the
- * factory wallpaper appears without a manual refresh.
+ * This is the state right after a server starts: the worker fetches its first
+ * Bing image in the background, so the first config response has no file.
+ * Callers use this to poll briefly so the image appears without a manual
+ * refresh.
  */
-export function isBingFirstImagePending(appearance: Record<string, unknown> | undefined): boolean {
-  if (resolveWallpaperMode(appearance) !== 'bing') return false
-  if (!resolveWallpaperEnabled(appearance)) return false
-  return resolveActiveFile(appearance) === ''
+export function isBingFirstImagePending(
+  mode: WallpaperMode,
+  enabled: boolean,
+  bingFile: string,
+  configLoaded: boolean,
+): boolean {
+  if (!enabled || mode !== 'bing') return false
+  return configLoaded && bingFile === ''
 }
 
 // ── API calls ─────────────────────────────────────────────────────────────────
@@ -358,15 +376,20 @@ export function isBingFirstImagePending(appearance: Record<string, unknown> | un
  *
  * The gallery is the only wallpaper store — a file picked in the file viewer
  * becomes a normal gallery entry the user can manage alongside uploads.
+ *
+ * The selection is written to this device's local config, not the server: the
+ * server no longer auto-selects on upload, so the caller is the only place that
+ * can make the new image actually appear.
  */
-export async function setWallpaperFromPath(path: string): Promise<WallpaperStateResult> {
+export async function setWallpaperFromPath(path: string, setLocal: (key: string, value: string) => void): Promise<void> {
   const resp = await fetch(buildLocalFileUrl(path))
   if (!resp.ok) throw new Error(`read wallpaper source failed: HTTP ${resp.status}`)
   const blob = await resp.blob()
   const name = path.split('/').pop() || 'wallpaper'
   const { items, errors } = await uploadGalleryImages([new File([blob], name, { type: blob.type })])
   if (!items.length) throw new Error(errors[0]?.error || 'upload wallpaper failed')
-  return selectGalleryItem(items[0].file)
+  setLocal('wallpaperLocalSelected', items[0].file)
+  setLocal('wallpaperMode', 'local')
 }
 
 // ── Gallery API ───────────────────────────────────────────────────────────────
@@ -375,14 +398,6 @@ export async function setWallpaperFromPath(path: string): Promise<WallpaperState
 export interface GalleryUploadResult {
   items: GalleryItem[]
   errors: { name: string; error: string }[]
-}
-
-/** Wallpaper state returned by the mutation endpoints. */
-export interface WallpaperStateResult {
-  mode: string
-  enabled: boolean
-  active_file: string
-  selected: string
 }
 
 /**
@@ -398,39 +413,20 @@ export async function uploadGalleryImages(files: File[]): Promise<GalleryUploadR
   return (await resp.json()) as GalleryUploadResult
 }
 
-/** Remove one gallery image via DELETE /api/theme/local/item. */
-export async function deleteGalleryItem(name: string): Promise<WallpaperStateResult> {
+/**
+ * Remove one gallery image via DELETE /api/theme/local/item.
+ *
+ * The server drops the file and its gallery entry. Whether this device still
+ * points at it is no longer the server's concern — callers that deleted the
+ * image currently displayed must clear `wallpaperLocalSelected` themselves
+ * (the settings panel does; another device's stale name self-heals on 404).
+ */
+export async function deleteGalleryItem(name: string): Promise<void> {
   const resp = await fetch(`/api/theme/local/item?name=${encodeURIComponent(name)}`, { method: 'DELETE' })
   if (!resp.ok) throw new Error(`delete gallery item failed: HTTP ${resp.status}`)
-  return (await resp.json()) as WallpaperStateResult
 }
 
-/** Make a gallery image the active wallpaper via POST /api/theme/local/select. */
-export async function selectGalleryItem(name: string): Promise<WallpaperStateResult> {
-  const resp = await fetch('/api/theme/local/select', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name }),
-  })
-  if (!resp.ok) throw new Error(`select gallery item failed: HTTP ${resp.status}`)
-  return (await resp.json()) as WallpaperStateResult
-}
-
-// ── Mode / Bing API ───────────────────────────────────────────────────────────
-
-/**
- * Switch the active wallpaper source and/or toggle the global wallpaper switch
- * via POST /api/theme/wallpaper. Only the supplied fields are applied.
- */
-export async function setWallpaperMode(patch: { mode?: WallpaperMode; enabled?: boolean }): Promise<WallpaperStateResult> {
-  const resp = await fetch('/api/theme/wallpaper', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  if (!resp.ok) throw new Error(`set wallpaper mode failed: HTTP ${resp.status}`)
-  return (await resp.json()) as WallpaperStateResult
-}
+// ── Bing API ──────────────────────────────────────────────────────────────────
 
 /**
  * Ask the server for an immediate Bing fetch via POST /api/theme/bing/sync.
@@ -447,13 +443,4 @@ export async function fetchBingStatus(): Promise<BingStatus> {
   const resp = await fetch('/api/theme/bing/status')
   if (!resp.ok) throw new Error(`bing status failed: HTTP ${resp.status}`)
   return (await resp.json()) as BingStatus
-}
-
-/**
- * Map a UI locale to the Bing market parameter. Mirrors the server-side
- * mapping in internal/wallpaper so the persisted market matches what the
- * fetch worker would choose on its own.
- */
-export function bingMktForLocale(locale: string): string {
-  return locale.toLowerCase().startsWith('zh') ? 'zh-CN' : 'en-US'
 }

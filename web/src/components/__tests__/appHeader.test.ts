@@ -749,6 +749,71 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  // ── current project is not removable ──
+
+  it('removeRecent refuses a programmatic call for the currently open project', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
+    wrapper.vm.recentItems = [item]
+
+    // The row renders no button at all, so this handler guard is the only thing
+    // between a programmatic call and a DELETE.
+    await (wrapper.vm as any).removeRecent(item)
+
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(wrapper.vm.recentItems).toEqual([item])
+    vi.unstubAllGlobals()
+  })
+
+  it('isCurrentProject normalizes separators and trailing slashes', () => {
+    const wrapper = mountAndTrack({ projectRoot: 'C:\\Users\\x\\proj' })
+    const vm = wrapper.vm as any
+    const base = { name: 'proj', displayPath: 'proj', kind: 'plain' as const, groupKey: '', groupName: '' }
+
+    expect(vm.isCurrentProject({ ...base, path: 'C:\\Users\\x\\proj' })).toBe(true)
+    // Forward-slash form of the same path (backend may return either).
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/proj' })).toBe(true)
+    // Trailing slash tolerated.
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/proj/' })).toBe(true)
+    // A different project stays removable.
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/other' })).toBe(false)
+    // No project root known → nothing is "current".
+    const noRoot = mountAndTrack({ projectRoot: '' })
+    expect((noRoot.vm as any).isCurrentProject({ ...base, path: 'C:/Users/x/proj' })).toBe(false)
+  })
+
+  it('renders no remove button on the current project row but keeps it on the others', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/project-a', kind: 'plain' }] },
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/project-b', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    await (wrapper.vm as any).loadRecentProjects()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const rows = Array.from(document.body.querySelectorAll('.app-menu-item--stacked')) as HTMLElement[]
+    expect(rows.length).toBe(2)
+    // Current project: no button at all.
+    expect(rows[0].querySelector('.item-remove-btn')).toBeNull()
+    // Other projects: button present, enabled, and actually usable.
+    const otherBtn = rows[1].querySelector('.item-remove-btn') as HTMLButtonElement
+    expect(otherBtn).not.toBeNull()
+    expect(otherBtn.disabled).toBe(false)
+    expect(otherBtn.getAttribute('title')).toBe('Remove project')
+
+    wrapper.vm.dropdownOpen = false
+    vi.unstubAllGlobals()
+  })
+
   it('recent-file remove button removes the entry without confirmation', async () => {
     const wrapper = mountAndTrack()
     wrapper.vm.recentFileEntries = [{ path: '/home/user/a.ts', accessedAt: 1 }]

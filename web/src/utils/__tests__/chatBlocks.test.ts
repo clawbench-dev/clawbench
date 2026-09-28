@@ -292,7 +292,18 @@ describe('parseAssistantContent', () => {
 
   // ── Thinking block _key assignment ──
 
-  it('assigns _key to thinking blocks parsed from DB', () => {
+  it('does not invent a _key for DB thinking blocks', () => {
+    // DB content carries the block's real identity (think_id) — that is what
+    // keys it. A synthetic _key was only ever a stand-in for live blocks whose
+    // payload had no id, and inventing one here shadowed nothing useful.
+    //
+    // The renderer's index fallback (`thinking-<absIdx>`) is stable for these:
+    // a legacy block without a think_id is only ever relocated by a merge that
+    // ALSO has a live thinking block — and in that case liveHasThinking drops
+    // every DB thinking block, so the legacy one is removed rather than moved
+    // (verified). Measured on real data: of 310,391 persisted thinking blocks,
+    // the 245 without a think_id all carry their full text and done=true, so
+    // they need no id to render or lazy-load.
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'first thought' },
@@ -301,11 +312,28 @@ describe('parseAssistantContent', () => {
       ],
     })
     const result = parseAssistantContent(content)
-    expect(result.blocks[0]._key).toBe('thinking-0')
-    expect(result.blocks[2]._key).toBe('thinking-1')
+    expect(result.blocks[0]._key).toBeUndefined()
+    expect(result.blocks[2]._key).toBeUndefined()
+    // The blocks themselves survive intact.
+    expect(result.blocks[0].text).toBe('first thought')
+    expect(result.blocks[2].text).toBe('second thought')
   })
 
-  it('does not overwrite existing _key on thinking blocks', () => {
+  it('preserves a think_id that the persisted content carries', () => {
+    // The real identity must round-trip: it is the v-for key and the key into
+    // chat_thinking for the lazy-loaded prefix.
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'thinking', think_id: 'th_abc', done: true },
+        { type: 'thinking', think_id: 'th_def', done: true },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0].think_id).toBe('th_abc')
+    expect(result.blocks[1].think_id).toBe('th_def')
+  })
+
+  it('does not overwrite a _key already present on a DB block', () => {
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'thought', _key: 'thinking-5' },
@@ -327,7 +355,9 @@ describe('parseAssistantContent', () => {
     expect(result.blocks[1]._key).toBeUndefined()
   })
 
-  it('assigns sequential _key across multiple thinking blocks with interleaved tools', () => {
+  it('keeps interleaved thinking blocks distinct without inventing keys', () => {
+    // Each block stays its own object at its own index, which is what the
+    // renderer's index fallback keys on. Interleaved tools must not merge them.
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'think1' },
@@ -338,9 +368,13 @@ describe('parseAssistantContent', () => {
       ],
     })
     const result = parseAssistantContent(content)
-    expect(result.blocks[0]._key).toBe('thinking-0')
-    expect(result.blocks[2]._key).toBe('thinking-1')
-    expect(result.blocks[4]._key).toBe('thinking-2')
+    expect(result.blocks).toHaveLength(5)
+    expect(result.blocks[0].text).toBe('think1')
+    expect(result.blocks[2].text).toBe('think2')
+    expect(result.blocks[4].text).toBe('think3')
+    expect(result.blocks[0]._key).toBeUndefined()
+    expect(result.blocks[2]._key).toBeUndefined()
+    expect(result.blocks[4]._key).toBeUndefined()
   })
 })
 
@@ -796,7 +830,8 @@ describe('parseAssistantContent slim thinking', () => {
     expect(blocks[1].type).toBe('thinking')
     expect(blocks[1].think_id).toBe('th_01')
     expect(blocks[1].text).toBeUndefined()
-    expect(blocks[1]._key).toBe('thinking-0')
+    // No synthetic _key: the block is keyed by its think_id.
+    expect(blocks[1]._key).toBeUndefined()
   })
 
   it('keeps live thinking blocks with text', () => {

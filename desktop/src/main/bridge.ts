@@ -6,13 +6,14 @@ import fs from 'node:fs'
 import { getStore, initStore } from './store'
 import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
-  migratePasswords, getServersForRenderer,
+  migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
   showSplashFor, dismissSplash, cancelSplash,
+  checkVersionGateFor, continueVersionGate, downloadVersionFromGate,
   minimizeMainWindow, toggleMaximizeMainWindow, closeMainWindow, isMainWindowMaximized,
 } from './window'
 import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
@@ -57,6 +58,14 @@ export function registerBridge(): void {
     // Writes the credential onto this server's entry (creating it if absent).
     savePasswordFor(url, password)
   })
+  // Save with the optional display name. A separate channel rather than an
+  // optional third argument to native:save-server, so a newer renderer and an
+  // older main process (or vice versa) fail loudly at the call site instead of
+  // silently dropping the name.
+  ipcMain.handle('native:save-server-named', (_e, url: string, password: string, name: string) => {
+    savePasswordFor(url, password)
+    saveServerName(url, name)
+  })
   ipcMain.handle('native:remove-server', (_e, url: string) => {
     getStore().set('servers', getStore().get('servers').filter(s => s.url !== url))
     // Drop the credential with the entry, or re-adding the same URL would
@@ -89,6 +98,10 @@ export function registerBridge(): void {
       // whole connect + boot period. Mirrors Android's connectToServer().
       showSplashFor(url)
       w.loadURL(url)
+      // Check the desktop/server version consistency for this connection. On a
+      // mismatch the gate replaces the loading overlay; every connect is checked
+      // (the skip is not remembered), matching Android.
+      checkVersionGateFor(url)
     } else { createMainWindow() }
   })
 
@@ -98,6 +111,10 @@ export function registerBridge(): void {
   ipcMain.on('native:dismiss-splash', () => dismissSplash())
   // The overlay page's cancel button. Navigates back to the login page.
   ipcMain.on('native:splash-cancel', () => cancelSplash())
+  // Version-gate actions. "continue" proceeds on the current version;
+  // "download" installs the server's version (the gate stays up on failure).
+  ipcMain.on('native:version-continue', () => continueVersionGate())
+  ipcMain.on('native:version-download', () => { void downloadVersionFromGate() })
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))
   ipcMain.handle('native:test-port-reachable', (_e, p: number) => testPortReachable(p))

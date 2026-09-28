@@ -3399,6 +3399,60 @@ func TestAIChat_Get_NoSessionID_NoSessionsCreatesNew(t *testing.T) {
 	assert.NotEmpty(t, resp["sessionId"])
 }
 
+// TestAIChat_Get_NoSessionsAutoTitleIsNumbered pins that the implicit session
+// created for an empty project is titled with the SAME numbered placeholder the
+// manual "new session" endpoint produces. Before the shared helper, this path
+// used the bare "New Session" while POST /api/ai/sessions produced
+// "New Session N", so the first session of every new project looked different
+// from every session the user created by hand.
+func TestAIChat_Get_NoSessionsAutoTitleIsNumbered(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?limit=20", nil)
+	withProjectCookie(req, env.ProjectDir)
+	withAuthCookie(req, "")
+
+	w := callHandlerWithAuth(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	sessionID, _ := resp["sessionId"].(string)
+	require.NotEmpty(t, sessionID)
+	assert.Equal(t, "New Session 1", resp["sessionTitle"],
+		"auto-created session must carry the numbered placeholder")
+}
+
+// TestUnnamedSessionNumberingSharedAcrossCreatePaths verifies the two creation
+// paths draw from one per-project counter: after an empty project implicitly
+// creates "New Session 1", the manual POST must yield "New Session 2" — not a
+// second "New Session 1".
+func TestUnnamedSessionNumberingSharedAcrossCreatePaths(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Path 1: implicit creation on first chat load of an empty project.
+	getReq := newRequest(t, http.MethodGet, "/api/ai/chat?limit=20", nil)
+	withProjectCookie(getReq, env.ProjectDir)
+	withAuthCookie(getReq, "")
+	getW := callHandlerWithAuth(AIChat, getReq)
+	require.Equal(t, http.StatusOK, getW.Code)
+	var getResp map[string]interface{}
+	require.NoError(t, json.Unmarshal(getW.Body.Bytes(), &getResp))
+	assert.Equal(t, "New Session 1", getResp["sessionTitle"])
+
+	// Path 2: the manual "new session" endpoint in the same project.
+	postReq := newRequest(t, http.MethodPost, "/api/ai/sessions", map[string]any{"backend": "claude"})
+	withProjectCookie(postReq, env.ProjectDir)
+	postW := callHandler(ServeSessions, postReq)
+	assertOK(t, postW)
+	var postResp map[string]interface{}
+	require.NoError(t, json.Unmarshal(postW.Body.Bytes(), &postResp))
+	assert.Equal(t, "New Session 2", postResp["title"],
+		"manual create must continue the counter the implicit create started")
+}
+
 // TestAIChat_Get_WithSessionID_ReturnsSessionInfo verifies that when AIChat GET
 // is called with a specific session_id, the sessionInfo fields (title, backend,
 // agentId, modelId, thinkingEffort) are populated from the single GetSessionInfo query.

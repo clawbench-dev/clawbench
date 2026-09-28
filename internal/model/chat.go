@@ -1,7 +1,10 @@
 package model
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 )
@@ -367,6 +370,26 @@ type ContentBlock struct {
 	// parent-link key (see internal/ai/acp_parent_link.go). Used by the frontend
 	// to group a sub-agent's output under its parent Agent card.
 	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+}
+
+// randRead is the entropy source for GenerateThinkingID, as a package-level
+// seam. crypto/rand.Read cannot be made to fail from outside the process, so
+// the fallback below would otherwise be permanently dead as far as tests go.
+// Production never reassigns it.
+var randRead = rand.Read
+
+// GenerateThinkingID returns a think_id ("th_" + 32 hex chars).
+//
+// Lives in model, not service, because both internal/ai (which assigns the ID
+// the moment a thinking block opens, so the WS event can carry it) and
+// internal/service (which persists by it) need it — and internal/ai importing
+// internal/service would cycle.
+func GenerateThinkingID() string {
+	b := make([]byte, 16)
+	if _, err := randRead(b); err != nil {
+		return fmt.Sprintf("th_%d", time.Now().UnixNano())
+	}
+	return "th_" + hex.EncodeToString(b)
 }
 
 // MarshalJSON implements custom serialization for ContentBlock.

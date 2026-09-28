@@ -277,19 +277,32 @@ describe('SettingsItem', () => {
       expect(wrapper.find('.settings-item__slider-value').text()).toBe('75%')
     })
 
-    it('renders reset button when value differs from default', () => {
-      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, defaultValue: 100 })
-      expect(wrapper.find('.settings-item__slider-reset').exists()).toBe(true)
-    })
-
-    it('does not render reset button when value equals default', () => {
+    it('keeps the reset button in the layout, inert at the default value', () => {
+      // The button must NOT be removed at the default: it is the disappearance
+      // that shifted the slider and value label on every reset. It stays in
+      // flow but disabled.
       const wrapper = mountItem({ type: 'slider', modelValue: 100, min: 0, max: 100, defaultValue: 100 })
-      expect(wrapper.find('.settings-item__slider-reset').exists()).toBe(false)
+      const btn = wrapper.find('.settings-item__slider-reset')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
     })
 
-    it('does not render reset button when no defaultValue', () => {
+    it('enables the reset button once the value differs from the default', () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, defaultValue: 100 })
+      const btn = wrapper.find('.settings-item__slider-reset')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
+    })
+
+    it('omits the reset button entirely when there is no defaultValue', () => {
+      // Nothing to reset to, so the slot is genuinely absent rather than inert.
       const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100 })
       expect(wrapper.find('.settings-item__slider-reset').exists()).toBe(false)
+    })
+
+    it('disables the reset button together with the row', () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, defaultValue: 100, disabled: true })
+      expect(wrapper.find('.settings-item__slider-reset').attributes('disabled')).toBeDefined()
     })
 
     it('emits defaultValue on reset click', async () => {

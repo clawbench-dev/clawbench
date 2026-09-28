@@ -185,50 +185,23 @@ type ForgeNotifyConfig struct {
 	Pipeline  bool `yaml:"pipeline"`
 }
 
-// Wallpaper source modes. WallpaperModeWave is an animated background drawn on
-// the client (no image file), which is why it has no entry in the local/Bing
-// config sections and why wallpaper.ResolveActive reports no active file for it.
-const (
-	WallpaperModeLocal = "local"
-	WallpaperModeBing  = "bing"
-	WallpaperModeWave  = "wave"
-)
-
-// IsValidWallpaperMode reports whether mode is a supported wallpaper source.
-// The two write paths (POST /api/theme/wallpaper and PATCH /api/config) both
-// validate against this, so a mode added here cannot be accepted by one and
-// rejected by the other.
-func IsValidWallpaperMode(mode string) bool {
-	switch mode {
-	case WallpaperModeLocal, WallpaperModeBing, WallpaperModeWave:
-		return true
-	}
-	return false
-}
-
-// AppearanceConfig holds the custom-wallpaper settings. Three wallpaper sources
-// are supported and are independent of each other — a locally uploaded gallery,
-// the Bing daily image, and an animated client-drawn wave — but only one is
-// displayed at a time, selected by WallpaperMode. WallpaperEnabled is a global
-// switch: turning it off hides the wallpaper while retaining the gallery and
-// its selection.
+// AppearanceConfig holds the custom-wallpaper *resources* the server owns.
 //
-// Panel translucency is deliberately NOT here: it is a per-device display tweak
-// stored in the browser (localStorage), alongside blur / edge-fade / wave speed.
+// Which wallpaper a device displays is NOT here: the source, the on/off switch
+// and the selected gallery image are per-device choices kept in the browser
+// (localStorage), alongside panel translucency / blur / edge-fade / wave speed.
+// Two devices on one server can therefore show different wallpapers.
+//
+// What remains server-side is what a browser cannot own: the uploaded gallery
+// files on disk and the fetched Bing daily image, both of which are shared.
 type AppearanceConfig struct {
-	// WallpaperMode selects the active source: "local", "bing" or "wave".
-	WallpaperMode string `yaml:"wallpaper_mode"`
-	// WallpaperEnabled is the global on/off switch for the wallpaper layer.
-	WallpaperEnabled bool `yaml:"wallpaper_enabled"`
-
 	Local LocalWallpaperConfig `yaml:"local"`
 	Bing  BingWallpaperConfig  `yaml:"bing"`
 }
 
 // LocalWallpaperConfig holds the user-uploaded wallpaper gallery.
 type LocalWallpaperConfig struct {
-	Selected string               `yaml:"selected"` // Bare file name of the gallery image currently displayed
-	Items    []LocalWallpaperItem `yaml:"items"`    // Gallery contents, in upload order
+	Items []LocalWallpaperItem `yaml:"items"` // Gallery contents, in upload order
 }
 
 // LocalWallpaperItem describes one uploaded gallery image. File is a bare name
@@ -241,16 +214,16 @@ type LocalWallpaperItem struct {
 	Size       int64  `yaml:"size"`        // Bytes on disk
 }
 
-// BingWallpaperConfig holds the Bing daily wallpaper state. The fields other
-// than Enabled and Mkt are server-owned (written by the fetch worker), because
-// File is joined onto <DataDir>/theme/bing when served.
+// BingWallpaperConfig holds the Bing daily wallpaper cache. Every field is
+// server-owned (written by the fetch worker), because File is joined onto
+// <DataDir>/theme/bing when served. The worker fetches once a day
+// unconditionally — there is no enable switch — and a failed fetch keeps the
+// previous File so the last good image keeps serving.
 type BingWallpaperConfig struct {
-	Enabled         bool   `yaml:"enabled"`
 	LastSuccessDate string `yaml:"last_success_date"` // yyyymmdd of the last successful fetch; prevents refetching the same day
 	File            string `yaml:"file"`              // Bare cached file name, e.g. "bing-20260910.jpg"
 	Copyright       string `yaml:"copyright"`         // Photographer credit, shown in the settings panel only
 	Title           string `yaml:"title"`
-	Mkt             string `yaml:"mkt"`             // Bing market parameter, e.g. "zh-CN" / "en-US"
 	LastError       string `yaml:"last_error"`      // "" when healthy; a failed fetch keeps File so the last good image still serves
 	LastAttemptAt   int64  `yaml:"last_attempt_at"` // Unix seconds of the last fetch attempt
 }
@@ -356,7 +329,7 @@ type MossNanoConfig struct {
 
 // APIConfig holds configuration for the API-based summarization backend.
 type APIConfig struct {
-	BaseURL string `yaml:"base_url"` // Full endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
+	BaseURL string `yaml:"base_url"` // Endpoint URL: bare host, partial base (…/v1), or full endpoint (…/v1/chat/completions) — completed by summarize.BuildEndpointURL
 	Key     string `yaml:"key"`      // API key (sent as Bearer token for OpenAI, x-api-key for Anthropic)
 }
 

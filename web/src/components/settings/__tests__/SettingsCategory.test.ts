@@ -35,6 +35,10 @@ const localConfig = reactive<Record<string, any>>({
   uiScale: 1,
   notificationSound: true,
   headerShortcutTips: true,
+  // Per-device wallpaper choice (localStorage-backed).
+  wallpaperEnabled: true,
+  wallpaperMode: 'wave',
+  wallpaperLocalSelected: '',
 })
 
 const serverConfig = ref<Record<string, any>>({
@@ -629,34 +633,50 @@ describe('SettingsCategory', () => {
       expect(wrapper.findAllComponents({ name: 'WallpaperSetting' })).toHaveLength(1)
     })
 
-    it('renders the panel-opacity slider disabled before config loads (unknown state)', async () => {
-      serverConfig.value = { ...serverConfig.value, appearance: undefined }
-      const wrapper = mountCategory('appearance')
-      await wrapper.vm.$nextTick()
-      // WallpaperSetting owns the slider; disabled while wallpaper state is unknown.
-      const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
-      const slider = wallpaper.find('input[type="range"]')
-      expect(slider.attributes('disabled')).toBeDefined()
-    })
-
-    it('enables the panel-opacity slider when a wallpaper is set', async () => {
-      serverConfig.value = {
-        ...serverConfig.value,
-        appearance: {
-          active_file: 'local-1-a.png',
-          wallpaper_mode: 'local',
-          wallpaper_enabled: true,
-          local: { selected: 'local-1-a.png', items: [{ file: 'local-1-a.png', name: 'a.png', uploaded_at: 1, size: 10 }] },
-          bing: {},
-        },
-      }
+    it('enables the panel-opacity slider for the factory wave default', async () => {
+      // The default (wave + enabled) is resolvable on first paint with no server
+      // data, so the slider must not sit disabled waiting for /api/config.
+      localConfig.wallpaperEnabled = true
+      localConfig.wallpaperMode = 'wave'
       const wrapper = mountCategory('appearance')
       await wrapper.vm.$nextTick()
       const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
       const slider = wallpaper.find('input[type="range"]')
       expect(slider.attributes('disabled')).toBeUndefined()
-      // The gallery tile for the selected wallpaper renders a thumbnail.
-      expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
+    })
+
+    it('disables the panel-opacity slider when this device turned the wallpaper off', async () => {
+      localConfig.wallpaperEnabled = false
+      try {
+        const wrapper = mountCategory('appearance')
+        await wrapper.vm.$nextTick()
+        const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+        const slider = wallpaper.find('input[type="range"]')
+        expect(slider.attributes('disabled')).toBeDefined()
+      } finally {
+        localConfig.wallpaperEnabled = true
+      }
+    })
+
+    it('renders the gallery thumbnail for a locally selected image', async () => {
+      localConfig.wallpaperMode = 'local'
+      localConfig.wallpaperLocalSelected = 'local-1-a.png'
+      serverConfig.value = {
+        ...serverConfig.value,
+        appearance: {
+          local: { items: [{ file: 'local-1-a.png', name: 'a.png', uploaded_at: 1, size: 10 }] },
+          bing: {},
+        },
+      }
+      try {
+        const wrapper = mountCategory('appearance')
+        await wrapper.vm.$nextTick()
+        const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+        expect(wallpaper.find('img.wallpaper-gallery__thumb').exists()).toBe(true)
+      } finally {
+        localConfig.wallpaperMode = 'wave'
+        localConfig.wallpaperLocalSelected = ''
+      }
     })
 
     it('renders the auto-fit row as an action, not a switch', () => {
