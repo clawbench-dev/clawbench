@@ -2937,36 +2937,45 @@ describe('provisional thinking text is replaced on finish', () => {
 })
 
 describe('done thinking blocks auto-load their text', () => {
-  it('a done block fetches the FINAL text (backend commits before thinking_done)', async () => {
-    // The reported truncated thinking text. Root cause was a backend race:
-    // thinking_done was forwarded BEFORE the block's chat_thinking was
-    // committed, so a client reacting to `done` cached a PREFIX (observed: 760
-    // of 844; another case 17124 of 18887) and never refetched.
+  it('a done block that KEEPS GROWING is refetched with the final text at turn end', async () => {
+    // `done` does not mean the text is final. The backend flushes before
+    // forwarding thinking_done (so the text is complete AS OF that event), but
+    // the accumulator has no done check: thinking → thinking_done → content →
+    // thinking yields ONE block whose text grows after done (verified in Go).
     //
-    // The backend now flushes the block's text before forwarding
-    // thinking_done, so `done` implies complete text — and the fetch can be
-    // final immediately, with no wait for the turn to end.
+    // So a mid-turn fetch must be provisional; otherwise it caches a prefix,
+    // clears the flag, and `cached !== undefined` skips it forever — the
+    // reported truncated reasoning (cached 760 of final 844).
     //
-    // Uses the REAL useThinkingContent (not mocked) so provisionalIds /
-    // isProvisional actually run — a hand-written mock would prove nothing.
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true, json: async () => ({ think_id: 'th_done', text: 'COMPLETE-REASONING' }),
-    })
+    // Uses the REAL useThinkingContent so provisionalIds actually run.
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_grow', text: 'PART1' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ think_id: 'th_grow', text: 'PART1PART2' }) })
     vi.stubGlobal('fetch', fetchMock)
 
-    mountBlocks({
-      msgId: 'm-done',
-      sessionId: 's-done',
-      streaming: true, // still mid-turn
+    const wrapper = mountBlocks({
+      msgId: 'm-grow',
+      sessionId: 's-grow',
+      streaming: true, // mid-turn: the block is `done` but may still grow
       active: true,
-      blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      blocks: [{ type: 'thinking', think_id: 'th_grow', done: true }],
     })
     await flushPromises(); await nextTick()
 
-    expect(fetchMock, 'a done block loads its text once').toHaveBeenCalledTimes(1)
-    const body = await (await fetchMock.mock.results[0].value).json()
-    expect(body.text).toBe('COMPLETE-REASONING')
+    // Mid-turn: only the prefix exists, and the fetch must be provisional.
+    expect(fetchMock, 'one mid-turn fetch').toHaveBeenCalledTimes(1)
+    const firstBody = await (await fetchMock.mock.results[0].value).json()
+    expect(firstBody.text).toBe('PART1')
+
+    // Turn ends: the DB is now complete, so the block must be refetched.
+    await wrapper.setProps({ streaming: false })
+    await flushPromises(); await nextTick()
+
+    expect(fetchMock, 'a final refetch once the turn is over').toHaveBeenCalledTimes(2)
+    const secondBody = await (await fetchMock.mock.results[1].value).json()
+    expect(secondBody.text, 'the grown tail must not be lost').toBe('PART1PART2')
   })
+
 
 
   it('does not refetch again once the final text is cached', async () => {

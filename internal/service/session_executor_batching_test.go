@@ -938,8 +938,12 @@ func TestExecutor_ThinkingDoneFlushesTextBeforeForwarding(t *testing.T) {
 
 	// Precondition: the DB holds only a PREFIX. The first event trips the
 	// rate-limited flush (lastFlush starts at zero), so "part1" is persisted;
-	// the second event lands inside the 500ms window and is not. Without the
-	// explicit flush on thinking_done, that is exactly what a client would read.
+	// the second event must land INSIDE the 500ms window and not be persisted.
+	// Pin lastFlush to now so a scheduler stall between the two events cannot
+	// trip a second periodic flush and make this assertion flake.
+	executor.mu.Lock()
+	executor.lastFlush = time.Now()
+	executor.mu.Unlock()
 	rec, err := GetThinking(thinkID, msgID)
 	require.NoError(t, err)
 	require.NotNil(t, rec)

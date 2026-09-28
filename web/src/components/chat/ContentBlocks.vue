@@ -1147,11 +1147,11 @@ function handleThinkingClick(block: any, bi: number) {
     thinkingExpanded.value[blockKey] = true
     invalidateBlockHtml()
     // Slim block (think_id, no text): lazy-load the thinking text on expand.
-    // Always a FINAL fetch: reaching here means the block is collapsed, which
-    // implies it is done (or the turn is over) — and the backend commits the
-    // text before it forwards thinking_done, so what we read is complete.
+    // Provisional while the turn runs: a block can be `done` and still grow (the
+    // accumulator has no done check), so reading now may only get a prefix —
+    // flagged so the auto-load refetches the final text once the turn ends.
     if (!block.text && block.think_id) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     }
     // Clean up expanding state after animation
@@ -1163,7 +1163,7 @@ function handleThinkingClick(block: any, bi: number) {
     // Retry failed lazy-load when clicking an error-state slim block;
     // otherwise collapse.
     if (!block.text && block.think_id && thinkingContent.errors.value[block.think_id]) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     } else {
       triggerThinkingCollapse(blockKey)
@@ -1810,6 +1810,7 @@ watch(() => props.active, (active) => {
 watch(
   () => {
     const blocks = props.blocks || []
+    const turnOver = !props.streaming
     const tailStart = props.streaming ? Math.max(0, blocks.length - DONE_AUTOLOAD_TAIL) : blocks.length
     const ids: string[] = []
     for (let bi = 0; bi < blocks.length; bi++) {
@@ -1831,21 +1832,26 @@ watch(
       // (nothing else would replace it), or when nothing was ever loaded AND
       // the block is in the streaming tail the live view renders open.
       //
-      // A finished block's text is complete by the time we see `done`: the
-      // backend commits the block's chat_thinking BEFORE it forwards
-      // thinking_done, and the terminal `done` is sent after Finalize. So the
-      // refetch can fire immediately — no need to wait for the turn to end.
-      if (provisional) { ids.push(`f:${b.think_id}`); continue }
+      // `done` does NOT mean the text is final, so the final fetch waits for the
+      // turn to end. The backend flushes before forwarding thinking_done, so the
+      // text is complete AS OF that event — but the accumulator keeps appending
+      // later deltas to the SAME block (it has no done check: a thinking →
+      // thinking_done → content → thinking sequence yields one block whose text
+      // grows after done). A "final" fetch on done would therefore cache a
+      // prefix and clear the provisional flag, after which `cached !== undefined`
+      // skipped it forever — the reported truncated reasoning (cached 760 of
+      // final 844; another case 17124 of 18887). At turn end the row is complete
+      // (the terminal `done` is sent after Finalize), so that is when we refetch.
+      if (provisional) { if (turnOver) ids.push(`f:${b.think_id}`); continue }
       if (cached !== undefined) continue
       // NOT for merely-expanded blocks: expanding one goes through
       // handleThinkingClick, which loads it itself. Auto-loading it here would
       // fire a second request that races the click's own — and on a FAILED
       // block it would swallow the retry's fresh request.
       //
-      // `f:`, not `p:` — this block is done, so what we read is the final text.
-      // Only a still-streaming block (the `in_progress` branch above) reads a
-      // prefix that must be refetched later.
-      if (bi >= tailStart) ids.push(`f:${b.think_id}`)
+      // Mid-turn the snapshot is provisional (the block may still grow), so the
+      // refetch above can replace it with the final text once the turn ends.
+      if (bi >= tailStart) ids.push(`${turnOver ? 'f' : 'p'}:${b.think_id}`)
     }
     return ids.join('|')
   },
