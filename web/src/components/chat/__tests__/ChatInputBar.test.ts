@@ -3148,15 +3148,16 @@ describe('ChatInputBar', () => {
     wrapper.unmount()
   })
 
-  // ── Accept confirmation animation (采纳确认动效) ──────────
+  // ── Accept handoff animation (采纳确认动效) ──────────
   //
   // Accepting used to be observable only as "the chip vanished": the text
   // landing in the input box is easy to miss, and rec.accept() dismisses the
   // entry synchronously, so the banner was already gone by the next paint. The
-  // confirmation is a held window during which the banner stays up showing a
-  // checkmark.
+  // banner is now held through a handoff flight — green + flying down into the
+  // input box — which the stylesheet drives; these tests pin the state machine
+  // that holds it open for exactly that long.
 
-  it('holds the banner with a checkmark while confirming, then retires it', async () => {
+  it('holds the banner through the accept flight, then retires it', async () => {
     vi.useFakeTimers()
     const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
     await wrapper.vm.$nextTick()
@@ -3188,7 +3189,7 @@ describe('ChatInputBar', () => {
     // It cannot be accepted twice.
     expect(acceptBtn.attributes('disabled')).toBeDefined()
 
-    vi.advanceTimersByTime(650)
+    vi.advanceTimersByTime(300)
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.recommendationAccepting).toBe(false)
     expect(wrapper.vm.showRecommendationBanner).toBe(false)
@@ -3230,7 +3231,7 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.displayedRecommendation).toBe('第二条')
 
     // The superseded timer must not fire later and tear the new banner down.
-    vi.advanceTimersByTime(650)
+    vi.advanceTimersByTime(300)
     await wrapper.vm.$nextTick()
     expect(wrapper.vm.showRecommendationBanner).toBe(true)
     expect(wrapper.vm.displayedRecommendation).toBe('第二条')
@@ -3293,7 +3294,7 @@ describe('ChatInputBar', () => {
     await wrapper.vm.$nextTick()
     const acceptIds = setTimeoutSpy.mock.calls
       .map((c, i) => ({ ms: c[1], id: setTimeoutSpy.mock.results[i].value }))
-      .filter(x => x.ms === 650)
+      .filter(x => x.ms === 300)
     expect(acceptIds, 'accept must schedule exactly one confirmation timer').toHaveLength(1)
 
     const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
@@ -3316,10 +3317,19 @@ describe('ChatInputBar', () => {
     expect(zh.global.t('tool.askUser.recommendationFilled')).toBe('已填入')
   })
 
-  it('drops the motion but keeps the static confirmation under reduced motion', async () => {
+  it('drops the decorative motion but keeps the chip flight under reduced motion', async () => {
     // jsdom has no CSS engine, so this is a source guard — the same pattern the
-    // flash family uses. The green button/checkmark is functional feedback and
-    // must survive; the pop and the ring pulse are decorative and must not.
+    // flash family uses.
+    //
+    // The button pop and the ring pulse are decorative and must be dropped. The
+    // chip's flight must NOT be: the flight IS the information ("the text moved
+    // into the box"), and there is no other channel carrying it. Opting it out
+    // also made the whole feature invisible to anyone with OS-level animations
+    // disabled — which is how it was reported (Windows, reduce=true).
+    //
+    // This assertion is INVERTED on purpose (same precedent as the session row
+    // status slot, see sessionStatusSlot.css.test.ts). Do not "restore" it to
+    // expecting `animation: none` without reading the stylesheet comment.
     const mod = await import('../ChatInputBar.vue?raw')
     const source = String(mod.default)
     // Slice from the LAST reduced-motion media query: an earlier one (the banner
@@ -3330,9 +3340,57 @@ describe('ChatInputBar', () => {
     const block = source.slice(start)
     expect(block).toMatch(/\.recommendation-accept\.accepted\s*\{[^}]*animation: none/)
     expect(block).toMatch(/\.chat-input-container\.accept-pulse\s*\{[^}]*animation: none/)
+    // The flight is deliberately exempt from the preference.
+    expect(block, 'the chip flight must NOT be opted out of reduced motion')
+      .not.toMatch(/\.recommendation-chip\.accepted\s*\{[^}]*animation: none/)
     // The static green confirmation is NOT disabled by the reduced-motion block.
     expect(source).toContain('.recommendation-accept.accepted {')
     expect(source).toContain('background: var(--color-success')
+    // ...and the flight itself is still declared, so this cannot pass by the
+    // animation having been deleted outright.
+    expect(source).toContain('animation: recommendation-chip-fly')
+  })
+
+  it('flies the chip DOWN into the input box on accept (the handoff reads as a fill)', async () => {
+    // jsdom has no CSS engine, so this is a source guard. The whole point of the
+    // accept feedback is that the text reads as *moved into the input box*: the
+    // chip must translate downward, and it must be the chip (not the slot) that
+    // carries the motion — the slot owns the height collapse, and putting the
+    // flight on the same element would make the collapse pull up against it.
+    const mod = await import('../ChatInputBar.vue?raw')
+    const source = String(mod.default)
+
+    const flightRule = source.match(/\.recommendation-chip\.accepted\s*\{([^}]*)\}/)
+    expect(flightRule, '.recommendation-chip.accepted must exist').not.toBeNull()
+    expect(flightRule[1]).toMatch(/animation:\s*recommendation-chip-fly/)
+
+    const keyframes = source.match(/@keyframes recommendation-chip-fly\s*\{([\s\S]*?)\n\}/)
+    expect(keyframes, 'the flight keyframes must exist').not.toBeNull()
+    // A positive translateY is downward (the input box sits below the chip).
+    // Capture the sign explicitly so a reversed flight fails on the direction
+    // assertion rather than on an unexpected non-match.
+    const end = keyframes[1].match(/100%\s*\{[^}]*translateY\(\s*(-?\d+)px/)
+    expect(end, 'the flight must end with a translateY offset').not.toBeNull()
+    expect(Number(end[1]), 'the chip must fly DOWN into the input box').toBeGreaterThan(0)
+    // It must also fade out, otherwise the chip would still be visible when the
+    // height collapse retires it.
+    expect(keyframes[1]).toMatch(/100%\s*\{[^}]*opacity:\s*0/)
+
+    // The slot is the Transition target and must NOT carry the flight.
+    expect(source).toContain('.recommendation-slot {')
+    expect(source).not.toMatch(/\.recommendation-slot\s*\{[^}]*recommendation-chip-fly/)
+
+    // The flight must be visible OVER the input box, not behind it.
+    // `.chat-input-container` is `position: relative` (for `.paste-overlay`), and
+    // a positioned element paints after an in-flow non-positioned sibling — so
+    // the banner needs its own stacking position or the chip disappears behind
+    // the input box mid-flight (reported from a real browser).
+    const slotRule = source.match(/\.recommendation-slot\s*\{([^}]*)\}/)
+    expect(slotRule, '.recommendation-slot must exist').not.toBeNull()
+    expect(slotRule[1], 'the banner must be positioned to paint over the input box')
+      .toMatch(/position:\s*relative/)
+    expect(slotRule[1], 'the banner needs a stacking order above the input container')
+      .toMatch(/z-index:\s*\d+/)
   })
 
   it('ignores recommendation with empty text', async () => {
