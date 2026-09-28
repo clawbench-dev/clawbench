@@ -213,6 +213,47 @@ describe('forceCleanupStreamingState', () => {
     expect(d, 'non-thinking blocks are untouched').toEqual({ type: 'text', text: 'hello' })
   })
 
+  it('syncs the DB done flag onto the live block it owns', () => {
+    // The reported "spinner keeps turning on a thinking block that has clearly
+    // moved on to its tool calls". msgId=54674 / th_bb1f742720e: its DB row is
+    // done=true, yet the live block kept in_progress and spun. The auto-load log
+    // confirms the block fetched as `provisional=true` three times in a row
+    // (4499 → 7782 → 9127 chars) and never as a final fetch — the live block
+    // never learned it was finished.
+    //
+    // Cause: mergeOrderedBlocks drops every DB thinking block once live has any
+    // (`liveHasThinking`). Correct for CONTENT (they are the same blocks; keeping
+    // both duplicates the chip) but it also discarded the one fact only the DB
+    // has — whether the block FINISHED. The DB is authoritative for that flag;
+    // live is authoritative for content.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54674, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', in_progress: true },
+        { type: 'tool_use', name: 'Read', id: 'r1', done: true },
+        { type: 'thinking', think_id: 'th_live', in_progress: true },
+      ] },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54674, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', done: true },
+        { type: 'tool_use', name: 'Read', id: 'r1', done: true },
+        { type: 'thinking', think_id: 'th_live', in_progress: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.streaming)!
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(2, 'no duplicate chips')
+    const finished = thinks.find((b: any) => b.think_id === 'th_done')
+    expect(finished.done, 'the DB-finished block must stop spinning').toBe(true)
+    expect(finished.in_progress).toBeUndefined()
+    const running = thinks.find((b: any) => b.think_id === 'th_live')
+    expect(running.in_progress, 'a genuinely-streaming block is untouched').toBe(true)
+    expect(running.done, 'and must NOT be marked done').toBeFalsy()
+  })
+
   it('marks unfinished tool_use as done', () => {
     const messages = [
       {

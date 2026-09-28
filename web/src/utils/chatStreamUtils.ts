@@ -828,6 +828,46 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
 }
 
 /**
+ * Copy the DB's finish state onto the live thinking blocks it owns.
+ *
+ * mergeStreamBlocks drops every DB thinking block once live has any (they are
+ * the same block seen from two sides; keeping both duplicates the chip). That is
+ * right for CONTENT but it also discarded the one fact only the DB has: whether
+ * the block has FINISHED. The live block then kept `in_progress` / an unset
+ * `done`, which isThinkingStreaming() renders as a spinner — so a block that had
+ * visibly moved on to its tool calls still spun.
+ *
+ * Observed: msgId=54674 / th_bb1f742720e. Its DB row is done=true, and the
+ * auto-load log shows the live block fetched as `provisional=true` three times
+ * running (4499 → 7782 → 9127 chars, the last already the final text) and never
+ * once as a final fetch — the live block never learned it was done. The DB is
+ * authoritative for this flag; live stays authoritative for content.
+ *
+ * Must run here, next to adoptThinkingMarkers, NOT inside mergeOrderedBlocks:
+ * a stretch of pure thinking/tool_use (no text on either side) makes every case
+ * in mergeStreamBlocks fall through to "leave live alone" and return before
+ * mergeOrderedBlocks is ever called — which is exactly the reported shape.
+ *
+ * Matched by think_id, the identity both sides share; a live block without one
+ * yet is handled by adoptThinkingMarkers above. Only ever moves forward
+ * (in-progress → done): the DB flush lags the live stream, so a not-yet-done DB
+ * row must never downgrade a block the live path has already finished.
+ */
+function syncThinkingDoneFromDb(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[]): void {
+  const doneIds = new Set<string>()
+  for (const db of dbBlocks) {
+    if (db.type === 'thinking' && db.think_id && db.done) doneIds.add(db.think_id)
+  }
+  if (doneIds.size === 0) return
+  for (const lb of liveBlocks) {
+    if (lb.type !== 'thinking' || !lb.think_id || lb.done) continue
+    if (!doneIds.has(lb.think_id)) continue
+    lb.done = true
+    delete lb.in_progress
+  }
+}
+
+/**
  * Order-preserving merge of the DB flushed blocks into the live blocks.
  *
  * The result is built in LIVE order — a live block is never relocated — with
@@ -952,6 +992,7 @@ function mergeStreamBlocks(dbBlocks: ContentBlock[], liveBlocks: ContentBlock[])
   // on either side (a thinking-only stretch) every case falls through to "leave
   // live alone", which is exactly when a switch-back loses the prefix.
   adoptThinkingMarkers(dbBlocks, liveBlocks)
+  syncThinkingDoneFromDb(dbBlocks, liveBlocks)
 
   const dbText = joinTextBlocks(dbBlocks)
   const liveText = joinTextBlocks(liveBlocks)
