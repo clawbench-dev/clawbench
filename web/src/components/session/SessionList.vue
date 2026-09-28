@@ -980,12 +980,6 @@ onUnmounted(() => {
 .session-rows {
   display: flex;
   flex-direction: column;
-  /* Width of the accent bar a selected row paints (`.session-row.active`).
-     Declared once because two places must agree on it: the border itself, and
-     the tree rail's compensation (an absolutely-positioned box is offset from
-     the padding box, i.e. inside the border, so the rail would shift by exactly
-     this much on the selected row). */
-  --row-active-border: 4px;
 }
 
 /* Drag feedback (SortableJS classes). `.sortable-ghost` is the placeholder left
@@ -1126,17 +1120,6 @@ onUnmounted(() => {
   background-size: 100% 1px, 1px 50%;
 }
 
-/* Selected member: `.session-row.active` adds a `border-left`, and an
-   absolutely-positioned box is offset from the PADDING box — i.e. inside the
-   border — so the rail would jump right by the border's width on the selected
-   row and no longer line up with the rows above and below it. (The row's text
-   does not move: it is compensated by `.session-item.active { padding-left:
-   8px }`. The rail needs the same compensation, which is what this is.)
-   Both widths come from --row-active-border so they cannot drift apart. */
-.session-row.is-fork-member.active::before {
-  left: calc(var(--space-6) - var(--row-active-border));
-}
-
 /* Generation chip on a group member's title line ("Gen 2" / "第 2 代"). */
 .session-fork-gen {
   flex-shrink: 0;
@@ -1175,14 +1158,6 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-/* Accent border lives on the row so it encloses the archive button too.
-   The padding is pulled in by exactly the border's width so the row's TEXT does
-   not shift when the selection appears. The tree rail needs its own copy of this
-   compensation — see `.session-row.is-fork-member.active::before`. */
-.session-item.active {
-  padding-left: calc(var(--space-6) - var(--row-active-border));
-}
-
 .session-row.session-row-active {
   background-color: color-mix(in srgb, var(--text-primary) 6%, transparent);
   border-radius: 0;
@@ -1193,13 +1168,21 @@ onUnmounted(() => {
    showing the row's own background (green for a running session) and the
    selection looked cut short. Painted as a background-image rather than a
    background-color so a running row's green fill still shows through beneath
-   the translucent tint instead of being replaced. */
+   the translucent tint instead of being replaced.
+
+   There is deliberately NO accent bar on the left edge. Selection is already
+   carried four times over by this rule alone (the 10% fill, the 35% outline,
+   the inset glow) plus the accent-coloured title — a 4px left bar was a fifth
+   signal saying the same thing. It also cost more than it looked: a `border`
+   displaces the content box, so it needed two matching `calc()` compensations
+   (`padding-left` on `.session-item.active` for the text, and a `left` override
+   on the fork-member tree rail) just to keep the row from shifting. Do not
+   reintroduce a left border here — it brings that alignment coupling back. */
 .session-row.active {
   background-image: linear-gradient(
     color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent),
     color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent)
   );
-  border-left: var(--row-active-border) solid var(--accent-color, #0066cc);
   border-right: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-top: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
   border-bottom: 1px solid color-mix(in srgb, var(--accent-color, #0066cc) 35%, transparent);
