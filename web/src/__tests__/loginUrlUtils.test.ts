@@ -151,6 +151,93 @@ describe.each([
   }
 })
 
+/**
+ * findServerNameConflict / normalizeServerName are the uniqueness rule shared
+ * by both login pages. Names are labels, so they must be unique; the rule has
+ * three subtleties the table below pins down: case-insensitive matching, empty
+ * names never colliding, and the edited entry being exempt from matching
+ * itself.
+ */
+interface NameServer {
+  url: string
+  name?: string
+}
+
+interface NameSandbox {
+  normalizeServerName: (t: unknown) => string
+  findServerNameConflict: (servers: NameServer[], name: string, exceptUrl?: string) => NameServer | null
+}
+
+function nameHelpersFor(rel: string): NameSandbox {
+  const sandbox: Record<string, unknown> = {}
+  createContext(sandbox)
+  runInContext(readRepoFile(rel), sandbox, { filename: rel })
+  const normalize = sandbox.normalizeServerName
+  const find = sandbox.findServerNameConflict
+  if (typeof normalize !== 'function') throw new Error(`${rel} did not define normalizeServerName`)
+  if (typeof find !== 'function') throw new Error(`${rel} did not define findServerNameConflict`)
+  return sandbox as unknown as NameSandbox
+}
+
+const SERVERS: NameServer[] = [
+  { url: 'https://a:20000', name: 'Home NAS' },
+  { url: 'https://b:20000', name: 'Office' },
+  { url: 'https://c:20000' },
+]
+
+describe.each([
+  ['android', ANDROID_UTILS],
+  ['desktop', DESKTOP_UTILS],
+])('server-name uniqueness (%s copy)', (_label, rel) => {
+  const normalizeCases: Array<[unknown, string]> = [
+    ['  Home  ', 'Home'],
+    ['', ''],
+    ['   ', ''],
+    [null, ''],
+    [undefined, ''],
+    [42, ''],
+  ]
+  for (const [input, expected] of normalizeCases) {
+    it(`normalizeServerName(${JSON.stringify(input)}) -> ${JSON.stringify(expected)}`, () => {
+      expect(nameHelpersFor(rel).normalizeServerName(input)).toBe(expected)
+    })
+  }
+
+  const conflictCases: Array<[string, string | undefined, string | null]> = [
+    // An existing name collides, regardless of case or surrounding space.
+    ['Office', undefined, 'https://b:20000'],
+    ['office', undefined, 'https://b:20000'],
+    ['  OFFICE  ', undefined, 'https://b:20000'],
+    // A fresh name is fine.
+    ['Lab', undefined, null],
+    // Empty never collides — unnamed servers are not a shared label.
+    ['', undefined, null],
+    ['   ', undefined, null],
+    // The entry being edited is exempt, so leaving its name unchanged is fine.
+    ['Home NAS', 'https://a:20000', null],
+    // ...but it still collides with a DIFFERENT server's name.
+    ['Office', 'https://a:20000', 'https://b:20000'],
+    // An unnamed existing server cannot be matched by an empty name.
+    ['', 'https://a:20000', null],
+  ]
+  for (const [name, exceptUrl, expectedUrl] of conflictCases) {
+    const label = `name=${JSON.stringify(name)} except=${JSON.stringify(exceptUrl)}`
+    it(`${label} -> ${JSON.stringify(expectedUrl)}`, () => {
+      const found = nameHelpersFor(rel).findServerNameConflict(SERVERS, name, exceptUrl)
+      expect(found ? found.url : null).toBe(expectedUrl)
+    })
+  }
+
+  it('returns null for a non-array server list', () => {
+    expect(
+      nameHelpersFor(rel).findServerNameConflict(
+        undefined as unknown as NameServer[],
+        'Home NAS',
+      ),
+    ).toBeNull()
+  })
+})
+
 const ANDROID_LOGIN = 'android/app/src/main/assets/login.html'
 const DESKTOP_LOGIN = 'desktop/assets/login.html'
 
@@ -198,6 +285,34 @@ describe('login.html wiring', () => {
       ).not.toBeNull()
       // Title element reused to show "Edit Server" when editing.
       expect(doc.getElementById('addFormTitle'), '#addFormTitle must exist').not.toBeNull()
+
+      const name = doc.getElementById('addName')
+      expect(name, '#addName must exist (optional display name)').not.toBeNull()
+      // The name is a label, not free-form text: cap its length so it cannot
+      // overflow the row it renders into.
+      expect(name!.getAttribute('maxlength')).toBe('40')
+    })
+
+    /**
+     * The list row must show the NAME when there is one and fall back to the
+     * address otherwise, with the full address in the tooltip. Asserting on the
+     * render site (the concatenated `html +=` line), not on any CSS rule.
+     */
+    it(`${label} labels rows by name with the address as a tooltip`, () => {
+      const html = readRepoFile(rel)
+      expect(html).toMatch(/normalizeServerName\(srv\.name\)\s*\|\|\s*formatHost\(srv\.url\)/)
+      expect(html).toMatch(/title="' \+ escHtml\(srv\.url\) \+ '"/)
+    })
+
+    it(`${label} refuses a duplicate name`, () => {
+      const submitSrc = extractSubmitHandler(rel)
+      expect(submitSrc).toContain('findServerNameConflict')
+      expect(submitSrc).toContain("t('duplicate_name')")
+      // The edited entry must be exempt, or renaming an entry without touching
+      // its name would collide with itself.
+      expect(submitSrc).toMatch(/findServerNameConflict\(savedServers,\s*name,\s*editingUrl\)/)
+      // The name travels with the save, not through a separate call.
+      expect(submitSrc).toMatch(/saveServerNamed\(url,\s*password,\s*name\)/)
     })
 
     /**
@@ -238,7 +353,7 @@ describe('login.html wiring', () => {
     it(`${label} saves without connecting`, () => {
       const submitSrc = extractSubmitHandler(rel)
       expect(submitSrc).toContain('buildServerUrl')
-      expect(submitSrc).toContain('saveServer')
+      expect(submitSrc).toContain('saveServerNamed')
       expect(submitSrc).not.toContain('connectToServer')
       // Renaming must retire the old URL, but only when it actually changed.
       expect(submitSrc).toMatch(/editingUrl\s*!==\s*url/)

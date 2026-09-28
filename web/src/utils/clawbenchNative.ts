@@ -78,6 +78,17 @@ export interface ClawBenchNative {
 
   // Async writes / actions
   saveServer(url: string, password: string): Promise<void>
+  /**
+   * Save a server together with its optional display name (empty clears it).
+   *
+   * A distinct method name, not an overload of saveServer(): Android's WebView
+   * bridge resolves @JavascriptInterface methods by name and overloads collide
+   * there.
+   *
+   * Optional: an older host lacks it, and the caller then falls back to
+   * saveServer() — the entry still persists, just without a name.
+   */
+  saveServerNamed?(url: string, password: string, name: string): Promise<void>
   removeServer(url: string): Promise<void>
   setSSHPassword(pwd: string): Promise<void>
   connectToServer(url: string, password: string): Promise<void>

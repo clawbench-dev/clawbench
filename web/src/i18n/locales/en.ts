@@ -268,6 +268,8 @@ export default {
     wrongPassword: 'Wrong password, please try again.',
     networkError: 'Network error, please check if the backend service is running.',
     addServer: 'Add another server',
+    serverNamePlaceholder: 'Name (optional)',
+    duplicateServerName: 'That name is already used',
     serverUrlPlaceholder: 'Enter server URL',
     serverPasswordPlaceholder: 'Enter password',
     addServerSubmit: 'Add & Login',

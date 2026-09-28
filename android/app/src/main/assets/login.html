@@ -26,6 +26,9 @@
       saved_servers: 'Saved Servers',
       authenticating: 'Authenticating...',
       saving: 'Saving...',
+      name_label: 'Name (optional)',
+      name_placeholder: 'e.g. Home NAS',
+      duplicate_name: 'That name is already used',
       enter_password: 'Please enter password',
       enter_full_address: 'Enter a full address with http:// or https:// and a port, e.g. https://192.168.1.100:20000',
       duplicate_server: 'That address is already saved',
@@ -53,6 +56,9 @@
       saved_servers: '已保存服务器',
       authenticating: '认证中...',
       saving: '保存中...',
+      name_label: '名称（选填）',
+      name_placeholder: '例如 家里的 NAS',
+      duplicate_name: '该名称已被使用',
       enter_password: '请输入密码',
       enter_full_address: '请输入完整地址，包含 http:// 或 https:// 与端口，例如 https://192.168.1.100:20000',
       duplicate_server: '该地址已存在',
@@ -1289,6 +1295,12 @@
       <form id="addServerForm" onsubmit="return false;" style="display:none;">
         <div class="form-title" id="addFormTitle" style="display:none;"></div>
 
+        <!-- Optional display name -->
+        <div class="field-group">
+          <span class="field-label" data-i18n="name_label">名称（选填）</span>
+          <input type="text" id="addName" data-i18n-placeholder="name_placeholder" placeholder="例如 家里的 NAS" maxlength="40" autocorrect="off" autocapitalize="sentences" spellcheck="false">
+        </div>
+
         <!-- Server address (protocol + host + port in one field) -->
         <div class="field-group">
           <span class="field-label" data-i18n="server_address">服务器地址</span>
@@ -1422,6 +1434,7 @@
         return;
       }
       var password = document.getElementById('addPassword').value;
+      var name = normalizeServerName(document.getElementById('addName').value);
       // The URL this form is editing ('' when adding). Captured before save so
       // the rename branch can retire the old entry afterwards.
       var editingUrl = document.getElementById('addServerForm').getAttribute('data-edit-url') || '';
@@ -1435,10 +1448,16 @@
         showError('addErrorMsg', t('duplicate_server'));
         return;
       }
+      // Names are unique labels. The edited entry is exempt from matching
+      // itself; unnamed servers never collide with each other.
+      if (findServerNameConflict(savedServers, name, editingUrl)) {
+        showError('addErrorMsg', t('duplicate_name'));
+        return;
+      }
 
       setSaving(true);
       try {
-        ClawBenchNative.saveServer(url, password);
+        ClawBenchNative.saveServerNamed(url, password, name);
         // URL changed while editing -> the old entry is now a different server,
         // so retire it. Only when it actually differs: deleting the same URL
         // would drop the entry we just saved.
@@ -1510,11 +1529,15 @@
     var html = '';
     savedServers.forEach(function(srv, idx) {
       var isActive = (idx === 0);
+      // A named server shows its name; an unnamed one falls back to the
+      // address. The full address always stays in the title tooltip, so a
+      // named row is still identifiable (and copying it is possible).
+      var label = normalizeServerName(srv.name) || formatHost(srv.url);
       html += '<div class="server-item' + (isActive ? ' active' : '') + '" data-url="' + escHtml(srv.url) + '" onclick="selectServer(\'' + escJs(srv.url) + '\')">';
       html += '  <div class="server-item-info">';
       html += '    <span class="server-indicator"></span>';
       html += '    ' + SVG_SERVER;
-      html += '    <span class="server-item-url">' + escHtml(formatHost(srv.url)) + '</span>';
+      html += '    <span class="server-item-url" title="' + escHtml(srv.url) + '">' + escHtml(label) + '</span>';
       html += '  </div>';
       html += '  <div class="server-item-actions">';
       html += '    <button class="server-edit-btn" onclick="event.stopPropagation(); editServer(\'' + escJs(srv.url) + '\')" title="' + t('edit_server') + '">';
@@ -1644,6 +1667,7 @@
     // Empty data-edit-url is what marks this as an add, not an edit.
     form.setAttribute('data-edit-url', '');
     document.getElementById('addFormTitle').style.display = 'none';
+    document.getElementById('addName').value = '';
     document.getElementById('addAddress').value = '';
     document.getElementById('addPassword').value = '';
     document.getElementById('addBtnText').textContent = t('add');
@@ -1668,6 +1692,7 @@
     var title = document.getElementById('addFormTitle');
     title.textContent = t('edit_server');
     title.style.display = 'block';
+    document.getElementById('addName').value = normalizeServerName(srv.name);
     document.getElementById('addAddress').value = srv.url;
     // Prefill the saved password so saving without retyping keeps it.
     document.getElementById('addPassword').value = srv.password || '';

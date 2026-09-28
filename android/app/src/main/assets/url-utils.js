@@ -66,3 +66,41 @@ function buildServerUrl(text) {
   if (!parsed || !parsed.protocol || !parsed.port) return null;
   return parsed.protocol + '://' + parsed.host + ':' + parsed.port;
 }
+
+/**
+ * Normalise a server's display name: trimmed. Empty means "no name", which the
+ * list renders as the address instead.
+ *
+ * Returns '' for anything that is not a string, so callers can pass the raw
+ * field value without guarding.
+ */
+function normalizeServerName(text) {
+  if (typeof text !== 'string') return '';
+  return text.trim();
+}
+
+/**
+ * Find the server whose NAME equals `name`, ignoring `exceptUrl`.
+ *
+ * Names are unique labels, so the form refuses to save a duplicate. The
+ * comparison is case-insensitive (users do not think of "Home" and "home" as
+ * different servers) and an empty `name` never matches — it means "no name",
+ * and unnamed servers must not collide with each other.
+ *
+ * `exceptUrl` is the entry currently being edited: a server must not collide
+ * with itself when its name is left unchanged.
+ *
+ * Returns the conflicting entry (an object with at least `.url`), or null.
+ */
+function findServerNameConflict(servers, name, exceptUrl) {
+  var wanted = normalizeServerName(name).toLowerCase();
+  if (!wanted) return null;
+  if (!Array.isArray(servers)) return null;
+  for (var i = 0; i < servers.length; i++) {
+    var srv = servers[i];
+    if (!srv) continue;
+    if (exceptUrl && srv.url === exceptUrl) continue;
+    if (normalizeServerName(srv.name).toLowerCase() === wanted) return srv;
+  }
+  return null;
+}

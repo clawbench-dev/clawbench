@@ -108,11 +108,37 @@ blur 监听器两份**逐字节相同**（只调 `buildServerUrl` 与 DOM），�
 变异验证（逐条确认测试会红）：保存路径加回 `connectToServer`；`buildServerUrl` 放宽端口；
 放宽协议；桌面改铅笔按钮 class；桌面 blur 不再写回；重命名铅笔 onclick —— 均 1~4 个用例失败。
 
+## 追加：服务器名称（同日实施）
+
+服务器条目新增可选的 `name` 字段，三处界面共享：两个原生登录页 + Web `LoginView.vue`。
+
+- **存储**：Android `saveServerInternal(url, password, name)`；Electron `ServerEntry.name` +
+  `saveServerName()`（独立于 `savePasswordFor`，因为「只有名字、没有密码」也必须能建条目）。
+- **桥**：新增 `saveServerNamed(url, password, name)`（Android `@JavascriptInterface` 按名解析、
+  不支持重载，故用独立方法名）；保留 2 参 `saveServer` 供旧页面与 Web 降级。
+- **唯一性**：`findServerNameConflict(servers, name, exceptUrl)`（两份 `url-utils.js` 逐字节相同）
+  与 Web 的 `findNameConflict` 同规则 —— **大小写不敏感**、**空名永不冲突**、**被编辑的条目豁免自身**。
+  重名 → 报错拒绝保存。
+- **显示**：有名字显示名字，无名字回退显示地址；完整地址始终在 `title` 悬停提示里。
+- **清空语义**：清空名字是**删除该字段**（不是写空串），条目因此回落到显示地址。
+- **`null` vs `""`（关键）**：`name === null` 表示「调用方无意见」，保留已存名字；`""` 才表示清除。
+  2 参 `saveServer` 传 `null` —— 若把它当 `""` 处理，用户每次点「连接」都会抹掉名字
+  （该缺陷由 `saveServerNamed_legacyTwoArgSaveLeavesNameIntact` 抓出）。
+
+### 顺带修掉的既有缺陷
+
+Electron 的 `savePasswordFor()` 在**密码为空且条目不存在**时不写任何东西，因此桌面端
+「添加」一个无密码服务器不会落库（Android 的 `saveServerInternal` 一直会创建条目）。
+新增的 `saveServerName()` 采用 upsert 语义修掉它，并由 `secrets.test.ts` 的
+「creates an entry for a name-only save」守住。
+
 ## 不做的事（YAGNI）
 
-- 不合并两份 `login.html`；不改 Web 端（浏览器端没有这个登录页）；
+- 不合并两份 `login.html`；
 - 不支持 IPv6 字面量与 URL 认证信息（沿用既有解析器限制）；
-- 编辑态不允许改密码以外的「部分字段」——地址与密码整体提交。
+- 编辑态不允许改密码以外的「部分字段」——地址、密码、名称整体提交；
+- 名称不参与 `saveServer` 的键（键仍是 URL），故重名唯一性只在 UI 层强制，
+  存储层允许重名（避免竞态下静默丢条目）。
 
 ## 人工验收
 

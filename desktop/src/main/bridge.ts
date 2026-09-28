@@ -6,7 +6,7 @@ import fs from 'node:fs'
 import { getStore, initStore } from './store'
 import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
-  migratePasswords, getServersForRenderer,
+  migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
@@ -57,6 +57,14 @@ export function registerBridge(): void {
   ipcMain.handle('native:save-server', (_e, url: string, password: string) => {
     // Writes the credential onto this server's entry (creating it if absent).
     savePasswordFor(url, password)
+  })
+  // Save with the optional display name. A separate channel rather than an
+  // optional third argument to native:save-server, so a newer renderer and an
+  // older main process (or vice versa) fail loudly at the call site instead of
+  // silently dropping the name.
+  ipcMain.handle('native:save-server-named', (_e, url: string, password: string, name: string) => {
+    savePasswordFor(url, password)
+    saveServerName(url, name)
   })
   ipcMain.handle('native:remove-server', (_e, url: string) => {
     getStore().set('servers', getStore().get('servers').filter(s => s.url !== url))

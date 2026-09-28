@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { useServerList } from '@/composables/useServerList'
+import { useServerList, findNameConflict, normalizeServerName } from '@/composables/useServerList'
 
 describe('useServerList', () => {
   beforeEach(() => {
@@ -152,6 +152,132 @@ describe('useServerList', () => {
       expect(mockSave).toHaveBeenCalledWith('http://newserver:8080', 'newpass')
 
       delete (window as any).ClawBenchNative
+    })
+
+    it('prefers native.saveServerNamed and passes a trimmed name', async () => {
+      const mockNamed = vi.fn()
+      const mockSave = vi.fn()
+      ;(window as any).ClawBenchNative = {
+        getServerList: () => JSON.stringify([]),
+        saveServer: mockSave,
+        saveServerNamed: mockNamed,
+      }
+
+      const { load, save } = useServerList()
+      await load()
+
+      await save('http://newserver:8080', 'newpass', '  Home NAS  ')
+
+      expect(mockNamed).toHaveBeenCalledWith('http://newserver:8080', 'newpass', 'Home NAS')
+      // The unnamed variant must NOT also fire, or the name would be clobbered.
+      expect(mockSave).not.toHaveBeenCalled()
+
+      delete (window as any).ClawBenchNative
+    })
+
+    it('falls back to saveServer when the host lacks saveServerNamed', async () => {
+      const mockSave = vi.fn()
+      ;(window as any).ClawBenchNative = {
+        getServerList: () => JSON.stringify([]),
+        saveServer: mockSave,
+      }
+
+      const { load, save } = useServerList()
+      await load()
+
+      await save('http://newserver:8080', 'newpass', 'Home NAS')
+
+      // The entry still persists; the name is dropped rather than blocking.
+      expect(mockSave).toHaveBeenCalledWith('http://newserver:8080', 'newpass')
+
+      delete (window as any).ClawBenchNative
+    })
+
+    it('stores the name in localStorage in web mode', async () => {
+      const { servers, load, save } = useServerList()
+      await load()
+
+      await save('http://named:8080', 'pw', 'Lab')
+
+      expect(servers.value[0].name).toBe('Lab')
+      const stored = JSON.parse(localStorage.getItem('clawbench-servers')!)
+      expect(stored[0].name).toBe('Lab')
+    })
+
+    it('clearing the name removes the field rather than storing an empty string', async () => {
+      localStorage.setItem('clawbench-servers', JSON.stringify([
+        { url: 'http://named:8080', password: 'pw', name: 'Lab' },
+      ]))
+
+      const { load, save } = useServerList()
+      await load()
+
+      await save('http://named:8080', 'pw', '   ')
+
+      const stored = JSON.parse(localStorage.getItem('clawbench-servers')!)
+      expect(stored[0].name).toBeUndefined()
+    })
+  })
+
+  // ── getLabel() ──
+
+  describe('getLabel', () => {
+    it('prefers the name and falls back to the url', async () => {
+      localStorage.setItem('clawbench-servers', JSON.stringify([
+        { url: 'http://named:8080', password: 'pw', name: 'Home' },
+        { url: 'http://unnamed:8080', password: 'pw' },
+      ]))
+
+      const { servers, load, getLabel } = useServerList()
+      await load()
+
+      expect(getLabel(servers.value[0])).toBe('Home')
+      expect(getLabel(servers.value[1])).toBe('http://unnamed:8080')
+    })
+
+    it('treats a whitespace-only name as no name', async () => {
+      localStorage.setItem('clawbench-servers', JSON.stringify([
+        { url: 'http://blank:8080', password: 'pw', name: '   ' },
+      ]))
+
+      const { servers, load, getLabel } = useServerList()
+      await load()
+
+      expect(getLabel(servers.value[0])).toBe('http://blank:8080')
+    })
+  })
+
+  // ── findNameConflict() ──
+
+  describe('findNameConflict', () => {
+    const list = [
+      { url: 'http://a:8080', password: '', name: 'Home' },
+      { url: 'http://b:8080', password: '' },
+    ]
+
+    it('normalises names by trimming', () => {
+      expect(normalizeServerName('  Home  ')).toBe('Home')
+      expect(normalizeServerName(undefined)).toBe('')
+    })
+
+    it('matches case-insensitively', () => {
+      expect(findNameConflict(list, 'home')?.url).toBe('http://a:8080')
+      expect(findNameConflict(list, '  HOME  ')?.url).toBe('http://a:8080')
+    })
+
+    it('returns null for a free name', () => {
+      expect(findNameConflict(list, 'Lab')).toBeNull()
+    })
+
+    it('never matches an empty name', () => {
+      expect(findNameConflict(list, '')).toBeNull()
+      expect(findNameConflict(list, '   ')).toBeNull()
+    })
+
+    it('exempts the entry being edited', () => {
+      expect(findNameConflict(list, 'Home', 'http://a:8080')).toBeNull()
+      // ...but still catches a collision with a different server.
+      expect(findNameConflict(list, 'Home', 'http://b:8080')?.url).toBe('http://a:8080')
     })
   })
 

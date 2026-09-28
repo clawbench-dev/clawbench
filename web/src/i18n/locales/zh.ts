@@ -271,6 +271,8 @@ export default {
     wrongPassword: '密码错误，请重试。',
     networkError: '网络错误，请检查后端服务是否启动。',
     addServer: '添加其他服务端',
+    serverNamePlaceholder: '名称（选填）',
+    duplicateServerName: '该名称已被使用',
     serverUrlPlaceholder: '输入服务端地址',
     serverPasswordPlaceholder: '输入密码',
     addServerSubmit: '添加并登录',

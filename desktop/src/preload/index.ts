@@ -103,6 +103,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
 
   // async writes
   saveServer: (u: string, p: string) => invoke('native:save-server', u, p),
+  saveServerNamed: (u: string, p: string, n: string) => invoke('native:save-server-named', u, p, n),
   removeServer: (u: string) => invoke('native:remove-server', u),
   setSSHPassword: (p: string) => invoke('native:set-ssh-password', p),
   connectToServer: (u: string, p: string) => invoke('native:connect-to-server', u, p),
