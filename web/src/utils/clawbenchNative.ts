@@ -29,12 +29,8 @@ export interface ClawBenchNative {
   setNativePushEnabled(enabled: boolean): void
   /** Enable/disable the floating session status window (Android; no-op on desktop). */
   setFloatingWindowEnabled(enabled: boolean): void
-  /** Read the persisted floating status window state (Android; no-op on desktop). */
-  getFloatingWindowEnabled(): boolean
   /** Enable/disable the Android 16 Live Updates status chip (Android; no-op on desktop). */
   setLiveUpdateEnabled(enabled: boolean): void
-  /** Read the persisted Live Updates chip state (Android; no-op on desktop). */
-  getLiveUpdateEnabled(): boolean
   /** Whether the system can currently promote Live Updates for this app (Android; false on desktop). */
   canPostPromotedNotifications?(): boolean
   /** Open the system screen to enable Live Updates for this app (Android; no-op on desktop). */

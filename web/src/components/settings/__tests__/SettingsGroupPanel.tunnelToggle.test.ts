@@ -2,10 +2,9 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import SettingsGroupPanel from '@/components/settings/SettingsGroupPanel.vue'
 import type { GroupPanelConfig } from '@/components/settings/settingsFieldMap'
+import { readAndroidBridge, androidBridgeExposes } from '@/testUtils/androidBridgeContract'
 
 /**
  * The Android-only h2 tunnel toggle in the port-forward panel.
@@ -378,33 +377,10 @@ describe('h2 toggle: interaction', () => {
  * the TS interface carries no host information. What IS checkable — and what
  * this bug actually needed — is that the methods the Android host is required
  * to expose for this feature are both implemented and bridged.
+ *
+ * The `readAndroidBridge` / `androidBridgeExposes` helpers live in
+ * `@/testUtils/androidBridgeContract` so other contract specs share them.
  */
-function readAndroidBridge(): string {
-  const candidates = [
-    resolve(process.cwd(), 'android/app/src/main/java/com/clawbench/app/MainActivity.java'),
-    resolve(process.cwd(), '../android/app/src/main/java/com/clawbench/app/MainActivity.java'),
-  ]
-  for (const p of candidates) {
-    try {
-      return readFileSync(p, 'utf8')
-    } catch {
-      // try the next candidate
-    }
-  }
-  throw new Error(`MainActivity.java not found from cwd: ${process.cwd()}`)
-}
-
-/** True when `name` is declared as a `@JavascriptInterface` bridge method. */
-function androidBridgeExposes(src: string, name: string): boolean {
-  // Match the annotation, then the method declaration within a few lines. A
-  // method present but missing the annotation is invisible to the WebView,
-  // which is exactly the failure mode a source-only grep would miss.
-  const re = new RegExp(
-    `@JavascriptInterface\\s+public\\s+[\\w<>\\[\\].]+\\s+${name}\\s*\\(`,
-  )
-  return re.test(src)
-}
-
 describe('h2 toggle: real Android host contract', () => {
   const src = readAndroidBridge()
 
