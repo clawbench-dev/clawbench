@@ -98,14 +98,24 @@ sequenceDiagram
 
 ## 传输方式
 
-端口转发支持两种线缆，由 `port_forward.transport` 选择（`internal/model/port_forward.go`）。
+端口转发支持两种线缆，配置项 `port_forward.transport` 保留三值（`internal/model/port_forward.go`）。
 
-**关键语义（已固化在实现里）：`enabled` 只管 SSH 监听，`transport` 只管客户端走哪条线。** 也就是说 **`transport` 是「客户端传输提示」，不是「服务端端点闸门」**——它随 `/api/config` 下发给客户端，由客户端决定探测哪条线，服务端**不据此启停任何监听器或端点**。
+**关键语义（已固化在实现里）：`enabled` 只管 SSH 监听，`transport` 不是「服务端端点闸门」。** 服务端**不据此启停任何监听器或端点**；它现在只剩两个服务端内部用途：
 
-| 值 | 客户端行为 | 服务端效果 |
+1. **registry 门控**——`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry`；
+2. **web 端健康检查门控**——`web/src/composables/usePortForward.ts` 的 `tunnelTransportAllowsH2()`（读服务端配置，**仍认 `'both'`**）。
+
+> **⚠️ 两个原生客户端已不再消费该值**（原先「客户端读 `/api/config` 后决定探测哪条线」的语义已失效）：
+> - **Electron 写死 SSH**：`desktop/src/main/bridge.ts` 的 `native:set-tunnel-transport` handler **只对 `'ssh'` 调用 `setTransportPreference`**，`'h2'` / `'both'` 被忽略；`tunnel.ts` 的三值能力与测试保持不变。
+> - **Android 用本地开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；Android 的 `PortForwardTransportKind` 只有 `SSH` / `H2`（**没有 `BOTH`**，不做失败回退）。
+> - 前端向原生推送 `transport` 的 `syncTunnelTransportToNative` 已删除（连同 `clawbenchNative.ts` 的 `setTunnelTransport?` 声明）。
+
+因此下表描述的是**服务端配置语义**，而非当前原生客户端的实际行为：
+
+| 值 | 服务端配置语义（历史「客户端行为」） | 服务端效果 |
 |---|---|---|
-| `ssh` | 只探测 SSH 通道（旧行为） | 无（不影响任何服务端监听/端点） |
-| `h2` | 只探测 h2（h2-over-TLS → h2c） | 无 |
+| `ssh` | 仅 SSH 通道 | 无（不影响任何服务端监听/端点） |
+| `h2` | 仅 h2（h2-over-TLS → h2c） | 无 |
 | `both` | **默认**。优先 h2，失败回退 SSH | 无 |
 
 `transport` 与两个服务端事实的关系：
@@ -137,7 +147,9 @@ fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，�
 
 ### 传输优先级链
 
-`transport: both` 时，客户端首次连接严格按顺序探测：**h2-over-TLS → h2c → SSH**。`transport` 只是把这条链裁剪成子集：`ssh` → 只探测 SSH，`h2` → 只探测 h2-over-TLS → h2c。
+> **⚠️ 当前桌面与 Android 均不按此链探测**：Electron 在 IPC 边界固定 SSH（`'h2'`/`'both'` 被 bridge 忽略），Android 由本地开关在 SSH / h2 之间**二选一**（默认 SSH，无失败回退）。本节描述的「h2-over-TLS → h2c → SSH」链路是 `tunnel.ts` 保留的能力，也是未来若恢复「客户端消费 `transport`」时的目标语义。
+
+`transport: both` 时，**`tunnel.ts` 的候选链**为：首次连接严格按顺序探测 **h2-over-TLS → h2c → SSH**。`transport` 只是把这条链裁剪成子集：`ssh` → 只探测 SSH，`h2` → 只探测 h2-over-TLS → h2c。（如上所述，当前 bridge 只会把该偏好设为 `ssh`，因此实际从不进入 h2 分支。）
 
 - **h2-over-TLS**：实例开了 TLS 时，`ServeTLS` 自动协商 ALPN `h2`——即「只要开了 TLS，20000 今天就在跑 h2」，多路复用层无需新端口。
 - **h2c**：明文部署走 prior-knowledge（不做 Upgrade 协商）。
@@ -146,6 +158,12 @@ fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，�
 明文部署下首次连接会白付一次 TLS 失败（很快，握手即被拒），因此客户端**记住上次成功的传输方式**，重连时优先复用；只有首次连接严格按此顺序探测。服务器侧协议开关见 `cmd/server/server_protocols.go` 的 `serverProtocols`：`SetHTTP1(true)` **必须保留**（5 个 `coder/websocket` 端点依赖 `http.Hijacker`，h2 无 hijack），TLS 下加 `SetHTTP2(true)`、明文下加 `SetUnencryptedHTTP2(true)`。
 
 > **浏览器端零改动**：`fetch()` 的 Fetch 规范里 `RequestDuplex` 只有 `"half"`（`"full"` 保留未用），无法全双工；且流式请求体仅 Chromium 支持。因此 h2 隧道只面向 Electron 与 Android 原生客户端，Web 前端不参与。详见设计文档 §2.3。
+
+### 后续可清理项：`transport` 对原生客户端已失效
+
+服务端 `port_forward.transport` 仍保留三值、默认 `both`，但**两个原生客户端都不再消费它**——Electron 在 bridge 层 clamp 到 `ssh`，Android 用本地 SharedPreferences 开关。于是 `/api/config` 下发的 `port_forward.transport` 对原生客户端已是**事实上的死配置**，只剩 registry 门控与 web 端健康检查门控两个服务端内部用途（见上文「传输方式」）。
+
+后续版本可考虑把「客户端传输提示」与「服务端 registry 门控」拆成两个独立配置项，或直接移除对客户端无意义的 `h2`/`both` 下发。**本次刻意不动**：改动会触碰 `port_forward.enabled` 的默认值陷阱——`cmd/server/proxy_registry_gate_test.go` 的回归守卫会拒绝把默认值从 `both` 改成 `ssh`（那会让从未显式配置的安装在 `enabled:false` 时失去注册表，h2 隧道请求拿到 503）。设计依据见设计文档 §10「后续可清理项」。
 
 ## h2 流隧道
 
@@ -325,7 +343,7 @@ sequenceDiagram
 ### h2 设计要点
 
 - **单端口是 h2 传输的核心收益**：SSH 要额外放行 `mainPort+1`，h2 复用 20000，用户只需一条防火墙规则
-- **h2 不取代 SSH**：SSH 保留为优先级链末端的兜底（`transport: both` 默认同时提供），也用于 h2 被中间设备阻断的场景
+- **h2 不取代 SSH**：SSH 保留为优先级链末端的兜底，也用于 h2 被中间设备阻断的场景。当前两个原生客户端里，Electron **固定走 SSH**（不探测 h2），Android 由本地开关在 SSH / h2 间二选一（默认 SSH，**无失败回退**）。
 - **`-R` 的认领机制是 h2 协议限制的必然结果**，不是设计偏好：服务端不能发起流，只能让客户端主动认领
 - **半关闭差异必须告知使用者**：依赖「target 先 FIN 后仍能持续写入」的协议在 h2 下会在 5s 后丢字节；这类场景应改用 SSH 传输
 

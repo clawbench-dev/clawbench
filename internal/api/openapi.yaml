@@ -384,10 +384,14 @@ paths:
         按 mode/enabled/选中项解析后下发。
 
         `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`transport` 是隧道传输方式：`ssh`（仅 SSH 通道）、
-        `h2`（仅 HTTP/2 流隧道，走主端口）、`both`（默认；客户端按
-        h2-over-TLS → h2c → SSH 探测并回退）。客户端（Electron / Android）
-        读该值后下发到原生隧道层。
+        `allowed_ports` 不下发）。`transport` 是服务端保留的隧道传输提示：`ssh`
+        （仅 SSH 通道）、`h2`（仅 HTTP/2 流隧道，走主端口）、`both`（默认）。
+
+        它目前**只驱动服务端 registry 门控与 web 端健康检查门控**；两个原生
+        客户端都不再消费该值——Electron 在 IPC 边界固定为 `ssh`，Android 改用
+        本地 SharedPreferences 开关（`tunnel_transport_h2_enabled`，默认关 = SSH）。
+        这个「配置项对原生客户端已失效」的状态属后续可清理项，本次不动（改默认值
+        会触发 registry 门控回归守卫）。
       operationId: getConfig
       responses:
         "200":
