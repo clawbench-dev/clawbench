@@ -1763,6 +1763,32 @@ watch(() => props.active, (active) => {
 // hundreds of collapsed blocks, and so the auto-load does not preempt the click
 // path (a user expanding a FAILED block to retry must not silently receive the
 // cached failure). Everything else keeps lazy-load-on-click.
+// DIAG (stuck top thinking block): dump EVERY thinking block's render state on
+// every blocks change. The stall watchdog only fires after 120s of silence, so a
+// block that spins while the turn keeps streaming is invisible to it — which is
+// exactly the reported shape ("the rest of the reply streams normally"). This
+// fires unconditionally and is throttled to 1/s so it stays readable.
+let _lastRenderDumpAt = 0
+watch(
+  () => props.blocks,
+  () => {
+    const now = Date.now()
+    if (now - _lastRenderDumpAt < 1000) return
+    _lastRenderDumpAt = now
+    const blocks = (props.blocks || []) as any[]
+    const thinks = blocks
+      .map((b, i) => ({ b, i }))
+      .filter(({ b }) => b?.type === 'thinking')
+    diagLog(TAG, `render dump: msgId=${props.msgId} streaming=${props.streaming} active=${props.active} blocks=${blocks.length} thinking=${thinks.length}`)
+    for (const { b, i } of thinks) {
+      const key = stableBlockKey(i, b)
+      const cached = b.think_id ? thinkingContent.cachedText(b.think_id) : undefined
+      diagLog(TAG, `render block[${i}]: tid=${b.think_id || '-'} done=${b.done} inprog=${b.in_progress} textLen=${typeof b.text === 'string' ? b.text.length : -1} cached=${cached === undefined ? 'none' : cached.length} err=${b.think_id ? !!thinkingContent.errors.value[b.think_id] : false} isStreaming=${isThinkingStreaming(b)} collapsed=${isThinkingCollapsed(b, i)} expanded=${!!thinkingExpanded.value[key]} expanding=${!!expandingThinking.value[key]}`)
+    }
+  },
+  { deep: true },
+)
+
 watch(
   () => {
     const blocks = props.blocks || []
