@@ -68,6 +68,20 @@ export function parseBackgroundColor(value: string | null | undefined): Rgb {
   return parseHexColorOr(value, FALLBACK_BG)
 }
 
+/**
+ * Relative luminance (WCAG) of an RGB colour, 0..1.
+ *
+ * Used to decide which way to push a derived colour so it contrasts with what it
+ * is drawn on, instead of assuming every theme is dark.
+ */
+export function luminance(c: Rgb): number {
+  const f = (v: number) => {
+    const s = v / 255
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4)
+  }
+  return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
+}
+
 /** Linear blend: k=0 returns `a`, k=1 returns `b`. */
 export function mixRgb(a: Rgb, b: Rgb, k: number): Rgb {
   return {
@@ -100,6 +114,22 @@ export interface WavePalette {
  * Explicit overrides win when provided (a theme may ship a hand-tuned wave
  * palette); otherwise the colours are derived so any theme gets a coherent
  * wave without extra configuration.
+ *
+ * ── Why the crest is pushed away from the stage, not always toward white ──
+ * The wave paints its OWN opaque stage gradient (see WaveBackground draw() ①),
+ * so what the bands must contrast against is that stage — not the page. Pushing
+ * both toward WHITE (the original) makes the crest a lighter tint of the stage
+ * on every theme: on a dark theme that reads as a glow, but on a light theme the
+ * stage is already near-white, so the wave becomes a barely-visible ghost.
+ *
+ * Measured on the real rendered frame across all 36 themes (front band crest vs
+ * the stage under it): light themes sat at 2.37–2.54, dark at 3.15–3.37. Pushing
+ * the crest AWAY from the stage lifts every theme and hurts none —
+ * light 2.78–2.99 (+0.23..+0.62), dark 3.56–3.97 (+0.41..+0.60).
+ *
+ * The consequence is deliberate: on light themes the wave is a DARK silhouette
+ * rather than a bright glow. That is forced by physics — you cannot draw
+ * anything brighter than a near-white stage.
  */
 export function buildWavePalette(
   accent: string | null | undefined,
@@ -110,10 +140,13 @@ export function buildWavePalette(
   const bgRgb = parseBackgroundColor(bg)
 
   const derivedBottom = mixRgb(mixRgb(bgRgb, accentRgb, 0.38), WHITE, 0.16)
+  // Contrast direction is decided from the STAGE the bands sit on, since that is
+  // what they are actually drawn over (the page behind it is fully covered).
+  const bandTarget = luminance(derivedBottom) < 0.5 ? WHITE : BLACK
   const derived: WavePalette = {
     bgTop: mixRgb(bgRgb, BLACK, 0.28),
     bgBottom: derivedBottom,
-    waveRim: mixRgb(derivedBottom, WHITE, 0.45),
+    waveRim: mixRgb(derivedBottom, bandTarget, 0.55),
     waveBody: mixRgb(derivedBottom, accentRgb, 0.20),
   }
 

@@ -208,14 +208,14 @@
           type="range"
           class="settings-item__slider"
           :value="panelOpacity"
-          min="0.5"
+          min="0"
           max="1"
           step="0.01"
           :disabled="!hasActiveBackground"
           @input="onOpacityInput"
           @click.stop
         />
-        <button v-if="panelOpacity !== 0.85" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
+        <button v-if="panelOpacity !== 0.7" class="settings-item__slider-reset" @click.stop="resetOpacity" :title="t('settings.resetToDefault')">↺</button>
       </div>
       <div class="settings-item__desc">{{ t('settings.items.wallpaperPanelOpacityDesc') }}</div>
     </div>
@@ -607,7 +607,7 @@ function onOpacityInput(e: Event) {
 }
 
 function resetOpacity() {
-  onOpacityInput({ target: { value: '0.85' } } as unknown as Event)
+  onOpacityInput({ target: { value: '0.7' } } as unknown as Event)
 }
 
 /** Local display prefs change instantly (live preview) and persist debounced.

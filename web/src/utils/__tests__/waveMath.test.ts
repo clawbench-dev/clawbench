@@ -5,6 +5,7 @@ import {
   parseAccentColor,
   parseBackgroundColor,
   mixRgb,
+  luminance,
   rgba,
   buildWavePalette,
   waveTimeScale,
@@ -129,13 +130,31 @@ describe('buildWavePalette', () => {
     }
   })
 
-  it('makes the rim the brightest colour, so the crest reads as a crisp edge', () => {
+  it('makes the crest contrast with the stage on a DARK theme by brightening', () => {
     const p = buildWavePalette('#fe8019', '#282828')
-    const lum = (c: Rgb) => 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
-    // The crest must outshine the background it is drawn over, otherwise the
-    // wave is physically invisible (a bug hit during prototyping).
-    expect(lum(p.waveRim)).toBeGreaterThan(lum(p.bgBottom))
-    expect(lum(p.bgBottom)).toBeGreaterThan(lum(p.bgTop))
+    // The bands are drawn over the stage gradient (bgBottom), so the crest must
+    // differ from THAT, not from the page. On a dark theme it goes brighter.
+    expect(luminance(p.waveRim)).toBeGreaterThan(luminance(p.bgBottom))
+    expect(luminance(p.bgBottom)).toBeGreaterThan(luminance(p.bgTop))
+  })
+
+  it('makes the crest contrast with the stage on a LIGHT theme by darkening', () => {
+    // Regression guard for the light-theme invisibility: pushing the crest
+    // toward white on a near-white stage left the wave a barely-visible ghost
+    // (measured 2.37 contrast on ayu-light). It must go DARKER instead.
+    const p = buildWavePalette('#4a90d9', '#ffffff')
+    expect(luminance(p.waveRim)).toBeLessThan(luminance(p.bgBottom))
+    // Still clearly separated, not merely "a bit different".
+    expect(luminance(p.bgBottom) - luminance(p.waveRim)).toBeGreaterThan(0.1)
+  })
+
+  it('decides the contrast direction from the stage, not the page', () => {
+    // A dark page can still yield a light stage (accent-heavy themes); the
+    // direction must follow whatever the bands actually sit on.
+    const p = buildWavePalette('#ffffff', '#000000') // white accent washes the stage out
+    const stageIsLight = luminance(p.bgBottom) > 0.5
+    const crestIsDarker = luminance(p.waveRim) < luminance(p.bgBottom)
+    expect(crestIsDarker).toBe(stageIsLight)
   })
 
   it('honours explicit overrides', () => {

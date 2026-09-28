@@ -242,7 +242,7 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // value flows through the same local-config pipeline as the other display
     // tweaks. Panel opacity is a per-device preference (localStorage), like
     // blur / edge fade / wave speed.
-    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'panelOpacity', type: 'slider', source: 'local', min: 0.5, max: 1, step: 0.01, defaultValue: 0.85, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
+    { type: 'item', spec: { labelKey: 'settings.items.wallpaperPanelOpacity', key: 'panelOpacity', type: 'slider', source: 'local', min: 0, max: 1, step: 0.01, defaultValue: 0.7, displayFormat: 'percent', sectionHeader: 'settings.items.wallpaperSection' }},
   ],
   agents: [],
   chat: [

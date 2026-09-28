@@ -173,24 +173,24 @@ describe('themeBackground', () => {
   })
 
   describe('resolvePanelOpacity', () => {
-    it('defaults to 0.85 for missing / non-numeric values', () => {
-      expect(resolvePanelOpacity(undefined)).toBe(0.85)
-      expect(resolvePanelOpacity(null)).toBe(0.85)
-      expect(resolvePanelOpacity('')).toBe(0.85)
-      expect(resolvePanelOpacity('abc')).toBe(0.85)
+    it('defaults to 0.7 for missing / non-numeric values', () => {
+      expect(resolvePanelOpacity(undefined)).toBe(0.7)
+      expect(resolvePanelOpacity(null)).toBe(0.7)
+      expect(resolvePanelOpacity('')).toBe(0.7)
+      expect(resolvePanelOpacity('abc')).toBe(0.7)
     })
 
-    it('accepts a stored numeric preference', () => {
-      expect(resolvePanelOpacity(0.7)).toBe(0.7)
+    it('accepts any value across the whole 0-1 range', () => {
+      expect(resolvePanelOpacity(0)).toBe(0)
+      expect(resolvePanelOpacity(0.35)).toBe(0.35)
       expect(resolvePanelOpacity(1)).toBe(1)
       // A stringified value (hand-edited localStorage) is coerced.
       expect(resolvePanelOpacity('0.6')).toBe(0.6)
     })
 
     it('rejects out-of-range values', () => {
-      expect(resolvePanelOpacity(0)).toBe(0.85)
-      expect(resolvePanelOpacity(-0.2)).toBe(0.85)
-      expect(resolvePanelOpacity(1.5)).toBe(0.85)
+      expect(resolvePanelOpacity(-0.2)).toBe(0.7)
+      expect(resolvePanelOpacity(1.5)).toBe(0.7)
     })
   })
 
@@ -230,8 +230,8 @@ describe('themeBackground', () => {
     it('clamps the alpha to the valid range', () => {
       applyWallpaper('background.png', 5, false)
       expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('100%')
-      applyWallpaper('background.png', 0.1, false)
-      expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('50%')
+      applyWallpaper('background.png', -1, false)
+      expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('0%')
     })
 
     it('clears the effect when the wallpaper file is empty', () => {
@@ -246,11 +246,11 @@ describe('themeBackground', () => {
     it('activates the translucent panels for the wave, which has no file', () => {
       // The wave is a background with no image, so the 5th argument is the only
       // signal that the surfaces must go translucent.
-      applyWallpaper('', 0.85, false, false, true)
+      applyWallpaper('', 0.7, false, false, true)
       const html = document.documentElement
       expect(html.classList.contains('wallpaper-active')).toBe(true)
       expect(html.style.getPropertyValue('--wallpaper-url')).toBe('none')
-      expect(html.style.getPropertyValue('--panel-alpha')).toBe('85%')
+      expect(html.style.getPropertyValue('--panel-alpha')).toBe('70%')
     })
 
     it('does not write a scrim for the wave', () => {

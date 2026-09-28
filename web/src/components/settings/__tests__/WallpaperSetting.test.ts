@@ -17,7 +17,7 @@ const serverConfig = ref<Record<string, unknown>>({ appearance: { active_file: '
 const localConfig = reactive<Record<string, string | number | boolean | null>>({
   theme: 'auto',
   locale: 'zh',
-  panelOpacity: 0.85,
+  panelOpacity: 0.7,
   wallpaperBlur: 0,
   wallpaperEdgeFade: false,
 })
@@ -759,7 +759,7 @@ describe('WallpaperSetting', () => {
       await nextTick()
       const opacity = wrapper.findAll('input[type="range"]').find(i => {
         const el = i.element as HTMLInputElement
-        return el.min === '0.5'
+        return el.min === '0'
       })!
       expect(opacity.attributes('disabled')).toBeUndefined()
     })
@@ -779,13 +779,13 @@ describe('WallpaperSetting', () => {
       expect(mockPatchConfig).not.toHaveBeenCalled()
     })
 
-    it('exposes the relaxed 0.5 lower bound', async () => {
+    it('exposes the full 0-100 opacity range', async () => {
       serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
       chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
       const slider = wrapper.findAll('input[type="range"]')[0]
-      expect(slider.attributes('min')).toBe('0.5')
+      expect(slider.attributes('min')).toBe('0')
       expect(slider.attributes('max')).toBe('1')
     })
 

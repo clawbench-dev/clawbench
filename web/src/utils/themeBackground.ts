@@ -140,7 +140,7 @@ export function resolveWallpaperUrl(wallpaperFile: string, forceBust = false): s
 /**
  * Apply (or clear) the wallpaper effect for the given state.
  * `wallpaperFile` — active file name from server config ('' = none).
- * `panelOpacity`  — 0.5..1.0 opacity multiplier (clamped).
+ * `panelOpacity`  — 0..1 opacity multiplier (clamped).
  * `dark`          — current resolved theme is dark (drives scrim strength).
  * `forceBust`     — when true, regenerate the image URL even if the file name is
  *                   unchanged. Pass after an upload/replace that reuses the same
@@ -173,7 +173,7 @@ export function applyWallpaper(
   el.style.setProperty('--wallpaper-url', url ? `url("${url}")` : 'none')
   el.style.setProperty('--wallpaper-scrim', hasImage ? wallpaperScrim(dark) : 'transparent')
 
-  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0.5, panelOpacity)) : 0.85
+  const alpha = Number.isFinite(panelOpacity) ? Math.min(1, Math.max(0, panelOpacity)) : 0.7
   // Store the panel opacity as a <percentage> so the CSS color-mix stops are
   // plain percentages (calc() inside color-mix trips some CSS minifiers).
   el.style.setProperty('--panel-alpha', `${Math.round(alpha * 1000) / 10}%`)
@@ -300,16 +300,20 @@ export function resolveBingStatus(appearance: Record<string, unknown> | undefine
 }
 
 /**
- * Compute the effective panel opacity (default 0.85) from the stored local
- * preference. Out-of-range or non-numeric values fall back to the default; the
- * applier additionally clamps to the readable 0.5–1.0 range.
+ * Compute the effective panel opacity (default 0.7) from the stored local
+ * preference. Non-numeric values fall back to the default; the whole 0–1 range
+ * is accepted (the applier clamps too, so a hand-edited out-of-range value
+ * cannot produce an invalid color-mix stop).
  *
  * This is a per-device display tweak stored in localStorage, alongside blur /
  * edge-fade / wave speed — not a server config value.
  */
 export function resolvePanelOpacity(value: unknown): number {
+  // `null`/`''` must fall back to the default rather than coerce to 0: Number()
+  // turns both into 0, which is a legitimate opacity now that the range is 0–1.
+  if (value === null || value === undefined || value === '') return 0.7
   const v = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(v) && v > 0 && v <= 1 ? v : 0.85
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : 0.7
 }
 
 /** Compute dark-ness from the resolved theme of the given stored theme value. */

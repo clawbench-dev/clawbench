@@ -436,10 +436,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
-  // Panel opacity over a wallpaper / wave (0.5–1.0). A per-device display
-  // tweak like blur/edgeFade/waveSpeed, so it lives here rather than in the
-  // server config — each device can tune its own translucency.
-  panelOpacity: 0.85,
+  // Panel opacity over a wallpaper / wave (0–1). A per-device display tweak
+  // like blur/edgeFade/waveSpeed, so it lives here rather than in the server
+  // config — each device can tune its own translucency.
+  panelOpacity: 0.7,
   wallpaperBlur: 0,
   // Edge fade is ON by default: users who never touched the toggle (or never
   // migrated a legacy value) get the soft blended border out of the box.
