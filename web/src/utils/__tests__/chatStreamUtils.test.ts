@@ -3008,6 +3008,43 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(thinks[1].in_progress).toBe(true)
   })
 
+  it('does NOT re-open a finished live block with an in_progress marker', () => {
+    // The reported "top of the assistant message, never finishes, text never
+    // grows" (msgId=54716). block[0] had already finished normally
+    // (done=true, 66 chars — it IS the DB's short block th_fe1c10f0). On the
+    // 09:56:05 switch-back, adoptThinkingMarkers handed it the in_progress
+    // marker of a DIFFERENT block (th_a14f9884, 174512 chars) and forced
+    // in_progress back on: `tid=th_a14f9884 inprog=true textLen=66`, spinning
+    // forever while the real streaming block opened separately.
+    //
+    // A block's `done` came from a real thinking_done for that very block, so it
+    // must not be undone by a marker belonging to another one.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54716, content: '', streaming: true, blocks: [
+        { type: 'thinking', text: 'finished thought', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'b1', done: true },
+      ] },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54716, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_short', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'b1', done: true },
+        { type: 'thinking', think_id: 'th_long', in_progress: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.streaming)!
+    const finished = (reply.blocks || []).find(
+      (b: any) => b.type === 'thinking' && b.text === 'finished thought',
+    )
+    expect(finished, 'the finished block survives').toBeDefined()
+    expect(finished.done, 'it stays finished').toBe(true)
+    expect(finished.in_progress, 'and is NOT re-opened as streaming').toBeUndefined()
+    expect(finished.think_id, 'nor given another block identity').toBeUndefined()
+  })
+
   it('adopts a done marker onto an unfinished live block, keeping its text', () => {
     // This test previously asserted the opposite (think_id stays undefined),
     // on the premise that "a done marker is handled by the liveHasThinking

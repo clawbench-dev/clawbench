@@ -822,6 +822,22 @@ function adoptThinkingMarkers(dbBlocks: ContentBlock[], liveBlocks: ContentBlock
     let target: ContentBlock | undefined
     for (const lb of liveBlocks) {
       if (lb.type !== 'thinking' || lb.think_id) continue
+      // A block the live path already FINISHED must not be re-opened. Its
+      // `done` came from a real thinking_done for that very block; re-tagging it
+      // with the in_progress marker (and forcing in_progress back on) makes a
+      // completed chip spin forever, with its text frozen at whatever it had.
+      //
+      // This is the reported "top of the assistant message, never finishes,
+      // text never grows". Observed msgId=54716: block[0] finished at 09:53:29
+      // with done=true and 66 chars; the 09:56:05 switch-back adopted the
+      // in_progress marker of a DIFFERENT block (th_a14f9884, 174512 chars) onto
+      // it, leaving `tid=th_a14f9884 inprog=true textLen=66` spinning forever
+      // while the real streaming block opened separately.
+      //
+      // The marker's own block is still out there and must be adopted by
+      // someone else (or prepended from the DB as an extra) — just not onto this
+      // one.
+      if (lb.done) continue
       if ((lb.parent_tool_call_id || '') !== parent) continue
       target = lb // keep scanning: the streaming block is the last one
     }
