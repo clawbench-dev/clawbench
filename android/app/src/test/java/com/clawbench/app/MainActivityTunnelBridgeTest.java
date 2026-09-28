@@ -43,6 +43,18 @@ public class MainActivityTunnelBridgeTest {
     private MainActivity activity;
     private SharedPreferences mockPrefs;
     private Map<String, Object> prefsData;
+    /**
+     * Counts {@code getBoolean} reads through the stubbed store. Used to prove
+     * the assertion path actually consults SharedPreferences (a no-op getter
+     * that returned a constant would leave this at zero).
+     */
+    private int prefsReads;
+    /**
+     * Counts {@code putBoolean} writes through the stubbed store. Used to prove
+     * the bridge setter really writes the key rather than only flipping an
+     * in-memory mirror.
+     */
+    private int prefsWrites;
 
     @Before
     public void setUp() throws Exception {
@@ -65,15 +77,24 @@ public class MainActivityTunnelBridgeTest {
         // activity needs a stubbed prefs store (a real Context would NPE under
         // Unsafe allocation). A missing key reads as the stored default, which
         // is how the "default ssh" case stays honest.
+        //
+        // This store is an in-memory fake, so on its own it cannot prove the
+        // value reached disk — the Robolectric-backed
+        // BackgroundServiceTunnelTransportPrefsTest owns that. What it *can*
+        // prove is that the read/write went through SharedPreferences at all,
+        // which is what prefsReads/prefsWrites anchor (a no-op getter or setter
+        // would leave the counters at zero).
         prefsData = new HashMap<>();
         mockPrefs = mock(SharedPreferences.class);
         when(mockPrefs.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> {
+            prefsReads++;
             String key = inv.getArgument(0);
             return prefsData.containsKey(key) ? prefsData.get(key) : inv.getArgument(1);
         });
         when(mockPrefs.edit()).thenAnswer(inv -> {
             SharedPreferences.Editor editor = mock(SharedPreferences.Editor.class);
             when(editor.putBoolean(anyString(), anyBoolean())).thenAnswer(editInv -> {
+                prefsWrites++;
                 prefsData.put(editInv.getArgument(0), editInv.getArgument(1));
                 return editor;
             });
@@ -193,24 +214,59 @@ public class MainActivityTunnelBridgeTest {
         assertNotNull("setTunnelTransportH2Enabled method should exist", method);
         assertNotNull("Should have @JavascriptInterface annotation",
                 method.getAnnotation(android.webkit.JavascriptInterface.class));
+        // The JS bridge calls this for its side effect only; a non-void return
+        // would be ignored but signals an unintended signature change.
+        assertEquals("the setter is a void bridge method",
+                void.class, method.getReturnType());
     }
 
     @Test
     public void setTunnelTransportH2Enabled_writesThePreference() throws Exception {
         invoke("setTunnelTransportH2Enabled", true);
+
         assertTrue("true must persist tunnel_transport_h2_enabled",
                 BackgroundService.isTunnelTransportH2Enabled(activity));
+        // Read back the raw stored value, not just the derived boolean: this
+        // pins the exact key the frontend toggles and rules out the setter
+        // writing some other key that happens to be read elsewhere.
+        assertEquals("the bridge must write the documented key, true",
+                Boolean.TRUE, prefsData.get("tunnel_transport_h2_enabled"));
+        assertTrue("the setter must actually write through SharedPreferences",
+                prefsWrites > 0);
+
         invoke("setTunnelTransportH2Enabled", false);
         assertFalse("false must persist tunnel_transport_h2_enabled",
                 BackgroundService.isTunnelTransportH2Enabled(activity));
+        assertEquals("the bridge must write false on toggle-off",
+                Boolean.FALSE, prefsData.get("tunnel_transport_h2_enabled"));
+    }
+
+    @Test
+    public void getTunnelTransport_defaultsToSshBeforeAnyToggle() throws Exception {
+        // No setter call: the key is absent, so the bridge must fall back to the
+        // pre-tunnel default. This is the compatibility contract the whole
+        // change rests on.
+        assertEquals("an untouched install reports ssh",
+                "ssh", invoke("getTunnelTransport"));
+        assertEquals("no key means no stored value",
+                null, prefsData.get("tunnel_transport_h2_enabled"));
     }
 
     @Test
     public void getTunnelTransport_derivesFromTheLocalToggle() throws Exception {
-        invoke("setTunnelTransportH2Enabled", false);
-        assertEquals("ssh", invoke("getTunnelTransport"));
-        invoke("setTunnelTransportH2Enabled", true);
-        assertEquals("h2", invoke("getTunnelTransport"));
+        // Drive the store directly (not through the bridge setter) so this
+        // pins the derivation `preference -> 'h2' | 'ssh'` on its own, rather
+        // than re-testing that the setter wrote what it wrote.
+        prefsData.put("tunnel_transport_h2_enabled", false);
+        assertEquals("stored false derives ssh", "ssh", invoke("getTunnelTransport"));
+
+        prefsData.put("tunnel_transport_h2_enabled", true);
+        assertEquals("stored true derives h2", "h2", invoke("getTunnelTransport"));
+
+        // The getter must consult SharedPreferences; a hardcoded return would
+        // leave the read counter at zero.
+        assertTrue("the getter must read through SharedPreferences",
+                prefsReads > 0);
     }
 
     @Test
@@ -219,6 +275,12 @@ public class MainActivityTunnelBridgeTest {
         assertNotNull("getActiveTunnelTransport method should exist", method);
         assertNotNull("Should have @JavascriptInterface annotation",
                 method.getAnnotation(android.webkit.JavascriptInterface.class));
+        assertEquals("the frontend consumes a transport name string",
+                String.class, method.getReturnType());
+        // Delegates to the static, which answers "" with no live h2 session
+        // (T3 kept the empty-string contract; only the non-empty mapping to
+        // "h2" changed).
+        assertEquals("", invoke("getActiveTunnelTransport"));
     }
 
     // =====================================================
