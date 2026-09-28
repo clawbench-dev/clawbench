@@ -2724,11 +2724,11 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * The wire transport that carried the last successful connect
-         * ({@code "tls" | "h2c"}), or {@code ""} while there is no live h2
-         * session. Distinct from {@link #getTunnelTransport()}: a {@code "both"}
-         * client reports whichever one actually won, which is what a status
-         * display wants.
+         * The transport family of the live h2 session ({@code "h2"}), or
+         * {@code ""} when there is no live h2 session — an empty value is what
+         * lets the frontend fall back to {@link #getTunnelTransport()}. The
+         * value is the family name, not the wire kind ({@code "tls"} /
+         * {@code "h2c"}), matching the desktop client's {@code getActiveTransport()}.
          */
         @JavascriptInterface
         public String getActiveTunnelTransport() {

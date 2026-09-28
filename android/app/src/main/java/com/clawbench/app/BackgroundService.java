@@ -1818,8 +1818,19 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * The wire transport ({@code "tls" | "h2c"}) carrying the live h2 session,
-     * or {@code ""} when there is none.
+     * The transport <em>family</em> carrying the live tunnel ({@code "h2"}), or
+     * {@code ""} when there is none.
+     *
+     * <p>This is deliberately not the wire kind. {@link TransportKind} only
+     * distinguishes {@code "tls"} from {@code "h2c"}, but both are h2, and the
+     * frontend's whitelist is {@code ['ssh', 'h2', 'both']} — reporting a raw
+     * wire name makes it fall back to the preference, so h2 could never be
+     * displayed. Normalising here keeps Android's value domain aligned with the
+     * desktop client's {@code getActiveTransport()} ({@code 'ssh' | 'h2'}).
+     *
+     * <p>An empty string means "no live tunnel", which the frontend relies on to
+     * fall back to {@link #getTunnelTransport()}; SSH never reaches this method
+     * with a live session because there is no SSH {@link TransportKind}.
      *
      * <p>Reads {@link TunnelStreams#peek()} rather than {@code get()} so a
      * status query on an SSH install does not build an unused h2 transport.
@@ -1833,7 +1844,10 @@ public class BackgroundService extends Service {
                 : TunnelStreams.peek();
         if (tunnel == null || !tunnel.isConnected()) return "";
         TransportKind kind = tunnel.getKind();
-        return kind == null ? "" : kind.wireName();
+        if (kind == null) return "";
+        // TransportKind has no SSH value: TLS("tls") and H2C("h2c") are both h2
+        // wires, so the transport family is always "h2" here.
+        return "h2";
     }
 
     /**

@@ -689,9 +689,11 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void getActiveTunnelTransport_reportsTheH2WireKind() {
-        // Reports the wire kind of the live h2 session, which is what a status
-        // display wants to show.
-        assertEquals("h2c", BackgroundService.getActiveTunnelTransport());
+        // Reports the transport *family* of the live h2 session ("h2"), not the
+        // raw wire kind ("tls"/"h2c"): the frontend whitelist is
+        // ['ssh','h2','both'] (usePortForward.ts), so a raw wire name would be
+        // rejected and fall back to the preference.
+        assertEquals("h2", BackgroundService.getActiveTunnelTransport());
     }
 
     @Test
