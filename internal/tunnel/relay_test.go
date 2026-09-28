@@ -609,7 +609,7 @@ func TestRelayDuplex_BidirectionalBulkTransfer(t *testing.T) {
 	}
 }
 
-// failingWriter fails every write, modelling a client that has gone away
+// failingWriter fails every write, modeling a client that has gone away
 // mid-stream.
 type failingWriter struct {
 	err error
