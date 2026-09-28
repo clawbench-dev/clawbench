@@ -84,7 +84,9 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 		// at Finalize (a lazy-load that 404s). Merging into an existing block is
 		// also a no-op for an empty delta, so skipping is strictly better.
 		if event.Content == "" {
-			return
+			// Explicit "" rather than a bare return: the function has a named
+			// result, so a naked return here would trip nakedret.
+			return ""
 		}
 		// Coalesce incremental thinking deltas into the most recent thinking block.
 		if idx, found := findLastBlockOfType("thinking", parent); found {

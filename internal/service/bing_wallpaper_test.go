@@ -140,7 +140,6 @@ func TestBingWorker_FetchSuccess_WritesFileAndState(t *testing.T) {
 	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
 
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -309,7 +308,6 @@ func TestBingWorker_FallsBackToUrlBase(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -424,7 +422,6 @@ func TestBingWorker_FallsBackWhenUHDFails(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -459,7 +456,6 @@ func TestBingWorker_KeepsNativeResolution(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -497,7 +493,6 @@ func TestBingWorker_EmptyImageListIsError(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -518,7 +513,6 @@ func TestBingWorker_MalformedJSONIsError(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -546,7 +540,6 @@ func TestBingWorker_RejectsNonImagePayload(t *testing.T) {
 	}))
 	defer srv.Close()
 	pointBingAt(t, srv)
-
 
 	w := NewBingWallpaperWorker()
 	w.work()
@@ -583,7 +576,6 @@ func TestBingWorker_DownloadSizeGuard(t *testing.T) {
 	defer srv.Close()
 	pointBingAt(t, srv)
 
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -614,7 +606,6 @@ func TestBingWorker_PrunesOldBingFiles(t *testing.T) {
 		require(wallpaper.WriteAtomic(wallpaper.BingDir(), n, []byte("x")))
 	}
 
-
 	w := NewBingWallpaperWorker()
 	w.work()
 
@@ -643,7 +634,6 @@ func TestBingWorker_TriggerRunsImmediately(t *testing.T) {
 	img := bingTestImage(t)
 	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
-
 
 	w := newBingWallpaperWorkerForTest()
 	w.Start()
@@ -686,7 +676,6 @@ func TestBingWorker_TriggerBypassesStartupDelay(t *testing.T) {
 	srv := stubBingServer(t, img, nil)
 	pointBingAt(t, srv)
 
-
 	w := newBingWallpaperWorkerForTest()
 	// A startup delay far longer than the test's patience: only the trigger can
 	// produce a fetch in time.
@@ -728,7 +717,6 @@ func TestBingWorker_GlobalSingletonLifecycle(t *testing.T) {
 	_, cleanup := bingTestEnv(t)
 	defer cleanup()
 
-
 	StartBingWallpaperWorker()
 	StartBingWallpaperWorker() // idempotent
 
@@ -753,7 +741,6 @@ func TestBingWorker_PersistErrorDoesNotPanic(t *testing.T) {
 	persistBingStateFn = func(wallpaper.BingState) error {
 		return fmt.Errorf("disk full")
 	}
-
 
 	w := NewBingWallpaperWorker()
 	w.work()

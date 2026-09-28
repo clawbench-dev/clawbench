@@ -174,4 +174,3 @@ func TestScopedCookieName_NonDefaultPort(t *testing.T) {
 	assert.Equal(t, "cb20300_chat_session_id", ScopedCookieName("chat_session_id"))
 	assert.Equal(t, "cb20300_clawbench-locale", ScopedCookieName("clawbench-locale"))
 }
-

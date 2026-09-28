@@ -477,7 +477,7 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
 //
-//nolint:gocyclo // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
+//nolint:gocyclo,gocognit // one branch per event type (content_reset, tool, metadata, context-state, flush gate); the dispatch is inherently a flat switch and splitting it would scatter the ordering invariants documented inline
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// No flush-before-dispatch here on purpose. Every client-visible emission in
 	// this executor goes through forwardEvent → coalescer.add, and the coalescer

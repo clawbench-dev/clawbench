@@ -542,15 +542,3 @@ func currentBingStatus() bingStatusResponse {
 		LastAttemptAt:   b.LastAttemptAt,
 	}
 }
-
-// localeFromRequest extracts the request locale using the same priority chain
-// as the i18n localizer (X-Locale header, then the locale cookie).
-func localeFromRequest(r *http.Request) string {
-	if v := r.Header.Get("X-Locale"); v != "" {
-		return v
-	}
-	if c, err := r.Cookie(model.ScopedCookieName("clawbench-locale")); err == nil && c.Value != "" {
-		return c.Value
-	}
-	return ""
-}
