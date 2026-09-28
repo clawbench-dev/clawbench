@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, reactive, nextTick } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import SettingsGroupPanel from '@/components/settings/SettingsGroupPanel.vue'
 import type { GroupPanelConfig } from '@/components/settings/settingsFieldMap'
 
@@ -281,6 +283,21 @@ describe('h2 toggle: initial value', () => {
     expect(findToggle(wrapper)).toBeFalsy()
   })
 
+  it('hides when the host has the setter but not the getter (the 2026 bug)', async () => {
+    // This is the exact shape the real Android host shipped with before the
+    // fix: the bridge had setTunnelTransportH2Enabled but no getter, because
+    // the older getTunnelTransport() was kept for the status display and the
+    // missing read accessor was never noticed. The row must stay hidden rather
+    // than render a switch whose initial value could never be read — pinning
+    // that the getter, not the setter, is the visibility precondition.
+    mockNative.current = { setTunnelTransportH2Enabled: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findToggle(wrapper)).toBeFalsy()
+  })
+
   it('hides when the getter rejects', async () => {
     mockNative.current = { getTunnelTransportH2Enabled: () => Promise.reject(new Error('bridge')) }
 
@@ -344,5 +361,66 @@ describe('h2 toggle: interaction', () => {
     await flushPromises()
 
     expect(mockToastShow).not.toHaveBeenCalled()
+  })
+})
+
+// ── Real-host contract ──
+
+/**
+ * The root cause of the 2026 h2-toggle bug was that every test above used a
+ * hand-built fake host, so they only ever proved "the row works when the getter
+ * is present" — never that the shipped Android host has it. The tests here read
+ * the REAL Android bridge source instead.
+ *
+ * A fully generic "every optional method declared in clawbenchNative.ts exists
+ * on Android" check is not expressible: most optional methods are deliberately
+ * Electron-only (nativeNotify, setZoomFactor, isDesktopApp), so optionality in
+ * the TS interface carries no host information. What IS checkable — and what
+ * this bug actually needed — is that the methods the Android host is required
+ * to expose for this feature are both implemented and bridged.
+ */
+function readAndroidBridge(): string {
+  const candidates = [
+    resolve(process.cwd(), 'android/app/src/main/java/com/clawbench/app/MainActivity.java'),
+    resolve(process.cwd(), '../android/app/src/main/java/com/clawbench/app/MainActivity.java'),
+  ]
+  for (const p of candidates) {
+    try {
+      return readFileSync(p, 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error(`MainActivity.java not found from cwd: ${process.cwd()}`)
+}
+
+/** True when `name` is declared as a `@JavascriptInterface` bridge method. */
+function androidBridgeExposes(src: string, name: string): boolean {
+  // Match the annotation, then the method declaration within a few lines. A
+  // method present but missing the annotation is invisible to the WebView,
+  // which is exactly the failure mode a source-only grep would miss.
+  const re = new RegExp(
+    `@JavascriptInterface\\s+public\\s+[\\w<>\\[\\].]+\\s+${name}\\s*\\(`,
+  )
+  return re.test(src)
+}
+
+describe('h2 toggle: real Android host contract', () => {
+  const src = readAndroidBridge()
+
+  it('the Android bridge implements the getter the row requires', () => {
+    // SettingsGroupPanel.vue hides the row when `getTunnelTransportH2Enabled`
+    // is absent, so without this the toggle can never be turned on in the app.
+    expect(androidBridgeExposes(src, 'getTunnelTransportH2Enabled')).toBe(true)
+  })
+
+  it('the Android bridge implements the setter the row writes through', () => {
+    expect(androidBridgeExposes(src, 'setTunnelTransportH2Enabled')).toBe(true)
+  })
+
+  it('the getter delegates to the SharedPreferences source of truth', () => {
+    // Pins that the getter reads the same store the setter writes rather than
+    // returning a constant (which would make the row render a stale value).
+    expect(src).toContain('BackgroundService.isTunnelTransportH2Enabled(activity)')
   })
 })

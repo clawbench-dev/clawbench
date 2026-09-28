@@ -2715,6 +2715,22 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Read the persisted local h2 port-forward transport toggle.
+         *
+         * <p>Reads the same {@code tunnel_transport_h2_enabled} SharedPreferences
+         * value the setter writes ({@link BackgroundService#isTunnelTransportH2Enabled}),
+         * defaulting to false (SSH) on an untouched install. The settings row
+         * uses this to seed its switch; its presence is also what tells the
+         * frontend the host is new enough to persist the toggle at all.
+         */
+        @JavascriptInterface
+        public boolean getTunnelTransportH2Enabled() {
+            boolean enabled = BackgroundService.isTunnelTransportH2Enabled(activity);
+            AppLog.i(TAG, "JSBridge: getTunnelTransportH2Enabled=" + enabled);
+            return enabled;
+        }
+
+        /**
          * The transport preference currently in effect, derived from the local
          * toggle: {@code "h2"} when enabled, {@code "ssh"} otherwise.
          */

@@ -242,6 +242,61 @@ public class MainActivityTunnelBridgeTest {
     }
 
     @Test
+    public void getTunnelTransportH2Enabled_methodExists() throws Exception {
+        // The settings row keys its visibility off this exact method name; the
+        // 2026 h2-toggle bug was precisely its absence (only the setter had been
+        // added), so the reflection lookup itself is the regression guard.
+        Method method = webAppInterface.getClass().getDeclaredMethod("getTunnelTransportH2Enabled");
+        assertNotNull("getTunnelTransportH2Enabled method should exist", method);
+        assertNotNull("Should have @JavascriptInterface annotation",
+                method.getAnnotation(android.webkit.JavascriptInterface.class));
+        // The frontend does `!!(await native.getTunnelTransportH2Enabled())`, so
+        // a String/Object return would silently read as truthy/falsy nonsense.
+        assertEquals("the getter must return a primitive boolean",
+                boolean.class, method.getReturnType());
+        assertEquals("the getter takes no arguments",
+                0, method.getParameterCount());
+    }
+
+    @Test
+    public void getTunnelTransportH2Enabled_readsThePreference() throws Exception {
+        // Absent key: the pre-tunnel default (SSH = false) must be reported,
+        // matching getTunnelTransport()'s "ssh" derivation.
+        assertEquals("an untouched install reports false (ssh)",
+                Boolean.FALSE, invoke("getTunnelTransportH2Enabled"));
+
+        // Drive the store directly so this pins `preference -> boolean` on its
+        // own rather than re-testing what the setter wrote.
+        prefsData.put("tunnel_transport_h2_enabled", false);
+        assertEquals("stored false reads back false",
+                Boolean.FALSE, invoke("getTunnelTransportH2Enabled"));
+
+        prefsData.put("tunnel_transport_h2_enabled", true);
+        assertEquals("stored true reads back true",
+                Boolean.TRUE, invoke("getTunnelTransportH2Enabled"));
+
+        // A hardcoded return would leave the read counter at zero; this proves
+        // the bridge actually consults SharedPreferences.
+        assertTrue("the getter must read through SharedPreferences",
+                prefsReads > 0);
+    }
+
+    @Test
+    public void getTunnelTransportH2Enabled_agreesWithTheDerivedString() throws Exception {
+        // Two bridge methods expose the same preference in different shapes.
+        // If they ever disagree the toggle's displayed state and the transport
+        // actually used would drift apart, which is exactly what a status
+        // banner must never do.
+        prefsData.put("tunnel_transport_h2_enabled", false);
+        assertEquals(Boolean.FALSE, invoke("getTunnelTransportH2Enabled"));
+        assertEquals("ssh", invoke("getTunnelTransport"));
+
+        prefsData.put("tunnel_transport_h2_enabled", true);
+        assertEquals(Boolean.TRUE, invoke("getTunnelTransportH2Enabled"));
+        assertEquals("h2", invoke("getTunnelTransport"));
+    }
+
+    @Test
     public void getTunnelTransport_defaultsToSshBeforeAnyToggle() throws Exception {
         // No setter call: the key is absent, so the bridge must fall back to the
         // pre-tunnel default. This is the compatibility contract the whole
