@@ -779,6 +779,22 @@ watch(lastAssistantMsgId, (mid) => {
   void rec.ensureFetched(sid, mid)
 })
 
+// ── Restore the recommendation when the accepted text is cleared ──
+// Accepting moves the suggestion into the input box and dismisses the banner.
+// If the user then empties the box the suggestion is no longer applied, so
+// hiding it would silently lose it — bring it back.
+//
+// This only reacts to the input *becoming* empty, and the other clear paths are
+// already safe: sending sets `loading` in the same tick (the loading watcher
+// calls rec.invalidate, deleting the slot outright, so nothing can resurface),
+// and a session switch re-derives the banner from the new session's slot.
+// A cleared-but-empty slot no-ops in undismiss(), so this can't resurrect a
+// stale recommendation.
+watch(inputText, (text) => {
+  if (text.trim()) return
+  rec.undismiss()
+})
+
 // ── Voice input (ASR) ───────────────────────────────
 const voiceInput = useVoiceInput()
 const { state: voiceState, inputText: voiceInputText, toggle: toggleVoice, start: startVoice, stop: stopVoice, shortcutKey: voiceShortcutKey } = voiceInput

@@ -3148,6 +3148,69 @@ describe('ChatInputBar', () => {
     wrapper.unmount()
   })
 
+  // ── Restore after the accepted text is cleared ──
+  //
+  // Accepting moves the suggestion into the input box and hides the banner. If
+  // the user then empties the box, the suggestion is no longer applied — hiding
+  // it would silently lose it, so it must come back.
+
+  it('brings the recommendation back when the accepted text is cleared', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('继续实现功能')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+
+    // Clear the box the way the user would.
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+    expect(wrapper.vm.recommendation).toBe('继续实现功能')
+
+    wrapper.unmount()
+  })
+
+  it('keeps the recommendation hidden while the accepted text is still there', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Editing the filled text must NOT resurrect the banner — only emptying it.
+    wrapper.vm.inputText = '继续实现功能 并补充测试'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('does not resurrect the recommendation when the input is cleared after sending', async () => {
+    // Sending empties the input too. `loading` flips true in the same tick,
+    // which invalidates the session's slot outright, so nothing may resurface.
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Send: text is cleared and streaming starts in the same tick.
+    wrapper.vm.inputText = ''
+    await wrapper.setProps({ loading: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    expect(wrapper.vm.recommendation).toBe('')
+
+    wrapper.unmount()
+  })
+
   // ── Accept handoff animation (采纳确认动效) ──────────
   //
   // Accepting used to be observable only as "the chip vanished": the text

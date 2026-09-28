@@ -177,6 +177,82 @@ describe('useChatRecommendation', () => {
     expect(rec.accept()).toBe('')
   })
 
+  // ── undismiss (restore after the accepted text is cleared) ──
+
+  it('undismiss brings back a recommendation that was accepted', () => {
+    const { rec, activeId, lastMsgId } = setup()
+    activeId.value = 'A'
+    lastMsgId.value = 101
+    rec.upsert('A', '继续实现', 101)
+    expect(rec.show.value).toBe(true)
+
+    expect(rec.accept()).toBe('继续实现')
+    expect(rec.show.value).toBe(false)
+    expect(rec.current.value).toBe('')
+
+    rec.undismiss()
+    // The text was never dropped, so it can simply be shown again.
+    expect(rec.show.value).toBe(true)
+    expect(rec.current.value).toBe('继续实现')
+  })
+
+  it('undismiss no-ops when nothing is stored (must not resurrect a stale slot)', () => {
+    const { rec, activeId, lastMsgId } = setup()
+    activeId.value = 'A'
+    lastMsgId.value = 101
+    rec.undismiss()
+    expect(rec.show.value).toBe(false)
+    expect(rec.current.value).toBe('')
+  })
+
+  it('cannot surface a stale recommendation via undismiss (matchesCurrent is the single gate)', () => {
+    const { rec, activeId, lastMsgId } = setup()
+    activeId.value = 'A'
+    lastMsgId.value = 101
+    rec.upsert('A', '旧推荐', 101)
+    rec.accept()
+    // The session moved on to a newer assistant message.
+    lastMsgId.value = 102
+    rec.undismiss()
+    // undismiss only clears the dismissed flag; the message-id gate in
+    // matchesCurrent is what keeps the stale entry hidden.
+    expect(rec.show.value).toBe(false)
+    expect(rec.current.value).toBe('')
+  })
+
+  it('undismiss no-ops when the last assistant message id is unavailable', () => {
+    const { rec, activeId, lastMsgId } = setup()
+    activeId.value = 'A'
+    lastMsgId.value = 101
+    rec.upsert('A', '继续实现', 101)
+    rec.accept()
+    lastMsgId.value = undefined
+    rec.undismiss()
+    expect(rec.show.value).toBe(false)
+  })
+
+  it('undismiss only affects the active session', () => {
+    const { rec, activeId, lastMsgId } = setup()
+    activeId.value = 'A'
+    lastMsgId.value = 101
+    rec.upsert('A', 'A 的推荐', 101)
+    rec.accept()
+    expect(rec.show.value).toBe(false)
+
+    // Switching to a session with no recommendation must not surface A's.
+    activeId.value = 'B'
+    lastMsgId.value = 202
+    rec.undismiss()
+    expect(rec.show.value).toBe(false)
+    expect(rec.current.value).toBe('')
+
+    // Back to A: its entry was un-dismissed only if undismiss ran while A was
+    // active, which it was not — so it stays dismissed.
+    activeId.value = 'A'
+    lastMsgId.value = 101
+    expect(rec.show.value).toBe(false)
+  })
+
   it('does not throw when the fetch fails', async () => {
     const { rec, activeId, lastMsgId, fetchRemote } = setup({ fetchRemote: vi.fn().mockRejectedValue(new Error('network')) })
     activeId.value = 'B'
