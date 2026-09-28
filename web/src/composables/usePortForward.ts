@@ -1,4 +1,4 @@
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { apiGet, apiPost, apiPut, apiDelete } from '@/utils/api'
 import { useAppMode } from './useAppMode.ts'
 import { gt } from '@/composables/useLocale'
@@ -196,12 +196,12 @@ function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
  */
 export function usePortForward() {
   const { currentSessionId } = useSessionIdentity()
-  // Same data source T8 already uses to push the transport to the native
-  // tunnel (useSettingsConfig.syncTunnelTransportToNative reads
-  // `port_forward.transport` from `/api/config`). Reusing it — rather than
-  // reading the bridge's own getTunnelTransport() — keeps a single source of
-  // truth: the server config is what the operator set, and the bridge value is
-  // just a copy of it that may be stale or absent on an older host.
+  // Reads `port_forward.transport` from `/api/config` for the web health gate
+  // (`tunnelTransportAllowsH2()`): the server config is the only place that
+  // says whether an h2 path exists when the SSH listener is off. The native
+  // clients no longer consume this value — Android decides via its local
+  // switch and Electron is pinned to SSH — so nothing here is pushed to the
+  // bridge any more.
   const { getServerValue } = useSettingsConfig()
 
   // Set up the callback for native port-forward-result events.
@@ -574,6 +574,18 @@ export function usePortForward() {
     const key = transportLabelKey(activeTransport.value)
     return key ? gt('proxy.transportAnnotation', { transport: gt(key) }) : ''
   }
+
+  /**
+   * Reactive view of `tunnelTransportAllowsH2()` for the UI.
+   *
+   * Reads through `getServerValue`, whose `serverConfig` ref is a real
+   * dependency, so this recomputes when `/api/config` resolves — the same
+   * reason the health gate can call the raw function synchronously inside an
+   * async check. Used by the panel's "port forwarding unavailable" banner:
+   * an h2-capable install forwards ports even with no SSH listener, so the
+   * banner must not key off SSH alone.
+   */
+  const transportAllowsH2 = computed(() => tunnelTransportAllowsH2())
 
   /** Check SSH tunnel health and determine status */
   async function checkTunnelHealth() {
@@ -961,6 +973,7 @@ export function usePortForward() {
     tunnelError,
     tunnelErrorType,
     activeTransport,
+    transportAllowsH2,
     connectingPorts,
     localReachable,
     scanDrawerOpen,

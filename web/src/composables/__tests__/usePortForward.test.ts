@@ -53,9 +53,9 @@ vi.mock('@/composables/useAppMode', () => ({
     useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
 }))
 
-// The transport preference lives in the server config (the SAME source
-// useSettingsConfig.syncTunnelTransportToNative() pushes to the native tunnel).
-// This mock mirrors that reader so the health gate can be driven per test.
+// The transport preference lives in the server config. This mock mirrors the
+// reader (`getServerValue`) the web health gate uses to decide whether an h2
+// path exists when the SSH listener is off, so it can be driven per test.
 const mockServerConfig = ref<Record<string, unknown>>({})
 const mockServerDefaults: Record<string, unknown> = { 'port_forward.transport': 'both' }
 function readDotPath(source: Record<string, unknown>, dotPath: string): unknown {
@@ -495,6 +495,35 @@ describe('usePortForward', () => {
             await checkTunnelHealth()
 
             expect(tunnelStatus.value).toBe('disconnected')
+        })
+    })
+
+    /**
+     * The panel's "port mapping unavailable" banner keys off this exported
+     * computed instead of calling the raw helper, so it recomputes when
+     * `/api/config` resolves. Pin the values the banner depends on.
+     */
+    describe('transportAllowsH2', () => {
+        it('is true for h2 and both, false for ssh and unknown values', async () => {
+            mockServerConfig.value = { port_forward: { transport: 'both' } }
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { transportAllowsH2 } = usePortForward()
+
+            expect(transportAllowsH2.value).toBe(true)
+
+            mockServerConfig.value = { port_forward: { transport: 'h2' } }
+            expect(transportAllowsH2.value).toBe(true)
+
+            mockServerConfig.value = { port_forward: { transport: 'ssh' } }
+            expect(transportAllowsH2.value).toBe(false)
+
+            // Missing (config not loaded yet) and unrecognized both mean
+            // "do not assume h2" — the conservative false the banner relies on.
+            mockServerConfig.value = {}
+            expect(transportAllowsH2.value).toBe(false)
+
+            mockServerConfig.value = { port_forward: { transport: 'quic' } }
+            expect(transportAllowsH2.value).toBe(false)
         })
     })
 

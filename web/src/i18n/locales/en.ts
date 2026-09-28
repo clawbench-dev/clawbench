@@ -1559,7 +1559,6 @@ export default {
     copyServerAddress: 'Copy server-side address',
     serverAddressCopied: 'Server-side address copied',
     reverseInactiveHint: 'Waiting for the client to establish the reverse tunnel',
-    sshTunnel: 'SSH Tunnel',
     transportLabel: 'Transport',
     transportSsh: 'SSH',
     transportH2: 'HTTP/2',
@@ -1569,7 +1568,6 @@ export default {
     // convention; the caller only passes this the label (`proxy.transportSsh` /
     // `transportH2`).
     transportAnnotation: ' ({transport})',
-    copySSHCommand: 'Copy SSH command',
     copyCommand: 'Copy command',
     appRecommendation: 'Use the ClawBench app for automatic tunnel setup — no manual configuration needed',
     tunnelGuide: 'Set up tunnel manually',
@@ -1582,7 +1580,13 @@ export default {
     tunnelInstallMac: 'OpenSSH ships with macOS — no install needed',
     tunnelInstallLinux: 'Install OpenSSH:',
     tunnelNoCommand: 'Add mapped ports first, the SSH tunnel command will be generated automatically',
-    tunnelNoSsh: 'SSH tunnel is not enabled. Set port_forward.enabled: true in the server config.yaml',
+    // Shown only when neither wire can carry the forwards (SSH listener off AND
+    // the transport config forbids h2), so the wording names the config gate
+    // rather than implying the SSH listener is the missing piece.
+    tunnelNoSsh: 'Port mapping is not enabled. Set port_forward.enabled: true in the server config.yaml',
+    // Host-key fingerprint label in the manual SSH guide. SSH-specific wording
+    // is correct here: the guide shows a real `ssh -N -L` command.
+    fingerprintLabel: 'Fingerprint:',
     portItem: {
       active: 'Active',
       connecting: 'Connecting',
@@ -2433,7 +2437,6 @@ export default {
       ragEmbedProgressDesc: 'Number of chat messages with vector embeddings completed',
       ragProgressFormat: '{done}/{total}',
       portForwardEnabled: 'Enable Port Mapping',
-      portForwardEnabledDesc: 'Map specified ports through SSH tunnel for remote access to server local ports',
       portForwardPort: 'Port Mapping Port',
       portForwardPortAuto: 'Auto',
       portForwardPortDesc: 'Local port number for port mapping service to listen on, 0 for auto-assign',

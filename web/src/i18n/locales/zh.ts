@@ -1562,7 +1562,6 @@ export default {
     copyServerAddress: '复制服务器侧地址',
     serverAddressCopied: '服务器侧地址已复制',
     reverseInactiveHint: '等待客户端建立反向隧道',
-    sshTunnel: 'SSH 隧道',
     transportLabel: '传输方式',
     transportSsh: 'SSH',
     transportH2: 'HTTP/2',
@@ -1571,7 +1570,6 @@ export default {
     // e.g. `隧道未连接（SSH）`. Full-width brackets are the zh convention; the
     // caller only passes this the label (`proxy.transportSsh` / `transportH2`).
     transportAnnotation: '（{transport}）',
-    copySSHCommand: '复制 SSH 命令',
     copyCommand: '复制命令',
     appRecommendation: '使用 ClawBench APP 可自动建立隧道，无需手动配置',
     tunnelGuide: '手动建立隧道',
@@ -1584,7 +1582,13 @@ export default {
     tunnelInstallMac: 'macOS 自带 OpenSSH，无需安装',
     tunnelInstallLinux: '安装 OpenSSH：',
     tunnelNoCommand: '请先添加转发端口，SSH 隧道命令将自动生成',
-    tunnelNoSsh: 'SSH 隧道未启用，请在服务器端 config.yaml 中配置 port_forward.enabled: true',
+    // Shown only when neither wire can carry the forwards (SSH listener off AND
+    // the transport config forbids h2), so the wording names the config gate
+    // rather than implying the SSH listener is the missing piece.
+    tunnelNoSsh: '端口映射未启用，请在服务器端 config.yaml 中配置 port_forward.enabled: true',
+    // Host-key fingerprint label in the manual SSH guide. SSH-specific wording
+    // is correct here: the guide shows a real `ssh -N -L` command.
+    fingerprintLabel: '指纹：',
     portItem: {
       active: '活跃',
       connecting: '连接中',
@@ -2435,7 +2439,6 @@ export default {
       ragEmbedProgressDesc: '已完成向量嵌入的聊天消息数量',
       ragProgressFormat: '{done}/{total}',
       portForwardEnabled: '启用端口映射',
-      portForwardEnabledDesc: '通过 SSH 隧道转发指定端口，启用后可从手机远程访问服务器本地端口',
       portForwardPort: '端口映射端口',
       portForwardPortAuto: '自动',
       portForwardPortDesc: '端口映射服务监听的本地端口号，0 表示自动分配',

@@ -104,7 +104,7 @@
               </button>
             </div>
             <div v-if="sshInfo.fingerprint" class="tunnel-guide-fingerprint">
-              <span class="fingerprint-label">Fingerprint:</span>
+              <span class="fingerprint-label">{{ t('proxy.fingerprintLabel') }}</span>
               <span class="fingerprint-value">{{ sshInfo.fingerprint }}</span>
             </div>
           </template>
@@ -112,8 +112,11 @@
         </div>
       </div>
 
-      <!-- Web mode: SSH not enabled -->
-      <div v-if="!isAppMode && sshInfo && !sshInfo.enabled" class="tunnel-banner warning">
+      <!-- Web mode: port forwarding unavailable. Keyed off availability, not
+           the SSH listener alone: an h2-only install (port_forward.enabled
+           false, forwards carried over the stream tunnel) has no SSH listener
+           yet still forwards ports, so accusing it of being disabled is wrong. -->
+      <div v-if="!isAppMode && sshInfo && !sshInfo.enabled && !transportAllowsH2" class="tunnel-banner warning">
         <AlertTriangle :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.tunnelNoSsh') }}</span>
@@ -339,7 +342,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, transportAllowsH2, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
 const toast = useToast()
 
 // Human label for the transport currently carrying the tunnel. '' when the
