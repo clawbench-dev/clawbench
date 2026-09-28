@@ -711,3 +711,59 @@ func TestThemeLocalUpload_StoredImageIsDecodable(t *testing.T) {
 	assert.Equal(t, 16, img.Bounds().Dy())
 	_ = png.Encode
 }
+
+// ── Delete success response shape ────────────────────────────────────────────
+
+// TestThemeLocalDelete_SuccessReturnsRemainingGallery covers the success path of
+// the delete handler and the two helpers it alone reaches
+// (`galleryItemsToViews` / `currentWallpaperState`). The response is the
+// authoritative gallery snapshot the settings panel re-renders from, so it must
+// reflect the deletion immediately rather than the pre-delete list.
+func TestThemeLocalDelete_SuccessReturnsRemainingGallery(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	a := seedGalleryItem(t, "local-1-a.png")
+	b := seedGalleryItem(t, "local-2-b.png")
+	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{a, b}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/theme/local/item?name=local-1-a.png", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeLocalUpload, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body galleryDeleteResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Items, 1, "the deleted item must be gone from the response")
+	assert.Equal(t, "local-2-b.png", body.Items[0].File)
+	// Every field the settings panel reads must survive the view conversion.
+	assert.Equal(t, "local-2-b.png", body.Items[0].Name)
+	assert.Equal(t, int64(1), body.Items[0].UploadedAt)
+	assert.Equal(t, int64(10), body.Items[0].Size)
+}
+
+// TestCurrentWallpaperState_EmptyGalleryIsEmptySlice pins the JSON shape: the
+// client iterates `items` directly, so a nil slice would serialise as null and
+// break that iteration.
+func TestCurrentWallpaperState_EmptyGalleryIsEmptySlice(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.Appearance.Local.Items = nil
+	got := currentWallpaperState()
+	assert.NotNil(t, got.Items, "items must be an empty slice, not nil")
+
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"items":[]}`, string(raw))
+}
+
+// TestGalleryItemsToViews_PreservesFields guards the field-by-field copy: a
+// mis-mapped field would silently drop a column in the settings panel.
+func TestGalleryItemsToViews_PreservesFields(t *testing.T) {
+	out := galleryItemsToViews([]model.LocalWallpaperItem{
+		{File: "local-1-a.png", Name: "a.png", UploadedAt: 111, Size: 222},
+	})
+	require.Len(t, out, 1)
+	assert.Equal(t, galleryItemView{File: "local-1-a.png", Name: "a.png", UploadedAt: 111, Size: 222}, out[0])
+}

@@ -973,16 +973,24 @@ func TestExecutor_ThinkingDoneFlushesTextBeforeForwarding(t *testing.T) {
 }
 
 // TestExecutor_ThinkingDoneWithoutDBDoesNotPanic guards the flush added to the
-// thinking_done path: flushPendingThinking has no db==nil check of its own (its
-// other callers are behind one), so an isolated executor must not crash.
+// thinking_done path: flushPendingThinking's callers are otherwise all behind a
+// db==nil guard, so the check must live inside it too. An isolated executor
+// must not crash.
+//
+// `db` is a package global, so a test that merely skips setupExecutorDB would
+// still see whatever DB an earlier test left behind — the guard would never be
+// reached and the test would pass vacuously. Nil it explicitly.
 func TestExecutor_ThinkingDoneWithoutDBDoesNotPanic(t *testing.T) {
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
 	}
 	defer func() { model.Agents = nil }()
 
-	// Deliberately NOT setupExecutorDB: db is nil, but the message id is set so
-	// the flush would otherwise try to write.
+	restoreDB := SetDBForTest(nil, nil)
+	defer restoreDB()
+
+	// The message id is set so that, without the guard, the flush would proceed
+	// past the config check and dereference the nil DB.
 	executor := NewSessionExecutor(context.Background(), RunConfig{
 		Mode:               ModeInteractive,
 		ProjectPath:        "/test",
@@ -997,5 +1005,13 @@ func TestExecutor_ThinkingDoneWithoutDBDoesNotPanic(t *testing.T) {
 	assert.NotPanics(t, func() {
 		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "x"})
 		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking_done"})
+	})
+
+	// Direct call: the thinking_done path calls this without the surrounding
+	// flushStreamingLocked guard, so pin it in isolation too.
+	assert.NotPanics(t, func() {
+		executor.mu.Lock()
+		executor.flushPendingThinking()
+		executor.mu.Unlock()
 	})
 }

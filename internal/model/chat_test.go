@@ -512,3 +512,34 @@ func TestContentBlockParentToolCallIDOmittedWhenEmpty(t *testing.T) {
 		t.Errorf("empty parent link should be omitted, got %s", data)
 	}
 }
+
+// TestGenerateThinkingID covers the happy path here in the owning package; the
+// service-level test only exercises its thin wrapper. Both call sites
+// (internal/ai assigns the ID when a block opens, internal/service persists by
+// it) rely on the format being "th_" + 32 lowercase hex chars — the frontend
+// and the slim-marker reader both key off the prefix.
+func TestGenerateThinkingID(t *testing.T) {
+	id := GenerateThinkingID()
+	if len(id) != 3+32 {
+		t.Fatalf("id length = %d (%q), want 35", len(id), id)
+	}
+	if id[:3] != "th_" {
+		t.Errorf("id = %q, want the th_ prefix", id)
+	}
+	for _, c := range id[3:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("id = %q: non-hex character %q after the prefix", id, c)
+			break
+		}
+	}
+
+	// Two calls must not collide; the ID is the DB key for a thinking block.
+	seen := map[string]bool{id: true}
+	for range 100 {
+		other := GenerateThinkingID()
+		if seen[other] {
+			t.Fatalf("duplicate id generated: %q", other)
+		}
+		seen[other] = true
+	}
+}
