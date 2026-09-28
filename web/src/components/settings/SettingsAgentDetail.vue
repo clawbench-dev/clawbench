@@ -1,5 +1,20 @@
 <template>
-  <div class="settings-agent-detail">
+  <!-- Fallback for a stale reference: the deep link (or a lingering nav-stack
+       entry) can point at an agent that no longer exists — it was deleted, or
+       dropped by a rescan. Without this branch the page rendered an empty shell
+       (no cards) with only a copy/delete pair, and delete silently no-opped.
+       Gated on agentsLoaded so a valid agent does not flash this before the
+       list has been fetched. -->
+  <div v-if="agentMissing" class="settings-agent-detail settings-agent-detail--missing">
+    <UserX :size="32" class="settings-agent-detail__missing-icon" />
+    <span class="settings-agent-detail__missing-title">{{ t('settings.items.agentNotFound') }}</span>
+    <span class="settings-agent-detail__missing-hint">{{ t('settings.items.agentNotFoundHint') }}</span>
+    <button class="fbtn fbtn-primary" @click="emit('back')">
+      <ArrowLeft :size="14" />
+      <span>{{ t('settings.items.agentBackToList') }}</span>
+    </button>
+  </div>
+  <div v-else class="settings-agent-detail">
     <SettingsCard
       v-for="group in groups"
       :key="group.title"
@@ -41,7 +56,7 @@
 
 <script setup lang="ts">
 import { computed, ref, onMounted } from 'vue'
-import { Copy, Trash2 } from 'lucide-vue-next'
+import { ArrowLeft, Copy, Trash2, UserX } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import SettingsItem from './SettingsItem.vue'
 import SettingsCard from './SettingsCard.vue'
@@ -59,12 +74,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   deleted: []
+  /** Leave the detail page without deleting anything (stale-reference fallback). */
+  back: []
 }>()
 
 const { t } = useI18n()
 const toast = useToast()
 const dialog = useDialog()
-const { loadAgents, getAgent, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
+const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
 
@@ -78,6 +95,11 @@ onMounted(async () => {
 })
 
 const agent = computed(() => getAgent(props.agentId))
+
+// The requested agent is gone (deleted, or dropped by a rescan). Requiring
+// agentsLoaded keeps the first paint of a valid agent from being reported as
+// missing — the list starts empty, so before the fetch lands every id is absent.
+const agentMissing = computed(() => !agent.value && agentsLoaded.value)
 
 // Determine if agent is ACP-only (has acpCommand but no CLI backend implementation)
 const isACPOnly = computed(() => {
@@ -401,6 +423,36 @@ async function handleDelete() {
   padding: var(--space-4);
   background: var(--bg-secondary);
   min-height: 100%;
+}
+
+/* Stale-reference fallback: centred block, matching the task panel's missing
+   state so a dead link reads as part of the settings surface, not a dead end. */
+.settings-agent-detail--missing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-6);
+  height: 100%;
+  min-height: 100%;
+  color: var(--text-muted);
+}
+
+.settings-agent-detail__missing-icon {
+  color: var(--text-muted);
+  opacity: var(--opacity-muted);
+}
+
+.settings-agent-detail__missing-title {
+  font-size: var(--font-size-lg);
+  color: var(--text-muted);
+}
+
+.settings-agent-detail__missing-hint {
+  font-size: var(--font-size-sm);
+  color: var(--text-hint);
+  text-align: center;
+  max-width: 32em;
 }
 
 .settings-agent-detail__actions {

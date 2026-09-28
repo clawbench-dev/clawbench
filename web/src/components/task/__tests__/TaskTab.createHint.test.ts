@@ -3,6 +3,12 @@ import { mount } from '@vue/test-utils'
 
 // ── Mocks ──
 
+// TaskTab resolves its fallback copy through useI18n, so the suite must provide
+// the composable (sibling task suites mock it the same way).
+vi.mock('vue-i18n', () => ({
+  useI18n: () => ({ t: (key: string) => key }),
+}))
+
 // Child pages are irrelevant to the "+" gating logic under test; stub them so
 // the assertions can look at a single, stable marker element.
 vi.mock('@/components/task/TaskListPage.vue', () => ({
@@ -43,6 +49,7 @@ vi.mock('@/composables/useTaskTab', async () => {
       execDetailOpen: ref(false),
       formViewOpen: ref(false),
       formMode: ref('create'),
+      tasksLoaded: ref(false),
       goBack: vi.fn(),
       navigateToTaskSettings: vi.fn(),
       navigateToList: vi.fn(),

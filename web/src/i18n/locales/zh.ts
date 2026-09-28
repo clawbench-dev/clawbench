@@ -1073,6 +1073,11 @@ export default {
   task: {
     title: '任务',
     noTasks: '暂无任务',
+    // Shown when a task detail view is opened for a task that no longer exists
+    // (a chat card or notification that outlived the task it points at).
+    notFound: '任务不存在或已被删除',
+    notFoundHint: '它可能刚刚被删除。返回列表查看当前的任务。',
+    backToList: '返回任务列表',
     confirmDelete: '确定删除此任务？',
     nextRun: '下次执行: {time}',
     nextRunNone: '下次执行: 无',
@@ -2296,6 +2301,11 @@ export default {
       agentDeleteDefault: '无法删除默认智能体',
       agentDeleted: '智能体已删除',
       agentDeleteFailed: '删除失败',
+      // Shown when the agent detail page is opened for an agent that no longer
+      // exists (a deep link or a lingering nav-stack entry outliving it).
+      agentNotFound: '智能体不存在或已被移除',
+      agentNotFoundHint: '它可能已被删除，或在重新扫描后不再可用。返回列表查看当前可用的智能体。',
+      agentBackToList: '返回智能体列表',
       chatInitialMessages: '初始消息数',
       chatInitialMessagesDesc: '首次加载聊天时获取的历史消息数量',
       chatPageSize: '每页消息数',

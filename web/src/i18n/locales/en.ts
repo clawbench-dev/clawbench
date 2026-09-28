@@ -1070,6 +1070,11 @@ export default {
   task: {
     title: 'Tasks',
     noTasks: 'No tasks',
+    // Shown when a task detail view is opened for a task that no longer exists
+    // (a chat card or notification that outlived the task it points at).
+    notFound: 'Task not found or already deleted',
+    notFoundHint: 'It may have just been deleted. Go back to the list to see your current tasks.',
+    backToList: 'Back to task list',
     confirmDelete: 'Delete this task?',
     nextRun: 'Next run: {time}',
     nextRunNone: 'Next run: none',
@@ -2297,6 +2302,11 @@ export default {
       agentDeleteDefault: 'Cannot delete default agent',
       agentDeleted: 'Agent deleted',
       agentDeleteFailed: 'Delete failed',
+      // Shown when the agent detail page is opened for an agent that no longer
+      // exists (a deep link or a lingering nav-stack entry outliving it).
+      agentNotFound: 'Agent not found or already removed',
+      agentNotFoundHint: 'It may have been deleted, or is no longer available after a rescan. Go back to the list to see the current agents.',
+      agentBackToList: 'Back to agent list',
       chatInitialMessages: 'Initial Messages',
       chatInitialMessagesDesc: 'Number of history messages loaded on first chat open',
       chatPageSize: 'Page Size',
