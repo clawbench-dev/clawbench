@@ -647,6 +647,85 @@ function joinTextBlocks(blocks: ContentBlock[]): string {
 }
 
 /**
+ * Find the thinking block a delta belongs to, and report whether it may be
+ * extended.
+ *
+ * The wire id is the authority: the backend mints one think_id per block and
+ * sends it on every delta of that block, so a block carrying this id IS the
+ * target wherever it sits in the array.
+ *
+ * A positional scan alone is not enough, and the difference is exactly the
+ * reported "top thinking block frozen forever": the array can hold a finished
+ * `tool_use` AFTER the live thinking block (mergeStreamBlocks splices DB blocks
+ * in; a sub-agent's tool_use is interleaved on the raw wire). A later delta then
+ * hits the tool_use boundary in the positional scan, finds nothing, and the
+ * caller opens a SECOND block — while stamping it with the same think_id. Two
+ * blocks, one v-for key: the head one keeps its stale text and spins while the
+ * new one takes the stream.
+ *
+ * So: id lookup first, positional scan only as the fallback for a block with no
+ * id yet (an older server that never sends one, or a block adopted from a
+ * position-only DB marker).
+ *
+ * Returns the target block, or undefined when the caller must open a new one.
+ * Both callers (the chat reducer and the task-execution stream) MUST use this —
+ * they diverged once and the task stream kept the duplicate-id bug.
+ */
+export function findThinkingTarget(
+  blocks: ContentBlock[],
+  thinkId: string | undefined,
+  findPositional: () => ContentBlock | undefined,
+): ContentBlock | undefined {
+  const existing = thinkId
+    ? (blocks.find((b) => b.type === 'thinking' && b.think_id === thinkId) ?? findPositional())
+    : findPositional()
+  // Only the SAME block may be extended. Two different ids are two different
+  // blocks by the backend's own definition — appending would merge them (wrong
+  // text under one v-for key). A missing id on either side stays compatible:
+  // that is the old-server / DB-marker case, where position is all there is.
+  if (!existing) return undefined
+  if (thinkId && existing.think_id && existing.think_id !== thinkId) return undefined
+  return existing
+}
+
+/**
+ * Append a thinking delta to its block, opening one when none matches.
+ *
+ * Shared by the chat reducer and the task-execution stream so the two can never
+ * diverge again (they did, and the task stream kept creating a second block with
+ * the same think_id).
+ */
+export function appendThinkingDelta(
+  blocks: ContentBlock[],
+  text: string,
+  thinkId: string | undefined,
+  parent: string | undefined,
+  findPositional: () => ContentBlock | undefined,
+  extra?: Partial<ContentBlock>,
+): void {
+  const target = findThinkingTarget(blocks, thinkId, findPositional)
+  if (target) {
+    // A slim marker (adopted from the DB on a session switch) carries no text:
+    // its prefix lives in chat_thinking and is lazy-loaded at render time.
+    // Appending with `+=` on an absent text would produce the literal
+    // "undefined…", so seed an empty string instead. The prefix is merged back
+    // in by mergeThinkingPrefix when rendering.
+    target.text = (typeof target.text === 'string' ? target.text : '') + text
+    // Backfill identity if this block never got one. Never overwrite a
+    // different id — that would merge two blocks' prefixes under one key.
+    if (thinkId && !target.think_id) target.think_id = thinkId
+    return
+  }
+  blocks.push({
+    type: 'thinking',
+    text,
+    ...(thinkId ? { think_id: thinkId } : {}),
+    ...(parent ? { parent_tool_call_id: parent } : {}),
+    ...extra,
+  } as ContentBlock)
+}
+
+/**
  * Combine a thinking block's lazy-loaded prefix with the live deltas held in
  * its `text`.
  *
@@ -1698,62 +1777,20 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // Mirrors AccumulateBlock's guard — the backend coalescer filters the WS
       // frame but the accumulator sees raw events, so both layers guard.
       if (!action.text) return state
-      // Locate the target block. The wire id is the authority: the backend mints
-      // one think_id per block and sends it on every delta of that block, so a
-      // block carrying this id IS the target wherever it sits in the array.
-      //
-      // A pure positional scan is not enough, and the difference is exactly the
-      // reported "top thinking block frozen forever": mergeStreamBlocks splices
-      // DB blocks (a finished tool_use) in AFTER the live thinking block, so a
-      // later delta of that same block hits the tool_use boundary in
-      // findBlockByTypeBackward, gets `undefined`, and opened a SECOND block —
-      // while still stamping it with the same think_id. Two blocks, one v-for
-      // key: the head one kept its stale text and spun, the new one took the
-      // stream. (Observed: block[0] and block[15] both th_2ddda639, textLen
-      // frozen at 100 vs growing 55→929→2028.)
-      //
-      // The scan is still the fallback for a block with no id yet — an older
-      // server that never sends one, or a block adopted from a position-only DB
-      // marker.
-      const existing = action.thinkId
-        ? (blocks.find((b) => b.type === 'thinking' && b.think_id === action.thinkId) ??
-           findBlockByTypeBackward(blocks, 'thinking', parent))
-        : findBlockByTypeBackward(blocks, 'thinking', parent)
-      // Only append to a block that is the SAME block. Two different ids are two
-      // different blocks by the backend's own definition — appending would merge
-      // them (wrong text under one v-for key).
-      //
-      // A missing id on either side stays compatible: that is the old-server /
-      // DB-marker case, where position is all there is to go on.
-      const sameBlock = !!existing && (!action.thinkId || !existing.think_id || existing.think_id === action.thinkId)
-      if (existing && sameBlock) {
-        // A slim marker (adopted from the DB on a session switch) carries no
-        // text: its prefix lives in chat_thinking and is lazy-loaded at render
-        // time. Appending with `+=` on an absent text would produce the literal
-        // "undefined…", so seed an empty string instead. The prefix is merged
-        // back in by mergeThinkingPrefix when rendering.
-        existing.text = (typeof existing.text === 'string' ? existing.text : '') + action.text
-        // Backfill identity if this block never got one. Normally it already
-        // has it from the delta that opened it; this covers a block that was
-        // created by an older server (no think_id on the wire) or adopted from
-        // a DB marker that only carried a position. Never overwrite a
-        // different id — that would merge two blocks' prefixes under one key.
-        if (action.thinkId && !existing.think_id) existing.think_id = action.thinkId
-      } else {
-        blocks.push({
-          type: 'thinking',
-          text: action.text,
-          // The identity the backend minted when this block opened. With it,
-          // the block is keyed correctly from birth and never needs the
-          // position-based adoption that used to mispair blocks across a
-          // session switch.
-          ...(action.thinkId ? { think_id: action.thinkId } : {}),
-          // `_key` remains the fallback identity for a server that does not
-          // send think_id yet (see computeStableBlockKey).
-          ...(action.key ? { _key: action.key } : {}),
-          ...(parent ? { parent_tool_call_id: parent } : {}),
-        })
-      }
+      // Locate the target by wire id first, falling back to the positional scan
+      // only for a block with no id yet. See findThinkingTarget for why a pure
+      // positional scan created a second block with the same think_id — the
+      // reported "top thinking block frozen forever".
+      appendThinkingDelta(
+        blocks,
+        action.text,
+        action.thinkId,
+        parent,
+        () => findBlockByTypeBackward(blocks, 'thinking', parent),
+        // `_key` remains the fallback identity for a server that does not send
+        // think_id yet (see computeStableBlockKey).
+        action.key ? { _key: action.key } : undefined,
+      )
       return state
     }
     case 'ws_error': {

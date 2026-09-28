@@ -25,10 +25,15 @@ vi.mock('@/utils/appLog', () => ({
   appLog: { i: vi.fn(), w: vi.fn(), e: vi.fn(), d: vi.fn() },
 }))
 
-vi.mock('@/utils/chatStreamUtils', () => ({
-  findLastBlockOfType: (blocks: any[], type: string) =>
-    [...blocks].reverse().find(b => b.type === type),
-}))
+vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
+  // Spread the REAL module so the code under test runs the real helpers. A
+  // hand-written copy here would make this suite prove only that the copy agrees
+  // with itself — and it did: the previous mock reimplemented findLastBlockOfType
+  // without the tool_use boundary, so the suite could not see the duplicate
+  // think_id that boundary causes.
+  const actual = await importOriginal<typeof import('@/utils/chatStreamUtils')>()
+  return { ...actual }
+})
 
 vi.mock('vue', async () => {
   const actual = await vi.importActual('vue')
@@ -195,20 +200,62 @@ describe('useTaskExecStream', () => {
       stream.stopPreview()
     })
 
-    it('backfills a missing think_id without overwriting an existing one', () => {
-      // VERSION-SKEW GUARD: unreachable from a current server (the opening delta
-      // always carries the id). Its value is the negative assertion — an id that
-      // is already present must never be replaced.
+    it('backfills a missing think_id on a later delta', () => {
+      // VERSION-SKEW GUARD: a block that got an id-less start and later receives
+      // an id picks it up from the next delta.
       const { stream } = createStream()
       stream.startPreview()
 
       simulateWsEvent('thinking', { text: 'a' })
-      simulateWsEvent('thinking', { text: 'b', think_id: 'th_first' })
-      expect(stream.streamingMsg.value!.blocks[0].think_id).toBe('th_first')
+      expect(stream.streamingMsg.value!.blocks[0].think_id).toBeUndefined()
 
-      simulateWsEvent('thinking', { text: 'c', think_id: 'th_other' })
+      simulateWsEvent('thinking', { text: 'b', think_id: 'th_first' })
       expect(stream.streamingMsg.value!.blocks).toHaveLength(1)
       expect(stream.streamingMsg.value!.blocks[0].think_id).toBe('th_first')
+      expect(stream.streamingMsg.value!.blocks[0].text).toBe('ab')
+
+      stream.stopPreview()
+    })
+
+    it('starts a NEW block when the delta carries a different think_id', () => {
+      // A different id is a different block by the backend's own definition;
+      // merging them would put two blocks' text under one v-for key.
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('thinking', { text: 'first', think_id: 'th_one' })
+      simulateWsEvent('thinking', { text: 'second', think_id: 'th_two' })
+
+      const blocks = stream.streamingMsg.value!.blocks
+      expect(blocks, 'two distinct blocks').toHaveLength(2)
+      expect(blocks[0]).toMatchObject({ think_id: 'th_one', text: 'first' })
+      expect(blocks[1]).toMatchObject({ think_id: 'th_two', text: 'second' })
+
+      stream.stopPreview()
+    })
+
+    it('appends to its own block even when a tool_use sits after it', () => {
+      // The reported "top thinking block frozen forever", in the TASK stream.
+      // A sub-agent's tool_use interleaves on the wire, so the positional scan
+      // stops at it, finds nothing, and used to open a SECOND block carrying the
+      // SAME think_id — two blocks, one v-for key, head frozen.
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('thinking', { text: 'TOP', think_id: 'th_X' })
+      // done:false CREATES the block (a done:true for an unknown tool only
+      // clears a watchdog and appends nothing — using it here left the array
+      // without the boundary and made the test pass against the buggy code).
+      simulateWsEvent('tool_use', { id: 'sub1', name: 'Bash', input: { cmd: 'ls' }, done: false })
+      simulateWsEvent('thinking', { text: 'MORE', think_id: 'th_X' })
+
+      const blocks = stream.streamingMsg.value!.blocks
+      const thinks = blocks.filter((b) => b.type === 'thinking')
+      expect(thinks, 'extends the existing block, does not open another').toHaveLength(1)
+      expect(thinks[0].text).toBe('TOPMORE')
+
+      const ids = thinks.map((b) => b.think_id)
+      expect(new Set(ids).size, 'think_id must not repeat').toBe(ids.length)
 
       stream.stopPreview()
     })

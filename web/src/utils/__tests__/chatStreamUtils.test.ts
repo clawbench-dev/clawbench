@@ -2,6 +2,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FILE_MODIFYING_TOOLS,
   findLastBlockOfType,
+  findThinkingTarget,
+  appendThinkingDelta,
   forceCleanupStreamingState,
   findStreamingMsg,
   finalizeStreamingForDrain,
@@ -3055,6 +3057,38 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(blocks, 'still one block').toHaveLength(1)
     expect(blocks[0].think_id, 'backfilled from the delta').toBe('th_first')
     expect(blocks[0].text).toBe('ab')
+  })
+
+  it('findThinkingTarget prefers the wire id over position (shared by both streams)', () => {
+    // Both the chat reducer and the task-execution stream call this, so the two
+    // cannot diverge again. The id lookup must win even when the positional scan
+    // would stop short at a tool_use boundary.
+    const blocks: any[] = [
+      { type: 'thinking', think_id: 'th_X', text: 'TOP' },
+      { type: 'tool_use', name: 'Bash', id: 'sub1', done: true },
+    ]
+    // A positional scan that stops at the tool_use boundary (the real
+    // findLastBlockOfType behaviour) finds nothing...
+    const positionalStopsAtToolUse = () => {
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'thinking') return blocks[i]
+        if (blocks[i].type === 'tool_use') return undefined
+      }
+      return undefined
+    }
+    expect(positionalStopsAtToolUse()).toBeUndefined()
+    // ...but the id lookup finds the block, so the caller extends it.
+    expect(findThinkingTarget(blocks, 'th_X', positionalStopsAtToolUse)).toBe(blocks[0])
+  })
+
+  it('findThinkingTarget refuses a DIFFERENT id but allows an id-less block', () => {
+    const other: any[] = [{ type: 'thinking', think_id: 'th_A', text: 'a' }]
+    // Different id → must not be extended (would merge two blocks under one key).
+    expect(findThinkingTarget(other, 'th_B', () => other[0])).toBeUndefined()
+
+    const idless: any[] = [{ type: 'thinking', text: 'a' }]
+    // No id on the block → positional match is all there is (old-server path).
+    expect(findThinkingTarget(idless, 'th_B', () => idless[0])).toBe(idless[0])
   })
 
   it('appends to its own block even when a tool_use sits after it', () => {
