@@ -689,8 +689,8 @@ public class BackgroundServiceTransportTest {
 
     @Test
     public void getActiveTunnelTransport_reportsTheH2WireKind() {
-        // A `both` client reports whichever transport actually won, which is
-        // what a status display wants to show.
+        // Reports the wire kind of the live h2 session, which is what a status
+        // display wants to show.
         assertEquals("h2c", BackgroundService.getActiveTunnelTransport());
     }
 
