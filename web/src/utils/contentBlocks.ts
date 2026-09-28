@@ -106,31 +106,24 @@ export function statusClass(task: { status: string }): string {
 
 /**
  * Get detailed status label for a task.
+ *
+ * The execution count is appended for every status, not just the running ones:
+ * a task that has been disabled or has run out of repeats is exactly when the
+ * user asks "how many times did this actually run?", and the count is the only
+ * place that answer appears on the chat card. Emitting it only while active
+ * made the number vanish the moment the task stopped.
  */
 export function statusLabel(
   task: { status: string; runCount: number; runningCount: number },
   t: (key: string, params?: Record<string, unknown>) => string
 ): string {
+  const execLabel = t('chat.contentBlocks.statusExecutions', { count: task.runCount })
   if (task.status === 'active') {
-    const execLabel = t('chat.contentBlocks.statusExecutions', { count: task.runCount })
     if (task.runningCount > 0) return `${t('chat.contentBlocks.statusRunning')} (${execLabel})`
     return `${t('chat.contentBlocks.statusActive')} (${execLabel})`
   }
-  if (task.status === 'paused') return t('chat.contentBlocks.statusPaused')
-  if (task.status === 'completed') return t('chat.contentBlocks.statusCompleted')
-  return task.status
-}
-
-/**
- * Get simple (short) status label for a task badge.
- */
-export function statusLabelSimple(
-  task: { status: string },
-  t: (key: string) => string
-): string {
-  if (task.status === 'active') return t('chat.contentBlocks.statusActive')
-  if (task.status === 'paused') return t('chat.contentBlocks.statusPaused')
-  if (task.status === 'completed') return t('chat.contentBlocks.statusCompleted')
+  if (task.status === 'paused') return `${t('chat.contentBlocks.statusPaused')} (${execLabel})`
+  if (task.status === 'completed') return `${t('chat.contentBlocks.statusCompleted')} (${execLabel})`
   return task.status
 }
 
