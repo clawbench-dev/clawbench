@@ -3057,6 +3057,39 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(blocks[0].text).toBe('ab')
   })
 
+  it('appends to its own block even when a tool_use sits after it', () => {
+    // The reported "top thinking block frozen forever". After a switch-back,
+    // mergeStreamBlocks splices the DB flush's blocks in, so a FINISHED tool_use
+    // can land right after the live thinking block. A later delta of that same
+    // block then hits the tool_use boundary in findBlockByTypeBackward, finds
+    // nothing, and used to open a SECOND block — while stamping it with the same
+    // think_id. Two blocks, one v-for key: the head one kept its stale text and
+    // spun while the new one took the stream.
+    //
+    // Observed live: block[0] and block[15] both th_2ddda639, textLen frozen at
+    // 100 vs growing 55→929→2028→3161.
+    const msg: any = {
+      role: 'assistant', id: 54910, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_2ddda639', in_progress: true, text: 'x'.repeat(100) },
+        { type: 'tool_use', name: 'Bash', id: 'call_00_Ldy5', done: true },
+        { type: 'text', text: 'db tail' },
+      ],
+    }
+    let s = [msg]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'y'.repeat(55), thinkId: 'th_2ddda639' } as any)
+
+    const blocks = s[0].blocks as any[]
+    const thinks = blocks.filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'the delta extends the existing block, it does not open another').toHaveLength(1)
+    expect(thinks[0].text, 'stale head text + new delta').toBe('x'.repeat(100) + 'y'.repeat(55))
+
+    const ids = thinks.map((b: any) => b.think_id)
+    expect(new Set(ids).size, 'think_id must not repeat (v-for key collision)').toBe(ids.length)
+
+    // The tool_use and text blocks keep their places.
+    expect(blocks.map((b: any) => b.type)).toEqual(['thinking', 'tool_use', 'text'])
+  })
+
   it('starts a NEW block when the delta carries a different think_id', () => {
     // A different think_id means the backend considers it a different block —
     // appending would merge two blocks' text under one v-for key. The reducer

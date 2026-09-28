@@ -1698,13 +1698,30 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       // Mirrors AccumulateBlock's guard — the backend coalescer filters the WS
       // frame but the accumulator sees raw events, so both layers guard.
       if (!action.text) return state
-      const existing = findBlockByTypeBackward(blocks, 'thinking', parent)
-      // Only append to a block that is the SAME block. The backend mints one
-      // think_id per block and sends it on every delta, so two different ids are
-      // two different blocks by the backend's own definition — appending would
-      // merge them (wrong text under one v-for key). Without this check the
-      // target is found purely by position, which silently relies on the
-      // frontend's scan boundary matching the backend's forever.
+      // Locate the target block. The wire id is the authority: the backend mints
+      // one think_id per block and sends it on every delta of that block, so a
+      // block carrying this id IS the target wherever it sits in the array.
+      //
+      // A pure positional scan is not enough, and the difference is exactly the
+      // reported "top thinking block frozen forever": mergeStreamBlocks splices
+      // DB blocks (a finished tool_use) in AFTER the live thinking block, so a
+      // later delta of that same block hits the tool_use boundary in
+      // findBlockByTypeBackward, gets `undefined`, and opened a SECOND block —
+      // while still stamping it with the same think_id. Two blocks, one v-for
+      // key: the head one kept its stale text and spun, the new one took the
+      // stream. (Observed: block[0] and block[15] both th_2ddda639, textLen
+      // frozen at 100 vs growing 55→929→2028.)
+      //
+      // The scan is still the fallback for a block with no id yet — an older
+      // server that never sends one, or a block adopted from a position-only DB
+      // marker.
+      const existing = action.thinkId
+        ? (blocks.find((b) => b.type === 'thinking' && b.think_id === action.thinkId) ??
+           findBlockByTypeBackward(blocks, 'thinking', parent))
+        : findBlockByTypeBackward(blocks, 'thinking', parent)
+      // Only append to a block that is the SAME block. Two different ids are two
+      // different blocks by the backend's own definition — appending would merge
+      // them (wrong text under one v-for key).
       //
       // A missing id on either side stays compatible: that is the old-server /
       // DB-marker case, where position is all there is to go on.
