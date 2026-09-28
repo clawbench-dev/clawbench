@@ -599,6 +599,26 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		event.ThinkID = thinkID
 	}
 
+	// Commit this block's thinking text BEFORE telling clients it is done.
+	//
+	// thinking_done is a client's cue to fetch the full reasoning from
+	// chat_thinking. The periodic flush is rate-limited to 500ms, so without
+	// this the event routinely arrives first and the client caches a PREFIX of
+	// the block — the reported truncated reasoning (observed: 760 of 844 chars
+	// cached; another case 17124 of 18887), which then never refetched because
+	// the cache looked populated.
+	//
+	// Safe here: AccumulateBlock (above) has already seen every delta — the
+	// coalescer only merges the OUTBOUND frames and never writes e.blocks — so
+	// flushing now writes the block's complete text. A separate lock scope is
+	// required because forwardEvent must not run under e.mu; flushPendingThinking
+	// takes no lock of its own (its callers hold e.mu), so this cannot deadlock.
+	if event.Type == "thinking_done" {
+		e.mu.Lock()
+		e.flushPendingThinking()
+		e.mu.Unlock()
+	}
+
 	// Forward event to WS clients via StreamHub
 	e.forwardEvent(event)
 
@@ -987,6 +1007,13 @@ func (e *SessionExecutor) flushPendingContextState() {
 // slimThinkingInContent (blocks that already carry think_id are not
 // regenerated), so no orphan rows and no duplicates.
 func (e *SessionExecutor) flushPendingThinking() {
+	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
+	// is nothing to persist to. Existing callers are all behind the same guard
+	// in flushStreamingLocked, but the thinking_done path calls this directly, so
+	// the check must live here too or that path panics on a DB-less executor.
+	if db == nil {
+		return
+	}
 	if e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" {
 		return
 	}
