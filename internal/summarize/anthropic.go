@@ -14,7 +14,7 @@ import (
 
 // AnthropicSummarizer implements Summarizer using the Anthropic Messages API format.
 type AnthropicSummarizer struct {
-	BaseURL    string       // Full endpoint URL (e.g., "https://api.anthropic.com/v1/messages")
+	BaseURL    string       // Resolved endpoint URL (base URL completed by BuildEndpointURL)
 	Key        string       // API key (sent as x-api-key header)
 	Model      string       // Model name (default: "claude-3-5-haiku-latest")
 	HTTPClient *http.Client // Shared HTTP client with timeout
@@ -22,13 +22,15 @@ type AnthropicSummarizer struct {
 }
 
 // NewAnthropic creates an AnthropicSummarizer with the given configuration.
-// Empty model defaults to "claude-3-5-haiku-latest".
+// baseURL may be a bare host, a partial base (e.g. "https://api.anthropic.com/v1"),
+// or the full endpoint; BuildEndpointURL normalizes all of them. Empty model
+// defaults to "claude-3-5-haiku-latest".
 func NewAnthropic(baseURL, key, model string) *AnthropicSummarizer {
 	if model == "" {
 		model = "claude-3-5-haiku-latest"
 	}
 	s := &AnthropicSummarizer{
-		BaseURL: strings.TrimRight(baseURL, "/"),
+		BaseURL: BuildEndpointURL(baseURL, AnthropicMessagesPath),
 		Key:     key,
 		Model:   model,
 		HTTPClient: &http.Client{

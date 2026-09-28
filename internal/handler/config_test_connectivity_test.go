@@ -406,31 +406,6 @@ func TestTestTTS_EdgeReachable(t *testing.T) {
 	_ = result
 }
 
-// ── buildEndpointURL tests ────────────────────────────────────
-
-func TestBuildEndpointURL(t *testing.T) {
-	tests := []struct {
-		name        string
-		baseURL     string
-		defaultPath string
-		expected    string
-	}{
-		{"full URL no path", "https://api.openai.com", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"URL with /v1", "https://api.openai.com/v1", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"URL already complete", "https://api.openai.com/v1/chat/completions", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"URL with trailing slash", "https://api.openai.com/v1/", "/v1/chat/completions", "https://api.openai.com/v1/chat/completions"},
-		{"Anthropic no path", "https://api.anthropic.com", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-		{"Anthropic with /v1", "https://api.anthropic.com/v1", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-		{"Anthropic already complete", "https://api.anthropic.com/v1/messages", "/v1/messages", "https://api.anthropic.com/v1/messages"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := buildEndpointURL(tt.baseURL, tt.defaultPath)
-			assert.Equal(t, tt.expected, result)
-		})
-	}
-}
-
 // ── resolveStringValue tests ─────────────────────────────────
 
 func TestResolveStringValue(t *testing.T) {
@@ -940,13 +915,6 @@ func TestTestFRP_DefaultPort(t *testing.T) {
 		// No port — should default to 7000
 	})
 	assert.True(t, result.Success)
-}
-
-// ── buildEndpointURL additional tests ─────────────────────────
-
-func TestBuildEndpointURL_NoSlashInPath(t *testing.T) {
-	result := buildEndpointURL("https://api.example.com", "chat")
-	assert.Equal(t, "https://api.example.com/chat", result)
 }
 
 // ── Feishu tests ──────────────────────────────────────────────────

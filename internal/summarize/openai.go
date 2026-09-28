@@ -16,7 +16,7 @@ import (
 // It is compatible with any OpenAI-compatible endpoint (OpenAI, DeepSeek, Groq,
 // OpenRouter, Ollama's /v1/chat/completions, etc.).
 type OpenAISummarizer struct {
-	BaseURL    string       // Full endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
+	BaseURL    string       // Resolved endpoint URL (base URL completed by BuildEndpointURL)
 	Key        string       // API key (sent as Authorization: Bearer <key>)
 	Model      string       // Model name (default: "gpt-4o-mini")
 	HTTPClient *http.Client // Shared HTTP client with timeout
@@ -24,13 +24,15 @@ type OpenAISummarizer struct {
 }
 
 // NewOpenAI creates an OpenAISummarizer with the given configuration.
-// Empty model defaults to "gpt-4o-mini".
+// baseURL may be a bare host, a partial base (e.g. "https://api.openai.com/v1"),
+// or the full endpoint; BuildEndpointURL normalizes all of them. Empty model
+// defaults to "gpt-4o-mini".
 func NewOpenAI(baseURL, key, model string) *OpenAISummarizer {
 	if model == "" {
 		model = "gpt-4o-mini"
 	}
 	s := &OpenAISummarizer{
-		BaseURL: strings.TrimRight(baseURL, "/"),
+		BaseURL: BuildEndpointURL(baseURL, OpenAIChatCompletionsPath),
 		Key:     key,
 		Model:   model,
 		HTTPClient: &http.Client{

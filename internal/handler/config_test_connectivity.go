@@ -92,42 +92,6 @@ func ServeConfigTest(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ──────────────────────────────────────────────────
 
-// buildEndpointURL constructs a full API endpoint URL from a base URL and a default path.
-// If the base URL already ends with the target suffix (e.g., "/chat/completions"), it's used as-is.
-// If the base URL already ends with a path component that overlaps with the default path,
-// only the remaining suffix is appended.
-// Examples for defaultPath="/v1/chat/completions":
-//   - "https://api.openai.com" → "https://api.openai.com/v1/chat/completions"
-//   - "https://api.openai.com/v1" → "https://api.openai.com/v1/chat/completions"
-//   - "https://api.openai.com/v1/chat/completions" → "https://api.openai.com/v1/chat/completions"
-func buildEndpointURL(baseURL, defaultPath string) string {
-	u := strings.TrimRight(baseURL, "/")
-	// Extract the final path component (e.g., "/chat/completions")
-	lastSlash := strings.LastIndex(defaultPath, "/")
-	if lastSlash < 0 {
-		return u + "/" + defaultPath
-	}
-	suffix := defaultPath[lastSlash:] // e.g., "/chat/completions"
-
-	// If URL already ends with the full suffix, it's complete
-	if strings.HasSuffix(u, suffix) {
-		return u
-	}
-
-	// Check for partial overlap: split defaultPath into segments and find the longest match
-	segments := strings.Split(strings.TrimLeft(defaultPath, "/"), "/")
-	// Try matching from longest prefix to shortest
-	for i := len(segments) - 1; i >= 1; i-- {
-		prefix := "/" + strings.Join(segments[:i], "/")
-		if strings.HasSuffix(u, prefix) {
-			remaining := "/" + strings.Join(segments[i:], "/")
-			return u + remaining
-		}
-	}
-
-	return u + defaultPath
-}
-
 // resolveStringValue returns the value from the test request if present and not empty,
 // otherwise falls back to the current config value.
 // Empty strings fall back to config since the frontend may send "" for
@@ -236,7 +200,7 @@ func testAPISummarizer(ctx context.Context, baseURL, apiKey, modelName string) C
 
 func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, modelName string) ConnectivityTestResult {
 	// Build the full chat completions URL
-	reqURL := buildEndpointURL(baseURL, "/v1/chat/completions")
+	reqURL := summarize.BuildEndpointURL(baseURL, summarize.OpenAIChatCompletionsPath)
 
 	reqBody := map[string]any{
 		"model":      modelName,
@@ -281,7 +245,7 @@ func testOpenAIAPI(ctx context.Context, client *http.Client, baseURL, apiKey, mo
 
 func testAnthropicAPI(ctx context.Context, client *http.Client, baseURL, apiKey, modelName string) ConnectivityTestResult {
 	// Build the full messages URL
-	reqURL := buildEndpointURL(baseURL, "/v1/messages")
+	reqURL := summarize.BuildEndpointURL(baseURL, summarize.AnthropicMessagesPath)
 
 	reqBody := map[string]any{
 		"model":      modelName,

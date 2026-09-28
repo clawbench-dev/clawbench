@@ -329,7 +329,7 @@ type MossNanoConfig struct {
 
 // APIConfig holds configuration for the API-based summarization backend.
 type APIConfig struct {
-	BaseURL string `yaml:"base_url"` // Full endpoint URL (e.g., "https://api.openai.com/v1/chat/completions")
+	BaseURL string `yaml:"base_url"` // Endpoint URL: bare host, partial base (…/v1), or full endpoint (…/v1/chat/completions) — completed by summarize.BuildEndpointURL
 	Key     string `yaml:"key"`      // API key (sent as Bearer token for OpenAI, x-api-key for Anthropic)
 }
 
