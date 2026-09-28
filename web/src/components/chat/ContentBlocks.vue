@@ -369,7 +369,7 @@ import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2 } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
 import { getShareToolCall } from '@/share/shareMode'
 import { apiGet } from '@/utils/api'
@@ -1374,6 +1374,44 @@ function reverifyAnnotations() {
 // onUpdated never fires (same reason the ask-state hook above needs both).
 onMounted(() => nextTick(reverifyAnnotations))
 onUpdated(() => nextTick(reverifyAnnotations))
+
+/**
+ * Render any Mermaid blocks this component still holds as raw source.
+ *
+ * The chat Mermaid pass is a ONE-SHOT render: `updateRenderedContents(true)`
+ * schedules a single `renderMermaidInElement` on a `nextTick`
+ * (useChatRender.ts), and that function only picks up
+ * `pre.mermaid:not([data-rendered])`. Any `<pre class="mermaid">` written into
+ * the DOM AFTER that pass is therefore never rendered and stays visible as raw
+ * source. Two writers reliably land late:
+ *
+ *  - `listKey` embeds `messages.length` (ChatMessageList.vue), so a new message
+ *    remounts the whole list, recreating every `pre.mermaid` from cached HTML.
+ *  - The newest message's text block is re-patched by a late `v-html` write
+ *    (throttled flush / cache upgrade), inserting its block after the pass.
+ *
+ * Measured on a real session: every cold load ended with exactly ONE leftover
+ * `pre.mermaid`, always in the LAST assistant message — i.e. the diagram the
+ * user had just asked for. Any later render pass converted it (which is why a
+ * theme switch or session re-open appeared to "fix" it).
+ *
+ * Same shape as `reverifyAnnotations` above: scoped to this component's subtree
+ * (so concurrent instances never race for the same element) and idempotent.
+ * `onMounted` covers the list-remount path, where `onUpdated` never fires.
+ *
+ * Deliberately skipped while `streaming`: the fence is still incomplete
+ * mid-stream, and the post-streaming pass owns that first render. The
+ * synchronous guard keeps the lazy 608KB Mermaid import out of the update path
+ * when there is nothing to do.
+ */
+function renderPendingMermaid() {
+  if (props.streaming) return
+  const root = contentRootRef.value
+  if (!root || !root.querySelector('pre.mermaid:not([data-rendered])')) return
+  void renderMermaidInElement(root, 'chat-mermaid-block')
+}
+onMounted(() => nextTick(renderPendingMermaid))
+onUpdated(() => nextTick(renderPendingMermaid))
 
 // ── Throttled streaming render ──
 // Rendered-HTML cache for streaming text/thinking blocks, keyed by stable block

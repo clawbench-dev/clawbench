@@ -49,12 +49,17 @@ vi.mock('@/utils/icons', () => ({
 // `detectedPaths` (unlike renderTextBlock, which schedules verification). Tests
 // that need annotated thinking markup override this. Options are forwarded so
 // tests can pin WHICH pipeline mode the thinking renderer asked for.
-const { mockRenderMarkdownHtml } = vi.hoisted(() => ({
+const { mockRenderMarkdownHtml, mockRenderMermaidInElement } = vi.hoisted(() => ({
   mockRenderMarkdownHtml: vi.fn((text: string, _opts?: unknown) => `<p>${text}</p>`),
+  mockRenderMermaidInElement: vi.fn().mockResolvedValue(undefined),
 }))
 vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
   renderMarkdown: (text: string) => `<p>${text}</p>`,
   renderMarkdownHtml: (text: string, opts?: unknown) => mockRenderMarkdownHtml(text, opts),
+  // The component self-heals Mermaid blocks written into the DOM after the
+  // one-shot chat render pass (see renderPendingMermaid). A hand-listed mock
+  // that omits this export makes the call site throw, not just no-op.
+  renderMermaidInElement: (...args: unknown[]) => mockRenderMermaidInElement(...args),
 }))
 
 vi.mock('@/utils/appLog', async (importOriginal) => ({
@@ -2781,6 +2786,103 @@ describe('path verification after a cache hit', () => {
     // i.e. the full pipeline (path annotation included).
     expect(opts?.skipEnhancements).toBeFalsy()
     expect(wrapper.html()).toContain('reasoning about src/real.go')
+  })
+})
+
+// ── Mermaid blocks written into the DOM after the one-shot chat render pass ──
+//
+// The chat Mermaid pass renders once, on a `nextTick` scheduled by
+// `updateRenderedContents(true)` (useChatRender.ts), and only picks up
+// `pre.mermaid:not([data-rendered])`. Any `<pre class="mermaid">` inserted into
+// the DOM AFTER that pass therefore stays as raw source forever.
+//
+// Two writers reliably land late: `listKey` embeds `messages.length`, so a new
+// message remounts the whole list (recreating every block from cached HTML),
+// and the newest message's text block is re-patched by a late `v-html` write.
+// Measured on a real session: every cold load ended with exactly ONE leftover
+// `pre.mermaid`, always in the LAST assistant message — the diagram the user
+// had just asked for. The component self-heals its own subtree.
+describe('mermaid blocks inserted after the render pass', () => {
+  const MERMAID_HTML = '<pre class="mermaid">flowchart TD\n  A-->B</pre>'
+
+  it('renders a pending mermaid block on mount', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'diagram' }],
+      renderTextBlock: () => MERMAID_HTML,
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockRenderMermaidInElement).toHaveBeenCalled()
+    const [container, prefix] = mockRenderMermaidInElement.mock.calls.at(-1)!
+    expect(prefix).toBe('chat-mermaid-block')
+    // Scoped to this component's own subtree, so concurrent instances never
+    // race for the same element.
+    expect((container as HTMLElement).classList.contains('content-blocks')).toBe(true)
+    expect(wrapper.element.contains(container as HTMLElement)).toBe(true)
+  })
+
+  it('renders a pending mermaid block that appears in a later update', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    // Mount with no diagram, then a re-render writes one into the DOM — the
+    // shape a late v-html patch or a list remount produces. The stub is
+    // stateful so the second pass really emits the block.
+    let html = '<p>plain</p>'
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'plain' }],
+      renderTextBlock: () => html,
+    })
+    await nextTick()
+    await nextTick()
+    expect(mockRenderMermaidInElement).not.toHaveBeenCalled()
+
+    html = MERMAID_HTML
+    await wrapper.setProps({ blocks: [{ type: 'text', text: 'diagram' }] })
+    await nextTick()
+    await nextTick()
+
+    expect(mockRenderMermaidInElement).toHaveBeenCalled()
+  })
+
+  it('does not re-render a block already marked data-rendered', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    // `data-rendered` is the renderer's own idempotence marker: a block that
+    // already carries it must not be handed over again, or every update would
+    // restart the 608KB render for every diagram on screen.
+    mountBlocks({
+      blocks: [{ type: 'text', text: 'diagram' }],
+      renderTextBlock: () => '<pre class="mermaid" data-rendered="1">flowchart TD\n  A-->B</pre>',
+    })
+    await nextTick()
+    await nextTick()
+
+    expect(mockRenderMermaidInElement).not.toHaveBeenCalled()
+  })
+
+  it('does not render mermaid while the turn is still streaming', async () => {
+    mockRenderMermaidInElement.mockClear()
+
+    // Mid-stream the fence is incomplete — rendering it produces errors. The
+    // post-streaming pass owns the first render, and the hook must not preempt
+    // it (nor pull the 608KB chunk in on every streaming frame).
+    const wrapper = mountBlocks({
+      blocks: [{ type: 'text', text: 'diagram' }],
+      streaming: true,
+      renderTextBlock: () => MERMAID_HTML,
+    })
+    await nextTick()
+    await nextTick()
+    expect(mockRenderMermaidInElement).not.toHaveBeenCalled()
+
+    // ...and it takes over once the turn ends.
+    await wrapper.setProps({ streaming: false })
+    await nextTick()
+    await nextTick()
+    expect(mockRenderMermaidInElement).toHaveBeenCalled()
   })
 })
 
