@@ -337,6 +337,7 @@ import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from
 import { useI18n } from 'vue-i18n'
 import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
+import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
@@ -1256,7 +1257,11 @@ function resetInputHistory() {
   historyDraft.value = { text: '', files: [] }
 }
 
-function textareaCursorRow(el) {
+// Logical row of the caret: the count of explicit newlines before it. Only a
+// fallback — a soft-wrapped line has one logical row but several visual ones,
+// and the caret guard below is about visual rows. Used when the layout cannot
+// be measured (see measureCaretVisualRows).
+function textareaLogicalCursorRow(el) {
   const text = el.value
   const pos = el.selectionStart ?? text.length
   let row = 0
@@ -1275,14 +1280,22 @@ function stepHistory(isUp, isGesture = false) {
   const el = textareaRef.value
   if (!el) return false
   const text = inputText.value
-  const rows = (text.match(/\n/g) || []).length + 1
   // In a multiline input, ArrowUp navigates history only from the first row and
   // ArrowDown only from the last row; elsewhere the arrows move the caret. A
   // swipe gesture has no caret conflict, so this guard applies to keyboard only.
-  if (!isGesture && rows > 1) {
-    const row = textareaCursorRow(el)
-    if (isUp && row > 0) return false
-    if (!isUp && row < rows - 1) return false
+  //
+  // "Row" must mean VISUAL row, not logical: a long line with no `\n` wraps and
+  // still has rows above the caret, so counting newlines would let ArrowUp jump
+  // to history mid-draft. Measure the real wrapping, and only fall back to the
+  // logical count when the layout is unmeasurable (jsdom, hidden textarea).
+  if (!isGesture) {
+    const measured = measureCaretVisualRows(el)
+    const caretRow = measured ? measured.caretRow : textareaLogicalCursorRow(el)
+    const lastRow = measured
+      ? measured.totalRows - 1
+      : (inputText.value.match(/\n/g) || []).length
+    if (isUp && caretRow > 0) return false
+    if (!isUp && caretRow < lastRow) return false
   }
   if (historyInputs.value.length === 0) return false
 

@@ -290,6 +290,15 @@ vi.mock('@/utils/chatInputUtils.ts', () => ({
   isImeCompositionEvent: (e: any) => !!(e && e.isComposing) || (e && e.keyCode === 229),
 }))
 
+// Visual-row measurement needs real layout, which jsdom has none of, so the
+// default fake reports "unmeasurable" and the component falls back to counting
+// newlines exactly as before. Cases that exercise the soft-wrap guard override
+// the return value to model a wrapped draft.
+const mockCaretVisualRows = vi.hoisted(() => vi.fn((): { caretRow: number; totalRows: number } | null => null))
+vi.mock('@/utils/textareaVisualRows.ts', () => ({
+  measureCaretVisualRows: mockCaretVisualRows,
+}))
+
 vi.mock('@/utils/fileIcon.ts', () => ({
   getFileIcon: () => 'FileText',
   getFileIconColor: () => '#999',
@@ -453,6 +462,9 @@ afterEach(() => {
   // The text draft store is module-level (survives component remounts on
   // purpose), so drafts must be cleared between tests or they leak across cases.
   _resetChatDraftsForTesting()
+  // Reset to the "unmeasurable" default: a `mockReturnValue` set by one case
+  // would otherwise decide the caret row for every case after it.
+  mockCaretVisualRows.mockReturnValue(null)
 })
 
 const stubs = {
@@ -2564,6 +2576,87 @@ describe('ChatInputBar', () => {
       await flushPromises()
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('does not navigate history while the caret has soft-wrapped rows above it', async () => {
+      // A long single line with NO newline still wraps onto several visual rows.
+      // Counting newlines would call this a one-row draft and steal ArrowUp for
+      // history; the measured caret row must keep the key for caret movement.
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const draft = 'a very long draft that soft wraps without any newline at all'
+      wrapper.vm.inputText = draft
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(draft.length, draft.length)
+      // Caret on the LAST visual row (row 2 of 3).
+      mockCaretVisualRows.mockReturnValue({ caretRow: 2, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      // History must not have replaced the draft
+      expect(wrapper.vm.inputText).toBe(draft)
+      wrapper.unmount()
+    })
+
+    it('navigates history from the first visual row of a soft-wrapped draft', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const draft = 'a very long draft that soft wraps without any newline at all'
+      wrapper.vm.inputText = draft
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(0, 0)
+      // Caret on the FIRST visual row (row 0 of 3) — now history takes over.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 0, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown keeps the caret inside a soft-wrapped history entry instead of leaving it', async () => {
+      // Regression shape: the user has stepped into history (so ArrowDown WOULD
+      // normally step back out), the loaded entry soft-wraps, and the caret sits
+      // mid-entry with rows below. ArrowDown must move the caret, not abandon the
+      // entry. Counting newlines sees a one-row entry and leaves; the measured
+      // caret row is what stops it.
+      const longEntry = 'x'.repeat(120)
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: longEntry }],
+      })
+      const ta = wrapper.find('.chat-textarea')
+      // Step into history from the first visual row.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 0, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe(longEntry)
+      // Caret is now mid-entry (row 1 of 3) — there is a row below it.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 1, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowDown' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      // History navigation must NOT have run: the entry stays loaded.
+      expect(wrapper.vm.inputText).toBe(longEntry)
+      wrapper.unmount()
+    })
+
+    it('falls back to logical rows when the visual row is unmeasurable', async () => {
+      // jsdom has no layout, so this is the real default: measurement returns
+      // null and the newline count decides. A multiline draft with the caret on
+      // the second line must still protect the caret.
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(9, 9)
+      expect(mockCaretVisualRows()).toBeNull()
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('line one\nline two')
       wrapper.unmount()
     })
 
