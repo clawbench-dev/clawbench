@@ -1092,8 +1092,11 @@ function handleSummaryToolClick(tool: any, ti: number) {
 
 /** Generate a stable key for a block, used for v-for :key and animation state.
  *  tool_use: block.id (unique tool call ID from backend)
- *  thinking: block.think_id (stable backend-assigned ID, survives re-opens),
- *            falling back to block._key (key assigned at creation/parsing)
+ *  thinking: block.think_id (the identity the backend mints when the block
+ *            opens and sends on the WS event), falling back to block._key for a
+ *            live block built from a payload that carried no think_id (a server
+ *            older than that field, e.g. the disk-served frontend running
+ *            against an un-restarted binary).
  *  text: text-${bi} (text blocks merge so index is stable)
  *  other: type-bi (fallback)
  *  The index fallback uses the ABSOLUTE root index (absIdx) so a nested

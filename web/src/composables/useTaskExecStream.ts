@@ -127,11 +127,23 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
         const msg = streamingMsg.value
         if (!msg) return
         const blocks = msg.blocks as ContentBlock[]
+        const thinkId = payload.think_id as string | undefined
         const existingThinking = findLastBlockOfType(blocks, 'thinking')
         if (existingThinking) {
           existingThinking.text += (payload.text as string) ?? ''
+          // Backfill identity if this block predates the field; never replace an
+          // id it already has (that would relabel a block mid-stream).
+          if (thinkId && !existingThinking.think_id) existingThinking.think_id = thinkId
         } else {
-          blocks.push({ type: 'thinking', text: (payload.text as string) ?? '' })
+          blocks.push({
+            type: 'thinking',
+            text: (payload.text as string) ?? '',
+            // The identity the backend mints when the block opens. This stream
+            // reads the same WS payload as the main chat, so it carries the same
+            // field — without it the block is keyed by position and cannot be
+            // linked to its chat_thinking prefix.
+            ...(thinkId ? { think_id: thinkId } : {}),
+          })
         }
         break
       }

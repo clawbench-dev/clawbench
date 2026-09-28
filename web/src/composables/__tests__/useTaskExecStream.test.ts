@@ -156,6 +156,60 @@ describe('useTaskExecStream', () => {
       stream.stopPreview()
     })
 
+    it('keys a thinking block with the think_id from the payload', () => {
+      // The task-exec stream reads the same WS payload as the main chat, which
+      // now carries the block's identity. Without picking it up, the block is
+      // keyed by position and cannot be linked to its chat_thinking prefix.
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('thinking', { text: 'first', think_id: 'th_task1' })
+
+      // Assert on the OPENING delta, before any later delta's backfill could
+      // mask a missing id: the block must carry its identity from the push that
+      // created it, not acquire one later.
+      expect(stream.streamingMsg.value!.blocks[0].think_id).toBe('th_task1')
+
+      simulateWsEvent('thinking', { text: ' second', think_id: 'th_task1' })
+
+      const msg = stream.streamingMsg.value
+      expect(msg!.blocks).toHaveLength(1)
+      expect(msg!.blocks[0].think_id).toBe('th_task1')
+      expect(msg!.blocks[0].text).toBe('first second')
+
+      stream.stopPreview()
+    })
+
+    it('tolerates a thinking payload with no think_id', () => {
+      // Version skew: a server older than the field must not break the stream.
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('thinking', { text: 'reasoning' })
+
+      const msg = stream.streamingMsg.value
+      expect(msg!.blocks).toHaveLength(1)
+      expect(msg!.blocks[0].think_id).toBeUndefined()
+      expect(msg!.blocks[0].text).toBe('reasoning')
+
+      stream.stopPreview()
+    })
+
+    it('backfills a missing think_id without overwriting an existing one', () => {
+      const { stream } = createStream()
+      stream.startPreview()
+
+      simulateWsEvent('thinking', { text: 'a' })
+      simulateWsEvent('thinking', { text: 'b', think_id: 'th_first' })
+      expect(stream.streamingMsg.value!.blocks[0].think_id).toBe('th_first')
+
+      simulateWsEvent('thinking', { text: 'c', think_id: 'th_other' })
+      expect(stream.streamingMsg.value!.blocks).toHaveLength(1)
+      expect(stream.streamingMsg.value!.blocks[0].think_id).toBe('th_first')
+
+      stream.stopPreview()
+    })
+
     it('handles tool_use events', () => {
       const { stream } = createStream()
       stream.startPreview()
