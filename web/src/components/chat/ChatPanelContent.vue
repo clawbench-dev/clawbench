@@ -216,7 +216,7 @@ import { useSessionIdentity, getSessionId } from '@/composables/useSessionIdenti
 import { useSessionManager } from '@/composables/useSessionManager.ts'
 import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
-import { queuedMessages, setActiveQueueSession, addQueued, clearQueue } from '@/composables/useMessageQueue.ts'
+import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, markSendCommitted } from '@/composables/useMessageQueue.ts'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
@@ -1228,6 +1228,11 @@ async function sendMessageNow(text, filePaths, files) {
                 files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
                 createdAt: new Date().toISOString(),
             })
+            // The POST resolved with the row committed (queued=true), so from
+            // this generation onward a queue snapshot that lacks this entry is
+            // authoritative — its row drained/cancelled — and must drop it
+            // rather than preserving it as an un-acked optimistic entry.
+            markSendCommitted(pendingId)
             render.updateRenderedContents()
             stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session

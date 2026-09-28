@@ -17,7 +17,7 @@ import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts
 import { isTransportError } from '@/utils/networkError'
 import { forceCleanupStreamingState, type ChatMessage, type ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { warmWorktreeCache } from '@/composables/useWorktreeAnnotation.ts'
-import { syncFromHistory, clearQueue } from '@/composables/useMessageQueue.ts'
+import { syncFromHistory, clearQueue, beginQueueSnapshot } from '@/composables/useMessageQueue.ts'
 
 // Module-level one-time session list load (replaces continuous polling)
 // Accessible from App.vue without instantiating useChatSession
@@ -176,6 +176,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     forceScrollBottom: boolean,
     skipIfUnchanged: boolean,
     immediate: boolean,
+    queueSnapshotGen: number,
   ): { synced: boolean; keepInputDisabled: boolean } {
     const rawMsgs = (sessionData.messages as Array<Record<string, unknown>> | undefined) || []
     const isRunning = !!sessionData.running
@@ -261,8 +262,14 @@ export function useChatSession(options: UseChatSessionOptions) {
     // Queued messages are NOT part of `messages` any more; the authoritative
     // snapshot rebuilds the separate queue store. This is what makes a
     // cross-device queue_added or a missed queue_drain self-heal on the next
-    // loadHistory.
-    syncFromHistory(returnedId, sessionData.queue as Array<{ queueId: string; text?: string }> | undefined)
+    // loadHistory. The generation tells the store whether this snapshot can
+    // disprove an in-flight entry (drained while backgrounded) or may merely
+    // predate its commit (see syncFromHistory).
+    syncFromHistory(
+      returnedId,
+      sessionData.queue as Array<{ queueId: string; text?: string }> | undefined,
+      queueSnapshotGen,
+    )
     // Re-evaluate history existence only when the session actually grew new
     // messages (total increased) or this is a different session. A routine
     // refresh of an already-exhausted history must NOT clear noMoreHistory —
@@ -564,6 +571,12 @@ export function useChatSession(options: UseChatSessionOptions) {
     loadHistoryDeferred = { promise: new Promise<void>((r) => { resolveDeferred = r }) }
 
     const mySeq = ++loadHistorySeq
+    // Claim the queue-snapshot generation BEFORE issuing the request. A queued
+    // message whose enqueue POST resolves after this point may legitimately be
+    // absent from the response (the read began before its commit), so the store
+    // must keep its optimistic entry; one that resolved before this point is
+    // committed, and its absence from the response is authoritative.
+    const queueSnapshotGen = beginQueueSnapshot()
     if (showOverlay || immediate) switching.value = true
     // immediate mode (switchSession): lock input to prevent stale messages
     if (immediate) inputDisabled.value = true
@@ -630,7 +643,7 @@ export function useChatSession(options: UseChatSessionOptions) {
             currentSessionId.value = recoverData.sessionId
             const rawMsgs = (recoverData.messages || []) as Array<Record<string, unknown>>
             if (rawMsgs.length > 0) {
-              const result = syncSessionState(recoverData, forceScrollBottom, skipIfUnchanged, immediate)
+              const result = syncSessionState(recoverData, forceScrollBottom, skipIfUnchanged, immediate, queueSnapshotGen)
               keepInputDisabled = result.keepInputDisabled
               if (result.synced) {
                 // Skip the second fetch — we already have the data
@@ -727,7 +740,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // Delegate all state sync to the shared helper.
       // Main path does NOT set currentSessionId before calling — the helper
       // sets it from the response data (returnedId).
-      const result = syncSessionState(data, forceScrollBottom, skipIfUnchanged, immediate)
+      const result = syncSessionState(data, forceScrollBottom, skipIfUnchanged, immediate, queueSnapshotGen)
       keepInputDisabled = result.keepInputDisabled
       if (!result.synced) return // skipIfUnchanged detected no change
 
