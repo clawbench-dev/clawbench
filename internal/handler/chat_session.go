@@ -218,16 +218,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// "NewSession N" placeholder may be replaced by first-message auto-titling.
 		lockTitle := title != ""
 		if title == "" {
-			// Numbering is per project: the new unnamed session takes
-			// max(existing numbered unnamed sessions) + 1, so unnamed sessions
-			// are numbered 1, 2, 3, ... regardless of agent. Explicitly-named
-			// sessions don't affect it.
-			n, err := service.NextSessionNumber(projectPath, T(r, "NewSession"))
-			if err == nil {
-				title = T(r, "NewSessionN", map[string]any{"N": n})
-			} else {
-				title = T(r, "NewSession")
-			}
+			title = newUnnamedSessionTitle(r, projectPath)
 		}
 		createSession := service.CreateSession
 		if lockTitle {
@@ -248,6 +239,25 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// newUnnamedSessionTitle builds the localized placeholder title for a session
+// the caller did not name, numbering it per project.
+//
+// Numbering is per project: the new unnamed session takes
+// max(existing numbered unnamed sessions) + 1, so unnamed sessions are numbered
+// 1, 2, 3, ... regardless of agent. Explicitly-named sessions don't affect it.
+//
+// Every unnamed-session creation path must go through here — the manual
+// "new session" POST and the implicit creation when a project has no sessions
+// at all (AIChat GET). Two paths numbering independently would both hand out
+// the same number.
+func newUnnamedSessionTitle(r *http.Request, projectPath string) string {
+	n, err := service.NextSessionNumber(projectPath, T(r, "NewSession"))
+	if err != nil {
+		return T(r, "NewSession")
+	}
+	return T(r, "NewSessionN", map[string]any{"N": n})
 }
 
 // ServeSessionsReorder handles PUT /api/ai/sessions/reorder — persists a manual
