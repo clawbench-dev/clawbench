@@ -2338,7 +2338,21 @@ func (c *ACPConn) SetAliveForTest() {
 	c.mu.Unlock()
 }
 
-// KillProcessForTest kills the agent subprocess for integration testing.
+// KillProcessForTest kills the agent subprocess tree for integration testing.
+//
+// It deliberately mirrors what production does when it disposes of a connection
+// (reapProcess → killProcessGroup): killing only the direct child is not enough
+// for npx-launched agents, whose tree is deeper than one level:
+//
+//	npm exec pi-acp@latest   ← cmd.Process (direct child)
+//	  └── sh -c "pi-acp"
+//	        └── node .../pi-acp   ← the actual ACP agent, holds the stdio pipes
+//
+// Killing just the direct child leaves that grandchild alive holding stdout
+// open, so conn.Done() never fires and IsAlive() stays true — which is exactly
+// what the ProcessCrash integration tests poll for, hence their 5s timeout.
+// The process group is safe to signal because spawnLocked calls
+// setProcessGroup (Setsid), making the child a group leader.
 func (c *ACPConn) KillProcessForTest() error {
 	c.mu.Lock()
 	if c.cmd == nil || c.cmd.Process == nil {
@@ -2347,7 +2361,12 @@ func (c *ACPConn) KillProcessForTest() error {
 	}
 	p := c.cmd.Process
 	c.mu.Unlock()
-	return p.Kill()
+	// SIGKILL the whole group first, then the direct child, matching
+	// killProcessGroup. Note we intentionally do NOT call Wait() here: the
+	// test's killConnProcess polls for the death signal, and reaping would
+	// race that observation.
+	killProcessGroup(p)
+	return nil
 }
 
 // SetListSessionsFnForTest overrides the ListSessions implementation for testing.

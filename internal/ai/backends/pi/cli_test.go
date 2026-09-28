@@ -250,3 +250,24 @@ func TestBuildPiStreamArgs_ScheduledStillUsesNoSession(t *testing.T) {
 	assert.Contains(t, args, "--no-session",
 		"scheduled executions should still use --no-session")
 }
+
+// TestPiACPInputRemaps_MatchesAdapterRawInput pins the ACP remap table against
+// the rawInput shapes pi-acp 0.0.34 actually sends.
+//
+// The previous registration shipped an EMPTY remap with a comment claiming "Pi
+// uses the standard ACP field names". That is false: pi-acp forwards Pi's native
+// tool arguments, so `path` reaches ClawBench unremapped. The frontend reads
+// `file_path` to resolve the click-to-open target and to render the edit diff,
+// so an empty table silently broke both.
+func TestPiACPInputRemaps_MatchesAdapterRawInput(t *testing.T) {
+	// Shapes captured from a live pi-acp session.
+	readRaw := `{"path":"probe-target.txt"}`
+	editRaw := `{"path":"edit-target.txt","edits":[{"oldText":"beta","newText":"BETA"}]}`
+
+	for name, raw := range map[string]string{"read": readRaw, "edit": editRaw} {
+		out, err := ai.NormalizeToolInputForTest([]byte(raw), PiACPInputRemaps)
+		assert.NoError(t, err, name)
+		assert.Contains(t, string(out), `"file_path":`, "%s: path must be remapped to file_path (out=%s)", name, out)
+		assert.NotContains(t, string(out), `"path":`, "%s: raw `path` must not survive (out=%s)", name, out)
+	}
+}

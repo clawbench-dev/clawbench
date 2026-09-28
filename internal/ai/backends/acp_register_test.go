@@ -167,12 +167,33 @@ func TestACPInitRegistration(t *testing.T) {
 
 	t.Run("pi", func(t *testing.T) {
 		p := mustLookup(t, "pi")
-		// Pi ACP is disabled (unstable) — ACP plugin should be nil.
-		if p.ACP != nil {
-			t.Fatal("expected pi ACP to be nil (ACP disabled)")
+		ACP := mustACP(t, p)
+
+		// Pi reaches ACP through the upstream pi-acp bridge. The adapter forwards
+		// Pi's native tool arguments, so rawInput is `path` + camelCase edit
+		// fields rather than the generic snake_case shape.
+		if p.Spec.AcpCommand != "npx -y pi-acp@latest" {
+			t.Errorf("expected AcpCommand npx -y pi-acp@latest, got %q", p.Spec.AcpCommand)
 		}
-		if p.Spec.AcpCommand != "" {
-			t.Errorf("expected pi AcpCommand to be empty (ACP disabled), got %q", p.Spec.AcpCommand)
+		// pi-acp does not implement the non-standard session/resume RPC, so it
+		// must NOT advertise LoadSession via BackendSpec. Crash recovery relies
+		// on the automatic session/load fallback instead.
+		if p.Spec.ACPLoadSession {
+			t.Error("expected ACPLoadSession=false for pi (pi-acp has no session/resume)")
+		}
+		expected := map[string]string{
+			"path":       "file_path",
+			"oldText":    "old_string",
+			"newText":    "new_string",
+			"replaceAll": "replace_all",
+		}
+		for k, v := range expected {
+			if ACP.InputRemaps[k] != v {
+				t.Errorf("InputRemaps[%q] = %q, want %q", k, ACP.InputRemaps[k], v)
+			}
+		}
+		if len(ACP.InputRemaps) != len(expected) {
+			t.Errorf("InputRemaps has %d entries, want %d", len(ACP.InputRemaps), len(expected))
 		}
 	})
 

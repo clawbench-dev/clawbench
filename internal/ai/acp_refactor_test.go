@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +195,37 @@ func TestRefactor_IsACPPeerDisconnected(t *testing.T) {
 			Message: "broken pipe on write",
 		}
 		assert.True(t, isACPPeerDisconnected(reqErr))
+	})
+}
+
+// TestIsMethodNotFound covers the runtime signal that drives the crash-recovery
+// fallback from session/resume to session/load.
+//
+// This must be a runtime check, not a capability check: SessionCapabilities.Resume
+// is unreliable — CodeBuddy implements session/resume without advertising it,
+// while pi-acp neither advertises nor implements it. Gating on the advertised
+// capability wrongly routed CodeBuddy to LoadSession and broke its recovery.
+func TestIsMethodNotFound(t *testing.T) {
+	t.Run("minus_32601_is_method_not_found", func(t *testing.T) {
+		err := &acp.RequestError{Code: -32601, Message: `"Method not found": session/resume`}
+		assert.True(t, isMethodNotFound(err))
+	})
+
+	t.Run("other_codes_are_not_method_not_found", func(t *testing.T) {
+		for _, code := range []int{-32600, -32602, -32603, -32000, -32800} {
+			err := &acp.RequestError{Code: code, Message: "other"}
+			assert.Falsef(t, isMethodNotFound(err), "code %d must not be treated as method-not-found", code)
+		}
+	})
+
+	t.Run("wrapped_error_is_unwrapped", func(t *testing.T) {
+		inner := &acp.RequestError{Code: -32601, Message: "method not found"}
+		assert.True(t, isMethodNotFound(fmt.Errorf("acp: ResumeSession failed: %w", inner)))
+	})
+
+	t.Run("plain_error_is_not_method_not_found", func(t *testing.T) {
+		assert.False(t, isMethodNotFound(fmt.Errorf("context deadline exceeded")))
+		assert.False(t, isMethodNotFound(nil))
 	})
 }
 
@@ -1757,6 +1789,113 @@ func TestRefactor_ACPConn_KillProcessForTest_NoProcess(t *testing.T) {
 	err := conn.KillProcessForTest()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no process to kill")
+}
+
+// TestRefactor_ACPConn_KillProcessForTest_KillsProcessGroup is a regression test
+// for the ProcessCrash integration failures.
+//
+// npx-launched ACP agents (claude, pi) run deeper than one level:
+//
+//	npm exec <adapter>  ← cmd.Process
+//	  └── sh -c "<adapter>"
+//	        └── node <adapter>   ← holds the stdio pipes
+//
+// The old implementation called Process.Kill() on only the direct child. The
+// GRANDCHILD survived holding stdout open, so conn.Done() never fired and
+// IsAlive() stayed true — the integration tests polled 5s and timed out.
+// KillProcessForTest must therefore signal the whole process group, matching
+// what production does in reapProcess → killProcessGroup.
+//
+// The assertion is deliberately on the *grandchild*, not the direct child:
+// killing only the leader still turns the leader into a zombie, so checking the
+// leader would pass against the buggy implementation too (verified by mutation).
+func TestRefactor_ACPConn_KillProcessForTest_KillsProcessGroup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process groups are POSIX-only; Windows uses taskkill /T")
+	}
+
+	// A grandchild that outlives its parent unless the whole group is killed.
+	// `sh -c 'sleep 30 & wait'` mirrors the npx → sh → node shape: the sleep is
+	// a grandchild of our cmd, in the same process group.
+	cmd := exec.Command("sh", "-c", "sleep 30 & wait")
+	setProcessGroup(cmd)
+	require.NoError(t, cmd.Start())
+	pgid := cmd.Process.Pid // Setsid makes the child a group leader
+	t.Cleanup(func() {
+		killProcessGroup(cmd.Process)
+		_ = cmd.Wait()
+	})
+
+	// Wait for the grandchild to appear so the test cannot pass vacuously.
+	var grandkids []int
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		grandkids = liveProcessesInGroup(pgid)
+		if len(grandkids) > 0 {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.NotEmpty(t, grandkids, "test setup: grandchild never appeared in group %d", pgid)
+
+	agent := &model.Agent{ID: "test-kill-group", Backend: "acp-stdio", AcpCommand: "sh"}
+	conn := newACPConn(agent, "test-kill-group")
+	conn.mu.Lock()
+	conn.cmd = cmd
+	conn.alive = true
+	conn.mu.Unlock()
+
+	require.NoError(t, conn.KillProcessForTest())
+
+	// The whole group must be gone: no live (non-zombie) process may remain.
+	// With the buggy single-process kill, the orphaned grandchild keeps running
+	// in this group and holds the stdio pipes open.
+	deadline = time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(liveProcessesInGroup(pgid)) == 0 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("process group kill left live processes in group %d: %v", pgid, liveProcessesInGroup(pgid))
+}
+
+// liveProcessesInGroup returns the PIDs of non-zombie processes whose process
+// group id is pgid. Zombies are excluded: a SIGKILLed leader stays visible in
+// /proc until reaped, and its lingering entry is not a live process.
+func liveProcessesInGroup(pgid int) []int {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+		if err != nil {
+			continue
+		}
+		// Fields after the parenthesised comm: state ppid pgrp ...
+		s := string(b)
+		i := strings.LastIndex(s, ")")
+		if i < 0 {
+			continue
+		}
+		fields := strings.Fields(s[i+1:])
+		if len(fields) < 3 {
+			continue
+		}
+		if fields[0] == "Z" {
+			continue // zombie: already terminated
+		}
+		if pgrp, err := strconv.Atoi(fields[2]); err == nil && pgrp == pgid {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 func TestRefactor_ACPConn_deleteACPSession(t *testing.T) {

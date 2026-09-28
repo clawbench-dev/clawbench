@@ -14,6 +14,31 @@ var PiInputRemaps = map[string]string{
 	"path": "file_path",
 }
 
+// PiACPInputRemaps maps Pi ACP rawInput field names to ClawBench's canonical
+// names.
+//
+// pi-acp forwards Pi's native tool arguments verbatim, so ACP rawInput is NOT
+// the generic snake_case shape the empty-remap default assumes. Verified against
+// pi-acp 0.0.34:
+//
+//	read  rawInput: {"path":"probe-target.txt"}
+//	edit  rawInput: {"path":"edit-target.txt","edits":[{"oldText":"beta","newText":"BETA"}]}
+//
+// Both use Pi's `path` (CLI parity: PiInputRemaps) and the edit pair is
+// camelCase. Mapping `path` also fixes the frontend, which reads `file_path` to
+// resolve the click-to-open target and render the edit diff.
+//
+// The nested `edits[]` oldText/newText are deliberately left alone: the ACP
+// normalizer (normalizeToolInput) is a flat single-pass remap and does not
+// recurse, and no backend remaps nested edit arrays today (Claude, whose CLI
+// uses the same edits[] shape, ships an empty ACP remap for the same reason).
+var PiACPInputRemaps = map[string]string{
+	"path":       "file_path",
+	"oldText":    "old_string",
+	"newText":    "new_string",
+	"replaceAll": "replace_all",
+}
+
 func init() {
 	ai.RegisterBackend("pi", newPiBackend)
 	backends.Register(&backends.BackendPlugin{
@@ -21,8 +46,21 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Specialty: "极简编程智能体",
 			ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
-			InstallCmd:           "npm install -g @earendil-works/pi-coding-agent",
-			SortOrder:            8,
+			// ACP via the upstream pi-acp bridge. Pi was previously CLI-only
+			// because the adapter originally used (@touchtechclub/pi-acp) stopped
+			// being maintained; upstream svkozak/pi-acp is active and passes the
+			// full ACP integration suite (see internal/ai/acp_integration_test.go,
+			// backend "pi").
+			//
+			// ACPLoadSession is false because pi-acp does NOT implement the
+			// non-standard session/resume RPC (it answers -32601). Crash recovery
+			// falls back to the standard session/load automatically.
+			AcpCommand: "npx -y pi-acp@latest",
+			InstallCmd: "npm install -g @earendil-works/pi-coding-agent",
+			SortOrder:  8,
+		},
+		ACP: &backends.ACPPlugin{
+			InputRemaps: PiACPInputRemaps,
 		},
 	})
 }

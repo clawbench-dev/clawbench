@@ -1,0 +1,14 @@
+{
+  "name": "clawbench-pi-sdk-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pi Coding Agent SDK capability probe harness for ClawBench integration tests. Not shipped; only used by internal/ai/pi_sdk_integration_test.go.",
+  "scripts": {
+    "probe": "node pi_sdk_probe.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.87.1",
+    "typebox": "1.3.27"
+  }
+}
