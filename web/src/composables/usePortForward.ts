@@ -5,6 +5,7 @@ import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl, buildServerAddress, isReversePort } from '@/utils/portForwardUtils.ts'
 import type { PortDirection } from '@/utils/portForwardUtils.ts'
+import { transportLabelKey } from '@/utils/tunnelTransport.ts'
 import { store } from '@/stores/app'
 import { useSessionIdentity } from './useSessionIdentity'
 import { useSettingsConfig } from './useSettingsConfig'
@@ -559,6 +560,21 @@ export function usePortForward() {
     activeTransport.value = active || await read(native.getTunnelTransport)
   }
 
+  /**
+   * Parenthesized transport annotation for status copy, or `''` when no single
+   * wire is known.
+   *
+   * Only a concrete `'ssh'` / `'h2'` yields a label; `''` (unknown) and
+   * `'both'` (a preference, not a wire) stay empty so the caller renders the
+   * neutral wording rather than guessing. The bracket style lives in the
+   * `proxy.transportAnnotation` message so zh gets full-width brackets and en
+   * half-width ones without a locale branch here.
+   */
+  function transportAnnotation(): string {
+    const key = transportLabelKey(activeTransport.value)
+    return key ? gt('proxy.transportAnnotation', { transport: gt(key) }) : ''
+  }
+
   /** Check SSH tunnel health and determine status */
   async function checkTunnelHealth() {
     tunnelChecking.value = true
@@ -589,7 +605,7 @@ export function usePortForward() {
         const status = tunnelStatusFromPorts(hasPorts)
         if (status === 'degraded') {
           tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded')
+          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
           tunnelChecking.value = false
           startTunnelPoll()
           return
@@ -603,7 +619,7 @@ export function usePortForward() {
         tunnelError.value = await getNativeTunnelError()
         tunnelErrorType.value = await getNativeTunnelErrorType()
         tunnelStatus.value = 'disconnected'
-        tunnelMessage.value = gt('portForward.tunnelDisconnected')
+        tunnelMessage.value = gt('portForward.tunnelDisconnected', { transport: transportAnnotation() })
         tunnelChecking.value = false
         startTunnelPoll()
         return
@@ -630,7 +646,7 @@ export function usePortForward() {
         return
       }
       tunnelStatus.value = 'disconnected'
-      tunnelMessage.value = gt('portForward.tunnelDisconnected')
+      tunnelMessage.value = gt('portForward.tunnelDisconnected', { transport: transportAnnotation() })
       tunnelChecking.value = false
       startTunnelPoll()
       return
@@ -640,7 +656,7 @@ export function usePortForward() {
     const hasPorts = ports.value.length > 0
     if (tunnelStatusFromPorts(hasPorts) === 'degraded') {
       tunnelStatus.value = 'degraded'
-      tunnelMessage.value = gt('portForward.tunnelDegraded')
+      tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
       tunnelChecking.value = false
       startTunnelPoll()
       return
@@ -717,7 +733,7 @@ export function usePortForward() {
           stopTunnelPoll()
         } else {
           tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded')
+          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
         }
         return
       }
@@ -747,7 +763,7 @@ export function usePortForward() {
           stopTunnelPoll()
         } else {
           tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded')
+          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
         }
       } else {
         // Server says disconnected — still check if ports are actually active
@@ -827,7 +843,7 @@ export function usePortForward() {
       const reconnected = await nativeReconnectTunnel()
       const toast = useToast()
       if (reconnected && (await native.testPortReachable(localPort))) {
-        toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
         doOpen(native, localPort, protocol, hostArg, path)
         return
       }
@@ -856,7 +872,7 @@ export function usePortForward() {
       // Step 1: Test if the port is already reachable
       const reachable = await native.testPortReachable(localPort)
       if (reachable) {
-        toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
         await loadPorts(true)
         return
       }
@@ -867,7 +883,7 @@ export function usePortForward() {
       if (reconnected) {
         const reachableAfter = await native.testPortReachable(localPort)
         if (reachableAfter) {
-          toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+          toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
         } else {
           toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
         }
@@ -964,6 +980,7 @@ export function usePortForward() {
     loadSSHInfo,
     checkTunnelHealth,
     refreshActiveTransport,
+    transportAnnotation,
     openPort,
     openPortWithCheck,
     openInExternalBrowser,
