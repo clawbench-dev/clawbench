@@ -502,7 +502,7 @@ func galleryItemsToMaps(items []model.LocalWallpaperItem) []map[string]any {
 }
 
 // galleryItemsToViews renders gallery items for a JSON response. Always a
-// non-nil slice so an empty gallery serialises as [] rather than null.
+// non-nil slice so an empty gallery serializes as [] rather than null.
 func galleryItemsToViews(items []model.LocalWallpaperItem) []galleryItemView {
 	out := make([]galleryItemView, 0, len(items))
 	for _, it := range items {

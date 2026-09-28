@@ -743,7 +743,7 @@ func TestThemeLocalDelete_SuccessReturnsRemainingGallery(t *testing.T) {
 }
 
 // TestCurrentWallpaperState_EmptyGalleryIsEmptySlice pins the JSON shape: the
-// client iterates `items` directly, so a nil slice would serialise as null and
+// client iterates `items` directly, so a nil slice would serialize as null and
 // break that iteration.
 func TestCurrentWallpaperState_EmptyGalleryIsEmptySlice(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)

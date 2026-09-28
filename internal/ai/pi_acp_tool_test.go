@@ -219,7 +219,7 @@ func TestParseACPToolCallUpdate_NonPiBackendStaysGeneric(t *testing.T) {
 // ── normalizePiACPInput / parsePiACPToolCallUpdate branches ──────────────────
 
 func TestNormalizePiACPInput_EmptyInputReturnsEmptyObject(t *testing.T) {
-	// An empty rawInput must serialise as "{}" rather than "" — the renderer
+	// An empty rawInput must serialize as "{}" rather than "" — the renderer
 	// parses this string, and "" is not valid JSON.
 	assert.Equal(t, "{}", normalizePiACPInput("read", nil))
 	assert.Equal(t, "{}", normalizePiACPInput("read", []byte{}))

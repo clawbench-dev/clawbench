@@ -95,7 +95,7 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 		}
 		// A new block. Mint its identity HERE, at the moment it opens, so the
 		// event that opens it can carry the id and the client never has to
-		// infer it. Assigning at flush time (the old behaviour) meant the id
+		// infer it. Assigning at flush time (the old behavior) meant the id
 		// only reached the client via a DB snapshot, which it had to match back
 		// to a live block by position — and mispaired whenever the two sides
 		// disagreed on ordering.

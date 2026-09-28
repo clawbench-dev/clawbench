@@ -1,13 +1,14 @@
 package service
 
 import (
-	"clawbench/internal/model"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // ThinkingRecord represents a row in the chat_thinking table.
