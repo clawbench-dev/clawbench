@@ -77,6 +77,22 @@ export interface ClawBenchNative {
    * one actually won), which is what a status display wants to show.
    */
   getActiveTunnelTransport?(): Promise<string> | string
+  /**
+   * The Android local h2 tunnel toggle's persisted state.
+   *
+   * The truth source is Android SharedPreferences (key
+   * `tunnel_transport_h2_enabled`), NOT the server's `port_forward.transport`:
+   * the toggle is Android-only and this is how the settings row reads its
+   * initial value.
+   *
+   * Optional: a host that predates the toggle lacks the method, and the caller
+   * must then HIDE the settings row rather than show a false "off" — the older
+   * host only has the non-persisting `setTunnelTransport`, which would look
+   * like it works while changing nothing.
+   */
+  getTunnelTransportH2Enabled?(): Promise<boolean> | boolean
+  /** Write the Android local h2 tunnel toggle (SharedPreferences). */
+  setTunnelTransportH2Enabled?(enabled: boolean): Promise<void> | void
   getPendingNavigation(): Promise<string>
 
   // Async writes / actions

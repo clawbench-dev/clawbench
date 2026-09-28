@@ -108,4 +108,43 @@ describe('clawbenchNative tunnel transport bridge', () => {
     setNative({ isNativeApp: () => true })
     expect(await getNative()?.getActiveTunnelTransport?.()).toBeUndefined()
   })
+
+  it('setTunnelTransportH2Enabled forwards the boolean on an Android sync host', () => {
+    // Android's bridge is synchronous: a void method, no Promise. Nothing in
+    // the call path may assume a thenable.
+    const setTunnelTransportH2Enabled = vi.fn()
+    setNative({ setTunnelTransportH2Enabled })
+
+    const result = getNative()?.setTunnelTransportH2Enabled?.(true)
+
+    expect(setTunnelTransportH2Enabled).toHaveBeenCalledWith(true)
+    expect(result).toBeUndefined()
+  })
+
+  it('setTunnelTransportH2Enabled degrades to a no-op on a host that predates it', () => {
+    // A legacy Android build: the method is absent. Optional chaining is the
+    // whole degradation story — a throw here would abort the toggle handler.
+    setNative({ isNativeApp: () => true })
+
+    expect(() => getNative()?.setTunnelTransportH2Enabled?.(true)).not.toThrow()
+  })
+
+  it('setTunnelTransportH2Enabled degrades to a no-op with no bridge at all (web mode)', () => {
+    expect(() => getNative()?.setTunnelTransportH2Enabled?.(true)).not.toThrow()
+  })
+
+  it('getTunnelTransportH2Enabled resolves an Electron Promise and an Android sync value alike', async () => {
+    setNative({ getTunnelTransportH2Enabled: () => Promise.resolve(true) })
+    expect(await getNative()?.getTunnelTransportH2Enabled?.()).toBe(true)
+
+    setNative({ getTunnelTransportH2Enabled: () => false })
+    expect(await getNative()?.getTunnelTransportH2Enabled?.()).toBe(false)
+  })
+
+  it('getTunnelTransportH2Enabled resolves undefined on a legacy host', async () => {
+    // The caller keys row visibility off this: undefined means "hide the row",
+    // never "off".
+    setNative({ isNativeApp: () => true })
+    expect(await getNative()?.getTunnelTransportH2Enabled?.()).toBeUndefined()
+  })
 })
