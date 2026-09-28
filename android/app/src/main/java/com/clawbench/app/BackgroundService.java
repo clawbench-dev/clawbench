@@ -1390,7 +1390,7 @@ public class BackgroundService extends Service {
                             isReconnecting = false;
                             reconnectAttempt = 0;
                             updateNotification(forwardedPorts.size(),
-                                    getString(R.string.ssh_notification_recovering));
+                                    getString(recoveringNotificationResId()));
                             // Clear the "recovered" status after 3 seconds
                             try {
                                 Thread.sleep(3000);
@@ -1848,6 +1848,24 @@ public class BackgroundService extends Service {
         // TransportKind has no SSH value: TLS("tls") and H2C("h2c") are both h2
         // wires, so the transport family is always "h2" here.
         return "h2";
+    }
+
+    /**
+     * The "tunnel reconnected" notification string for the transport that just
+     * came back up.
+     *
+     * <p>Unlike the reconnect-progress strings, this one fires only after
+     * {@link #ensureConnection()} succeeded, so {@link #getActiveTunnelTransport()}
+     * can name the kind: a non-empty value is h2, an empty one is SSH (SSH has no
+     * wire {@link TransportKind}, so it never reports one). Extracted from the
+     * reconnect loop so the selection is unit-testable by resource id — the loop
+     * itself can only be exercised by driving the whole monitor.
+     */
+    @androidx.annotation.VisibleForTesting
+    static int recoveringNotificationResId() {
+        return getActiveTunnelTransport().isEmpty()
+                ? R.string.ssh_notification_recovering
+                : R.string.h2_notification_recovering;
     }
 
     /**

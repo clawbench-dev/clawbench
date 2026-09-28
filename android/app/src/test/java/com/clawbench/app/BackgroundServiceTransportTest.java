@@ -703,6 +703,29 @@ public class BackgroundServiceTransportTest {
     }
 
     // ==================================================================
+    // "tunnel reconnected" notification wording (T15)
+    // ==================================================================
+
+    /**
+     * N2 is the only notification that can name the transport: it fires after
+     * ensureConnection() succeeded, so the kind is known. h2 -> HTTP/2 wording,
+     * SSH (no wire kind) -> SSH wording. The progress strings stay generic
+     * because a disconnected h2 is indistinguishable from SSH.
+     */
+    @Test
+    public void recoveringNotificationResId_namesTheLiveTransport() {
+        tunnel.connected = true;
+        assertEquals("a live h2 session must announce HTTP/2",
+                R.string.h2_notification_recovering,
+                BackgroundService.recoveringNotificationResId());
+
+        tunnel.connected = false;
+        assertEquals("SSH has no wire kind, so an empty transport means SSH",
+                R.string.ssh_notification_recovering,
+                BackgroundService.recoveringNotificationResId());
+    }
+
+    // ==================================================================
     // screen-off suspend (T12)
     // ==================================================================
 
