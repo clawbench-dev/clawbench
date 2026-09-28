@@ -14,29 +14,21 @@ var PiInputRemaps = map[string]string{
 	"path": "file_path",
 }
 
-// PiACPInputRemaps maps Pi ACP rawInput field names to ClawBench's canonical
-// names.
+// PiACPInputRemaps is the ACP remap table for Pi.
 //
-// pi-acp forwards Pi's native tool arguments verbatim, so ACP rawInput is NOT
-// the generic snake_case shape the empty-remap default assumes. Verified against
-// pi-acp 0.0.34:
+// It is intentionally minimal and mirrors PiInputRemaps: pi-acp forwards Pi's
+// native tool arguments, and the tool-aware normalization (including the nested
+// edits[] array) lives in internal/ai's Pi-specific ACP parser
+// (parsePiACPToolCall → normalizePiACPInput), which reuses the same
+// normalizePiToolInput the CLI path uses. Registering the table here keeps the
+// backend's declared remaps inspectable, and LookupACPRemaps falls back to the
+// generic table when a backend has no ACP plugin.
 //
-//	read  rawInput: {"path":"probe-target.txt"}
-//	edit  rawInput: {"path":"edit-target.txt","edits":[{"oldText":"beta","newText":"BETA"}]}
-//
-// Both use Pi's `path` (CLI parity: PiInputRemaps) and the edit pair is
-// camelCase. Mapping `path` also fixes the frontend, which reads `file_path` to
-// resolve the click-to-open target and render the edit diff.
-//
-// The nested `edits[]` oldText/newText are deliberately left alone: the ACP
-// normalizer (normalizeToolInput) is a flat single-pass remap and does not
-// recurse, and no backend remaps nested edit arrays today (Claude, whose CLI
-// uses the same edits[] shape, ships an empty ACP remap for the same reason).
+// Do NOT add oldText/newText here: the generic ACP normalizer is a flat
+// single-pass remap that never recurses into edits[], so those entries would be
+// dead. They are handled by the Pi-specific parser instead.
 var PiACPInputRemaps = map[string]string{
-	"path":       "file_path",
-	"oldText":    "old_string",
-	"newText":    "new_string",
-	"replaceAll": "replace_all",
+	"path": "file_path",
 }
 
 func init() {
@@ -52,12 +44,16 @@ func init() {
 			// full ACP integration suite (see internal/ai/acp_integration_test.go,
 			// backend "pi").
 			//
-			// ACPLoadSession is false because pi-acp does NOT implement the
-			// non-standard session/resume RPC (it answers -32601). Crash recovery
-			// falls back to the standard session/load automatically.
-			AcpCommand: "npx -y pi-acp@latest",
-			InstallCmd: "npm install -g @earendil-works/pi-coding-agent",
-			SortOrder:  8,
+			// ACPLoadSession is TRUE: pi-acp advertises loadSession and implements
+			// session/load, so the explicit acp-load / acp-sync endpoints work.
+			// This flag is about session/load only — pi-acp does NOT implement the
+			// non-standard session/resume RPC (it answers -32601), which is a
+			// separate capability that affects automatic crash recovery. That path
+			// falls back to session/load on -32601, so no flag is needed for it.
+			AcpCommand:     "npx -y pi-acp@latest",
+			ACPLoadSession: true,
+			InstallCmd:     "npm install -g @earendil-works/pi-coding-agent",
+			SortOrder:      8,
 		},
 		ACP: &backends.ACPPlugin{
 			InputRemaps: PiACPInputRemaps,

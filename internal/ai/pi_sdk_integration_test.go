@@ -52,7 +52,8 @@ import (
 //     builds a ModelRuntime + SettingsManager + SessionManager + ResourceLoader
 //     and returns an AgentSession; events arrive via session.subscribe().
 //   - Pi's existing ClawBench transport is CLI-only (`pi -p --mode json`), and
-//     ACP is explicitly disabled (backends/pi/cli.go, acp_register_test.go:168).
+//     ACP is now available via the pi-acp bridge (backends/pi/cli.go); this
+//     probe predates that and targets the separate in-process SDK instead.
 //   - The SDK does NOT spawn the `pi` binary; it reads ~/.pi/agent/auth.json.
 //     So the availability gate checks credentials, not the CLI on PATH.
 

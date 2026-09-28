@@ -112,7 +112,7 @@ sequenceDiagram
   - **进程退出防挂起**：过滤器在后台处理过滤和重发行，当 Agent 进程被 kill 但 OS 尚未关闭 stdout 管道时，过滤器的 `Close()` 调用立即解除阻塞的读取操作，防止进程等待挂起
 - **CodeWhale ACP 字段重映射**：CodeWhale 在 ACP 模式下使用简写字段名（如 `path` 代替 `file_path`、`search` 代替 `old_string`）。重映射表将其映射为前端渲染器的标准字段名，工具名前缀表将 CodeWhale 工具名（如 `read_file`）映射为 UI 友好的显示前缀（如 `Read`）
 - **BackendSpec.AltCmd 回退检测**：`AltCmd` 字段提供备用 CLI 命令名——当主命令在 PATH 中未找到时，检查 `AltCmd` 是否存在。当前仅 CodeWhale 使用：`DefaultCmd: "codewhale", AltCmd: "deepseek"`，兼容旧版二进制名
-- **Pi 仅支持 CLI 模式**：Pi 当前不注册 ACP 配置。请求 `acp-stdio` 传输时会自动降级为 CLI 模式
+- **Pi 双传输模式**：Pi 支持 CLI（`pi -p --mode json`）与 ACP（经上游 `pi-acp` 桥接适配器，`npx -y pi-acp@latest`）两种传输。历史上 Pi 曾因所用适配器（`@touchtechclub/pi-acp` fork）停更而移除 ACP；改用仍在维护的上游 `svkozak/pi-acp` 后重新接入，全量 ACP 集成测试通过。ACP 侧的 `ACPLoadSession=true`（pi-acp 实现 `session/load`），但它**不实现**非标准的 `session/resume`，故崩溃恢复走 `-32601` 运行时回退到 `session/load`。注意：新增 ACP 后，存量 Pi agent 在下次 refresh 时会自动从 CLI 切到 ACP（`refresh.go` 的 spec 同步机制），这是该机制的固有行为
 - **Antigravity ACP 桥接**：Antigravity 后端通过 `agy-acp` ACP 桥接适配器接入，仅支持 `acp-stdio` 传输模式，没有 CLI 命令。这是外部 Agent 的集成模式——桥接适配器将非 ACP 原生的 Agent 包装为 ACP 协议兼容的子进程
 - **ZCode ACP 桥接**：ZCode（智谱 GLM 编码代理）后端通过 `zcode-acp-server` ACP 桥接适配器接入，仅支持 `acp-stdio` 传输模式，没有 CLI 命令（`AcpCommand: npx -y zcode-acp-server`）。桥接自行解析 zcode CLI（`ZCODE_BIN` → PATH → 桌面应用 bundle）并启动真实 headless 引擎（`zcode app-server --stdio`），凭据留在 `~/.zcode/v2/config.json`；经标准 ACP sessionConfig 上报 modes（plan/build/edit/yolo/auto）、模型（GLM-5.3）与思考档位（low/high/max）
 - **Grok Build 双传输模式**：Grok Build 后端同时支持 ACP（`grok agent stdio`）和 CLI（`grok -p ... --output-format streaming-json`）两种传输。ACP 为首选传输，CLI 作为流式 JSON 回退。`GrokStreamParser` 解析 CLI 的 JSON Lines 输出（text/thought/end/error 事件类型），从 end 事件捕获 session ID 和 token 用量

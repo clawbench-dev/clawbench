@@ -1810,8 +1810,12 @@ func TestRefactor_ACPConn_KillProcessForTest_NoProcess(t *testing.T) {
 // killing only the leader still turns the leader into a zombie, so checking the
 // leader would pass against the buggy implementation too (verified by mutation).
 func TestRefactor_ACPConn_KillProcessForTest_KillsProcessGroup(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups are POSIX-only; Windows uses taskkill /T")
+	// liveProcessesInGroup reads /proc, which exists only on Linux. Guard on
+	// linux (not "windows") to match this file's other /proc-based tests —
+	// guarding on Windows alone would still run and fail on darwin, where CI
+	// executes `go test ./...` (ci.yml runs ubuntu + macos + windows).
+	if runtime.GOOS != "linux" {
+		t.Skipf("skipping: /proc only available on Linux (current: %s)", runtime.GOOS)
 	}
 
 	// A grandchild that outlives its parent unless the whole group is killed.
@@ -3864,5 +3868,101 @@ func TestRefactor_ACPHTTPStatusFromMeta(t *testing.T) {
 	t.Run("non_numeric_status_ignored", func(t *testing.T) {
 		meta := map[string]any{"status": "error"}
 		assert.Equal(t, 0, acpHTTPStatusFromMeta(meta))
+	})
+}
+
+// TestRecoverExistingSession_FallsBackToLoadOnMethodNotFound covers the crash-
+// recovery fallback introduced for pi-acp, which implements session/load but not
+// the non-standard session/resume RPC.
+//
+// This is a unit test on purpose: the only other assertion of this behavior
+// lives in the integration suite behind //go:build integration, which CI does
+// not run. Deleting the fallback branch must fail here.
+func TestRecoverExistingSession_FallsBackToLoadOnMethodNotFound(t *testing.T) {
+	newConn := func(t *testing.T) *ACPConn {
+		t.Helper()
+		conn := newACPConn(&model.Agent{ID: "pi-test", Backend: "pi"}, "sid")
+		conn.alive = true
+		return conn
+	}
+
+	methodNotFound := &acp.RequestError{Code: -32601, Message: `"Method not found": session/resume`}
+
+	t.Run("falls_back_to_load_on_32601", func(t *testing.T) {
+		conn := newConn(t)
+		var loadCalled bool
+		conn.SetRecoveryRPCsFnForTest(
+			func(context.Context, string, string) (*acp.ResumeSessionResponse, error) {
+				return nil, methodNotFound
+			},
+			func(context.Context, string, string) (*acp.LoadSessionResponse, error) {
+				loadCalled = true
+				return &acp.LoadSessionResponse{}, nil
+			},
+		)
+
+		err := conn.recoverExistingSession(context.Background(), "/tmp", "acp-sid", cachedConfigSnapshot{})
+		require.NoError(t, err, "fallback to session/load should succeed")
+		assert.True(t, loadCalled, "session/load must be attempted after -32601")
+		// recoverViaResumeSession sets alive=false on failure; the fallback must
+		// restore it or the process would be treated as dead.
+		assert.True(t, conn.alive, "alive must be restored before the load fallback")
+		assert.Equal(t, "acp-sid", conn.acpSID)
+	})
+
+	t.Run("does_not_fall_back_on_other_errors", func(t *testing.T) {
+		conn := newConn(t)
+		var loadCalled bool
+		// -32602 (invalid params) is NOT "method not found": e.g. an unknown
+		// session id. Falling back to load would mask a genuine failure.
+		conn.SetRecoveryRPCsFnForTest(
+			func(context.Context, string, string) (*acp.ResumeSessionResponse, error) {
+				return nil, &acp.RequestError{Code: -32602, Message: "Invalid params"}
+			},
+			func(context.Context, string, string) (*acp.LoadSessionResponse, error) {
+				loadCalled = true
+				return &acp.LoadSessionResponse{}, nil
+			},
+		)
+
+		err := conn.recoverExistingSession(context.Background(), "/tmp", "acp-sid", cachedConfigSnapshot{})
+		require.Error(t, err, "a non-32601 failure must surface as an error")
+		assert.Contains(t, err.Error(), "ResumeSession")
+		assert.False(t, loadCalled, "session/load must NOT be attempted for non-32601 errors")
+	})
+
+	t.Run("load_failure_is_reported_as_unrecoverable", func(t *testing.T) {
+		conn := newConn(t)
+		conn.SetRecoveryRPCsFnForTest(
+			func(context.Context, string, string) (*acp.ResumeSessionResponse, error) {
+				return nil, methodNotFound
+			},
+			func(context.Context, string, string) (*acp.LoadSessionResponse, error) {
+				return nil, &acp.RequestError{Code: -32602, Message: "Unknown sessionId"}
+			},
+		)
+
+		err := conn.recoverExistingSession(context.Background(), "/tmp", "acp-sid", cachedConfigSnapshot{})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "LoadSession",
+			"when both RPCs fail the error must name the one actually attempted last")
+	})
+
+	t.Run("success_does_not_call_load", func(t *testing.T) {
+		conn := newConn(t)
+		var loadCalled bool
+		conn.SetRecoveryRPCsFnForTest(
+			func(context.Context, string, string) (*acp.ResumeSessionResponse, error) {
+				return &acp.ResumeSessionResponse{}, nil
+			},
+			func(context.Context, string, string) (*acp.LoadSessionResponse, error) {
+				loadCalled = true
+				return &acp.LoadSessionResponse{}, nil
+			},
+		)
+
+		err := conn.recoverExistingSession(context.Background(), "/tmp", "acp-sid", cachedConfigSnapshot{})
+		require.NoError(t, err)
+		assert.False(t, loadCalled, "a working session/resume must not trigger session/load")
 	})
 }

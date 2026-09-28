@@ -175,17 +175,18 @@ func TestACPInitRegistration(t *testing.T) {
 		if p.Spec.AcpCommand != "npx -y pi-acp@latest" {
 			t.Errorf("expected AcpCommand npx -y pi-acp@latest, got %q", p.Spec.AcpCommand)
 		}
-		// pi-acp does not implement the non-standard session/resume RPC, so it
-		// must NOT advertise LoadSession via BackendSpec. Crash recovery relies
-		// on the automatic session/load fallback instead.
-		if p.Spec.ACPLoadSession {
-			t.Error("expected ACPLoadSession=false for pi (pi-acp has no session/resume)")
+		// pi-acp advertises loadSession and implements session/load, so the
+		// explicit acp-load endpoint must be allowed to use it. (Its lack of the
+		// non-standard session/resume RPC is a separate capability and is handled
+		// at runtime by the automatic recovery fallback, not by this flag.)
+		if !p.Spec.ACPLoadSession {
+			t.Error("expected ACPLoadSession=true for pi (pi-acp implements session/load)")
 		}
+		// The table stays minimal on purpose: nested edits[] cannot be handled by
+		// the flat generic ACP remap, so Pi uses a tool-aware parser in internal/ai
+		// instead (see parsePiACPToolCall / normalizePiACPInput).
 		expected := map[string]string{
-			"path":       "file_path",
-			"oldText":    "old_string",
-			"newText":    "new_string",
-			"replaceAll": "replace_all",
+			"path": "file_path",
 		}
 		for k, v := range expected {
 			if ACP.InputRemaps[k] != v {

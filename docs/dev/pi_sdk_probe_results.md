@@ -23,7 +23,7 @@
 | 事件模型与 `pi --mode json` 同源 | `AgentSessionEvent` 即 JSON/RPC 模式的事件形状（`docs/json.md` 为权威参考）；SDK 版额外带累积 `message` 快照 |
 | 传输面自带 | `message_update`（含 `text_/thinking_/toolcall_` 六种 delta）、`tool_execution_*`、`agent_end`/`agent_settled`、`compaction_*`、`auto_retry_*`、`queue_update` 等 |
 
-**含义**：ClawBench 现有 Pi 通道是 CLI 行解析（`pi -p --mode json`，`backends/pi/cli.go`），且 ACP 明确禁用（`acp_register_test.go:168`）。SDK 提供了**第三条路径**，且是三者中唯一 in-process 的。
+**含义**：本探针调研时 ClawBench 的 Pi 通道只有 CLI 行解析（`pi -p --mode json`，`backends/pi/cli.go`）。**该结论之后已变化**：Pi 现已接入 ACP（经 `pi-acp` 桥接，见 `backends/pi/cli.go`），故 SDK 是**第三条路径**，且是三者中唯一 in-process 的。本探针针对的是 SDK 而非 ACP，结论不受影响。
 
 ## 二、能力点实测结果（45/45 通过）
 

@@ -228,12 +228,26 @@ func TestParsePiToolCallEnd_EditToolMultipleEdits(t *testing.T) {
 		t.Fatal("expected non-nil ToolCall")
 		return
 	}
-	// All edits should have oldText/newText remapped
-	if strings.Count(tc.Input, `"old_string"`) != 2 {
-		t.Errorf("expected 2 'old_string' occurrences, got input: '%s'", tc.Input)
+	// Both edits are remapped inside the array, and the first is also promoted
+	// to the top level for the renderer (which reads only flat fields).
+	var parsed struct {
+		Edits []map[string]any `json:"edits"`
+		Old   string           `json:"old_string"`
+		New   string           `json:"new_string"`
 	}
-	if strings.Count(tc.Input, `"new_string"`) != 2 {
-		t.Errorf("expected 2 'new_string' occurrences, got input: '%s'", tc.Input)
+	if err := json.Unmarshal([]byte(tc.Input), &parsed); err != nil {
+		t.Fatalf("input is not valid JSON: %v (%s)", err, tc.Input)
+	}
+	if len(parsed.Edits) != 2 {
+		t.Fatalf("expected 2 edits, got %d: %s", len(parsed.Edits), tc.Input)
+	}
+	for i, want := range []struct{ old, new string }{{"foo", "bar"}, {"baz", "qux"}} {
+		if parsed.Edits[i]["old_string"] != want.old || parsed.Edits[i]["new_string"] != want.new {
+			t.Errorf("edit %d not remapped: %v", i, parsed.Edits[i])
+		}
+	}
+	if parsed.Old != "foo" || parsed.New != "bar" {
+		t.Errorf("first edit should be promoted to top level, got old=%q new=%q", parsed.Old, parsed.New)
 	}
 }
 
@@ -509,6 +523,18 @@ func TestNormalizePiEditInput_SingleEdit(t *testing.T) {
 	if strings.Contains(result, `"path"`) {
 		t.Errorf("expected 'path' to be remapped, still present in '%s'", result)
 	}
+
+	// The first edit must also be promoted to the top level: the renderer reads
+	// only flat old_string/new_string (nothing consumes edits[]), so without the
+	// promotion the edit card renders a file header with an empty diff.
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if parsed["old_string"] != "foo" || parsed["new_string"] != "bar" {
+		t.Errorf("first edit not promoted to top level: got old_string=%v new_string=%v in %s",
+			parsed["old_string"], parsed["new_string"], result)
+	}
 }
 
 func TestNormalizePiEditInput_MultipleEdits(t *testing.T) {
@@ -517,11 +543,45 @@ func TestNormalizePiEditInput_MultipleEdits(t *testing.T) {
 
 	result := normalizePiEditInput(input, topRemaps)
 
-	if strings.Count(result, `"old_string"`) != 2 {
-		t.Errorf("expected 2 'old_string' occurrences, got: '%s'", result)
+	// Both edits are remapped inside the array...
+	var parsed struct {
+		Edits []map[string]any `json:"edits"`
+		Old   string           `json:"old_string"`
+		New   string           `json:"new_string"`
 	}
-	if strings.Count(result, `"new_string"`) != 2 {
-		t.Errorf("expected 2 'new_string' occurrences, got: '%s'", result)
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if len(parsed.Edits) != 2 {
+		t.Fatalf("expected 2 edits, got %d in %s", len(parsed.Edits), result)
+	}
+	for i, want := range []struct{ old, new string }{{"a", "b"}, {"c", "d"}} {
+		if parsed.Edits[i]["old_string"] != want.old || parsed.Edits[i]["new_string"] != want.new {
+			t.Errorf("edit %d not remapped: %v", i, parsed.Edits[i])
+		}
+	}
+	// ...and only the FIRST is promoted, so a multi-edit card shows its first hunk.
+	if parsed.Old != "a" || parsed.New != "b" {
+		t.Errorf("expected first edit promoted (a/b), got old=%q new=%q", parsed.Old, parsed.New)
+	}
+}
+
+// TestNormalizePiEditInput_PreservesFlatFields guards against the promotion
+// clobbering fields the tool supplied directly (no edits array, or a tool that
+// already sends flat old_string/new_string alongside edits).
+func TestNormalizePiEditInput_PreservesFlatFields(t *testing.T) {
+	input := json.RawMessage(`{"path":"/tmp/test.go","old_string":"flat_old","new_string":"flat_new","edits":[{"oldText":"x","newText":"y"}]}`)
+	result := normalizePiEditInput(input, map[string]string{"path": "file_path"})
+
+	var parsed struct {
+		Old string `json:"old_string"`
+		New string `json:"new_string"`
+	}
+	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v", err)
+	}
+	if parsed.Old != "flat_old" || parsed.New != "flat_new" {
+		t.Errorf("promotion must not overwrite existing flat fields: got old=%q new=%q", parsed.Old, parsed.New)
 	}
 }
 

@@ -401,12 +401,16 @@ func (c *ACPConn) snapshotCachedConfig() cachedConfigSnapshot {
 
 // recoverViaLoadSession recovers a session via LoadSession and returns
 // isNew=true (the session was re-established on a fresh process).
-// Used only by explicit endpoints (acp-load, acp-sync), not automatic recovery.
+//
+// Two callers:
+//   - the explicit endpoints (acp-load, acp-sync), with drainReplay=false;
+//   - automatic crash recovery, when the agent answered -32601 for
+//     session/resume (see recoverExistingSession), with drainReplay=true.
 //
 // drainReplay controls whether the LoadSession replay buffer is drained:
-//   - true  (acp-sync endpoint): the replayed messages are already persisted
-//     in ClawBench's DB, so they must be drained so they don't leak into the
-//     live stream (which would double-display them).
+//   - true  (automatic recovery, acp-sync): the replayed messages are already
+//     persisted in ClawBench's DB, so they must be drained so they don't leak
+//     into the live stream (which would double-display them).
 //   - false (acp-load endpoint): the caller (ServeACPLoadSession) reads the
 //     buffered SessionUpdate notifications to persist the replay into the DB,
 //     so the buffer must be preserved.
@@ -416,11 +420,21 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 
 	c.loadSessionActive.Store(true)
 	loadStart := time.Now()
-	loadResp, err := c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
-		SessionId:  acp.SessionId(loadSID),
-		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
-	})
+	var loadResp acp.LoadSessionResponse
+	var err error
+	if c.loadSessionFnForTest != nil {
+		var resp *acp.LoadSessionResponse
+		resp, err = c.loadSessionFnForTest(loadCtx, loadSID, cwd)
+		if resp != nil {
+			loadResp = *resp
+		}
+	} else {
+		loadResp, err = c.conn.LoadSession(loadCtx, acp.LoadSessionRequest{
+			SessionId:  acp.SessionId(loadSID),
+			Cwd:        cwd,
+			McpServers: []acp.McpServer{},
+		})
+	}
 	slog.Info("acp perf: ensureAliveWithSession.LoadSession", "clawbench_sid", c.clawbenchSID, "acp_sid", loadSID, "elapsed", time.Since(loadStart), "error", err)
 
 	if err != nil {
@@ -466,11 +480,21 @@ func (c *ACPConn) recoverViaResumeSession(ctx context.Context, cwd, acpSID strin
 		slog.String("acp_sid", acpSID),
 		slog.String("cwd", cwd),
 		slog.String("c.cwd", c.cwd))
-	resumeResp, err := c.conn.ResumeSession(resumeCtx, acp.ResumeSessionRequest{
-		SessionId:  acp.SessionId(acpSID),
-		Cwd:        cwd,
-		McpServers: []acp.McpServer{},
-	})
+	var resumeResp acp.ResumeSessionResponse
+	var err error
+	if c.resumeSessionFnForTest != nil {
+		var resp *acp.ResumeSessionResponse
+		resp, err = c.resumeSessionFnForTest(resumeCtx, acpSID, cwd)
+		if resp != nil {
+			resumeResp = *resp
+		}
+	} else {
+		resumeResp, err = c.conn.ResumeSession(resumeCtx, acp.ResumeSessionRequest{
+			SessionId:  acp.SessionId(acpSID),
+			Cwd:        cwd,
+			McpServers: []acp.McpServer{},
+		})
+	}
 	slog.Info("acp perf: recoverViaResumeSession.ResumeSession", "clawbench_sid", c.clawbenchSID, "acp_sid", acpSID, "elapsed", time.Since(resumeStart), "error", err)
 	if err != nil {
 		slog.Error("acp conn: ResumeSession failed",

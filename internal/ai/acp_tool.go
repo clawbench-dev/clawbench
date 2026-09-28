@@ -28,6 +28,11 @@ func parseACPToolCall(backend string, tc acp.SessionUpdateToolCall) *ToolCall {
 		return parseKimiACPToolCall(tc)
 	case "codex":
 		return parseCodexACPToolCall(tc)
+	case "pi":
+		// pi-acp forwards Pi's native tool arguments, including the nested
+		// edits[] array, so it needs the tool-aware Pi normalizer rather than
+		// the flat generic remap.
+		return parsePiACPToolCall(tc)
 	default:
 		return parseGenericACPToolCall(tc, backend)
 	}
@@ -48,6 +53,8 @@ func parseACPToolCallUpdate(backend string, tcu acp.SessionToolCallUpdate) *Tool
 		return parseKimiACPToolCallUpdate(tcu)
 	case "codex":
 		return parseCodexACPToolCallUpdate(tcu)
+	case "pi":
+		return parsePiACPToolCallUpdate(tcu)
 	default:
 		return parseGenericACPToolCallUpdate(tcu, backend)
 	}
