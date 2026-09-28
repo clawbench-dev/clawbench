@@ -137,6 +137,7 @@ import { MessageSquare, Square, Zap, ExternalLink, ChevronDown } from 'lucide-vu
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
+import { mergeDbBlocksWithLive } from '@/utils/chatBlocks'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
@@ -363,6 +364,7 @@ const summaryMsgData = computed(() => {
 })
 
 // ── Active message data based on tab ──
+
 const activeMsgData = computed(() => {
   // When live streaming via WS, merge DB history blocks with streaming blocks
   // so the user sees both prior content and new real-time output.
@@ -370,11 +372,8 @@ const activeMsgData = computed(() => {
     const sm = execStream.streamingMsg.value
     if (sm.blocks && sm.blocks.length > 0) {
       const dbBlocks = msgData.value?.blocks
-      if (dbBlocks && dbBlocks.length > 0) {
-        // Merge: DB history first, then streaming increments
-        return { ...sm, blocks: [...dbBlocks, ...sm.blocks] }
-      }
-      return sm
+      if (!dbBlocks || dbBlocks.length === 0) return sm
+      return { ...sm, blocks: mergeDbBlocksWithLive(dbBlocks, sm.blocks) }
     }
     // Streaming started but no content yet — show DB history so it doesn't flash away
     if (msgData.value) return msgData.value
@@ -385,11 +384,10 @@ const activeMsgData = computed(() => {
     const sm = execStream.streamingMsg.value
     if (sm.blocks && sm.blocks.length > 0) {
       const dbBlocks = msgData.value?.blocks
-      if (dbBlocks && dbBlocks.length > 0) {
-        return { ...sm, blocks: [...dbBlocks, ...sm.blocks], streaming: false }
-      }
-      return { ...sm, streaming: false }
+      if (!dbBlocks || dbBlocks.length === 0) return { ...sm, streaming: false }
+      return { ...sm, blocks: mergeDbBlocksWithLive(dbBlocks, sm.blocks), streaming: false }
     }
+    return { ...sm, streaming: false }
   }
   // When not streaming, use the DB content (refreshed by refreshExecDetail)
   // we always show whatever partial content is available rather than "connecting..."

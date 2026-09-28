@@ -3016,6 +3016,12 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     // "top block spins forever with its text frozen").
     let s = [streamingMsg([])]
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first', thinkId: 'th_abc' } as any)
+
+    // Assert on the OPENING delta. A later delta would take the coalescing
+    // branch, whose backfill would supply the id even if the push had not —
+    // masking a regression in exactly the line under test.
+    expect(s[0].blocks![0].think_id, 'id set by the push that opened the block').toBe('th_abc')
+
     s = chatMessageReducer(s, { type: 'ws_thinking', text: ' second', thinkId: 'th_abc' } as any)
     const blocks = s[0].blocks!
     expect(blocks, 'one block, coalesced').toHaveLength(1)
@@ -3036,9 +3042,13 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
   })
 
   it('backfills a missing think_id on a later delta without overwriting one', () => {
-    // A block created before the id arrived (or adopted from a text-less DB
-    // marker) should pick the id up from the next delta. An id it already has
-    // must never be replaced — that would relabel a block mid-stream.
+    // VERSION-SKEW GUARD, not coverage of the live path. With a current server
+    // every block carries its id from the opening delta, so the backfill branch
+    // never fires; with an old server the payload has no id, so it also never
+    // fires. It exists for a block that somehow got an id-less start (a payload
+    // from an older server that later reconnects through a newer one). What it
+    // must never do is REPLACE an existing id — that would relabel a block
+    // mid-stream and merge two blocks' prefixes under one key.
     let s = [streamingMsg([])]
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a', key: 'thinking-0' })
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b', thinkId: 'th_first' } as any)

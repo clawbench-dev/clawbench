@@ -208,3 +208,34 @@ export function truncate(str: string | null | undefined, len: number): string {
   const runes = [...str]
   return runes.length > len ? runes.slice(0, len).join('') + '...' : str
 }
+
+/**
+ * Merge DB-history blocks with a live stream's blocks for the task-execution
+ * detail view.
+ *
+ * The DB row is flushed every 500ms WHILE the turn runs, so for a running
+ * execution its content already carries a slim `{think_id}` marker for the very
+ * block the live stream is appending to. Concatenating blindly would emit that
+ * `think_id` twice, and the renderer keys thinking blocks by `think_id`
+ * (`computeStableBlockKey`) — a duplicate key corrupts Vue's keyed diff.
+ * DB thinking markers whose think_id a live block already carries are dropped
+ * (mirrors mergeStreamBlocks in chatStreamUtils).
+ *
+ * Order is preserved: DB history first (earlier content), then live increments.
+ */
+export function mergeDbBlocksWithLive<T extends Record<string, unknown>>(
+  dbBlocks: T[] | undefined | null,
+  liveBlocks: T[],
+): T[] {
+  if (!dbBlocks || dbBlocks.length === 0) return liveBlocks
+  const liveThinkIDs = new Set(
+    liveBlocks
+      .filter((b) => b?.type === 'thinking' && b.think_id)
+      .map((b) => b.think_id as string),
+  )
+  if (liveThinkIDs.size === 0) return [...dbBlocks, ...liveBlocks]
+  const dbOnly = dbBlocks.filter(
+    (b) => !(b?.type === 'thinking' && b.think_id && liveThinkIDs.has(b.think_id as string)),
+  )
+  return [...dbOnly, ...liveBlocks]
+}

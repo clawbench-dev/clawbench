@@ -295,11 +295,15 @@ describe('parseAssistantContent', () => {
   it('does not invent a _key for DB thinking blocks', () => {
     // DB content carries the block's real identity (think_id) — that is what
     // keys it. A synthetic _key was only ever a stand-in for live blocks whose
-    // payload had no id, and inventing one here would shadow nothing useful:
-    // the renderer's index fallback (`thinking-<absIdx>`) is equally stable
-    // because a parsed history row is never spliced. Measured on real data: of
-    // 310,391 persisted thinking blocks, the 245 without a think_id all carry
-    // their full text and done=true, so they need no id to render or lazy-load.
+    // payload had no id, and inventing one here shadowed nothing useful.
+    //
+    // The renderer's index fallback (`thinking-<absIdx>`) is stable for these:
+    // a legacy block without a think_id is only ever relocated by a merge that
+    // ALSO has a live thinking block — and in that case liveHasThinking drops
+    // every DB thinking block, so the legacy one is removed rather than moved
+    // (verified). Measured on real data: of 310,391 persisted thinking blocks,
+    // the 245 without a think_id all carry their full text and done=true, so
+    // they need no id to render or lazy-load.
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'first thought' },

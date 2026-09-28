@@ -1707,9 +1707,6 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         // a DB marker that only carried a position. Never overwrite a
         // different id — that would merge two blocks' prefixes under one key.
         if (action.thinkId && !existing.think_id) existing.think_id = action.thinkId
-        // Deltas arrived for this block, so it is still streaming. Clear a stale
-        // done flag only when the block was reopened — never downgrade a block
-        // the backend already finished.
       } else {
         blocks.push({
           type: 'thinking',

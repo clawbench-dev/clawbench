@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -826,4 +827,69 @@ func TestExecutor_DoneAndInProgressThinking_SameFlush(t *testing.T) {
 	assert.Equal(t, true, inProgBlock["in_progress"], "the unfinished block must be marked in_progress")
 	assert.NotEqual(t, true, inProgBlock["done"])
 	assert.NotContains(t, content, "second ongoing", "in-progress block's text must not be in content")
+}
+
+// TestExecutor_ForwardedThinkingCarriesThinkID pins the ORDER of the two calls
+// in handleNonTerminalEvent: the block must be accumulated (which mints its
+// think_id) BEFORE the event is forwarded, and the id must be stamped onto the
+// forwarded event.
+//
+// Without this test the reorder is unguarded: every other test either stops at
+// AccumulateBlock (id on the block) or hand-builds the WS payload. Moving
+// AccumulateBlock back after forwardEvent would leave all of them passing while
+// the event that OPENS a thinking block silently lost its id — re-introducing
+// the position-matching the field exists to remove.
+func TestExecutor_ForwardedThinkingCarriesThinkID(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID := getStreamingMsgIDForTest(t, sid)
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: msgID,
+	})
+	defer executor.unregisterActiveStream()
+
+	// Capture what the executor actually hands to the WS fan-out, without
+	// standing up a real hub connection. emitStreamEvent is the coalescer's
+	// emit target, so this observes the exact event that would reach a client.
+	var forwarded []ai.StreamEvent
+	executor.coalescer = &streamCoalescer{emit: func(ev ai.StreamEvent) {
+		forwarded = append(forwarded, ev)
+	}}
+
+	// Drive a thinking event through the executor, then flush the coalescer so
+	// the buffered delta is actually emitted.
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "reasoning"})
+	executor.flushCoalesced()
+
+	require.Len(t, forwarded, 1, "one thinking delta must reach the fan-out")
+	got := forwarded[0]
+	assert.Equal(t, "thinking", got.Type)
+	assert.Equal(t, "reasoning", got.Content)
+	require.NotEmpty(t, got.ThinkID, "the forwarded event must carry the block id")
+	assert.True(t, strings.HasPrefix(got.ThinkID, "th_"), "id format, got %q", got.ThinkID)
+
+	// The wire id must equal the id on the accumulated block, or the client
+	// would key a different block than the one that is streaming.
+	executor.mu.Lock()
+	require.Len(t, executor.blocks, 1)
+	stored := executor.blocks[0].ThinkID
+	executor.mu.Unlock()
+	assert.Equal(t, stored, got.ThinkID, "wire id must equal the accumulated block's id")
+
+	// A coalescing delta of the SAME block must report the same id (that is what
+	// lets the coalescer tell two consecutive blocks apart).
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: " more"})
+	executor.flushCoalesced()
+	require.Len(t, forwarded, 2)
+	assert.Equal(t, got.ThinkID, forwarded[1].ThinkID)
 }

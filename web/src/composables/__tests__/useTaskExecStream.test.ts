@@ -196,6 +196,9 @@ describe('useTaskExecStream', () => {
     })
 
     it('backfills a missing think_id without overwriting an existing one', () => {
+      // VERSION-SKEW GUARD: unreachable from a current server (the opening delta
+      // always carries the id). Its value is the negative assertion — an id that
+      // is already present must never be replaced.
       const { stream } = createStream()
       stream.startPreview()
 
