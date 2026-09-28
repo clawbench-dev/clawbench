@@ -367,8 +367,15 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type           string                 // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
-	Content        string                 // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
+	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
+	Content string // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
+	// ThinkID is the stable identity of a thinking block, set on Type=thinking
+	// from the moment the block opens (see AccumulateBlock, which mints it and
+	// reports it back to the caller). It rides the WS event so a client knows
+	// the block's identity at creation time instead of having to infer it later
+	// from a DB snapshot — inference that mispaired blocks whenever the live
+	// placeholder and the DB disagreed on ordering.
+	ThinkID        string                 // thinking: stable block identity, assigned when the block opens
 	Reason         string                 // Structured reason code for i18n (e.g. "disconnect", "timeout", "parse_error")
 	ErrorCode      int                    // Structured error code (e.g. ACP JSON-RPC code -32603)
 	HTTPStatus     int                    // Upstream HTTP status when available (e.g. 500)

@@ -570,13 +570,18 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.trackToolDuration(&event)
 	}
 
-	// Forward event to WS clients via StreamHub
-	e.forwardEvent(event)
-
-	// Accumulate block. Guarded so FlushStreamingNow (shutdown goroutine) can
-	// read e.blocks concurrently without a data race.
+	// Accumulate block BEFORE forwarding, so a thinking block's freshly minted
+	// think_id can ride the very event that opens it. Guarded so
+	// FlushStreamingNow (shutdown goroutine) can read e.blocks concurrently
+	// without a data race.
+	//
+	// Reordering is safe for event ordering: what guarantees a client sees
+	// events in order is the coalescer (a non-delta flushes buffered text
+	// before emitting), not the order of these two calls. The lock is released
+	// before forwarding because forwardEvent fans out to WS clients and must
+	// not run under e.mu.
 	e.mu.Lock()
-	ai.AccumulateBlock(&e.blocks, event)
+	thinkID, _ := ai.AccumulateBlock(&e.blocks, event)
 	// Queue tool-call upserts for the next flush window instead of writing per
 	// event — a burst of incremental tool_use updates would otherwise issue one
 	// SQLite write per event and stall the consumer.
@@ -586,6 +591,16 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		}
 	}
 	e.mu.Unlock()
+
+	// Stamp the block's identity onto the event: the one that opens the block
+	// and every delta of it, so the coalescer can tell blocks apart. Empty for
+	// all other event types.
+	if thinkID != "" {
+		event.ThinkID = thinkID
+	}
+
+	// Forward event to WS clients via StreamHub
+	e.forwardEvent(event)
 
 	// metadata capture
 	if event.Type == contentKeyMetadata && event.Meta != nil {

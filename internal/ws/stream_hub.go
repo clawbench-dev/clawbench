@@ -338,6 +338,13 @@ func simpleTextPayload(event ai.StreamEvent) any {
 	payload := map[string]string{}
 	if event.Type == "thinking" {
 		payload["text"] = event.Content
+		// The block's stable identity, so the client can key its thinking block
+		// from the moment it appears instead of inferring it from a later DB
+		// snapshot (which mispaired blocks when the two sides disagreed on
+		// ordering). Absent only for events from a backend that predates this.
+		if event.ThinkID != "" {
+			payload["think_id"] = event.ThinkID
+		}
 	} else {
 		payload["content"] = event.Content
 	}

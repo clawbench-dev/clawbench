@@ -73,9 +73,17 @@ func isCoalescableDelta(event ai.StreamEvent) bool {
 // requirement, not an optimization: the frontend locates the target block with
 // findBlockByTypeBackward(blocks, 'text', parent), so merging a sub-agent's
 // delta into a top-level block would attribute a child's text to its parent.
+//
+// ThinkID must match too, for thinking deltas. Two consecutive thinking blocks
+// of the SAME parent are possible (a tool_use separates them, and tool_use is a
+// non-coalescable barrier, so in practice a flush already sits between them) —
+// but the id makes it structural rather than incidental: only deltas belonging
+// to one block ever merge, so a merged frame can never carry text from two
+// blocks that the client would then have to untangle.
 func canMerge(pending, next *ai.StreamEvent) bool {
 	return pending.Type == next.Type &&
-		pending.ParentToolCallID == next.ParentToolCallID
+		pending.ParentToolCallID == next.ParentToolCallID &&
+		pending.ThinkID == next.ThinkID
 }
 
 // add feeds one event through the coalescer.

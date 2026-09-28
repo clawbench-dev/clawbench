@@ -3008,6 +3008,49 @@ describe('in-progress thinking marker (switch-back losslessness)', () => {
     expect(thinks[1].in_progress).toBe(true)
   })
 
+  it('keys a thinking block with the think_id the backend sent', () => {
+    // The backend mints a block's identity when it opens and puts it on the WS
+    // event, so the client knows it from birth. Before this, the block had no
+    // id until a DB snapshot arrived and the client matched them up by
+    // POSITION — which mispaired blocks across a session switch (the reported
+    // "top block spins forever with its text frozen").
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first', thinkId: 'th_abc' } as any)
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' second', thinkId: 'th_abc' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'one block, coalesced').toHaveLength(1)
+    expect(blocks[0].think_id, 'carries the backend identity').toBe('th_abc')
+    expect(blocks[0].text).toBe('first second')
+  })
+
+  it('still works when the server sends no think_id (older server)', () => {
+    // Version-skew guard: the payload may lack think_id. The block must still be
+    // created and still get a usable key from _key, so a new client against an
+    // old server behaves exactly as before.
+    const s = chatMessageReducer([streamingMsg([])], { type: 'ws_thinking', text: 'reasoning', key: 'thinking-0' })
+    const blocks = s[0].blocks!
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].think_id, 'no id invented').toBeUndefined()
+    expect(blocks[0]._key, 'the fallback key survives').toBe('thinking-0')
+    expect(blocks[0].text).toBe('reasoning')
+  })
+
+  it('backfills a missing think_id on a later delta without overwriting one', () => {
+    // A block created before the id arrived (or adopted from a text-less DB
+    // marker) should pick the id up from the next delta. An id it already has
+    // must never be replaced — that would relabel a block mid-stream.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a', key: 'thinking-0' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b', thinkId: 'th_first' } as any)
+    let blocks = s[0].blocks!
+    expect(blocks[0].think_id, 'backfilled').toBe('th_first')
+
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'c', thinkId: 'th_other' } as any)
+    blocks = s[0].blocks!
+    expect(blocks, 'still one block').toHaveLength(1)
+    expect(blocks[0].think_id, 'the original id is not overwritten').toBe('th_first')
+  })
+
   it('does NOT re-open a finished live block with an in_progress marker', () => {
     // The reported "top of the assistant message, never finishes, text never
     // grows" (msgId=54716). block[0] had already finished normally

@@ -142,6 +142,12 @@ function isJsonContent(c: string): boolean {
 /** SSE event data for thinking events */
 export interface ThinkingEventData {
   text?: string
+  /**
+   * The block's stable identity, minted by the backend when the block opens.
+   * Carried on every delta of the block. Absent when the server predates this
+   * field, in which case the block gets its id later from a DB snapshot.
+   */
+  think_id?: string
   /** Parent Agent tool-call id when this thinking belongs to a sub-agent. */
   parent_tool_call_id?: string
 }
@@ -604,7 +610,7 @@ export type ChatMessageAction =
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
   | { type: 'ws_content'; text: string; parentToolCallId?: string }
-  | { type: 'ws_thinking'; text: string; key?: string; parentToolCallId?: string }
+  | { type: 'ws_thinking'; text: string; key?: string; thinkId?: string; parentToolCallId?: string }
   | { type: 'ws_thinking_done'; parentToolCallId?: string }
   | { type: 'ws_content_reset' }
   | { type: 'ws_tool_use'; data: ToolUseEventData }
@@ -1695,11 +1701,29 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         // "undefined…", so seed an empty string instead. The prefix is merged
         // back in by mergeThinkingPrefix when rendering.
         existing.text = (typeof existing.text === 'string' ? existing.text : '') + action.text
+        // Backfill identity if this block never got one. Normally it already
+        // has it from the delta that opened it; this covers a block that was
+        // created by an older server (no think_id on the wire) or adopted from
+        // a DB marker that only carried a position. Never overwrite a
+        // different id — that would merge two blocks' prefixes under one key.
+        if (action.thinkId && !existing.think_id) existing.think_id = action.thinkId
         // Deltas arrived for this block, so it is still streaming. Clear a stale
         // done flag only when the block was reopened — never downgrade a block
         // the backend already finished.
       } else {
-        blocks.push({ type: 'thinking', text: action.text, ...(action.key ? { _key: action.key } : {}), ...(parent ? { parent_tool_call_id: parent } : {}) })
+        blocks.push({
+          type: 'thinking',
+          text: action.text,
+          // The identity the backend minted when this block opened. With it,
+          // the block is keyed correctly from birth and never needs the
+          // position-based adoption that used to mispair blocks across a
+          // session switch.
+          ...(action.thinkId ? { think_id: action.thinkId } : {}),
+          // `_key` remains the fallback identity for a server that does not
+          // send think_id yet (see computeStableBlockKey).
+          ...(action.key ? { _key: action.key } : {}),
+          ...(parent ? { parent_tool_call_id: parent } : {}),
+        })
       }
       return state
     }
