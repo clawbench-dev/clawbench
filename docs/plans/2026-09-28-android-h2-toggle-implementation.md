@@ -8,7 +8,7 @@
 
 **Tech Stack:** Java 17（Android，JSch + OkHttp 4.12）、Kotlin/Java + Gradle、Vue 3 + TypeScript + Vitest、Electron `node:http2`、Go（仅文档改动）。
 
-**设计来源（唯一事实来源，不要重新调研、不要推翻其决策）：** `docs/plans/2026-09-28-android-h2-toggle-design.md`（549 行，11 章）
+**设计来源（唯一事实来源，不要重新调研、不要推翻其决策）：** `docs/plans/2026-09-28-android-h2-toggle-design.md`（756 行，12 章）
 
 ---
 
@@ -987,6 +987,7 @@ its h2 test suite untouched, and blocks a stale renderer pushing 'both'."
 - Modify: `docs/spec/infra/ssh-tunnel.md:101-140`（「传输方式」与「传输优先级链」章节）
 - Modify: `docs/spec/README.md:47`（索引摘要）
 - Modify: `docs/spec/infra/proxy.md:44`（transport 描述）
+- Modify: `docs/plans/2026-09-28-android-h2-toggle-design.md` — ➕ 新增 **§12 措辞通用化与传输标注**（T13–T16 的设计来源；已随本计划一并落地）
 
 **依赖：** T1/T7/T10 的最终行为已定。**可并行：** 与阶段 2/3 并行收尾。
 
@@ -1153,6 +1154,359 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 
 ---
 
+## 阶段 6 — 措辞通用化与传输标注（设计文档 §12）
+
+> **设计来源**：`docs/plans/2026-09-28-android-h2-toggle-design.md` **§12 措辞通用化与传输标注**。用户已拍板：措辞改动**并入本次 h2 开关任务**（同一批改动、同一次验收），**不单独出计划**；动态显示采用**追加括号标注**，`activeTransport` 为 `''` 或 `'both'` 时**退回纯通用措辞、不猜传输**。
+>
+> **行号基准**：本阶段所有 `文件:行号` 在本 worktree HEAD `32086bca` 上实测（源码与设计文档基准 `4c12d3b8` 逐字节相同）。若 T1–T12 已改动源码导致漂移，**以资源名 / i18n key / 符号名重新定位**，不要照搬数字。
+>
+> **阶段 6 可并行矩阵**：
+> - **T13 ∥ T15**：T13 只碰前端 i18n 值，T15 只碰 Android 资源 + `BackgroundService.java`，**不同语言/目录，完全可并行**。
+> - **T14 依赖 T13 与 T3**：T13 提供通用基线值，T3 提供 `tls|h2c → h2` 归一化（否则 Android 永远拿不到 `'h2'`，动态标注永不显示）。
+> - **T16 与 T14 可并行**：T16 改 `v-if` 触发条件 + 删死 key + i18n 一个硬编码标签，与 T14 的插值改造不碰同一区域。
+
+---
+
+### Task 13: 前端措辞通用化（A 类 2 处 + B 类 9 处的通用基线）
+
+**目标**：把与 SSH 协议无关的 11 处文案去掉「SSH」字样，改成通用「隧道 / 端口映射」措辞。**本任务只改 i18n 值，不加插值**（插值留给 T14），因此**不碰任何 `.vue` / `.ts` 调用点**。
+
+**Files:**
+- Modify: `web/src/i18n/locales/zh.ts`（11 个值）
+- Modify: `web/src/i18n/locales/en.ts`（11 个值，**必须与 zh 对齐**）
+
+**逐条清单**（zh 行 / en 行，设计文档 §12.3.2）：
+
+| # | key | zh 行 / en 行 | 当前 zh | 改为（zh / en） | 分类 |
+|---|---|---|---|---|---|
+| 1 | `proxy.tunnelDisconnected` | 1530 / 1527 | `SSH 隧道未连接` | `隧道未连接` / `Tunnel disconnected` | B |
+| 2 | `proxy.tunnelConnectedButNoResponse` | 1536 / 1533 | `SSH 隧道已连接，但所有端口的服务均未响应` | `隧道已连接，但所有端口的服务均未响应` / `Tunnel connected, but all port services are unresponsive` | B |
+| 3 | `proxy.backgroundTip` | 1537 / 1534 | `…否则 APP 进入后台后 SSH 隧道会被系统终止` | `…否则 APP 进入后台后隧道会被系统终止` / `…otherwise the tunnel will be killed when app goes to background` | B |
+| 4 | `proxy.toast.tunnelRecovered` | 1604 / 1601 | `SSH 隧道已恢复` | `隧道已恢复` / `Tunnel recovered` | B |
+| 5 | `proxy.toast.tunnelConnectedNoResponse` | 1605 / 1602 | `SSH 隧道已连接，但端口服务未响应` | `隧道已连接，但端口服务未响应` / `Tunnel connected, but port services not responding` | B |
+| 6 | `proxy.toast.tunnelStillDisconnected` | 1606 / 1603 | `SSH 隧道仍未连接` | `隧道仍未连接` / `Tunnel still disconnected` | B |
+| 7 | `portForward.tunnelDegraded` | 1611 / 1608 | `SSH 隧道已连接，但所有转发端口均无服务响应` | `隧道已连接，但所有转发端口均无服务响应` / `Tunnel connected, but all mapped ports are unresponsive` | B |
+| 8 | `portForward.tunnelDisconnected` | 1612 / 1609 | `SSH 隧道未连接，端口映射将无法使用` | `隧道未连接，端口映射将无法使用` / `Tunnel disconnected, port mapping unavailable` | B |
+| 9 | `portForward.tunnelReconnected` | 1613 / 1610 | `SSH 隧道已重连` | `隧道已重连` / `Tunnel reconnected` | B |
+| 10 | `proxy.appRecommendation` | 1572 / 1569 | `使用 ClawBench APP 可自动建立 SSH 隧道，无需手动配置` | `使用 ClawBench APP 可自动建立隧道，无需手动配置` / `Use the ClawBench app for automatic tunnel setup — no manual configuration needed` | **A** |
+| 11 | `chat.localhost.sshDisabled` | 946 / 943 | `SSH 隧道已禁用，无法打开本地地址` | `隧道已禁用，无法打开本地地址` / `Tunnel is disabled, cannot open localhost URL` | **A** |
+
+**不动的 C 类 15 处**（设计文档 §12.3.3）：`proxy.directionForwardHint`/`directionReverseHint`（`ssh -L`/`ssh -R`）、`tunnelGuideStep2/3`、`tunnelNeedSshHint`、`tunnelInstallWin/Mac/Linux`、`tunnelNoCommand`、`tunnelNoSsh`、`tunnelErrorAuth/Network/HostKey`、`settings.items.frpAssignedSSHPort`/`frpSSHRemotePort`。
+
+**依赖：** 无（可与 T15 并行）。**可并行：** 与 T15 并行；与 T14 同文件，**串行**（T14 在 T13 的通用基线上加插值）。
+
+**Step 1: 改 zh.ts**
+
+按上表逐条改值。**不要改 key 名**（改 key 会破 `ProxyPanelContent.transport.test.ts` 等断言，见设计文档 §12.8）。
+
+**Step 2: 改 en.ts**
+
+同样 11 条，行号见上表。**zh/en 必须一一对应**（虽然无 parity 测试守护，但漏改会导致中英不一致）。
+
+**Step 3: 验证（先查并发，§0.2）**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+# 确认 11 处已无 "SSH" 字样（这些 key 的值）
+grep -nE "(tunnelDisconnected|tunnelConnectedButNoResponse|backgroundTip|tunnelRecovered|tunnelConnectedNoResponse|tunnelStillDisconnected|tunnelDegraded|tunnelReconnected|appRecommendation|sshDisabled):" \
+  web/src/i18n/locales/zh.ts web/src/i18n/locales/en.ts
+
+npx vitest run web/src/composables/__tests__/usePortForward.test.ts \
+               web/src/composables/__tests__/useLocalhostAnnotation.test.ts \
+               web/src/components/proxy/__tests__/ProxyPanelContent.transport.test.ts
+```
+
+预期：grep 输出中这 11 行的值**不含 `SSH`**；三个测试文件**全绿**（断言的是 key，不是值，见设计文档 §12.8）。
+
+**Step 4: 前端编译（AGENTS.md：纯前端改动必须自觉编译）**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+npm run build     # 产物写入 .clawbench-web/，disk 模式立即生效
+```
+
+预期：构建成功。
+
+**Step 5: Commit**
+
+```bash
+git add web/src/i18n/locales/zh.ts web/src/i18n/locales/en.ts
+git commit -m "i18n(web): make tunnel wording transport-neutral
+
+The tunnel can be SSH or the HTTP/2 stream tunnel, so 11 user-visible strings
+that only talk about the tunnel itself no longer say SSH. SSH-specific copy
+(ssh -L/-R hints, the manual guide, SSH error classes, FRP SSH ports) is
+deliberately untouched."
+```
+
+**完成标准：** 11 处（zh + en 共 22 个值）改完且不含「SSH」；三个相关测试文件全绿；`npm run build` 成功；C 类 15 处**一行未动**。
+
+---
+
+### Task 14: 动态传输标注（B 类 9 处加插值 + 调用点传参）
+
+**目标**：把 B 类 9 处文案改成**带 `{transport}` 插值**，调用点按 `activeTransport` 传参；规则见设计文档 §12.4——`'ssh'→（SSH）`、`'h2'→（HTTP/2）`、`''`/`'both'` **不追加**。
+
+**Files:**
+- Modify: `web/src/i18n/locales/zh.ts` + `en.ts`（T13 改过的 9 个 B 类值再加插值占位）
+- Modify: `web/src/components/proxy/ProxyPanelContent.vue`
+  - 模板 `:30`（`tunnelDisconnected`）、`:39`（`tunnelConnectedButNoResponse`）、`:48`（`backgroundTip`）
+  - toast `:520`（`toast.tunnelRecovered`）、`:522`（`toast.tunnelConnectedNoResponse`）、`:524`（`toast.tunnelStillDisconnected`）
+  - **不改** `:22-24` 的 `.tunnel-transport` 行与 `:348-355` 的 `transportLabel`（见风险 R12.2）
+- Modify: `web/src/composables/usePortForward.ts`
+  - `tunnelMessage` 赋值点 `:592, :606, :633, :643, :720, :750`
+  - toast `:830, :859, :870`
+- Test: 新增/扩展 `web/src/components/proxy/__tests__/ProxyPanelContent.transport.test.ts` 或新建 `ProxyPanelContent.transportAnnotation.test.ts`
+
+**依赖：** **T13**（通用基线值）与 **T3**（Android `tls|h2c → h2` 归一化；否则 Android 拿不到 `'h2'`，标注永不显示）。**可并行：** 与 T15/T16 并行；与 T13 同文件，串行。
+
+**规则（硬性，设计文档 §12.4）：**
+
+| `activeTransport` | 渲染 |
+|---|---|
+| `'ssh'` | 通用措辞 + `（SSH）` |
+| `'h2'` | 通用措辞 + `（HTTP/2）` |
+| `''` | **纯通用措辞，不追加** |
+| `'both'` | **纯通用措辞，不追加** |
+
+**标签来源**：插值值复用 `transportLabel`（`ProxyPanelContent.vue:348-355`）的映射结果（`'ssh'→'SSH'`、`'h2'→'HTTP/2'`）。**不要**在调用点另起字面量（三处会漂移）。若需要，把该映射抽成一个小 helper；**若抽到 `web/src/utils/portForwardUtils.ts`，必须同步 `usePortForward.test.ts:96-115` 的自复制 mock**（风险 R12.3）。
+
+**Step 1: 写失败测试**
+
+新增用例（覆盖规则四种取值）：
+
+| 用例 | 断言 |
+|---|---|
+| `activeTransport='h2'` → banner/toast 含 `（HTTP/2）` | `t('proxy.tunnelDisconnected', { transport: 'HTTP/2' })` 形如 `隧道未连接（HTTP/2）` |
+| `activeTransport='ssh'` → 含 `（SSH）` | 同上 |
+| `activeTransport=''` → **不含**括号 | 文本 === 纯通用措辞 |
+| `activeTransport='both'` → **不含**括号 | 同上 |
+
+**Step 2: 跑测试确认失败**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+npx vitest run web/src/components/proxy/__tests__/ProxyPanelContent.transportAnnotation.test.ts
+```
+
+预期：FAIL（插值未实现）。
+
+**Step 3: 改 i18n 为插值 + 改调用点**
+
+zh 示例（en 对应）：`tunnelDisconnected: '隧道未连接{transport}'`，其中 `transport` 由调用点算成 `'（SSH）'` / `'（HTTP/2）'` / `''`（**空串时整段消失**，天然满足「不追加」）。
+
+```ts
+// 形态片段（非完整实现）——调用点
+const transportSuffix = computed(() =>
+  activeTransport.value === 'ssh' ? '（SSH）'
+  : activeTransport.value === 'h2' ? '（HTTP/2）'
+  : '')                                  // '' | 'both' → 不追加
+```
+
+- 模板 `:30/:39/:48`：`t('proxy.tunnelDisconnected', { transport: transportSuffix })`。
+- toast `:520/:522/:524`：同样传参。
+- `usePortForward.ts` 的 `tunnelMessage` 赋值点（`:592, :606, :633, :643, :720, :750`）与 toast（`:830, :859, :870`）：该文件已持有 `activeTransport`（`:79`）与 `gt`，按同规则算后缀传入。
+
+> **⚠️ 关键选择（决定测试是否破）**：`usePortForward.test.ts:82` 把 `gt` mock 成 identity（`(key) => key`）。若 `tunnelMessage` 存的是 `gt(key)` 的返回（纯 key），**加插值实参不影响断言**（`:1695/:1742/:1897/:1976/:2003` 仍成立）；若改成**拼接**（`gt(key) + suffix`），`tunnelMessage` 不再是纯 key，**这些断言会破**。**推荐**：把后缀拼进 i18n 的插值（`gt(key, { transport })`），保持 `tunnelMessage` 的形态判断不变；若坚持拼接，则**必须同步更新那 5 条断言**。
+
+**Step 4: 验证（先查并发，§0.2）**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+npx vitest run web/src/components/proxy/__tests__/ProxyPanelContent.transportAnnotation.test.ts \
+               web/src/components/proxy/__tests__/ProxyPanelContent.transport.test.ts \
+               web/src/composables/__tests__/usePortForward.test.ts
+```
+
+预期：全绿；`ProxyPanelContent.transport.test.ts:149/:156/:165`（`.tunnel-transport-value` === `'SSH'`/`'HTTP/2'`/`'自动'`）**未破**（本任务不碰那一行）。
+
+**Step 5: 前端编译**
+
+```bash
+npm run build
+```
+
+**Step 6: Commit**
+
+```bash
+git add web/src/i18n/locales/zh.ts web/src/i18n/locales/en.ts \
+        web/src/components/proxy/ProxyPanelContent.vue \
+        web/src/composables/usePortForward.ts \
+        web/src/components/proxy/__tests__/ProxyPanelContent.transportAnnotation.test.ts
+git commit -m "feat(web): annotate tunnel messages with the active transport
+
+Appends （SSH）/（HTTP/2） only when activeTransport is a known single value;
+'' and 'both' fall back to the neutral wording rather than guessing. Depends on
+T3 normalizing Android's tls/h2c to h2, otherwise the annotation can never show."
+```
+
+**完成标准：** 四种 `activeTransport` 取值均有断言；`'ssh'`/`'h2'` 追加正确括号，`''`/`'both'` 不追加；`ProxyPanelContent.transport.test.ts` 三条 `.tunnel-transport-value` 断言未破；`npm run build` 成功。
+
+---
+
+### Task 15: Android 原生通知文案（N1–N4）
+
+**目标**：改 4 个 Android 字符串资源（zh + en 各 4 条），其中 N2 按传输动态选词。
+
+**Files:**
+- Modify: `android/app/src/main/res/values/strings.xml`（`:93, :94, :95, :97`）
+- Modify: `android/app/src/main/res/values-zh/strings.xml`（`:93, :94, :95, :97`）
+- Modify: `android/app/src/main/java/com/clawbench/app/BackgroundService.java`
+  - N1 调用点 `:1332-1333`、`:2455-2456`
+  - N3 调用点 `:1343-1344`
+  - N2 调用点 `:1361-1362`（**动态选词**）
+  - N4 调用点 `:2366-2371`（`createNotificationChannel`）
+
+**逐条清单**（行号两文件相同，设计文档 §12.3.1）：
+
+| # | 资源名 | 行 | 当前 zh | 改为（zh / en） | 分类 |
+|---|---|---|---|---|---|
+| N1 | `ssh_notification_reconnecting` | `:93` | `SSH 隧道断开，正在重连…` | `隧道断开，正在重连…` / `Tunnel disconnected, reconnecting…` | A |
+| N2 | `ssh_notification_recovering` | `:94` | `SSH 隧道已恢复` | **动态**：ssh → `SSH 隧道已恢复` / `SSH tunnel reconnected`；h2 → 新增资源 `tunnel_notification_recovering_h2` = `HTTP/2 隧道已恢复` / `HTTP/2 tunnel reconnected` | B |
+| N3 | `notif_ssh_reconnecting_attempt` | `:95` | `SSH 隧道断开，第 %1$d 次重连…` | `隧道断开，第 %1$d 次重连…` / `Tunnel disconnected, reconnecting (attempt %1$d)…` | A |
+| N4 | `notif_channel_bg_service_desc` | `:97` | `SSH 端口映射与后台事件监听` | `端口映射与后台事件监听` / `Port forwarding and background event listening` | A |
+
+**依赖：** 无（可与 T13 并行）。**可并行：** 与 T13 并行；与 T14/T16 并行。
+
+**Step 1: 先查现有测试覆盖（V3，必做）**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+grep -rn "ssh_notification_reconnecting\|ssh_notification_recovering\|notif_ssh_reconnecting_attempt\|notif_channel_bg_service_desc\|tunnel_notification_recovering_h2" \
+  android/app/src/test/ android/app/src/androidTest/ 2>/dev/null || echo "NO NOTIFICATION STRING TEST"
+```
+
+预期：大概率 `NO NOTIFICATION STRING TEST`。**若为空**：改 N1–N4 **零测试影响**，但**也意味着无回归守护**——本任务需**新增**一条最小断言（见 Step 4）。**若非空**：把断言的行号记下，改文案后同步。
+
+**Step 2: 改两个 strings.xml**
+
+按上表改 N1/N3/N4 的值；**N2 保留原值**（ssh 用），**新增** `tunnel_notification_recovering_h2`（zh + en 各一条，紧邻 N2）。
+
+**Step 3: N2 动态选词（`BackgroundService.java:1361-1362`）**
+
+```java
+// 形态片段（非完整实现）
+// 此刻传输已连接：getActiveTunnelTransport() 非空即 h2（T3 后返回 "h2"），空即 SSH。
+boolean h2 = !getActiveTunnelTransport().isEmpty();
+String text = getString(h2
+        ? R.string.tunnel_notification_recovering_h2
+        : R.string.ssh_notification_recovering);
+```
+
+> **不要**给 N2 塞 `%1$s` 插值：Android 资源插值在调用点拼装即可，且**只有 N2 能动态**（N1/N3 在断线态渲染时 `getActiveTunnelTransport()` 也返回 `""`，与 SSH 不可区分——设计文档 §12.3.1）。N4 是通道描述，首次 `createNotificationChannel` 后固化，**保持静态通用措辞**。
+
+**Step 4: 验证**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward/android
+JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64 ANDROID_HOME=/opt/android-sdk \
+  ./gradlew :app:testDebugUnitTest --tests '*Transport*'
+```
+
+预期：`*Transport*` 全绿（`BackgroundServiceTransportTest` / `H2TunnelStreamTest` 等）。
+
+```bash
+# 资源引用完整性（R.java 生成失败即编译失败，但先静态确认无拼写错误）
+grep -rn "tunnel_notification_recovering_h2" android/app/src/main/res/values/strings.xml android/app/src/main/res/values-zh/strings.xml
+```
+
+预期：两文件各命中 1 条。
+
+> **若 Step 1 确认无测试**：在 `BackgroundServiceTunnelTransportPrefsTest`（T6 新建）或同类 Robolectric 测试中补一条最小断言——N2 的选词在 h2 / ssh 两态下分别取到 `tunnel_notification_recovering_h2` / `ssh_notification_recovering`（或直接断言 `getString` 结果文本）。**不要**只改文案而不留任何守护。
+
+**Step 5: Commit**
+
+```bash
+git add android/app/src/main/res/values/strings.xml \
+        android/app/src/main/res/values-zh/strings.xml \
+        android/app/src/main/java/com/clawbench/app/BackgroundService.java
+git commit -m "i18n(android): make tunnel notifications transport-neutral
+
+N1/N3/N4 only talk about the tunnel/port mapping, so they drop the SSH prefix.
+N2 ('tunnel recovered') fires while the transport is connected, so it picks the
+HTTP/2 or SSH wording from getActiveTunnelTransport(); the reconnect-progress
+strings stay generic because a disconnected h2 is indistinguishable from SSH."
+```
+
+**完成标准：** N1/N3/N4 通用化（zh + en）；N2 在 h2 / ssh 两态下选到正确资源；新增 `tunnel_notification_recovering_h2`；`--tests '*Transport*'` 全绿；N2 有最小测试守护。
+
+---
+
+### Task 16: `tunnelNoSsh` 触发条件修复 + 死 key 清理 + `Fingerprint:` i18n（低风险收尾）
+
+**目标**：三件互相独立的小事，均属设计文档 §12.6 / §12.7 的记录项。**`tunnelNoSsh` 触发条件修复是行为改动**，其余为文案/清理。
+
+**Files:**
+- Modify: `web/src/components/proxy/ProxyPanelContent.vue`
+  - `:116` — ✏️ `tunnelNoSsh` banner 的 `v-if` 触发条件（**行为改动**）
+  - `:107` — ✏️ 硬编码 `<span class="fingerprint-label">Fingerprint:</span>` → i18n
+- Modify: `web/src/i18n/locales/zh.ts` + `en.ts`
+  - ➕ `proxy.fingerprintLabel`（`指纹：` / `Fingerprint:`）
+  - ❌ 删死 key `proxy.sshTunnel`（1565 / 1562）、`proxy.copySSHCommand`（1570 / 1567）、`settings.items.portForwardEnabledDesc`（2434 / 2431）
+
+**依赖：** 无。**可并行：** 与 T14 并行（不同区域）；与 T13 同文件 `zh.ts`/`en.ts`，**建议 T13 之后再动**（避免同文件冲突）。
+
+**Step 1: `tunnelNoSsh` 触发条件（设计文档 §12.6）**
+
+**现状**：`:116` 的 `v-if="!isAppMode && sshInfo && !sshInfo.enabled"` → 渲染 `:119` 的 `proxy.tunnelNoSsh`。根因是**把「没有 SSH 监听」等同于「没有端口转发」**——在 h2 可用的安装下，用户关掉 `port_forward.enabled` 靠 h2 工作，端口映射**其实正常**，banner 却叫用户去开 SSH（误导）。
+
+**建议修法**：判定改为「端口转发是否可用」而非「SSH 监听是否启用」——需同时考虑 h2 通道可用性（web 端可读服务端 `port_forward.transport`；h2 可用性判定可复用 `usePortForward.ts:515-523` 的 `tunnelTransportAllowsH2()`）。
+
+> **注意**：`sshInfo` 来自 `/api/ssh/info/full`，**只反映 SSH 状态**，不含 h2。因此不能只改文案，必须改判定输入。
+> **文案同步**：若修了触发条件，`proxy.tunnelNoSsh`（`:1583`）的文案应同步改通用（「端口转发未启用…」），否则「端口转发正常」时还显示「SSH 隧道未启用」仍矛盾。**本任务同时改该值**（zh + en），但它属 C 类语义的 key（讲 `port_forward.enabled`），**不改 key 名**。
+
+**Step 2: `Fingerprint:` i18n（设计文档 §12.7）**
+
+`ProxyPanelContent.vue:107` 的 `<span class="fingerprint-label">Fingerprint:</span>` 是**唯一未 i18n 的硬编码英文**，属 C 类概念（host key 指纹标签，**保留 SSH 语义**）。新增 `proxy.fingerprintLabel`（zh `指纹：` / en `Fingerprint:`）并替换。
+
+> 该标签在 web 模式手动指南整块内（`:62` 的 `!isAppMode && sshInfo.enabled` 门控），改的是**本地化**不是**措辞通用化**。
+
+**Step 3: 死 key 清理（设计文档 §12.7）**
+
+先确认无消费者，再删（zh + en 同时删）：
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+grep -rn "proxy.sshTunnel\|proxy.copySSHCommand\|settings.items.portForwardEnabledDesc" web/src --include=*.vue --include=*.ts | grep -v "i18n/locales" || echo "NO CONSUMERS"
+```
+
+预期：`NO CONSUMERS`。确认后删三个 key（zh + en）。
+
+> **命名空间无 parity 测试**：`proxy.*` / `settings.items.*` 既无 zh/en parity 测试也无快照（设计文档 §12.8），所以删 key 不会被测试抓到——**正因如此必须先用 grep 证明无消费者**，且两个 locale 同时删。
+
+**Step 4: 验证（先查并发，§0.2）**
+
+```bash
+cd /root/code/clawbench/.worktrees/ssh-ws-forward
+npx vitest run web/src/components/proxy/__tests__/ProxyPanelContent.transport.test.ts \
+               web/src/components/proxy/__tests__/ProxyPanelContent.direction.test.ts \
+               web/src/components/proxy/__tests__/ProxyPanelContent.scan.test.ts
+```
+
+预期：全绿。若 `ProxyPanelContent.scan.test.ts` / `direction.test.ts` 的 mock 里含 `proxy.fingerprintLabel` 缺失导致渲染告警，按需补 mock（它们的 `:105/:89` 附近已有 locale mock 区）。
+
+**Step 5: 前端编译**
+
+```bash
+npm run build
+```
+
+**Step 6: Commit**
+
+```bash
+git add web/src/components/proxy/ProxyPanelContent.vue web/src/i18n/locales/zh.ts web/src/i18n/locales/en.ts
+git commit -m "fix(web): stop telling h2-only installs to enable SSH; drop dead keys
+
+The 'tunnelNoSsh' banner keyed off sshInfo.enabled, which conflates 'no SSH
+listener' with 'no port forwarding' — an h2-only install forwards ports fine.
+The banner now keys off port-forwarding availability. Also i18n the hardcoded
+Fingerprint: label and remove three keys with no consumers."
+```
+
+**完成标准：** h2-only 安装（关 `port_forward.enabled`、靠 h2 工作）**不再**显示「SSH 隧道未启用」banner；`Fingerprint:` 走 i18n；三个死 key 从 zh + en 删除且 grep 证明无消费者；相关前端测试全绿；`npm run build` 成功。
+
+---
+
 ## 2. 执行顺序总览
 
 | 顺序 | 任务 | 并行组 | 依赖 | 备注 |
@@ -1169,6 +1523,10 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 | 10 | **T10** Electron bridge clamp | D（与 C 并行） | — | **不动 `tunnel.ts`** |
 | 11 | **T11** 文档同步 | E（与 C/D 并行） | T1/T7/T10 | 只碰 docs + openapi |
 | 12 | **T12** 端到端 | 收尾 | 全部 | 真实服务端 + 真机 |
+| 13 | **T13** 前端措辞通用化（A 2 + B 9 基线） | F | — | 只改 i18n 值；可与 T15 并行 |
+| 14 | **T14** 动态传输标注（B 9 加插值） | F′ | **T13 + T3** | 无 T3 则 Android 永不显示（HTTP/2） |
+| 15 | **T15** Android 通知文案 N1–N4 | G | — | 可与 T13 并行；N2 动态选词 |
+| 16 | **T16** `tunnelNoSsh` 触发条件 + 死 key + `Fingerprint:` | H | — | 触发条件是**行为改动**；与 T14 可并行 |
 
 **可并行矩阵（互不碰文件区域，可同时开工）：**
 
@@ -1176,6 +1534,9 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 - **B** = {T5, T6}：T5 改既有测试文件，T6 新增独立测试文件；T6 依赖 T5 的 stub 模式。
 - **C** = 阶段 2（前端）与 **D** = T10（Electron）**整体可并行**（不同目录、不同语言）。
 - **E** = T11 只碰 `docs/` 与 `internal/api/openapi.yaml`，可与 C/D 并行。
+- **F** = {T13, T14} 与 **F′** 的关系：T13（只改 i18n 值）**必须先于 T14**（T14 在通用基线上加插值）；**G** = {T15} 只碰 Android 资源 + `BackgroundService.java`，与 **F 完全可并行**（不同语言/目录）。
+- **H** = {T16} 与 T14 可并行（不同区域）；与 T13 同改 `zh.ts`/`en.ts`，**建议 T13 之后再动**（避免同文件冲突）。
+- **阶段 6 内部**：T13 ∥ T15；T14 依赖 T13 + T3；T16 与 T14 可并行。
 - **并行禁令（AGENTS.md）：** 绝不同时跑 `npm run build` 与全量 vitest（OOM）；全量测试前先 `ps` 检查；不重复跑同一个全量；判回归一律先隔离单跑。
 - **与另一 agent 的隔离：** 不碰 `android-e2e/`；发现它在跑 gradle/emulator 时**等待**。
 
@@ -1196,6 +1557,13 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 | R7 | Electron clamp 防旧缓存前端推 `both` | T10 clamp 在 bridge 层 |
 | R8 | `setField` 静态字段助手抛异常 | T5 逐条替换 20 处；验证命令 `grep -n 'setField("transportPreference"'` 必须无输出 |
 | — | 编译耦合（T1↔T4） | §0.5 已说明：T1 含 `MainActivity` 源码最小改动，T4 承接其测试 |
+| R12.1 | 插值改造牵动 `gt` identity mock | T14：`usePortForward.test.ts:82` 的 `gt` 是 identity。**推荐**把后缀并入 i18n 插值（`gt(key, { transport })`）以保持 `tunnelMessage` 的 key 形态；若改为拼接则必须同步 `:1695/:1742/:1897/:1976/:2003` 断言（设计文档 §12.9 R12.1） |
+| R12.2 | `transportLabel` 映射测试 | T14：`.tunnel-transport-value` 断言（`ProxyPanelContent.transport.test.ts:149/:156/:165`）不能动；标注落在 banner/toast，不落该行（设计文档 §12.9 R12.2） |
+| R12.3 | `usePortForward.test.ts` 自复制 mock | T14：若为传输标签新增 `portForwardUtils` 导出，**必须**同步 `:96-115` 的 mock，否则套件抛 `No export named …`（设计文档 §12.9 R12.3） |
+| R12.4 | `activeTransport` 依赖 T3 | T14 **必须等 T3**：否则 Android 拿不到 `'h2'`，动态标注永不显示（安全降级但不达验收） |
+| R12.5 | `activeTransport` 可能为 `''` | T14：按规则退回纯通用措辞，**不得猜传输**（设计文档 §12.5） |
+| R12.6 | `tunnelNoSsh` 触发条件是行为 bug | T16：改 `v-if` 判定输入（`sshInfo` 只反映 SSH）；**单独验收**（设计文档 §12.6） |
+| R12.7 | 改 i18n key 名会破测试 | T13/T14/T16：只改**值**安全；改 key 名必须同步两 locale + 调用点 + 断言（设计文档 §12.8） |
 
 ---
 
@@ -1209,7 +1577,12 @@ git commit -m "test(android): end-to-end verification of the local h2 toggle"
 6. ❌ 不给 `SettingsItem` 加异步受控能力。
 7. ❌ 不扩前端 `TRANSPORTS` 白名单（在 Android 边界归一化即可）。
 8. ❌ 不动 `android-e2e/`（另一 agent 负责）。
+9. ❌ **不改 web 模式手动指南整块的 SSH 措辞**（`ProxyPanelContent.vue:55-106`，设计文档 §12.1）——它展示的是 `ssh -N -L …` 命令、host key 指纹与装 ssh 客户端指引，浏览器没有客户端 h2 路径。
+10. ❌ **不给 SSH 错误分类改措辞**（`proxy.tunnelErrorAuth/Network/HostKey`，`zh.ts:1532-1534`）。
+11. ❌ **不给 `tunnelNoSsh` 之外任何断线态文案加动态标注**（N1/N3/N4 与 `activeTransport=''`/`'both'` 场景一律退回纯通用措辞，不猜传输，设计文档 §12.3.1 / §12.4）。
 
 ### 后续可清理项（本次不做，仅记录）
 
 服务端 `port_forward.transport` 对原生客户端已成为**事实上的死配置**，只剩 registry 门控与 web 健康门控两个用途。后续版本可考虑把它拆成两个独立配置项，或移除对客户端无意义的 `h2`/`both` 下发。
+
+> **关联**：设计文档 §12 新增的「措辞通用化与传输标注」（T13–T16）与本项同源——`port_forward.transport` 语义混乱的**用户可见表现**就是「SSH 转发」措辞与 `tunnelNoSsh` 误报（§12.6）。T13–T16 已把**文案层**收口；配置项本身的清理仍留后续版本。

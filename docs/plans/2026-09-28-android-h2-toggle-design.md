@@ -547,3 +547,210 @@ flowchart TD
 | U3 | **前端专用行在真实 Android WebView 的渲染** | 仅从组件结构与既有平台门控先例推导，未实机截图验证 |
 | U4 | **旧宿主（无新桥方法）的实测降级** | 从可选 `?` 语义推导，未构造真实旧 APK 验证 |
 | U5 | **冷启动偏好读取时序** | 从 `onCreate` → `restoreAndReconnect` → `ensureConnection` 的调用链推导（`:789-905` / `:1264-1292` / `:1453`），未插桩实测时序 |
+
+---
+
+## 12. 措辞通用化与传输标注
+
+> **来源**：用户反馈「安卓很多提示都是 ssh 转发，如果有改成通用的端口映射，或者隧道转发，如果能明确是什么隧道转发更好」。
+> **行号基准**：本章所有 `文件:行号` 均在本 worktree `feat/ssh-ws-forward` HEAD `32086bca` 磁盘内容上实测。`32086bca` 只改了 `docs/plans/`，源码与 §1–§11 的基准 `4c12d3b8` 逐字节相同，故前文行号仍成立。实施时若源码已被 h2 开关任务改动，请**以符号名/资源名重新定位**，不要照搬数字。
+
+### 12.1 目标与非目标
+
+**目标**：把与 SSH 协议无关的用户可见文案改成通用的「隧道 / 端口映射 / 端口转发」，并在**渲染时刻能确定传输**的状态类文案上追加括号标注（如「隧道已连接（HTTP/2）」）。
+
+**非目标（明确不做）**：
+
+- ❌ **不改 web 模式手动指南整块的 SSH 措辞**（`ProxyPanelContent.vue:55-106`）——它就是在展示服务端 `/api/ssh/info/full` 生成的 `ssh -N -L …` 命令、host key 指纹与装 ssh 客户端指引，浏览器没有客户端 h2 路径，**改成通用措辞反而是错的**。
+- ❌ **不给 SSH 错误分类改措辞**：`proxy.tunnelErrorAuth` / `tunnelErrorNetwork` / `tunnelErrorHostKey`（`zh.ts:1532-1534`）讲的是 SSH 认证 / 网络 / host key，属 SSH 语义。
+- ❌ **不做措辞以外的行为改动**（`tunnelNoSsh` 触发条件是唯一例外，见 §12.6，且**本次只记录建议**）。
+- ❌ 不给 `tunnelNoSsh` 之外任何文案加动态标注（N1/N3/N4 在断线态或与传输无关，无法可靠区分，见 §12.3.1）。
+
+### 12.2 分类原则
+
+| 类 | 判据 | 处置 |
+|---|---|---|
+| **(A) 通用** | 文案讲「隧道 / 端口转发 / 端口映射」本身，与 SSH 协议无关 | 去掉「SSH」字样，改通用措辞 |
+| **(B) 动态** | 状态类文案，**渲染时刻能确定当前传输** | 改通用基线 + 按 `activeTransport` **追加括号标注** |
+| **(C) 保留 SSH** | 文案本身就在讲 SSH 协议 / 命令 / 凭据（`ssh -L`、SSH 密码、SSH 端口、host key 指纹、装 ssh 客户端指引） | **不动**；改了就错 |
+
+**「渲染时刻能确定」的严格定义**（决定 B 类边界）：只有**传输已连接**时，`BackgroundService.getActiveTunnelTransport()`（`BackgroundService.java:1821-1831`）才能对 h2 返回非空、对 SSH 返回空来区分。断线态下 h2 也返回 `""`，与 SSH **不可区分**——这是 N1/N3 不能动态化的根本原因。
+
+### 12.3 完整清单
+
+#### 12.3.1 Android 原生侧（**只有 4 处**，全在资源文件）
+
+原生侧**没有硬编码用户可见文案**，全部走 Android 资源机制：`android/app/src/main/res/values/strings.xml`（默认英文）+ `values-zh/strings.xml`（中文），经 `MainActivity.userLangString()`（`MainActivity.java:620-651`）与 `UserLanguage.resolve()`（`UserLanguage.java:35-51`）在非 Activity 上下文按用户语言解析。`login.html` 与 Java 源码贡献 **0 处**。
+
+| # | 资源名 | 行号（两文件相同） | 当前 zh / en | 分类 | 建议 |
+|---|---|---|---|---|---|
+| N1 | `ssh_notification_reconnecting` | `:93` | `SSH 隧道断开，正在重连…` / `SSH tunnel disconnected, reconnecting…` | A | `隧道断开，正在重连…` / `Tunnel disconnected, reconnecting…` |
+| N2 | `ssh_notification_recovering` | `:94` | `SSH 隧道已恢复` / `SSH tunnel reconnected` | **B（唯一可动态）** | h2 → `HTTP/2 隧道已恢复`；ssh → `SSH 隧道已恢复` |
+| N3 | `notif_ssh_reconnecting_attempt` | `:95` | `SSH 隧道断开，第 %1$d 次重连…` / `SSH tunnel disconnected, reconnecting (attempt %1$d)…` | A | `隧道断开，第 %1$d 次重连…` |
+| N4 | `notif_channel_bg_service_desc` | `:97` | `SSH 端口映射与后台事件监听` / `SSH port forwarding and background event listening` | A | `端口映射与后台事件监听` / `Port forwarding and background event listening` |
+
+**调用点**（全部，`BackgroundService.java`）：
+
+- N1：`:1332-1333`（重连循环）、`:2455-2456`（`buildNotification(0, …)` 复用）
+- N3：`:1343-1344`
+- N2：`:1361-1362`
+- N4：`:2366-2371`（`createNotificationChannel`）
+
+**为什么只有 N2 能动态**：
+
+- N2 触发时传输**已连接**，`getActiveTunnelTransport()`（`:1821-1831`）对 h2 返回非空（映射后为 `"h2"`）、对 SSH 返回空，**可区分**。
+- N1/N3 在**断线态**渲染——h2 断线时该方法同样返回 `""`，与 SSH 无法区分。
+- N4 是通知通道描述，`createNotificationChannel` 首次创建后**固化**（改名需换 channel id，否则用户已建通道不会被更新），且与传输无关。
+
+**已经是通用措辞、不用改**：`browser_tunnel_waiting` / `browser_tunnel_failed`（`:52-53`，已是「隧道 / tunnel」）、`notif_ports_mapped`（`:106`，已是「端口映射」）、`notif_channel_bg_service`（`:96`）。
+
+> **N2 的措辞形态**：Android 资源没有前端那种运行时插值，最简做法是**在调用点按 `getActiveTunnelTransport()` 是否非空选两个字符串资源**（`strings.xml` 加一条 `tunnel_notification_recovering_h2`），而不是给 N2 硬塞 `%1$s`。见实施计划 T15。
+
+#### 12.3.2 前端 A/B 类 —— 应改或应动态（11 处）
+
+**所有 SSH 文案都在 i18n，`.vue` / `.ts` 无硬编码**（`web/src/` 全量 grep 确认）。
+
+| key | zh 行 / en 行 | 当前 zh | 分类 | 消费者（文件:行） |
+|---|---|---|---|---|
+| `proxy.tunnelDisconnected` | 1530 / 1527 | `SSH 隧道未连接` | B | `ProxyPanelContent.vue:30` banner 标题 |
+| `proxy.tunnelConnectedButNoResponse` | 1536 / 1533 | `SSH 隧道已连接，但所有端口的服务均未响应` | B | `ProxyPanelContent.vue:39` banner 详情 |
+| `proxy.backgroundTip` | 1537 / 1534 | `…否则 APP 进入后台后 SSH 隧道会被系统终止` | B | `ProxyPanelContent.vue:48` |
+| `proxy.toast.tunnelRecovered` | 1604 / 1601 | `SSH 隧道已恢复` | B | `ProxyPanelContent.vue:520` |
+| `proxy.toast.tunnelConnectedNoResponse` | 1605 / 1602 | `SSH 隧道已连接，但端口服务未响应` | B | `ProxyPanelContent.vue:522` |
+| `proxy.toast.tunnelStillDisconnected` | 1606 / 1603 | `SSH 隧道仍未连接` | B | `ProxyPanelContent.vue:524` |
+| `portForward.tunnelDegraded` | 1611 / 1608 | `SSH 隧道已连接，但所有转发端口均无服务响应` | B | `usePortForward.ts:592,643,720,750` → `tunnelMessage` |
+| `portForward.tunnelDisconnected` | 1612 / 1609 | `SSH 隧道未连接，端口映射将无法使用` | B | `usePortForward.ts:606,633` → `tunnelMessage` |
+| `portForward.tunnelReconnected` | 1613 / 1610 | `SSH 隧道已重连` | B | `usePortForward.ts:830,859,870` toast |
+| `proxy.appRecommendation` | 1572 / 1569 | `使用 ClawBench APP 可自动建立 SSH 隧道，无需手动配置` | **A（仅通用）** | `ProxyPanelContent.vue:57` web 模式 banner |
+| `chat.localhost.sshDisabled` | 946 / 943 | `SSH 隧道已禁用，无法打开本地地址` | **A（仅通用）** | `useLocalhostAnnotation.ts:252` toast |
+
+> **`proxy.appRecommendation` 与 `chat.localhost.sshDisabled` 属 A 类而非 B**：它们要么出现在 web 模式（无原生隧道、`activeTransport` 恒 `''`，`ProxyPanelContent.vue:57` 由 `!isAppMode` 门控），要么出现在「隧道整体禁用」的语义下（`useLocalhostAnnotation.ts:252`），**没有可标注的当前传输**。改通用措辞即可，不追加括号。
+
+#### 12.3.3 前端 C 类 —— 必须保留 SSH（15 处）
+
+改了就是错的：
+
+| 分组 | key | zh 行 / en 行 | 保留理由 |
+|---|---|---|---|
+| 方向提示 | `proxy.directionForwardHint` | 1556 / 1553 | 文案即 `ssh -L` |
+| | `proxy.directionReverseHint` | 1557 / 1554 | 文案即 `ssh -R` |
+| 手动指南 | `proxy.tunnelGuideStep2` | 1576 / 1573 | 复制 SSH 命令 |
+| | `proxy.tunnelGuideStep3` | 1577 / 1574 | 使用登录密码作为 SSH 密码 |
+| | `proxy.tunnelNeedSshHint` | 1578 / 1575 | 「本机还没有 ssh 命令？」 |
+| | `proxy.tunnelInstallWin` | 1579 / 1576 | 装 OpenSSH for Windows |
+| | `proxy.tunnelInstallMac` | 1580 / 1577 | macOS 自带 OpenSSH |
+| | `proxy.tunnelInstallLinux` | 1581 / 1578 | 装 OpenSSH |
+| | `proxy.tunnelNoCommand` | 1582 / 1579 | 「SSH 隧道命令将自动生成」 |
+| | `proxy.tunnelNoSsh` | 1583 / 1580 | 讲 `port_forward.enabled` 与 SSH 隧道（**触发条件见 §12.6**） |
+| SSH 错误分类 | `proxy.tunnelErrorAuth` | 1532 / 1529 | SSH 认证失败 |
+| | `proxy.tunnelErrorNetwork` | 1533 / 1530 | SSH 服务器不可达 |
+| | `proxy.tunnelErrorHostKey` | 1534 / 1531 | SSH host key 变更 |
+| FRP | `settings.items.frpAssignedSSHPort` | 2450 / 2447 | 字面就是「SSH 端口」 |
+| | `settings.items.frpSSHRemotePort` | 2454 / 2451 | 同上 |
+
+**web 模式的手动指南整块是 C**（`ProxyPanelContent.vue:55-106`，由 `:62` 的 `v-if="!isAppMode && sshInfo && sshInfo.enabled"` 门控）——展示服务端生成的 `ssh -N -L …` 命令（来自 `/api/ssh/info/full` 的 `command`）、SSH 指纹、装 ssh 客户端指引。浏览器没有客户端 h2 路径。
+
+### 12.4 动态标注设计
+
+**用户已拍板：追加括号标注，不猜传输。**
+
+- **数据源**：`usePortForward.ts:79` 的 `activeTransport = ref<TunnelTransport>('')`（类型 `'ssh'|'h2'|'both'|''`，`:60`；`TRANSPORTS` 白名单 `:62`），由 `refreshActiveTransport()`（`:534-560`）填充——首选 `native.getActiveTunnelTransport()`，回退 `native.getTunnelTransport()`（`:558-559`），两者都不命中白名单则回退 `''`。
+- **现有标签映射**：`ProxyPanelContent.vue:348-355` 的 `transportLabel`（`'ssh'→transportSsh`、`'h2'→transportH2`、`'both'→transportAuto`），渲染在 `:22-24` 的 `.tunnel-transport` 行。
+- **规则（硬性）**：
+
+  | `activeTransport` | 渲染 |
+  |---|---|
+  | `'ssh'` | 通用措辞 + `（SSH）` |
+  | `'h2'` | 通用措辞 + `（HTTP/2）` |
+  | `''` | **纯通用措辞，不追加**（未知，不猜） |
+  | `'both'` | **纯通用措辞，不追加**（此刻无法确定实际胜出的是哪条） |
+
+- **实施要点**：这些文案是 i18n 值，需改为**带插值**的形式（如 zh `隧道已连接（{transport}）`），调用点传参。调用点已列出：
+  - banner（模板 `t(...)`）：`ProxyPanelContent.vue:30, 39, 48`
+  - toast：`ProxyPanelContent.vue:520, 522, 524`；`usePortForward.ts:830, 859, 870`
+  - `tunnelMessage` 赋值点：`usePortForward.ts:592, 606, 633, 643, 720, 750`
+- **标签来源**：插值值应复用 `transportLabel` 的映射结果（`'ssh'→'SSH'`、`'h2'→'HTTP/2'`），**不要**在调用点另起一套字面量，否则三处会漂移。
+
+> **依赖 T3**：Android 侧 `getActiveTunnelTransport()` 现在返回 `tls|h2c`，被前端白名单（`TRANSPORTS`，`:62`）拒绝 → `activeTransport` 永远拿不到 h2。**本动态标注依赖实施计划 T3**（Android 边界把 `tls|h2c → h2`）才能真的显示 `（HTTP/2）`。在 T3 落地前，Android 上 h2 状态只会退回纯通用措辞（不显示标注），**不会显示错误标注**——这是安全的降级。
+
+### 12.5 数据可靠性缺口（`activeTransport` 可能为 `''`）
+
+**必须写进文档的事实**：`refreshActiveTransport()` 在生产中**只被 `checkTunnelHealth()` 调用一处**（`usePortForward.ts:570`）。而 `checkTunnelHealth()` 只在这些时候跑：
+
+- `usePortForward.ts:486` 的 `syncToNative()` 里，但**仅当至少有一个已启用端口**时——`:442-447` 在无启用端口时提前 `return`（并 `stopBackgroundService()`）；
+- `ProxyPanelContent.vue:514`（手动重试按钮）；
+- **`ProxyPanelContent.vue` 没有 `onMounted` / watch 触发健康检查**；
+- **5s 恢复轮询 `startTunnelPoll`（`:706-762`）不刷新它**。
+
+**结论**：`activeTransport` 在下列场景会停留在 `''`（**app 模式下也可能**）：
+
+1. 面板打开但从未点过「重试」，且没有已启用端口触发过 `syncToNative`；
+2. 轮询恢复了隧道（`:716/:746/:757` 把 `tunnelMessage` 清空）但没刷新 `activeTransport`。
+
+→ 按 §12.4 规则**退回纯通用措辞**。这是**刻意保守**：宁可少标，不可标错。若未来要求标注更可靠，需要给 `refreshActiveTransport()` 补触发点（面板 `onMounted`、`startTunnelPoll` 每次成功轮询后），**本设计不改**（属行为改动，超出措辞范围）。
+
+### 12.6 【真 bug】`proxy.tunnelNoSsh` 的触发条件（比措辞更值得修）
+
+**现状**：`ProxyPanelContent.vue:116` 的 banner `v-if="!isAppMode && sshInfo && !sshInfo.enabled"`，其详情 `:119` 渲染 `proxy.tunnelNoSsh`（`zh.ts:1583` = `SSH 隧道未启用，请在服务器端 config.yaml 中配置 port_forward.enabled: true`）。
+
+**问题**：在 h2 可用的安装下，用户关掉 `port_forward.enabled` 以避免跑 SSH、靠 h2 隧道工作（**这正是 §2.2 描述的「只想跑 h2」人群**），**端口映射其实正常工作**，这个 banner 却在叫用户去开 SSH——**误导**。
+
+**根因**：**把「没有 SSH 监听」等同于「没有端口转发」**。这与既有的「`transport` 语义混乱」（§10 后续可清理项）是同一类问题：`sshInfo` 来自 `/api/ssh/info/full`，它**只反映 SSH 状态**，不含 h2 可用性。
+
+**建议修法**（**本次只记录，不实施**）：把 banner 的判定从「SSH 监听是否启用」改为「端口转发是否可用」——即同时考虑 h2 通道可用性（web 端可读服务端 `port_forward.transport` 与 `tunnelTransportAllowsH2()`，`usePortForward.ts:515-523`）。措辞改通用（§12.3.2 未含此 key，因为它整体属 C 类语义；但**若修了触发条件，其文案应同步改通用**，否则「端口转发正常」时还显示「SSH 隧道未启用」仍矛盾）。
+
+> **本次边界**：措辞任务（T13–T16）**只改文案值**，不改这个 `v-if`。触发条件修复单列为实施计划 **T16**（低风险收尾），并明确标注「改判定条件 = 行为改动，需单独验收」。
+
+### 12.7 死 key 清理建议
+
+以下 3 个 key **无任何消费者**（`web/src` 全量 grep 确认），建议顺带清理（zh + en 两处同时删）：
+
+| key | zh 行 / en 行 | 说明 |
+|---|---|---|
+| `proxy.sshTunnel` | 1565 / 1562 | 无渲染点 |
+| `proxy.copySSHCommand` | 1570 / 1567 | 无渲染点 |
+| `settings.items.portForwardEnabledDesc` | 2434 / 2431 | 文案写着「通过 SSH 隧道转发…」但**从不渲染**——若未来启用，措辞应直接改通用 |
+
+> **命名空间无 parity 测试**：`proxy.*` / `portForward.*` / `settings.items.*` **既没有 zh/en parity 测试，也没有快照**，所以删/改名 key 不会被任何测试抓到——**但改名必须同时改两个 locale 与所有调用点**，且**只删确认无消费者的 key**。清理动作放实施计划 T16。
+
+### 12.8 测试影响
+
+**有利事实：没有测试断言这些文案的 _值_，只断言 _key_。** 所以改 i18n **值**是测试安全的；只有 **key 重命名**、**函数重命名**、**mock 形状变化**会破测试。逐条：
+
+| # | 测试:行号 | 断言内容 | 改值是否破 | 备注 |
+|---|---|---|---|---|
+| 1 | `ProxyPanelContent.transport.test.ts:143-150` | `.tunnel-transport-value` 文本 `=== 'SSH'`（mock 了 `transportSsh` `:48`） | 否 | **改 `transportSsh`/`transportH2`/`transportAuto` 的 key 名或映射会破** |
+| 2 | 同文件 `:152-157` | h2 → `'HTTP/2'` | 否 | 同上 |
+| 3 | 同文件 `:159-166` | both → `'自动'` | 否 | 同上 |
+| 4 | 同文件 `:168-175` / `:177-184` | 空 / web 模式隐藏 | 否 | 守 `.tunnel-transport` 的 `v-if` 语义 |
+| 5 | `usePortForward.test.ts:82` | `gt` mock 成 **identity** | — | **关键**：`gt('portForward.tunnelDegraded')` 原样返回 key |
+| 6 | 同文件 `:1695, :1742, :1897, :1976, :2003` | `tunnelMessage.value === 'portForward.tunnelDegraded' \| 'portForward.tunnelDisconnected'` | 否（断言 key） | **但给这些 key 加插值参数后，`gt` identity mock 会收到额外实参**——断言仍是 key 字符串，**需复核 mock 签名**（见风险 R12.4） |
+| 7 | 同文件 `:756, :827, :846` | toast key `'portForward.tunnelReconnected'` | 否（断言 key） | 同上 |
+| 8 | 同文件 `:96-115` | **自复制了一份 `portForwardUtils` mock**（只含 `tunnelStatusFromPorts` / `buildPortUrl` / `buildServerAddress` / `isReversePort`） | — | **若 `usePortForward.ts` 新增 import 任何 `portForwardUtils` 导出（例如传输标签 helper），该 mock 必须同步，否则套件抛错** |
+| 9 | `useLocalhostAnnotation.test.ts:374, 415` | toast key `'chat.localhost.sshDisabled'` | 否（改 key 会破） | 改值安全 |
+| 10 | `portForwardUtils.test.ts:157-186` | `describe('sshInstallHint')` 函数名 + Windows OpenSSH URL | — | **`sshInstallHint` 是 C 类，不动**（真实文件在 `web/src/utils/portForwardUtils.ts`，非 `composables/`） |
+| 11 | `ProxyPanelContent.direction.test.ts:169, 181`、`ProxyPortItem.test.ts:191` | 断言**测试自己 mock 里**的 `ssh -L` / `ssh -R` 文案 | 否 | 不是真实 locale，改 locale 不破 |
+
+> **不存在的东西**：`proxy.*` / `portForward.*` / `settings.items.*` **无 zh/en parity 测试、无快照**。新增/改名 key 不会被 parity 测试抓到（`settings.items.tunnelTransportH2*` 等新 key 在 T9 也同理）。
+
+### 12.9 风险点
+
+| # | 风险 | 说明 / 缓解 |
+|---|---|---|
+| R12.1 | **插值改造牵动 `gt` identity mock** | `usePortForward.test.ts:82` 把 `gt` mock 成 `(key) => key`。若把 `gt('portForward.tunnelDegraded')` 改成 `gt('portForward.tunnelDegraded', { transport })`，identity mock 仍返回 key，**断言不破**；但若改成**拼接字符串**（`gt(key) + '（' + label + '）'`）则 `tunnelMessage` 不再是纯 key，`:1695` 等**会破**。**推荐**：让 `tunnelMessage` 存**完整可渲染串**但把拼接放进调用点，或同步更新这些断言。实施时二选一并写清 |
+| R12.2 | **`transportLabel` 映射测试** | `ProxyPanelContent.transport.test.ts` 断言 `.tunnel-transport-value` 为 `'SSH'` / `'HTTP/2'` / `'自动'`（`:149/:156/:165`）。追加括号标注**不要动 `.tunnel-transport-value` 本身**（那是「当前传输」独立行），标注应落在 banner / toast 文案里，否则破这三条 |
+| R12.3 | **`usePortForward.test.ts` 自复制 mock** | 见 §12.8 #8。若为传输标签新增 `portForwardUtils` 导出（如 `transportDisplayLabel`），**必须**同步 `:96-115` 的 mock，否则整个套件抛 `No export named …` |
+| R12.4 | **`activeTransport` 依赖 T3** | 见 §12.4 / §12.5。T3 未落地时 Android 拿不到 `'h2'`，动态标注**永不显示**（安全降级，但不达验收）→ **T14 的验收必须等 T3** |
+| R12.5 | **`activeTransport` 可能为 `''`** | 见 §12.5。保守回退纯通用措辞；不得为「让标注出现」而猜传输 |
+| R12.6 | **`tunnelNoSsh` 触发条件是行为 bug** | 见 §12.6。措辞改通用**缓解但不解决**；真正修复要改 `v-if` 判定，属行为改动，单列 T16 并单独验收 |
+| R12.7 | **改 key 名 / 函数名会破测试** | 改 i18n **值**安全（§12.8）；**改 key 名**会破 #1–#4、#9，**必须**同步两 locale + 所有调用点 + 断言 |
+| R12.8 | **Android 资源无插值** | N2 动态化不能用前端那种运行时插值；用「按传输选资源」而非给 N2 塞 `%1$s`（见 §12.3.1 注） |
+
+### 12.10 未验证项（诚实标注）
+
+| # | 未验证 | 说明 |
+|---|---|---|
+| V1 | **`activeTransport` 在真机各时序下的实际取值** | §12.5 的「何时为 `''`」是从调用链静态推导（`:442-447` / `:486` / `:570` / `:706-762`），未在真机插桩观察面板打开瞬间的取值 |
+| V2 | **`proxy.tunnelNoSsh` bug 的真实触发频率** | §12.6 的「h2 安装下误导」是从 `:116` 的 `v-if` 与 §2.2 的「只想跑 h2」人群推导，未在 h2-only 安装上实测 |
+| V3 | **Android 通知文案的现有测试覆盖** | 尚未确认 `BackgroundService` 通知文案是否有单测断言（T15 第一步要求先查）；若无，则改 N1–N4 **零测试影响**，但也**无回归守护** |
+| V4 | **N2 动态选词的用户感知** | 「HTTP/2 隧道已恢复」与「SSH 隧道已恢复」的实际可读性未做用户验证；纯通用（「隧道已恢复」）+ 括号（「隧道已恢复（HTTP/2）」）两种形态未二选一实测 |
