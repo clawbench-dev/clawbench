@@ -799,6 +799,14 @@ export default {
       nothingToRewind: 'This is the last message — nothing to rewind',
       sessionLimitReached: 'Maximum session limit reached',
     },
+    // In-flight hints for slow actions (shared by the top progress bar and the
+    // sticky toast). `elapsed` is the seconds so far, so the user can tell
+    // "still working" from "hung".
+    busy: {
+      forking: 'Forking session…',
+      syncing: 'Syncing native session…',
+      elapsed: '{elapsed}s',
+    },
     messageList: {
       loadingMore: 'Loading...',
       moreOlderMessages: '{count} more older messages',
@@ -2149,6 +2157,10 @@ export default {
       wallpaperBingSyncedAt: 'Synced {date}',
       wallpaperBingNoImage: 'No image fetched yet',
       wallpaperBingFailed: 'Bing wallpaper sync failed — still using the last successful image',
+      wallpaperBingSaveToGallery: 'Add to gallery',
+      wallpaperBingSaving: 'Adding…',
+      wallpaperBingSaved: 'Bing wallpaper saved to gallery',
+      wallpaperBingSaveFailed: 'Failed to save Bing wallpaper to gallery',
       wallpaperGallery: 'Local gallery',
       wallpaperGalleryDesc: 'Upload several images at once, click a thumbnail to switch, use the × to delete. Images live in the server data directory and are shared across devices',
       wallpaperGalleryUpload: 'Upload images',

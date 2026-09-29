@@ -802,6 +802,13 @@ export default {
       nothingToRewind: '这是最后一条消息，没有可回溯的内容',
       sessionLimitReached: '已达到最大会话数',
     },
+    // 长耗时动作的进行中提示（顶部进度条 + 常驻 toast 共用）。
+    // `elapsed` 是已用秒数，用来区分「在跑」与「卡死」。
+    busy: {
+      forking: '正在分叉会话…',
+      syncing: '正在同步原生会话…',
+      elapsed: '{elapsed}s',
+    },
     messageList: {
       loadingMore: '加载中...',
       moreOlderMessages: '还有 {count} 条更早消息',
@@ -2148,6 +2155,10 @@ export default {
       wallpaperBingSyncedAt: '同步于 {date}',
       wallpaperBingNoImage: '尚未获取到图片',
       wallpaperBingFailed: 'Bing 壁纸同步失败，继续使用上次成功的图片',
+      wallpaperBingSaveToGallery: '加入图库',
+      wallpaperBingSaving: '加入中…',
+      wallpaperBingSaved: '已保存到图库',
+      wallpaperBingSaveFailed: '保存到图库失败',
       wallpaperGallery: '本地图库',
       wallpaperGalleryDesc: '可一次上传多张图片，点击缩略图切换，右上角 × 删除。图片存放在服务器数据目录，跨设备共享',
       wallpaperGalleryUpload: '上传图片',

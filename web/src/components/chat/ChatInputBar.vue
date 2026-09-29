@@ -402,9 +402,14 @@ const isACPTransport = computed(() => {
 // ACP 同步按钮的禁用状态与提示：空会话（无 ACP 会话）或当前会话运行中时不可同步。
 const currentSessionRunning = computed(() => !!props.currentSessionRunning)
 const sessionEmpty = computed(() => !props.messages || props.messages.length === 0)
-const acpSyncDisabled = computed(() => props.acpSyncing || currentSessionRunning.value || sessionEmpty.value)
+// A fork in flight also blocks syncing: the busy indicator (bar + sticky toast)
+// is a singleton, so the two must not run at once. `busyKind` is 'fork' while
+// the fork POST is pending.
+const forkBusy = computed(() => props.busyKind === 'fork')
+const acpSyncDisabled = computed(() => props.acpSyncing || currentSessionRunning.value || sessionEmpty.value || forkBusy.value)
 const acpSyncTitle = computed(() => {
   if (props.acpSyncing) return t('chat.actions.acpSyncSyncing')
+  if (forkBusy.value) return t('chat.busy.forking')
   if (currentSessionRunning.value) return t('chat.actions.acpSyncRunning')
   if (sessionEmpty.value) return t('chat.actions.acpSyncEmpty')
   return t('chat.actions.acpSync')
@@ -591,6 +596,10 @@ const props = defineProps({
   chatUnreadCount: Number,
   chatRunning: Boolean,
   acpSyncing: Boolean,
+  /** Which long action currently owns the panel-wide busy indicator, if any.
+   *  'fork' blocks the sync button (the indicator and its sticky toast are a
+   *  singleton, so the two actions must not overlap). */
+  busyKind: { type: String, default: null },
   currentModelId: String,
   currentModelName: String,
   currentModeName: String,

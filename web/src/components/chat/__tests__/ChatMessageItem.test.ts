@@ -129,6 +129,7 @@ const i18n = createI18n({
         pending: { queuing: '排队中' },
         fileChanges: { title: '文件变更' },
         speech: { summarizing: '总结中' },
+        busy: { forking: '正在分叉会话…', syncing: '正在同步原生会话…', elapsed: '{elapsed}s' },
       },
       common: { remove: '移除', copy: '复制' },
     },
@@ -1063,6 +1064,46 @@ describe('ChatMessageItem', () => {
       const wrapper = createWrapper({ msg: assistantMsg })
       expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(true)
       expect(wrapper.find('button[title="chat.actions.rewindSession"]').exists()).toBe(true)
+    })
+  })
+
+  // In-flight fork: the POST can take seconds (it copies the whole history), so
+  // the clicked button must show that it registered. The id match is what keeps
+  // the spinner on the message that was actually forked.
+  describe('forking busy state', () => {
+    const assistantMsg = { id: 'fk1', role: 'assistant', content: 'response', blocks: [{ type: 'text', text: 'Hello world' }] }
+
+    it('shows a spinner and disables the fork button for the matching message', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, forkingMessageId: 'fk1' })
+      const btn = wrapper.find('button[title="正在分叉会话…"]')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
+      expect(btn.find('.loading-indicator-stub').exists()).toBe(true)
+      // The Split glyph is swapped out — a spinner AND the fork icon would read
+      // as two states at once.
+      expect(btn.find('svg').exists()).toBe(false)
+    })
+
+    it('matches numeric ids against string markers (ids cross a JSON boundary)', () => {
+      // The parent stores the id it forked; message ids may be numbers while the
+      // marker round-trips as a string. A strict === would leave the spinner off.
+      const wrapper = createWrapper({ msg: { ...assistantMsg, id: 42 }, forkingMessageId: '42' })
+      expect(wrapper.find('button[title="正在分叉会话…"]').exists()).toBe(true)
+    })
+
+    it('leaves OTHER messages untouched while one is forking', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, forkingMessageId: 'some-other-id' })
+      expect(wrapper.find('button[title="正在分叉会话…"]').exists()).toBe(false)
+      const btn = wrapper.find('button[title="chat.actions.forkSession"]')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
+      expect(btn.find('svg').exists()).toBe(true)
+    })
+
+    it('renders the normal fork button when no fork is in flight', () => {
+      const wrapper = createWrapper({ msg: assistantMsg, forkingMessageId: null })
+      expect(wrapper.find('button[title="chat.actions.forkSession"]').exists()).toBe(true)
+      expect(wrapper.find('button[title="正在分叉会话…"]').exists()).toBe(false)
     })
   })
 

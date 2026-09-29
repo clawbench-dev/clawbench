@@ -118,8 +118,9 @@
           class="chat-action-btn"
         />
         <template v-if="msg.role === 'assistant'">
-          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" @click="$emit('fork-from-message', msg)" :title="t('chat.actions.forkSession')">
-            <Split :size="14" />
+          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
+            <LoadingIndicator v-if="isForking" size="sm" inline />
+            <Split v-else :size="14" />
           </button>
           <button
             v-if="!readOnly && !msg.streaming && !hideSessionActions"
@@ -205,6 +206,10 @@ const props = defineProps({
    *  execution record does not have. The rest of the bar (summary toggle,
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
+  /** Message id whose fork button is mid-flight. The fork POST can take
+   *  seconds (it copies the whole history), so the clicked button swaps to a
+   *  spinner and disables — without it the click reads as a no-op. */
+  forkingMessageId: { type: [Number, String], default: null },
   /** Public share page: the viewer is anonymous, so every per-message action
    *  is suppressed — speak/fork/rewind need a live session or auth, copy/
    *  details duplicate what the snapshot already renders (details also exposes
@@ -223,6 +228,10 @@ const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
 const speakBtnRef = ref(null)
 const toggleWrapRef = ref(null)
+
+/** True while THIS message's fork is in flight (id match against the parent's
+ *  in-flight marker). Drives the button's spinner + disabled state. */
+const isForking = computed(() => props.forkingMessageId != null && String(props.forkingMessageId) === String(props.msg?.id))
 
 // ── Summary/original toggle scroll anchoring ──
 // The toggle button sits in the bottom meta bar, BELOW the message content.
@@ -576,6 +585,22 @@ const copyPayload = quotableText
 /* Speak button loading spinner animation */
 .chat-action-btn.loading .speak-spinner {
     animation: speak-spin 1s linear infinite;
+}
+
+/* In-flight fork button. It stays `disabled` so it cannot be clicked twice, but
+   the shared :disabled rule mutes it to --opacity-disabled — and the spinner IS
+   the feedback that the click registered, so dimming it undercuts the point.
+   Restore full opacity here (scoped styles carry a [data-v-*] attribute, so this
+   (0,3,0) rule wins over the shared (0,2,0) one) while keeping the muted cursor
+   and the native disabled semantics. The spinner itself follows the accent so
+   it reads as "working", not as a greyed-out control. */
+.chat-action-btn.is-forking {
+    opacity: 1;
+    cursor: default;
+}
+
+.chat-action-btn.is-forking .li-spinner {
+    --li-color: var(--accent-color);
 }
 
 @keyframes speak-spin {

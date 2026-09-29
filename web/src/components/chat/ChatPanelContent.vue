@@ -1,5 +1,11 @@
 <template>
   <div class="chat-panel-content">
+    <!-- Long-action feedback. Absolute at the panel's top edge so it is visible
+         regardless of scroll position or viewport width — the button that was
+         clicked may be scrolled out of the horizontally-scrollable action bar.
+         Also mirrored by a sticky toast (startBusy) for the elapsed counter. -->
+    <BusyBar :visible="busy !== null" :label="busyLabel" />
+
     <!-- Messages -->
     <ChatMessageList
       ref="messageListRef"
@@ -17,6 +23,7 @@
       :totalMessages="session.totalMessages.value"
       :active="props.active"
       :btwAnchors="btwAnchors"
+      :forkingMessageId="forkingMessageId"
       @open-btw="openBtwDrawer"
       @touchstart.passive="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
@@ -99,6 +106,7 @@
       :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
       :acpSyncing="acpSyncing"
+      :busyKind="busy"
       :active="props.active"
       @send="sendMessage"
       @btw="handleBtw"
@@ -225,6 +233,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
+import BusyBar from '@/components/common/BusyBar.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { formatToolOutput, revertAskSubmission } from '@/utils/renderToolDetail.ts'
@@ -329,6 +338,9 @@ const metadataModal = ref({
 const metadataDrawer = useTabDrawer('chat')
 const forkAgentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const forkPending = ref(null) // { sessionId, beforeMessageId }
+/** Message id whose fork button is mid-flight — drives its in-place spinner.
+ *  Null when no fork is running. */
+const forkingMessageId = ref(null)
 /** Conversation-share dialog state. The id is captured on open so the dialog
  *  keeps targeting that session even if the user switches away. */
 const sessionShareOpen = ref(false)
@@ -336,6 +348,65 @@ const sessionShareId = ref('')
 const toast = useToast()
 const acpSyncing = ref(false)
 const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
+
+/**
+ * Long-action feedback (fork / ACP sync).
+ *
+ * Both actions POST and only touch the message area once the response lands,
+ * which can take many seconds — forking copies the whole history and ACP sync
+ * closes the agent process and replays the session. Without feedback the click
+ * reads as a no-op. Two channels carry the same fact:
+ *   - `BusyBar` at the panel's top edge: always visible, independent of scroll.
+ *   - a sticky toast (`duration: 0`) showing the elapsed seconds, so "still
+ *     working" is distinguishable from "hung".
+ *
+ * ONE action at a time, and the claim is explicit (`startBusy` returns false
+ * when another action already owns the indicator). The toast is a singleton, so
+ * two concurrent tickers would overwrite each other's text and whichever
+ * finished first would dismiss the other's toast. Both entry points are also
+ * disabled while busy (see `busyKind` / `forkingMessageId`), so the losing
+ * claim is a belt-and-braces guard rather than a path the user can reach.
+ *
+ * `stopBusy` deliberately shows NO completion toast: each caller already has a
+ * specific success/failure toast, and emitting a generic one here would double
+ * up (and could overwrite the specific message).
+ */
+const busy = ref(null)
+const busyElapsed = ref(0)
+let busyTimer = null
+
+const busyLabel = computed(() => (busy.value === 'sync' ? t('chat.busy.syncing') : t('chat.busy.forking')))
+
+function busyToastText() {
+  return `${busyLabel.value} ${t('chat.busy.elapsed', { elapsed: busyElapsed.value })}`
+}
+
+/** Claim the indicator for `kind`. Returns false if another action holds it. */
+function startBusy(kind) {
+  if (busy.value !== null) return false
+  busy.value = kind
+  busyElapsed.value = 0
+  toast.show(busyToastText(), { type: 'loading', duration: 0 })
+  // 1Hz is enough to show progress without churning the toast DOM; the counter
+  // exists to answer "is this still alive", not to be a stopwatch.
+  busyTimer = setInterval(() => {
+    busyElapsed.value++
+    toast.show(busyToastText(), { type: 'loading', duration: 0 })
+  }, 1000)
+  return true
+}
+
+/** Release the indicator. Pass `kind` so a late `finally` from one action can
+ *  never clear another action's state (they are serialised, but the guard keeps
+ *  that invariant local instead of implied by call-site ordering). */
+function stopBusy(kind) {
+  if (kind && busy.value !== kind) return
+  if (busyTimer) { clearInterval(busyTimer); busyTimer = null }
+  busy.value = null
+  // Only clear the sticky toast; a result toast from the caller replaces it
+  // anyway (show() overwrites), but on failure paths nothing else would.
+  if (toast.type.value === 'loading') toast.dismiss()
+}
 
 async function handleSyncAcpSession() {
   const sid = identity.currentSessionId.value
@@ -349,6 +420,7 @@ async function handleSyncAcpSession() {
   if (!confirmed) return
 
   acpSyncing.value = true
+  const claimed = startBusy('sync')
   // 同步期间禁用输入：避免用户在 LoadSession 回放窗口内发消息，导致回复通知被
   // 改路由进回放缓冲（而非实时流）。
   const prevInputDisabled = inputDisabled.value
@@ -365,6 +437,7 @@ async function handleSyncAcpSession() {
   } finally {
     inputDisabled.value = prevInputDisabled
     acpSyncing.value = false
+    if (claimed) stopBusy('sync')
   }
 }
 
@@ -1025,7 +1098,7 @@ async function handleForkFromMessage(msg) {
     await agentsComposable.loadAgents()
     // If only one agent, fork directly (inherits source session's agent)
     if (agentsList.value.length <= 1) {
-      await manager.forkSession(sid, msg.id)
+      await runFork(sid, msg.id)
       return
     }
     // Multiple agents — show selector with source session's agent pre-selected
@@ -1039,7 +1112,23 @@ function handleForkAgentSelect(agentId) {
   const pending = forkPending.value
   if (!pending) return
   forkPending.value = null
-  manager.forkSession(pending.sessionId, pending.beforeMessageId, agentId)
+  runFork(pending.sessionId, pending.beforeMessageId, agentId)
+}
+
+/**
+ * Run a fork with the shared busy feedback. The message id drives the in-place
+ * spinner on that message's fork button; the BusyBar/toast cover the rest of
+ * the wait (the POST itself has no other visible progress).
+ */
+async function runFork(sessionId, beforeMessageId, agentId) {
+  if (!startBusy('fork')) return
+  forkingMessageId.value = beforeMessageId ?? null
+  try {
+    await manager.forkSession(sessionId, beforeMessageId, agentId)
+  } finally {
+    forkingMessageId.value = null
+    stopBusy('fork')
+  }
 }
 
 // Rewind/回溯: truncate the current session at this assistant message, reset the
@@ -1780,6 +1869,10 @@ onUnmounted(() => {
     removeEventHandler()
     cleanupPreviewUrls()
     stream.disconnectStream()
+    // A fork/sync in flight outlives this component (the request keeps running),
+    // so stop the ticker and drop the sticky toast rather than leaving an
+    // orphaned interval updating a toast that no longer belongs to a panel.
+    stopBusy()
     // Clear tool update debounce timers
     for (const timer of toolUpdateFetchDebounce.values()) clearTimeout(timer)
     toolUpdateFetchDebounce.clear()
