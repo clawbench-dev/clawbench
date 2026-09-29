@@ -35,6 +35,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -637,6 +638,47 @@ public class BackgroundServiceTransportTest {
                 getField("h2PortForwardTransport"));
         assertNull("activeTransport must not point at a closed transport",
                 getField("activeTransport"));
+    }
+
+    @Test
+    public void ensureConnection_h2CloseThrows_stillClearsTheFieldsAndReachesSsh() throws Exception {
+        // Report item 1: teardownH2IfAny()'s close() is best-effort, symmetric
+        // with teardownSshIfAny(). A throwing close must neither strand
+        // h2PortForwardTransport/activeTransport nor prevent the SSH branch from
+        // running. The real adapter's close() does not throw today (its sockets
+        // are closed via closeQuietly), so this pins the defensive contract by
+        // injecting a throwing adapter.
+        com.clawbench.app.tunnel.H2PortForwardTransport throwing =
+                mock(com.clawbench.app.tunnel.H2PortForwardTransport.class);
+        doThrow(new RuntimeException("close blew up")).when(throwing).close();
+        setField("h2PortForwardTransport", throwing);
+        // Production invariant: while h2 is live, activeTransport IS the adapter
+        // (h2Transport() returns h2PortForwardTransport when no test override is
+        // set), so the teardown's identity check is what clears it.
+        setField("activeTransport", throwing);
+
+        // SSH is already alive, so ensureSshConnection() adopts it and returns
+        // without any network I/O — a deterministic way to prove the SSH branch
+        // was actually reached. A missing server URL would work too, but then
+        // "the SSH connection is established" could not be asserted.
+        Session session = mock(Session.class);
+        when(session.isConnected()).thenReturn(true);
+        setField("sshSession", session);
+
+        // Preference is SSH (the default). WITHOUT the guard in teardownH2IfAny
+        // this call propagates "close blew up" and never reaches
+        // ensureSshConnection(), so every assertion below fails.
+        service.ensureConnection();
+
+        verify(throwing).close();
+        assertNull("a throwing close must not leave the h2 adapter referenced",
+                getField("h2PortForwardTransport"));
+        assertNotNull("the SSH branch must still run and become the live transport",
+                getField("activeTransport"));
+        assertSame("activeTransport must point at the SSH transport, not the dead h2 one",
+                getField("sshTransport"), getField("activeTransport"));
+        assertSame("the live SSH session must be adopted, not discarded",
+                session, getField("sshSession"));
     }
 
     @Test

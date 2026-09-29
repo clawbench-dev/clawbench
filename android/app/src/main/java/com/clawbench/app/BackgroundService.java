@@ -1671,6 +1671,14 @@ public class BackgroundService extends Service {
         sshSession = null;
         // The SSH adapter wraps sshSession and holds no resources of its own, so
         // it is only dropped when it was the live transport.
+        //
+        // Comparing the field (rather than `instanceof SshPortForwardTransport`)
+        // is exact here: `sshTransport` is write-once — assigned only inside
+        // sshTransport() and never reset — and activeTransport is only ever set
+        // to that same instance, so "identity" and "is the SSH family" agree in
+        // every reachable state. The lone degenerate case, both fields null,
+        // re-nulls a null and is a no-op. The family check would add no safety
+        // while coupling this to the concrete adapter class.
         if (activeTransport == sshTransport) {
             activeTransport = null;
         }
@@ -1689,7 +1697,19 @@ public class BackgroundService extends Service {
     private void teardownH2IfAny() {
         H2PortForwardTransport h2 = h2PortForwardTransport;
         if (h2 == null) return;
-        h2.close();
+        // Mirror teardownSshIfAny: the close is best-effort and the field
+        // cleanup below must run even when it throws. Leaving the transport
+        // referenced (and activeTransport pointing at it) would strand the
+        // caller in a half-torn state: ensureConnection() would propagate the
+        // throw instead of reaching ensureSshConnection(), so the switch to SSH
+        // silently never happens. Today's H2PortForwardTransport.close() does
+        // not throw, but the SSH half already guarantees this, and the two
+        // helpers should be symmetric.
+        try {
+            h2.close();
+        } catch (Exception e) {
+            AppLog.e(TAG, "H2: error closing transport on transport switch", e);
+        }
         h2PortForwardTransport = null;
         if (activeTransport == h2) {
             activeTransport = null;
