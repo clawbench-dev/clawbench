@@ -53,6 +53,9 @@
         </button>
         <pre v-if="execDetail?.eventSummary && eventContextOpen" class="exec-event-context">{{ execDetail.eventSummary }}</pre>
       </div>
+      <!-- Gating script result. Shown above the answer so the gate's decision
+           frames what follows; absent for a task with no script. -->
+      <TaskScriptResultCard v-if="execDetail?.script" :script="execDetail.script" />
       <ChatMessageItem
         v-if="activeMsgData"
         :msg="activeMsgData"
@@ -135,6 +138,7 @@ import { ref, computed, watch, nextTick, provide, onUnmounted, inject } from 'vu
 import { useI18n } from 'vue-i18n'
 import { MessageSquare, Square, Zap, ExternalLink, ChevronDown } from 'lucide-vue-next'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
+import TaskScriptResultCard from '@/components/task/TaskScriptResultCard.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import { mergeDbBlocksWithLive } from '@/utils/chatBlocks'

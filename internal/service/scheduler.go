@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -846,12 +847,17 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		backendName = "codebuddy"
 	}
 
-	// ── Pre-AI script phase ──────────────────────────────────────────────
-	// An optional script runs BEFORE the session/AI. It lets a cron task bail
-	// out cheaply (e.g. "nothing changed") without spawning an AI turn or
-	// notifying the user. Only cron tasks have a script: an event task's
-	// prompt is driven entirely by the injected event context.
-	var scriptPromptBlock string
+	// ── Pre-AI gating script phase ───────────────────────────────────────
+	// An optional script runs BEFORE the session/AI as a gate: exit code 0
+	// opens it and the AI turn runs, anything else (non-zero, timeout) closes
+	// it and the run is skipped without spawning a session. Only cron tasks
+	// have a script: an event task's prompt is driven entirely by the injected
+	// event context.
+	//
+	// The script's result is always persisted on the execution row (exit code,
+	// stdout, stderr) so the run's history can show what the gate saw, and its
+	// output is substituted into the prompt through the template variables.
+	var scriptRes *ScriptResult
 	if !task.IsEventTriggered() && task.Script != "" {
 		// Register the script as a cancellable running execution so a user
 		// cancel reaches the script's context (CancelExecution looks up by the
@@ -860,9 +866,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		//
 		// Deliberately NO task_update event here. A "running" task_update is a
 		// user-visible notification (browser notification; DingTalk/Feishu
-		// "任务已启动"), and a skip must emit NOTHING — a "task started" that is
-		// never followed by a result is exactly the noise this feature exists
-		// to avoid. The script row is still discoverable through
+		// "任务已启动"), and a gated run must not announce itself before the
+		// gate has decided. The script row is still discoverable through
 		// GetRunningExecutions (GET /api/tasks/{id}) for the UI to label it.
 		scriptExecID := fmt.Sprintf("script-%d", task.ID)
 		s.runningExecutions.Store(scriptExecID, &RunningExecution{
@@ -876,9 +881,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 		res := RunTaskScript(ctx, task.Script, projectPath, scriptTimeoutDuration(task.ScriptTimeout))
 		s.runningExecutions.Delete(scriptExecID)
+		scriptRes = &res
 
-		switch res.Outcome {
-		case ScriptSkipped, ScriptCanceled:
+		// The gate is closed for anything but a clean exit 0, and for a cancel.
+		if res.Outcome != ScriptSucceeded {
 			status := "skipped"
 			if res.Outcome == ScriptCanceled {
 				status = "cancelled"
@@ -887,8 +893,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			// session_id (AddTaskExecutionWithStatus allows it).
 			execID, err := AddTaskExecutionWithStatus(task.ID, "", triggerType, status)
 			if err != nil {
-				slog.Error("failed to record script-skip execution",
+				slog.Error("failed to record script-gated execution",
 					slog.Int64("task_id", task.ID), slog.String("err", err.Error()))
+			} else if err := SetTaskExecutionScriptResult(execID, res); err != nil {
+				slog.Warn("failed to persist script result",
+					slog.Int64("execution_id", execID), slog.String("err", err.Error()))
 			}
 			s.finishScriptOnlyRun(task, status)
 			if status == "cancelled" {
@@ -901,10 +910,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 				}
 				emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", execIDArg, "", projectPath, task.Name)
 			}
-			// Skipped emits nothing: a content-free skip must not notify.
+			// A gate-closed run emits nothing: it is a deliberate no-op.
 			return
-		default:
-			scriptPromptBlock = buildScriptPromptBlock(res)
 		}
 	}
 
@@ -979,9 +986,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	// Render the final prompt. For event-triggered runs the forge event context
 	// is prepended as a fixed, read-only block; the task's own prompt follows as
-	// the user's instruction. Cron runs use the prompt verbatim, with any
-	// pre-AI script output injected between the event context (if any) and the
-	// task prompt.
+	// the user's instruction. The prompt's {{code}} / {{stdout}} / {{stderr}} /
+	// {{output}} variables are then substituted with the gating script's result
+	// (a task with no script leaves them untouched). The substituted prompt is
+	// what lands in the session history via AddChatMessage below, so the user
+	// can see exactly what the AI was given.
 	renderedPrompt := task.Prompt
 	if eventCtx != nil {
 		renderedPrompt = RenderEventContext(*eventCtx) + "\n\n" + task.Prompt
@@ -994,12 +1003,16 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			}
 		}
 	}
-	// The script output is injected before the task prompt so the AI sees the
-	// data it must act on, then the instruction. It also lands in the session
-	// history via AddChatMessage below, which is intended: the user can see
-	// exactly what the script produced.
-	if scriptPromptBlock != "" {
-		renderedPrompt = scriptPromptBlock + "\n\n" + renderedPrompt
+	if scriptRes != nil {
+		renderedPrompt = renderScriptPrompt(renderedPrompt, *scriptRes)
+		// Persist the script result on the AI-phase execution row too, so the
+		// execution detail can show the gate's output alongside the answer.
+		if executionID != 0 {
+			if err := SetTaskExecutionScriptResult(executionID, *scriptRes); err != nil {
+				slog.Warn("failed to record script result on execution",
+					slog.Int64("execution_id", executionID), slog.String("err", err.Error()))
+			}
+		}
 	}
 
 	// Write user message (the prompt)
@@ -1427,45 +1440,54 @@ func (s *Scheduler) finishScriptOnlyRun(task *model.ScheduledTask, status string
 	)
 }
 
-// buildScriptPromptBlock renders the script result into a delimited block that
-// is injected into the prompt. A successful run injects its stdout then stderr;
-// a failure/timeout injects the error text (with whatever output was produced).
-func buildScriptPromptBlock(res ScriptResult) string {
+// Script prompt template variables. The prompt may reference any of them and
+// they are replaced with the gating script's result before the AI is called.
+const (
+	scriptVarCode   = "{{code}}"
+	scriptVarStdout = "{{stdout}}"
+	scriptVarStderr = "{{stderr}}"
+	scriptVarOutput = "{{output}}"
+)
+
+// renderScriptPrompt substitutes the script template variables in prompt with
+// the gating script's result. Output is capped at scriptOutputCap (the same
+// constant the capture used) so a runaway producer cannot blow up the context.
+//
+// {{output}} is the merged stdout+stderr stream, for prompts that just want
+// "everything the script said" without caring which stream it came from.
+func renderScriptPrompt(prompt string, res ScriptResult) string {
+	stdout := truncateScriptOutput(res.Stdout, res.StdoutTruncated)
+	stderr := truncateScriptOutput(res.Stderr, res.StderrTruncated)
+	combined := combineScriptOutput(stdout, stderr, res.StdoutTruncated || res.StderrTruncated)
+
+	// Replace {{output}} first: it is the longest name and does not share a
+	// prefix with the others, but a single pass over a replacer keeps the
+	// substitution unambiguous and avoids re-substituting injected output.
+	return strings.NewReplacer(
+		scriptVarOutput, combined,
+		scriptVarStdout, stdout,
+		scriptVarStderr, stderr,
+		scriptVarCode, strconv.Itoa(res.ExitCode),
+	).Replace(prompt)
+}
+
+// combineScriptOutput merges the two streams for {{output}}, labeling stderr
+// only when it is non-empty so a clean run reads as plain output.
+func combineScriptOutput(stdout, stderr string, truncated bool) string {
 	var b strings.Builder
-	b.WriteString("<<<TASK_SCRIPT_OUTPUT>>>\n")
-	switch res.Outcome {
-	case ScriptFailed, ScriptTimedOut:
-		if res.Outcome == ScriptTimedOut {
-			b.WriteString("The task script timed out.\n")
-		} else {
-			fmt.Fprintf(&b, "The task script failed (exit code %d).\n", res.ExitCode)
-		}
-		if res.Err != nil {
-			b.WriteString(res.Err.Error())
-			b.WriteString("\n")
-		}
-		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
-			b.WriteString("--- stdout ---\n")
-			b.WriteString(out)
-			b.WriteString("\n")
-		}
-		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
-			b.WriteString("--- stderr ---\n")
-			b.WriteString(errOut)
-			b.WriteString("\n")
-		}
-	default: // ScriptProduced
-		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
-			b.WriteString(out)
-			b.WriteString("\n")
-		}
-		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
-			b.WriteString("--- stderr ---\n")
-			b.WriteString(errOut)
-			b.WriteString("\n")
-		}
+	if stdout != "" {
+		b.WriteString(stdout)
 	}
-	b.WriteString("<<<END_TASK_SCRIPT_OUTPUT>>>")
+	if stderr != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("--- stderr ---\n")
+		b.WriteString(stderr)
+	}
+	if truncated && b.Len() > 0 {
+		b.WriteString(scriptTruncationMarker)
+	}
 	return b.String()
 }
 
@@ -1652,6 +1674,20 @@ func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary stri
 	_, err := WriteExec(
 		"UPDATE task_executions SET event_url = ?, event_summary = ? WHERE id = ?",
 		eventURL, eventSummary, executionID,
+	)
+	return err
+}
+
+// SetTaskExecutionScriptResult records the gating script's result on an
+// execution, so the detail view can show the exit code and both output streams
+// without re-running the script or digging through the chat transcript. The
+// stored output is already capped at scriptOutputCap by the capture.
+func SetTaskExecutionScriptResult(executionID int64, res ScriptResult) error {
+	_, err := WriteExec(
+		`UPDATE task_executions
+		 SET script_exit_code = ?, script_stdout = ?, script_stderr = ?, script_duration_ms = ?
+		 WHERE id = ?`,
+		res.ExitCode, res.Stdout, res.Stderr, res.Duration.Milliseconds(), executionID,
 	)
 	return err
 }

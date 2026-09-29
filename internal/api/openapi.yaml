@@ -3795,8 +3795,10 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选预执行脚本，AI 调用前执行，工作目录为项目路径；仅 cron 任务生效。
-                    退出码 0 且无输出 → 跳过 AI 且不发通知；有输出或非 0/超时 → 注入 prompt 后照常调用 AI。
+                    可选门控脚本（仅 cron），AI 调用前执行，工作目录为项目路径。
+                    退出码 0 放行并调用 AI；非 0 / 超时关闭门控，跳过本次 AI（不建会话、不发通知）。
+                    结果记录在执行记录上；提示词可用模板变量：
+                    {{code}}、{{stdout}}、{{stderr}}、{{output}}。
                 script_timeout:
                   type: integer
                   minimum: 0
@@ -3850,7 +3852,8 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选预执行脚本（仅 cron）。`action=update` 时生效。
+                    可选门控脚本（仅 cron）。`action=update` 时生效。
+                    退出码 0 放行 AI，非 0 / 超时跳过 AI；脚本结果可在提示词中以模板变量引用。
                     **省略该字段表示保持不变**（与 `name` / `prompt` 等一致的部分更新语义）；
                     传空字符串表示清除脚本。
                 script_timeout:
@@ -3904,7 +3907,9 @@ paths:
             type: string
       responses:
         "200":
-          description: 执行记录
+          description: |
+            执行记录。每条可带 `script`（门控脚本结果），仅在任务配置了脚本时出现：
+            `exitCode` / `stdout` / `stderr` / `durationMs`。
 
   /api/tasks/{id}/executions/{execId}/continue:
     get:

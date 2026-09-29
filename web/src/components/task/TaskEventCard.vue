@@ -61,12 +61,12 @@
        Hidden when the task subscribes to no event: there is no trigger, so no
        context is ever injected and the samples would document nothing. -->
   <div v-if="contextRows.length > 0" class="overview-card">
-    <h3 class="card-title context-card-title" @click="contextCollapsed = !contextCollapsed">
+    <h3 class="card-title is-collapsible" @click="contextCollapsed = !contextCollapsed">
       <Braces class="card-icon" :size="14" />
-      <span class="prompt-title-text">{{ t('task.overview.eventContext') }}</span>
+      <span class="card-title-text">{{ t('task.overview.eventContext') }}</span>
       <span class="sample-badge">{{ t('task.overview.eventContextSample') }}</span>
-      <button class="prompt-toggle-btn" :title="contextCollapsed ? t('task.overview.showEventContext') : t('task.overview.hideEventContext')">
-        <ChevronDown :size="14" :class="{ 'prompt-chevron-collapsed': contextCollapsed }" class="prompt-chevron" />
+      <button class="card-toggle-btn" :title="contextCollapsed ? t('task.overview.showEventContext') : t('task.overview.hideEventContext')">
+        <ChevronDown :size="14" :class="{ 'is-collapsed': contextCollapsed }" class="card-chevron" />
       </button>
     </h3>
     <div v-show="!contextCollapsed" class="event-context-body">
@@ -90,6 +90,7 @@ import { eventChips, eventKindLabel, type EventChip } from '@/utils/forgeEventLa
 import { eventContextSampleRows, isRepoTargetedOnly } from '@/utils/forgeEventContextVars'
 import { useForgeBinding } from '@/composables/useForgeBinding'
 import { formatDateTimeWithYear } from '@/utils/format'
+import '@/assets/task-overview-card.css'
 
 const { t } = useI18n()
 
@@ -220,63 +221,9 @@ const contextRows = computed(() =>
 </script>
 
 <style scoped>
-.overview-card {
-  background: var(--bg-secondary, #f8f9fa);
-  border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
-  padding: var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.card-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #1a1a1a);
-  margin: 0;
-}
-.card-icon { color: var(--text-muted, #999); }
-.prompt-title-text { flex: 1; min-width: 0; }
+/* Card chrome (.overview-card / .card-title / .card-toggle-btn / .card-chevron)
+   is global — see assets/task-overview-card.css. */
 
-/* Collapsible context card title — mirrors the prompt card in TaskOverviewTab
-   so both cards in the detail page collapse the same way. */
-.context-card-title {
-  cursor: pointer;
-  user-select: none;
-}
-.prompt-toggle-btn {
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted, #999);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  padding: 0;
-  transition: background var(--duration-slow), color var(--duration-slow);
-}
-@media (hover: hover) {
-  .prompt-toggle-btn:hover {
-    background: var(--bg-tertiary, #eef1f4);
-    color: var(--text-primary, #1a1a1a);
-  }
-}
-.prompt-toggle-btn:active {
-  transform: scale(0.92);
-}
-.prompt-chevron {
-  transition: transform var(--duration-slow) ease;
-}
-.prompt-chevron-collapsed {
-  transform: rotate(-90deg);
-}
 /* Collapsed body only carries the sample rows + hint; keep them grouped so
    `v-show` hides the whole block rather than leaving a stray hint behind. */
 .event-context-body {

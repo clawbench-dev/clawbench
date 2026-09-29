@@ -43,8 +43,9 @@ export function useTaskForm(options: UseTaskFormOptions) {
     // Comma-separated forge event subscription (event mode). The watched
     // repository is always the project's binding, so it is not form state.
     eventTypes: '',
-    // Optional pre-AI shell script (cron tasks only). Runs before the AI call;
-    // exit 0 with no output skips the run entirely.
+    // Optional gating shell script (cron tasks only). Runs before the AI call
+    // as a gate: exit 0 runs the AI, anything else skips the run. Its result is
+    // available to the prompt as {{code}} / {{stdout}} / {{stderr}} / {{output}}.
     script: '',
     // Script timeout in seconds. Kept as '' so the input renders empty (the
     // 300s default is shown as a placeholder instead, mirroring how maxRuns
@@ -132,9 +133,9 @@ export function useTaskForm(options: UseTaskFormOptions) {
       max_runs: form.value.maxRuns,
       trigger_mode: form.value.triggerMode,
       event_types: isEvent ? form.value.eventTypes : '',
-      // A script is a cron-task precondition: an event task's prompt is driven
-      // by the injected event context, so the field is cleared like event_types
-      // is for the cron mode.
+      // A gating script is a cron-task precondition: an event task's prompt is
+      // driven by the injected event context, so the field is cleared like
+      // event_types is for the cron mode.
       script: isEvent ? '' : form.value.script,
       // 0 means "use the backend default" (300s); an empty input coerces to 0.
       script_timeout: isEvent ? 0 : Number(form.value.scriptTimeout) || 0,

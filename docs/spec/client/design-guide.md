@@ -266,6 +266,9 @@
   组件里只留布局。守卫 `settingsControls.css.test.ts` 同时钉「形状只在全局」与「scoped 不得重加几何」。
 - **输入框是刻意的例外：保持圆角矩形**（`--radius-sm`），不跟随药丸——否则「可输入」与「可点击」在形状上无法区分。
   高度仍对齐 30px 基准；**字号不缩**（输入值不得小于其标签，见 `settingsRowTypography.css.test.ts`）。
+- **非设置页也能复用**：任务表单的门控脚本开关（`TaskFormPage.vue`）直接用
+  `.settings-item__switch` / `-input` / `-track` 三个类，只在自己的 scoped 块里加
+  行布局（`.script-switch-row`），不复制几何。需要开关时照此办理，别再写第四份。
 
 ### 行内重置按钮（`.settings-item__slider-reset`）
 
@@ -392,6 +395,24 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 ## 改动检查清单
 
+### 任务详情页卡片（`.overview-card` 等）
+
+任务详情页叠了好几张卡（提示词预览、执行计划/事件触发、门控脚本、事件上下文），
+形状**只在 `web/src/assets/task-overview-card.css` 定义一次**：`.overview-card`、
+`.card-title`、`.card-icon`、`.card-title-text`、`.card-toggle-btn`、`.card-chevron`，
+可折叠标题加 `.card-title.is-collapsible`、箭头收起态加 `.is-collapsed`。
+
+- **必须全局**：这些类原先在 `TaskOverviewTab` / `TaskScheduleCard` / `TaskEventCard`
+  各自的 `<style scoped>` 里逐字重复三份。新加的 `TaskScriptCard` 只用了类名却没声明，
+  而父组件的 scoped 规则带 `[data-v-x]`、**永远匹配不到子组件根元素** ⇒ 那张卡完全
+  没样式（无背景/边框/内边距），和旁边的提示词卡长得完全不一样。
+- 消费方只保留自己的布局（如 `.script-body` 的 `padding-top`），**不得**在 scoped 块里
+  重声明上述选择器。守卫 `taskOverviewCard.css.test.ts` 同时钉「只在全局定义」
+  「scoped 不得重复」「四个消费组件都必须 import 该 css」。
+- 守卫注意：判 import 必须匹配 **import 语句**（`/^\s*import\s+['"]@\/assets\/…['"]\s*$/m`），
+  不能只 `toContain(文件名)`——好几个文件在**注释里**提到该路径，删掉真 import 后
+  注释仍会让断言通过（实际踩过）。
+
 ### 加一个共享类 / 原语样式
 
 - [ ] 放进 `web/css/components.css` 或 `web/src/assets/*.css`（**全局**）
@@ -453,6 +474,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
 | `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
 | `components/settings/__tests__/settingsControls.css.test.ts` | 设置控件形状全局唯一（开关/滑块/重置）、尺寸对齐 30px、scoped 不得重加几何、按钮复用 `.fbtn` |
+| `components/task/__tests__/taskOverviewCard.css.test.ts` | 任务详情页卡片 chrome 全局唯一（scoped 不得重复）、四个消费组件都必须 import |
+| `utils/__tests__/codeHighlightStyle.test.ts` | CodeMirror 语法高亮映射全局唯一（不得在组件里重复 `HighlightStyle.define`）、颜色必须来自 CSS 变量 |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |

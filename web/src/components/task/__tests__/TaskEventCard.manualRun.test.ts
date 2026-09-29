@@ -198,19 +198,19 @@ describe('TaskEventCard event-context collapse', () => {
     const wrapper = mountCard()
     expect(wrapper.find('.event-context-body').exists()).toBe(true)
     expect(bodyStyle(wrapper)).toContain('display: none')
-    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(true)
+    expect(wrapper.find('.card-chevron.is-collapsed').exists()).toBe(true)
   })
 
   it('expands the context body when the title is clicked', async () => {
     const wrapper = mountCard()
-    await wrapper.find('.context-card-title').trigger('click')
+    await wrapper.find('.card-title.is-collapsible').trigger('click')
     expect(bodyStyle(wrapper)).not.toContain('display: none')
-    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(false)
+    expect(wrapper.find('.card-chevron.is-collapsed').exists()).toBe(false)
   })
 
   it('toggles the context body on subsequent clicks', async () => {
     const wrapper = mountCard()
-    const title = wrapper.find('.context-card-title')
+    const title = wrapper.find('.card-title.is-collapsible')
     await title.trigger('click') // expand
     expect(bodyStyle(wrapper)).not.toContain('display: none')
     await title.trigger('click') // collapse

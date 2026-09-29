@@ -168,6 +168,10 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			summary TEXT,
 			event_url TEXT NOT NULL DEFAULT '',
 			event_summary TEXT NOT NULL DEFAULT '',
+			script_exit_code INTEGER,
+			script_stdout TEXT NOT NULL DEFAULT '',
+			script_stderr TEXT NOT NULL DEFAULT '',
+			script_duration_ms INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);

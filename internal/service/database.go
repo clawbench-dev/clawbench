@@ -645,6 +645,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			session_id TEXT NOT NULL,
 			trigger_type TEXT NOT NULL DEFAULT 'auto',
 			status TEXT NOT NULL DEFAULT 'running',
+			event_url TEXT NOT NULL DEFAULT '',
+			event_summary TEXT NOT NULL DEFAULT '',
+			script_exit_code INTEGER,
+			script_stdout TEXT NOT NULL DEFAULT '',
+			script_stderr TEXT NOT NULL DEFAULT '',
+			script_duration_ms INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
@@ -1202,10 +1208,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Migrate: record the forge event that triggered an execution, so the run is
-	// traceable back to the originating issue/PR.
+	// traceable back to the originating issue/PR; and the gating script's
+	// result, so the execution detail can show what the gate saw.
 	for _, col := range []struct{ name, ddl string }{
 		{"event_url", "ALTER TABLE task_executions ADD COLUMN event_url TEXT NOT NULL DEFAULT ''"},
 		{"event_summary", "ALTER TABLE task_executions ADD COLUMN event_summary TEXT NOT NULL DEFAULT ''"},
+		{"script_exit_code", "ALTER TABLE task_executions ADD COLUMN script_exit_code INTEGER"},
+		{"script_stdout", "ALTER TABLE task_executions ADD COLUMN script_stdout TEXT NOT NULL DEFAULT ''"},
+		{"script_stderr", "ALTER TABLE task_executions ADD COLUMN script_stderr TEXT NOT NULL DEFAULT ''"},
+		{"script_duration_ms", "ALTER TABLE task_executions ADD COLUMN script_duration_ms INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
 		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)

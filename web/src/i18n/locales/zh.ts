@@ -1126,6 +1126,8 @@ export default {
     overview: {
       showPrompt: '展开提示词',
       hidePrompt: '收起提示词',
+      showScript: '展开门控脚本',
+      hideScript: '收起门控脚本',
       schedule: '执行计划',
       eventTrigger: '事件触发',
       eventRepo: '监听仓库',
@@ -1231,11 +1233,23 @@ export default {
       repeatLimited: '限制次数',
       repeatUnlimited: '不限次数',
       maxRuns: '最大执行次数',
-      // Optional pre-AI script (cron tasks only). The skip semantics live in
-      // the placeholder now (the long hint paragraph was removed as too
-      // verbose); the timeout's 300s default is a placeholder, not a value.
-      script: '自定义脚本',
-      scriptPlaceholder: '可选：在 AI 之前执行的 Shell 脚本，留空则不执行。脚本以 0 退出且无输出时会跳过 AI。',
+      // Optional gating script (cron tasks only). The gate semantics live in
+      // the placeholder; the timeout's 300s default is a placeholder, not a
+      // value. The switch controls whether the task carries a script at all.
+      script: '门控脚本',
+      scriptEnabled: '启用门控脚本',
+      scriptHint: '脚本在智能体执行前运行，用于判断是否满足执行条件。',
+      // The full explanation lives in the dedicated guide panel (below); the
+      // placeholder stays a one-liner. The tokens themselves are built in the
+      // component from plain strings, so no i18n brace escaping is needed here.
+      scriptPlaceholder: '输入 Shell 脚本，例如：test -f .build-needed',
+      scriptGuideTitle: '门控脚本说明',
+      scriptGuideIntro: '在智能体执行前，使用脚本做前置条件判断，避免不必要的 token 消耗。脚本退出码为 0 触发智能体执行。',
+      scriptGuideVarsTitle: '智能体提示词中可引用以下模板变量：',
+      scriptVarCode: '退出码',
+      scriptVarStdout: '脚本标准输出',
+      scriptVarStderr: '脚本标准错误输出',
+      scriptVarOutput: '脚本完整输出（标准输出 + 标准错误）',
       scriptTimeout: '脚本超时（秒）',
       scriptTimeoutInvalid: '请输入非负整数秒数（0 表示使用默认值）',
       prompt: '提示词 (Prompt)',
@@ -1261,7 +1275,7 @@ export default {
       title: '执行记录',
       noExecutions: '暂无执行记录',
       noTextOutput: '无文本输出',
-      skippedHint: '已跳过，无输出',
+      skippedHint: '门控脚本未通过，本次未执行智能体',
       startingPreview: '正在连接预览…',
       manual: '手动',
       auto: '自动',
@@ -1283,7 +1297,15 @@ export default {
       // not-running.
       statusScriptPhase: '准备中（脚本）',
       cancelledNotice: '此执行已被取消，无输出内容',
-      skippedNotice: '脚本以 0 退出且无输出，本次已跳过 AI 执行',
+      skippedNotice: '门控脚本未通过（退出码非 0 或超时），本次未执行智能体',
+      // Gating-script result card, mirroring the chat's bash tool card.
+      scriptTitle: '门控脚本',
+      scriptExitCode: '退出码',
+      scriptStdout: '标准输出',
+      scriptStderr: '标准错误',
+      scriptNoOutput: '无输出',
+      scriptRunning: '脚本执行中…',
+      scriptDuration: '耗时',
       confirmDeleteExecution: '确定删除此执行记录？',
       executionDeleted: '执行记录已删除',
       confirmDeleteAll: '确定清除所有执行记录？此操作不可撤销。',

@@ -1124,6 +1124,8 @@ export default {
     overview: {
       showPrompt: 'Show prompt',
       hidePrompt: 'Collapse prompt',
+      showScript: 'Show gating script',
+      hideScript: 'Collapse gating script',
       schedule: 'Schedule',
       eventTrigger: 'Event trigger',
       eventRepo: 'Watched repository',
@@ -1229,11 +1231,23 @@ export default {
       repeatLimited: 'Limited runs',
       repeatUnlimited: 'Unlimited runs',
       maxRuns: 'Max runs',
-      // Optional pre-AI script (cron tasks only). The skip semantics live in
-      // the placeholder now (the long hint paragraph was removed as too
-      // verbose); the timeout's 300s default is a placeholder, not a value.
-      script: 'Custom script',
-      scriptPlaceholder: 'Optional: a shell script that runs before the AI. Leave empty to skip. If it exits 0 with no output, the AI is skipped.',
+      // Optional gating script (cron tasks only). The gate semantics live in
+      // the placeholder; the timeout's 300s default is a placeholder, not a
+      // value. The switch controls whether the task carries a script at all.
+      script: 'Gating script',
+      scriptEnabled: 'Enable gating script',
+      scriptHint: 'The script runs before the agent to decide whether the run should proceed.',
+      // The full explanation lives in the dedicated guide panel (below); the
+      // placeholder stays a one-liner. The tokens themselves are built in the
+      // component from plain strings, so no i18n brace escaping is needed here.
+      scriptPlaceholder: 'Enter a shell script, e.g. test -f .build-needed',
+      scriptGuideTitle: 'About the gating script',
+      scriptGuideIntro: 'Before the agent runs, use a script as a precondition to avoid unnecessary token usage. The agent runs when the script exits 0.',
+      scriptGuideVarsTitle: 'The agent prompt can reference these template variables:',
+      scriptVarCode: 'Exit code',
+      scriptVarStdout: 'Script stdout',
+      scriptVarStderr: 'Script stderr',
+      scriptVarOutput: 'Script output (stdout + stderr)',
       scriptTimeout: 'Script timeout (seconds)',
       scriptTimeoutInvalid: 'Enter a non-negative whole number of seconds (0 uses the default)',
       prompt: 'Prompt',
@@ -1259,7 +1273,7 @@ export default {
       title: 'Execution log',
       noExecutions: 'No executions',
       noTextOutput: 'No text output',
-      skippedHint: 'Skipped — no output',
+      skippedHint: 'Gating script did not pass — the agent was not run',
       startingPreview: 'Connecting preview…',
       manual: 'Manual',
       auto: 'Auto',
@@ -1281,7 +1295,15 @@ export default {
       // not-running.
       statusScriptPhase: 'Preparing (script)',
       cancelledNotice: 'This execution was cancelled. No output available.',
-      skippedNotice: 'The script exited 0 with no output, so the AI was skipped for this run.',
+      skippedNotice: 'The gating script did not pass (non-zero exit or timeout), so the agent was not run.',
+      // Gating-script result card, mirroring the chat's bash tool card.
+      scriptTitle: 'Gating script',
+      scriptExitCode: 'Exit code',
+      scriptStdout: 'Standard output',
+      scriptStderr: 'Standard error',
+      scriptNoOutput: 'No output',
+      scriptRunning: 'Script running…',
+      scriptDuration: 'Duration',
       confirmDeleteExecution: 'Delete this execution record?',
       executionDeleted: 'Execution record deleted',
       confirmDeleteAll: 'Clear all execution records? This cannot be undone.',

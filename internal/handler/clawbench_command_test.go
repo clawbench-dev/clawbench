@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,35 @@ func TestProcessClawbenchCommand_TaskInjects(t *testing.T) {
 	assert.Contains(t, result, "GET /api/agents")
 	assert.Contains(t, result, "clawbench_project=/project")
 	assert.NotContains(t, result, "/cb-task daily build")
+}
+
+// TestProcessClawbenchCommand_TaskDocumentsGatingScript pins the gating-script
+// knowledge the AI needs when creating a task from the slash command. Without
+// it the model only sees the `script` field name in the endpoint dump and
+// cannot explain the gate, or know that the prompt may reference the script via
+// template variables — so it would create a task with an inert script.
+func TestProcessClawbenchCommand_TaskDocumentsGatingScript(t *testing.T) {
+	withServerPort(t, 20000)
+
+	result, err := processClawbenchCommand("/cb-task daily build", "/project", "session-456")
+	require.NoError(t, err)
+
+	// The gate semantics: exit 0 runs the agent, non-zero/timeout skips it.
+	assert.Contains(t, result, "Exit code 0", "the gate condition must be stated")
+	assert.Contains(t, result, "skipped", "the closed-gate outcome must be stated")
+
+	// All four prompt template variables, spelled literally so the model copies
+	// the exact syntax rather than paraphrasing it into something that is never
+	// substituted.
+	for _, tok := range []string{"{{code}}", "{{stdout}}", "{{stderr}}", "{{output}}"} {
+		assert.Containsf(t, result, tok, "the %s prompt variable must be documented", tok)
+	}
+
+	// Cron-only, matching the backend, which ignores a script on an event task.
+	assert.Contains(t, result, "ignored for an event task")
+
+	// The default timeout, so the model does not invent one.
+	assert.Contains(t, result, "300")
 }
 
 // TestProcessClawbenchCommand_NoCliReferences guards the core of the refactor:
@@ -147,23 +177,48 @@ func TestIsClawbenchCommand(t *testing.T) {
 	assert.False(t, IsClawbenchCommand(""))
 }
 
-// TestProcessClawbenchCommand_PlaceholderReplacement asserts every placeholder
-// is substituted: a leftover "{{...}}" would reach the model verbatim.
+// TestProcessClawbenchCommand_PlaceholderReplacement asserts every *injection*
+// placeholder is substituted: a leftover "{{BASE_URL}}" would reach the model
+// verbatim as noise.
+//
+// It deliberately does NOT assert "no {{ at all". The /cb-task injection
+// documents the task-prompt template variables ({{code}} / {{stdout}} /
+// {{stderr}} / {{output}}) on purpose — the model must see the literal syntax
+// and reproduce it in the prompt, or the substitution silently never happens.
+// So the rule is narrower and still strict: every brace token that survives
+// must be one of those documented variables, which catches a typo'd injection
+// placeholder just as well (the set is closed, not a free pass).
 func TestProcessClawbenchCommand_PlaceholderReplacement(t *testing.T) {
 	withServerPort(t, 20000)
 
+	// Brace tokens allowed to survive, per command. Only /cb-task documents
+	// prompt variables; /cb-chatsearch injects none, so nothing may survive.
+	allowedForTask := map[string]bool{
+		"{{code}}": true, "{{stdout}}": true, "{{stderr}}": true, "{{output}}": true,
+	}
 	tests := []struct {
-		msg string
+		msg   string
+		allow map[string]bool
 	}{
-		{"/cb-chatsearch auth bug"},
-		{"/cb-task daily report"},
+		{"/cb-chatsearch auth bug", nil},
+		{"/cb-task daily report", allowedForTask},
 	}
 	for _, tc := range tests {
 		result, err := processClawbenchCommand(tc.msg, "/my/project", "sess-abc")
 		require.NoError(t, err)
-		assert.NotContainsf(t, result, "{{", "%s left an unreplaced placeholder", tc.msg)
 		assert.Containsf(t, result, "/my/project", "%s must carry the project path", tc.msg)
+
+		for _, tok := range braceTokens(result) {
+			assert.Truef(t, tc.allow[tok],
+				"%s: unreplaced placeholder %q would reach the model", tc.msg, tok)
+		}
 	}
+}
+
+// braceTokens returns every {{...}} token in s, so a test can assert on the
+// exact set that survived substitution rather than pattern-matching for "{{".
+func braceTokens(s string) []string {
+	return regexp.MustCompile(`\{\{[^{}]*\}\}`).FindAllString(s, -1)
 }
 
 // TestProcessClawbenchCommand_BaseURLTracksPort verifies the injected base URL
