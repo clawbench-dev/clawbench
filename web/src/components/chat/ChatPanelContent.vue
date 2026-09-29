@@ -1247,6 +1247,11 @@ async function handleBtw(question) {
     pending: true,
   }
   btwRecords.value = [...btwRecords.value, pendingRec]
+  // The anchor renders after the last message, i.e. at the bottom of the list.
+  // Asking a side question is explicit intent to see where it landed, so pin to
+  // the bottom with force — the "user scrolled away" latch must not drop it
+  // (same rule as sending a message).
+  scrollBottom(true)
 
   try {
     const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question }, { timeoutMs: BTW_REQUEST_TIMEOUT_MS })

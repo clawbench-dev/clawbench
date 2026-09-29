@@ -659,6 +659,23 @@ describe('ChatPanelContent — /btw side question', () => {
     expect(region).toMatch(/currentAnchorKey\(messages\.value\)/)
   })
 
+  it('scrolls to the bottom when the question is asked', async () => {
+    // The anchor renders after the last message, so a user who had scrolled up
+    // would otherwise not see the question land. Asking is explicit intent to
+    // see it, hence a FORCED pin — the "user scrolled away" latch must not drop
+    // it (same rule as sending a message).
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/scrollBottom\(true\)/)
+    // It must run right after the optimistic entry is inserted, before the
+    // request is awaited, so the scroll happens while the anchor is pending.
+    const insertAt = region.indexOf('pendingRec]')
+    const scrollAt = region.indexOf('scrollBottom(true)')
+    const awaitAt = region.indexOf('await apiPost')
+    expect(insertAt).toBeGreaterThanOrEqual(0)
+    expect(scrollAt).toBeGreaterThan(insertAt)
+    expect(scrollAt).toBeLessThan(awaitAt)
+  })
+
   it('drops the optimistic entry when the answer lands or the request fails', async () => {
     // Otherwise the marker would double (pending + stored) or linger forever.
     const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
