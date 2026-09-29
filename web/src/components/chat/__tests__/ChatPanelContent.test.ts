@@ -626,9 +626,52 @@ describe('ChatPanelContent — /btw side question', () => {
     expect(region).toMatch(/catch\s*\(err\)[\s\S]*?toast\.show\(/)
   })
 
-  it('clears the btw loading state in a finally block', async () => {
+  it('never puts the composer into a loading state', async () => {
+    // The wait is shown on the message anchor instead. The composer must not be
+    // disabled or spun: the user can keep typing or ask another question.
     const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
-    expect(region).toMatch(/finally\s*\{[\s\S]*?setBtwLoading\?\.\(false\)/)
+    expect(region).not.toMatch(/setBtwLoading/)
+    expect(region).not.toMatch(/inputDisabled\.value\s*=\s*true/)
+  })
+
+  it('inserts an optimistic anchor before the request resolves', async () => {
+    // The question must have a visible home the moment it is asked — the anchor
+    // appears immediately in its pending state, not only after the answer.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/pending:\s*true/)
+    expect(region).toMatch(/btwRecords\.value\s*=\s*\[\.\.\.btwRecords\.value,\s*pendingRec\]/)
+    // The optimistic entry must be created BEFORE the await, so it renders while
+    // the request is still in flight.
+    const insertAt = region.indexOf('pendingRec')
+    const awaitAt = region.indexOf('await apiPost')
+    expect(insertAt).toBeGreaterThanOrEqual(0)
+    expect(awaitAt).toBeGreaterThan(insertAt)
+  })
+
+  it('anchors the optimistic entry where the server record will land', async () => {
+    // The backend anchors to MAX(id) FROM chat_history, so the optimistic anchor
+    // must use the same rule or it would jump when the response arrives.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/currentAnchorKey\(messages\.value\)/)
+  })
+
+  it('drops the optimistic entry when the answer lands or the request fails', async () => {
+    // Otherwise the marker would double (pending + stored) or linger forever.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/removePendingBtw\(pendingId\)/)
+    // Once on success, once on the no-record path, once in the catch.
+    const calls = region.match(/removePendingBtw\(pendingId\)/g) || []
+    expect(calls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('carries optimistic entries across an anchor reload', async () => {
+    // loadBtwRecords replaces the list from the server, which does not know
+    // about a still-unanswered question yet.
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const fn = source.slice(source.indexOf('async function loadBtwRecords'), source.indexOf('function openBtwDrawer'))
+    expect(fn).toMatch(/filter\(r => r\.pending === true\)/)
+    expect(fn).toMatch(/\.\.\.stillPending/)
   })
 
   it('wires the input bar btw event to handleBtw', async () => {

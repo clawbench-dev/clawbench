@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { btwAnchorKey, groupBtwRecords, messageAnchorKey, anchorCount } from '../btwAnchors'
+import { btwAnchorKey, groupBtwRecords, messageAnchorKey, anchorCount, anchorPending, anchorKeyPending, currentAnchorKey } from '../btwAnchors'
 
 describe('btwAnchorKey', () => {
   it('stringifies a numeric anchor id', () => {
@@ -83,5 +83,56 @@ describe('anchorCount', () => {
     expect(anchorCount(anchors, { id: 'pending-1' })).toBe(0)
     expect(anchorCount(anchors, null)).toBe(0)
     expect(anchorCount(null, { id: 10 })).toBe(0)
+  })
+})
+
+// ── Pending (optimistic) anchors ──
+// A question is inserted locally the moment it is asked, so its anchor can show
+// an in-progress state without waiting for the server round trip.
+describe('anchorKeyPending / anchorPending', () => {
+  const settled = { id: 1, anchorMessageId: 10, question: 'q', answer: 'a' }
+  const pending = { id: 'btw-pending-1', anchorMessageId: 10, question: 'q', pending: true }
+
+  it('reports pending only while an unanswered entry sits at that anchor', () => {
+    expect(anchorKeyPending({ 10: [pending] }, '10')).toBe(true)
+    expect(anchorKeyPending({ 10: [settled] }, '10')).toBe(false)
+    // A settled entry alongside a pending one still reports pending.
+    expect(anchorKeyPending({ 10: [settled, pending] }, '10')).toBe(true)
+  })
+
+  it('reports false for an unknown or empty key', () => {
+    expect(anchorKeyPending({ 10: [pending] }, '11')).toBe(false)
+    expect(anchorKeyPending({}, '10')).toBe(false)
+    expect(anchorKeyPending(null, '10')).toBe(false)
+    expect(anchorKeyPending({ 10: [pending] }, '')).toBe(false)
+    expect(anchorKeyPending({ 10: [pending] }, null)).toBe(false)
+  })
+
+  it('resolves the anchor through the same id rule as the count', () => {
+    const anchors = { 10: [pending] }
+    expect(anchorPending(anchors, { id: 10 })).toBe(true)
+    expect(anchorPending(anchors, { id: 11 })).toBe(false)
+    // A placeholder id can never match, exactly like anchorCount.
+    expect(anchorPending(anchors, { id: 'pending-10' })).toBe(false)
+    expect(anchorPending(anchors, null)).toBe(false)
+  })
+})
+
+describe('currentAnchorKey', () => {
+  it('uses the last settled numeric message id', () => {
+    expect(currentAnchorKey([{ id: 1 }, { id: 2 }, { id: 3 }])).toBe('3')
+  })
+
+  it('skips optimistic messages, which are not in the DB yet', () => {
+    // The server anchors to MAX(id) FROM chat_history, so a trailing pending
+    // bubble must not become the anchor — it would jump when the answer lands.
+    expect(currentAnchorKey([{ id: 7 }, { id: 'db-local-1' }])).toBe('7')
+    expect(currentAnchorKey([{ id: 'pending-1' }])).toBe('0')
+  })
+
+  it('falls back to the pre-message anchor when nothing is settled', () => {
+    expect(currentAnchorKey([])).toBe('0')
+    expect(currentAnchorKey(null)).toBe('0')
+    expect(currentAnchorKey(undefined)).toBe('0')
   })
 })

@@ -215,3 +215,81 @@ describe('BtwAnswerDrawer', () => {
     expect(wrapper.vm.isOpen).toBe(false)
   })
 })
+
+// ── Container click layer ──
+// The drawer is teleported to <body>, so clicks inside it never reach
+// ChatMessageList's container handler. Without a local layer, annotations and
+// code-link previews render but do nothing — which is exactly the reported bug.
+// These tests mount the drawer and CLICK, so a dropped delegation fails loudly
+// rather than only being visible in a source grep.
+describe('BtwAnswerDrawer — click layer', () => {
+  /** Clicks the content container with a given element as the event target. */
+  async function clickContent(wrapper: ReturnType<typeof mountDrawer>, target: HTMLElement) {
+    const content = wrapper.find('.btw-content').element
+    content.appendChild(target)
+    const ev = new MouseEvent('click', { bubbles: true })
+    target.dispatchEvent(ev)
+    await wrapper.vm.$nextTick()
+    return ev
+  }
+
+  it('delegates a click inside the content to the file-path handler', async () => {
+    const mod = await import('@/composables/useCodeLinkPreview.ts')
+    // Claim the click, as a verified path would, so the handler chain stops here
+    // and the test observes only the delegation under test.
+    const spy = vi.spyOn(mod, 'handleVerifiedFilePathClick').mockReturnValue(true)
+
+    const wrapper = mountDrawer()
+    const pathEl = document.createElement('span')
+    pathEl.className = 'chat-file-path'
+    pathEl.setAttribute('data-file-path', 'src/main.go')
+    pathEl.setAttribute('data-path-type', 'file')
+    await clickContent(wrapper, pathEl)
+
+    // The drawer's own handler must have offered the click to the path layer.
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('routes a table-row click to the row modal handler', async () => {
+    const mod = await import('@/composables/useTableRowExpand.ts')
+    const spy = vi.spyOn(mod, 'useTableRowExpand')
+    const wrapper = mountDrawer()
+    const rowEl = document.createElement('tr')
+    rowEl.className = 'chat-table-row'
+    await clickContent(wrapper, rowEl)
+    // The layer must have created its own table-row expander (that is what
+    // opens the modal); without it a row click inside the drawer does nothing.
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('wires a click listener on the content container', async () => {
+    // Source guard: the layer only works if the template actually binds it.
+    const src = await drawerSource()
+    expect(src).toMatch(/class="btw-content"[^>]*@click="handleContentClick"/)
+  })
+
+  it('declares every dependency the click layer calls', async () => {
+    const src = await drawerSource()
+    for (const dep of [
+      'useCodeLinkPreview',
+      'handleVerifiedFilePathClick',
+      'handleLocalhostUrlClick',
+      'handleTableRowClick',
+      'readLineTargetFromEl',
+      'openFilePath',
+      'handleDblClick',
+      'handleCodeBlockClick',
+      'handleTableBlockClick',
+    ]) {
+      expect(src, `${dep} must be wired into the drawer's click layer`).toContain(dep)
+    }
+  })
+
+  it('renders the floating preview and the table-row modal', async () => {
+    const src = await drawerSource()
+    expect(src).toContain('<CodeLinkPreview')
+    expect(src).toContain('<TableRowModal')
+  })
+})

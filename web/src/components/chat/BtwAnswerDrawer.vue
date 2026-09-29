@@ -10,7 +10,19 @@
       <span class="bs-header-title">{{ t('chat.btw.title') }}</span>
     </template>
 
-    <div class="btw-content">
+    <!-- Container-level click delegation. ChatMessageList normally owns this,
+         but the drawer is teleported to <body>, so a click inside it never
+         reaches that handler. Without a local layer the annotations and code
+         link previews render but do nothing (the elements and their
+         data-path-type are produced by ContentBlocks either way). Mirrors
+         ToolDetailDrawer's handleBodyClick. -->
+    <div
+      class="btw-content"
+      ref="contentRef"
+      @click="handleContentClick"
+      @mousedown="onTableMouseDown"
+      @touchstart.passive="onTableTouchStart"
+    >
       <!-- Each /btw is a mini exchange: the question as a real user bubble, the
            answer as an assistant bubble. Both go through ChatMessageItem, so
            the rendering (markdown, KaTeX, code, annotations) is identical to the
@@ -47,19 +59,44 @@
       </div>
     </div>
   </BottomSheet>
+
+  <!-- Floating file/code preview, same as the chat area's. It teleports to
+       <body> and sits at --z-sheet (1200), above the drawer's overlay tier
+       (1000..1049), so it is never clipped by the drawer it was opened from. -->
+  <CodeLinkPreview
+    v-if="codeLinkPreview.enabled.value"
+    :preview="codeLinkPreview"
+  />
+
+  <!-- Table row expand modal, opened by clicking a table row inside a bubble. -->
+  <TableRowModal
+    :data="tableRowModal"
+    @close="closeTableRowModal"
+    @prev="tableRowPrev"
+    @next="tableRowNext"
+  />
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, inject } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MessageCircleQuestion } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
+import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
+import TableRowModal from '@/components/common/TableRowModal.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
+import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
+import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
+import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
+import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
+import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
+import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCodeBlockHeader.ts'
 
 const props = defineProps({
   /** The /btw records to show, oldest first. Each entry is a stored record
-   *  ({ id, question, answer, error, createdAt, ... }). */
+   *  ({ id, question, answer, error, createdAt, ... }) or, while a question is
+   *  still being answered, an optimistic pending entry ({ pending: true }). */
   records: { type: Array, default: () => [] },
   /** Render maps forwarded from ChatPanelContent's useChatRender instance, so
    *  the bubbles go through the exact same pipeline as chat messages. */
@@ -76,6 +113,74 @@ const { t } = useI18n()
 // autoRestore:false keeps it from reopening when returning to chat.
 const drawer = useTabDrawer('chat', { autoRestore: false })
 
+// ── Click delegation ──
+// The drawer renders the same bubbles as the chat area, so it needs the same
+// click handling the chat list provides. It cannot reuse ChatMessageList's
+// handler (the drawer is teleported to <body>, out of that component's tree),
+// so it owns a local layer. Mirrors ToolDetailDrawer.handleBodyClick.
+const contentRef = ref(null)
+const codeLinkPreview = useCodeLinkPreview({ containerRef: contentRef, source: 'chat' })
+const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
+const { openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
+const { handleDblClick } = useDoubleClickCopy()
+const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
+const chatUI = inject('chatUI', {})
+
+async function handleContentClick(event) {
+  // Code / table block header buttons (copy, wrap) — highest priority, same
+  // order as ChatMessageList.handleChatClick.
+  if (handleCodeBlockClick(event)) return
+  if (handleTableBlockClick(event)) return
+
+  // Localhost URL buttons (App mode only).
+  if (handleLocalhostUrlClick(event)) return
+
+  // Table row click — opens the row-form modal.
+  if (handleTableRowClick(event)) return
+
+  // Verified file paths: desktop plain-click opens the floating preview;
+  // Ctrl/Cmd-click pins it; touch opens the bottom-sheet preview.
+  if (handleVerifiedFilePathClick(event, codeLinkPreview)) return
+
+  // Commit hash — navigate the git history tab to it.
+  const commitEl = event.target.closest('.chat-commit-hash, .chat-commit-open-btn')
+  if (commitEl) {
+    event.preventDefault()
+    event.stopPropagation()
+    const sha = commitEl.getAttribute('data-commit-sha')
+    if (sha) window.dispatchEvent(new CustomEvent('navigate-to-commit', { detail: { sha } }))
+    return
+  }
+
+  // File open button or directory path text.
+  const btn = event.target.closest('.chat-file-open-btn')
+  const dirEl = event.target.closest('.chat-file-path[data-path-type="dir"]')
+  const linkOrBtn = btn || dirEl
+  if (linkOrBtn) {
+    event.preventDefault()
+    event.stopPropagation()
+    codeLinkPreview.close()
+    const { filePath, lineStart, lineEnd, lineRanges } = readLineTargetFromEl(linkOrBtn)
+    if (filePath) {
+      const ok = lineRanges
+        ? await openFilePath(filePath, lineStart, lineEnd, 'chat', lineRanges)
+        : await openFilePath(filePath, lineStart, lineEnd, 'chat')
+      if (ok) chatUI.navigateToFileViewer?.()
+    }
+    return
+  }
+
+  // Double-click fallback: open the anchor's file target.
+  handleDblClick(event, async (href, lineStart, lineEnd, lineRanges) => {
+    event.stopPropagation()
+    codeLinkPreview.close()
+    const ok = lineRanges
+      ? await openFilePath(href, lineStart, lineEnd, 'chat', lineRanges)
+      : await openFilePath(href, lineStart, lineEnd, 'chat')
+    if (ok) chatUI.navigateToFileViewer?.()
+  })
+}
+
 /**
  * One synthetic user/assistant message pair per record, shaped like the ones
  * TaskExecDetail builds. `streaming: false` selects the full (non-streaming)
@@ -83,12 +188,18 @@ const drawer = useTabDrawer('chat', { autoRestore: false })
  *
  * A failed question has no answer; its assistant bubble carries the error text
  * so the drawer still explains what happened instead of showing an empty reply.
+ *
+ * A pending record (the question was just asked and is still being answered)
+ * renders an empty assistant bubble carrying `pending: true`; ChatMessageItem
+ * turns that into the in-progress indicator, so the wait is shown here rather
+ * than in the composer.
  */
 const items = computed(() => props.records.map((rec, i) => {
   const failed = !rec.answer && rec.error
   const answerText = rec.answer || (failed ? t('chat.btw.failedWithReason', { reason: rec.error }) : '')
   return {
     key: `btw-${rec.id ?? i}`,
+    pending: rec.pending === true,
     questionMsg: {
       id: `btw-q-${rec.id ?? i}`,
       role: 'user',
@@ -106,7 +217,9 @@ const items = computed(() => props.records.map((rec, i) => {
       blocks: answerText ? [{ type: 'text', text: answerText }] : [],
       metadata: null,
       createdAt: rec.createdAt || '',
-      streaming: false,
+      // A pending answer takes the streaming branch so the bubble shows the
+      // in-progress state; a settled one renders normally.
+      streaming: rec.pending === true,
       cancelled: false,
     },
   }

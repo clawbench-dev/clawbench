@@ -45,7 +45,11 @@ vi.mock('../ChatMessageItem.vue', () => ({
   }),
 }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({ default: { render: () => null } }))
-vi.mock('@/components/common/LoadingIndicator.vue', () => ({ default: { render: () => null } }))
+// Renders an identifiable node: the pending anchor swaps its icon for this
+// spinner, and the test asserts that swap happened.
+vi.mock('@/components/common/LoadingIndicator.vue', () => ({
+  default: defineComponent({ name: 'LoadingIndicator', render: () => h('i', { class: 'li-stub' }) }),
+}))
 vi.mock('@/components/common/ProviderIcon.vue', () => ({ default: { render: () => null } }))
 vi.mock('../UserMsgIndexDrawer.vue', () => ({ default: { render: () => null } }))
 vi.mock('@/components/common/TableRowModal.vue', () => ({ default: { render: () => null } }))
@@ -110,7 +114,7 @@ const i18n = createI18n({
   messages: {
     en: {
       chat: {
-        btw: { anchorLabel: 'Asked by the way', anchorTitle: 'View the side question' },
+        btw: { anchorLabel: 'Asked by the way', anchorTitle: 'View the side question', answering: 'Answering…' },
         messageList: { loadingMore: 'Loading…', moreOlderMessages: 'More ({count})', allMessagesLoaded: 'All loaded' },
       },
     },
@@ -182,6 +186,47 @@ describe('ChatMessageList — /btw anchor (mounted)', () => {
     expect(top.exists()).toBe(true)
     await top.trigger('click')
     expect(wrapper.emitted('open-btw')![0]).toEqual(['0'])
+  })
+
+  // ── Pending state ──
+  // A question asked just now is inserted optimistically, so its anchor must
+  // show an in-progress state immediately rather than waiting for the server.
+  it('shows a spinner and the answering label while a question is pending', () => {
+    const wrapper = mountList({ btwAnchors: { 10: [{ id: 'btw-pending-1', anchorMessageId: 10, pending: true }] } })
+    const anchor = wrapper.find('.btw-anchor')
+    expect(anchor.exists()).toBe(true)
+    expect(anchor.classes()).toContain('btw-anchor--pending')
+    expect(anchor.text()).toContain('Answering…')
+    // The icon is replaced by the spinner, not shown alongside it.
+    expect(anchor.find('.btw-anchor-spinner').exists()).toBe(true)
+  })
+
+  it('returns to the resting state once the answer is stored', () => {
+    const wrapper = mountList({ btwAnchors: { 10: [{ id: 5, anchorMessageId: 10, question: 'q', answer: 'a' }] } })
+    const anchor = wrapper.find('.btw-anchor')
+    expect(anchor.classes()).not.toContain('btw-anchor--pending')
+    expect(anchor.text()).toContain('Asked by the way')
+    expect(anchor.find('.btw-anchor-spinner').exists()).toBe(false)
+  })
+
+  it('shows the pending state on the pre-message anchor too', () => {
+    const wrapper = mountList({ btwAnchors: { 0: [{ id: 'btw-pending-2', anchorMessageId: 0, pending: true }] } })
+    const anchor = wrapper.find('.btw-anchor-top')
+    expect(anchor.exists()).toBe(true)
+    expect(anchor.classes()).toContain('btw-anchor--pending')
+  })
+
+  it('stays pending while a settled question shares the anchor', () => {
+    // Two questions at one position, the newer one still answering.
+    const wrapper = mountList({
+      btwAnchors: { 10: [
+        { id: 1, anchorMessageId: 10, answer: 'a' },
+        { id: 'btw-pending-3', anchorMessageId: 10, pending: true },
+      ] },
+    })
+    const anchor = wrapper.find('.btw-anchor')
+    expect(anchor.classes()).toContain('btw-anchor--pending')
+    expect(anchor.find('.btw-anchor-count').text()).toBe('2')
   })
 
   it('does not anchor a message without a settled numeric id', () => {

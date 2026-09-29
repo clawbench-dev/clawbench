@@ -122,7 +122,7 @@
           :key="inputEpoch"
           ref="textareaRef"
           v-model="inputText"
-          :disabled="inputDisabled || btwLoading"
+          :disabled="inputDisabled"
           :placeholder="dynamicPlaceholder"
           rows="1"
           @keydown="onTextareaKeydown"
@@ -135,11 +135,9 @@
           @touchend="onTextareaTouchEnd"
           @touchcancel="onTextareaTouchCancel"
           ></textarea>
-        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent && !btwLoading }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :disabled="btwLoading" :title="btwLoading ? t('chat.btw.answering') : !hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
-          <!-- /btw request in flight -->
-          <LoadingIndicator v-if="btwLoading" class="send-btn-spinner" size="sm" inline />
+        <button v-if="!stopPrimed" class="chat-send-btn" ref="sendBtnRef" :class="{ queued: loading, shortcut: !hasInputContent }" @click.stop="handleSendClick" @pointerdown="onSendPointerDown" @pointerup="onSendPointerUp" @pointerleave="onSendPointerUp" :title="!hasInputContent ? t('chat.input.quickMenu') : loading ? t('chat.input.enqueue') : t('chat.input.send')">
           <!-- Empty input: green lightning (quick-menu shortcut) -->
-          <Zap v-else-if="!hasInputContent" :size="15" />
+          <Zap v-if="!hasInputContent" :size="15" />
           <!-- Queue mode: inbox with down arrow (enqueue) -->
           <Inbox v-else-if="loading" :size="15" />
           <!-- Normal mode: paper plane (send) -->
@@ -996,10 +994,10 @@ function parseBtwCommand(text) {
   return null
 }
 
-// True while the /btw request is in flight. Deliberately separate from the
-// session's `loading`: a /btw question must work while the agent is running.
-const btwLoading = ref(false)
-function setBtwLoading(v) { btwLoading.value = v }
+// The /btw request runs entirely in the background: the composer must stay
+// usable (the user can keep typing or ask another question) and shows no
+// loading state of its own. The wait is shown on the anchor in the message
+// list instead — see ChatMessageList's /btw anchor and BtwAnswerDrawer.
 
 // Slash candidates. Command names arrive inconsistently: CodeBuddy ACP reports
 // skills slashless ("mmx-cli"), while pre-scanned names may keep a leading "/".
@@ -2081,7 +2079,6 @@ defineExpose({
   handleQuickSendInject,
   handleArchive,
   measureActionLabels,
-  setBtwLoading,
 })
 </script>
 

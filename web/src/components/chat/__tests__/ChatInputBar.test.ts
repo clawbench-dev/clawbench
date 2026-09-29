@@ -1078,15 +1078,19 @@ describe('ChatInputBar', () => {
     expect(keys).toContain('/btw')
   })
 
-  it('shows the spinner and disables the input while a btw request is in flight', async () => {
+  it('never shows a btw loading state and never disables the composer', async () => {
+    // A /btw question runs in the background: the wait is shown on the message
+    // anchor, not here. The composer must stay fully usable so the user can keep
+    // typing or ask another question while the first is still being answered.
     const wrapper = mountBar()
-    wrapper.vm.setBtwLoading(true)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.chat-send-btn').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('.chat-textarea').attributes('disabled')).toBeDefined()
-    wrapper.vm.setBtwLoading(false)
-    await wrapper.vm.$nextTick()
-    expect(wrapper.find('.chat-textarea').attributes('disabled')).toBeUndefined()
+    const textarea = wrapper.find('.chat-textarea')
+    expect(textarea.attributes('disabled')).toBeUndefined()
+    // No /btw spinner exists in the composer, and the send button is never
+    // disabled by a background question.
+    expect(wrapper.find('.send-btn-spinner').exists()).toBe(false)
+    expect(wrapper.find('.chat-send-btn').attributes('disabled')).toBeUndefined()
+    // The mechanism itself is gone: no setBtwLoading is exposed any more.
+    expect((wrapper.vm as any).setBtwLoading).toBeUndefined()
   })
 
   it('quick-send menu items disable text selection', async () => {

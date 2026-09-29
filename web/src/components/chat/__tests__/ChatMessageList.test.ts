@@ -807,8 +807,12 @@ describe('ChatMessageList — /btw anchors', () => {
   it('only anchors settled numeric ids (optimistic/placeholder ids cannot match rows)', async () => {
     const src = await source('ChatMessageList.vue')
     // The rule itself lives in the util; the component must delegate to it
-    // rather than re-implementing a weaker check.
-    expect(src).toContain("import { anchorCount, messageAnchorKey } from '@/utils/btwAnchors.ts'")
+    // rather than re-implementing a weaker check. Assert the identifiers rather
+    // than the exact import line — pinning the literal string makes the guard
+    // fail on any unrelated addition to the import list.
+    const importLine = src.slice(src.indexOf("from '@/utils/btwAnchors.ts'") - 200, src.indexOf("from '@/utils/btwAnchors.ts'"))
+    expect(importLine).toMatch(/\banchorCount\b/)
+    expect(importLine).toMatch(/\bmessageAnchorKey\b/)
     expect(src).toMatch(/anchorCount\(props\.btwAnchors, msg\)/)
   })
 

@@ -221,7 +221,7 @@ import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, n
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
-import { groupBtwRecords } from '@/utils/btwAnchors.ts'
+import { groupBtwRecords, currentAnchorKey } from '@/utils/btwAnchors.ts'
 import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -1197,13 +1197,17 @@ async function loadBtwRecords(sessionId) {
     btwRecords.value = []
     return
   }
+  // Optimistic entries are not in the server list yet, so a plain replace would
+  // make a still-unanswered question's anchor vanish whenever another question
+  // resolves. Carry them over.
+  const stillPending = btwRecords.value.filter(r => r.pending === true)
   try {
     const data = await apiGet(`/api/ai/session/btw?session_id=${encodeURIComponent(sessionId)}`)
-    btwRecords.value = data?.questions || []
+    btwRecords.value = [...(data?.questions || []), ...stillPending]
   } catch (err) {
     // A failed list is not worth surfacing — the anchors simply do not render.
     appLog.w(TAG, 'failed to load btw records', err)
-    btwRecords.value = []
+    btwRecords.value = stillPending
   }
 }
 
@@ -1223,13 +1227,32 @@ async function handleBtw(question) {
   }
 
   // Clear the composer up front: the question is consumed by this request.
+  // The composer is otherwise untouched — no loading state, no disabling — so
+  // the user can keep typing or ask another question while this one is answered.
   inputBarRef.value?.clearInput()
-  inputBarRef.value?.setBtwLoading?.(true)
+
+  // Show the anchor immediately, in its pending state, so the question has a
+  // visible home from the moment it is asked. The anchor key mirrors the
+  // backend's "last persisted message" rule, so the pending anchor lands exactly
+  // where the stored record will and does not jump when the answer arrives.
+  const anchorKey = currentAnchorKey(messages.value)
+  const pendingId = `btw-pending-${Date.now()}`
+  const pendingRec = {
+    id: pendingId,
+    anchorMessageId: Number(anchorKey) || 0,
+    question,
+    answer: '',
+    error: '',
+    createdAt: new Date().toISOString(),
+    pending: true,
+  }
+  btwRecords.value = [...btwRecords.value, pendingRec]
 
   try {
     const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question }, { timeoutMs: BTW_REQUEST_TIMEOUT_MS })
     const rec = data?.record
     if (!rec) {
+      removePendingBtw(pendingId)
       toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
       return
     }
@@ -1239,19 +1262,25 @@ async function handleBtw(question) {
     if (rec.error) {
       toast.show(rec.error, { icon: '⚠️', type: 'error' })
     }
-    // Re-read the list so the new anchor (and its count) is authoritative.
+    // Re-read the list so the new anchor (and its count) is authoritative; the
+    // pending entry is dropped first so it cannot double the marker.
+    removePendingBtw(pendingId)
     await loadBtwRecords(sid)
     btwDrawerRecords.value = [rec]
     btwDrawerRef.value?.open()
   } catch (err) {
     // Errors that produced no record (no session, empty question, model not
     // configured) surface as a toast — there is nothing to anchor.
+    removePendingBtw(pendingId)
     appLog.w(TAG, 'btw question failed', err)
     const msg = err?.message || t('chat.btw.failed')
     toast.show(msg, { icon: '⚠️', type: 'error' })
-  } finally {
-    inputBarRef.value?.setBtwLoading?.(false)
   }
+}
+
+/** Drop one optimistic /btw entry by its local id. */
+function removePendingBtw(pendingId) {
+  btwRecords.value = btwRecords.value.filter(r => r.id !== pendingId)
 }
 
 // Anchors must be reloaded whenever the session changes (and on first mount).

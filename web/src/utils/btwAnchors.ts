@@ -17,6 +17,11 @@ export interface BtwRecordLike {
   answer?: string
   error?: string
   createdAt?: string
+  /**
+   * Optimistic entry: the question was just asked and is still being answered.
+   * It has no server id yet and renders as an in-progress anchor.
+   */
+  pending?: boolean
 }
 
 /** The grouping key for a record's anchor id. Null/undefined → "0". */
@@ -58,4 +63,45 @@ export function anchorCount(
   const key = messageAnchorKey(msg)
   if (!key) return 0
   return anchors?.[key]?.length || 0
+}
+
+/**
+ * Whether any record grouped under an anchor key is still being answered.
+ *
+ * A just-asked question is inserted optimistically (see `pending`), so the
+ * marker can show its in-progress state without waiting for the server.
+ */
+export function anchorKeyPending(
+  anchors: Record<string, BtwRecordLike[]> | null | undefined,
+  key: string | null | undefined,
+): boolean {
+  if (!key) return false
+  return (anchors?.[key] || []).some(r => r?.pending === true)
+}
+
+/** Whether any question anchored to a message is still being answered. */
+export function anchorPending(
+  anchors: Record<string, BtwRecordLike[]> | null | undefined,
+  msg: { id?: unknown } | null | undefined,
+): boolean {
+  return anchorKeyPending(anchors, messageAnchorKey(msg))
+}
+
+/**
+ * The anchor key a question asked *now* would receive: the id of the last
+ * settled (persisted) message, or "0" when the session has none.
+ *
+ * Mirrors the backend's `MAX(id) FROM chat_history`, so an optimistic anchor
+ * lands exactly where the server record will — otherwise it would visibly jump
+ * when the response arrives. Optimistic messages (string `pending-*` ids) are
+ * skipped for the same reason: they are not in the DB yet, so the server
+ * anchors the question to an earlier message.
+ */
+export function currentAnchorKey(messages: { id?: unknown }[] | null | undefined): string {
+  if (!messages) return '0'
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const key = messageAnchorKey(messages[i])
+    if (key) return key
+  }
+  return '0'
 }

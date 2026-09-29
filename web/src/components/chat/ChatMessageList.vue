@@ -67,12 +67,14 @@
     <button
       v-if="(btwAnchors?.['0']?.length || 0) > 0"
       class="btw-anchor btw-anchor-top"
+      :class="{ 'btw-anchor--pending': anchorKeyPending(btwAnchors, '0') }"
       :title="t('chat.btw.anchorTitle')"
       :aria-label="t('chat.btw.anchorTitle')"
       @click="$emit('open-btw', '0')"
     >
-      <MessageCircleQuestion :size="14" />
-      <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
+      <LoadingIndicator v-if="anchorKeyPending(btwAnchors, '0')" :size="14" inline class="btw-anchor-spinner" />
+      <MessageCircleQuestion v-else :size="14" />
+      <span class="btw-anchor-label">{{ anchorKeyPending(btwAnchors, '0') ? t('chat.btw.answering') : t('chat.btw.anchorLabel') }}</span>
       <span v-if="btwAnchors['0'].length > 1" class="btw-anchor-count">{{ btwAnchors['0'].length }}</span>
     </button>
 
@@ -111,12 +113,14 @@
       <button
         v-if="anchorCountFor(msg) > 0"
         class="btw-anchor"
+        :class="{ 'btw-anchor--pending': anchorPendingFor(msg) }"
         :title="t('chat.btw.anchorTitle')"
         :aria-label="t('chat.btw.anchorTitle')"
         @click="$emit('open-btw', anchorKeyFor(msg))"
       >
-        <MessageCircleQuestion :size="14" />
-        <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
+        <LoadingIndicator v-if="anchorPendingFor(msg)" :size="14" inline class="btw-anchor-spinner" />
+        <MessageCircleQuestion v-else :size="14" />
+        <span class="btw-anchor-label">{{ anchorPendingFor(msg) ? t('chat.btw.answering') : t('chat.btw.anchorLabel') }}</span>
         <span v-if="anchorCountFor(msg) > 1" class="btw-anchor-count">{{ anchorCountFor(msg) }}</span>
       </button>
     </template>
@@ -195,7 +199,7 @@ import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } 
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
-import { anchorCount, messageAnchorKey } from '@/utils/btwAnchors.ts'
+import { anchorCount, anchorPending, anchorKeyPending, messageAnchorKey } from '@/utils/btwAnchors.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
@@ -263,6 +267,11 @@ function anchorCountFor(msg) {
  */
 function anchorKeyFor(msg) {
   return messageAnchorKey(msg)
+}
+
+/** Whether any question anchored to this message is still being answered. */
+function anchorPendingFor(msg) {
+  return anchorPending(props.btwAnchors, msg)
 }
 
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -1380,6 +1389,19 @@ defineExpose({
   color: #fff;
   font-size: var(--font-size-xs);
   text-align: center;
+}
+
+/* In-progress: the question was just asked and is still being answered. The
+   wait is shown HERE (not in the composer) so the input stays usable. A solid
+   accent border reads as "active" next to the dashed resting state. */
+.btw-anchor--pending {
+  border-style: solid;
+  border-color: var(--accent-color, #0066cc);
+  color: var(--accent-color, #0066cc);
+}
+
+.btw-anchor-spinner {
+  flex-shrink: 0;
 }
 
 .chat-empty {
