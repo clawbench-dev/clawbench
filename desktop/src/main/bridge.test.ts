@@ -18,7 +18,6 @@ const handlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => unknow
 const onHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => void>())
 
 const tunnelMock = vi.hoisted(() => ({
-  setTransportPreference: vi.fn(),
   getTransportPreference: vi.fn(() => 'both' as string),
   getActiveTransport: vi.fn(() => 'h2' as string),
 }))
@@ -62,7 +61,6 @@ vi.mock('./tunnel', () => ({
   getTunnelErrorType: vi.fn(() => ''),
   testPortReachable: vi.fn(async () => false),
   reconnectTunnel: vi.fn(async () => true),
-  setTransportPreference: tunnelMock.setTransportPreference,
   getTransportPreference: tunnelMock.getTransportPreference,
   getActiveTransport: tunnelMock.getActiveTransport,
 }))
@@ -91,34 +89,9 @@ describe('bridge: tunnel transport IPC', () => {
     vi.clearAllMocks()
   })
 
-  it('registers the three transport channels the preload invokes', () => {
-    expect(handlers.has('native:set-tunnel-transport')).toBe(true)
+  it('registers the two transport channels the preload invokes', () => {
     expect(handlers.has('native:get-tunnel-transport')).toBe(true)
     expect(handlers.has('native:get-active-tunnel-transport')).toBe(true)
-  })
-
-  it('forwards ssh to setTransportPreference', () => {
-    invoke('native:set-tunnel-transport', 'ssh')
-    expect(tunnelMock.setTransportPreference).toHaveBeenCalledWith('ssh')
-  })
-
-  // Electron is hard-wired to SSH: h2/both must be dropped at the IPC boundary
-  // so a stale renderer cannot switch the main process off SSH.
-  it.each(['h2', 'both'])('clamps %s to a no-op (Electron stays on ssh)', (pref) => {
-    invoke('native:set-tunnel-transport', pref)
-    expect(tunnelMock.setTransportPreference).not.toHaveBeenCalled()
-  })
-
-  it.each([
-    ['an unknown string', 'quic'],
-    ['an empty string', ''],
-    ['a number', 2],
-    ['null', null],
-    ['undefined', undefined],
-    ['an object', { transport: 'h2' }],
-  ])('ignores %s instead of poisoning the transport chain', (_name, value) => {
-    invoke('native:set-tunnel-transport', value)
-    expect(tunnelMock.setTransportPreference).not.toHaveBeenCalled()
   })
 
   it('get-tunnel-transport reports the configured preference', () => {

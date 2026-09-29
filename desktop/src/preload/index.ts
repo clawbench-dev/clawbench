@@ -99,18 +99,6 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   isTunnelConnected: () => invoke('native:is-tunnel-connected'),
   getTunnelError: () => invoke('native:get-tunnel-error'),
   getTunnelErrorType: () => invoke('native:get-tunnel-error-type'),
-  /**
-   * The configured tunnel transport (`port_forward.transport`).
-   *
-   * The value is owned by the SERVER (`/api/config`); the renderer reads it and
-   * pushes it here, because the main process has no authenticated config
-   * client (it reads the cookie jar only for /api/client-log and the h2 stream,
-   * and duplicating the authenticated GET would add a second source of truth).
-   * The main process holds it in memory for the session; it is not persisted,
-   * so a tunnel connect before the first config load falls back to the built-in
-   * default.
-   */
-  setTunnelTransport: (pref: string) => invoke('native:set-tunnel-transport', pref),
   /** The preference the main process is currently using. */
   getTunnelTransport: () => invoke('native:get-tunnel-transport'),
   /** 'ssh' | 'h2' — the transport that carried the last successful connect. */
