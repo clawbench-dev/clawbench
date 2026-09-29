@@ -1319,7 +1319,7 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	assert.Equal(t, "completed", data.Status)
 	assert.Equal(t, "100", data.ExecutionID)
 	assert.Equal(t, "session-task-1", data.SessionID)
-	assert.Equal(t, NormalizeProjectPath("/home/user/project"), data.ProjectPath)
+	assert.Equal(t, "/home/user/project", data.ProjectPath)
 	assert.Equal(t, "test task", data.SessionTitle)
 	assert.Equal(t, "task-agent-1", data.AgentID)
 }
@@ -1508,7 +1508,7 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	assert.Equal(t, "failed", data1.Status)
 	assert.Equal(t, fmt.Sprintf("%d", taskID), data1.TaskID)
 	assert.NotEmpty(t, data1.SessionID, "failed event should have session_id")
-	assert.Equal(t, NormalizeProjectPath("/test-project"), data1.ProjectPath, "failed event should have project_path")
+	assert.Equal(t, "/test-project", data1.ProjectPath, "failed event should have project_path")
 }
 
 // --- executeTask: ExecuteStream error path (covers scheduler.go:681-687) ---

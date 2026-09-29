@@ -3895,15 +3895,15 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 	}
 
 	// Same session id appears in both projects
-	assert.Equal(t, "shared-session", byProject["/projectA"].ID)
-	assert.Equal(t, "shared-session", byProject["/projectB"].ID)
+	assert.Equal(t, "shared-session", byProject[service.NormalizeProjectPath("/projectA")].ID)
+	assert.Equal(t, "shared-session", byProject[service.NormalizeProjectPath("/projectB")].ID)
 
 	// Unread counts must not leak across projects
-	a, ok := byProject["/projectA"]
+	a, ok := byProject[service.NormalizeProjectPath("/projectA")]
 	require.True(t, ok, "projectA session should be present")
 	assert.Equal(t, 2, a.UnreadCount, "projectA unread must not include projectB's messages")
 
-	b, ok := byProject["/projectB"]
+	b, ok := byProject[service.NormalizeProjectPath("/projectB")]
 	require.True(t, ok, "projectB session should be present")
 	assert.Equal(t, 3, b.UnreadCount, "projectB unread must not include projectA's messages")
 }

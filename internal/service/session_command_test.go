@@ -1176,7 +1176,7 @@ func TestScanDingTalkSessionInfos_MultipleRows(t *testing.T) {
 	require.Len(t, results, 2)
 	assert.Equal(t, "scan-1", results[0].ID)
 	assert.Equal(t, "Session 1", results[0].Title)
-	assert.Equal(t, NormalizeProjectPath("/proj"), results[0].ProjectPath)
+	assert.Equal(t, "/proj", results[0].ProjectPath)
 	assert.Equal(t, "claude", results[0].Backend)
 	assert.Equal(t, "agent1", results[0].AgentID)
 	assert.Equal(t, "model-a", results[0].Model)
@@ -1204,7 +1204,7 @@ func TestDingTalkSessionInfo_AllFields(t *testing.T) {
 	info := results[0]
 	assert.Equal(t, "full-info-1", info.ID)
 	assert.Equal(t, "Full Info", info.Title)
-	assert.Equal(t, NormalizeProjectPath("/proj"), info.ProjectPath)
+	assert.Equal(t, "/proj", info.ProjectPath)
 	assert.Equal(t, "claude", info.Backend)
 	assert.Equal(t, "agent1", info.AgentID)
 	assert.Equal(t, "model-x", info.Model)
@@ -2696,7 +2696,7 @@ func TestGetSessionInfoForPush(t *testing.T) {
 		info, err := GetSessionInfoForPush(sessionID)
 		require.NoError(t, err)
 		assert.Equal(t, sessionID, info.ID)
-		assert.Equal(t, NormalizeProjectPath("/proj/info"), info.ProjectPath)
+		assert.Equal(t, "/proj/info", info.ProjectPath)
 		assert.Equal(t, "Info Session", info.Title)
 	})
 

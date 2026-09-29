@@ -311,7 +311,10 @@ func TestAddTask(t *testing.T) {
 	persisted, err := service.GetTaskByID(task.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, task.Name, persisted.Name)
-	assert.Equal(t, task.ProjectPath, persisted.ProjectPath)
+	// The read path resolves the project through the registry, which stores the
+	// canonical path — the input literal is not necessarily canonical (on Windows
+	// filepath.Abs("/test-project") is drive-rooted).
+	assert.Equal(t, service.NormalizeProjectPath(task.ProjectPath), persisted.ProjectPath)
 }
 
 func TestAddTask_InvalidCronExpr(t *testing.T) {

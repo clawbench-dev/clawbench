@@ -2792,8 +2792,9 @@ func TestSchema_RenameSessionDeletedToArchived(t *testing.T) {
 	`)
 	assert.NoError(t, err)
 
-	// The fixture stores project_id directly, so register the matching project:
-	// the assertion below resolves it back to a path.
+	// The fixture stores project_id directly and registers the project row
+	// itself, so it stores the RAW path here; the lookup below must use the same
+	// raw value (this test exercises the schema rename, not path canonicalization).
 	_, err = oldDB.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj') ON CONFLICT(id) DO NOTHING")
 	assert.NoError(t, err)
 	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, deleted) VALUES ('active-sess', 1, 'claude', 'Active', 0)")
@@ -2829,7 +2830,7 @@ func TestSchema_RenameSessionDeletedToArchived(t *testing.T) {
 
 	// Step 5: Verify index still functions after rename
 	var activeCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) AND archived = 0 AND session_type = 'chat'", NormalizeProjectPath("/proj")).Scan(&activeCount)
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/proj') AND archived = 0 AND session_type = 'chat'").Scan(&activeCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, activeCount)
 }

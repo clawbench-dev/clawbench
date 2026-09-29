@@ -419,7 +419,7 @@ func TestEnsureConsumer_BackendInfoIsPassedThrough(t *testing.T) {
 
 	require.True(t, EnsureConsumer("sess-info"))
 	require.Len(t, *calls, 1)
-	assert.Equal(t, NormalizeProjectPath("/proj/x"), (*calls)[0].ProjectPath)
+	assert.Equal(t, "/proj/x", (*calls)[0].ProjectPath)
 	assert.Equal(t, "codebuddy", (*calls)[0].BackendName)
 	assert.Equal(t, "codebuddy", (*calls)[0].AgentID)
 }

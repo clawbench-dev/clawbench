@@ -42,8 +42,11 @@ func titleServer(body string) http.HandlerFunc {
 // assertions read the project path back out through the registry.
 const testProjectID = 1
 
-// testProjectPath is the path testProjectID maps to.
-const testProjectPath = "/test"
+// testProjectPath is the canonical path testProjectID maps to. It is
+// canonicalized because the registry stores canonical paths and the accessors
+// resolve a project_id back to that form — on Windows filepath.Abs("/test") is
+// a drive-rooted path, not "/test".
+var testProjectPath = NormalizeProjectPath("/test")
 
 // ensureTestProject registers testProjectPath in the projects registry, so
 // fixtures that store project_id = testProjectID can resolve it back to a path.
