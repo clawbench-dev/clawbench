@@ -287,6 +287,23 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );`
 
+// 数据转换类迁移的台账名。名字里带日期是为了可读；一旦发布就不得再改，
+// 改了等于让所有已升级的库重跑一次全表扫描。
+const (
+	migMetadataFromContent  = "2026-09-29_migrate_metadata_from_content"
+	migTaskExecSummaries    = "2026-09-29_migrate_task_execution_summaries"
+	migToolCallsFromContent = "2026-09-29_migrate_tool_calls_from_content"
+	migThinkingFromContent  = "2026-09-29_migrate_thinking_from_content"
+)
+
+// dataMigrationNames 是上表的名字集合，供测试遍历。
+var dataMigrationNames = []string{
+	migMetadataFromContent,
+	migTaskExecSummaries,
+	migToolCallsFromContent,
+	migThinkingFromContent,
+}
+
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
 func ensureSchemaMigrationsTable() error {
 	_, err := WriteExec(schemaMigrationsDDL)
@@ -380,6 +397,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Wait up to 10 seconds when database is locked (defense-in-depth fallback)
 	if _, err := WriteExec("PRAGMA busy_timeout=10000"); err != nil {
 		return fmt.Errorf("failed to set busy_timeout: %w", err)
+	}
+
+	// 迁移台账：数据转换类迁移按名字记账，只跑一次。
+	if err := ensureSchemaMigrationsTable(); err != nil {
+		return fmt.Errorf("failed to create schema_migrations: %w", err)
 	}
 
 	// Pre-migration: add columns that must exist before createTables runs
@@ -1842,17 +1864,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: extract metadata from chat_history.content into chat_metadata table.
 	// This is a one-time migration for existing data; new messages are saved
 	// to chat_metadata automatically via SaveMetadata().
-	MigrateMetadataFromContent()
+	runOnce(migMetadataFromContent, MigrateMetadataFromContent)
 
 	// Migrate: convert task_execution summaries to chat_message summaries.
 	// Tasks now store summaries as target_type='chat_message' keyed by
 	// the assistant message ID (chat_history.id), same as interactive sessions.
 	// This converts any existing 'task_execution' summaries to the new format.
-	MigrateTaskExecutionSummaries()
+	runOnce(migTaskExecSummaries, MigrateTaskExecutionSummaries)
 
 	// Migrate: extract tool_use input/output from chat_history.content into
 	// chat_tool_calls table and rewrite content to slim format (no input/output).
-	MigrateToolCallsFromContent()
+	runOnce(migToolCallsFromContent, MigrateToolCallsFromContent)
 
 	// Migrate: rebuild chat_thinking with a seq column for incremental streaming
 	// persistence (existing single rows become seq=0). Must run BEFORE
@@ -1863,7 +1885,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: extract thinking text from chat_history.content into chat_thinking
 	// and rewrite content to slim format (think_id instead of text).
-	MigrateThinkingFromContent()
+	runOnce(migThinkingFromContent, MigrateThinkingFromContent)
 
 	return nil
 }

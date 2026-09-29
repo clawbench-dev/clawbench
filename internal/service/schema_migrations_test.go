@@ -7,6 +7,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
+
+	"clawbench/internal/model"
 )
 
 // setupTestDBForMigrations 建一个内存库，装上 schema_migrations 表，并把
@@ -75,4 +77,29 @@ func TestRunOnce_DistinctNamesAreIndependent(t *testing.T) {
 	runOnce("test_migration_c", func() bool { return true })
 	assert.True(t, isMigrationApplied("test_migration_c"))
 	assert.False(t, isMigrationApplied("test_migration_d"))
+}
+
+// TestInitDB_DataMigrationsAreGatedByLedger 走真实 InitDB：
+// 第一次应转换旧格式数据并记账；清掉台账后第二次应重跑。
+func TestInitDB_DataMigrationsAreGatedByLedger(t *testing.T) {
+	dir := t.TempDir()
+	model.DataDir = dir
+
+	// 第一次启动：空库，4 个迁移无待转换行 → 全部记账。
+	require.NoError(t, InitDB(true))
+	for _, name := range dataMigrationNames {
+		assert.True(t, isMigrationApplied(name), "空库首启也应记账: %s", name)
+	}
+
+	// 清台账 = 模拟「尚未应用」。
+	ResetSchemaMigrationsForTest()
+	for _, name := range dataMigrationNames {
+		assert.False(t, isMigrationApplied(name))
+	}
+
+	// 第二次启动：应重跑（空库仍是 no-op，但必须再次记账）。
+	require.NoError(t, InitDB(true))
+	for _, name := range dataMigrationNames {
+		assert.True(t, isMigrationApplied(name), "清台账后应重新记账: %s", name)
+	}
 }
