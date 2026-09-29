@@ -128,7 +128,7 @@
                     @click.stop="toggleForkCollapsed(row.session.id)"
                   >
                     <ChevronDown :size="11" class="fork-toggle-chevron" />
-                    <GitFork :size="11" />
+                    <Split :size="11" />
                     <span>{{ t('session.forkCount', { n: row.childCount }) }}</span>
                   </button>
                   <div v-if="row.session.tags && row.session.tags.length" class="session-item-tags">
@@ -280,7 +280,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'

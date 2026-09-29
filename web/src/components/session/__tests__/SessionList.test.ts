@@ -774,6 +774,25 @@ describe('SessionList', () => {
       expect(wrapper.find('.session-fork-toggle').attributes('aria-expanded')).toBe('true')
     })
 
+    it('uses the chat fork glyph (Split) for the group toggle, not a second icon language', async () => {
+      // The chat message's "fork from here" button draws lucide `Split`. The
+      // list's group toggle used `GitFork` — a git-branch glyph that reads as
+      // version control, not "fork this conversation", so the same action had
+      // two unrelated symbols across the app. Pin them to one glyph: a future
+      // "tidy up the icons" pass must not re-diverge them.
+      const src = readWebFile('src/components/session/SessionList.vue')
+      const chat = readWebFile('src/components/chat/ChatMessageItem.vue')
+      expect(chat, 'ChatMessageItem must keep using Split for its fork button').toMatch(
+        /<Split v-else :size="14" \/>/,
+      )
+      expect(src, 'the list toggle must draw the same glyph').toMatch(
+        /<Split :size="11" \/>/,
+      )
+      // GitFork is the git panel's glyph and must not appear here at all —
+      // neither in the template nor the lucide import list.
+      expect(src, 'the git-branch glyph must be gone').not.toMatch(/GitFork/)
+    })
+
     it('does not select the session when the collapse control is clicked', async () => {
       // The toggle sits inside the row, which selects the session on click.
       // Without @click.stop, collapsing the group would also open the anchor.
