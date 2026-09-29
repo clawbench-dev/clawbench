@@ -275,6 +275,66 @@ func (mutexDBWriter) QueryRowContext(ctx context.Context, query string, args ...
 	return dbRead.QueryRowContext(ctx, query, args...)
 }
 
+// schemaMigrationsDDL 是「已应用迁移」的台账。数据转换类迁移无法用列探针
+// 判断是否已完成（它们的守卫是 LIKE 扫描 + NOT EXISTS，而某些行按设计永远
+// 无法转换），所以改为按名字记账：跑完一次就不再重扫。
+//
+// 加列 / 建索引类迁移不在这里记账——它们已由 pragma_table_info / sqlite_master
+// 探针天然只跑一次，且探针比台账更能反映真实 schema（例如用户手工 DROP 过列）。
+const schemaMigrationsDDL = `
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    name       TEXT PRIMARY KEY,
+    applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`
+
+// ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
+func ensureSchemaMigrationsTable() error {
+	_, err := WriteExec(schemaMigrationsDDL)
+	return err
+}
+
+// isMigrationApplied 报告某个具名迁移是否已成功记账。
+func isMigrationApplied(name string) bool {
+	var n int
+	if err := dbRead.QueryRow(
+		"SELECT COUNT(*) FROM schema_migrations WHERE name = ?", name,
+	).Scan(&n); err != nil {
+		// 读失败按「未应用」处理：宁可重跑一次（幂等迁移无副作用），
+		// 也不要因为一次读错误永久跳过迁移。
+		slog.Warn("schema_migrations: probe failed", "name", name, "err", err)
+		return false
+	}
+	return n > 0
+}
+
+// markMigrationApplied 记账。INSERT OR IGNORE 使并发/重复调用安全。
+func markMigrationApplied(name string) {
+	if _, err := WriteExec(
+		"INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)", name,
+	); err != nil {
+		slog.Warn("schema_migrations: mark failed", "name", name, "err", err)
+	}
+}
+
+// runOnce 只在 name 未记账时执行 fn。fn 返回 true 表示「本轮已完成」——包括
+// 「没有需要转换的行」和「扫描循环正常跑完但留下了按设计无法转换的行」两种
+// 情况。返回 false 表示硬失败（查询/事务错误），此时不记账，下次启动重试。
+func runOnce(name string, fn func() bool) {
+	if isMigrationApplied(name) {
+		return
+	}
+	if fn() {
+		markMigrationApplied(name)
+		return
+	}
+	slog.Warn("migration did not complete; will retry on next start", "name", name)
+}
+
+// ResetSchemaMigrationsForTest 清空台账，让测试能重新走迁移路径。
+func ResetSchemaMigrationsForTest() {
+	_, _ = WriteExec("DELETE FROM schema_migrations")
+}
+
 // InitDB initializes the SQLite database with latest schema.
 // When runFromServer is true (server startup), orphaned streaming messages
 // from previous crashes are cleaned up. When false (CLI subcommand), cleanup
