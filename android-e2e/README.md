@@ -156,40 +156,46 @@ compose runs it in the **emulator's network namespace** (`network_mode:
 service:emulator`) so the app reaches it at `10.0.2.2:20000` — the same address
 the Tier 1 mock used.
 
-### The config that must not regress
+### The config, and why there is only one
 
 ```yaml
 port_forward:
   enabled: false   # disables ONLY the SSH listener
-  transport: h2    # h2-only
 ```
 
-This is the load-bearing combination: `shouldCreateProxyRegistry`
-(`cmd/server/proxy_registry_gate.go`) is `Enabled || Transport != "ssh"`, so
-`enabled: false` + `transport: h2` **must still create the ProxyRegistry**. If it
-did not, every `/api/tunnel/*` request would be `503 PortForwardUnavailable`. The
-only combination that legitimately disables the h2 endpoints is
-`enabled: false` + `transport: ssh`.
+`transport` is deliberately not set: `model.ApplyDefaults` pins
+`port_forward.transport` to `"both"` on every load (`internal/model/defaults.go`),
+so whatever the file says is discarded. Because of that pin,
+`shouldCreateProxyRegistry` (`cmd/server/proxy_registry_gate.go`) is now
+**unconditionally true** and the ProxyRegistry is always created — no config can
+leave `service.ProxyService` nil. Consequently the tunnel handlers'
+`503 PortForwardUnavailable` guard
+(`internal/handler/tunnel_stream.go:59`, `tunnel_control.go:432`) is **dead code
+by configuration**: it is pure defence against a failed creation or a future
+refactor, and no server config can reach it.
 
-`tests/tunnel.server.mjs` asserts this on an **authenticated** request: the
-handler's nil-registry guard is *inside* the handler, and `middleware.Auth`
-returns `401` before the handler runs for any request without a cookie. An
-unauthenticated probe therefore cannot observe `503` at all — an earlier revision
-asserted `status !== 503` without a cookie and could never fail (the 401 came
-from the middleware regardless of the registry). The spec now:
+`tests/tunnel.server.mjs` asserts the reachable behaviour on an **authenticated**
+request: the handler's nil-registry guard is *inside* the handler, and
+`middleware.Auth` returns `401` before the handler runs for any request without a
+cookie. An unauthenticated probe therefore cannot observe `503` at all — an
+earlier revision asserted `status !== 503` without a cookie and could never fail
+(the 401 came from the middleware regardless of the registry). The spec now:
 
 - probes unauthenticated and asserts **401** (a statement about the auth layer);
 - probes **authenticated** and asserts the handler was reached — a dead-target
-  dial is **502**, and the control stream is **200** — never `503`;
-- and pins the `503` branch with a **positive control**: the `server-no-h2`
-  compose service runs the same binary with `enabled: false` + `transport: ssh`
-  (`server-config/config.no-h2.yaml`) on port **20002**, and both endpoints are
-  asserted to answer `503` there. Without that control, "not 503" would be
-  consistent with a 503 branch that does not exist.
+  dial is **502**, and the control stream is **200**.
 
-The control server runs alongside the h2 server for the whole Tier 2 phase
-(`network_mode: service:emulator`, so the runner reaches it at
-`http://emulator:20002`), which is far cheaper than a second emulator boot.
+The spec used to also pin the `503` branch with a **positive control**: a second
+`server-no-h2` service (`enabled: false` + `transport: ssh`) asserted to answer
+`503`. That control has been **removed**, because the transport pin makes the
+combination it relied on inexpressible — a server that cannot reach the branch
+proved nothing about it. The branch is not left uncovered: it has direct Go unit
+tests that nil `service.ProxyService` and assert 503
+(`TestTunnelStream_NilProxyServiceIsUnavailable`,
+`TestTunnelControl_NilProxyServiceIsUnavailable`,
+`TestProxyHandlers_NilRegistryReturns503`), which is what makes the removal safe.
+The former `server-config/config.no-h2.yaml` and the `server-no-h2` compose
+service are gone with it.
 
 ### Version agreement (why login does not hang)
 
@@ -212,8 +218,7 @@ Everything the tunnel needs lives in the emulator's network namespace:
 
 ```
 [emulator container netns]                       [device]
-  10.0.2.2:20000  real clawbench server (enabled:false, transport:h2)
-  127.0.0.1:20002 negative-config control server (enabled:false, transport:ssh)
+  10.0.2.2:20000  real clawbench server (enabled:false, transport pinned to both)
   127.0.0.1:18080 tunnel target (node:net)  <──h2──  127.0.0.1:15080  (-L listener)
   127.0.0.1:17080 reverse listener (server binds) <──h2──  127.0.0.1:18090  (-R device target)
   0.0.0.0:18081   target/control HTTP server
@@ -221,12 +226,11 @@ Everything the tunnel needs lives in the emulator's network namespace:
 
 | Service | Role |
 |---------|------|
-| `server` | The real `clawbench` binary (`Dockerfile.server`), h2-only config |
-| `server-no-h2` | The same binary with `enabled:false, transport:ssh` on :20002 — the 503 positive control |
+| `server` | The real `clawbench` binary (`Dockerfile.server`), `enabled: false` (SSH off) |
 | `target` | `target-server/server.mjs` — the `-L` dial target + a control API for the runner |
 
-Both server services share the emulator's netns (like `target`), so the runner
-reaches them at `http://emulator:20000` and `http://emulator:20002`.
+The server shares the emulator's netns (like `target`), so the runner reaches it
+at `http://emulator:20000`.
 
 `target` must share the server's namespace because the h2 `-L` handler dials the
 target **from the server's namespace**, so `127.0.0.1:18080` is only a valid
@@ -485,7 +489,7 @@ AVD's `hw.keyboard=yes` does **not** suppress it (the WebView sets
 `mShowExplicitlyRequested=true`). The window then shrinks by the IME height
 (measured: the WebView goes from `[0,72][1080,1776]` to `[0,72][1080,1029]`), and
 the vertically-centered form collapses into a ~3px sliver. The next interaction
-(`#addPort.clearValue()`) then fails with `400 element not interactable`, and the
+(`#addAddress.clearValue()`) then fails with `400 element not interactable`, and the
 run took ~13 minutes to report it.
 
 The test never needs a real keyboard: `setValue` drives the WebView DOM, not the

@@ -86,8 +86,7 @@ services:
       dockerfile: Dockerfile.server
       args:
         # Which server-config/*.yaml is baked in. Explicit (not defaulted) so a
-        # reader can see at a glance which config the app is tested against;
-        # the negative-config control (server-no-h2 below) overrides it.
+        # reader can see at a glance which config the app is tested against.
         SERVER_CONFIG: "config.yaml"
     image: clawbench-android-e2e-server:local
     network_mode: "service:emulator"
@@ -97,29 +96,6 @@ services:
     # with the APK's versionName), not here: the server's /api/health version is
     # what the native version gate compares against the APK, and a mismatch is a
     # BLOCKING dialog. Baking it into the binary makes that agreement structural.
-    restart: "no"
-
-  # The negative-config CONTROL for the 503 assertions (tests/tunnel.server.mjs).
-  #
-  # Same binary as `server`, built from server-config/config.no-h2.yaml:
-  # `enabled: false` + `transport: ssh` is the ONLY combination that yields a nil
-  # ProxyRegistry, so /api/tunnel/* answers 503 PortForwardUnavailable. It runs
-  # on :20002 (see that config) so it can coexist with the h2 `server` in the
-  # emulator's netns for the whole phase — far cheaper than a second emulator
-  # boot + wdio session for one status code.
-  #
-  # A separate image tag (and a separate compose service) keeps its build from
-  # clobbering the h2 image the app is actually testing against.
-  server-no-h2:
-    build:
-      context: .
-      dockerfile: Dockerfile.server
-      args:
-        SERVER_CONFIG: "config.no-h2.yaml"
-    image: clawbench-android-e2e-server-no-h2:local
-    network_mode: "service:emulator"
-    depends_on:
-      - emulator
     restart: "no"
 
   # Tunnel target + test-control server. Lives in the same netns as `server` so
@@ -166,10 +142,6 @@ services:
       # the runner reaches the target's control API by compose service name.
       E2E_SERVER_HOST: "10.0.2.2"
       E2E_SERVER_PORT: "20000"
-      # The negative-config control server (nil ProxyRegistry -> 503). Reached by
-      # the runner at the emulator's compose-bridge address; it shares the
-      # emulator's netns, like the real server.
-      E2E_NO_H2_SERVER: "http://emulator:20002"
       E2E_TARGET_CONTROL: "http://emulator:18081"
       E2E_TARGET_PORT: "18080"
       E2E_PASSWORD: "e2e-test-password"

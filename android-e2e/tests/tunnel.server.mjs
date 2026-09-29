@@ -4,14 +4,15 @@
  * This spec is the foundation the other two depend on, and it asserts the one
  * thing the Tier 1 mock could never prove:
  *
- *   With `port_forward.enabled: false` and `port_forward.transport: h2`, the
- *   server MUST still create its ProxyRegistry, so the h2 tunnel endpoints are
- *   served rather than answered with 503 "PortForwardUnavailable".
+ *   With `port_forward.enabled: false`, the server MUST still create its
+ *   ProxyRegistry, so the h2 tunnel endpoints are served rather than answered
+ *   with 503 "PortForwardUnavailable".
  *
- * `shouldCreateProxyRegistry` (cmd/server/proxy_registry_gate.go) is the gate:
- * `Enabled || Transport != "ssh"`. The ONLY combination that disables the h2
- * endpoints is `enabled: false && transport: ssh`. This server is configured
- * `enabled: false, transport: h2`, so the registry must exist.
+ * `shouldCreateProxyRegistry` (cmd/server/proxy_registry_gate.go) is the gate,
+ * and it is now **unconditionally true**: `model.ApplyDefaults` pins
+ * `cfg.PortForward.Transport` to `"both"` on every load (internal/model/defaults.go),
+ * so the registry is always created. This server is configured `enabled: false`
+ * (SSH listener off) and still answers — that is what the probes below check.
  *
  * ## Why the probes are AUTHENTICATED (this used to be a vacuous test)
  *
@@ -32,12 +33,32 @@
  * therefore carry a real session cookie (`authFetch`), which is the only way
  * the handler — and its nil-registry guard — is actually reached.
  *
- * The 503 branch is then pinned by a POSITIVE CONTROL: the
- * `server-no-h2` compose service (server-config/config.no-h2.yaml, `enabled:
- * false` + `transport: ssh`) is the one combination that yields a nil registry,
- * and it is asserted to answer 503 on an authenticated request. Without that
- * control, "401 not 503" would be consistent with a 503 branch that does not
- * exist at all.
+ * ## The 503 branch is dead code by configuration (the old positive control is gone)
+ *
+ * This spec used to pin the 503 branch with a POSITIVE CONTROL: a second
+ * `server-no-h2` compose service (`enabled: false` + `transport: ssh`) that was
+ * asserted to answer 503. That control is now **removed**, because the
+ * combination it relied on can no longer exist:
+ *
+ *   - `model.ApplyDefaults` pins `cfg.PortForward.Transport` to `"both"` on
+ *     every load (internal/model/defaults.go), so `shouldCreateProxyRegistry`
+ *     (cmd/server/proxy_registry_gate.go) is **unconditionally true** and the
+ *     registry is always created. No config file can make it nil.
+ *   - Therefore the `service.ProxyService == nil` → 503 guard
+ *     (internal/handler/tunnel_stream.go:59, tunnel_control.go:432) is pure
+ *     defence: it is unreachable by configuration.
+ *
+ * The branch is NOT left uncovered, though — it has direct Go unit tests, which
+ * is what makes deleting the E2E control safe:
+ *
+ *   - TestTunnelStream_NilProxyServiceIsUnavailable  (tunnel_stream_test.go)
+ *   - TestTunnelControl_NilProxyServiceIsUnavailable (tunnel_control_test.go)
+ *   - TestProxyHandlers_NilRegistryReturns503        (proxy_test.go)
+ *
+ * each nil-ing `service.ProxyService` and asserting 503. An E2E server that can
+ * no longer reach the branch proved nothing about it, so the probes here now
+ * assert the concrete, reachable behaviour instead: 401 without a cookie, and
+ * (with one) the handler actually running.
  *
  * The session-cookie read on this image is a separate, image-specific WebView
  * defect (Chrome 69's `CookieManager.getCookie()` omits SameSite cookies — see
@@ -50,7 +71,6 @@ import assert from 'node:assert/strict';
 import {
   SERVER_FROM_RUNNER,
   SERVER_URL,
-  NO_H2_SERVER,
   nativeLogin,
   bridge,
   enterWebView,
@@ -121,9 +141,8 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
     // guard is reachable. The probe targets an UNLISTENED loopback port so the
     // handler's own dial fails deterministically: the expected status is 502
     // (TunnelTargetUnreachable), which proves the handler ran, passed the port
-    // whitelist and reached the dial — i.e. the registry existed. A 503 would
-    // mean service.ProxyService == nil (the regression); a 401 would mean the
-    // cookie did not authenticate.
+    // whitelist and reached the dial — i.e. the registry existed. A 401 would
+    // mean the cookie did not authenticate.
     const port = 18099; // nothing listens here; see the topology in the README
     const res = await authFetch(
       `${SERVER_FROM_RUNNER}/api/tunnel/stream?host=127.0.0.1&port=${port}`,
@@ -131,13 +150,8 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
     );
     const text = await res.text();
     console.log(`[tier2] POST /api/tunnel/stream (authenticated, dead target) -> ${res.status} ${text.slice(0, 160)}`);
-    assert.notEqual(
-      res.status,
-      503,
-      'the tunnel endpoints are unavailable (503): ProxyRegistry was not created for ' +
-        'enabled:false + transport:h2 — see shouldCreateProxyRegistry',
-    );
-    assert.notEqual(res.status, 401, `an authenticated request was rejected by auth: ${text}`);
+    // The exact status IS the registry assertion: 502 means the handler ran past
+    // the (nil) registry guard, past the port whitelist, and reached its dial.
     assert.equal(
       res.status,
       502,
@@ -145,7 +159,7 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
     );
   });
 
-  it('serves /api/tunnel/control to an AUTHENTICATED request (registry exists for enabled:false + h2)', async () => {
+  it('serves /api/tunnel/control to an AUTHENTICATED request (registry exists for enabled:false)', async () => {
     // Same reasoning as the stream probe: the nil guard is inside the handler,
     // so only an authenticated request can reach it. A successful control bind
     // is an NDJSON stream, so the status is read from the headers and the body
@@ -161,55 +175,11 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
     } catch {
       // Already finished.
     }
-    assert.notEqual(res.status, 503, 'the tunnel control endpoint is unavailable (503)');
-    assert.notEqual(res.status, 401, 'an authenticated request was rejected by auth');
+    // 200 means the control stream opened, which a live registry must serve.
     assert.equal(
       res.status,
       200,
       `expected 200 (control stream opened) but got ${res.status} — a live registry must serve this`,
-    );
-  });
-
-  it('POSITIVE CONTROL: enabled:false + transport:ssh really does answer 503 on both endpoints', async () => {
-    // The only combination that yields a nil ProxyRegistry. Asserting 503 here
-    // is what makes the "not 503" assertions above meaningful: it proves the
-    // branch they rule out is real and reachable, rather than dead code that
-    // could never fire.
-    //
-    // `authFetch` is given NO_H2_SERVER as its base so the token is minted on
-    // :20002 and the port-scoped cookie name (`cb20002_clawbench_session`) is
-    // derived from it. Authenticating against :20000 and then sending that
-    // cookie to :20002 would be a 401, not a 503.
-    const stream = await authFetch(
-      `${NO_H2_SERVER}/api/tunnel/stream?host=127.0.0.1&port=18080`,
-      { method: 'POST', body: 'x' },
-      NO_H2_SERVER,
-    );
-    const streamText = await stream.text();
-    console.log(
-      `[tier2] POST /api/tunnel/stream (no-h2 config, authenticated) -> ${stream.status} ${streamText.slice(0, 160)}`,
-    );
-    assert.equal(
-      stream.status,
-      503,
-      `expected 503 (nil ProxyRegistry) from the enabled:false + transport:ssh server, ` +
-        `got ${stream.status}: ${streamText}`,
-    );
-
-    const control = await authFetch(
-      `${NO_H2_SERVER}/api/tunnel/control`,
-      { method: 'POST', body: '' },
-      NO_H2_SERVER,
-    );
-    const controlText = await control.text();
-    console.log(
-      `[tier2] POST /api/tunnel/control (no-h2 config, authenticated) -> ${control.status} ${controlText.slice(0, 160)}`,
-    );
-    assert.equal(
-      control.status,
-      503,
-      `expected 503 (nil ProxyRegistry) from the enabled:false + transport:ssh server, ` +
-        `got ${control.status}: ${controlText}`,
     );
   });
 

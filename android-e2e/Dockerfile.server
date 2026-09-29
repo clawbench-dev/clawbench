@@ -1,16 +1,18 @@
 # Tier 2 real-server image.
 #
 # The config is selected at BUILD time by SERVER_CONFIG (see
-# docker-compose.yml's `server` service), so `docker compose build server`
-# bakes in exactly one config file:
+# docker-compose.yml's `server` service), so `docker compose build server` bakes
+# in exactly one config file: config.yaml (`enabled: false`, the SSH listener
+# off; the h2 tunnel rides the always-on main HTTP server).
 #
-#   config.yaml            enabled:false + transport:h2   -> registry EXISTS
-#   config.no-h2.yaml      enabled:false + transport:ssh  -> registry is nil
-#
-# The negative-config phase (tests/tunnel.server.mjs, the 503 assertions)
-# rebuilds this image with SERVER_CONFIG=config.no-h2.yaml. That is deliberately
-# a *different image tag* (see compose) so the two phases can never race on the
-# same tag, and the binary itself is unchanged — only the config differs.
+# There is deliberately only ONE config now. `model.ApplyDefaults` pins
+# `port_forward.transport` to "both" on every load (internal/model/defaults.go),
+# so `shouldCreateProxyRegistry` (cmd/server/proxy_registry_gate.go) is
+# unconditionally true and no config can leave the ProxyRegistry nil — the
+# 503 "PortForwardUnavailable" branch is unreachable by configuration (it is
+# covered by Go unit tests instead; see tests/tunnel.server.mjs). The former
+# `config.no-h2.yaml` + `server-no-h2` control service existed only to pin that
+# branch from E2E and has been removed.
 #
 # Why a real server and not the Tier 1 mock: MockWebServer / the dependency-free
 # mock are HALF-DUPLEX — they consume the whole request body before writing a
@@ -29,7 +31,7 @@
 # unreachable here); the Go binary itself needs no runtime.
 FROM node:20-alpine
 
-# Which server-config/*.yaml to bake in. Defaults to the h2-capable config.
+# Which server-config/*.yaml to bake in.
 ARG SERVER_CONFIG=config.yaml
 
 WORKDIR /app

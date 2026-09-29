@@ -5,9 +5,18 @@
  * Path under test:
  *   MainActivity launch -> file:///android_asset/login.html (first launch)
  *     -> switch into the WEBVIEW_* context
- *     -> fill host/port/password, pick HTTP
+ *     -> fill the single full-address field (protocol + host + port) + password,
+ *        press Add (which only SAVES — 0c2da01c), then press Connect
  *     -> native connectToServer(): POST /login, then (on 200) GET /api/health,
  *        inject the auth cookie
+ *
+ * The login page was refactored (0c2da01c, e8d8d57c): the protocol radio and the
+ * separate host/port inputs are GONE. The address is one free-text field
+ * (`#addAddress`) that must carry a complete `scheme://host:port` (url-utils.js
+ * buildServerUrl rejects anything less), plus an optional display name
+ * (`#addName`). Add/Edit now only save the server; the user must press Connect
+ * to authenticate. `#addHost`/`#addPort`/`input[name="addProtocol"]` no longer
+ * exist — driving them was this spec's original Tier 1 failure.
  *     -> webView.loadUrl(serverUrl) -> GET / -> mock home page carrying
  *        E2E_HOME_MARKER
  *
@@ -127,22 +136,45 @@ describe('ClawBench Android shell — Tier 1 login smoke', () => {
   });
 
   it('renders the server-address form inside the WebView', async () => {
-    for (const id of ['addHost', 'addPort', 'addPassword', 'addConnectBtn']) {
+    // First launch has no saved servers, so renderServerList() calls
+    // showAddForm() and the ADD form is the visible one: optional name, the
+    // single address field, the password, and the submit button.
+    for (const id of ['addName', 'addAddress', 'addPassword', 'addConnectBtn']) {
       const el = await browser.$(`#${id}`);
       assert.ok(await el.isExisting(), `#${id} not found in the WebView DOM`);
+    }
+
+    // The refactor (0c2da01c) deleted the protocol radio and the split
+    // host/port inputs in favour of one full-URL field. Assert they are really
+    // gone, so this spec cannot quietly pass against a page that reintroduced
+    // them while the connect test below relies on the new contract.
+    for (const selector of ['input[name="addProtocol"]', '#addHost', '#addPort']) {
+      assert.equal(
+        await browser.$(selector).isExisting(),
+        false,
+        `${selector} still exists — the login form should use the single address field`,
+      );
     }
   });
 
   it('connects to the mock server and reaches the home page', async () => {
-    // Protocol: HTTP (the form defaults to HTTPS).
-    await browser.$('input[name="addProtocol"][value="http"]').click();
-
-    await fillField('#addHost', MOCK_HOST);
-    await fillField('#addPort', MOCK_PORT);
+    // The single address field must carry a COMPLETE scheme://host:port
+    // (url-utils.js buildServerUrl rejects anything less — there is no protocol
+    // radio to pick HTTP and no separate port input any more).
+    await fillField('#addAddress', `http://${MOCK_HOST}:${MOCK_PORT}`);
     await fillField('#addPassword', PASSWORD);
 
+    // Add only SAVES the server (it no longer auto-connects — 0c2da01c). The
+    // submit lands the page back on the saved-server view with the Connect form
+    // shown and the password hidden (it was stored with the entry).
     await browser.$('#addConnectBtn').scrollIntoView({ block: 'center', inline: 'center' });
     await browser.$('#addConnectBtn').click();
+
+    // Now the actual native login: Connect -> connectToServer(url, password).
+    const connectBtn = await browser.$('#connectBtn');
+    await connectBtn.waitForDisplayed({ timeout: 15000 });
+    await connectBtn.scrollIntoView({ block: 'center', inline: 'center' });
+    await connectBtn.click();
 
     // Native order: POST /login first, then GET /api/health only on a 200
     // (`authenticateAndNavigate` -> `handleAuthResponse`), then the WebView

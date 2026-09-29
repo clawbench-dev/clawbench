@@ -85,15 +85,6 @@ export const APP_ACTIVITY = process.env.E2E_APP_ACTIVITY || 'com.clawbench.app.M
 export const TARGET_CONTROL = process.env.E2E_TARGET_CONTROL || 'http://emulator:18081';
 export const TARGET_PORT = Number(process.env.E2E_TARGET_PORT || 18080);
 
-/**
- * The negative-config control server: same binary as the real server, but
- * `enabled: false` + `transport: ssh` — the only combination that leaves the
- * ProxyRegistry nil, so both tunnel endpoints answer 503. Reached by the runner
- * at the emulator's compose-bridge address (it shares the emulator's netns).
- * Used by `tunnel.server.mjs` to prove the 503 branch is real and reachable.
- */
-export const NO_H2_SERVER = process.env.E2E_NO_H2_SERVER || 'http://emulator:20002';
-
 /** `-L`: device-side listener port and its server-side target. */
 export const L_LOCAL_PORT = 15080;
 /** A SECOND `-L` listener, for the "two simultaneous forwards" test. */
@@ -336,9 +327,6 @@ export async function readDeviceLog() {
 
 // ------------------------------------------------- app state / login ---------
 
-/** The login form's connect button (proves the app is on the login asset). */
-const LOGIN_BUTTON = '#addConnectBtn';
-
 /**
  * Wipe the app and relaunch it onto the first-launch login page.
  *
@@ -373,6 +361,14 @@ export async function resetAppToLoginPage() {
  * Drive the native login form (the flow `MainActivity.authenticateAndNavigate`
  * implements: POST /login -> GET /api/health -> webView.loadUrl).
  *
+ * The login page was refactored (0c2da01c, e8d8d57c): the protocol radio and the
+ * separate host/port inputs are gone. The address is one field (`#addAddress`)
+ * that must be a complete `scheme://host:port` (url-utils.js buildServerUrl),
+ * and Add/Edit now only SAVES — it no longer auto-connects. So the flow is:
+ * fill address + password, press Add, then press Connect. This helper used to
+ * drive `#addHost`/`#addPort`/`input[name="addProtocol"]`, all of which no
+ * longer exist; it was only ever masked because Tier 1 failed first.
+ *
  * After this the app holds its OWN (HttpOnly, `SameSite=Lax`) session cookie and
  * is on the server origin. On this image `getCookie()` will not read that cookie
  * back (SameSite omission — see the file header), so the tunnel fixtures use
@@ -384,16 +380,26 @@ export async function nativeLogin() {
   const href = await browser.execute(() => location.href).catch(() => '');
   if (typeof href === 'string' && href.startsWith(SERVER_URL)) return; // already in
 
-  const connectBtn = await browser.$('input[name="addProtocol"][value="http"]');
-  if (!(await connectBtn.isExisting())) {
+  // On the login page the add form is the visible one (first launch has no
+  // saved servers). `#addAddress` is the single address field.
+  const address = await browser.$('#addAddress');
+  if (!(await address.isExisting())) {
     throw new Error(`not on the login page (location=${href})`);
   }
-  await connectBtn.click();
-  await fillField('#addHost', SERVER_HOST);
-  await fillField('#addPort', SERVER_PORT);
+  await fillField('#addAddress', SERVER_URL);
   await fillField('#addPassword', PASSWORD);
+
+  // Add only SAVES; it does not authenticate (0c2da01c).
   await browser.$('#addConnectBtn').scrollIntoView({ block: 'center', inline: 'center' });
   await browser.$('#addConnectBtn').click();
+
+  // Saving returns to the saved-server view with the Connect form shown; the
+  // password is hidden because it was stored with the entry. Connect is what
+  // runs the native authenticateAndNavigate flow.
+  const connectBtn = await browser.$('#connectBtn');
+  await connectBtn.waitForDisplayed({ timeout: 15000 });
+  await connectBtn.scrollIntoView({ block: 'center', inline: 'center' });
+  await connectBtn.click();
 
   await waitFor(async () => {
     const contexts = await browser.getContexts();
@@ -405,7 +411,7 @@ export async function nativeLogin() {
   }, 90000, `the WebView to reach ${SERVER_URL}`);
 
   const errorVisible = await browser.execute(() => {
-    const e = document.getElementById('addErrorMsg');
+    const e = document.getElementById('errorMsg');
     return !!e && getComputedStyle(e).display !== 'none';
   });
   assert.equal(errorVisible, false, 'login error banner is visible');
@@ -439,10 +445,6 @@ export async function connectToOriginWithoutPassword() {
  * The token is a server-generated random value (see internal/handler/auth.go);
  * reading it here is what lets the fixture hand the page a *valid* credential
  * without the app installing one itself.
- *
- * `base` defaults to the real server. The negative-config control server
- * (NO_H2_SERVER) authenticates against the SAME password, so passing it here is
- * all that is needed to make an authenticated request to it.
  */
 export async function fetchSessionToken(base = SERVER_FROM_RUNNER) {
   const res = await fetch(`${base}/login`, {
@@ -455,8 +457,8 @@ export async function fetchSessionToken(base = SERVER_FROM_RUNNER) {
     ? res.headers.getSetCookie()
     : [res.headers.get('set-cookie')];
   // Match on the name SUFFIX: a non-default port is scoped by the server
-  // (model.ScopedCookieName prefixes it, e.g. `cb20002_clawbench_session`), so
-  // an exact-prefix match would silently find nothing on the control server.
+  // (model.ScopedCookieName prefixes it, e.g. `cb20001_clawbench_session`), so
+  // an exact-prefix match would silently find nothing on a non-default port.
   const session = setCookies.find(
     (c) => c && /(^|;\s*)(cb\d+_)?clawbench_session=/.test(c),
   );
@@ -478,9 +480,9 @@ export async function fetchSessionToken(base = SERVER_FROM_RUNNER) {
  * `base` is BOTH where the token is minted and where the cookie name is derived
  * from. The two must come from the same server: the cookie is port-scoped
  * (model.ScopedCookieName), so a token minted on :20000 is named
- * `clawbench_session` and would not authenticate a request to :20002, whose
- * cookie is `cb20002_clawbench_session`. Deriving the name from the CALLER's
- * base (rather than hardcoding it) is what keeps the two in sync.
+ * `clawbench_session` and would not authenticate a request to a non-default
+ * port, whose cookie is `cb<port>_clawbench_session`. Deriving the name from the
+ * CALLER's base (rather than hardcoding it) is what keeps the two in sync.
  */
 export async function authFetch(url, init = {}, base = SERVER_FROM_RUNNER) {
   const token = await fetchSessionToken(base);

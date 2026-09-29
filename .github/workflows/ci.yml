@@ -656,10 +656,10 @@ jobs:
       - name: Stage harness assets
         # `--with-server` ONLY for the tiers that run the real server. run.sh
         # scopes its compose build to the selected tier's services (ce4c649c):
-        # Tier 1 builds `emulator mock runner`, Tier 2 `emulator server
-        # server-no-h2 target runner`, `all` all five. Tier 1 therefore never
-        # touches the `server` service and never needs assets/clawbench-server,
-        # so building it there would be one Go link (~10-20 s) for nothing.
+        # Tier 1 builds `emulator mock runner`, Tier 2 `emulator server target
+        # runner`, `all` all five. Tier 1 therefore never touches the `server`
+        # service and never needs assets/clawbench-server, so building it there
+        # would be one Go link (~10-20 s) for nothing.
         #
         # A PR run has no `github.event.inputs`, so the `|| 'all'` fallback
         # resolves to `all`, which does need the server — same expression the
