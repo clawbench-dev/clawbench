@@ -2141,10 +2141,10 @@ func migrateQuickProjectScope() error {
 // messages would otherwise be re-migrated here and double-count usage that the
 // source session already contributed. ACP replay-replace messages carry only
 // {"transport":"acp"} and are likewise skipped.
-func MigrateMetadataFromContent() {
+func MigrateMetadataFromContent() bool {
 	// Count how many rows need migration
 	var needed int
-	_ = dbRead.QueryRow(`
+	if err := dbRead.QueryRow(`
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"metadata"%'
@@ -2153,9 +2153,12 @@ func MigrateMetadataFromContent() {
 			SELECT 1 FROM chat_sessions s
 			WHERE s.id = h.session_id AND s.source_session_id IS NOT NULL
 		  )
-	`).Scan(&needed)
+	`).Scan(&needed); err != nil {
+		slog.Error("metadata migration: count failed", slog.String("err", err.Error()))
+		return false
+	}
 	if needed == 0 {
-		return
+		return true
 	}
 	slog.Info("migrating metadata from chat_history to chat_metadata", slog.Int("rows", needed))
 
@@ -2167,7 +2170,7 @@ func MigrateMetadataFromContent() {
 		batch, err := migrateMetadataBatch(batchSize, offset)
 		if err != nil {
 			slog.Error("metadata migration: query failed", slog.String("err", err.Error()))
-			return
+			return false
 		}
 
 		if len(batch) == 0 {
@@ -2200,6 +2203,7 @@ func MigrateMetadataFromContent() {
 	}
 
 	slog.Info("metadata migration complete", slog.Int("migrated", migrated), slog.Int("needed", needed))
+	return true
 }
 
 // migrateMetadataBatch fetches one batch of assistant messages with metadata
@@ -2254,12 +2258,15 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 //  1. Finds the corresponding chat_history assistant message via session_id
 //  2. Inserts a 'chat_message' summary keyed by ch.id (if not already present)
 //  3. Deletes the old 'task_execution' summary
-func MigrateTaskExecutionSummaries() {
+func MigrateTaskExecutionSummaries() bool {
 	// Check if there are any task_execution summaries to migrate
 	var count int
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count)
+	if err := dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count); err != nil {
+		slog.Error("task_execution summary migration: count failed", slog.String("err", err.Error()))
+		return false
+	}
 	if count == 0 {
-		return
+		return true
 	}
 	slog.Info("migrating task_execution summaries to chat_message", slog.Int("count", count))
 
@@ -2275,7 +2282,7 @@ func MigrateTaskExecutionSummaries() {
 	`)
 	if err != nil {
 		slog.Error("task_execution summary migration: query failed", slog.String("err", err.Error()))
-		return
+		return false
 	}
 
 	type migrationRow struct {
@@ -2326,6 +2333,7 @@ func MigrateTaskExecutionSummaries() {
 	}
 
 	slog.Info("task_execution summary migration complete", slog.Int("migrated", migrated), slog.Int("total", count))
+	return true
 }
 
 // MigrateLegacyAgentPrompts drops the legacy agents.system_prompt column on the
@@ -2462,7 +2470,7 @@ func migrateQueuedMessagesToOwnTable() error {
 // and rewrites content to the slim format (no input/output).
 // This is a one-time migration for data created before the tool-call-split feature.
 // Runs in batches to avoid excessive memory usage on large databases.
-func MigrateToolCallsFromContent() {
+func MigrateToolCallsFromContent() bool {
 	// Find assistant messages that have tool_use blocks with input field in content,
 	// but have no entries in chat_tool_calls yet.
 	// We detect old-format data by checking for "input" key inside tool_use blocks,
@@ -2481,7 +2489,7 @@ func MigrateToolCallsFromContent() {
 		  )
 	`).Scan(&needed)
 	if needed == 0 {
-		return
+		return true
 	}
 	slog.Info("migrating tool_use input/output from chat_history to chat_tool_calls", slog.Int("rows", needed))
 
@@ -2514,7 +2522,7 @@ func MigrateToolCallsFromContent() {
 		)
 		if err != nil {
 			slog.Error("tool_use migration: query failed", slog.String("err", err.Error()))
-			return
+			return false
 		}
 
 		type msgRow struct {
@@ -2567,6 +2575,7 @@ func MigrateToolCallsFromContent() {
 		slog.Int("migrated", migrated),
 		slog.Int("failed", failed),
 		slog.Int("needed", needed))
+	return true
 }
 
 // migrateToolCallsForRow processes a single chat_history row:

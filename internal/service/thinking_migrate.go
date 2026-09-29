@@ -11,12 +11,12 @@ import (
 // and rewrites content to the slim format (think_id instead of text).
 // One-time migration for data created before the thinking-split feature.
 // Runs in batches to avoid excessive memory usage on large databases.
-func MigrateThinkingFromContent() {
+func MigrateThinkingFromContent() bool {
 	// Old-format rows have "type":"thinking" blocks WITHOUT "think_id".
 	// Both compact ("type":"thinking") and spaced ("type": "thinking") JSON are
 	// matched because historical content may contain either.
 	var needed int
-	_ = dbRead.QueryRowContext(context.Background(), `
+	if err := dbRead.QueryRowContext(context.Background(), `
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND (h.content LIKE '%"type":"thinking"%' OR h.content LIKE '%"type": "thinking"%')
@@ -27,9 +27,12 @@ func MigrateThinkingFromContent() {
 		    WHERE tc.message_id = h.id
 		    LIMIT 1
 		  )
-	`).Scan(&needed)
+	`).Scan(&needed); err != nil {
+		slog.Error("thinking migration: count failed", slog.String("err", err.Error()))
+		return false
+	}
 	if needed == 0 {
-		return
+		return true
 	}
 	slog.Info("migrating thinking text from chat_history to chat_thinking", slog.Int("rows", needed))
 
@@ -62,7 +65,7 @@ func MigrateThinkingFromContent() {
 		)
 		if err != nil {
 			slog.Error("thinking migration: query failed", slog.String("err", err.Error()))
-			return
+			return false
 		}
 
 		type msgRow struct {
@@ -82,7 +85,7 @@ func MigrateThinkingFromContent() {
 		if err = rows.Err(); err != nil {
 			slog.Error("thinking migration: rows iteration failed", slog.String("err", err.Error()))
 			_ = rows.Close() //nolint:sqlclosecheck // batched loop: cannot defer inside for-loop
-			return
+			return false
 		}
 		_ = rows.Close()
 
@@ -119,6 +122,7 @@ func MigrateThinkingFromContent() {
 		slog.Int("migrated", migrated),
 		slog.Int("failed", failed),
 		slog.Int("needed", needed))
+	return true
 }
 
 // migrateThinkingForRow processes a single chat_history row:
