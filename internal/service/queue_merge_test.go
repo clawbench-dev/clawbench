@@ -168,3 +168,58 @@ func TestMergeQueuedMessages_EmptySessionIDIsError(t *testing.T) {
 	assert.Error(t, err)
 	assert.False(t, ok)
 }
+
+// TestMergeQueuedMessages_DedupesURLAndQuoteAttachments pins the identity rules
+// for the two non-file attachment kinds: URLs key on their address, quotes on
+// their id + content. Two identical URLs must collapse; two quotes of the same
+// range with different text must both survive.
+func TestMergeQueuedMessages_DedupesURLAndQuoteAttachments(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Merge Attach Kinds")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "one", []model.FileEntry{
+		{Kind: "url", URL: "https://example.com/a"},
+		{Kind: "quote", ID: "x", Path: "/f.go", StartLine: 1, EndLine: 2, Text: "alpha"},
+	}, "q-1", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "two", []model.FileEntry{
+		{Kind: "url", URL: "https://example.com/a"},                                     // same URL as above
+		{Kind: "quote", ID: "x", Path: "/f.go", StartLine: 1, EndLine: 2, Text: "beta"}, // same range, different text
+	}, "q-2", "")
+	require.NoError(t, err)
+
+	merged, _, ok, err := service.MergeQueuedMessages(sid, "q-merged")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	require.Len(t, merged.Files, 3, "duplicate URL collapses, both distinct quotes survive")
+	urls, quotes := 0, 0
+	for _, f := range merged.Files {
+		switch {
+		case f.IsURL():
+			urls++
+		case f.IsQuote():
+			quotes++
+		}
+	}
+	assert.Equal(t, 1, urls)
+	assert.Equal(t, 2, quotes)
+}
+
+// TestMergeQueuedMessages_MintsQueueIDWhenEmpty verifies the "" queueID is not
+// stored verbatim: the merge mints one so the caller always has a usable id to
+// broadcast.
+func TestMergeQueuedMessages_MintsQueueIDWhenEmpty(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Merge Mint ID")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "a", nil, "q-1", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "b", nil, "q-2", "")
+	require.NoError(t, err)
+
+	merged, _, ok, err := service.MergeQueuedMessages(sid, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.NotEmpty(t, merged.QueueID, "an empty queueID must be minted, not stored blank")
+}

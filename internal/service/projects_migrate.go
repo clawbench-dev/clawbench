@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -35,10 +36,18 @@ var legacyProjectPathIndexes = []string{
 // the union of the in-place and rebuild sets.
 var legacyProjectPathTables = []string{
 	"chat_history", "chat_sessions", "recent_projects", "project_meta",
-	"scheduled_tasks", "queued_messages", "terminal_quick_commands",
-	"chat_quick_send", "chat_metadata", "chat_recommendations", "session_tags",
+	"scheduled_tasks", "queued_messages", tableTerminalQuickCommands,
+	tableChatQuickSend, "chat_metadata", "chat_recommendations", "session_tags",
 	"btw_questions", "project_forges", "rag_chunks",
 }
+
+// Table names referenced in more than one place, hoisted to constants so a
+// rename cannot drift between the probe list, the conversion list, and the
+// per-project dedupe specs.
+const (
+	tableTerminalQuickCommands = "terminal_quick_commands"
+	tableChatQuickSend         = "chat_quick_send"
+)
 
 // legacyPathTables are the tables whose project_path column converts in place:
 // add project_id, backfill it from the path→id map, then drop project_path.
@@ -58,8 +67,8 @@ var legacyPathTables = []struct {
 	{"chat_recommendations", false},
 	{"btw_questions", false},
 	{"project_forges", false},
-	{"terminal_quick_commands", true},
-	{"chat_quick_send", true},
+	{tableTerminalQuickCommands, true},
+	{tableChatQuickSend, true},
 	{"rag_chunks", false},
 }
 
@@ -102,7 +111,7 @@ var legacyRebuildTables = []struct {
 // (NormalizeProjectPath) resolves symlinks and relative segments, which SQLite
 // cannot do. So the distinct paths are read out, canonicalized in Go, and
 // written back into a temp table that the per-table backfills join against.
-func migrateProjectsToIDs() error {
+func migrateProjectsToIDs() error { //nolint:gocyclo // ordered multi-table conversion: index drops, path→id map, in-place conversions, rebuilds, RAG, shares; the sequence is the contract
 	tx, err := WriteBegin()
 	if err != nil {
 		return err
@@ -112,8 +121,8 @@ func migrateProjectsToIDs() error {
 
 	// The projects table does not exist yet on an upgrading database: this runs
 	// before createTables, which is where the DDL normally lives.
-	if _, err := tx.Exec(ProjectsDDL); err != nil {
-		return fmt.Errorf("create projects table: %w", err)
+	if _, ddlErr := tx.ExecContext(context.Background(), ProjectsDDL); ddlErr != nil {
+		return fmt.Errorf("create projects table: %w", ddlErr)
 	}
 
 	// ── Fold project_meta into projects ──────────────────────────────────────
@@ -133,7 +142,7 @@ func migrateProjectsToIDs() error {
 	// ── Indexes first ────────────────────────────────────────────────────────
 	// DROP COLUMN fails while any index still references the column.
 	for _, idx := range legacyProjectPathIndexes {
-		if _, err := tx.Exec("DROP INDEX IF EXISTS " + idx); err != nil {
+		if _, err := tx.ExecContext(context.Background(), "DROP INDEX IF EXISTS "+idx); err != nil {
 			return fmt.Errorf("drop index %s: %w", idx, err)
 		}
 	}
@@ -189,7 +198,7 @@ func migrateProjectsToIDs() error {
 	// this does NOT trigger re-embedding (the embedder is never called).
 	// The service package cannot recreate it: vec0 needs the extension and a
 	// known embedding dimension, both owned by internal/rag.
-	if _, err := tx.Exec("DROP TABLE IF EXISTS rag_vec"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DROP TABLE IF EXISTS rag_vec"); err != nil {
 		return fmt.Errorf("drop rag_vec: %w", err)
 	}
 	// Rows flagged embedded but holding no vector can never be recovered from a
@@ -204,7 +213,7 @@ func migrateProjectsToIDs() error {
 	if hasFlag, err := txColumnExists(tx, "rag_chunks", "has_embedding"); err != nil {
 		return err
 	} else if hasFlag {
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			"UPDATE rag_chunks SET has_embedding = 0 WHERE has_embedding = 1 AND embedding IS NULL",
 		); err != nil {
 			return fmt.Errorf("repair rag_chunks embedding flags: %w", err)
@@ -216,7 +225,7 @@ func migrateProjectsToIDs() error {
 		return err
 	}
 
-	if _, err := tx.Exec("DROP TABLE IF EXISTS _proj_map"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DROP TABLE IF EXISTS _proj_map"); err != nil {
 		return fmt.Errorf("drop temp project map: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
@@ -234,10 +243,11 @@ func migrateProjectsToIDs() error {
 // the old table. forge_bind_opt_out is the only live column; created_at /
 // updated_at are carried over so the registry keeps its history.
 func foldProjectMetaIntoProjects(tx *sql.Tx) error {
-	rows, err := tx.Query("SELECT project_path, forge_bind_opt_out, created_at, updated_at FROM project_meta")
+	rows, err := tx.QueryContext(context.Background(), "SELECT project_path, forge_bind_opt_out, created_at, updated_at FROM project_meta")
 	if err != nil {
 		return fmt.Errorf("read project_meta: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
 	type metaRow struct {
 		path      string
 		optOut    int
@@ -248,13 +258,12 @@ func foldProjectMetaIntoProjects(tx *sql.Tx) error {
 	for rows.Next() {
 		var m metaRow
 		if err := rows.Scan(&m.path, &m.optOut, &m.createdAt, &m.updatedAt); err != nil {
-			rows.Close()
 			return fmt.Errorf("scan project_meta: %w", err)
 		}
 		metas = append(metas, m)
 	}
-	if err := rows.Close(); err != nil {
-		return err
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate project_meta: %w", err)
 	}
 
 	for _, m := range metas {
@@ -264,7 +273,7 @@ func foldProjectMetaIntoProjects(tx *sql.Tx) error {
 		}
 		// ON CONFLICT keeps an existing projects row (created by a sibling
 		// table's backfill) and only lifts the opt-out flag onto it.
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			`INSERT INTO projects (path, forge_bind_opt_out, created_at, updated_at)
 			 VALUES (?, ?, ?, ?)
 			 ON CONFLICT(path) DO UPDATE SET
@@ -276,7 +285,7 @@ func foldProjectMetaIntoProjects(tx *sql.Tx) error {
 		}
 	}
 
-	if _, err := tx.Exec("DROP TABLE project_meta"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DROP TABLE project_meta"); err != nil {
 		return fmt.Errorf("drop project_meta: %w", err)
 	}
 	return nil
@@ -289,7 +298,7 @@ func foldProjectMetaIntoProjects(tx *sql.Tx) error {
 // The temp table is per-connection and WriteBegin pins one connection for the
 // transaction, so it is visible to every later statement here.
 func buildProjectIDMap(tx *sql.Tx) error {
-	if _, err := tx.Exec(
+	if _, err := tx.ExecContext(context.Background(),
 		"CREATE TEMP TABLE _proj_map (raw TEXT PRIMARY KEY, project_id INTEGER NOT NULL)",
 	); err != nil {
 		return fmt.Errorf("create temp project map: %w", err)
@@ -309,17 +318,17 @@ func buildProjectIDMap(tx *sql.Tx) error {
 		}
 		id, ok := canonIDs[canon]
 		if !ok {
-			if _, err := tx.Exec(
+			if _, err := tx.ExecContext(context.Background(),
 				"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", canon,
 			); err != nil {
 				return fmt.Errorf("insert project %q: %w", canon, err)
 			}
-			if err := tx.QueryRow("SELECT id FROM projects WHERE path = ?", canon).Scan(&id); err != nil {
+			if err := tx.QueryRowContext(context.Background(), "SELECT id FROM projects WHERE path = ?", canon).Scan(&id); err != nil {
 				return fmt.Errorf("read project id for %q: %w", canon, err)
 			}
 			canonIDs[canon] = id
 		}
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			"INSERT INTO _proj_map (raw, project_id) VALUES (?, ?) ON CONFLICT(raw) DO NOTHING",
 			raw, id,
 		); err != nil {
@@ -359,28 +368,44 @@ func collectDistinctProjectPaths(tx *sql.Tx) ([]string, error) {
 		if !hasCol {
 			continue
 		}
-		rows, err := tx.Query(
-			"SELECT DISTINCT project_path FROM " + table + " WHERE project_path IS NOT NULL AND project_path != ''",
-		)
+		paths, err := distinctProjectPathsInTable(tx, table)
 		if err != nil {
-			return nil, fmt.Errorf("collect project paths from %s: %w", table, err)
+			return nil, err
 		}
-		for rows.Next() {
-			var p string
-			if err := rows.Scan(&p); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan project path from %s: %w", table, err)
-			}
+		for _, p := range paths {
 			if !seen[p] {
 				seen[p] = true
 				out = append(out, p)
 			}
 		}
-		if err := rows.Close(); err != nil {
-			return nil, err
-		}
 	}
 	return out, nil
+}
+
+// distinctProjectPathsInTable reads the non-empty project_path values of one
+// table. Scoped to its own function so the rows handle is closed before the
+// caller's next table is probed, rather than accumulating deferred closes
+// across the whole probe loop.
+func distinctProjectPathsInTable(tx *sql.Tx, table string) ([]string, error) {
+	rows, err := tx.QueryContext(context.Background(),
+		"SELECT DISTINCT project_path FROM "+table+" WHERE project_path IS NOT NULL AND project_path != ''",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("collect project paths from %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, fmt.Errorf("scan project path from %s: %w", table, err)
+		}
+		paths = append(paths, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate project paths from %s: %w", table, err)
+	}
+	return paths, nil
 }
 
 // convertLegacyPathColumn adds project_id to a table, backfills it from the
@@ -405,7 +430,7 @@ func convertLegacyPathColumn(tx *sql.Tx, table string, nullable bool) error {
 	if nullable {
 		colType = "INTEGER DEFAULT NULL"
 	}
-	if _, err := tx.Exec("ALTER TABLE " + table + " ADD COLUMN project_id " + colType); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "ALTER TABLE "+table+" ADD COLUMN project_id "+colType); err != nil {
 		return fmt.Errorf("add project_id to %s: %w", table, err)
 	}
 
@@ -416,11 +441,11 @@ func convertLegacyPathColumn(tx *sql.Tx, table string, nullable bool) error {
 	if !nullable {
 		backfill = "UPDATE " + table + " SET project_id = COALESCE((SELECT project_id FROM _proj_map WHERE raw = " + table + ".project_path), 0)"
 	}
-	if _, err := tx.Exec(backfill); err != nil {
+	if _, err := tx.ExecContext(context.Background(), backfill); err != nil {
 		return fmt.Errorf("backfill project_id on %s: %w", table, err)
 	}
 
-	if _, err := tx.Exec("ALTER TABLE " + table + " DROP COLUMN project_path"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "ALTER TABLE "+table+" DROP COLUMN project_path"); err != nil {
 		return fmt.Errorf("drop project_path from %s: %w", table, err)
 	}
 	return nil
@@ -459,8 +484,10 @@ var projectScopeSpecs = []projectScopeSpec{
 	// Unique per project scope, not per project: many commands may be scoped to
 	// one project, but only one may be auto-executed. Clearing the flag on the
 	// losers (rather than deleting them) keeps the user's commands.
-	{table: "terminal_quick_commands", keyExprs: []string{"auto_execute = 1"},
-		keepOrder: "id DESC", demoteFlag: "auto_execute"},
+	{
+		table: tableTerminalQuickCommands, keyExprs: []string{"auto_execute = 1"},
+		keepOrder: "id DESC", demoteFlag: "auto_execute",
+	},
 }
 
 // dropDuplicateScopedRows removes (or, for the auto-execute flag, demotes) rows
@@ -504,7 +531,7 @@ func dropDuplicateScopedRows(tx *sql.Tx) error {
 		} else {
 			stmt = "DELETE FROM " + spec.table + " WHERE id IN (SELECT id FROM (" + ranked + ") WHERE rn > 1)"
 		}
-		if _, err := tx.Exec(stmt); err != nil {
+		if _, err := tx.ExecContext(context.Background(), stmt); err != nil {
 			return fmt.Errorf("dedupe %s per project scope: %w", spec.table, err)
 		}
 	}
@@ -517,7 +544,7 @@ func dropDuplicateScopedRows(tx *sql.Tx) error {
 // The new table is built by rewriting the table's stored DDL (so later-added
 // columns survive), the rows are copied with project_path resolved to an id,
 // and the two tables are swapped.
-func rebuildLegacyTable(tx *sql.Tx, table string, rewrites [][2]string) error {
+func rebuildLegacyTable(tx *sql.Tx, table string, rewrites [][2]string) error { //nolint:gocyclo // existence/column probes + DDL rewrite + copy + swap, each step with its own error branch
 	ok, err := txTableExists(tx, table)
 	if err != nil {
 		return err
@@ -550,8 +577,8 @@ func rebuildLegacyTable(tx *sql.Tx, table string, rewrites [][2]string) error {
 		return fmt.Errorf("rebuild %s: project_path survived the DDL rewrite", table)
 	}
 
-	if _, err := tx.Exec(newDDL); err != nil {
-		return fmt.Errorf("create %s: %w", newTable, err)
+	if _, createErr := tx.ExecContext(context.Background(), newDDL); createErr != nil {
+		return fmt.Errorf("create %s: %w", newTable, createErr)
 	}
 
 	cols, err := txColumnNames(tx, table)
@@ -571,17 +598,83 @@ func rebuildLegacyTable(tx *sql.Tx, table string, rewrites [][2]string) error {
 	}
 	copySQL := "INSERT INTO " + newTable + " (" + strings.Join(insertCols, ", ") + ") " +
 		"SELECT " + strings.Join(selectExprs, ", ") + " FROM " + table
-	if _, err := tx.Exec(copySQL); err != nil {
+	if _, err := tx.ExecContext(context.Background(), copySQL); err != nil {
 		return fmt.Errorf("copy %s rows: %w", table, err)
 	}
 
-	if _, err := tx.Exec("DROP TABLE " + table); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DROP TABLE "+table); err != nil {
 		return fmt.Errorf("drop %s: %w", table, err)
 	}
-	if _, err := tx.Exec("ALTER TABLE " + newTable + " RENAME TO " + table); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "ALTER TABLE "+newTable+" RENAME TO "+table); err != nil {
 		return fmt.Errorf("rename %s: %w", newTable, err)
 	}
 	return nil
+}
+
+// linkRow is one session_tag_links row as the tags rebuild reads it.
+type linkRow struct {
+	sessionID string
+	tagID     int64
+	createdAt any
+}
+
+// tagRow is one session_tags row with its project id already resolved.
+type tagRow struct {
+	id        int64
+	name      string
+	scope     string
+	projectID int64
+	createdAt any
+}
+
+// readSessionTagLinks reads every tag assignment. The rows handle is closed
+// before returning so the caller can drop the table immediately after.
+func readSessionTagLinks(tx *sql.Tx) ([]linkRow, error) {
+	rows, err := tx.QueryContext(context.Background(), "SELECT session_id, tag_id, created_at FROM session_tag_links")
+	if err != nil {
+		return nil, fmt.Errorf("read session_tag_links: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var links []linkRow
+	for rows.Next() {
+		var l linkRow
+		if err := rows.Scan(&l.sessionID, &l.tagID, &l.createdAt); err != nil {
+			return nil, fmt.Errorf("scan session_tag_links: %w", err)
+		}
+		links = append(links, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session_tag_links: %w", err)
+	}
+	return links, nil
+}
+
+// readSessionTags reads every tag with its project id resolved through the
+// path→id map built earlier in the migration.
+func readSessionTags(tx *sql.Tx) ([]tagRow, error) {
+	rows, err := tx.QueryContext(context.Background(),
+		`SELECT id, name, scope,
+		        COALESCE((SELECT project_id FROM _proj_map WHERE raw = session_tags.project_path), 0),
+		        created_at
+		   FROM session_tags
+		  ORDER BY id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read session_tags: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var tags []tagRow
+	for rows.Next() {
+		var t tagRow
+		if err := rows.Scan(&t.id, &t.name, &t.scope, &t.projectID, &t.createdAt); err != nil {
+			return nil, fmt.Errorf("scan session_tags: %w", err)
+		}
+		tags = append(tags, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate session_tags: %w", err)
+	}
+	return tags, nil
 }
 
 // rebuildSessionTagsAndLinks converts session_tags to a project id and rebuilds
@@ -599,7 +692,7 @@ func rebuildLegacyTable(tx *sql.Tx, table string, rewrites [][2]string) error {
 //     named "bug" collapse onto one project_id and would violate
 //     UNIQUE(name, project_id). The duplicate is dropped and its assignments are
 //     repointed at the surviving tag row.
-func rebuildSessionTagsAndLinks(tx *sql.Tx) error {
+func rebuildSessionTagsAndLinks(tx *sql.Tx) error { //nolint:gocyclo // read links, read+dedupe tags, rebuild both tables, restore with remap; the foreign-key ordering is the contract
 	tagsExist, err := txTableExists(tx, "session_tags")
 	if err != nil {
 		return err
@@ -619,62 +712,21 @@ func rebuildSessionTagsAndLinks(tx *sql.Tx) error {
 	if err != nil {
 		return err
 	}
-	type linkRow struct {
-		sessionID string
-		tagID     int64
-		createdAt any
-	}
 	var links []linkRow
 	if linksExist {
-		rows, err := tx.Query("SELECT session_id, tag_id, created_at FROM session_tag_links")
+		links, err = readSessionTagLinks(tx)
 		if err != nil {
-			return fmt.Errorf("read session_tag_links: %w", err)
-		}
-		for rows.Next() {
-			var l linkRow
-			if err := rows.Scan(&l.sessionID, &l.tagID, &l.createdAt); err != nil {
-				rows.Close()
-				return fmt.Errorf("scan session_tag_links: %w", err)
-			}
-			links = append(links, l)
-		}
-		if err := rows.Close(); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("DROP TABLE session_tag_links"); err != nil {
-			return fmt.Errorf("drop session_tag_links: %w", err)
+		if _, dropErr := tx.ExecContext(context.Background(), "DROP TABLE session_tag_links"); dropErr != nil {
+			return fmt.Errorf("drop session_tag_links: %w", dropErr)
 		}
 	}
 
 	// Read the tags, resolve each to its project id, and pick one survivor per
 	// (name, project_id).
-	type tagRow struct {
-		id        int64
-		name      string
-		scope     string
-		projectID int64
-		createdAt any
-	}
-	rows, err := tx.Query(
-		`SELECT id, name, scope,
-		        COALESCE((SELECT project_id FROM _proj_map WHERE raw = session_tags.project_path), 0),
-		        created_at
-		   FROM session_tags
-		  ORDER BY id`,
-	)
+	tags, err := readSessionTags(tx)
 	if err != nil {
-		return fmt.Errorf("read session_tags: %w", err)
-	}
-	var tags []tagRow
-	for rows.Next() {
-		var t tagRow
-		if err := rows.Scan(&t.id, &t.name, &t.scope, &t.projectID, &t.createdAt); err != nil {
-			rows.Close()
-			return fmt.Errorf("scan session_tags: %w", err)
-		}
-		tags = append(tags, t)
-	}
-	if err := rows.Close(); err != nil {
 		return err
 	}
 
@@ -695,7 +747,7 @@ func rebuildSessionTagsAndLinks(tx *sql.Tx) error {
 		keep = append(keep, t)
 	}
 
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(context.Background(), `
 		CREATE TABLE session_tags_projects_new (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
@@ -707,23 +759,23 @@ func rebuildSessionTagsAndLinks(tx *sql.Tx) error {
 		return fmt.Errorf("create session_tags_projects_new: %w", err)
 	}
 	for _, t := range keep {
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			"INSERT INTO session_tags_projects_new (id, name, scope, project_id, created_at) VALUES (?, ?, ?, ?, ?)",
 			t.id, t.name, t.scope, t.projectID, t.createdAt,
 		); err != nil {
 			return fmt.Errorf("copy session tag %d: %w", t.id, err)
 		}
 	}
-	if _, err := tx.Exec("DROP TABLE session_tags"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "DROP TABLE session_tags"); err != nil {
 		return fmt.Errorf("drop session_tags: %w", err)
 	}
-	if _, err := tx.Exec("ALTER TABLE session_tags_projects_new RENAME TO session_tags"); err != nil {
+	if _, err := tx.ExecContext(context.Background(), "ALTER TABLE session_tags_projects_new RENAME TO session_tags"); err != nil {
 		return fmt.Errorf("rename session_tags_projects_new: %w", err)
 	}
 
 	// Recreate the links table with its foreign key pointing at the rebuilt
 	// session_tags, then restore the assignments with duplicate tag ids remapped.
-	if _, err := tx.Exec(`
+	if _, err := tx.ExecContext(context.Background(), `
 		CREATE TABLE session_tag_links (
 			session_id TEXT NOT NULL,
 			tag_id INTEGER NOT NULL REFERENCES session_tags(id) ON DELETE CASCADE,
@@ -739,7 +791,7 @@ func rebuildSessionTagsAndLinks(tx *sql.Tx) error {
 		}
 		// OR IGNORE: a session that carried both the surviving and the dropped
 		// duplicate now has one link, not a UNIQUE violation.
-		if _, err := tx.Exec(
+		if _, err := tx.ExecContext(context.Background(),
 			"INSERT OR IGNORE INTO session_tag_links (session_id, tag_id, created_at) VALUES (?, ?, ?)",
 			l.sessionID, tagID, l.createdAt,
 		); err != nil {
@@ -774,26 +826,14 @@ func backfillFileShareProject(tx *sql.Tx) error {
 		return err
 	}
 	if !hasCol {
-		if _, err := tx.Exec("ALTER TABLE file_shares ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
-			return fmt.Errorf("add project_id to file_shares: %w", err)
+		if _, addColErr := tx.ExecContext(context.Background(), "ALTER TABLE file_shares ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); addColErr != nil {
+			return fmt.Errorf("add project_id to file_shares: %w", addColErr)
 		}
 	}
 
 	// Every known project, for the longest-prefix match below.
-	projRows, err := tx.Query("SELECT id, path FROM projects")
+	projects, err := readAllProjectPaths(tx)
 	if err != nil {
-		return fmt.Errorf("read projects for share backfill: %w", err)
-	}
-	var projects []projectPathEntry
-	for projRows.Next() {
-		var p projectPathEntry
-		if err := projRows.Scan(&p.id, &p.path); err != nil {
-			projRows.Close()
-			return fmt.Errorf("scan project for share backfill: %w", err)
-		}
-		projects = append(projects, p)
-	}
-	if err := projRows.Close(); err != nil {
 		return err
 	}
 
@@ -802,29 +842,13 @@ func backfillFileShareProject(tx *sql.Tx) error {
 	// project_id directly rather than going through GetDefaultProject (which
 	// still speaks in paths and would consult the not-yet-migrated table).
 	var fallbackID int64
-	_ = tx.QueryRow(`
+	_ = tx.QueryRowContext(context.Background(), `
 		SELECT r.project_id FROM recent_projects r
 		 ORDER BY r.is_default DESC, r.accessed_at DESC, r.id DESC
 		 LIMIT 1`).Scan(&fallbackID)
 
-	shareRows, err := tx.Query("SELECT token, path FROM file_shares WHERE project_id = 0")
+	shares, err := readUnattributedShares(tx)
 	if err != nil {
-		return fmt.Errorf("read file_shares for backfill: %w", err)
-	}
-	type shareEntry struct {
-		token string
-		path  string
-	}
-	var shares []shareEntry
-	for shareRows.Next() {
-		var s shareEntry
-		if err := shareRows.Scan(&s.token, &s.path); err != nil {
-			shareRows.Close()
-			return fmt.Errorf("scan file share for backfill: %w", err)
-		}
-		shares = append(shares, s)
-	}
-	if err := shareRows.Close(); err != nil {
 		return err
 	}
 
@@ -836,11 +860,61 @@ func backfillFileShareProject(tx *sql.Tx) error {
 		if projectID == 0 {
 			continue // nothing to attribute it to; leave the 0 sentinel
 		}
-		if _, err := tx.Exec("UPDATE file_shares SET project_id = ? WHERE token = ?", projectID, s.token); err != nil {
+		if _, err := tx.ExecContext(context.Background(), "UPDATE file_shares SET project_id = ? WHERE token = ?", projectID, s.token); err != nil {
 			return fmt.Errorf("backfill file share project: %w", err)
 		}
 	}
 	return nil
+}
+
+// readAllProjectPaths reads the id/path of every registered project, for the
+// share backfill's longest-prefix match.
+func readAllProjectPaths(tx *sql.Tx) ([]projectPathEntry, error) {
+	projRows, err := tx.QueryContext(context.Background(), "SELECT id, path FROM projects")
+	if err != nil {
+		return nil, fmt.Errorf("read projects for share backfill: %w", err)
+	}
+	defer func() { _ = projRows.Close() }()
+	var projects []projectPathEntry
+	for projRows.Next() {
+		var p projectPathEntry
+		if err := projRows.Scan(&p.id, &p.path); err != nil {
+			return nil, fmt.Errorf("scan project for share backfill: %w", err)
+		}
+		projects = append(projects, p)
+	}
+	if err := projRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate projects for share backfill: %w", err)
+	}
+	return projects, nil
+}
+
+// readUnattributedShares reads the shares still parked on the 0 sentinel, i.e.
+// those the backfill has to attribute.
+func readUnattributedShares(tx *sql.Tx) ([]shareEntry, error) {
+	shareRows, err := tx.QueryContext(context.Background(), "SELECT token, path FROM file_shares WHERE project_id = 0")
+	if err != nil {
+		return nil, fmt.Errorf("read file_shares for backfill: %w", err)
+	}
+	defer func() { _ = shareRows.Close() }()
+	var shares []shareEntry
+	for shareRows.Next() {
+		var s shareEntry
+		if err := shareRows.Scan(&s.token, &s.path); err != nil {
+			return nil, fmt.Errorf("scan file share for backfill: %w", err)
+		}
+		shares = append(shares, s)
+	}
+	if err := shareRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate file_shares for backfill: %w", err)
+	}
+	return shares, nil
+}
+
+// shareEntry is one file_shares row as the backfill reads it.
+type shareEntry struct {
+	token string
+	path  string
 }
 
 // projectPathEntry is one projects row as the share backfill needs it.
@@ -876,7 +950,7 @@ func longestProjectPrefix(projects []projectPathEntry, filePath string) int64 {
 
 func txTableExists(tx *sql.Tx, table string) (bool, error) {
 	var n int
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(context.Background(),
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table,
 	).Scan(&n); err != nil {
 		return false, fmt.Errorf("check table %s: %w", table, err)
@@ -886,7 +960,7 @@ func txTableExists(tx *sql.Tx, table string) (bool, error) {
 
 func txColumnExists(tx *sql.Tx, table, column string) (bool, error) {
 	var n int
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(context.Background(),
 		"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name=?", table, column,
 	).Scan(&n); err != nil {
 		return false, fmt.Errorf("check column %s.%s: %w", table, column, err)
@@ -895,7 +969,7 @@ func txColumnExists(tx *sql.Tx, table, column string) (bool, error) {
 }
 
 func txColumnNames(tx *sql.Tx, table string) ([]string, error) {
-	rows, err := tx.Query("SELECT name FROM pragma_table_info(?)", table)
+	rows, err := tx.QueryContext(context.Background(), "SELECT name FROM pragma_table_info(?)", table)
 	if err != nil {
 		return nil, fmt.Errorf("read columns of %s: %w", table, err)
 	}
@@ -913,7 +987,7 @@ func txColumnNames(tx *sql.Tx, table string) ([]string, error) {
 
 func txCreateTableSQL(tx *sql.Tx, table string) (string, error) {
 	var ddl string
-	if err := tx.QueryRow(
+	if err := tx.QueryRowContext(context.Background(),
 		"SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='table' AND name=?", table,
 	).Scan(&ddl); err != nil {
 		return "", fmt.Errorf("read DDL of %s: %w", table, err)

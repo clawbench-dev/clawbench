@@ -867,3 +867,34 @@ func TestThemeBingSaveToGallery_GalleryFull_Returns400(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, after, len(before), "a refused save must not leave an orphan file in the gallery dir")
 }
+
+// TestThemeBingSaveToGallery_MethodNotAllowed pins the method guard: the save
+// endpoint is POST-only.
+func TestThemeBingSaveToGallery_MethodNotAllowed(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/theme/bing/save-to-gallery", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBingSaveToGallery, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestThemeBingSaveToGallery_ReadFailureIs500 covers the non-ENOENT read error:
+// the file is named and present to FilePath(), but reading it fails, which is a
+// server fault (500) rather than the vanished-file 404.
+func TestThemeBingSaveToGallery_ReadFailureIs500(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	// A directory carrying an allowed image extension: FilePath accepts it (the
+	// name is safe and has a permitted ext), but os.ReadFile fails with EISDIR,
+	// which is not os.ErrNotExist.
+	require.NoError(t, os.MkdirAll(filepath.Join(wallpaper.BingDir(), "bing-dir.jpg"), 0o755))
+	model.ConfigInstance.Appearance.Bing = model.BingWallpaperConfig{File: "bing-dir.jpg"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/save-to-gallery", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBingSaveToGallery, req)
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
+}

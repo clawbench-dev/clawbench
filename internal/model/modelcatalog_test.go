@@ -605,6 +605,21 @@ func TestModelSourceKinds(t *testing.T) {
 	assert.Equal(t, SourceKindPlugin, PluginSource("p", nil).Kind())
 }
 
+// Timeout() drives the per-source probe budget in the concurrent discovery
+// pass: static and plugin sources resolve in-process (no budget), while a CLI
+// source reports its configured command timeout.
+func TestModelSourceTimeouts(t *testing.T) {
+	assert.Equal(t, time.Duration(0), StaticSource("s", "", nil).Timeout())
+	assert.Equal(t, time.Duration(0), PluginSource("p", nil).Timeout())
+
+	// An unset timeout defaults to 10s rather than 0 (0 would mean "no budget"
+	// to the caller and make a hung CLI block discovery forever).
+	assert.Equal(t, 10*time.Second, NewCLISource("c", CLIOptions{}).Timeout())
+
+	custom := NewCLISource("c", CLIOptions{Timeout: 3 * time.Second})
+	assert.Equal(t, 3*time.Second, custom.Timeout())
+}
+
 func TestInvalidateDiscoveredModels_SingleBackend(t *testing.T) {
 	restore := isolateModelSources(t)
 	defer restore()

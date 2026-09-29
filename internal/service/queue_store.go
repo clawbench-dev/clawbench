@@ -398,6 +398,59 @@ func fileEntryKey(f model.FileEntry) string {
 	}
 }
 
+// loadQueuedParts reads every queued message of a session in queue (DB-id)
+// order. The caller must already hold the write mutex/transaction so no drain
+// can claim a row between this read and the delete that follows the merge.
+func loadQueuedParts(tx *sql.Tx, sessionID string) ([]QueuedRow, error) {
+	rows, err := tx.QueryContext(context.Background(),
+		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
+		   FROM queued_messages q
+		   LEFT JOIN projects p ON p.id = q.project_id
+		  WHERE q.session_id = ? ORDER BY q.id ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var parts []QueuedRow
+	for rows.Next() {
+		var row QueuedRow
+		var filesJSON sql.NullString
+		if scanErr := rows.Scan(&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt); scanErr != nil {
+			return nil, scanErr
+		}
+		if filesJSON.Valid && filesJSON.String != "" {
+			row.Files = unmarshalFilesJSON(filesJSON.String)
+		}
+		parts = append(parts, row)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+	return parts, nil
+}
+
+// mergeQueuedFiles concatenates the attachments of the merged rows in queue
+// order, keeping the first occurrence of each identity (same order the
+// frontend's dedupeFiles uses).
+func mergeQueuedFiles(parts []QueuedRow) []model.FileEntry {
+	var merged []model.FileEntry
+	seen := make(map[string]bool)
+	for _, r := range parts {
+		for _, f := range r.Files {
+			key := fileEntryKey(f)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, f)
+		}
+	}
+	return merged
+}
+
 // MergeQueuedMessages collapses every queued message of a session into ONE
 // queued message: the old rows are deleted and a single row carrying all the
 // text and attachments is inserted, in one transaction under the write mutex.
@@ -416,7 +469,7 @@ func fileEntryKey(f model.FileEntry) string {
 // nothing to merge) — that is not an error. On success the returned row's
 // QueueID is the (newly minted or supplied) merged id, and oldQueueIDs lists the
 // ids that were removed so the caller can broadcast queue_cancel for them.
-func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueIDs []string, ok bool, err error) {
+func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueIDs []string, ok bool, err error) { //nolint:gocyclo // single transaction: validate, read, join text, merge files, insert, delete originals, commit — each step has its own error branch
 	if sessionID == "" {
 		return QueuedRow{}, nil, false, fmt.Errorf("merge: empty session id")
 	}
@@ -433,34 +486,10 @@ func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueI
 
 	// Read the whole queue inside the transaction: the write mutex is held, so
 	// no drain can claim a row between this SELECT and the DELETE below.
-	rows, err := tx.QueryContext(context.Background(),
-		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
-		   FROM queued_messages q
-		   LEFT JOIN projects p ON p.id = q.project_id
-		  WHERE q.session_id = ? ORDER BY q.id ASC`,
-		sessionID,
-	)
+	parts, err := loadQueuedParts(tx, sessionID)
 	if err != nil {
 		return QueuedRow{}, nil, false, err
 	}
-	var parts []QueuedRow
-	for rows.Next() {
-		var row QueuedRow
-		var filesJSON sql.NullString
-		if scanErr := rows.Scan(&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt); scanErr != nil {
-			_ = rows.Close()
-			return QueuedRow{}, nil, false, scanErr
-		}
-		if filesJSON.Valid && filesJSON.String != "" {
-			row.Files = unmarshalFilesJSON(filesJSON.String)
-		}
-		parts = append(parts, row)
-	}
-	if rowsErr := rows.Err(); rowsErr != nil {
-		_ = rows.Close()
-		return QueuedRow{}, nil, false, rowsErr
-	}
-	_ = rows.Close()
 
 	if len(parts) < 2 {
 		return QueuedRow{}, nil, false, nil
@@ -475,20 +504,7 @@ func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueI
 	}
 	mergedContent := strings.Join(texts, "\n\n")
 
-	// Concatenate attachments in queue order, keeping the first occurrence of
-	// each identity (same order the frontend's dedupeFiles uses).
-	var mergedFiles []model.FileEntry
-	seen := make(map[string]bool)
-	for _, r := range parts {
-		for _, f := range r.Files {
-			key := fileEntryKey(f)
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			mergedFiles = append(mergedFiles, f)
-		}
-	}
+	mergedFiles := mergeQueuedFiles(parts)
 
 	head := parts[0]
 	var filesJSON string

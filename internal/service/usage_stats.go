@@ -146,7 +146,7 @@ func dimExpr(d UsageDim) (string, bool) {
 		// column existed were backfilled by migrateChatMetadataLedger.
 		//
 		// The stored value is a project id, resolved back to its path through
-		// the join in `from` so the report keeps labelling buckets by path.
+		// the join in `from` so the report keeps labeling buckets by path.
 		return "COALESCE(NULLIF(p.path,''),'" + emptyGroupLabel + "')", true
 	}
 	return "", false

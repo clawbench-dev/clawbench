@@ -274,6 +274,7 @@ func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
 		require.NoError(t, rows.Scan(&a))
 		anchors = append(anchors, a)
 	}
+	require.NoError(t, rows.Err())
 	assert.Equal(t, []int64{701}, anchors, "only the marker inside the removed range is deleted")
 }
 

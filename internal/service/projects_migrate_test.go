@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -830,4 +831,118 @@ func TestRenameProject_NotifiesHooks(t *testing.T) {
 			t.Errorf("hook arg %d = %q, want %q", i, got[i], want[i])
 		}
 	}
+}
+
+// ProjectPathForID is the inverse of ProjectIDByPath and is what lets a
+// project-scoped read report the directory it belongs to. It is deliberately
+// uncached, so it must answer from the registry for a real id and report
+// absence (not an error) for both the 0 sentinel and an unknown id.
+func TestProjectPathForID(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	dir := t.TempDir()
+	if _, err := raw.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', ?, 'claude', 'a')", dir,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	id, ok, err := ProjectIDByPath(dir)
+	requireNoError(t, err)
+	if !ok {
+		t.Fatal("seeded project did not resolve")
+	}
+
+	gotPath, ok, err := ProjectPathForID(id)
+	requireNoError(t, err)
+	if !ok {
+		t.Fatal("ProjectPathForID reported a real id as absent")
+	}
+	if gotPath != NormalizeProjectPath(dir) {
+		t.Errorf("path = %q, want %q", gotPath, NormalizeProjectPath(dir))
+	}
+
+	// The 0 sentinel is "no project", not an error.
+	if p, ok, err := ProjectPathForID(GlobalScopeProjectID); err != nil || ok || p != "" {
+		t.Errorf("global scope: got (%q, %v, %v), want (\"\", false, nil)", p, ok, err)
+	}
+	// An id that was never registered is absent, not an error.
+	if p, ok, err := ProjectPathForID(999999); err != nil || ok || p != "" {
+		t.Errorf("unknown id: got (%q, %v, %v), want (\"\", false, nil)", p, ok, err)
+	}
+}
+
+// RenameProject validates its inputs before touching the registry: an empty
+// path is a programming error, and an identical path is a no-op (not an error),
+// so a caller that re-applies a rename does not fail.
+func TestRenameProject_InputGuards(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	if err := RenameProject("", "/somewhere"); err == nil {
+		t.Error("an empty old path must be rejected")
+	}
+	if err := RenameProject("/somewhere", ""); err == nil {
+		t.Error("an empty new path must be rejected")
+	}
+
+	dir := t.TempDir()
+	requireNoError(t, RenameProject(dir, dir))
+	if _, ok, err := ProjectIDByPath(dir); err != nil || ok {
+		t.Errorf("renaming to the same path must be a no-op, got ok=%v err=%v", ok, err)
+	}
+}
+
+// RenameProject must report a missing source as an error rather than silently
+// succeeding (a zero RowsAffected UPDATE would otherwise look like success).
+func TestRenameProject_MissingSourceIsError(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	err := RenameProject(t.TempDir(), t.TempDir())
+	if err == nil {
+		t.Fatal("renaming a project that does not exist must fail")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want a not-found message", err)
+	}
+}
+
+// RegisterProjectRenamedHook must ignore a nil hook: callers register
+// conditionally and a nil would panic on the next rename.
+func TestRegisterProjectRenamedHook_IgnoresNil(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	dir := t.TempDir()
+	if _, err := raw.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', ?, 'claude', 'a')", dir,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	// A nil registration must not be stored (and must not panic the rename).
+	RegisterProjectRenamedHook(nil)
+	defer func() {
+		projectRenamedMu.Lock()
+		projectRenamedHooks = nil
+		projectRenamedMu.Unlock()
+	}()
+
+	requireNoError(t, RenameProject(dir, t.TempDir()))
 }

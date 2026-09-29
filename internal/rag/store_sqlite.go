@@ -258,8 +258,8 @@ func (s *Store) initSchema() error {
 	// so a store opened on its own — a standalone indexer run, or a test fixture
 	// database — still resolves project ids and filters by project instead of
 	// silently degrading to "no project".
-	if _, err := s.db.Exec(service.ProjectsDDL); err != nil {
-		return fmt.Errorf("create projects table: %w", err)
+	if _, projErr := s.db.Exec(service.ProjectsDDL); projErr != nil {
+		return fmt.Errorf("create projects table: %w", projErr)
 	}
 
 	// Create partial index for embedding queries

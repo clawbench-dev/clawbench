@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -101,6 +102,20 @@ func TestServeBtwQuestion_EmptyQuestion(t *testing.T) {
 	w := callHandler(ServeBtwQuestion, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 	assert.Contains(t, w.Body.String(), "BtwQuestionRequired")
+}
+
+// A malformed body must be rejected by decodeJSON before any session or model
+// work happens (no record, no LLM call).
+func TestServeBtwQuestion_InvalidJSON(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/btw", nil)
+	req.Body = io.NopCloser(strings.NewReader("{not json"))
+	req = withProjectCookie(req, env.ProjectDir)
+
+	w := callHandler(ServeBtwQuestion, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // The happy path: the compressed history and the question reach the summary

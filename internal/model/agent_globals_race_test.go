@@ -23,7 +23,7 @@ func TestAgentGlobalsConcurrentAccessIsRaceFree(t *testing.T) {
 	build := func(n int) (map[string]*Agent, []*Agent) {
 		m := make(map[string]*Agent, n)
 		l := make([]*Agent, 0, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			a := &Agent{ID: string(rune('a' + i)), Backend: "backend"}
 			m[a.ID] = a
 			l = append(l, a)
@@ -38,18 +38,18 @@ func TestAgentGlobalsConcurrentAccessIsRaceFree(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < iterations; i++ {
+		for range iterations {
 			m, l := build(3)
 			ReplaceAgents(m, l)
 		}
 	}()
 
 	// Readers: every accessor that production uses.
-	for r := 0; r < 4; r++ {
+	for range 4 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < iterations; i++ {
+			for range iterations {
 				_ = GetAgent("a")
 				_ = GetAgentList()
 				_ = HasAgent("a")

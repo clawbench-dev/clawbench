@@ -1228,3 +1228,36 @@ func TestQueueMergeHandler_NotEnoughIsConflict(t *testing.T) {
 	require.Len(t, queued, 1)
 	assert.Equal(t, "only", queued[0].Text)
 }
+
+// TestQueueMergeHandler_MissingProjectCookie verifies the project scope is
+// mandatory: without it the handler must not touch another project's queue.
+func TestQueueMergeHandler_MissingProjectCookie(t *testing.T) {
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/merge?session_id=s", nil)
+	w := callHandler(QueueMergeHandler, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}
+
+// TestQueueMergeHandler_CrossProject_403 verifies a session owned by another
+// project cannot be merged from this one, even though the merge primitive
+// itself is session-id based.
+func TestQueueMergeHandler_CrossProject_403(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-merge-cross-project"
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+	require.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/merge?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueMergeHandler, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code)
+}

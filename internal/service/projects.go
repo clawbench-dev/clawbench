@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -93,7 +94,7 @@ func ProjectIDForPath(path string) (int64, error) {
 	// visible there yet. Reading the same connection family also keeps the
 	// function usable when only the read handle is unavailable.
 	var id int64
-	if err := db.QueryRow("SELECT id FROM projects WHERE path = ?", canon).Scan(&id); err != nil {
+	if err := db.QueryRowContext(context.Background(), "SELECT id FROM projects WHERE path = ?", canon).Scan(&id); err != nil {
 		return 0, fmt.Errorf("query project id: %w", err)
 	}
 
@@ -253,7 +254,8 @@ func projectID2Valid(id int64) bool { return id != GlobalScopeProjectID }
 func ProjectIDForTest(t interface {
 	Helper()
 	Fatalf(string, ...any)
-}, path string) int64 {
+}, path string,
+) int64 {
 	t.Helper()
 	id, err := ProjectIDForPath(path)
 	if err != nil {
@@ -277,7 +279,8 @@ var seedTestProjectPaths = []string{
 func SeedTestProjectsForTest(t interface {
 	Helper()
 	Fatalf(string, ...any)
-}) {
+},
+) {
 	t.Helper()
 	for _, p := range seedTestProjectPaths {
 		if _, err := WriteExec(
@@ -294,10 +297,12 @@ func SeedTestProjectsForTest(t interface {
 func SeedTestProjectsOnDB(t interface {
 	Helper()
 	Fatalf(string, ...any)
-}, db *sql.DB) {
+}, db *sql.DB,
+) {
 	t.Helper()
 	for _, p := range seedTestProjectPaths {
-		if _, err := db.Exec(
+		if _, err := db.ExecContext(
+			context.Background(),
 			"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", p,
 		); err != nil {
 			t.Fatalf("seed project %q: %v", p, err)
