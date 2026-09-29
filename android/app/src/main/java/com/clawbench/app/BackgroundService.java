@@ -1483,10 +1483,19 @@ public class BackgroundService extends Service {
      * picks up the persisted value.
      */
     synchronized void ensureConnection() throws Exception {
+        // The preference change takes effect on the next (re)connect, and that
+        // reconnect must not leave the *previous* transport's session/listeners
+        // alive: both would then forward the same ports at once. This is the
+        // monitor's auto-reconnect path (it calls ensureConnection() directly,
+        // without disconnectInternal()), so the teardown has to live here too —
+        // forceReconnectAsync() is safe only because it happens to call
+        // disconnectInternal() first.
         if (isTunnelTransportH2Enabled(this)) {
+            teardownSshIfAny();
             ensureH2Connection();
             return;
         }
+        teardownH2IfAny();
         ensureSshConnection();
     }
 
@@ -1625,6 +1634,67 @@ public class BackgroundService extends Service {
 
         // Start connection monitor to detect future disconnects
         startConnectionMonitor();
+    }
+
+    /**
+     * Tear down a live JSch session, if any, so switching to h2 cannot leave
+     * both transports forwarding at once.
+     *
+     * <p>Idempotent and scoped: it touches only the SSH half (unlike
+     * {@link #disconnectInternal()}, which closes h2 too). A no-op when no
+     * session exists, so it is safe to call unconditionally before
+     * {@code ensureH2Connection()}.
+     */
+    private void teardownSshIfAny() {
+        if (sshSession == null) return;
+        // Drop the -L/-R registrations before disconnecting: JSch's session
+        // teardown does not always remove the server-side forwardings, and a
+        // lingering setPortForwardingL listener on the server is exactly the
+        // "two tunnels alive" bug this method exists to prevent.
+        try {
+            for (int port : new HashSet<>(forwardedPorts.keySet())) {
+                try {
+                    sshSession.delPortForwardingL(port);
+                } catch (Exception ignored) {}
+            }
+            for (int serverPort : new HashSet<>(reversePorts.keySet())) {
+                try {
+                    sshSession.delPortForwardingR(serverPort);
+                } catch (Exception ignored) {}
+            }
+            sshSession.disconnect();
+            AppLog.i(TAG, "SSH: torn down on transport switch (forwarded=" + forwardedPorts.keySet()
+                    + ", reverse=" + reversePorts.keySet() + ")");
+        } catch (Exception e) {
+            AppLog.e(TAG, "SSH: error tearing down session on transport switch", e);
+        }
+        sshSession = null;
+        // The SSH adapter wraps sshSession and holds no resources of its own, so
+        // it is only dropped when it was the live transport.
+        if (activeTransport == sshTransport) {
+            activeTransport = null;
+        }
+    }
+
+    /**
+     * Close the h2 transport, if one was ever built, so switching to SSH cannot
+     * leave its local {@code ServerSocket} listeners bound.
+     *
+     * <p>Idempotent and scoped to the h2 half. A lingering h2 listener would
+     * make the SSH side's {@code setPortForwardingL} fail to bind the same
+     * port, so the mapping would be dropped from {@code forwardedPorts} while
+     * the h2 listener kept forwarding it — the UI would claim the port was
+     * removed.
+     */
+    private void teardownH2IfAny() {
+        H2PortForwardTransport h2 = h2PortForwardTransport;
+        if (h2 == null) return;
+        h2.close();
+        h2PortForwardTransport = null;
+        if (activeTransport == h2) {
+            activeTransport = null;
+        }
+        AppLog.i(TAG, "H2: torn down on transport switch");
     }
 
     /**
@@ -1905,6 +1975,17 @@ public class BackgroundService extends Service {
         // Skip if service is being destroyed — avoid race with onDestroy
         if (isShuttingDown) {
             AppLog.w(TAG, "SSH: addPortForward skipped, service shutting down");
+            return;
+        }
+        // Validate before touching any state or the transport, mirroring
+        // addReversePortForward. Port 0 is rejected explicitly: the h2 path's
+        // ServerSocket.bind(0) *succeeds* on a random port, so the forward would
+        // report success while nobody knows which port it landed on and the
+        // listener would leak for the life of the process. Out-of-range values
+        // would otherwise reach bind() as an unchecked IllegalArgumentException.
+        if (localPort <= 0 || localPort > 65535 || targetPort <= 0 || targetPort > 65535) {
+            AppLog.w(TAG, "SSH: addPortForward invalid ports: local=" + localPort + ", target=" + targetPort);
+            notifyPortForwardResult(localPort, false);
             return;
         }
 

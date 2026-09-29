@@ -263,6 +263,11 @@ public class BackgroundServiceTransportTest {
     @Test
     public void addPortForward_underH2_doesNotTouchTheSshSession() throws Exception {
         enableH2Preference();
+        // A live SSH session alongside an h2 preference is exactly the state C1
+        // left behind. The h2 add path must (a) never create an SSH forward and
+        // (b) tear the stray session down rather than let both transports
+        // forward at once. Without the h2 adapter seam this test would also
+        // fail on the real ServerSocket bind.
         Session session = mock(Session.class);
         when(session.isConnected()).thenReturn(true);
         setField("sshSession", session);
@@ -270,10 +275,13 @@ public class BackgroundServiceTransportTest {
 
         invoke("addPortForward", 3080, 80, "127.0.0.1");
 
-        // The h2 path must not reach into JSch at all. Without the h2 adapter
-        // seam this test would also fail on the real ServerSocket bind.
+        // The h2 path must not reach into JSch to establish anything.
         verify(session, never()).setPortForwardingL(anyString(), anyInt(), anyString(), anyInt());
-        verify(session, never()).delPortForwardingL(anyInt());
+        // But it must release the stale SSH session (its -L registration for the
+        // in-flight 3080 included) — that is the C1 fix.
+        verify(session).disconnect();
+        assertNull("the stale SSH session must not survive the h2 add",
+                getField("sshSession"));
         // addLocal is called twice on a fresh add: once by ensureConnection's
         // replay (the port was recorded before connecting) and once by the
         // explicit add. The h2 adapter is idempotent, exactly as JSch's
@@ -359,21 +367,25 @@ public class BackgroundServiceTransportTest {
     }
 
     @Test
-    public void addPortForward_invalidPort_reachesTheTransportUnvalidated() throws Exception {
+    public void addPortForward_invalidPort_isRejectedBeforeTheTransport() throws Exception {
         enableH2Preference();
-        // Pins the validation asymmetry: addReversePortForward rejects
-        // serverPort<=0 or >65535 (BackgroundService:2111) BEFORE touching the
-        // transport, but addPortForward (:1866) does not — the bad port reaches
-        // the transport, which for h2 means ServerSocket.bind. This test records
-        // that the transport is asked with the raw value; the report flags the
-        // asymmetry and whether port 0 is legitimate.
+        // Mirrors addReversePortForward: a localPort outside 1..65535 must be
+        // rejected BEFORE the transport is touched. Port 0 is explicitly
+        // invalid too — the h2 path's ServerSocket.bind(0) would succeed on a
+        // random port and report success while leaking an anonymous listener.
+        // This test previously pinned the opposite (unvalidated) behaviour; the
+        // expectation flipped with the M4 fix.
         setField("activeTransport", null);
 
         invoke("addPortForward", -1, 80, "127.0.0.1");
+        invoke("addPortForward", 0, 80, "127.0.0.1");
+        invoke("addPortForward", 70000, 80, "127.0.0.1");
+        invoke("addPortForward", 3080, 0, "127.0.0.1");
 
-        assertTrue("the forward path must NOT pre-validate (unlike the reverse path)",
-                h2.addLocalCalls.get() >= 1);
-        assertEquals("the raw invalid port must reach the transport", -1, h2.lastLocalPort);
+        assertEquals("an invalid local/target port must never reach the transport",
+                0, h2.addLocalCalls.get());
+        assertTrue("a rejected port must not linger in the bookkeeping",
+                forwardedPorts().isEmpty());
     }
 
     @Test
@@ -562,6 +574,98 @@ public class BackgroundServiceTransportTest {
         invoke("removePortForward", 3080);
         assertEquals("port ops must keep using the live transport",
                 1, h2.removeLocalCalls.get());
+    }
+
+    // ==================================================================
+    // C1: the transport switch must tear the *other* transport down on the
+    // next reconnect. The monitor's auto-reconnect calls ensureConnection()
+    // directly (no disconnectInternal()), so a preference flip used to leave
+    // the old session/listeners alive alongside the new one.
+    // ==================================================================
+
+    @Test
+    public void ensureConnection_switchSshToH2_tearsDownTheSshSession() throws Exception {
+        // SSH is live: a connected JSch session with its keep-alive and the
+        // service's SSH adapter as the active transport.
+        Session session = mock(Session.class);
+        when(session.isConnected()).thenReturn(true);
+        setField("sshSession", session);
+        PortForwardTransport sshTransport = mock(PortForwardTransport.class);
+        setField("sshTransport", sshTransport);
+        setField("activeTransport", sshTransport);
+
+        // The user flips the switch, then the monitor (or any port op)
+        // reconnects: ensureConnection() must drop SSH before starting h2.
+        enableH2Preference();
+        service.ensureConnection();
+
+        verify(session).disconnect();
+        assertNull("the SSH session must not survive the switch to h2",
+                getField("sshSession"));
+        assertSame("h2 must become the live transport", h2, getField("activeTransport"));
+        assertTrue("the h2 tunnel must actually be connected", tunnel.connected);
+    }
+
+    @Test
+    public void ensureConnection_switchH2ToSsh_closesTheH2TransportAndListeners() throws Exception {
+        // h2 is live. Use the real adapter (not the recording fake) because it
+        // is the field teardownH2IfAny closes: its close() is what releases the
+        // local ServerSocket listeners, observed here via the fake session's
+        // closed flag.
+        setField("h2TransportOverride", null);
+        com.clawbench.app.tunnel.H2PortForwardTransport adapter =
+                new com.clawbench.app.tunnel.H2PortForwardTransport(() -> tunnel);
+        setField("h2PortForwardTransport", adapter);
+        // Production invariant: when h2 is live, activeTransport IS the adapter
+        // (h2Transport() returns h2PortForwardTransport when no test override is
+        // set), so the teardown's identity check clears it.
+        setField("activeTransport", adapter);
+
+        // Preference is already SSH (the default). Fail the SSH dial fast so
+        // the test never touches the network — the teardown runs first either
+        // way, which is the whole point.
+        serverUrl = null;
+        try {
+            service.ensureConnection();
+        } catch (Exception expected) {
+            // ensureSshConnection cannot complete without a server URL.
+        }
+
+        assertTrue("the h2 session/listeners must be released on the switch to SSH",
+                tunnel.closed);
+        assertNull("the h2 adapter reference must be dropped",
+                getField("h2PortForwardTransport"));
+        assertNull("activeTransport must not point at a closed transport",
+                getField("activeTransport"));
+    }
+
+    @Test
+    public void ensureConnection_noPriorTransport_isAnIdempotentNoOpTeardown() throws Exception {
+        // Fresh state: no SSH session, no h2 transport. Neither teardown helper
+        // may do anything — in particular the h2 path must not close the
+        // transport it is about to use.
+        assertNull(getField("sshSession"));
+        assertNull(getField("h2PortForwardTransport"));
+
+        enableH2Preference();
+        service.ensureConnection();
+
+        assertNull("no SSH session existed, so none was created or touched",
+                getField("sshSession"));
+        assertEquals("a missing h2 transport must not be closed", 0, h2.closeCalls.get());
+        assertSame("the h2 path still connects normally", h2, getField("activeTransport"));
+
+        // Same for the SSH branch with nothing live: teardownH2IfAny() is a
+        // no-op and the SSH dial fails cleanly rather than NPEing.
+        BackgroundService.setTunnelTransportH2Enabled(service, false);
+        setField("activeTransport", null);
+        serverUrl = null;
+        try {
+            service.ensureConnection();
+        } catch (Exception expected) {
+            // No server URL — expected.
+        }
+        assertEquals("nothing to close on the h2 side", 0, h2.closeCalls.get());
     }
 
     @Test

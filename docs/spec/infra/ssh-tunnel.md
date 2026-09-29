@@ -107,7 +107,7 @@ sequenceDiagram
 
 > **⚠️ 两个原生客户端已不再消费该值**（原先「客户端读 `/api/config` 后决定探测哪条线」的语义已失效）：
 > - **Electron 写死 SSH**：`desktop/src/main/bridge.ts` 的 `native:set-tunnel-transport` handler **只对 `'ssh'` 调用 `setTransportPreference`**，`'h2'` / `'both'` 被忽略；`tunnel.ts` 的三值能力与测试保持不变。
-> - **Android 用本地开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；Android 的 `PortForwardTransportKind` 只有 `SSH` / `H2`（**没有 `BOTH`**，不做失败回退）。
+> - **Android 用本地开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；Android 侧只有一个本地布尔开关，**没有 `BOTH`**，不做失败回退。
 > - 前端向原生推送 `transport` 的 `syncTunnelTransportToNative` 已删除（连同 `clawbenchNative.ts` 的 `setTunnelTransport?` 声明）。
 
 因此下表描述的是**服务端配置语义**，而非当前原生客户端的实际行为：
