@@ -105,11 +105,17 @@ export function useFileUpload() {
   // (file preview, chat input, quote-question) can read/write it.
   const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
 
-  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string) {
+  /**
+   * Upload one file. Resolves with the server-assigned path on success, or
+   * null on any failure / cancellation — callers that need to auto-select the
+   * freshly uploaded file read the path from here rather than scanning the
+   * shared `pendingFiles` list (which cannot distinguish two same-sized files).
+   */
+  function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string): Promise<string | null> {
     // Hoisted out of the executor so the banking step below shares the same cap.
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
 
-    const attempt = new Promise<boolean>((resolve) => {
+    const attempt = new Promise<string | null>((resolve) => {
       const isDirUpload = !!dir
 
       // Route a failure reason either to an immediate toast (chat attachment)
@@ -133,7 +139,7 @@ export function useFileUpload() {
       // instead of a readable error response).
       if (file.size > maxSizeBytes) {
         notifyError(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
-        resolve(false)
+        resolve(null)
         return
       }
 
@@ -178,7 +184,7 @@ export function useFileUpload() {
 
       xhr.onload = () => {
         if (entry?.cancelled) {
-          resolve(false)
+          resolve(null)
           return
         }
         try {
@@ -190,7 +196,7 @@ export function useFileUpload() {
               entry.path = data.path
               if (autoAttach) addAttachedFile(entry.path)
             }
-            resolve(true)
+            resolve(data.path)
           } else {
             if (entry) {
               if (previewUrl) URL.revokeObjectURL(previewUrl)
@@ -198,7 +204,7 @@ export function useFileUpload() {
               if (i !== -1) pendingFiles.value.splice(i, 1)
             }
             failError(data.error || gt('upload.unknownError'))
-            resolve(false)
+            resolve(null)
           }
         } catch {
           if (entry) {
@@ -207,13 +213,13 @@ export function useFileUpload() {
             if (i !== -1) pendingFiles.value.splice(i, 1)
           }
           notifyError(gt('upload.parseError'))
-          resolve(false)
+          resolve(null)
         }
       }
 
       xhr.onerror = () => {
         if (entry?.cancelled) {
-          resolve(false)
+          resolve(null)
           return
         }
         if (entry) {
@@ -228,12 +234,12 @@ export function useFileUpload() {
         notifyError(file.size > maxSizeBytes
           ? gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB })
           : gt('upload.networkError'))
-        resolve(false)
+        resolve(null)
       }
 
       xhr.ontimeout = () => {
         if (entry?.cancelled) {
-          resolve(false)
+          resolve(null)
           return
         }
         if (entry) {
@@ -243,11 +249,11 @@ export function useFileUpload() {
           if (i !== -1) pendingFiles.value.splice(i, 1)
         }
         notifyError(gt('upload.timeout'))
-        resolve(false)
+        resolve(null)
       }
 
       // Removing a pending card aborts the request without showing a network error.
-      xhr.onabort = () => resolve(false)
+      xhr.onabort = () => resolve(null)
 
       xhr.send(formData)
     })
@@ -255,9 +261,9 @@ export function useFileUpload() {
     // Bank this file's bytes on every settle path (success, failure, abort) so
     // the batch bar continues from here instead of restarting. Doing it here
     // rather than in each caller means a caller cannot forget and stall the bar.
-    return attempt.then((ok) => {
+    return attempt.then((path) => {
       if (dir) bankDirProgress(file.size, maxSizeBytes)
-      return ok
+      return path
     })
   }
 
@@ -288,13 +294,13 @@ export function useFileUpload() {
     }
   }
 
-  async function uploadFiles(files: File[], dir?: string, preserveStructure = false) {
+  async function uploadFiles(files: File[], dir?: string, preserveStructure = false): Promise<string[]> {
     const maxFiles = store.state.uploadMaxFiles
     const currentCount = pendingFiles.value.filter(f => !f.uploading).length
     const remaining = maxFiles - currentCount
     if (remaining <= 0) {
       toast.show(gt('upload.maxFiles', { max: maxFiles }), { icon: '⚠️', type: 'error' })
-      return
+      return []
     }
 
     const toUpload = files.slice(0, remaining)
@@ -319,6 +325,9 @@ export function useFileUpload() {
 
     let okCount = 0
     let failCount = 0
+    // Paths of files that finished uploading, in upload order. The chat picker
+    // uses these to auto-select what the user just uploaded.
+    const uploadedPaths: string[] = []
 
     for (const file of toUpload) {
       if (isDirUpload && dirUploadCancelled.value) break
@@ -336,27 +345,30 @@ export function useFileUpload() {
       // When preserving folder structure, derive each file's relative sub-path
       // (including the top-level folder) from webkitRelativePath.
       const relPath = preserveStructure ? folderRelPath(file) || undefined : undefined
-      const ok = await uploadOneFile(file, dir, false, relPath)
+      const uploadedPath = await uploadOneFile(file, dir, false, relPath)
       if (isDirUpload && dirUploadCancelled.value) break
       if (isDirUpload) {
-        if (ok) okCount++
+        if (uploadedPath) okCount++
         else failCount++
         dirUploadDone.value++
+      } else if (uploadedPath) {
+        uploadedPaths.push(uploadedPath)
       }
     }
 
     if (isDirUpload) {
       finishDirUpload(okCount, failCount)
     }
+    return uploadedPaths
   }
 
-  async function handleFileSelect(e: Event) {
+  async function handleFileSelect(e: Event): Promise<string[]> {
     const files = Array.from((e.target as HTMLInputElement).files || [])
     // Reset input immediately to prevent Android WebView from re-firing
     // the change event with stale file data on picker cancellation
     ;(e.target as HTMLInputElement).value = ''
-    if (files.length === 0) return
-    await uploadFiles(files)
+    if (files.length === 0) return []
+    return uploadFiles(files)
   }
 
   async function handleFileDrop(files: File[]) {
@@ -458,9 +470,9 @@ export function useFileUpload() {
         dirUploadErrorMsgs.push(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
         failCount++
       } else {
-        const ok = await uploadOneFile(file, dir, false, relPath || undefined)
+        const uploadedPath = await uploadOneFile(file, dir, false, relPath || undefined)
         if (dirUploadCancelled.value) break
-        if (ok) okCount++
+        if (uploadedPath) okCount++
         else failCount++
       }
       done++

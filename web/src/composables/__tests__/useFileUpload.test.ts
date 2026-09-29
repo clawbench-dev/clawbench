@@ -645,6 +645,43 @@ describe('useFileUpload', () => {
       await upload.handleFileSelect(mockEvent as any)
       expect(mockEvent.target.value).toBe('')
     })
+
+    it('returns the server paths of successfully uploaded files, in order', async () => {
+      // The chat picker uses this return value to auto-select what was just
+      // uploaded — so it must carry the server-assigned path, not a boolean.
+      let n = 0
+      xhrSendHandler = (xhr) => respondSuccess(xhr, `.clawbench/uploads/f${n++}.png`)
+
+      const upload = useFileUpload()
+      const ev = { target: { files: [makeFile('a.png'), makeFile('b.png')], value: 'x' } }
+      const paths = await upload.handleFileSelect(ev as any)
+
+      expect(paths).toEqual([
+        '.clawbench/uploads/f0.png',
+        '.clawbench/uploads/f1.png',
+      ])
+    })
+
+    it('omits failed uploads from the returned paths', async () => {
+      let n = 0
+      xhrSendHandler = (xhr) => {
+        n++
+        if (n === 1) respondSuccess(xhr, '.clawbench/uploads/ok.png')
+        else respondError(xhr, 'UploadFailed')
+      }
+
+      const upload = useFileUpload()
+      const ev = { target: { files: [makeFile('ok.png'), makeFile('bad.png')], value: 'x' } }
+      const paths = await upload.handleFileSelect(ev as any)
+
+      expect(paths).toEqual(['.clawbench/uploads/ok.png'])
+    })
+
+    it('returns an empty array when the picker is cancelled (no files)', async () => {
+      const upload = useFileUpload()
+      const ev = { target: { files: [], value: 'x' } }
+      expect(await upload.handleFileSelect(ev as any)).toEqual([])
+    })
   })
 
   describe('handleFileDrop', () => {

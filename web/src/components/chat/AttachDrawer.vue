@@ -268,9 +268,16 @@ function handleUploadClick() {
 
 async function onFileSelect(e: Event) {
   filePickerOpen.value = false
-  await handleFileSelect(e)
-  // Switch to uploads tab to show the upload progress
+  const uploadedPaths = await handleFileSelect(e)
+  // Switch to the uploads tab and select the freshly uploaded files so the
+  // user immediately sees (and has attached) what they just uploaded. Only do
+  // this on a successful upload — switching for a cancelled/empty picker would
+  // yank the user away from their current tab for nothing.
+  if (uploadedPaths.length === 0) return
   activeTab.value = 'uploads'
+  for (const path of uploadedPaths) {
+    if (!isAttached(path)) emit('add-attached', path, false)
+  }
 }
 
 // When uploads complete, remove finished items from pendingFiles
@@ -499,7 +506,13 @@ defineExpose({ activeTab, handleFileDrop })
 
 /* Icon container: holds icon or thumbnail.
  * 28x28 matches FileManagerContent list-view icon size.
- * Thumbnails fill the container; icons stay at their :size prop. */
+ * Thumbnails fill the container; icons stay at their :size prop.
+ *
+ * No `overflow: hidden` here: the selected-state check badge is anchored to
+ * the bottom-right corner OUTSIDE the 28px box (right/bottom: -3px), so
+ * clipping the container truncated the badge and its white ring along the
+ * image edge. The thumbnail rounds itself via its own border-radius, so the
+ * wrapper does not need to clip. */
 .ad-icon-wrap {
   flex-shrink: 0;
   width: 28px;
@@ -507,7 +520,6 @@ defineExpose({ activeTab, handleFileDrop })
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
   border-radius: var(--radius-sm);
   position: relative;
 }
