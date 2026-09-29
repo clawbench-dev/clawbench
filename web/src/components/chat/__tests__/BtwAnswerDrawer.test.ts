@@ -52,6 +52,12 @@ const i18n = createI18n({
   },
 })
 
+/** The component's raw SFC source, for asserting on its <style> block. */
+async function drawerSource(): Promise<string> {
+  const raw = await import('../BtwAnswerDrawer.vue?raw')
+  return typeof raw.default === 'string' ? raw.default : ''
+}
+
 function mountDrawer(props = {}) {
   return mount(BtwAnswerDrawer, {
     props: {
@@ -140,8 +146,7 @@ describe('BtwAnswerDrawer', () => {
     // The body has no padding of its own, so the content wrapper must supply
     // top AND bottom padding; a zero top made the first bubble sit flush
     // against the header line.
-    const raw = await import('../BtwAnswerDrawer.vue?raw')
-    const src = typeof raw.default === 'string' ? raw.default : ''
+    const src = await drawerSource()
     const block = src.slice(src.indexOf('.btw-content {'), src.indexOf('.btw-exchange'))
     const m = block.match(/padding:\s*([^;]+);/)
     expect(m, '.btw-content must declare padding').toBeTruthy()
@@ -149,6 +154,49 @@ describe('BtwAnswerDrawer', () => {
     const [top, , bottom] = m![1].trim().split(/\s+/)
     expect(top, 'top padding must be non-zero').toMatch(/var\(--space-/)
     expect(bottom, 'bottom padding must be non-zero').toMatch(/var\(--space-/)
+  })
+
+  it('spaces the question and answer inside an exchange like chat messages', async () => {
+    // The chat area separates messages with gap: var(--space-8); the drawer has
+    // no such list container, so the exchange wrapper must supply it or the
+    // question and answer would touch.
+    const src = await drawerSource()
+    const block = src.slice(src.indexOf('.btw-exchange {'), src.indexOf('.btw-exchange +'))
+    expect(block).toMatch(/display:\s*flex/)
+    expect(block).toMatch(/flex-direction:\s*column/)
+    expect(block).toMatch(/gap:\s*var\(--space-8\)/)
+  })
+
+  it('separates successive exchanges by more than the intra-exchange gap', async () => {
+    const src = await drawerSource()
+    const block = src.slice(src.indexOf('.btw-exchange + .btw-exchange'))
+    const m = block.match(/margin-top:\s*var\((--space-\d+)\)/)
+    expect(m, 'exchanges must be separated').toBeTruthy()
+    // Must exceed the intra-exchange gap (--space-8) so pairs read as separate.
+    const spacing: Record<string, number> = {
+      '--space-1': 2, '--space-2': 4, '--space-3': 6, '--space-4': 8,
+      '--space-5': 10, '--space-6': 12, '--space-7': 16, '--space-8': 20,
+      '--space-9': 24, '--space-10': 28,
+    }
+    expect(spacing[m![1]]).toBeGreaterThan(spacing['--space-8'])
+  })
+
+  it('leaves the user bubble its own right inset (does not flatten it)', async () => {
+    // The chat area insets the user bubble from the right edge via
+    // margin-right var(--space-5) + max-width calc(100% - 20px) on .msg-card.
+    // An earlier version reset both here, so the bubble ran to the drawer edge.
+    const src = await drawerSource()
+    expect(src).not.toMatch(/margin-right:\s*0/)
+    expect(src).not.toMatch(/max-width:\s*100%/)
+  })
+
+  it('does not redeclare the bubble width rules the chat area already provides', async () => {
+    // ChatMessageItem's bubble rules are non-scoped, so they apply in the
+    // drawer too; re-declaring them risks silently diverging from the chat
+    // area. The drawer should only own spacing.
+    const src = await drawerSource()
+    expect(src).not.toMatch(/chat-message\.user \.msg-card/)
+    expect(src).not.toMatch(/chat-message\.assistant \.msg-card/)
   })
 
   it('renders nothing when there are no records', () => {

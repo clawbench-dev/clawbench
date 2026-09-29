@@ -120,10 +120,10 @@ defineExpose({
 </script>
 
 <style scoped>
-/* The drawer is a full-width reading surface: the chat area's 900px measure and
-   the user bubble's right inset are chat-list layout, not message rendering, so
-   they are removed here. Everything else (bubble background, radius, padding,
-   typography) stays exactly as in the chat area. */
+/* The drawer renders the same ChatMessageItem bubbles as the chat area; only
+   the layout around them differs (the chat list's scrolling container and its
+   own gap are not present here). Spacing below mirrors the chat area's values
+   so an exchange reads the same as it does in the main conversation. */
 .btw-content {
   /* Breathing room above and below the exchange(s). Top matters most: without
      it the first bubble sits flush against the header's shadow line. Bottom is
@@ -132,26 +132,23 @@ defineExpose({
   padding: var(--space-5) 0 var(--space-7);
 }
 
+/* Each exchange is a Q&A pair. The pair's own gap matches the chat area's
+   message-to-message gap (.chat-messages-list uses var(--space-8)). */
+.btw-exchange {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+
+/* A step larger between pairs than within one, so successive /btw questions
+   read as separate exchanges rather than one long conversation. */
 .btw-exchange + .btw-exchange {
-  margin-top: var(--space-7);
+  margin-top: var(--space-9);
 }
 
-/* Assistant: full width, no side margins. */
-.btw-content :deep(.chat-message.assistant),
-.btw-content :deep(.chat-message.assistant .msg-card) {
-  max-width: 100%;
-}
-
-/* User: keep the bubble, drop the chat list's right inset so it can use the
-   full width too. */
-.btw-content :deep(.chat-message.user .msg-card) {
-  margin-right: 0;
-  max-width: 100%;
-}
-
-/* The message rows carry the chat list's own spacing; the exchange wrapper
-   already separates them. */
-.btw-content :deep(.chat-message) {
-  max-width: 100%;
-}
+/* No width overrides: ChatMessageItem's bubble rules are non-scoped, so the
+   drawer already inherits the chat area's exact layout — the assistant bubble
+   spans the full width and the user bubble keeps its own right inset
+   (margin-right var(--space-5) + max-width calc(100% - 20px)). Overriding them
+   here is what previously flattened the user inset. */
 </style>
