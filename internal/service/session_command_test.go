@@ -2696,7 +2696,9 @@ func TestGetSessionInfoForPush(t *testing.T) {
 		info, err := GetSessionInfoForPush(sessionID)
 		require.NoError(t, err)
 		assert.Equal(t, sessionID, info.ID)
-		assert.Equal(t, "/proj/info", info.ProjectPath)
+		// The insert resolves the project through the registry (canonical), so the
+		// read returns the canonical spelling.
+		assert.Equal(t, NormalizeProjectPath("/proj/info"), info.ProjectPath)
 		assert.Equal(t, "Info Session", info.Title)
 	})
 
