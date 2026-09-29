@@ -139,7 +139,10 @@ describe('stacking-order tokens (variables.css)', () => {
     // These replaced magic numbers; the values must not drift, or a surface
     // that used to sit above another would silently swap order.
     expect(token('--z-overlay')).toBe('1000')
-    expect(token('--z-overlay-raised')).toBe('1001')
+    // Parked above the whole BottomSheet open-order band (1000..1049), not just
+    // one above --z-overlay: stacked drawers occupy that band, and an upgrade
+    // prompt must still beat every one of them.
+    expect(token('--z-overlay-raised')).toBe('1050')
     expect(token('--z-header')).toBe('1100')
     expect(token('--z-sheet')).toBe('1200')
     expect(token('--z-preview-tooltip')).toBe('1300')
@@ -162,6 +165,20 @@ describe('stacking-order tokens (variables.css)', () => {
     expect(parseInt(token('--z-popover'))).toBe(
       parseInt(token('--z-popover-backdrop')) + 1,
     )
+  })
+
+  it('reserves a band above the overlay for stacked BottomSheets', () => {
+    // BottomSheet raises its overlay by open order (a drawer opened from inside
+    // another must paint above it) via
+    // `calc(var(--z-overlay) + var(--bs-open-order, 0))`. That band must not
+    // collide with the tier above it.
+    const overlay = parseInt(token('--z-overlay'))
+    const raised = parseInt(token('--z-overlay-raised'))
+    const header = parseInt(token('--z-header'))
+    // The band needs room for realistic nesting.
+    expect(raised - overlay).toBeGreaterThanOrEqual(20)
+    // And must stay clear of the app header tier.
+    expect(raised).toBeLessThan(header)
   })
 
   it('keeps the topmost surfaces above the modal tier', () => {

@@ -11,6 +11,7 @@ vi.mock('lucide-vue-next', () => ({
   // for the tests to tell the roles apart.
   User: { name: 'UserIcon', render: () => h('i', { class: 'icon-user' }) },
   Bot: { name: 'BotIcon', render: () => h('i', { class: 'icon-bot' }) },
+  MessageCircleQuestion: { name: 'BtwIcon', render: () => h('i', { class: 'icon-btw' }) },
 }))
 
 vi.mock('@/components/common/BottomSheet.vue', () => ({
@@ -49,6 +50,10 @@ const i18n = createI18n({
           conversationIndexRoleAssistant: 'Assistant',
           conversationIndexNoText: '(no text in this turn)',
           userMsgIndexAttachment: 'Attachment',
+        },
+        btw: {
+          anchorLabel: 'Asked by the way',
+          anchorTitle: 'View the side question asked here',
         },
       },
     },
@@ -489,5 +494,73 @@ describe('UserMsgIndexDrawer', () => {
       ] })
       expect(wrapper.find('.panel-hint').exists()).toBe(false)
     })
+  })
+})
+
+// ── /btw marker ──
+// A message with a /btw side question anchored to it gets an icon on the right
+// of the row (icon only, no text). The host owns the anchors and passes a
+// predicate; the row just renders what it is told.
+describe('UserMsgIndexDrawer — /btw marker', () => {
+  /** hasBtw predicate that flags the given ids. */
+  const flagIds = (...ids: number[]) => (msg: { id?: unknown }) => ids.includes(msg?.id as number)
+
+  it('marks rows whose message has a /btw question', () => {
+    const wrapper = mountSheet({
+      messages: [
+        { id: 1, content: 'with btw', role: 'user' },
+        { id: 2, content: 'without btw', role: 'user' },
+      ],
+      hasBtw: flagIds(1),
+    })
+    const rows = wrapper.findAll('.msg-item')
+    expect(rows).toHaveLength(2)
+    expect(rows[0].find('.msg-btw-mark').exists()).toBe(true)
+    expect(rows[1].find('.msg-btw-mark').exists()).toBe(false)
+  })
+
+  it('renders the marker as an icon with an accessible label, not text', () => {
+    const wrapper = mountSheet({
+      messages: [{ id: 1, content: 'q', role: 'user' }],
+      hasBtw: flagIds(1),
+    })
+    const mark = wrapper.find('.msg-btw-mark')
+    expect(mark.exists()).toBe(true)
+    // Icon, not a text label.
+    expect(mark.find('.icon-btw').exists()).toBe(true)
+    expect(mark.text()).toBe('')
+    // The meaning must still reach screen readers / tooltips.
+    expect(mark.attributes('title')).toBe('View the side question asked here')
+    expect(mark.attributes('aria-label')).toBe('View the side question asked here')
+  })
+
+  it('places the marker between the preview and the timestamp', () => {
+    const wrapper = mountSheet({
+      messages: [{ id: 1, content: 'q', role: 'user', createdAt: '2026-01-01T00:00:00Z' }],
+      hasBtw: flagIds(1),
+    })
+    const body = wrapper.find('.msg-body')
+    const order = Array.from(body.element.children).map(el => el.className)
+    const textIdx = order.findIndex(c => c.includes('msg-text'))
+    const btwIdx = order.findIndex(c => c.includes('msg-btw-mark'))
+    const timeIdx = order.findIndex(c => c.includes('msg-time'))
+    expect(btwIdx).toBeGreaterThan(textIdx)
+    expect(btwIdx).toBeLessThan(timeIdx)
+  })
+
+  it('shows no marker when the host flags nothing', () => {
+    const wrapper = mountSheet({
+      messages: [{ id: 1, content: 'q', role: 'user' }],
+    })
+    expect(wrapper.find('.msg-btw-mark').exists()).toBe(false)
+  })
+
+  it('shows no marker when the host does not supply a predicate (share TOC)', () => {
+    // MessageIndexRow defaults hasBtw to false; the drawer's default predicate
+    // is "never", so a host with no anchors renders no marks at all.
+    const wrapper = mountSheet({
+      messages: [{ id: 1, content: 'q', role: 'user' }, { id: 2, content: 'w', role: 'assistant' }],
+    })
+    expect(wrapper.findAll('.msg-btw-mark')).toHaveLength(0)
   })
 })

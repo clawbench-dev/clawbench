@@ -43,6 +43,7 @@
             :active="msg.id === activeId"
             :nav-active="listNav.activeIndex.value === idx"
             :search-query="searchQuery"
+            :has-btw="hasBtw(msg)"
             @select="$emit('select', $event)"
           />
         </div>
@@ -71,6 +72,13 @@ const props = defineProps({
   activeId: { type: [Number, String], default: null, required: false },
   loading: Boolean,
   jumping: Boolean,
+  /**
+   * Whether a message has a /btw side question anchored to it (marks its row).
+   * A predicate rather than a per-message flag so the list keeps the API's own
+   * shape; the host owns the anchors. Defaults to "never", which is what the
+   * share TOC wants.
+   */
+  hasBtw: { type: Function, default: () => false },
 })
 
 const emit = defineEmits(['close', 'select'])

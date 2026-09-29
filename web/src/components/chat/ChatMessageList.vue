@@ -154,6 +154,7 @@
     :active-id="nearestIndexMsgId"
     :loading="loadingIndex"
     :jumping="loadingTarget"
+    :has-btw="hasBtwAnchor"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
   />
@@ -1061,6 +1062,7 @@ const {
   jumpToUserMessage,
   jumpToAdjacentMessage,
   scrollToMessage: scrollToMessageUserMsg,
+  hasBtw: hasBtwAnchor,
 } = useUserMsgIndex({
   getMessages: () => props.messages,
   getCurrentSessionId: () => props.currentSessionId || '',
@@ -1071,6 +1073,9 @@ const {
   hideScrollFab,
   // Defer the flash until the smooth scroll settles (see queueMessageHighlight).
   highlightMessage: (el) => queueMessageHighlight(el),
+  // The conversation index marks rows whose message has a /btw side question,
+  // using the same anchor map (and id rule) as the chat-area markers.
+  getBtwAnchors: () => props.btwAnchors || {},
   setProgrammaticScrolling: (val) => { setProgrammatic(val) },
   setAtBottom: (val) => {
     isAtBottom.value = val

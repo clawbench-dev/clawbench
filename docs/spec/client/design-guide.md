@@ -106,7 +106,7 @@
 
 ```
 --z-overlay: 1000              欢迎页/弹窗/底部抽屉的遮罩
---z-overlay-raised: 1001       升级提示，压在遮罩之上
+--z-overlay-raised: 1050       升级提示，压在遮罩之上
 --z-header: 1100               应用头部
 --z-sheet: 1200                全屏抽屉、代码预览浮层
 --z-preview-tooltip: 1300      预览浮层上的 tooltip
@@ -119,6 +119,13 @@
 --z-popover: 9999              菜单、下拉、tooltip、toast
 --z-lightbox: 10000            图片灯箱——最高
 ```
+
+**`--z-overlay` 之上留了一条 1000..1049 的带**给 BottomSheet 按**打开顺序**叠放
+（`calc(var(--z-overlay) + var(--bs-open-order))`）：所有 BottomSheet 都 teleport 到
+`<body>` 且同一层级，两个同时打开时由 **DOM 顺序**决定谁在上，而 Teleport 在**挂载**时
+就固定了顺序——于是在 App 根部挂载、却**后**打开的抽屉（如 /btw 抽屉里打开的失效路径
+选择器）会被先打开的抽屉盖住。开序叠放修的就是这个。`--z-overlay-raised` 因此停在整条
+带之上（1050），保证升级提示仍压过任何数量的抽屉。
 
 两条不变量（`designTokens.css.test.ts:156`）：
 1. 每个 `-backdrop` **恰好比它的表面小 1**——相等会让遮罩盖住自己的菜单。
