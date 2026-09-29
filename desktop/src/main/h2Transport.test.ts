@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
  * Fake `node:http2` + `./clientLog` for the h2 transport.
@@ -88,12 +88,32 @@ const { h2State } = vi.hoisted(() => {
     destroyed = false
     closeCalls = 0
     destroyCalls = 0
+    /** Every keepalive PING issued on this session. */
+    pingCalls: Array<{ answered: boolean }> = []
+    /**
+     * When true, `ping()` never invokes its callback — exactly what a
+     * black-holed (half-open) peer does: no PONG, and no 'error'/'close' either.
+     */
+    dropPings = false
 
     constructor(authority: string, options?: Record<string, unknown>) {
       super()
       this.authority = authority
       this.options = options
       this.kind = authority.startsWith('https:') ? 'tls' : 'h2c'
+    }
+
+    /**
+     * Mirror `session.ping(callback)`: the callback runs on the next tick when
+     * the PONG arrives, and NEVER runs when it does not (the transport's own
+     * timeout is what must catch that — see startHeartbeat).
+     */
+    ping(cb?: (err: Error | null) => void): void {
+      const entry = { answered: false }
+      this.pingCalls.push(entry)
+      if (this.dropPings) return
+      entry.answered = true
+      queueMicrotask(() => cb?.(null))
     }
 
     request(headers: Record<string, unknown>): FakeStream {
@@ -172,7 +192,7 @@ vi.mock('./clientLog', () => ({
 
 import {
   connect, openStream, openClaimStream, openControlStream, close,
-  isConnected, getTransportKind, _resetForTesting,
+  isConnected, getTransportKind, _resetForTesting, _hasHeartbeatForTesting,
 } from './h2Transport'
 
 /** Let queued microtasks (cookie read, response event) run. */
@@ -182,6 +202,11 @@ beforeEach(() => {
   h2State.reset()
   _resetForTesting()
 })
+
+// `_resetForTesting()` tears the session (and thus the keepalive) down after
+// every test, so the heartbeat timer a connecting test arms does not outlive it
+// and trip the harness's async-leak detector.
+afterEach(() => { _resetForTesting() })
 
 describe('h2Transport: connect', () => {
   it('connects over h2c with prior knowledge (plain http authority)', async () => {
@@ -519,6 +544,113 @@ describe('h2Transport: session lifecycle', () => {
     expect(isConnected()).toBe(false)
     // Idempotent: a second close must not throw.
     expect(() => close()).not.toThrow()
+  })
+})
+
+/**
+ * The desktop half of the Android liveness defect (cb693c7c).
+ *
+ * A half-open session — NAT rebind, server restart — emits neither 'error' nor
+ * 'close' and never answers a PING. Before the heartbeat, `isConnected()` stayed
+ * true forever, so tunnel.ts's monitor skipped it and every `-R` mapping stayed
+ * dead until a manual reconnect. These tests pin the two mechanisms that make it
+ * observable: the periodic PING, and the session-level `dead` flag it sets.
+ */
+describe('h2Transport: session liveness', () => {
+  it('arms the keepalive after connect and PINGs the session on the interval', async () => {
+    vi.useFakeTimers()
+    try {
+      await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+      const s = h2State.lastSession()
+
+      // Nothing yet: the first PING is one interval away.
+      expect(s.pingCalls.length).toBe(0)
+      await vi.advanceTimersByTimeAsync(30001)
+      // PING sent, PONG came back (fake answers in a microtask), re-armed.
+      expect(s.pingCalls.length).toBe(1)
+      expect(isConnected()).toBe(true)
+      // The re-arm is real: a second interval produces a second PING.
+      await vi.advanceTimersByTimeAsync(30001)
+      expect(s.pingCalls.length).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks the session dead when a PING is never answered (half-open peer)', async () => {
+    vi.useFakeTimers()
+    try {
+      await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+      const s = h2State.lastSession()
+      // The peer goes silent: no PONG, and (as measured against a real
+      // black hole) no 'error'/'close' either.
+      s.dropPings = true
+
+      // The PING itself fires at 30s and, unanswered, must time out 30s later.
+      await vi.advanceTimersByTimeAsync(30001)
+      expect(isConnected()).toBe(true)   // still inside the PING deadline
+      await vi.advanceTimersByTimeAsync(30001)
+      expect(isConnected()).toBe(false)  // PING timed out -> dead
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('marks the session dead on a session error', async () => {
+    await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+    h2State.lastSession().emit('error', Object.assign(new Error('reset'), { code: 'ECONNRESET' }))
+    expect(isConnected()).toBe(false)
+  })
+
+  it('marks the session dead on a session close', async () => {
+    await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+    h2State.lastSession().emit('close')
+    expect(isConnected()).toBe(false)
+  })
+
+  it('marks the session dead on a GOAWAY', async () => {
+    await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+    h2State.lastSession().emit('goaway', 0, 0)
+    expect(isConnected()).toBe(false)
+  })
+
+  it('clears the keepalive timer on closeSession (no leak)', async () => {
+    vi.useFakeTimers()
+    try {
+      await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+      const s = h2State.lastSession()
+      expect(_hasHeartbeatForTesting()).toBe(true)
+
+      close()
+      // The clear is what stops the timer outliving its session. The stale tick
+      // would be a silent no-op (identity guard), so assert the handle itself.
+      expect(_hasHeartbeatForTesting()).toBe(false)
+
+      await vi.advanceTimersByTimeAsync(60002)
+      // The heartbeat belonged to the torn-down session: it must not PING the
+      // old one (nor keep the timer alive past close).
+      expect(s.pingCalls.length).toBe(0)
+      expect(isConnected()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not mark the session dead when a single stream fails (no false positive)', async () => {
+    await connect({ host: '127.0.0.1', port: 20000, prefer: 'h2c' })
+    const session = h2State.lastSession()
+    // The next data stream answers 502 — the server answered over a perfectly
+    // healthy h2 session, so the session must stay connected. Marking it dead
+    // here would reconnect on every refused target.
+    const origRequest = session.request.bind(session)
+    session.request = (headers: Record<string, unknown>) => {
+      const st = origRequest(headers)
+      st.status = 502
+      return st
+    }
+
+    await expect(openStream('127.0.0.1', 9999)).rejects.toThrow(/HTTP 502/)
+    expect(isConnected()).toBe(true)
   })
 })
 

@@ -96,6 +96,16 @@ const DEFAULT_PREFER: H2TransportKind = 'tls'
 const CONTROL_PATH = '/api/tunnel/control'
 const STREAM_PATH = '/api/tunnel/stream'
 
+/**
+ * How often the live session is probed with an h2 PING, and how long a PING may
+ * stay unanswered before the session is declared dead. 30s matches the SSH
+ * path's `setServerAliveInterval(30000)` and Android's
+ * `H2_PING_INTERVAL_SECONDS` (commit cb693c7c), so both desktop transports —
+ * and both platforms — notice a dead peer on the same timescale.
+ */
+const PING_INTERVAL_MS = 30000
+const PING_TIMEOUT_MS = 30000
+
 // A control line is tiny; the server caps its scanner at 64 KiB. Matching that
 // bound here means a hostile/garbled peer cannot grow the client buffer
 // without limit, and the overflow surfaces as an error rather than a hang.
@@ -116,9 +126,27 @@ let sessionPort = 0
  * Set once the session has failed or been closed deliberately. A torn-down
  * session must never be reused, so `isConnected()` consults this rather than
  * `session.closed` alone (the error path may leave a non-null session).
+ *
+ * "Failed" now includes an unanswered keepalive PING (see startHeartbeat): that
+ * is the only way a half-open connection becomes observable, since a black-holed
+ * socket emits neither 'error' nor 'close'.
  */
 let sessionDead = false
 let connecting: Promise<H2ConnectResult> | null = null
+/**
+ * Keepalive timer for the live session. One PING every PING_INTERVAL_MS, with a
+ * PING_TIMEOUT_MS deadline of its own (Node's `ping` callback never fires when
+ * the PONG never comes — measured — so the timeout cannot come from the API).
+ * Cleared by closeSession(); a stale tick is additionally guarded by the
+ * session identity and the generation below.
+ */
+let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+/**
+ * Bumped on every teardown. The PING race captures it and only reports a
+ * timeout while it still matches, so a PING armed against a session that has
+ * since been replaced cannot mark the replacement dead.
+ */
+let sessionGeneration = 0
 
 function log(level: 'd' | 'i' | 'w' | 'e', msg: string): void {
   // The main process has no appLog; clientLog.record() is its logging
@@ -142,17 +170,41 @@ function authority(kind: H2TransportKind, host: string, port: number): string {
 }
 
 /**
+ * Mark the current session dead so `isConnected()` turns false and the tunnel
+ * monitor (`tunnel.ts` monitorTick) reconnects.
+ *
+ * Only connection-level failures belong here — a session 'error'/'close'/
+ * 'goaway' or an unanswered PING. A single stream failing does NOT: a 502/403/
+ * 401 is the server answering over a perfectly good h2 session (see
+ * openRawStream), so marking the session dead for it would reconnect on every
+ * refused target. Mirrors Android's markSessionDead (cb693c7c), minus the
+ * generation parameter: in Node the generation is folded into the heartbeat's
+ * identity guard below, since that is the only late reporter.
+ *
+ * The session is left otherwise intact (no close here): the monitor's
+ * ensureTunnel() calls connect(), which tears the old session down itself.
+ */
+function markDead(s: http2.ClientHttp2Session, reason: string): void {
+  if (s !== session || sessionDead) return
+  sessionDead = true
+  log('w', `session dead: ${reason}`)
+}
+
+/**
  * Attach the error handlers a session needs to not crash the main process.
  *
  * Without these, an `'error'` on the session (TLS rejected, GOAWAY, socket
  * reset) is an unhandled `'error'` event and Node throws — in Electron that is
  * a "JavaScript error occurred in the main process" dialog and a dead app.
+ *
+ * They also feed `markDead`: these events are the *only* signal a half-open
+ * connection gives on its own, and they are what makes `isConnected()` honest
+ * when the peer resets or sends GOAWAY. A silent black hole emits none of them,
+ * which is what the heartbeat exists for.
  */
 function armSession(s: http2.ClientHttp2Session): void {
   s.on('error', (err: NodeJS.ErrnoException) => {
-    if (s !== session) return
-    sessionDead = true
-    log('e', `session error: ${err.code || err.message}`)
+    markDead(s, `error: ${err.code || err.message}`)
   })
   s.on('close', () => {
     if (s !== session) return
@@ -160,10 +212,64 @@ function armSession(s: http2.ClientHttp2Session): void {
     session = null
   })
   s.on('goaway', (code: number) => {
-    if (s !== session) return
-    sessionDead = true
-    log('w', `session GOAWAY code=${code}`)
+    markDead(s, `GOAWAY code=${code}`)
   })
+}
+
+/**
+ * Arm the keepalive: one PING every PING_INTERVAL_MS, each with its own
+ * PING_TIMEOUT_MS deadline.
+ *
+ * This is what turns a half-open connection into something observable. A NAT
+ * rebind or a server restart leaves the TCP socket open but silent; Node emits
+ * neither 'error' nor 'close', and a `ping()` issued into that hole never
+ * invokes its callback (all measured). Without a self-imposed deadline the
+ * session would look healthy forever, `isConnected()` would keep returning true,
+ * and the monitor would never reconnect — stranding every `-R` mapping until a
+ * manual reconnect. Identical to the Android defect fixed in cb693c7c, where the
+ * PING is what replaces the removed `readTimeout`.
+ *
+ * The timer is NOT unref'd: it is short-lived and owns no socket of its own, and
+ * an unref'd timer could let the process exit between ticks while the tunnel is
+ * meant to stay up (the session's own socket keeps the loop alive regardless).
+ */
+function startHeartbeat(s: http2.ClientHttp2Session): void {
+  stopHeartbeat()
+  const gen = sessionGeneration
+  heartbeatTimer = setTimeout(() => {
+    heartbeatTimer = null
+    // A teardown (closeSession) clears the timer; this guards a tick that was
+    // already queued when it ran, and a PING from a superseded session.
+    if (gen !== sessionGeneration || s !== session || sessionDead) return
+    let answered = false
+    try {
+      s.ping((err?: Error | null) => {
+        // A PONG arrived (or the session reported an error of its own). Either
+        // way the PING did not time out, so the session stays alive; the next
+        // tick is armed below.
+        answered = true
+        if (gen !== sessionGeneration || s !== session || sessionDead) return
+        if (err) markDead(s, `ping failed: ${err.message}`)
+        else startHeartbeat(s)
+      })
+    } catch (err) {
+      // ping() throws ERR_HTTP2_INVALID_SESSION once the session is destroyed.
+      markDead(s, `ping threw: ${(err as Error).message}`)
+      return
+    }
+    setTimeout(() => {
+      if (answered) return
+      markDead(s, 'ping timeout')
+      // No re-arm: the next connect() starts a fresh heartbeat.
+    }, PING_TIMEOUT_MS)
+  }, PING_INTERVAL_MS)
+}
+
+function stopHeartbeat(): void {
+  if (heartbeatTimer) {
+    clearTimeout(heartbeatTimer)
+    heartbeatTimer = null
+  }
 }
 
 /**
@@ -309,6 +415,7 @@ export async function connect(opts: H2ConnectOptions): Promise<H2ConnectResult> 
         sessionPort = port
         sessionDead = false
         armSession(s)
+        startHeartbeat(s)
         log('i', `connected via ${kind} to ${host}:${port}`)
         return { ok: true, kind, error: '' }
       } catch (err) {
@@ -329,12 +436,28 @@ export function getTransportKind(): H2TransportKind | null {
   return isConnected() ? sessionKind : null
 }
 
+/**
+ * True while the session is believed healthy.
+ *
+ * This is the tunnel monitor's only liveness signal (`monitorTick` in
+ * tunnel.ts), so it must reflect a dead connection rather than local intent:
+ * `sessionDead` is set by a session 'error'/'close'/'goaway' or by an
+ * unanswered keepalive PING. Before the heartbeat existed a half-open session
+ * reported `true` forever, the monitor skipped it, and every `-R` mapping stayed
+ * dead until a manual reconnect — the desktop half of the Android defect fixed
+ * in cb693c7c.
+ */
 export function isConnected(): boolean {
   return !!session && !sessionDead && !session.closed && !session.destroyed
 }
 
 /** Close the current session and mark it unusable. Idempotent. */
 function closeSession(): void {
+  // Retire the keepalive first: a PING still in flight must not fire against
+  // (or restart a heartbeat for) the session being torn down, and the timer
+  // must not leak past the session it belongs to.
+  stopHeartbeat()
+  sessionGeneration++
   const s = session
   session = null
   sessionDead = true
@@ -663,4 +786,16 @@ export function _resetForTesting(): void {
   sessionKind = DEFAULT_PREFER
   sessionHost = ''
   sessionPort = 0
+}
+
+/**
+ * Test helper — whether a keepalive tick is currently armed.
+ *
+ * `closeSession()`'s clearTimeout is what stops the heartbeat leaking past the
+ * session it belongs to; the stale tick would otherwise be a silent no-op (its
+ * session identity guard drops it), so no behavioural assertion can see a
+ * missing clear. This exposes the handle's existence so the leak is testable.
+ */
+export function _hasHeartbeatForTesting(): boolean {
+  return heartbeatTimer !== null
 }
