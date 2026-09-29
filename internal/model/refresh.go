@@ -1,7 +1,23 @@
 // Package model — unified agent + model refresh.
 //
-// This file replaces a five-step startup sequence that each step re-queried the
-// database and reloaded global state:
+// There are two entry points, split by cost:
+//
+//	RefreshAgents(db, opts)                             → synchronous: CLI detection,
+//	                                                      YAML agents, memory reload
+//	StartModelDiscoveryAsync(db, withAgentsLock, done)  → asynchronous: model probes,
+//	                                                      persist, memory reload, callback
+//
+// The split exists because the model probes fork each vendor's CLI: antigravity
+// hangs for its full timeout (~16s) when logged out, and the serial total was
+// measured at ~18s. Startup keeps only the synchronous half — roughly 0.1s,
+// since CLI detection already runs in parallel — because default-agent selection
+// and scheduler.LoadTasksFromDB run before the background half can finish, and
+// the scheduler silently skips cron registration for a task whose agent is not
+// yet known. RefreshAgents(SkipDiscovery: true) is what startup calls;
+// StartModelDiscoveryAsync runs the probe half afterwards. The manual rescan
+// endpoint still calls the full RefreshAgents (discovery included).
+//
+// History: this file replaced a five-step startup sequence
 //
 //	SyncDiscoverAgentsDB   → detect CLIs, insert new agents, sync acp_command
 //	LoadYamlAgents         → insert agents from config/agents/*.yaml
@@ -9,16 +25,14 @@
 //	MergeDiscoveredDataDB  → three passes of SQL, then a full memory reload
 //	AsyncRefreshModelCache → probe every backend AGAIN in a goroutine
 //
-// Beyond the duplicate work, that sequence had two structural problems. First,
-// there were two independent implementations of "load agents into memory and
-// compose the system prompt" — this file's and service.LoadAgentsIntoMemory —
-// so which one won depended on call order. Second, the same discovery probes ran
-// twice per boot (once synchronously, once in the background), and neither run
-// was cached.
-//
-// RefreshAgents is now the only entry point. It performs detection, discovery,
-// persistence and the memory reload in one pass, and it is what both startup and
-// the manual rescan endpoint call.
+// whose steps each re-queried the database and reloaded global state, and which
+// had two structural problems: two independent implementations of "load agents
+// into memory and compose the system prompt", and the same discovery probes run
+// twice per boot with neither run cached. The single reload path below still
+// fixes the first. AsyncRefreshModelCache was removed for the second — running
+// duplicate uncached probes — but that objection no longer holds: the
+// discoveryCache (5-minute TTL) now dedupes probes, so the async pass reuses the
+// work the synchronous path just did rather than paying for it twice.
 package model
 
 import (

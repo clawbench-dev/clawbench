@@ -13,12 +13,13 @@ import (
 // exec.Cmd.Output() / CombinedOutput() can hang forever even when the command
 // is killed by a Context deadline: if the spawned CLI leaves a grandchild
 // holding the stdout/stderr pipe open, Output() waits for pipe EOF and the
-// Context kill of the direct child never unblocks it. This blocks server
-// startup (model.RefreshAgents runs synchronously in main), so the service
-// "stops but never comes back up".
+// Context kill of the direct child never unblocks it.
 //
 // Capturing to files makes Cmd.Run() return as soon as the direct child exits,
-// so the Context kill works reliably and the hang cannot occur.
+// so the Context kill works reliably and the hang cannot occur. The probes now
+// run on a background goroutine rather than blocking startup, but a hung probe
+// would still stall model discovery and hold its backend's per-backend probe
+// lock, so the file-capture design stays necessary.
 func RunCommandContext(ctx context.Context, name string, args ...string) (stdout string, stderr string, err error) {
 	stdoutFile, err := os.CreateTemp("", "clawbench-cmd-out-*")
 	if err != nil {
