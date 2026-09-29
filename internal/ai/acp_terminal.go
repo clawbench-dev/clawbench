@@ -70,7 +70,14 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 	cmdCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 
 	var cmd *exec.Cmd
-	if shell := platform.ResolveLoginShell(); shell != "" {
+	if len(req.Args) > 0 {
+		// The agent split argv across Command and Args (e.g. Kimi ACP sends
+		// Command "/bin/bash" with Args ["-c", "<actual command>"]). Run them
+		// verbatim: wrapping only req.Command in a login shell would execute a
+		// bare interactive shell that exits 0 with no output — the tool call
+		// then reports success while the real command never ran.
+		cmd = exec.CommandContext(cmdCtx, req.Command, req.Args...)
+	} else if shell := platform.ResolveLoginShell(); shell != "" {
 		cmd = exec.CommandContext(cmdCtx, shell, "-c", req.Command)
 	} else {
 		// Windows fallback: ResolveLoginShell() returns empty on Windows
@@ -157,7 +164,10 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 		}
 	}()
 
-	slog.Debug("acp: terminal created", "terminal_id", termID, "command", req.Command)
+	// Log args too: an agent that splits argv across Command and Args (Kimi
+	// sends command=/bin/bash with the real work in args) otherwise logs a
+	// harmless-looking "command=/bin/bash" that hides what actually ran.
+	slog.Debug("acp: terminal created", "terminal_id", termID, "command", req.Command, "args", req.Args)
 	return acp.CreateTerminalResponse{TerminalId: termID}, nil
 }
 
