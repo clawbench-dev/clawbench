@@ -236,6 +236,9 @@ import { formatFileSize } from '@/utils/fileType'
 import '@/assets/modal-footer-btn.css'
 import { SORTED_THEME_IDS, buildTerminalThemePreviews, formatThemeName, loadThemesModule } from '@/utils/terminalThemes'
 import type { TerminalPreview } from './SettingsItem.vue'
+import { appLog } from '@/utils/appLog'
+
+const TAG = 'SettingsPanel'
 
 // ── Props & Emits ──
 
@@ -629,12 +632,23 @@ onMounted(async () => {
 
 /** Persist the toggle. Takes effect on the next reconnect (the native setter
  *  only writes SharedPreferences and does not touch the live transport), hence
- *  the hint + reconnect button below the row. */
-function onH2Toggle(value: unknown) {
-  h2Enabled.value = !!value
+ *  the hint + reconnect button below the row.
+ *
+ *  The switch is optimistic: it flips immediately, then awaits the native
+ *  write. A rejected write (bridge error) reverts the row to its previous
+ *  value so the UI never claims a preference the host did not persist. A
+ *  missing host or setter is a no-op via optional chaining — it does not throw,
+ *  so the row keeps its optimistic value. */
+async function onH2Toggle(value: unknown) {
+  const next = !!value
+  const previous = h2Enabled.value
+  h2Enabled.value = next
   try {
-    getNative()?.setTunnelTransportH2Enabled?.(h2Enabled.value)
-  } catch { /* not in app mode */ }
+    await getNative()?.setTunnelTransportH2Enabled?.(next)
+  } catch (err) {
+    h2Enabled.value = previous
+    appLog.w(TAG, 'h2 toggle write failed, reverted', err)
+  }
 }
 
 async function onReconnectTunnel() {

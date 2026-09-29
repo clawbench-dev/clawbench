@@ -86,10 +86,9 @@ export interface ClawBenchNative {
    * the toggle is Android-only and this is how the settings row reads its
    * initial value.
    *
-   * Optional: a host that predates the toggle lacks the method, and the caller
-   * must then HIDE the settings row rather than show a false "off" — the older
-   * host only has the non-persisting `setTunnelTransport`, which would look
-   * like it works while changing nothing.
+   * Optional: a host that predates the toggle lacks the method entirely (there
+   * is no older, non-persisting setter to fall back to), and the caller must
+   * then HIDE the settings row rather than show a false "off".
    */
   getTunnelTransportH2Enabled?(): Promise<boolean> | boolean
   /** Write the Android local h2 tunnel toggle (SharedPreferences). */

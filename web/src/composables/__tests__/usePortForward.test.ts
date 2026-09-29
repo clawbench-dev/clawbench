@@ -78,8 +78,14 @@ vi.mock('@/composables/useSettingsConfig', () => ({
     }),
 }))
 
+// Identity by default (the rest of this file asserts on bare i18n keys). The
+// transportAnnotation tests below swap in a composing implementation so the
+// real `gt('proxy.transportAnnotation', { transport: gt(labelKey) })` wrapper
+// is observable — under identity both wires would collapse to one string and a
+// dropped wrapper or wrong label key would go unnoticed.
+let gtImpl: (key: string, params?: Record<string, unknown>) => string = (key) => key
 vi.mock('@/composables/useLocale', () => ({
-    gt: (key: string) => key,
+    gt: (key: string, params?: Record<string, unknown>) => gtImpl(key, params),
 }))
 
 const mockToastShow = vi.fn()
@@ -629,6 +635,77 @@ describe('usePortForward', () => {
             expect(activeTransport.value).toBe('')
 
             delete (window as any).ClawBenchNative
+        })
+    })
+
+    /**
+     * The real `transportAnnotation()` — imported from the composable and driven
+     * by the real `transportLabelKey`, NOT re-implemented. Two render tests
+     * elsewhere hand-roll the same logic (one behind a `vi.mock` of this very
+     * composable), so without this the function could be deleted or return the
+     * wrong key and every test would still pass.
+     *
+     * `gt` is stubbed with a composing implementation that resolves the label
+     * key to a wire marker, so the annotation is `(wire)` only when the real
+     * `proxy.transportAnnotation` wrapper is applied around the right label key.
+     */
+    describe('transportAnnotation', () => {
+        beforeEach(() => {
+            gtImpl = (key, params) => {
+                const labels: Record<string, string> = {
+                    'proxy.transportSsh': 'SSH',
+                    'proxy.transportH2': 'HTTP/2',
+                }
+                if (labels[key]) return labels[key]
+                if (key === 'proxy.transportAnnotation') {
+                    return `(${String(params?.transport ?? '')})`
+                }
+                return key
+            }
+        })
+
+        afterEach(() => {
+            gtImpl = (key) => key
+        })
+
+        async function setActiveTransport(value: 'ssh' | 'h2' | 'both' | '') {
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => value,
+                getTunnelTransport: async () => value,
+            }
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const pf = usePortForward()
+            await pf.refreshActiveTransport()
+            return pf
+        }
+
+        it('wraps the SSH label through proxy.transportAnnotation for an ssh wire', async () => {
+            const { transportAnnotation } = await setActiveTransport('ssh')
+            expect(transportAnnotation()).toBe('(SSH)')
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('wraps the HTTP/2 label through proxy.transportAnnotation for an h2 wire', async () => {
+            const { transportAnnotation } = await setActiveTransport('h2')
+            expect(transportAnnotation()).toBe('(HTTP/2)')
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('returns empty for the both preference (a preference, not a wire)', async () => {
+            const { transportAnnotation } = await setActiveTransport('both')
+            expect(transportAnnotation()).toBe('')
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('returns empty when no single wire is known', async () => {
+            const { transportAnnotation } = await setActiveTransport('')
+            expect(transportAnnotation()).toBe('')
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
         })
     })
 

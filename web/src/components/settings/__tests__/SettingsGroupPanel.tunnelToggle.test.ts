@@ -90,6 +90,11 @@ vi.mock('@/composables/useRagRebuild', () => ({
 
 vi.mock('@/utils/api', () => ({ apiPost: vi.fn().mockResolvedValue(undefined) }))
 
+// appLog relays to native/server; keep it inert in unit tests.
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
 // Platform mode holders. Plain objects (not refs) — the factory is hoisted
 // above the vue import, and the component reads `.value` off them directly.
 const mockAppMode = vi.hoisted(() => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }))
@@ -328,6 +333,42 @@ describe('h2 toggle: interaction', () => {
 
     const setter = (mockNative.current as { setTunnelTransportH2Enabled: ReturnType<typeof vi.fn> }).setTunnelTransportH2Enabled
     expect(setter).toHaveBeenCalledWith(true)
+    expect(findToggle(wrapper)!.props('modelValue')).toBe(true)
+  })
+
+  it('reverts the optimistic value when the native setter rejects', async () => {
+    // The row flips immediately, then awaits the write. A rejected write (the
+    // host exists but the bridge call failed) must roll the row back so the UI
+    // never claims a preference that was not persisted.
+    const setter = vi.fn().mockRejectedValue(new Error('bridge'))
+    mockNative.current = {
+      getTunnelTransportH2Enabled: () => false,
+      setTunnelTransportH2Enabled: setter,
+    }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(findToggle(wrapper)!.props('modelValue')).toBe(false)
+
+    await findToggle(wrapper)!.vm.$emit('update:modelValue', true)
+    await flushPromises()
+
+    expect(setter).toHaveBeenCalledWith(true)
+    // Rolled back to the pre-toggle value.
+    expect(findToggle(wrapper)!.props('modelValue')).toBe(false)
+  })
+
+  it('keeps the value when there is no native setter (no-op, not a failure)', async () => {
+    // Android host with the getter but no setter: optional chaining means
+    // nothing is called and nothing throws, so the optimistic value stands.
+    mockNative.current = { getTunnelTransportH2Enabled: () => false }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findToggle(wrapper)!.vm.$emit('update:modelValue', true)
+    await flushPromises()
+
     expect(findToggle(wrapper)!.props('modelValue')).toBe(true)
   })
 
