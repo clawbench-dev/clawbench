@@ -578,6 +578,13 @@ jobs:
           # toolchain must be on PATH. Same version as every other job here.
           go-version: '1.25'
 
+      - uses: actions/setup-node@v4
+        with:
+          # Tier 2 embeds the real frontend into the server binary (see the
+          # `Build frontend` step below). Same Node version as the other jobs.
+          node-version: '24'
+          cache: 'npm'
+
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -617,6 +624,34 @@ jobs:
           VERSION_CODE=$("$GITHUB_WORKSPACE/scripts/lib/version-code.sh" --tag-only)
           VERSION_NAME=$(git describe --tags --always 2>/dev/null || echo "dev")
           ./gradlew assembleDebug -PversionCode="$VERSION_CODE" -PversionName="$VERSION_NAME"
+
+      - name: Build frontend (Tier 2 real server needs the SPA shell)
+        # Same consumer-before-producer class as the `e2e` job's go build: the
+        # server binary is compiled with `//go:embed all:dist`, and Tier 2 drives
+        # the app to the REAL server's root, where tunnel.server.mjs asserts
+        # `document.getElementById('app')` exists ("the served page has no #app
+        # root — not the SPA shell"). Without this step prepare-assets.sh falls
+        # back to a `.gitkeep`-only stub embed, `GET /` answers 404, and that
+        # assertion fails — before the 503 control is even reached.
+        #
+        # Only the tiers that run the real server (all|2) need it; Tier 1 talks
+        # to the dependency-free mock, which serves its own marker home page, so
+        # building ~1 GB of frontend deps for it would be pure waste. Same
+        # `E2E_TIER_INPUT` + case shape as the staging step below, deliberately.
+        env:
+          E2E_TIER_INPUT: ${{ github.event.inputs.android_e2e_tier || 'all' }}
+        run: |
+          set -euo pipefail
+          case "$E2E_TIER_INPUT" in
+            all|2)
+              # Excalidraw first: the copy below is wholesale, and the isolated
+              # React editor writes into .clawbench-web/vendor/excalidraw/.
+              (cd web/vendor-build/excalidraw && npm ci && npm run build)
+              npm ci
+              npm run build
+              ;;
+            *) echo "Tier $E2E_TIER_INPUT runs the mock — no frontend build needed";;
+          esac
 
       - name: Stage harness assets
         # `--with-server` ONLY for the tiers that run the real server. run.sh

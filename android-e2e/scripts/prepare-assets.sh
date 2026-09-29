@@ -105,9 +105,13 @@ echo "[assets] building real server binary (version=$SERVER_VERSION)..."
 # CGO_ENABLED=0 -> a static binary that runs on the minimal alpine base. The
 # embed directory must be non-empty or `go:embed all:dist` fails to compile; the
 # real frontend build output (.clawbench-web/) is staged into it when present
-# (build.sh does the same), otherwise a .gitkeep is enough to compile. Tier 2
-# does not assert on the SPA, so a stub embed is acceptable — but a real one
-# costs nothing when it is already there.
+# (build.sh does the same), otherwise a .gitkeep is enough to compile.
+#
+# Tier 2 DOES assert on the SPA: tunnel.server.mjs requires `#app` to exist on
+# the server's root ("the served page has no #app root — not the SPA shell").
+# The `.gitkeep` branch below is therefore only a compile stub for a tree that
+# has no frontend build — a real Tier 2 run must provide .clawbench-web/, which
+# is why the CI job builds the frontend before this script runs.
 if [[ -f "$REPO_ROOT/.clawbench-web/index.html" ]]; then
   rm -rf "$REPO_ROOT/internal/frontend/dist"
   cp -r "$REPO_ROOT/.clawbench-web" "$REPO_ROOT/internal/frontend/dist"
