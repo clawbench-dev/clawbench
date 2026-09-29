@@ -86,8 +86,20 @@ def discover_token(registry, repo, tag):
     return data.get("token") or data.get("access_token")
 
 
-def fetch_blob(registry, repo, digest, size, token, conns, dest_dir):
-    """Download one blob (parallel ranges when large), verify digest, return size."""
+def fetch_blob(registry, repo, digest, size, token_fn, conns, dest_dir, attempts=4):
+    """Download one blob (parallel ranges when large), verify digest, return size.
+
+    The WHOLE download is retried when the digest does not match. A registry
+    mirror can answer 200 with a truncated or otherwise wrong body; curl exits
+    0, so its own `--retry` never fires and the digest is the only thing that
+    catches it. Measured in CI (run 36567786806): node:20-alpine's *config* blob
+    came back with a different digest on the first try while every other blob of
+    that image, and the other image pulled in the same run, were fine — i.e. a
+    transient mirror-side corruption. A single bad response must not fail the
+    whole image pull, so a mismatch is retried rather than fatal.
+
+    `token_fn` is called before each attempt because tokens are short-lived.
+    """
     dest = os.path.join(dest_dir, digest.split(":")[1])
     url = f"{registry}/v2/{repo}/blobs/{digest}"
 
@@ -97,34 +109,67 @@ def fetch_blob(registry, repo, digest, size, token, conns, dest_dir):
              "-o", out, "-r", f"{start}-{end}",
              "-H", f"User-Agent: {UA}", "-H", f"Authorization: Bearer {token}", url],
             check=True)
+        # A mirror that ignores the Range header answers 200 with the FULL blob,
+        # and a truncated transfer is simply short. Neither is an error at the
+        # curl level, so the length is asserted here as well as at the final
+        # digest — this localizes the failure to the offending chunk.
+        want = end - start + 1
+        got = os.path.getsize(out)
+        if got != want:
+            raise RuntimeError(f"range {start}-{end}: expected {want} bytes, got {got}")
 
-    if size is None or size < 4_000_000 or conns <= 1:
-        chunk(0, (size or 1) - 1, dest)
-    else:
-        n = conns
-        step = size // n
-        parts = []
-        with cf.ThreadPoolExecutor(max_workers=n) as ex:
-            futs = []
-            for i in range(n):
-                start = i * step
-                end = size - 1 if i == n - 1 else start + step - 1
-                part = f"{dest}.part{i}"
-                parts.append(part)
-                futs.append(ex.submit(chunk, start, end, part))
-            for f in futs:
-                f.result()
-        with open(dest, "wb") as out:
-            for part in parts:
-                with open(part, "rb") as f:
-                    shutil.copyfileobj(f, out, 1 << 20)
-                os.remove(part)
+    def clean_partials():
+        for p in [dest] + [f"{dest}.part{i}" for i in range(conns)]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
-    got = "sha256:" + hashlib.sha256(open(dest, "rb").read()).hexdigest()
-    if got != digest:
+    last = ""
+    for attempt in range(attempts):
+        token = token_fn()  # tokens are short-lived; re-mint per attempt
+        try:
+            if size is None or size < 4_000_000 or conns <= 1:
+                chunk(0, (size or 1) - 1, dest)
+            else:
+                n = conns
+                step = size // n
+                parts = []
+                with cf.ThreadPoolExecutor(max_workers=n) as ex:
+                    futs = []
+                    for i in range(n):
+                        start = i * step
+                        end = size - 1 if i == n - 1 else start + step - 1
+                        part = f"{dest}.part{i}"
+                        parts.append(part)
+                        futs.append(ex.submit(chunk, start, end, part))
+                    for f in futs:
+                        f.result()
+                with open(dest, "wb") as out:
+                    for part in parts:
+                        with open(part, "rb") as f:
+                            shutil.copyfileobj(f, out, 1 << 20)
+                        os.remove(part)
+        except Exception as e:  # noqa: BLE001 - any transfer error is retryable
+            clean_partials()
+            last = f"{type(e).__name__}: {e}"
+            if attempt + 1 < attempts:
+                print(f"[pull] blob {digest[:19]} attempt {attempt + 1}/{attempts} "
+                      f"failed ({last}); retrying", flush=True)
+                time.sleep(1.5 * (attempt + 1))
+            continue
+
+        got = "sha256:" + hashlib.sha256(open(dest, "rb").read()).hexdigest()
+        if got == digest:
+            return os.path.getsize(dest)
+        last = f"digest mismatch: got {got}"
         os.remove(dest)
-        raise RuntimeError(f"digest mismatch for {digest}: got {got}")
-    return os.path.getsize(dest)
+        if attempt + 1 < attempts:
+            print(f"[pull] blob {digest[:19]} attempt {attempt + 1}/{attempts} "
+                  f"{last}; retrying", flush=True)
+            time.sleep(1.5 * (attempt + 1))
+
+    raise RuntimeError(f"failed to fetch {digest} after {attempts} attempts: {last}")
 
 
 def main():
@@ -169,9 +214,8 @@ def main():
     total = 0
     for label, blob in [("config", cfg)] + [(f"layer {i}/{len(layers)}", l)
                                             for i, l in enumerate(layers, 1)]:
-        token = discover_token(registry, repo, tag)  # tokens are short-lived
         n = fetch_blob(registry, repo, blob["digest"], blob.get("size"),
-                       token, conns, blobs)
+                       lambda: discover_token(registry, repo, tag), conns, blobs)
         total += n
         print(f"[pull] {label:14s} {blob['digest'][:19]} {n/1e6:8.1f}MB "
               f"| {total/1e6:7.1f}MB, {time.time()-t0:5.0f}s", flush=True)
