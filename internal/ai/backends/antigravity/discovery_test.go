@@ -61,6 +61,24 @@ gemini-3-pro
 	assert.Equal(t, "gemini-3-pro", models[0].ID)
 }
 
+func TestIsAgyStatusLine_DropsErrorLines(t *testing.T) {
+	for _, line := range []string{
+		"Error: Please sign in to view available models.",
+		"error something went wrong",
+		"Failed to fetch models",
+		"You are not logged into Antigravity",
+		"Fetching available models...",
+	} {
+		assert.True(t, isAgyStatusLine(line), "应被当作诊断行丢弃: %q", line)
+	}
+}
+
+func TestIsAgyStatusLine_KeepsModelIDs(t *testing.T) {
+	for _, line := range []string{"gemini-3-pro", "gemini-2.5-flash"} {
+		assert.False(t, isAgyStatusLine(line), "是模型 id，不得丢弃: %q", line)
+	}
+}
+
 func TestParseAgyModels_EmptyOutput(t *testing.T) {
 	assert.Empty(t, parseAgyModels(""))
 	assert.Empty(t, parseAgyModels("\n\n"))
