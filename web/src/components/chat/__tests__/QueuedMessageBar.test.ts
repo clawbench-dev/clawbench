@@ -128,6 +128,52 @@ describe('QueuedMessageBar (collapsed next-message preview)', () => {
     expect(wrapper.find('.queued-bar-list').exists(), 'expanded').toBe(true)
     expect(wrapper.find('.queued-bar-preview').exists(), 'no duplicate preview once expanded').toBe(false)
   })
+
+  it('starts collapsed again after the queue empties and refills', async () => {
+    // The root v-if hides the card but does NOT unmount the component, so
+    // `expanded` used to survive the empty gap: expand once, and every later
+    // batch of queued messages appeared already expanded — the panel no longer
+    // defaulted to collapsed. It must reset on the empty transition only, so an
+    // in-progress queue keeps the user's choice.
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'one' })
+    addQueued('s1', { queueId: 'q2', text: 'two' })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    await wrapper.find('.queued-bar-header').trigger('click')
+    expect(wrapper.find('.queued-bar-list').exists(), 'expanded by the click').toBe(true)
+
+    // The queue drains completely: the card is hidden.
+    removeQueued('s1', 'q1')
+    removeQueued('s1', 'q2')
+    await nextTick()
+    expect(wrapper.find('.queued-bar').exists(), 'no messages, no card').toBe(false)
+
+    // A new batch arrives and must show the COLLAPSED banner.
+    addQueued('s1', { queueId: 'q3', text: 'three' })
+    addQueued('s1', { queueId: 'q4', text: 'four' })
+    await nextTick()
+    expect(wrapper.find('.queued-bar-list').exists(), 'refilled panel must default to collapsed').toBe(false)
+    expect(wrapper.find('.queued-bar-preview').text(), 'collapsed shows the next message').toBe('three')
+  })
+
+  it('keeps the user expansion while the queue is in progress', async () => {
+    // The reset must fire on the EMPTY transition only — adding more messages
+    // to a queue the user expanded must not snap it shut.
+    setActiveQueueSession('s1')
+    addQueued('s1', { queueId: 'q1', text: 'one' })
+    addQueued('s1', { queueId: 'q2', text: 'two' })
+
+    const wrapper = mount(Host, { global: { plugins: [i18n] } })
+    await nextTick()
+    await wrapper.find('.queued-bar-header').trigger('click')
+    expect(wrapper.find('.queued-bar-list').exists()).toBe(true)
+
+    addQueued('s1', { queueId: 'q3', text: 'three' })
+    await nextTick()
+    expect(wrapper.find('.queued-bar-list').exists(), 'a third message must not collapse it').toBe(true)
+  })
 })
 
 /**

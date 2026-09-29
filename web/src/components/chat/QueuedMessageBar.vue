@@ -48,7 +48,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, Zap, Square } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -66,6 +66,16 @@ defineEmits(['remove', 'action'])
 
 const { t } = useI18n()
 const expanded = ref(false)
+
+// Collapse back when the queue empties. The root `v-if="messages.length > 0"`
+// hides the CARD, but it does not unmount this component — so `expanded` would
+// survive the gap and the next batch of queued messages would appear already
+// expanded, even though the panel is supposed to start collapsed. Resetting on
+// the empty transition (not on every change) keeps the user's expand/collapse
+// choice while a queue is in progress.
+watch(() => props.messages.length, (len) => {
+  if (len === 0) expanded.value = false
+})
 
 // Collapsed header shows the NEXT message to be sent, so the queue is readable
 // without expanding. Attachment-only entries fall back to the same label the
