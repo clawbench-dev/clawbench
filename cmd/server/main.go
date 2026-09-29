@@ -63,6 +63,11 @@ import (
 const (
 	summarizeBackendAPI    = "api"
 	summarizeBackendSimple = "simple"
+
+	// URL schemes. Kept as a pair so the `scheme` value and every comparison
+	// against it stay in sync.
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
 )
 
 // forgeNotifierAdapter bridges the service package's ForgeNotifier interface to
@@ -1299,13 +1304,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Resolve TLS config and scheme before banner.
 	// This also logs the HTTP/TLS mode so those slog lines appear
 	// *before* the banner and don't visually disrupt it.
-	scheme := "http"
+	scheme := schemeHTTP
 	tlsCertFile := ""
 	tlsKeyFile := ""
 	if certs, ok := model.ResolveTLSCerts(cfg.TLS.CertDir); ok {
 		tlsCertFile = certs.CertFile
 		tlsKeyFile = certs.KeyFile
-		scheme = "https"
+		scheme = schemeHTTPS
 		slog.Info("starting with TLS", slog.String("dir", cfg.TLS.CertDir), slog.String("cert", tlsCertFile))
 	} else {
 		if cfg.TLS.CertDir != "" {
@@ -1318,7 +1323,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Enable HTTP/1.1 + h2 on the main listener. `scheme` is the same switch
 	// that selects ServeTLS/Serve below, so the protocol set always matches
 	// how this instance is actually served.
-	srv.Protocols = serverProtocols(scheme == "https")
+	srv.Protocols = serverProtocols(scheme == schemeHTTPS)
 
 	// Pre-bind the main listener to detect port conflicts BEFORE printing the banner.
 	// Without this, PrintBanner shows a password for an instance that immediately fails
@@ -1339,7 +1344,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 			slog.Error("failed to listen on dev port", slog.String("addr", devSrv.Addr), slog.String("err", err.Error()))
 			os.Exit(1)
 		}
-		if scheme == "https" {
+		if scheme == schemeHTTPS {
 			go func() {
 				if err := devSrv.Serve(devLn); err != nil && err != http.ErrServerClosed {
 					slog.Error("dev listener failed", slog.String("err", err.Error()))
@@ -1486,7 +1491,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}()
 
 	// Start HTTP server using the pre-bound listener (blocking)
-	if scheme == "https" {
+	if scheme == schemeHTTPS {
 		if err := srv.ServeTLS(mainLn, tlsCertFile, tlsKeyFile); err != nil && err != http.ErrServerClosed {
 			slog.Error("server failed", slog.String("err", err.Error()))
 			os.Exit(1)

@@ -54,6 +54,14 @@ public class H2PortForwardTransportRealSocketTest {
     /** Upper bound for "close() must not hang"; the real figure is ~0 ms. */
     private static final long CLOSE_BUDGET_MS = 5_000;
     private static final long WAIT_MS = 5_000;
+    /**
+     * How long a released port is allowed to take to become rebindable again.
+     * The real figure is ~1 ms (see {@link #assertPortFree}); the budget is
+     * generous only so a loaded CI box cannot make the wait itself flaky.
+     */
+    private static final long PORT_FREE_TIMEOUT_MS = 2_000;
+    /** Poll interval while waiting for a released port to become rebindable. */
+    private static final long PORT_FREE_POLL_MS = 10;
 
     private final FakeTunnelStream tunnel = new FakeTunnelStream();
     private H2PortForwardTransport transport;
@@ -259,11 +267,36 @@ public class H2PortForwardTransportRealSocketTest {
         fail("expected port " + port + " to be occupied, but a rebind succeeded");
     }
 
-    /** Assert {@code port} is genuinely released: a fresh bind must succeed. */
-    private static void assertPortFree(int port) throws IOException {
-        try (ServerSocket probe = new ServerSocket()) {
-            probe.setReuseAddress(true);
-            probe.bind(new InetSocketAddress(LOOPBACK, port));
+    /**
+     * Assert {@code port} is genuinely released: a fresh bind must eventually
+     * succeed.
+     *
+     * <p>Polled rather than attempted once: {@code ServerSocket.close()} is not
+     * synchronous with the kernel dropping the listener. The closing socket's
+     * accept thread is parked in {@code accept()} and must be woken and exit
+     * before the bound address is fully released, so an immediate rebind can
+     * still race it and throw {@link BindException} (measured: ~7/3000 attempts,
+     * resolving within ~1 ms). The assertion is unchanged in meaning — the port
+     * <em>must</em> become bindable — we simply give the kernel that moment
+     * instead of failing on the first, racy attempt.
+     */
+    private static void assertPortFree(int port) throws IOException, InterruptedException {
+        long deadline = System.currentTimeMillis() + PORT_FREE_TIMEOUT_MS;
+        BindException lastFailure = null;
+        while (true) {
+            try (ServerSocket probe = new ServerSocket()) {
+                probe.setReuseAddress(true);
+                probe.bind(new InetSocketAddress(LOOPBACK, port));
+                return;
+            } catch (BindException e) {
+                lastFailure = e;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                fail("port " + port + " was still not bindable after "
+                        + PORT_FREE_TIMEOUT_MS + " ms of polling (last error: "
+                        + lastFailure + ")");
+            }
+            Thread.sleep(PORT_FREE_POLL_MS);
         }
     }
 
