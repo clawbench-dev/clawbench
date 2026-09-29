@@ -71,6 +71,10 @@ const i18n = createI18n({
           wallpaperBingSyncedAt: 'Synced {date}',
           wallpaperBingNoImage: 'No image fetched yet',
           wallpaperBingFailed: 'Sync failed',
+          wallpaperBingSaveToGallery: 'Add to gallery',
+          wallpaperBingSaving: 'Saving…',
+          wallpaperBingSaved: 'Bing wallpaper saved to gallery',
+          wallpaperBingSaveFailed: 'Failed to save Bing wallpaper to gallery',
           wallpaperGallery: 'Local gallery',
           wallpaperGalleryDesc: 'Desc',
           wallpaperGalleryUpload: 'Upload images',
@@ -127,10 +131,14 @@ const i18n = createI18n({
   },
 })
 
+// App.vue provides the shared Lightbox openers; the panel injects them.
+// Mocked here so the click → lightbox wiring is observable.
+const openMdImages = vi.fn()
+
 function mountSetting() {
   return mount(WallpaperSetting, {
     props: { description: 'desc' },
-    global: { plugins: [i18n] },
+    global: { plugins: [i18n], provide: { openMdImages } },
   })
 }
 
@@ -509,6 +517,83 @@ describe('WallpaperSetting', () => {
         vi.useRealTimers()
       }
     }, 20000)
+
+    it('saves the Bing image to the gallery, reloads, and toasts success', async () => {
+      // The gallery reload (loadConfig → serverConfig) is what makes the new
+      // item visible; without it the user sees the toast but no new tile.
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/save-to-gallery') {
+          return { ok: true, status: 200, json: async () => ({ item: { file: 'local-new-a.jpg', name: 'Bing 20260910.jpg', uploaded_at: 1, size: 9 } }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Add to gallery')!
+      expect(saveBtn).toBeTruthy()
+      await saveBtn.trigger('click')
+
+      // The handler chains save → reload → toast; let the microtask queue drain.
+      await vi.waitFor(() => expect(toastShow).toHaveBeenCalled())
+
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/bing/save-to-gallery')).toBe(true)
+      expect(mockLoadConfig).toHaveBeenCalled()
+      expect(toastShow.mock.calls.map(c => c[0])).toContain('Bing wallpaper saved to gallery')
+      expect(wrapper.find('.wallpaper-error').exists()).toBe(false)
+    })
+
+    it('shows the capacity hint (not a generic error) when the gallery is full', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/save-to-gallery') {
+          return { ok: false, status: 400, json: async () => ({}) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Add to gallery')!
+      await saveBtn.trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.wallpaper-error').exists()).toBe(true))
+
+      const err = wrapper.find('.wallpaper-error')
+      expect(err.text()).toContain('Limit 50')
+      expect(toastShow).not.toHaveBeenCalled()
+    })
+
+    it('disables the save button while a save is in flight', async () => {
+      let release!: () => void
+      const gate = new Promise<void>((r) => { release = r })
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/save-to-gallery') {
+          await gate
+          return { ok: true, status: 200, json: async () => ({ item: { file: 'local-new-a.jpg', name: 'n', uploaded_at: 1, size: 9 } }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Add to gallery')!
+      await saveBtn.trigger('click')
+      await nextTick()
+      // In flight: the label flips to "Saving…" and the control is disabled.
+      const inFlight = wrapper.findAll('button').find(b => b.text() === 'Saving…')!
+      expect(inFlight.attributes('disabled')).toBeDefined()
+      release()
+      await nextTick()
+      await nextTick()
+    })
   })
 
   describe('gallery', () => {
@@ -570,7 +655,7 @@ describe('WallpaperSetting', () => {
       expect(wrapper.find('.wallpaper-thumb').classes()).toContain('local-media-hidden')
     })
 
-    it('selects a tile locally, with no server round-trip', async () => {
+    it('opens the lightbox when a thumbnail is clicked, without selecting it', async () => {
       const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
       vi.stubGlobal('fetch', fetchMock)
       serverConfig.value = serverWith([
@@ -582,19 +667,64 @@ describe('WallpaperSetting', () => {
       await nextTick()
 
       await wrapper.findAll('.wallpaper-gallery__thumb')[1].trigger('click')
-      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperLocalSelected', 'local-2-b.png')
-      expect(localConfig.wallpaperLocalSelected).toBe('local-2-b.png')
+      // Viewing must not change the wallpaper — that is the Apply button's job.
+      expect(openMdImages).toHaveBeenCalledTimes(1)
+      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('wallpaperLocalSelected', 'local-2-b.png')
       expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/local/select')).toBe(false)
     })
 
-    it('does not re-select an already-selected tile', async () => {
-      serverConfig.value = serverWith([{ file: 'local-1-a.png', name: 'a.png' }])
+    it('hands the lightbox every wallpaper, full size, starting at the clicked one', async () => {
+      serverConfig.value = serverWith([
+        { file: 'local-1-a.png', name: 'a.png' },
+        { file: 'local-2-b.png', name: 'b.png' },
+      ], { file: 'bing-20260910.jpg' })
       chooseDevice('local', 'local-1-a.png')
       const wrapper = mountSetting()
       await nextTick()
 
-      await wrapper.findAll('.wallpaper-gallery__thumb')[0].trigger('click')
-      expect(mockSetLocalConfig).not.toHaveBeenCalledWith('wallpaperLocalSelected', 'local-1-a.png')
+      await wrapper.findAll('.wallpaper-gallery__thumb')[1].trigger('click')
+      const [imgs, idx] = openMdImages.mock.calls[0]
+      // Bing first, then the gallery — so the set can be paged across sources.
+      expect(imgs.map((i: { name: string }) => i.name)).toEqual(['bing-20260910.jpg', 'a.png', 'b.png'])
+      expect(idx).toBe(2)
+      // Full-size endpoint, NOT the 144px /api/fs/thumb the grid renders.
+      for (const img of imgs) {
+        expect(img.src).toContain('/api/file/theme-wallpaper?name=')
+        expect(img.src).not.toContain('/api/fs/thumb')
+      }
+    })
+
+    it('opens the lightbox from the Bing preview too', async () => {
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', title: 'A Title' })
+      chooseDevice('bing')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      await wrapper.find('.wallpaper-thumb').trigger('click')
+      expect(openMdImages).toHaveBeenCalledTimes(1)
+      const [imgs, idx] = openMdImages.mock.calls[0]
+      expect(imgs[idx].name).toBe('A Title')
+      expect(imgs[idx].src).toContain('/api/file/theme-wallpaper?name=bing-20260910.jpg')
+    })
+
+    it('applies a tile via the Apply button, with no server round-trip', async () => {
+      const fetchMock = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([
+        { file: 'local-1-a.png', name: 'a.png' },
+        { file: 'local-2-b.png', name: 'b.png' },
+      ])
+      chooseDevice('local', 'local-1-a.png')
+      const wrapper = mountSetting()
+      await nextTick()
+
+      const applyBtns = wrapper.findAll('.wallpaper-gallery__apply')
+      // Only the non-active tile offers Apply — the selected one shows ✓ instead.
+      expect(applyBtns).toHaveLength(1)
+      await applyBtns[0].trigger('click')
+      expect(mockSetLocalConfig).toHaveBeenCalledWith('wallpaperLocalSelected', 'local-2-b.png')
+      expect(localConfig.wallpaperLocalSelected).toBe('local-2-b.png')
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/local/select')).toBe(false)
     })
 
     it('deletes a tile via DELETE /api/theme/local/item', async () => {

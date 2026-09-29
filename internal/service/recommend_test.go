@@ -114,11 +114,11 @@ func TestRecentConversation_LimitsAndOrders(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-rec-ctx"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (300, '/test', 'user', 'first', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (301, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"reply1\"}]}', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (302, '/test', 'user', 'second', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (303, '/test', 'user', 'third', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (300, 1, 'user', 'first', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (301, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"reply1\"}]}', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (302, 1, 'user', 'second', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (303, 1, 'user', 'third', ?, 0)", sessionID)
 
 	got := recentConversation(context.Background(), sessionID, 3)
 	// Most recent 3 messages: user "third", user "second", assistant conclusion "reply1"
@@ -138,9 +138,9 @@ func TestRecentConversation_ReadsRawConclusionFromStrippedMessage(t *testing.T) 
 	defer teardown()
 
 	sessionID := "sess-rec-stripped-ctx"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (400, '/test', 'user', 'please fix', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (401, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"Fixed. Run the tests to confirm.\"},{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"go test\"}}]}', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (400, 1, 'user', 'please fix', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (401, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"Fixed. Run the tests to confirm.\"},{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"go test\"}}]}', ?, 0)", sessionID)
 	// The summary exists → enrichMessagesWithSummaries strips the blocks view.
 	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 401, 'Fixed. Run the tests to confirm.')", sessionID)
 
@@ -212,11 +212,11 @@ func TestTriggerChatRecommendation_SurvivesSummaryStrippedContent(t *testing.T) 
 	defer func() { model.ConfigInstance = model.Config{} }()
 
 	sessionID := "sess-rec-stripped"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
 	// Assistant message whose reading summary ALREADY exists — exactly the state
 	// where GetMessagesBySessionID returns stripped (empty-blocks) content.
 	_, _ = db.Exec(
-		"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (401, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The build passed.\"},{\"type\":\"text\",\"text\":\"Now verify the fix.\"}]}', ?, 0)",
+		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (401, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The build passed.\"},{\"type\":\"text\",\"text\":\"Now verify the fix.\"}]}', ?, 0)",
 		sessionID,
 	)
 	_, _ = db.Exec(
@@ -290,8 +290,8 @@ func TestTriggerChatSummarization_RecommendSurvivesCancelledCtx(t *testing.T) {
 	defer func() { model.ConfigInstance = model.Config{} }()
 
 	sessionID := "sess-rec-cancelctx"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (411, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"Done.\"}]}', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (411, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"Done.\"}]}', ?, 0)", sessionID)
 
 	// Simulate the handler having already cancelled the session ctx (its goroutine
 	// returns and runs defer cancel() right after the reply stream finishes).

@@ -24,9 +24,17 @@ func setupTestDBForLedgerMigration(t *testing.T) func() {
 	db.Exec("PRAGMA foreign_keys = ON")
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -36,7 +44,7 @@ func setupTestDBForLedgerMigration(t *testing.T) func() {
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -78,7 +86,7 @@ func setupTestDBForLedgerMigration(t *testing.T) func() {
 			finish_reason TEXT DEFAULT '',
 			outcome TEXT DEFAULT '',
 			agent_phase TEXT DEFAULT '',
-			project_path TEXT DEFAULT '',
+			project_id INTEGER DEFAULT 0,
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
@@ -102,10 +110,12 @@ func TestMigrateChatMetadataLedger_RemovesFKAndBackfills(t *testing.T) {
 	teardown := setupTestDBForLedgerMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES ('s1', '/proj', 'codebuddy', 'T', 'codebuddy')")
+	_, err := db.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj') ON CONFLICT(id) DO NOTHING")
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES ('s1', 1, 'codebuddy', 'T', 'codebuddy')")
 	require.NoError(t, err)
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('/proj', 'codebuddy', 's1', 'assistant', '{}', 0)",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (1, 'codebuddy', 's1', 'assistant', '{}', 0)",
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
@@ -124,11 +134,12 @@ func TestMigrateChatMetadataLedger_RemovesFKAndBackfills(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkAfter))
 	assert.Equal(t, 0, fkAfter, "FK must be removed so the ledger is standalone")
 
-	var project, backend, agentID, clawSID string
+	var projectID int64
+	var backend, agentID, clawSID string
 	require.NoError(t, db.QueryRow(
-		"SELECT project_path, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
-	).Scan(&project, &backend, &agentID, &clawSID))
-	assert.Equal(t, "/proj", project)
+		"SELECT project_id, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
+	).Scan(&projectID, &backend, &agentID, &clawSID))
+	assert.Equal(t, int64(1), projectID)
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "codebuddy", agentID)
 	assert.Equal(t, "s1", clawSID)
@@ -157,10 +168,10 @@ func TestMigrateChatMetadataLedger_Idempotent(t *testing.T) {
 	teardown := setupTestDBForLedgerMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES ('s1', '/proj', 'claude', 'T', 'agent-x')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES ('s1', 1, 'claude', 'T', 'agent-x')")
 	require.NoError(t, err)
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('/proj', 'claude', 's1', 'assistant', '{}', 0)",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (1, 'claude', 's1', 'assistant', '{}', 0)",
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
@@ -203,7 +214,7 @@ func TestMigrateChatMetadataLedger_SkipsBackfillWhenAttributionPresent(t *testin
 			message_id INTEGER PRIMARY KEY,
 			model TEXT DEFAULT '',
 			total_tokens INTEGER DEFAULT 0,
-			project_path TEXT DEFAULT '',
+			project_id INTEGER DEFAULT 0,
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
@@ -211,7 +222,7 @@ func TestMigrateChatMetadataLedger_SkipsBackfillWhenAttributionPresent(t *testin
 		);
 		CREATE TABLE chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -222,7 +233,7 @@ func TestMigrateChatMetadataLedger_SkipsBackfillWhenAttributionPresent(t *testin
 	`)
 	require.NoError(t, err)
 	// Already attributed — nothing to backfill.
-	_, err = db.Exec("INSERT INTO chat_metadata (message_id, project_path, backend, agent_id, clawbench_session_id) VALUES (1, '/proj', 'claude', 'a', 's1')")
+	_, err = db.Exec("INSERT INTO chat_metadata (message_id, project_id, backend, agent_id, clawbench_session_id) VALUES (1, 1, 'claude', 'a', 's1')")
 	require.NoError(t, err)
 
 	cleanup := SetDBForTest(db, db)
@@ -230,9 +241,9 @@ func TestMigrateChatMetadataLedger_SkipsBackfillWhenAttributionPresent(t *testin
 
 	assert.NoError(t, migrateChatMetadataLedger())
 
-	var project string
-	require.NoError(t, db.QueryRow("SELECT project_path FROM chat_metadata WHERE message_id = 1").Scan(&project))
-	assert.Equal(t, "/proj", project, "already-attributed row must be untouched")
+	var projectID int64
+	require.NoError(t, db.QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = 1").Scan(&projectID))
+	assert.Equal(t, int64(1), projectID, "already-attributed row must be untouched")
 }
 
 // TestMigrateChatMetadataLedger_OrphanRowsStayEmpty covers rows whose
@@ -258,9 +269,9 @@ func TestMigrateChatMetadataLedger_OrphanRowsStayEmpty(t *testing.T) {
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = 9999").Scan(&count))
 	assert.Equal(t, 1, count, "orphan ledger row must survive the rebuild")
 
-	var project string
-	require.NoError(t, db.QueryRow("SELECT project_path FROM chat_metadata WHERE message_id = 9999").Scan(&project))
-	assert.Empty(t, project, "orphan cannot be attributed")
+	var projectID int64
+	require.NoError(t, db.QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = 9999").Scan(&projectID))
+	assert.Zero(t, projectID, "orphan cannot be attributed")
 }
 
 // TestMigrateChatMetadataLedger_EmptyHistoryProjectNotRescanned guards the
@@ -272,7 +283,7 @@ func TestMigrateChatMetadataLedger_EmptyHistoryProjectNotRescanned(t *testing.T)
 	defer teardown()
 
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('', 'claude', 's1', 'assistant', '{}', 0)",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (0, 'claude', 's1', 'assistant', '{}', 0)",
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
@@ -281,16 +292,16 @@ func TestMigrateChatMetadataLedger_EmptyHistoryProjectNotRescanned(t *testing.T)
 
 	require.NoError(t, migrateChatMetadataLedger())
 
-	var project string
-	require.NoError(t, db.QueryRow("SELECT project_path FROM chat_metadata WHERE message_id = ?", msgID).Scan(&project))
-	assert.Empty(t, project, "unattributable row stays empty")
+	var projectID int64
+	require.NoError(t, db.QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = ?", msgID).Scan(&projectID))
+	assert.Zero(t, projectID, "unattributable row stays empty")
 
-	// The backfill predicate must now exclude this row (h.project_path == '').
+	// The backfill predicate must now exclude this row (h.project_id == 0).
 	var stillNeeds int
 	require.NoError(t, db.QueryRow(`
 		SELECT COUNT(*) FROM chat_metadata m
-		WHERE m.project_path = ''
-		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_path != '')
+		WHERE m.project_id = 0
+		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_id != 0)
 	`).Scan(&stillNeeds))
 	assert.Equal(t, 0, stillNeeds, "empty-project row must not be rescanned on later startups")
 }

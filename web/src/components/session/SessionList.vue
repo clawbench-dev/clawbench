@@ -93,7 +93,14 @@
                 <div class="session-item-info">
                   <div class="session-item-header">
                     <span class="session-item-title">{{ row.session.title }}</span>
-                    <span v-if="row.depth > 0" class="session-fork-gen" :title="t('session.forkGenerationTitle', { n: row.depth })">{{ t('session.forkGeneration', { n: row.depth }) }}</span>
+                    <!-- Generation chip, shown from the SECOND generation on.
+                         A direct fork (depth 1) needs no label: the indent, the
+                         tree rail and the anchor's "N forks" count already say
+                         "this hangs off that row" three times over, and the chip
+                         spends the title line's scarcest space repeating it. Only
+                         a fork OF a fork carries a fact the structure cannot
+                         express — that it is not a sibling of the rows above it. -->
+                    <span v-if="row.depth > 1" class="session-fork-gen" :title="t('session.forkGenerationTitle', { n: row.depth })">{{ t('session.forkGeneration', { n: row.depth }) }}</span>
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>
@@ -121,7 +128,7 @@
                     @click.stop="toggleForkCollapsed(row.session.id)"
                   >
                     <ChevronDown :size="11" class="fork-toggle-chevron" />
-                    <GitFork :size="11" />
+                    <Split :size="11" />
                     <span>{{ t('session.forkCount', { n: row.childCount }) }}</span>
                   </button>
                   <div v-if="row.session.tags && row.session.tags.length" class="session-item-tags">
@@ -231,15 +238,18 @@
           {{ t('common.setTags') }}
         </div>
         <!-- Doubles as the share-state indicator (mirrors the file header's
-             "Share link" item): highlighted and relabelled when this
-             conversation already has a live public link. -->
+             "Share link" item): highlighted, with a trailing check, when this
+             conversation already has a live public link. The label itself stays
+             plain — the check is the same "this option is on" language the file
+             menu uses for word wrap / line numbers. -->
         <div
           class="context-menu-item"
           :class="{ active: isSessionShared(contextMenu.sessionId) }"
           @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
         >
           <MessageSquareShare :size="14" />
-          {{ isSessionShared(contextMenu.sessionId) ? t('sessionShare.buttonActive') : t('sessionShare.button') }}
+          {{ t('sessionShare.button') }}
+          <span v-if="isSessionShared(contextMenu.sessionId)" class="wrap-check">✓</span>
         </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />
@@ -273,7 +283,7 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, GitFork } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'

@@ -20,20 +20,28 @@ func setupTestDBForThinkingMigration(t *testing.T) func() {
 	db.Exec("PRAGMA foreign_keys = ON")
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -68,7 +76,7 @@ func TestMigrateThinkingFromContent_ExtractsThinking(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	oldContent := `{
@@ -79,7 +87,7 @@ func TestMigrateThinkingFromContent_ExtractsThinking(t *testing.T) {
 		]
 	}`
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
@@ -118,11 +126,11 @@ func TestMigrateThinkingFromContent_IdempotentAndSkipsSlim(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","text":"old","done":true},{"type":"text","text":"ok"}]}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
@@ -136,7 +144,7 @@ func TestMigrateThinkingFromContent_IdempotentAndSkipsSlim(t *testing.T) {
 
 	// Streaming message must be skipped.
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
@@ -149,11 +157,11 @@ func TestMigrateThinkingFromContent_EmptyTextThinkingSlimmed(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","done":true}]}`
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
@@ -181,11 +189,11 @@ func TestMigrateThinkingFromContent_UpsertFailureKeepsContent(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","text":"doomed","done":true}]}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
@@ -214,14 +222,14 @@ func TestMigrateThinkingFromContent_MoreThanOneBatch(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","text":"thought","done":true}]}`
 
 	const total = 450
 	for range total {
 		_, err = db.Exec(
-			"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+			"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 			"/proj", oldContent, "sess-1",
 		)
 		assert.NoError(t, err)

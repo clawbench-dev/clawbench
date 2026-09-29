@@ -766,32 +766,42 @@ func TestApplyDefaults_ChatAutoContinueEnabledPresenceTrue(t *testing.T) {
 	}
 }
 
-// AutoRenameEnabled spends an LLM call, so it is opt-in: an omitted field must
-// resolve to false, and an explicit false must not be flipped back on.
-func TestApplyDefaults_ChatAutoRenameEnabledDefaultFalse(t *testing.T) {
-	setupTestBinDir(t)
-
-	for _, presence := range []map[string]bool{
-		nil,
-		{"chat.auto_rename_enabled": false},
-	} {
-		cfg := Config{}
-		cfg.Chat.AutoRenameEnabled = true // a stray true must be cleared by the default
-		ApplyDefaults(&cfg, presence)
-		if cfg.Chat.AutoRenameEnabled {
-			t.Errorf("Chat.AutoRenameEnabled = true, want false for presence %#v", presence)
-		}
-	}
-}
-
-func TestApplyDefaults_ChatAutoRenameEnabledPresenceTrue(t *testing.T) {
+// AutoRenameEnabled defaults ON: an install without the shared ai_summary
+// model is unaffected (the AI layer is gated a second time on that model), so
+// the feature is inert rather than harmful. An omitted field must resolve to
+// true.
+func TestApplyDefaults_ChatAutoRenameEnabledDefaultTrue(t *testing.T) {
 	setupTestBinDir(t)
 
 	cfg := Config{}
-	cfg.Chat.AutoRenameEnabled = true
-	ApplyDefaults(&cfg, map[string]bool{"chat.auto_rename_enabled": true})
+	cfg.Chat.AutoRenameEnabled = false // a stray false must be raised by the default
+	ApplyDefaults(&cfg, nil)
 	if !cfg.Chat.AutoRenameEnabled {
-		t.Error("Chat.AutoRenameEnabled should stay true when explicitly set")
+		t.Error("Chat.AutoRenameEnabled should default to true when not in config")
+	}
+
+	// A present `chat` section without the key is still "omitted".
+	cfg = Config{}
+	ApplyDefaults(&cfg, map[string]bool{"chat": true})
+	if !cfg.Chat.AutoRenameEnabled {
+		t.Error("Chat.AutoRenameEnabled should default to true when the key is absent")
+	}
+}
+
+// An explicit false is a deliberate opt-out and must survive. The presence map
+// records a present key as true (walkPresenceMap), so the parsed false value is
+// what is kept — a `!ok || !p` rewrite would silently re-enable the feature.
+func TestApplyDefaults_ChatAutoRenameEnabledPresenceFalse(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Chat.AutoRenameEnabled = false
+	ApplyDefaults(&cfg, map[string]bool{
+		"chat":                     true,
+		"chat.auto_rename_enabled": true,
+	})
+	if cfg.Chat.AutoRenameEnabled {
+		t.Error("Chat.AutoRenameEnabled should stay false when explicitly set to false")
 	}
 }
 

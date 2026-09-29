@@ -2,7 +2,7 @@
   <div class="code-preview-content">
     <!-- Loading -->
     <div v-if="status === 'loading'" class="code-preview-status" aria-live="polite">
-      <div class="code-preview-spinner" />
+      <span class="li-spinner code-preview-spinner" aria-hidden="true" />
       <span>{{ t('file.codePreview.loading') }}</span>
     </div>
 
@@ -29,7 +29,7 @@
       <div v-if="canExpandAbove" class="code-preview-expand-bar expand-above">
         <span class="code-preview-expand-hint">{{ t('file.codePreview.linesRemaining', { n: remainingAbove }) }}</span>
         <span v-if="loadingAbove" class="code-preview-expand-loading">
-          <span class="code-preview-expand-spinner" aria-hidden="true" />
+          <span class="li-spinner code-preview-expand-spinner" aria-hidden="true" />
           {{ t('file.codePreview.loadingMoreLines') }}
         </span>
       </div>
@@ -67,7 +67,7 @@
       <div v-if="canExpandBelow" class="code-preview-expand-bar expand-below">
         <span class="code-preview-expand-hint">{{ t('file.codePreview.linesRemaining', { n: remainingBelow }) }}</span>
         <span v-if="loadingBelow" class="code-preview-expand-loading">
-          <span class="code-preview-expand-spinner" aria-hidden="true" />
+          <span class="li-spinner code-preview-expand-spinner" aria-hidden="true" />
           {{ t('file.codePreview.loadingMoreLines') }}
         </span>
       </div>

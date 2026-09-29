@@ -3,6 +3,8 @@
 日期：2026-09-26
 状态：已确认，实施中
 
+> **2026-09-29 变更**：开关默认值由 false 改为 **true**。原设计以「会消耗一次 LLM 调用」为由 opt-in；但未配置「AI 摘要模型」时该功能本就不可用（`service.AutoRenameEnabled` 在开关之外再门控模型是否存在），回退到本地标题是既有行为而非新增失败路径，故默认开无副作用。下文「默认 false / 默认关闭」为当时决策，现以 `internal/model/defaults.go` 与 `docs/spec/core/session-lifecycle.md` 为准。
+
 ## 背景与目标
 
 现有会话命名有两条独立链路：

@@ -302,9 +302,17 @@ func TestRealSessionCleanupSvc_PurgesExpiredArchived(t *testing.T) {
 	_, _ = testDB.Exec("PRAGMA busy_timeout=5000")
 
 	_, err = testDB.Exec(`
-		CREATE TABLE chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -320,11 +328,11 @@ func TestRealSessionCleanupSvc_PurgesExpiredArchived(t *testing.T) {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -342,13 +350,13 @@ func TestRealSessionCleanupSvc_PurgesExpiredArchived(t *testing.T) {
 
 	// Insert one archived session (expired) and one archived session (recent).
 	_, err = testDB.Exec(`
-		INSERT INTO chat_sessions (id, project_path, backend, title, archived, updated_at) VALUES
+		INSERT INTO chat_sessions (id, project_id, backend, title, archived, updated_at) VALUES
 		('sess-old', '/proj', 'claude', 'Old', 1, datetime('now', '-10 days')),
 		('sess-new', '/proj', 'claude', 'New', 1, datetime('now'))
 	`)
 	require.NoError(t, err)
 	_, err = testDB.Exec(`
-		INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES
+		INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES
 		('/proj', 'user', 'msg1', 'sess-old', 'claude'),
 		('/proj', 'user', 'msg2', 'sess-old', 'claude'),
 		('/proj', 'user', 'msg3', 'sess-new', 'claude')

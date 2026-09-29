@@ -113,6 +113,21 @@ export function invalidateGalleryImageUrls(names?: string[]): void {
   for (const n of names) galleryUrlCache.delete(n)
 }
 
+/**
+ * Full-size URL for a gallery/Bing image, by bare file name.
+ *
+ * Distinct from galleryImageUrl(), which returns a 144px thumbnail. The
+ * lightbox renders the image at up to full viewport size, so feeding it a
+ * thumbnail would show a visibly blurry picture once zoomed — this hits the
+ * same endpoint without the `w` scaling parameter.
+ *
+ * Not cached: opening the lightbox is a user action (not a per-render call),
+ * so a fresh version keeps a replaced file from showing stale bytes.
+ */
+export function fullSizeImageUrl(name: string): string {
+  return buildImageUrl(name)
+}
+
 /** Scrim overlay color for a resolved theme base. */
 export function wallpaperScrim(dark: boolean): string {
   return dark ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.12)'
@@ -443,4 +458,33 @@ export async function fetchBingStatus(): Promise<BingStatus> {
   const resp = await fetch('/api/theme/bing/status')
   if (!resp.ok) throw new Error(`bing status failed: HTTP ${resp.status}`)
   return (await resp.json()) as BingStatus
+}
+
+/** Result of saving the Bing wallpaper to the local gallery. */
+export interface SaveToGalleryResult {
+  item: GalleryItem
+}
+
+/**
+ * Error thrown by saveBingToGallery. `status` carries the HTTP status so the
+ * caller can distinguish "gallery full" (400) from a real failure.
+ */
+export class SaveToGalleryError extends Error {
+  status: number
+
+  constructor(status: number) {
+    super(`save Bing to gallery failed: HTTP ${status}`)
+    this.name = 'SaveToGalleryError'
+    this.status = status
+  }
+}
+
+/**
+ * Copy the currently cached Bing wallpaper into the local gallery via
+ * POST /api/theme/bing/save-to-gallery.
+ */
+export async function saveBingToGallery(): Promise<SaveToGalleryResult> {
+  const resp = await fetch('/api/theme/bing/save-to-gallery', { method: 'POST' })
+  if (!resp.ok) throw new SaveToGalleryError(resp.status)
+  return (await resp.json()) as SaveToGalleryResult
 }

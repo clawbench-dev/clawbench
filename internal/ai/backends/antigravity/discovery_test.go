@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,6 +61,24 @@ gemini-3-pro
 	assert.Equal(t, "gemini-3-pro", models[0].ID)
 }
 
+func TestIsAgyStatusLine_DropsErrorLines(t *testing.T) {
+	for _, line := range []string{
+		"Error: Please sign in to view available models.",
+		"error something went wrong",
+		"Failed to fetch models",
+		"You are not logged into Antigravity",
+		"Fetching available models...",
+	} {
+		assert.True(t, isAgyStatusLine(line), "应被当作诊断行丢弃: %q", line)
+	}
+}
+
+func TestIsAgyStatusLine_KeepsModelIDs(t *testing.T) {
+	for _, line := range []string{"gemini-3-pro", "gemini-2.5-flash"} {
+		assert.False(t, isAgyStatusLine(line), "是模型 id，不得丢弃: %q", line)
+	}
+}
+
 func TestParseAgyModels_EmptyOutput(t *testing.T) {
 	assert.Empty(t, parseAgyModels(""))
 	assert.Empty(t, parseAgyModels("\n\n"))
@@ -94,6 +113,18 @@ func TestAntigravitySource_Registered(t *testing.T) {
 	src, ok := model.LookupModelSource("antigravity")
 	require.True(t, ok)
 	assert.Equal(t, model.SourceKindCLI, src.Kind())
+}
+
+func TestAntigravitySourceHasShortTimeout(t *testing.T) {
+	src, ok := model.LookupModelSource("antigravity")
+	require.True(t, ok, "antigravity 必须注册了模型源")
+	// Positive guards against the accessor silently returning the zero value
+	// (a static/plugin source, or a cliSource whose Timeout() is not wired):
+	// a broken accessor would satisfy the <=5s bound below while the real probe
+	// still used the 10s default.
+	require.Positive(t, src.Timeout(), "antigravity 是 CLI 探针，超时必须被真实设置")
+	assert.LessOrEqual(t, src.Timeout(), 5*time.Second,
+		"antigravity 探针超时必须 <=5s（agy 未登录时挂 ~16s）")
 }
 
 func TestAntigravitySource_FallsBackOnMissingBinary(t *testing.T) {

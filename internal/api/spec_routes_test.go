@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -115,4 +116,55 @@ properties:
 	assert.Equal(t, []string{"a", "b"}, names, "field order must follow the document")
 	assert.True(t, required["b"])
 	assert.False(t, required["a"])
+}
+
+// TestEmbeddedSpec_StructuralIntegrity guards the two mistakes that parse fine
+// but produce a broken document: a schema block mis-indented under `paths`
+// (parses as a bogus path item, and its $ref no longer resolves), and a $ref
+// that points at a component that does not exist.
+//
+// Neither is caught elsewhere: SpecRoutes iterates paths by method, so a
+// schemaless bogus path item is silently dropped, and the handler drift guard
+// only compares path+method pairs.
+func TestEmbeddedSpec_StructuralIntegrity(t *testing.T) {
+	var doc struct {
+		Paths      map[string]any `yaml:"paths"`
+		Components struct {
+			Schemas map[string]any `yaml:"schemas"`
+		} `yaml:"components"`
+	}
+	require.NoError(t, yaml.Unmarshal(specYAML, &doc))
+
+	for key := range doc.Paths {
+		assert.True(t, strings.HasPrefix(key, "/"),
+			"paths must only contain path items (keys starting with /); %q is a stray block "+
+				"mis-indented into `paths` instead of `components.schemas`", key)
+	}
+
+	// Every local schema $ref must resolve. Collect them by walking the raw
+	// document so a ref nested inside a component is checked too.
+	var root yaml.Node
+	require.NoError(t, yaml.Unmarshal(specYAML, &root))
+	var dangling []string
+	var walk func(*yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				if n.Content[i].Value == "$ref" {
+					ref := n.Content[i+1].Value
+					const prefix = "#/components/schemas/"
+					if strings.HasPrefix(ref, prefix) {
+						if _, ok := doc.Components.Schemas[strings.TrimPrefix(ref, prefix)]; !ok {
+							dangling = append(dangling, ref)
+						}
+					}
+				}
+			}
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(&root)
+	assert.Empty(t, dangling, "every $ref must point at a defined component schema")
 }

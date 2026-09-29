@@ -563,6 +563,170 @@ describe('ChatPanelContent — send failure always toasts', () => {
   })
 })
 
+// ── /btw side question ──
+// /btw must not share the send path: it must not queue, must not start the
+// agent, and must not touch the session's loading state.
+describe('ChatPanelContent — /btw side question', () => {
+  async function sourceRegion(start: string, end: string) {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    return source.slice(source.indexOf(start), source.indexOf(end))
+  }
+
+  it('posts to the dedicated btw endpoint instead of the chat endpoint', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/apiPost\(\s*'\/api\/ai\/session\/btw'/)
+    // It must NOT go through the chat send pipeline (queue / agent start).
+    expect(region).not.toMatch(/sendMessageNow\(/)
+    expect(region).not.toMatch(/enqueueAndMaybeStart\(/)
+  })
+
+  it('gives the btw request a timeout above the default 10s', async () => {
+    // The server answers a /btw by calling the summary model synchronously,
+    // which routinely takes ~10s. With the default 10s API timeout the request
+    // was aborted just as the answer arrived, surfacing as a bare
+    // "signal is aborted without reason" while the server returned 200.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/timeoutMs:\s*BTW_REQUEST_TIMEOUT_MS/)
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const m = source.match(/const BTW_REQUEST_TIMEOUT_MS = ([\d_]+)/)
+    expect(m, 'BTW_REQUEST_TIMEOUT_MS must be declared').toBeTruthy()
+    expect(Number(m![1].replace(/_/g, ''))).toBeGreaterThan(10_000)
+  })
+
+  it('never writes to the session loading flag', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    // loading drives the queue decision and the stop button; a side question
+    // must leave it alone so it stays usable while the agent is running.
+    expect(region).not.toMatch(/loading\.value\s*=/)
+  })
+
+  it('opens the drawer only when a record came back', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    // No record (e.g. a 4xx that stored nothing) → toast, no drawer.
+    expect(region).toMatch(/if\s*\(!rec\)/)
+    expect(region).toMatch(/btwDrawerRef\.value\?\.open\(\)/)
+  })
+
+  it('refreshes the anchor list after a successful question', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    // The new anchor's count must be authoritative, so the list is re-read
+    // rather than the record being appended locally.
+    expect(region).toMatch(/await loadBtwRecords\(sid\)/)
+  })
+
+  it('does not toast a recorded model failure — the drawer shows the error card', async () => {
+    // The drawer opens right after this and renders the failure as a chat-style
+    // error card (BtwAnswerDrawer maps `error` to an `error` block). Toasting as
+    // well would report the same failure twice, once transiently and once in the
+    // drawer, so the toast is deliberately absent for a RECORDED failure.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).not.toMatch(/rec\.error[\s\S]{0,200}?toast\.show\(/)
+  })
+
+  it('toasts instead of opening a drawer when the request fails outright', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/catch\s*\(err\)[\s\S]*?toast\.show\(/)
+  })
+
+  it('never puts the composer into a loading state', async () => {
+    // The wait is shown on the message anchor instead. The composer must not be
+    // disabled or spun: the user can keep typing or ask another question.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).not.toMatch(/setBtwLoading/)
+    expect(region).not.toMatch(/inputDisabled\.value\s*=\s*true/)
+  })
+
+  it('inserts an optimistic anchor before the request resolves', async () => {
+    // The question must have a visible home the moment it is asked — the anchor
+    // appears immediately in its pending state, not only after the answer.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/pending:\s*true/)
+    expect(region).toMatch(/btwRecords\.value\s*=\s*\[\.\.\.btwRecords\.value,\s*pendingRec\]/)
+    // The optimistic entry must be created BEFORE the await, so it renders while
+    // the request is still in flight.
+    const insertAt = region.indexOf('pendingRec')
+    const awaitAt = region.indexOf('await apiPost')
+    expect(insertAt).toBeGreaterThanOrEqual(0)
+    expect(awaitAt).toBeGreaterThan(insertAt)
+  })
+
+  it('anchors the optimistic entry where the server record will land', async () => {
+    // The backend anchors to MAX(id) FROM chat_history, so the optimistic anchor
+    // must use the same rule or it would jump when the response arrives.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/currentAnchorKey\(messages\.value\)/)
+  })
+
+  it('scrolls to the bottom when the question is asked', async () => {
+    // The anchor renders after the last message, so a user who had scrolled up
+    // would otherwise not see the question land. Asking is explicit intent to
+    // see it, hence a FORCED pin — the "user scrolled away" latch must not drop
+    // it (same rule as sending a message).
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/scrollBottom\(true\)/)
+    // It must run right after the optimistic entry is inserted, before the
+    // request is awaited, so the scroll happens while the anchor is pending.
+    const insertAt = region.indexOf('pendingRec]')
+    const scrollAt = region.indexOf('scrollBottom(true)')
+    const awaitAt = region.indexOf('await apiPost')
+    expect(insertAt).toBeGreaterThanOrEqual(0)
+    expect(scrollAt).toBeGreaterThan(insertAt)
+    expect(scrollAt).toBeLessThan(awaitAt)
+  })
+
+  it('drops the optimistic entry when the answer lands or the request fails', async () => {
+    // Otherwise the marker would double (pending + stored) or linger forever.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/removePendingBtw\(pendingId\)/)
+    // Once on success, once on the no-record path, once in the catch.
+    const calls = region.match(/removePendingBtw\(pendingId\)/g) || []
+    expect(calls.length).toBeGreaterThanOrEqual(3)
+  })
+
+  it('carries optimistic entries across an anchor reload', async () => {
+    // loadBtwRecords replaces the list from the server, which does not know
+    // about a still-unanswered question yet.
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const fn = source.slice(source.indexOf('async function loadBtwRecords'), source.indexOf('function openBtwDrawer'))
+    expect(fn).toMatch(/filter\(r => r\.pending === true\)/)
+    expect(fn).toMatch(/\.\.\.stillPending/)
+  })
+
+  it('wires the input bar btw event to handleBtw', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/@btw="handleBtw"/)
+  })
+
+  it('loads the anchors when the session changes, and passes them to the list', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // Anchors are per-session; a switch must reload them (immediate for first mount).
+    expect(source).toMatch(/watch\(\(\) => identity\.currentSessionId\.value[\s\S]*?loadBtwRecords\(sid\)[\s\S]*?immediate:\s*true/)
+    expect(source).toMatch(/:btwAnchors="btwAnchors"/)
+  })
+
+  it('opens the drawer for an anchor position through the open-btw event', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/@open-btw="openBtwDrawer"/)
+    // The handler resolves the anchor's records before opening, and is a no-op
+    // for an unknown anchor.
+    const region = source.slice(source.indexOf('function openBtwDrawer'), source.indexOf('async function handleBtw'))
+    expect(region).toMatch(/btwAnchors\.value\[anchorKey\]/)
+    expect(region).toMatch(/if\s*\(records\.length === 0\)\s*return/)
+  })
+
+  it('passes the clicked anchor records (not a single answer) to the drawer', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/:records="btwDrawerRecords"/)
+  })
+})
+
 // ── First-open scroll-to-bottom ──
 // Root cause: the active watch passed forceScrollBottom=false on EVERY open.
 // On first app launch there is no prior scroll position (fresh DOM, scrollTop=0),

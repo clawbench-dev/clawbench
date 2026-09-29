@@ -109,6 +109,7 @@ exempt_files = {
     "internal/service/agent_store.go",       # new file: SaveAgent/PatchAgent DB error paths, JSON marshal paths
     "internal/service/crypto.go",            # new file: EncryptAPIKey cipher.NewGCM path, SaveAgentAPIKey DB error
     "internal/service/database.go",          # InitDB: file system + PRAGMA + DDL; reorder: tx error paths
+    "internal/service/projects_migrate.go",  # migrateProjectsToIDs: one-shot path→id schema conversion; the happy path is covered by the InitDB migration tests, but ~half the changed lines are tx/DDL error returns that need SQLite fault injection to reach
     "internal/service/testutil.go",          # new file: InitInMemoryDB sql.Open error path
     "internal/service/chat.go",              # new diff: session model/paged history error paths
     "internal/service/continue_conversation.go", # new diff: restoreArchivedSession/continue error paths

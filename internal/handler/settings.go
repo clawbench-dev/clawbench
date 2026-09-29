@@ -35,7 +35,26 @@ import (
 
 // configMutex protects ConfigInstance from concurrent access.
 // PATCH acquires a full lock; GET acquires a read lock to allow concurrent reads.
+//
+// It also serializes access to the agent globals (model.Agents / model.AgentList)
+// for the agent handlers that use it (see agent.go). NOTE: this is NOT complete
+// coverage — several readers in this package (handler.go resolveAgentConfig,
+// chat.go, chat_session.go, validatePatchValues) and all readers in
+// internal/service and internal/ai access the globals WITHOUT this lock, so a
+// write racing them is still possible. See StartModelDiscoveryAsync in
+// internal/model/refresh.go.
 var configMutex sync.RWMutex
+
+// WithConfigLock runs fn while holding the config write lock. Code outside this
+// package that mutates the agent globals (model.Agents / model.AgentList) should
+// go through this so it serializes with the HTTP handlers that use configMutex.
+// It is not a complete barrier: many readers access those globals without the
+// lock (see the note on configMutex).
+func WithConfigLock(fn func()) {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+	fn()
+}
 
 // hotReloadFields is the set of config dot-paths that take effect immediately
 // via applyHotReloadGlobals() and do NOT require a server restart.
@@ -1128,14 +1147,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// 3. default_agent must be an existing agent ID.
 	if v, ok := patch["default_agent"].(string); ok && v != "" {
-		if model.Agents != nil {
-			if _, exists := model.Agents[v]; !exists {
-				available := make([]string, 0, len(model.AgentList))
-				for _, a := range model.AgentList {
-					available = append(available, a.ID)
-				}
-				return fmt.Errorf("default_agent \"%s\" not found (available: %s)", v, strings.Join(available, ", "))
+		if model.AgentSetLoaded() && !model.HasAgent(v) {
+			list := model.GetAgentList()
+			available := make([]string, 0, len(list))
+			for _, a := range list {
+				available = append(available, a.ID)
 			}
+			return fmt.Errorf("default_agent \"%s\" not found (available: %s)", v, strings.Join(available, ", "))
 		}
 	}
 

@@ -140,23 +140,23 @@ describe('TaskOverviewTab prompt collapse', () => {
     })
     expect(wrapper.find('.prompt-body').exists()).toBe(true)
     expect(bodyStyle(wrapper)).toContain('display: none')
-    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(true)
+    expect(wrapper.find('.card-chevron.is-collapsed').exists()).toBe(true)
   })
 
   it('expands prompt body when title is clicked', async () => {
     const wrapper = mount(TaskOverviewTab, {
       props: { task: { ...baseTask } },
     })
-    await wrapper.find('.prompt-card-title').trigger('click')
+    await wrapper.find('.card-title.is-collapsible').trigger('click')
     expect(bodyStyle(wrapper)).not.toContain('display: none')
-    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(false)
+    expect(wrapper.find('.card-chevron.is-collapsed').exists()).toBe(false)
   })
 
   it('toggles prompt collapse on subsequent clicks', async () => {
     const wrapper = mount(TaskOverviewTab, {
       props: { task: { ...baseTask } },
     })
-    const title = wrapper.find('.prompt-card-title')
+    const title = wrapper.find('.card-title.is-collapsible')
     await title.trigger('click') // expand
     expect(bodyStyle(wrapper)).not.toContain('display: none')
     await title.trigger('click') // collapse

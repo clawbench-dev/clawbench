@@ -230,6 +230,19 @@
     background: color-mix(in srgb, var(--accent-color) 18%, transparent);
 }
 
+/* Trailing "this option is currently on" check, pushed to the right edge of a
+   menu row. Declared globally because BOTH menus use it — the file header's
+   dropdown (word wrap / line numbers / sticky scroll / share link) and the
+   session list's context menu (share conversation). Keeping the base rule in
+   one place is what makes the two menus read identically; a scoped copy would
+   only style the menu of the component that declared it. */
+.wrap-check {
+    margin-left: auto;
+    color: var(--accent-color);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+}
+
 .context-menu-item.danger {
     color: #ef4444;
 }
@@ -790,4 +803,174 @@
             rgba(255, 255, 255, 0.2)
         );
     }
+}
+
+/* ── Settings controls (shared) ───────────────────────────────────────────────
+   Single source of truth for the settings controls that were previously
+   duplicated across components: the switch (copied verbatim into SettingsItem
+   AND WallpaperSetting, plus a third copy under `.group-panel__switch`), and
+   the slider trio (slider / slider-value / slider-reset, copied into both).
+   A size change had to be made in 2–3 places and silently diverged when one
+   was missed.
+
+   Why global and not scoped: a scoped rule compiles to `.foo[data-v-x]`
+   (0,2,0), which OUTRANKS this single class (0,1,0). Any geometry left behind
+   in a component's scoped block would silently win and undo the shared size —
+   so the components keep only layout (flex/margin) and all shape declarations
+   live here. Guard: settingsControls.css.test.ts.
+
+   Sizes align with the `.fbtn` pill language (30px tall) used by the settings
+   buttons; see docs/spec/client/design-guide.md. */
+
+/* iOS-style switch. 44x26 with a 22px thumb: travel = 44 - 22 - 2*2 = 18px. */
+.settings-item__switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 26px;
+  cursor: pointer;
+}
+
+.settings-item__switch-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.settings-item__switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  transition: background var(--duration-slow) ease;
+}
+
+.settings-item__switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  transition: transform var(--duration-slow) ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.settings-item__switch-input:checked + .settings-item__switch-track {
+  background: var(--accent-color);
+}
+
+.settings-item__switch-input:checked + .settings-item__switch-track::after {
+  transform: translateX(18px);
+}
+
+/* Slider row: numeric readout + range + resident reset button. */
+.settings-item__slider-value {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
+}
+
+.settings-item__slider {
+  width: 100px;
+  cursor: pointer;
+  accent-color: var(--accent-color);
+}
+
+/* Resident (never v-if'd) so the control cluster width is constant — the
+   button vanishing on reset was the reported layout shift. Inert at the
+   default value via :disabled + the "unusable" opacity token. */
+.settings-item__slider-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.settings-item__slider-reset:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.settings-item__slider-reset:active {
+  color: var(--accent-color);
+}
+
+/* ==========================================================================
+   Shared loading ring (the visual core of LoadingIndicator)
+   ==========================================================================
+
+   The ring itself is declared GLOBALLY, not in LoadingIndicator's <style
+   scoped> block, because not every caller can render a Vue component:
+
+     - chat tool-call body      → injected as an HTML string (v-html)
+     - mermaid diagram loading  → injected via innerHTML in a util
+     - localhost open button    → a CSS ::after pseudo-element
+
+   Those three get no `data-v-*` attribute, so a scoped rule can never match
+   them (design-guide red line 1: scoped styles silently miss injected DOM).
+   Keeping one global definition is what makes the ring a single
+   implementation instead of five lookalikes.
+
+   What the component owns is only the wrapper layout (.loading-indicator).
+   Callers may mark up either:
+     - <LoadingIndicator> — renders <div class="li-spinner">
+     - a plain `<span class="li-spinner">` — for injected HTML
+
+   Size comes from `--li-size` (default md). The `size-*` tiers below are the
+   component's wrapper classes; a caller that cannot render the component sets
+   `--li-size` on the ring element itself instead (specificity 0,2,0 beats the
+   0,1,0 base, and such callers never sit inside a `size-*` wrapper, so the two
+   mechanisms cannot collide). Border weight is derived so every tier keeps the
+   same optical ratio. Colour: `--li-color` for the moving arc,
+   `--li-track-color` for the resting ring — both fall back to theme tokens.
+
+   `--li-duration` exists so a call site can keep the speed it shipped with
+   without forking the shape: the callers migrated onto this ring used 0.6s,
+   while the component's own default is 0.8s. Prefer the default unless a site
+   has a specific reason. */
+.li-spinner {
+  --li-size: 28px; /* default md */
+  --li-border: calc(var(--li-size) / 9);
+  --li-duration: 0.8s;
+  /* inline-block (not block) so a bare <span class="li-spinner"> works where a
+     component cannot be rendered. Inside the component's flex wrapper it is a
+     flex item, which blockifies anyway, so this changes nothing there. */
+  display: inline-block;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: var(--li-size);
+  height: var(--li-size);
+  border-radius: 50%;
+  border: var(--li-border) solid var(--li-track-color, var(--border-color, #e9ecef));
+  border-top-color: var(--li-color, var(--accent-color, #0066cc));
+  animation: li-spin var(--li-duration) linear infinite;
+}
+
+.size-sm .li-spinner {
+  --li-size: 14px;
+}
+
+.size-md .li-spinner {
+  --li-size: 28px;
+}
+
+.size-lg .li-spinner {
+  --li-size: 36px;
+}
+
+@keyframes li-spin {
+  to { transform: rotate(360deg); }
 }

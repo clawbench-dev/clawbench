@@ -645,12 +645,129 @@ describe('useFileUpload', () => {
       await upload.handleFileSelect(mockEvent as any)
       expect(mockEvent.target.value).toBe('')
     })
+
+    it('returns the server paths of successfully uploaded files, in order', async () => {
+      // The chat picker uses this return value to auto-select what was just
+      // uploaded — so it must carry the server-assigned path, not a boolean.
+      let n = 0
+      xhrSendHandler = (xhr) => respondSuccess(xhr, `.clawbench/uploads/f${n++}.png`)
+
+      const upload = useFileUpload()
+      const ev = { target: { files: [makeFile('a.png'), makeFile('b.png')], value: 'x' } }
+      const paths = await upload.handleFileSelect(ev as any)
+
+      expect(paths).toEqual([
+        '.clawbench/uploads/f0.png',
+        '.clawbench/uploads/f1.png',
+      ])
+    })
+
+    it('omits failed uploads from the returned paths', async () => {
+      let n = 0
+      xhrSendHandler = (xhr) => {
+        n++
+        if (n === 1) respondSuccess(xhr, '.clawbench/uploads/ok.png')
+        else respondError(xhr, 'UploadFailed')
+      }
+
+      const upload = useFileUpload()
+      const ev = { target: { files: [makeFile('ok.png'), makeFile('bad.png')], value: 'x' } }
+      const paths = await upload.handleFileSelect(ev as any)
+
+      expect(paths).toEqual(['.clawbench/uploads/ok.png'])
+    })
+
+    it('returns an empty array when the picker is cancelled (no files)', async () => {
+      const upload = useFileUpload()
+      const ev = { target: { files: [], value: 'x' } }
+      expect(await upload.handleFileSelect(ev as any)).toEqual([])
+    })
   })
 
   describe('handleFileDrop', () => {
     it('does nothing when empty', async () => {
       const upload = useFileUpload()
       await upload.handleFileDrop([])
+    })
+  })
+
+  describe('cancelChatUpload (batch terminate)', () => {
+    it('aborts the in-flight transfer, clears rows and returns finished paths', async () => {
+      let xhrInstance: any
+      let calls = 0
+      xhrSendHandler = (xhr) => {
+        calls++
+        xhrInstance = xhr
+        // First file completes immediately; second stays in flight.
+        if (calls === 1) respondSuccess(xhr, '.clawbench/uploads/a.png')
+      }
+
+      const upload = useFileUpload()
+      const p = upload.handleFileDrop([makeFile('a.png'), makeFile('b.png')])
+      await vi.waitFor(() => { expect(upload.pendingFiles.value.some(f => f.uploading)).toBe(true) })
+
+      const finished = upload.cancelChatUpload()
+
+      expect(finished).toEqual(['.clawbench/uploads/a.png'])
+      expect(xhrInstance.abort).toHaveBeenCalled()
+      // No in-flight row is left behind at its last percentage.
+      expect(upload.pendingFiles.value.filter(f => f.uploading)).toHaveLength(0)
+
+      // The loop stops: the second file is never sent.
+      await p
+      expect(upload.pendingFiles.value.some(f => f.path === '.clawbench/uploads/b.png')).toBe(false)
+    })
+
+    it('stops a queued batch before the next file starts', async () => {
+      // The real FormData is not introspectable in this mock, so count sends
+      // by call order: only the first file should ever be sent.
+      let sends = 0
+      xhrSendHandler = () => { sends++ }
+
+      const upload = useFileUpload()
+      const p = upload.handleFileDrop([makeFile('a.txt'), makeFile('b.txt'), makeFile('c.txt')])
+      await vi.waitFor(() => { expect(sends).toBeGreaterThan(0) })
+
+      upload.cancelChatUpload()
+      await p
+
+      expect(sends).toBe(1)
+    })
+
+    it('is a no-op when nothing is uploading', () => {
+      const upload = useFileUpload()
+      expect(upload.cancelChatUpload()).toEqual([])
+      expect(upload.pendingFiles.value).toHaveLength(0)
+    })
+
+    it('a fresh batch clears the previous cancellation flag', async () => {
+      xhrSendHandler = (xhr) => respondSuccess(xhr, '.clawbench/uploads/ok.txt')
+
+      const upload = useFileUpload()
+      upload.cancelChatUpload()
+      expect(upload.chatUploadCancelled.value).toBe(true)
+
+      // Starting a new upload resets the flag so it is not inherited.
+      const paths = await upload.handleFileDrop([makeFile('ok.txt')])
+      expect(upload.chatUploadCancelled.value).toBe(false)
+      expect(paths).toEqual(['.clawbench/uploads/ok.txt'])
+    })
+
+    it('a file whose success lands after termination is not reported as finished', async () => {
+      let xhrInstance: any
+      xhrSendHandler = (xhr) => { xhrInstance = xhr }
+
+      const upload = useFileUpload()
+      const p = upload.handleFileDrop([makeFile('late.txt')])
+      await vi.waitFor(() => { expect(upload.pendingFiles.value.some(f => f.uploading)).toBe(true) })
+
+      upload.cancelChatUpload()
+      // Server response arrives after the user terminated.
+      respondSuccess(xhrInstance, '.clawbench/uploads/late.txt')
+      const paths = await p
+
+      expect(paths).toEqual([])
+      expect(upload.pendingFiles.value).toHaveLength(0)
     })
   })
 

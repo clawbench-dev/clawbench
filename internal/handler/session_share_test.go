@@ -18,9 +18,9 @@ func seedShareSession(t *testing.T, env *testEnv, sessionID string) (string, []i
 	t.Helper()
 
 	_, err := env.DB().Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model)
 		 VALUES (?, ?, 'codebuddy', 'Shared chat', 'codebuddy', 'claude-sonnet-4')`,
-		sessionID, env.ProjectDir,
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	require.NoError(t, err)
 
@@ -30,9 +30,9 @@ func seedShareSession(t *testing.T, env *testEnv, sessionID string) (string, []i
 		{"assistant", `{"blocks":[{"type":"text","text":"hi there"}]}`},
 	} {
 		res, err := env.DB().Exec(
-			`INSERT INTO chat_history (project_path, session_id, role, content, backend)
+			`INSERT INTO chat_history (project_id, session_id, role, content, backend)
 			 VALUES (?, ?, ?, ?, 'codebuddy')`,
-			env.ProjectDir, sessionID, m.role, m.content,
+			service.ProjectIDForTest(t, env.ProjectDir), sessionID, m.role, m.content,
 		)
 		require.NoError(t, err)
 		id, err := res.LastInsertId()
@@ -109,7 +109,7 @@ func TestSessionShareManage_StatusReportsInFlightFlags(t *testing.T) {
 
 	sessionID, _ := seedShareSession(t, env, "sess-1")
 	_, err := env.DB().Exec(
-		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming)
+		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming)
 		 VALUES (?, ?, 'assistant', 'typing', 'codebuddy', 1)`,
 		env.ProjectDir, sessionID,
 	)
@@ -150,7 +150,7 @@ func TestSessionShareManage_RejectsStreamingSelection(t *testing.T) {
 
 	sessionID, ids := seedShareSession(t, env, "sess-1")
 	res, err := env.DB().Exec(
-		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming)
+		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming)
 		 VALUES (?, ?, 'assistant', 'typing', 'codebuddy', 1)`,
 		env.ProjectDir, sessionID,
 	)
@@ -174,7 +174,9 @@ func TestSessionShareManage_RejectsForeignSession(t *testing.T) {
 	defer teardown()
 
 	sessionID, _ := seedShareSession(t, env, "sess-other")
-	_, err := env.DB().Exec(`UPDATE chat_sessions SET project_path = ? WHERE id = ?`, "/some/other/project", sessionID)
+	_, err := env.DB().Exec(`INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING`, "/some/other/project")
+	require.NoError(t, err)
+	_, err = env.DB().Exec(`UPDATE chat_sessions SET project_id = (SELECT id FROM projects WHERE path = ?) WHERE id = ?`, "/some/other/project", sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodPost, "/api/share/session", map[string]any{"sessionId": sessionID})
@@ -376,8 +378,8 @@ func TestSessionShareManage_NoShareableContent(t *testing.T) {
 	defer teardown()
 
 	_, err := env.DB().Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('empty', ?, 'codebuddy', 'Empty')`,
-		env.ProjectDir,
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('empty', ?, 'codebuddy', 'Empty')`,
+		service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	require.NoError(t, err)
 
@@ -441,9 +443,13 @@ func listSessionSharesViaAPI(t *testing.T, env *testEnv) []sessionShareListItem 
 // project, so a share can be created "as" that project.
 func moveSessionToProject(t *testing.T, env *testEnv, sessionID, projectPath string) {
 	t.Helper()
-	_, err := env.DB().Exec("UPDATE chat_sessions SET project_path = ? WHERE id = ?", projectPath, sessionID)
+	// Repoint the session (and its messages) at the project id for projectPath,
+	// registering that project if the fixture has not seen it yet.
+	pid, idErr := service.ProjectIDForPath(projectPath)
+	require.NoError(t, idErr)
+	_, err := env.DB().Exec("UPDATE chat_sessions SET project_id = ? WHERE id = ?", pid, sessionID)
 	require.NoError(t, err)
-	_, err = env.DB().Exec("UPDATE chat_history SET project_path = ? WHERE session_id = ?", projectPath, sessionID)
+	_, err = env.DB().Exec("UPDATE chat_history SET project_id = ? WHERE session_id = ?", pid, sessionID)
 	require.NoError(t, err)
 }
 

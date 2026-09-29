@@ -10,7 +10,7 @@
         :title="t('sharedSessions.clearAll')"
         @click.stop="clearAll"
       >
-        <RefreshCw v-if="clearing" :size="13" class="shared-sessions-clear-spin" />
+        <LoadingIndicator v-if="clearing" size="sm" inline class="shared-sessions-clear-spin" />
         <Trash2 v-else :size="13" />
         {{ clearing ? t('common.loading') : t('sharedSessions.clear') }}
       </button>
@@ -102,7 +102,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { MessageSquareShare, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
+import { MessageSquareShare, ExternalLink, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
@@ -366,10 +366,10 @@ defineExpose({ open: openDrawer })
   flex-shrink: 0;
 }
 .shared-sessions-clear:disabled { opacity: var(--opacity-muted); cursor: default; }
-.shared-sessions-clear-spin { animation: shared-sessions-clear-spin 0.8s linear infinite; }
-@keyframes shared-sessions-clear-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+/* Shared LoadingIndicator, tinted with the destructive red the button (and the
+   icon it replaced) already carries. */
+.shared-sessions-clear-spin {
+  --li-color: currentColor;
 }
 @media (hover: hover) {
   .shared-sessions-clear:not(:disabled):hover { background: color-mix(in srgb, var(--color-red) 10%, transparent); }

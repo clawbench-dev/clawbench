@@ -13,7 +13,7 @@
     <div class="header-divider"></div>
     <!-- Connection error / reconnecting state -->
     <div v-if="wsDisconnected" class="connection-status">
-      <LoaderCircle v-if="wsStatus === 'reconnecting'" :size="28" class="connection-status-icon status-reconnecting" />
+      <LoadingIndicator v-if="wsStatus === 'reconnecting'" size="md" inline class="connection-status-icon status-reconnecting" />
       <WifiOff v-else :size="28" class="connection-status-icon status-disconnected" />
       <span class="connection-status-text">{{ wsStatus === 'reconnecting' ? t('systemResources.reconnecting') : t('systemResources.disconnected') }}</span>
     </div>
@@ -100,7 +100,8 @@
 </template>
 
 <script setup>
-import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff, LoaderCircle } from 'lucide-vue-next'
+import { Cpu, Activity, MemoryStick, Database, HardDriveDownload, HardDriveUpload, CloudDownload, CloudUpload, Server, LogOut, WifiOff } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSystemResources } from '@/composables/useSystemResources'
@@ -312,19 +313,16 @@ defineExpose({ startPolling, stopPolling })
   color: var(--color-red, #ef4444);
 }
 
+/* Reconnecting uses the shared LoadingIndicator. Only the arc keeps the warning
+   yellow the icon carried; the track stays at the component default so this
+   reads like every other spinner in the app. */
 .connection-status-icon.status-reconnecting {
-  color: var(--color-yellow, #eab308);
-  animation: reconnect-spin 1s linear infinite;
+  --li-color: var(--color-yellow, #eab308);
 }
 
 .connection-status-text {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
-}
-
-@keyframes reconnect-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
 }
 </style>

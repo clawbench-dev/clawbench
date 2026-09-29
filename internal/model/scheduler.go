@@ -23,10 +23,12 @@ type ScheduledTask struct {
 	// is deliberately no repository field: the binding is the single source of
 	// truth and cannot drift from the task configuration.
 	EventTypes string `json:"eventTypes,omitempty"`
-	// Script is an optional shell script run BEFORE the AI call. When it exits
-	// 0 with no output the run is skipped entirely (no session, no
-	// notification); otherwise its output is injected into the prompt.
-	// Only meaningful for cron tasks.
+	// Script is an optional gating shell script run BEFORE the AI call. Exit
+	// code 0 opens the gate and the AI turn runs; any other outcome (non-zero,
+	// timeout) closes it and the run is skipped without a session. Its result
+	// is recorded on the execution and its output is available to the prompt
+	// through the {{code}} / {{stdout}} / {{stderr}} / {{output}} template
+	// variables. Only meaningful for cron tasks.
 	Script string `json:"script,omitempty"`
 	// ScriptTimeout bounds Script in seconds; 0 means DefaultScriptTimeout.
 	ScriptTimeout     int                    `json:"scriptTimeout,omitempty"`

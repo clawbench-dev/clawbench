@@ -19,9 +19,9 @@ func TestThinkingCRUD(t *testing.T) {
 	}()
 
 	sessionID := "thinking-sess-001"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -92,9 +92,9 @@ func TestAppendThinkingSegment_GetThinkingConcat(t *testing.T) {
 	}()
 
 	sessionID := "thinking-append-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -168,9 +168,9 @@ func TestGetThinkingBySessionAll(t *testing.T) {
 	}()
 
 	sessionID := "thinking-all-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -462,9 +462,9 @@ func TestReplaceThinkingForMessage(t *testing.T) {
 	}()
 
 	sessionID := "thinking-batch-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Batch Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -572,9 +572,9 @@ func TestReplaceThinkingForMessage_AtomicOnFailure(t *testing.T) {
 	}()
 
 	sessionID := "thinking-atomic-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Atomic Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -631,9 +631,9 @@ func TestReplaceThinkingForMessage_DuplicateThinkIDLastWins(t *testing.T) {
 	}()
 
 	sessionID := "thinking-dup-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Dup Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -676,9 +676,9 @@ func TestPersistThinkingToDB_SlimsAndReplacesRows(t *testing.T) {
 	}()
 
 	sessionID := "thinking-persist-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Persist Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)

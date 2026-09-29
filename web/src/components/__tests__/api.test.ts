@@ -269,6 +269,32 @@ describe('apiGet with signal', () => {
     await expect(result).rejects.toThrow()
   })
 
+  it('aborts a timeout with an AbortError reason, not the opaque default', async () => {
+    // A bare abort() makes fetch throw "signal is aborted without reason",
+    // which hides the fact that this was a CLIENT-side timeout (the server may
+    // have answered). The reason must also keep name === 'AbortError' so the
+    // many callers that treat a superseded request as non-fatal still do.
+    vi.useFakeTimers()
+
+    let capturedSignal: AbortSignal | undefined
+    mockFetch.mockImplementation((_url: string, opts: { signal?: AbortSignal }) => {
+      capturedSignal = opts?.signal
+      return new Promise(() => {})
+    })
+
+    const promise = apiGet('/api/test')
+    promise.catch(() => {})
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    expect(capturedSignal?.aborted).toBe(true)
+    const reason = capturedSignal?.reason
+    expect(reason).toBeInstanceOf(DOMException)
+    expect((reason as DOMException).name).toBe('AbortError')
+    expect(String((reason as DOMException).message)).toContain('timed out')
+
+    vi.useRealTimers()
+  })
+
   it('rejects when fetch times out', async () => {
     vi.useFakeTimers()
 

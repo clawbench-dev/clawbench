@@ -96,7 +96,7 @@ func syncViaRealAgent(t *testing.T, agentID, sid string) int {
 func sessionProjectPath(t *testing.T, sid string) string {
 	t.Helper()
 	var p string
-	err := service.ReadDB().QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", sid).Scan(&p)
+	err := service.ReadDB().QueryRow(`SELECT COALESCE(pj.path, '') FROM chat_sessions s LEFT JOIN projects pj ON pj.id = s.project_id WHERE s.id = ?`, sid).Scan(&p)
 	require.NoError(t, err)
 	return p
 }
@@ -140,12 +140,12 @@ func TestACPSync_RealAgent_TwoTurnExternalHistory(t *testing.T) {
 	require.NoError(t, err)
 	service.UpdateExternalSessionID(sid, extSID)
 	_, err = service.WriteExec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)
 	_, err = service.WriteExec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)

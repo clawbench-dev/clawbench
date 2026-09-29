@@ -53,12 +53,21 @@ export function parseLocalhostUrl(url: string): { port: number; protocol: string
 export const LOCALHOST_OPEN_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12"><path d="m15 20 3-3h2a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2l3 3z"/><path d="M6 8v1"/><path d="M10 8v1"/><path d="M14 8v1"/><path d="M18 8v1"/></svg>'
 
 /**
+ * Spinner markup shown while a localhost URL is being opened.
+ *
+ * This is the shared global .li-spinner (css/components.css) rather than a CSS
+ * ::after ring, so the ring stays one implementation across the app. It is
+ * hidden by default and revealed by the button's `.loading` state.
+ */
+export const LOCALHOST_SPINNER_HTML = '<span class="li-spinner chat-url-open-btn-spinner" aria-hidden="true"></span>'
+
+/**
  * Generate HTML for the localhost open button (EthernetPort icon).
  * Same pattern as fileOpenButtonHtml() in useFilePathAnnotation.ts.
  */
 export function localhostOpenButtonHtml(port: number, protocol: string, url: string, path?: string): string {
     const pathAttr = path ? ` data-path="${escapeHtml(path)}"` : ''
-    return `<button class="chat-url-open-btn" data-url="${escapeHtml(url)}" data-port="${port}" data-protocol="${escapeHtml(protocol)}"${pathAttr} title="Open in WebView">${LOCALHOST_OPEN_ICON_SVG}</button>`
+    return `<button class="chat-url-open-btn" data-url="${escapeHtml(url)}" data-port="${port}" data-protocol="${escapeHtml(protocol)}"${pathAttr} title="Open in WebView">${LOCALHOST_OPEN_ICON_SVG}${LOCALHOST_SPINNER_HTML}</button>`
 }
 
 /**

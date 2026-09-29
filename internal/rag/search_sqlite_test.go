@@ -510,13 +510,13 @@ func TestRAGSessionSearch_TypeFilter(t *testing.T) {
 
 	// One conversation and one task execution, both matching the query text.
 	_, err := serviceDB.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, session_type) VALUES ('sess-conv', ?, 'claude', 'Conversation', 'chat')",
-		testProjectPath,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('sess-conv', ?, 'claude', 'Conversation', 'chat')",
+		testProjectID,
 	)
 	require.NoError(t, err)
 	_, err = serviceDB.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, session_type) VALUES ('sess-job', ?, 'claude', 'Task run', 'scheduled')",
-		testProjectPath,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type) VALUES ('sess-job', ?, 'claude', 'Task run', 'scheduled')",
+		testProjectID,
 	)
 	require.NoError(t, err)
 
@@ -699,9 +699,9 @@ func insertTitleSession(t *testing.T, db *sql.DB, id, title, createdAt string, a
 		sessionType = "chat"
 	}
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, session_type, archived, created_at, updated_at)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived, created_at, updated_at)
 		 VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)`,
-		id, testProjectPath, title, sessionType, archivedInt, createdAt, createdAt,
+		id, testProjectID, title, sessionType, archivedInt, createdAt, createdAt,
 	)
 	require.NoError(t, err)
 }

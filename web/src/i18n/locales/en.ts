@@ -466,6 +466,17 @@ export default {
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage tasks',
       usageDesc: 'View token usage',
+      btwDesc: 'Ask a side question (answered by the summary model, without disturbing this session)',
+    },
+    btw: {
+      title: 'By the way',
+      answering: 'Answering…',
+      questionRequired: 'A question is required after /btw',
+      failed: 'Failed to answer',
+      failedWithReason: 'Failed to answer: {reason}',
+      anchorLabel: 'Asked by the way',
+      anchorTitle: 'View the side question asked here',
+      close: 'Close',
     },
     slashCommand: {
       title: 'Commands',
@@ -641,6 +652,8 @@ export default {
       dropToUpload: 'Drop to upload',
       pasteToUpload: 'Pasting files...',
       uploading: 'Uploading...',
+      terminateUpload: 'Terminate',
+      uploadingBatch: 'Uploading {n} file(s)...',
       openFile: 'Open file',
       openCommit: 'Open commit details',
       openWorktree: 'Worktree Actions',
@@ -788,6 +801,14 @@ export default {
       nothingToRewind: 'This is the last message — nothing to rewind',
       sessionLimitReached: 'Maximum session limit reached',
     },
+    // In-flight hints for slow actions (shared by the top progress bar and the
+    // sticky toast). `elapsed` is the seconds so far, so the user can tell
+    // "still working" from "hung".
+    busy: {
+      forking: 'Forking session…',
+      syncing: 'Syncing native session…',
+      elapsed: '{elapsed}s',
+    },
     messageList: {
       loadingMore: 'Loading...',
       moreOlderMessages: '{count} more older messages',
@@ -819,12 +840,14 @@ export default {
       queuing: 'Queued',
       insert: 'Insert',
       insertHint: 'Join the reply being written now; its current work continues',
-      interrupt: 'Interrupt and send',
       interruptHint: 'Stop the reply being written and do this message instead',
       insertFailed: 'Could not insert right now — the message is still queued',
       actionFailed: 'Action failed — the message is still queued',
       insertStranded: 'Insert failed and the message could not be re-queued — please resend it',
       interruptNotQueued: 'That message is no longer queued — the current reply was left running',
+      merge: 'Merge',
+      mergeHint: 'Combine these queued messages into one, sent together in their original order',
+      mergeFailed: 'Merge failed — the queued messages are unchanged',
       barTitle: 'Queued',
       expand: 'Expand',
       collapse: 'Collapse',
@@ -1101,6 +1124,8 @@ export default {
     overview: {
       showPrompt: 'Show prompt',
       hidePrompt: 'Collapse prompt',
+      showScript: 'Show gating script',
+      hideScript: 'Collapse gating script',
       schedule: 'Schedule',
       eventTrigger: 'Event trigger',
       eventRepo: 'Watched repository',
@@ -1206,11 +1231,23 @@ export default {
       repeatLimited: 'Limited runs',
       repeatUnlimited: 'Unlimited runs',
       maxRuns: 'Max runs',
-      // Optional pre-AI script (cron tasks only). The skip semantics live in
-      // the placeholder now (the long hint paragraph was removed as too
-      // verbose); the timeout's 300s default is a placeholder, not a value.
-      script: 'Custom script',
-      scriptPlaceholder: 'Optional: a shell script that runs before the AI. Leave empty to skip. If it exits 0 with no output, the AI is skipped.',
+      // Optional gating script (cron tasks only). The gate semantics live in
+      // the placeholder; the timeout's 300s default is a placeholder, not a
+      // value. The switch controls whether the task carries a script at all.
+      script: 'Gating script',
+      scriptEnabled: 'Enable gating script',
+      scriptHint: 'The script runs before the agent to decide whether the run should proceed.',
+      // The full explanation lives in the dedicated guide panel (below); the
+      // placeholder stays a one-liner. The tokens themselves are built in the
+      // component from plain strings, so no i18n brace escaping is needed here.
+      scriptPlaceholder: 'Enter a shell script, e.g. test -f .build-needed',
+      scriptGuideTitle: 'About the gating script',
+      scriptGuideIntro: 'Before the agent runs, use a script as a precondition to avoid unnecessary token usage. The agent runs when the script exits 0.',
+      scriptGuideVarsTitle: 'The agent prompt can reference these template variables:',
+      scriptVarCode: 'Exit code',
+      scriptVarStdout: 'Script stdout',
+      scriptVarStderr: 'Script stderr',
+      scriptVarOutput: 'Script output (stdout + stderr)',
       scriptTimeout: 'Script timeout (seconds)',
       scriptTimeoutInvalid: 'Enter a non-negative whole number of seconds (0 uses the default)',
       prompt: 'Prompt',
@@ -1236,7 +1273,7 @@ export default {
       title: 'Execution log',
       noExecutions: 'No executions',
       noTextOutput: 'No text output',
-      skippedHint: 'Skipped — no output',
+      skippedHint: 'Gating script did not pass — the agent was not run',
       startingPreview: 'Connecting preview…',
       manual: 'Manual',
       auto: 'Auto',
@@ -1258,7 +1295,15 @@ export default {
       // not-running.
       statusScriptPhase: 'Preparing (script)',
       cancelledNotice: 'This execution was cancelled. No output available.',
-      skippedNotice: 'The script exited 0 with no output, so the AI was skipped for this run.',
+      skippedNotice: 'The gating script did not pass (non-zero exit or timeout), so the agent was not run.',
+      // Gating-script result card, mirroring the chat's bash tool card.
+      scriptTitle: 'Gating script',
+      scriptExitCode: 'Exit code',
+      scriptStdout: 'Standard output',
+      scriptStderr: 'Standard error',
+      scriptNoOutput: 'No output',
+      scriptRunning: 'Script running…',
+      scriptDuration: 'Duration',
       confirmDeleteExecution: 'Delete this execution record?',
       executionDeleted: 'Execution record deleted',
       confirmDeleteAll: 'Clear all execution records? This cannot be undone.',
@@ -1460,7 +1505,6 @@ export default {
       shareExternal: 'Share',
       quoteInChat: 'Quote in chat',
       shareLink: 'Share link',
-      shareLinkActive: 'Share link (active)',
       details: 'Details',
       confirmDelete: 'Delete "{name}"?',
       exportHtml: 'Export HTML',
@@ -2151,12 +2195,18 @@ export default {
       wallpaperBingSyncedAt: 'Synced {date}',
       wallpaperBingNoImage: 'No image fetched yet',
       wallpaperBingFailed: 'Bing wallpaper sync failed — still using the last successful image',
+      wallpaperBingSaveToGallery: 'Add to gallery',
+      wallpaperBingSaving: 'Adding…',
+      wallpaperBingSaved: 'Bing wallpaper saved to gallery',
+      wallpaperBingSaveFailed: 'Failed to save Bing wallpaper to gallery',
       wallpaperGallery: 'Local gallery',
       wallpaperGalleryDesc: 'Upload several images at once, click a thumbnail to switch, use the × to delete. Images live in the server data directory and are shared across devices',
       wallpaperGalleryUpload: 'Upload images',
       wallpaperGalleryEmpty: 'Your gallery is empty — uploaded images will appear here',
       wallpaperGalleryCount: '{count} / {max} images',
       wallpaperGalleryDelete: 'Delete',
+      wallpaperApply: 'Apply',
+      wallpaperView: 'View full size',
       wallpaperGalleryLimit: 'The gallery holds up to {max} images — delete some first',
       wallpaperUploadPartial: 'Added {ok} image(s), {failed} failed',
       wallpaperUploadTooMany: 'Up to {max} images per upload',
@@ -3125,7 +3175,6 @@ export default {
   },
   sessionShare: {
     button: 'Share conversation',
-    buttonActive: 'Share conversation (shared)',
     title: 'Share conversation',
     explain: 'Create a public link. Anyone with it can read the selected conversation without logging in. Revoking the share invalidates the link immediately.',
     securityHint: 'The link needs no login. The conversation includes full reasoning and tool calls — check it for sensitive data first.',

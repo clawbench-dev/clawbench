@@ -400,9 +400,14 @@ const isACPTransport = computed(() => {
 // ACP 同步按钮的禁用状态与提示：空会话（无 ACP 会话）或当前会话运行中时不可同步。
 const currentSessionRunning = computed(() => !!props.currentSessionRunning)
 const sessionEmpty = computed(() => !props.messages || props.messages.length === 0)
-const acpSyncDisabled = computed(() => props.acpSyncing || currentSessionRunning.value || sessionEmpty.value)
+// A fork in flight also blocks syncing: the busy indicator (bar + sticky toast)
+// is a singleton, so the two must not run at once. `busyKind` is 'fork' while
+// the fork POST is pending.
+const forkBusy = computed(() => props.busyKind === 'fork')
+const acpSyncDisabled = computed(() => props.acpSyncing || currentSessionRunning.value || sessionEmpty.value || forkBusy.value)
 const acpSyncTitle = computed(() => {
   if (props.acpSyncing) return t('chat.actions.acpSyncSyncing')
+  if (forkBusy.value) return t('chat.busy.forking')
   if (currentSessionRunning.value) return t('chat.actions.acpSyncRunning')
   if (sessionEmpty.value) return t('chat.actions.acpSyncEmpty')
   return t('chat.actions.acpSync')
@@ -589,6 +594,10 @@ const props = defineProps({
   chatUnreadCount: Number,
   chatRunning: Boolean,
   acpSyncing: Boolean,
+  /** Which long action currently owns the panel-wide busy indicator, if any.
+   *  'fork' blocks the sync button (the indicator and its sticky toast are a
+   *  singleton, so the two actions must not overlap). */
+  busyKind: { type: String, default: null },
   currentModelId: String,
   currentModelName: String,
   currentModeName: String,
@@ -600,6 +609,7 @@ const props = defineProps({
 
 const emit = defineEmits([
   'send',
+  'btw',
   'cancel',
   'add-attached',
   'remove-attached',
@@ -966,8 +976,28 @@ const clawbenchCommands = computed(() => {
     { key: '/cb-chatsearch', label: '/cb-chatsearch', description: t('chat.clawbenchCommand.chatsearchDesc') },
     { key: '/cb-task', label: '/cb-task', description: t('chat.clawbenchCommand.taskDesc') },
     { key: '/cb-usage', label: '/cb-usage', description: t('chat.clawbenchCommand.usageDesc') },
+    { key: '/btw', label: '/btw', description: t('chat.clawbenchCommand.btwDesc') },
   ]
 })
+
+// ── /btw side question ──
+// "/btw <question>" is answered by ClawBench itself (the AI summary model) from
+// a compressed snapshot of the session — it never reaches the session's agent
+// and is never queued, so it stays available while the agent is busy.
+const BTW_PREFIX = '/btw'
+
+/** Returns the question text when text is a /btw invocation, else null. */
+function parseBtwCommand(text) {
+  const trimmed = (text || '').trim()
+  if (trimmed === BTW_PREFIX) return ''
+  if (trimmed.startsWith(BTW_PREFIX + ' ')) return trimmed.slice(BTW_PREFIX.length).trim()
+  return null
+}
+
+// The /btw request runs entirely in the background: the composer must stay
+// usable (the user can keep typing or ask another question) and shows no
+// loading state of its own. The wait is shown on the anchor in the message
+// list instead — see ChatMessageList's /btw anchor and BtwAnswerDrawer.
 
 // Slash candidates. Command names arrive inconsistently: CodeBuddy ACP reports
 // skills slashless ("mmx-cli"), while pre-scanned names may keep a leading "/".
@@ -975,12 +1005,18 @@ const clawbenchCommands = computed(() => {
 // the same command cannot appear twice.
 const slashCandidates = computed(() => {
   const items = []
+  // Canonical names ClawBench itself handles. Seeded BEFORE the agent commands
+  // are scanned so an agent command with the same name is dropped: ClawBench
+  // intercepts these before they can reach the agent, so showing the agent's
+  // copy would offer the user a command that cannot run (e.g. CodeBuddy ACP
+  // ships its own /btw, which must not shadow ClawBench's).
+  const seen = new Set()
   for (const cmd of clawbenchCommands.value) {
+    seen.add(cmd.key.startsWith('/') ? cmd.key.slice(1) : cmd.key)
     items.push({ key: cmd.key, label: cmd.label, description: cmd.description, source: 'clawbench' })
   }
   if (isACPTransport.value) {
     const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
-    const seen = new Set()
     for (const cmd of availableCommands.value) {
       const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
       if (!canonical || seen.has(canonical)) continue
@@ -1430,8 +1466,30 @@ function onTextareaKeydown(e) {
   // Default: Enter (without modifier) sends
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
-    emit('send', inputText.value.trim())
+    dispatchSend(inputText.value.trim())
   }
+}
+
+/**
+ * The single send path for every entry point (send button, Enter, quick menu).
+ *
+ * "/btw <question>" is intercepted here and emitted as its own event instead of
+ * 'send': the question is answered by ClawBench's summary model, not the
+ * session's agent, so it must not reach the normal send/queue pipeline. Routing
+ * every caller through this function keeps the three entry points from drifting
+ * (a /btw typed then submitted with the send button must behave identically to
+ * one submitted with Enter).
+ */
+function dispatchSend(text) {
+  const btwQuestion = parseBtwCommand(text)
+  if (btwQuestion !== null) {
+    // A bare "/btw" carries no question; leave it in the input so the user can
+    // finish typing rather than firing an empty request.
+    if (!btwQuestion) return
+    emit('btw', btwQuestion)
+    return
+  }
+  emit('send', text)
 }
 
 // Keyboard detection for iOS (no adjustResize) — activates visualViewport monitoring
@@ -1854,7 +1912,7 @@ function handleSendClick() {
     return
   }
   if (inputText.value.trim()) {
-    emit('send', inputText.value.trim())
+    dispatchSend(inputText.value.trim())
   } else if (props.attachedFiles.length > 0 || quoteItems.value.length > 0) {
     emit('send', '')
   } else {
@@ -1865,7 +1923,7 @@ function handleSendClick() {
 // — Quick-send actions →
 function handleQuickSendClick(item) {
   showQuickMenu.value = false
-  emit('send', item.command)
+  dispatchSend(item.command)
 }
 
 function handleQuickSendInject(item) {
@@ -2369,6 +2427,11 @@ defineExpose({
 
 /* Cancelling state of the stop button — spinner inside the danger-tinted pill */
 .chat-stop-btn .stop-spinner {
+  --li-color: currentColor;
+}
+
+/* /btw side question in flight — spinner replaces the send/queue glyph */
+.chat-send-btn .send-btn-spinner {
   --li-color: currentColor;
 }
 

@@ -70,6 +70,19 @@ Event-triggered tasks (trigger_mode=event):
 - Before creating one, call "GET /api/forge/binding" and confirm "binding" is non-null — an event task only fires for a repository its project is bound to. If it is null, tell the user to bind a repository first rather than creating a task that will never run.
 - Note that repeat_mode / max_runs do not constrain an event task, and that the event context is prepended to the prompt automatically; write the prompt as the instruction to act on that context.
 
+Gating script (cron tasks only — the "script" field):
+- Optional. It is a precondition gate that runs before the agent, with the project directory as its working directory. Exit code 0 lets the run proceed and the agent is called; any non-zero exit (or a timeout) closes the gate and the run is skipped — no session is created and no notification is sent.
+- Output is data, not a control signal: a script may print to stdout/stderr without affecting whether the agent runs.
+- Use it when the user wants to avoid spending tokens on runs where nothing changed (e.g. "only run if there are new commits"). Leave it empty otherwise.
+- The prompt may reference the script's result through these template variables, written literally with double braces and substituted before the agent runs:
+  {{code}} = the script's exit code
+  {{stdout}} = the script's standard output
+  {{stderr}} = the script's standard error
+  {{output}} = the merged stdout + stderr
+  Example prompt: "Here is the script output: {{output}} — summarize it."
+- script_timeout is the timeout in seconds; 0 means the server default (300).
+- The script is ignored for an event task.
+
 After creating a task, you MUST include in your response: <scheduled-task id="task-id" />
 
 Rules:

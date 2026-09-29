@@ -10,6 +10,7 @@ import (
 	"clawbench/internal/ws"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // --- triggerChatRecommendation error paths ---
@@ -78,6 +79,36 @@ func TestTriggerChatRecommendation_NilManager(t *testing.T) {
 	})
 }
 
+// --- SaveChatRecommendation ---
+
+// TestSaveChatRecommendation_StoresProjectID pins the column type: project_id is
+// an INTEGER, and binding the project *path* to it stores the raw string, because
+// SQLite's INTEGER affinity does not convert non-numeric text. The row then
+// belongs to no project — invisible to any project-scoped query, and corrupt for
+// any future join.
+func TestSaveChatRecommendation_StoresProjectID(t *testing.T) {
+	db, teardown := setupTestDBForChatSummary(t)
+	defer teardown()
+
+	SaveChatRecommendation("sess-save-id", "/test", 42, "do the thing")
+
+	// typeof() is the point: an integer column holding a path reads back as
+	// 'text', which a plain Scan into int64 would have hidden.
+	var storedType string
+	require.NoError(t, db.QueryRow(
+		"SELECT typeof(project_id) FROM chat_recommendations WHERE session_id = ?", "sess-save-id",
+	).Scan(&storedType))
+	assert.Equal(t, "integer", storedType, "project_id must hold an id, not the path string")
+
+	wantID, err := ProjectIDForPath("/test")
+	require.NoError(t, err)
+	var gotID int64
+	require.NoError(t, db.QueryRow(
+		"SELECT project_id FROM chat_recommendations WHERE session_id = ?", "sess-save-id",
+	).Scan(&gotID))
+	assert.Equal(t, wantID, gotID, "the recommendation must be attributed to the project's id")
+}
+
 // --- SaveChatRecommendation error path ---
 
 func TestSaveChatRecommendation_DBError(t *testing.T) {
@@ -108,12 +139,12 @@ func TestRecentConversation_SkipsOtherRolesAndEmptyText(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-rc-skip"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (900, '/test', 'user', 'hello', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (901, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"reply\"}]}', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (902, '/test', 'system', 'sysmsg', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (903, '/test', 'user', '   ', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (904, '/test', 'user', 'world', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (900, 1, 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (901, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"reply\"}]}', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (902, 1, 'system', 'sysmsg', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (903, 1, 'user', '   ', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (904, 1, 'user', 'world', ?, 0)", sessionID)
 
 	// system role (902) and empty-text user (903) are skipped; remaining
 	// messages returned in chronological order.
@@ -133,10 +164,10 @@ func TestRecentConversation_PlainTextAssistantFallback(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-rc-plain"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (910, '/test', 'user', 'hi', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (910, 1, 'user', 'hi', ?, 0)", sessionID)
 	// Plain-text assistant content (no blocks JSON) → ExtractPlainText fallback.
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (911, '/test', 'assistant', 'plain reply', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (911, 1, 'assistant', 'plain reply', ?, 0)", sessionID)
 
 	got := recentConversation(context.Background(), sessionID, 5)
 	assert.Equal(t, []string{"hi", "plain reply"}, got)
@@ -147,11 +178,11 @@ func TestRecentConversation_BrokenJSONAssistantFallback(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-rc-broken"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (920, '/test', 'user', 'hi', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (920, 1, 'user', 'hi', ?, 0)", sessionID)
 	// Broken blocks JSON → parseMessageBlocks fails → rawAssistantBlocks returns
 	// the DB content and the fallback ExtractPlainText keeps the original text.
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (921, '/test', 'assistant', '{\"blocks\": broken', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (921, 1, 'assistant', '{\"blocks\": broken', ?, 0)", sessionID)
 
 	got := recentConversation(context.Background(), sessionID, 5)
 	assert.Equal(t, []string{"hi", "{\"blocks\": broken"}, got)

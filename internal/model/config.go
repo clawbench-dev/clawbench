@@ -101,7 +101,8 @@ type Config struct {
 		// of its user messages, at the same moment the local title is written
 		// (first message, or first message after a fork/continue). Falls back to
 		// the local title when the shared ai_summary model is unconfigured or
-		// the call fails. (default: false)
+		// the call fails — which is why it can default ON: without the model it
+		// is simply inert. (default: true)
 		AutoRenameEnabled bool `yaml:"auto_rename_enabled"`
 	} `yaml:"chat"`
 	Session struct {

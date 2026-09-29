@@ -28,6 +28,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { CalendarClock } from 'lucide-vue-next'
 import { humanizeCron, repeatLabel, formatDateTimeWithYear } from '@/utils/format'
+import '@/assets/task-overview-card.css'
 
 const { t } = useI18n()
 
@@ -43,27 +44,8 @@ const nextRunAt = computed(() => props.task.nextRunAt as string | undefined)
 </script>
 
 <style scoped>
-/* Card chrome is owned by the parent (.overview-card in TaskOverviewTab's
-   non-scoped global styles) so both trigger variants stay identical. */
-.overview-card {
-  background: var(--bg-secondary, #f8f9fa);
-  border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
-  padding: var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.card-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #1a1a1a);
-  margin: 0;
-}
-.card-icon { color: var(--text-muted, #999); }
+/* Card chrome (.overview-card / .card-title / .card-icon) is global — see
+   assets/task-overview-card.css. Only this card's own rows live here. */
 .overview-divider {
   height: 1px;
   background: var(--border-color, #e5e5e5);

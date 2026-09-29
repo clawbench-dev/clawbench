@@ -61,34 +61,78 @@
       - Optimistic push: 'db-local-{ts}' (stable, replaced by DB ID on loadHistory)
       - Pending messages (no id): 'local-{index}' (unstable, but temporary)
     -->
-    <ChatMessageItem
-      v-for="(msg, i) in messages"
-      :key="msg.id ? 'db-' + msg.id : 'local-' + i"
-      :msg="msg"
-      :index="i"
-      :expandedTools="expandedTools"
-      :blockTasks="blockTasks"
-      :blockAskQuestions="blockAskQuestions"
-      :agents="agents"
-      :staticBlockCache="staticBlockCache"
-      :active="active"
-      :isLastAssistant="isLastAssistant(msg, i)"
-      :isLastMessage="i === messages.length - 1"
-      @toggle-tool="$emit('toggle-tool', $event)"
-      @show-tool-detail="$emit('show-tool-detail', $event)"
-      @show-metadata="$emit('show-metadata', $event)"
-      @file-tag-click="$emit('file-tag-click', $event)"
-      @quote-message="$emit('quote-message', $event)"
-      @task-card-click="$emit('task-card-click', $event)"
-      @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
-      @render-flush="emit('render-flush')"
-      @toggle-summary="$emit('toggle-summary', $event)"
-      @ensure-content="$emit('ensure-content', $event)"
-      @resume-session="$emit('resume-session', $event)"
-      @reset-session="$emit('reset-session', $event)"
-      @fork-from-message="$emit('fork-from-message', $event)"
-      @rewind-from-message="$emit('rewind-from-message', $event)"
-    />
+    <!-- Anchor for questions asked before the session had any message
+         (anchorMessageId 0): there is no message to sit after, so it leads the
+         list. -->
+    <button
+      v-if="(btwAnchors?.['0']?.length || 0) > 0"
+      class="btw-anchor btw-anchor-top"
+      :class="{ 'btw-anchor--pending': anchorKeyPending(btwAnchors, '0') }"
+      :title="anchorKeyPending(btwAnchors, '0') ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+      :aria-label="anchorKeyPending(btwAnchors, '0') ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+      :aria-busy="anchorKeyPending(btwAnchors, '0')"
+      @click="$emit('open-btw', '0')"
+    >
+      <!-- The pending state must NOT resize the pill, so the visible label and
+           its footprint stay identical: only the 14px icon is swapped for an
+           equally-sized spinner, and the wait is described via title/aria
+           (which do not affect layout). -->
+      <LoadingIndicator v-if="anchorKeyPending(btwAnchors, '0')" size="sm" inline class="btw-anchor-spinner" />
+      <MessageCircleQuestion v-else :size="14" />
+      <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
+      <span v-if="btwAnchors['0'].length > 1" class="btw-anchor-count">{{ btwAnchors['0'].length }}</span>
+    </button>
+
+    <template v-for="(msg, i) in messages" :key="msg.id ? 'db-' + msg.id : 'local-' + i">
+      <ChatMessageItem
+        :msg="msg"
+        :index="i"
+        :expandedTools="expandedTools"
+        :blockTasks="blockTasks"
+        :blockAskQuestions="blockAskQuestions"
+        :agents="agents"
+        :staticBlockCache="staticBlockCache"
+        :active="active"
+        :isLastAssistant="isLastAssistant(msg, i)"
+        :isLastMessage="i === messages.length - 1"
+        :forkingMessageId="forkingMessageId"
+        @toggle-tool="$emit('toggle-tool', $event)"
+        @show-tool-detail="$emit('show-tool-detail', $event)"
+        @show-metadata="$emit('show-metadata', $event)"
+        @file-tag-click="$emit('file-tag-click', $event)"
+        @quote-message="$emit('quote-message', $event)"
+        @task-card-click="$emit('task-card-click', $event)"
+        @send-message="(text, cardKey) => $emit('send-message', text, cardKey)"
+        @render-flush="emit('render-flush')"
+        @toggle-summary="$emit('toggle-summary', $event)"
+        @ensure-content="$emit('ensure-content', $event)"
+        @resume-session="$emit('resume-session', $event)"
+        @reset-session="$emit('reset-session', $event)"
+        @fork-from-message="$emit('fork-from-message', $event)"
+        @rewind-from-message="$emit('rewind-from-message', $event)"
+      />
+      <!-- /btw anchor: marks where the user asked a side question. Sits AFTER
+           its message so it reads as "here I asked something". One anchor per
+           position even when several questions were asked there; the count says
+           how many, and the drawer lists them all. -->
+      <button
+        v-if="anchorCountFor(msg) > 0"
+        class="btw-anchor"
+        :class="{ 'btw-anchor--pending': anchorPendingFor(msg) }"
+        :title="anchorPendingFor(msg) ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+        :aria-label="anchorPendingFor(msg) ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+        :aria-busy="anchorPendingFor(msg)"
+        @click="$emit('open-btw', anchorKeyFor(msg))"
+      >
+        <!-- Same label and icon footprint as the resting state, so the pill does
+             not resize when a question starts or finishes; the wait is described
+             via title/aria, which do not affect layout. -->
+        <LoadingIndicator v-if="anchorPendingFor(msg)" size="sm" inline class="btw-anchor-spinner" />
+        <MessageCircleQuestion v-else :size="14" />
+        <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
+        <span v-if="anchorCountFor(msg) > 1" class="btw-anchor-count">{{ anchorCountFor(msg) }}</span>
+      </button>
+    </template>
     </div>
   </div>
 
@@ -123,6 +167,7 @@
     :active-id="nearestIndexMsgId"
     :loading="loadingIndex"
     :jumping="loadingTarget"
+    :has-btw="hasBtwAnchor"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
   />
@@ -147,7 +192,7 @@
 <script setup>
 import { ref, nextTick, inject, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings } from 'lucide-vue-next'
+import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings, MessageCircleQuestion } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -163,6 +208,7 @@ import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } 
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
+import { anchorCount, anchorPending, anchorKeyPending, messageAnchorKey } from '@/utils/btwAnchors.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
@@ -193,9 +239,16 @@ const props = defineProps({
   totalMessages: { type: Number, default: 0 },
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
+  /** /btw records for this session, keyed by anchor message id. Each value is
+   *  the list of questions asked after that message. Built by the parent from
+   *  the /btw list endpoint; absent means no anchors to draw. */
+  btwAnchors: { type: Object, default: () => ({}) },
+  /** Message id whose fork button is mid-flight (spinner instead of the icon).
+   *  Null when no fork is running. */
+  forkingMessageId: { type: [Number, String], default: null },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
@@ -209,6 +262,25 @@ const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 
 // as summaries). Identity comparison against the full ordered list.
 function isLastAssistant(msg, _i) {
   return isLastAssistantMessage(props.messages, msg)
+}
+
+/** Number of /btw questions asked after this message (0 = no anchor). */
+function anchorCountFor(msg) {
+  return anchorCount(props.btwAnchors, msg)
+}
+
+/**
+ * The /btw anchor key for a message — the id its records are grouped under.
+ * Empty for a message with no settled numeric id (nothing can be anchored to
+ * it). Delegates to the util so the rule has one definition.
+ */
+function anchorKeyFor(msg) {
+  return messageAnchorKey(msg)
+}
+
+/** Whether any question anchored to this message is still being answered. */
+function anchorPendingFor(msg) {
+  return anchorPending(props.btwAnchors, msg)
 }
 
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -1008,6 +1080,7 @@ const {
   jumpToUserMessage,
   jumpToAdjacentMessage,
   scrollToMessage: scrollToMessageUserMsg,
+  hasBtw: hasBtwAnchor,
 } = useUserMsgIndex({
   getMessages: () => props.messages,
   getCurrentSessionId: () => props.currentSessionId || '',
@@ -1018,6 +1091,9 @@ const {
   hideScrollFab,
   // Defer the flash until the smooth scroll settles (see queueMessageHighlight).
   highlightMessage: (el) => queueMessageHighlight(el),
+  // The conversation index marks rows whose message has a /btw side question,
+  // using the same anchor map (and id rule) as the chat-area markers.
+  getBtwAnchors: () => props.btwAnchors || {},
   setProgrammaticScrolling: (val) => { setProgrammatic(val) },
   setAtBottom: (val) => {
     isAtBottom.value = val
@@ -1264,6 +1340,77 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
+}
+
+/* ── /btw anchor ──
+   A small pill marking "here I asked a side question". It is a sibling of the
+   message rows (a direct child of .chat-messages-list), so it participates in
+   the list's flex gap and inherits its own row. align-self keeps it hugging the
+   start edge rather than stretching like the message rows. */
+.btw-anchor {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: flex-start;
+  /* The message list itself has no horizontal padding (messages carry their own
+     inset inside .chat-message), so without this the pill would sit flush
+     against the panel edge. Match the plan panel's scroll body inset
+     (TaskListPage .task-list-body uses var(--space-4)) so the anchor lines up
+     with that panel's content. */
+  margin-left: var(--space-4);
+  /* Pull up into the gap the list adds before the NEXT message, so the anchor
+     reads as attached to the message above it rather than floating between. */
+  margin-top: calc(var(--space-8) * -1 + var(--space-3));
+  padding: var(--space-1) var(--space-4);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-full, 999px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.6;
+  cursor: pointer;
+  transition: color var(--duration-fast) ease, border-color var(--duration-fast) ease;
+}
+
+.btw-anchor:hover,
+.btw-anchor:focus-visible {
+  color: var(--accent-color, #0066cc);
+  border-color: var(--accent-color, #0066cc);
+}
+
+/* The "asked before any message" anchor has no message above it, so it keeps
+   the list's normal top gap. */
+.btw-anchor-top {
+  margin-top: 0;
+}
+
+/* RTL flips the reading edge: the inset must follow it. */
+[dir='rtl'] .btw-anchor {
+  margin-left: 0;
+  margin-right: var(--space-4);
+}
+
+.btw-anchor-count {
+  min-width: 16px;
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-full, 999px);
+  background: var(--accent-color, #0066cc);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+/* In-progress: the question was just asked and is still being answered. The
+   wait is shown HERE (not in the composer) so the input stays usable. A solid
+   accent border reads as "active" next to the dashed resting state. */
+.btw-anchor--pending {
+  border-style: solid;
+  border-color: var(--accent-color, #0066cc);
+  color: var(--accent-color, #0066cc);
+}
+
+.btw-anchor-spinner {
+  flex-shrink: 0;
 }
 
 .chat-empty {

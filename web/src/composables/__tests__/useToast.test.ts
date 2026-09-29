@@ -105,6 +105,27 @@ describe('useToast', () => {
     expect(toast.type.value).toBe('error')
   })
 
+  // 'loading' is the in-flight type: the notification renders a spinner instead
+  // of the icon and callers pair it with duration: 0 so it stays until a real
+  // result toast replaces it (fork / ACP sync).
+  it('show() with loading type', () => {
+    const toast = useToast()
+    toast.show('Forking session… 3s', { type: 'loading', duration: 0 })
+    expect(toast.type.value).toBe('loading')
+    expect(toast.visible.value).toBe(true)
+  })
+
+  it('a result toast replaces a sticky loading toast', () => {
+    const toast = useToast()
+    toast.show('Forking session… 5s', { type: 'loading', duration: 0 })
+    // The caller's own success toast overwrites the sticky one — no manual
+    // dismiss needed, and the loading toast must not linger alongside it.
+    toast.show('Session forked (3/20)', { icon: '🔀', type: 'success', duration: 1500 })
+
+    expect(toast.type.value).toBe('success')
+    expect(toast.message.value).toBe('Session forked (3/20)')
+  })
+
   it('dismiss() clears the auto-dismiss timer', () => {
     const toast = useToast()
     toast.show('Test', { duration: 5000 })

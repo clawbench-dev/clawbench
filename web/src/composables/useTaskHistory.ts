@@ -31,6 +31,8 @@ interface TaskExecution {
   /** Forge event that triggered this run, when it was event-triggered. */
   eventUrl?: string
   eventSummary?: string
+  /** Gating script result, present only when the task has a script. */
+  script?: { exitCode: number; stdout: string; stderr: string; durationMs: number }
   /**
    * Running-execution phase: "script" (the optional pre-AI script) or "ai"
    * (the AI turn). Only present on entries from the in-memory running map

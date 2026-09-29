@@ -188,15 +188,15 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	_, err = db0.Exec(`CREATE TABLE IF NOT EXISTS chat_recommendations (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id TEXT NOT NULL,
-		project_path TEXT NOT NULL DEFAULT '',
+		project_id INTEGER NOT NULL DEFAULT 0,
 		message_id INTEGER NOT NULL DEFAULT 0,
 		recommendation TEXT NOT NULL,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	assert.NoError(t, err)
-	_, err = db0.Exec("INSERT INTO chat_recommendations (session_id, project_path, message_id, recommendation) VALUES (?, '/project', ?, 'follow up on cut')", sessID, asst2ID)
+	_, err = db0.Exec("INSERT INTO chat_recommendations (session_id, project_id, message_id, recommendation) VALUES (?, 1, ?, 'follow up on cut')", sessID, asst2ID)
 	assert.NoError(t, err)
-	_, err = db0.Exec("INSERT INTO chat_recommendations (session_id, project_path, message_id, recommendation) VALUES (?, '/project', ?, 'follow up on keep')", sessID, asst1ID)
+	_, err = db0.Exec("INSERT INTO chat_recommendations (session_id, project_id, message_id, recommendation) VALUES (?, 1, ?, 'follow up on keep')", sessID, asst1ID)
 	assert.NoError(t, err)
 
 	res, err := service.TruncateSessionAfterMessage(sessID, asst1ID)

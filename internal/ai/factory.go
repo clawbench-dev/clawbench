@@ -89,7 +89,7 @@ func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
 // to CLI backend gracefully instead of erroring out.
 func NewBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
 	if agentID != "" {
-		if agent, ok := model.Agents[agentID]; ok {
+		if agent := model.GetAgent(agentID); agent != nil {
 			effectiveTransport := transportOverride
 			if effectiveTransport == "" {
 				effectiveTransport = agent.Transport

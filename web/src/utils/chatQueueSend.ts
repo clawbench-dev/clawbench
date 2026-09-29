@@ -18,7 +18,7 @@
 
 import { dedupeFiles, type FileEntry } from '@/utils/fileAttachmentUtils'
 import { trackInFlightSend, untrackInFlightSend } from '@/utils/chatStreamUtils'
-import { addQueued, removeQueued } from '@/composables/useMessageQueue.ts'
+import { addQueued, removeQueued, markSendCommitted } from '@/composables/useMessageQueue.ts'
 
 /** Generate a unique queue ID for matching a queue entry to backend events. */
 export function generateQueueId(): string {
@@ -85,6 +85,14 @@ export async function enqueueAndMaybeStart(opts: EnqueueAndMaybeStartOptions): P
     removeQueued(opts.sessionId, queueId)
     throw new Error('enqueue failed')
   }
+
+  // The POST resolved, so the backend row is committed. From this generation
+  // onward, a queue snapshot that lacks this entry is authoritative — its row
+  // was drained/cancelled — and must drop it (see syncFromHistory). Snapshots
+  // requested BEFORE this point may predate the commit and must still preserve
+  // the optimistic entry, which is why the mark is recorded here rather than at
+  // track time.
+  markSendCommitted(queueId)
 
   return queueId
 }

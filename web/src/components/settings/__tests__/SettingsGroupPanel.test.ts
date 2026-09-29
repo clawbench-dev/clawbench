@@ -504,14 +504,14 @@ describe('SettingsGroupPanel', () => {
     it('checkbox reflects localValues state', () => {
       localValues['terminal.enabled'] = true
       const wrapper = mountPanel(makeTerminalConfig())
-      const checkbox = wrapper.find('.group-panel__switch-input')
+      const checkbox = wrapper.find('.settings-item__switch-input')
       expect((checkbox.element as HTMLInputElement).checked).toBe(true)
     })
 
     it('toggling enable updates localValues', async () => {
       localValues['terminal.enabled'] = false
       const wrapper = mountPanel(makeTerminalConfig())
-      const checkbox = wrapper.find('.group-panel__switch-input')
+      const checkbox = wrapper.find('.settings-item__switch-input')
       await checkbox.setValue(true)
       expect(localValues['terminal.enabled']).toBe(true)
     })

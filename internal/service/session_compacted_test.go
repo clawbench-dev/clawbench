@@ -29,20 +29,28 @@ func TestInitDB_MigratesSessionCompactedColumn(t *testing.T) {
 	// Old schema: chat_sessions WITHOUT compacted (and without every column the
 	// later migrations add, so InitDB has real work to do).
 	_, err = oldDB.Exec(`
-		CREATE TABLE chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 	`)
 	require.NoError(t, err)
-	_, err = oldDB.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('legacy', '/p', 'codebuddy', 'T')`)
+	_, err = oldDB.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('legacy', 1, 'codebuddy', 'T')`)
 	require.NoError(t, err)
 	require.NoError(t, oldDB.Close())
 
@@ -174,7 +182,7 @@ func TestMarkAndConsumeSessionCompacted(t *testing.T) {
 		dbRead.Close()
 	}()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', '/p', 'codebuddy', 'T')`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s1', 1, 'codebuddy', 'T')`)
 	require.NoError(t, err)
 
 	// Fresh session: nothing to consume.
@@ -208,7 +216,7 @@ func TestConsumeSessionCompacted_ConcurrentConsumersOnlyOneWins(t *testing.T) {
 		dbRead.Close()
 	}()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('race', '/p', 'codebuddy', 'T')`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('race', 1, 'codebuddy', 'T')`)
 	require.NoError(t, err)
 	MarkSessionCompacted("race")
 

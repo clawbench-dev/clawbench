@@ -1,0 +1,96 @@
+/**
+ * Shared card chrome for the task detail page (overview tab).
+ *
+ * The detail page stacks several cards — the prompt preview, the schedule /
+ * event trigger card, the gating script card and the event-context card. They
+ * must look identical, and they previously each re-declared the same
+ * `.overview-card` / `.card-title` / `.prompt-toggle-btn` block in their own
+ * SFC. That is why the gating script card shipped with no chrome at all: it
+ * reused the class names but its own `<style scoped>` never declared them, and
+ * scoped rules from the parent (TaskOverviewTab) do not reach a child
+ * component's root.
+ *
+ * Global on purpose: the card primitive is shared across components, so a
+ * scoped copy would only style its own component and silently diverge. See
+ * docs/spec/client/design-guide.md red line 2.
+ *
+ * Consumers: TaskOverviewTab, TaskScheduleCard, TaskEventCard, TaskScriptCard.
+ * They keep only their own layout (e.g. the prompt body), never this shape.
+ */
+
+/* The card shell: secondary surface, hairline border, square corners (the
+   design language of this page is deliberately radius 0). */
+.overview-card {
+  background: var(--bg-secondary, #f8f9fa);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: 0;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* Card header row: icon + title + optional trailing control. */
+.card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1a1a1a);
+  margin: 0;
+}
+
+.card-icon {
+  color: var(--text-muted, #999);
+}
+
+/* Title text takes the slack so a trailing chevron sits hard right. */
+.card-title-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A clickable card header (whole row toggles the body). */
+.card-title.is-collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Collapse chevron button: a bare 22px hit target, no chrome of its own. */
+.card-toggle-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-slow), color var(--duration-slow);
+}
+
+@media (hover: hover) {
+  .card-toggle-btn:hover {
+    background: var(--bg-tertiary, #eef1f4);
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+
+.card-toggle-btn:active {
+  transform: scale(0.92);
+}
+
+/* Chevron rotation. The icon is ChevronDown, which reads as "expanded";
+   rotating it -90deg points it right, the conventional "collapsed" state. */
+.card-chevron {
+  transition: transform var(--duration-slow) ease;
+}
+
+.card-chevron.is-collapsed {
+  transform: rotate(-90deg);
+}

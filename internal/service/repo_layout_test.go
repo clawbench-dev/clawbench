@@ -19,18 +19,7 @@ import (
 // symlinked ancestor.
 func canon(t *testing.T, p string) string {
 	t.Helper()
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		abs = p
-	}
-	abs = filepath.Clean(abs)
-	resolved, err := filepath.EvalSymlinks(abs)
-	if err != nil {
-		// A path that does not exist (e.g. a dangling gitdir target) is
-		// returned cleaned by production; mirror that.
-		return abs
-	}
-	return resolved
+	return service.NormalizeProjectPath(p)
 }
 
 // makeRepo creates a normal clone layout: <dir>/.git as a directory.

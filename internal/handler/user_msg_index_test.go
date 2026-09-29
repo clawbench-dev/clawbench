@@ -21,11 +21,11 @@ func TestServeConversationIndex_Basic(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert some messages
-	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', 'Hello', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', 'Hello', ?, 'claude', 0)`, service.ProjectIDForTest(t, env.ProjectDir), sessionID)
 	require.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', '{"blocks":[{"type":"text","text":"Hi there"}]}', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', '{"blocks":[{"type":"text","text":"Hi there"}]}', ?, 'claude', 0)`, service.ProjectIDForTest(t, env.ProjectDir), sessionID)
 	require.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', 'How are you?', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', 'How are you?', ?, 'claude', 0)`, service.ProjectIDForTest(t, env.ProjectDir), sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)
@@ -135,7 +135,7 @@ func TestServeConversationIndex_WithFiles(t *testing.T) {
 	require.NoError(t, err)
 
 	// Insert a user message with files
-	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', 'Check this', '[{"path":"/src/main.go","isDir":false}]', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = service.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, 'user', 'Check this', '[{"path":"/src/main.go","isDir":false}]', ?, 'claude', 0)`, service.ProjectIDForTest(t, env.ProjectDir), sessionID)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat/user-messages?session_id="+sessionID, nil)

@@ -8,21 +8,36 @@ ClawBench 支持零配置启动：安装 CLI 工具后直接运行 `./clawbench`
 
 ```mermaid
 flowchart TD
-    A[服务启动 main.go] --> B[InitDB 迁移<br/>丢弃旧的拼接提示词列]
-    B --> C[model.RefreshAgents<br/>单次调用完成全部工作]
+    A[服务启动 main.go] --> B[InitDB 迁移<br/>含 schema_migrations 台账]
+    B --> C[model.RefreshAgents<br/>SkipDiscovery: true 同步]
     C --> C1[1. 探测 PATH 中的 CLI<br/>插入新 agent + 同步 acp_command/transport]
     C1 --> C2[2. 加载 config/agents/*.yaml]
-    C2 --> C3[3. 各后端发现模型并落库<br/>仅更新自动管理的 agent]
-    C3 --> C4[4. 从 DB 重载内存<br/>填充运行时字段 + 组装 system prompt]
-    C4 --> D[系统就绪]
+    C2 --> C3[3. 从 DB 重载内存<br/>填充运行时字段 + 组装 system prompt]
+    C3 --> D[系统就绪<br/>立即接受请求]
+    D --> E[model.StartModelDiscoveryAsync<br/>后台 goroutine]
+    E --> E1[各后端发现模型并落库<br/>仅更新自动管理的 agent]
+    E1 --> E2[加锁重载内存<br/>handler.WithConfigLock]
+    E2 --> E3[广播 WS agents_updated]
+    E3 --> F[前端 loadAgents:true 重拉]
 ```
 
-`RefreshAgents`（`internal/model/refresh.go`）是**唯一**的发现入口，启动与
-`POST /api/agents/rescan` 都调用它。它取代了原先的五步串行流程
+`RefreshAgents`（`internal/model/refresh.go`）是**同步**入口：只做 CLI 探测、
+YAML 加载与内存重载（约 0.1s，CLI 探测已并行），启动与
+`POST /api/agents/rescan` 都调用它。模型探测会 fork 各家 CLI（antigravity
+未登录时挂满超时，串行合计约 18s），因此被拆到
+`StartModelDiscoveryAsync`（同一文件）在后台执行：探测 → 落库 → 加锁重载内存
+→ 回调，由 `cmd/server/main.go` 在回调里广播 WS 事件 `agents_updated`。
+启动必须先同步加载 agent，因为默认 agent 选择与
+`scheduler.LoadTasksFromDB`（其会校验 `task.AgentID` 是否存在，未知 agent
+会静默跳过 cron 注册）都依赖 `model.Agent` 已就绪。
+
+这套双入口取代了原先的五步串行流程
 （`SyncDiscoverAgentsDB` → `LoadYamlAgents` → `SyncDiscoverModels` →
 `MergeDiscoveredDataDB` → `AsyncRefreshModelCache`）：
 那套流程每一步都各自查库、各自重载内存，同一批发现探测在一次启动中跑两遍，
-且"加载 agent 到内存并组装 prompt"有两份独立实现。
+且"加载 agent 到内存并组装 prompt"有两份独立实现。历史遗留的
+`AsyncRefreshModelCache` 当初因"同步与异步各探一遍且都不缓存"被移除；现在
+`DiscoveryCache`（TTL 5 分钟）已去重，该反对理由不再成立。
 
 ### 模型来源与解析
 
@@ -76,7 +91,7 @@ flowchart TD
 
   四者形状必须一致：此前 `/api/ai/chat` 只返回原始 ACP 列表，任何只消费 `models` 的客户端都会丢掉全部 CLI 模型。当 agent 没有 CLI 列表可合并时，`resolvedModels` 为空但 `models` 仍返回——整条列表丢失比未合并且更糟。`refresh-models` 曾只返回原始 CLI 发现结果，于是在 ACP 传输下点一次刷新就会把「agent 实际能跑的模型」替换成 CLI 骨架（含运行时不支持的条目）。
 - **ACP 模型持久化**：ACP 上报的模型列表写入 `agents.acp_available_models`，因此重启后仍然可见。此前它只存在于内存，导致同一 agent 的模型列表在重启前后跳变（首个 ACP 会话前是 CLI 列表，之后是 ACP 列表）
-- **后台模型刷新**：`AsyncRefreshModelCache` 已移除；模型列表随启动时的 `RefreshAgents` 一次性发现并落库，之后由 `POST /api/agents/rescan` 或单个 agent 的 `refresh-models` 显式刷新
+- **后台模型刷新**：模型探测在启动后台执行（`model.StartModelDiscoveryAsync`，`internal/model/refresh.go`）。完成后服务端广播 WS 事件 `agents_updated`，前端 `useAgents` 收到后强制重拉 `GET /api/agents`。手动刷新仍走 `POST /api/agents/rescan`（失效缓存、重跑完整发现）或单个 agent 的 `POST /api/agents/{id}/refresh-models`（只重探该 agent 的模型）
 - **用户配置优先**：用户手动定义的模型列表不会被自动发现覆盖（`models_auto_detected = 0` 且列表非空即受保护）；自动管理的 agent 保持其自动管理状态，该标记不是单向闩锁
 - **运行时连通性与升级**：前端 `useConnectivityTest` 检查服务连通性；`useUpgrade` 调用 `/api/upgrade/check`、`/api/upgrade/start` 和 `/api/upgrade/status` 完成版本检查、启动升级和进度查询，三个端点均要求认证；`useSystemResources` 经 WS 的 `system_resources` 推送获取 CPU、内存、磁盘、网络和负载指标（用 `metrics_preference` 声明速率，服务端按需采样），用于设置页资源监控（详见[系统资源监控](../features/system-resources.md)）
 - **供应商注册表**：内置 27 个 LLM 供应商规格（含 minimax / minimax-cn）。供应商规格 `ProviderSpec` 只描述 Chat/Models 端点与 API 格式，不含模型清单；Agent 的模型列表由后端通过 `RegisterModelSource()` 动态发现，或由用户手动定义。运行时可通过 `POST /api/agents/rescan` 重新扫描 PATH
@@ -85,7 +100,7 @@ flowchart TD
 - **TLS 证书自动发现**：HTTPS 启用方式从手动配置 `enabled`/`cert_file`/`key_file` 改为自动发现证书目录（`tls.cert_dir`，默认 `<DataDir>/config/tls`）。`ResolveTLSCerts` 扫描目录中的证书文件，按优先级匹配：Let's Encrypt 风格（`fullchain.pem` + `privkey.pem`）→ 通用（`cert.pem` + `key.pem`）→ 合并文件（`combined.pem`）。找到有效证书对即启用 HTTPS，否则回退 HTTP。旧配置 `tls.enabled`/`tls.cert_file`/`tls.key_file` 仍可读取并自动迁移到 `cert_dir`
 - **配置连通性测试**：`POST /api/config/test` 端点对设置表单中的各服务做即时连通性验证。支持 8 个类别：FRP、文本摘要、语音摘要、RAG、钉钉、飞书、端口映射、TTS。测试使用表单当前值（可能未保存），无需先保存配置即可验证连接性——降低配置试错成本
 - **多实例 Cookie 隔离**：`ScopedCookieName()`（`internal/model/config.go`）为非默认端口实例的 Cookie 名添加前缀——端口 20300 的 `clawbench_session` 变为 `cb20300_clawbench_session`。默认端口 20000 保持原名称（向后兼容）。前端 `scopedCookieKey()`（`web/src/i18n/index.ts`）镜像相同逻辑。不同端口实例可安全共存于同一浏览器
-- **版本化 Schema 迁移**：数据库迁移采用列检测模式（`internal/service/database.go`）——每条迁移通过 `pragma_table_info('table')` 查询列是否已存在，不存在才执行 `ALTER TABLE`。此方式天然幂等，无需 `schema_migrations` 版本表或 dirty flag。`InitDB()` 先用 `CREATE TABLE IF NOT EXISTS` 创建最新表结构，再依次运行增量迁移（如 `summary` 列、`transport` 列、`custom_system_prompt` 列、ACP 相关列含 `acp_available_models`、`indexed` 列用于 RAG 索引进度跟踪等）。数据迁移由独立函数处理（`MigrateMetadataFromContent`、`MigrateTaskExecutionSummaries`、`MigrateToolCallsFromContent`）
+- **Schema 迁移双机制**：加列 / 建索引类迁移采用列检测模式（`internal/service/database.go`）——每条迁移通过 `pragma_table_info('table')` 或 `sqlite_master` 查询是否已存在，不存在才执行 `ALTER TABLE` / `CREATE INDEX`。此方式天然幂等，无需台账。`InitDB()` 先用 `CREATE TABLE IF NOT EXISTS` 创建最新表结构，再依次运行增量迁移（如 `summary` 列、`transport` 列、`custom_system_prompt` 列、ACP 相关列含 `acp_available_models`、`indexed` 列用于 RAG 索引进度跟踪等）。**数据转换类**迁移（`MigrateMetadataFromContent`、`MigrateTaskExecutionSummaries`、`MigrateToolCallsFromContent`、`MigrateThinkingFromContent`）无法用列探针判断是否完成，改由 `schema_migrations` 台账按名记账（详见下节）
 - **覆盖率门禁**：两层强制执行，每次 PR/push 到 main 分支触发（`scripts/check-go-coverage.sh`、`scripts/check-frontend-coverage.sh`、`scripts/check-android-coverage.sh`）：
   - **Tier 1 项目门禁**：当前包覆盖率 `>= 基线% - 1.5%`（`TIER1_TOLERANCE = 1.5`）
   - **Tier 2 Diff 覆盖率**：变更行覆盖率 `>= 80%`（`DIFF_THRESHOLD = 80.0`）
@@ -94,7 +109,7 @@ flowchart TD
 ### 设计要点
 
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先；自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖
-- **单一发现入口**：`RefreshAgents` 是唯一的发现与重载路径。它按固定顺序执行探测 CLI → 加载 YAML → 发现模型 → 重载内存，顺序本身承载语义（例如必须先探测才能给新装的后端发现模型）。`service.LoadAgentsIntoMemory` 委托给 `model.LoadAgentsIntoMemoryFromDB`，因此"加载并组装 prompt"只有一份实现
+- **发现与重载的两条入口**：`RefreshAgents` 是同步路径，按固定顺序执行探测 CLI → 加载 YAML →（可选）发现模型 → 重载内存，顺序本身承载语义（例如必须先探测才能给新装的后端发现模型）。启动时传 `SkipDiscovery: true` 只跑同步那一半（约 0.1s），`StartModelDiscoveryAsync` 随后在后台补上模型探测、落库与加锁重载。`service.LoadAgentsIntoMemory` 委托给 `model.LoadAgentsIntoMemoryFromDB`，因此"加载并组装 prompt"只有一份实现
 - **默认项目持久化**：`recent_projects.is_default` 标记服务端默认项目。读取时依次回退到显式默认项目、最近访问项目、用户主目录和首个可用根路径，确保首次启动和旧数据均可用
 - **ACP 能力持久化**：Agent 的 ACP 相关属性（`transport`、`acp_command`、可用模式、思考深度、命令、模型等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存
 - **供应商模型注册**：模型列表通过各后端的 `RegisterModelSource()` 在 `init()` 注册，`model.DiscoverModels` 只走这张注册表（没有静态声明的已知模型字段）。运行时可通过 `POST /api/agents/rescan` 重新触发 PATH 扫描；模型数据不依赖 `<dataDir>/provider_models.json` 或生成脚本
@@ -104,3 +119,38 @@ flowchart TD
 - **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
 - **发现失败的原因随返回值传递**：`ModelSource.Discover` 返回 `(models, detail)`，detail 说明探测了哪些位置。此前 codebuddy 用进程级全局变量记录失败原因，并发刷新会互相串台；现在原因随调用返回，不会误归因
 - **Codex 的多级发现**：Codex 无列模型命令且发布的是 stripped Rust 二进制，因此按可信度依次尝试——先读 CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用清单），再扫描二进制字符串，最后落到 `internal/model/catalogs.go` 中的内置清单。原先的 state SQLite 分支是死代码（定位到文件后无条件 `return nil`），已删除
+
+## 迁移台账（schema_migrations）
+
+加列 / 建索引类迁移的守卫（列是否存在）天然只会为真一次，因此它们继续用列探针，
+不进台账——探针比台账更能反映真实 schema（例如用户手工 `DROP` 过列）。台账只服务
+**数据转换类**迁移：这类迁移的守卫是「LIKE 扫描 `chat_history.content` + `NOT EXISTS`」，
+而某些行按设计永远无法转换（例如一个 `tool_use` 块的 `input` 本就已经是 slim/null），
+守卫因此**永远不会变成假**，于是每次启动都重扫一遍 `chat_history`。实测：2026-09-29
+连续 10 次重启，`tool_use` 每次都被报告为 443 行待转换，即每次都重扫了全表。
+
+实现（`internal/service/database.go`）：
+
+- `schema_migrations(name TEXT PRIMARY KEY, applied_at DATETIME)` —— 按名字记录已完成的迁移。
+  名字里带日期只为可读；**一旦发布不得再改**，改了等于让所有已升级的库重跑一次全表扫描。
+- `ensureSchemaMigrationsTable()` —— 幂等建表，必须在任何 `runOnce` 之前调用。
+- `isMigrationApplied(name)` —— 查台账；**读失败按「未应用」处理**，宁可重跑一次（迁移幂等、
+  无副作用），也不要因一次读错误永久跳过迁移。
+- `markMigrationApplied(name)` —— `INSERT OR IGNORE`，并发/重复调用安全。
+- `runOnce(name, fn)` —— 未记账时才执行 `fn`。`fn` 返回 `true` 表示「本轮已完成」，涵盖
+  「没有需要转换的行」与「扫描正常跑完、按设计留下了无法转换的行」两种情况，随后记账；
+  返回 `false` 表示硬失败（查询/事务错误），**不记账**，下次启动重试并打 warn 日志。
+
+被台账门控的四个迁移：
+
+| 迁移 | 转换内容 |
+|---|---|
+| `MigrateMetadataFromContent` | `chat_history.content` 中的 metadata → `chat_metadata` 表 |
+| `MigrateTaskExecutionSummaries` | `task_execution` 摘要 → `chat_message` 形式的摘要 |
+| `MigrateToolCallsFromContent` | `tool_use` 的 input/output → `chat_tool_calls`，content 改写为 slim 格式 |
+| `MigrateThinkingFromContent` | thinking 文本 → `chat_thinking`，content 改写为 slim 格式（只留 `think_id`） |
+
+顺序上有一处硬约束：建索引类迁移 `migrateChatThinkingSeq()`（给 `chat_thinking` 加
+`seq` 列）必须先于 `MigrateThinkingFromContent`，后者的插入要匹配前者建立的约束。该约束由
+`runOnce` 的调用顺序承载，与台账无关。`ResetSchemaMigrationsForTest()` 清空台账，供测试
+重走迁移路径。

@@ -1,7 +1,23 @@
 // Package model — unified agent + model refresh.
 //
-// This file replaces a five-step startup sequence that each step re-queried the
-// database and reloaded global state:
+// There are two entry points, split by cost:
+//
+//	RefreshAgents(db, opts)                             → synchronous: CLI detection,
+//	                                                      YAML agents, memory reload
+//	StartModelDiscoveryAsync(db, withAgentsLock, done)  → asynchronous: model probes,
+//	                                                      persist, memory reload, callback
+//
+// The split exists because the model probes fork each vendor's CLI: antigravity
+// hangs for its full timeout (~16s) when logged out, and the serial total was
+// measured at ~18s. Startup keeps only the synchronous half — roughly 0.1s,
+// since CLI detection already runs in parallel — because default-agent selection
+// and scheduler.LoadTasksFromDB run before the background half can finish, and
+// the scheduler silently skips cron registration for a task whose agent is not
+// yet known. RefreshAgents(SkipDiscovery: true) is what startup calls;
+// StartModelDiscoveryAsync runs the probe half afterwards. The manual rescan
+// endpoint still calls the full RefreshAgents (discovery included).
+//
+// History: this file replaced a five-step startup sequence
 //
 //	SyncDiscoverAgentsDB   → detect CLIs, insert new agents, sync acp_command
 //	LoadYamlAgents         → insert agents from config/agents/*.yaml
@@ -9,16 +25,14 @@
 //	MergeDiscoveredDataDB  → three passes of SQL, then a full memory reload
 //	AsyncRefreshModelCache → probe every backend AGAIN in a goroutine
 //
-// Beyond the duplicate work, that sequence had two structural problems. First,
-// there were two independent implementations of "load agents into memory and
-// compose the system prompt" — this file's and service.LoadAgentsIntoMemory —
-// so which one won depended on call order. Second, the same discovery probes ran
-// twice per boot (once synchronously, once in the background), and neither run
-// was cached.
-//
-// RefreshAgents is now the only entry point. It performs detection, discovery,
-// persistence and the memory reload in one pass, and it is what both startup and
-// the manual rescan endpoint call.
+// whose steps each re-queried the database and reloaded global state, and which
+// had two structural problems: two independent implementations of "load agents
+// into memory and compose the system prompt", and the same discovery probes run
+// twice per boot with neither run cached. The single reload path below still
+// fixes the first. AsyncRefreshModelCache was removed for the second — running
+// duplicate uncached probes — but that objection no longer holds: the
+// discoveryCache (5-minute TTL) now dedupes probes, so the async pass reuses the
+// work the synchronous path just did rather than paying for it twice.
 package model
 
 import (
@@ -113,7 +127,7 @@ func RefreshAgents(db dbutil.Writer, opts RefreshOptions) (*RefreshResult, error
 	if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
 		return result, err
 	}
-	result.LoadedAgents = len(AgentList)
+	result.LoadedAgents = len(GetAgentList())
 
 	slog.Info("agents refreshed",
 		"present", len(result.PresentCLIs),
@@ -309,6 +323,10 @@ func sortedKeys(m map[string]interface{}) []string {
 	return keys
 }
 
+// maxConcurrentProbes 限制同时运行的探针数。每个 CLI 探针会 fork 一个进程
+// （部分会拉 Node），14 个同时起会打爆启动期的 CPU/内存，所以有界并行。
+const maxConcurrentProbes = 4
+
 // discoverAndPersistModels probes every backend that has a model source and
 // writes the result to the agents whose model list is auto-managed.
 //
@@ -324,35 +342,105 @@ func sortedKeys(m map[string]interface{}) []string {
 // list and no flag, so excluding it would leave every freshly installed backend
 // with an empty model picker until a manual refresh.
 func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []string) {
+	backends := RegisteredModelSources()
+	type probeResult struct {
+		backend string
+		models  []AgentModel
+	}
+
+	results := make([]probeResult, len(backends))
+	sem := make(chan struct{}, maxConcurrentProbes)
+	var wg sync.WaitGroup
+	for i, backend := range backends {
+		wg.Add(1)
+		go func(i int, backend string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			// DiscoverModels 内部有 per-backend 探针锁 + TTL 缓存，
+			// 并发调用不会重复探测同一 backend。
+			results[i] = probeResult{backend: backend, models: DiscoverModels(backend)}
+		}(i, backend)
+	}
+	wg.Wait()
+
+	// 落库串行执行：探测阶段才需要并发，写库保持单 goroutine 以避免并发写同一个 *sql.DB。
 	discovered := make(map[string][]AgentModel)
 	var updated []string
-
-	for _, backend := range RegisteredModelSources() {
-		models := DiscoverModels(backend)
-		if len(models) == 0 {
+	for _, r := range results {
+		if len(r.models) == 0 {
 			continue
 		}
-		discovered[backend] = models
+		discovered[r.backend] = r.models
 
-		modelsJSON, err := json.Marshal(models)
+		modelsJSON, err := json.Marshal(r.models)
 		if err != nil {
-			slog.Warn("failed to marshal discovered models", "backend", backend, "error", err)
+			slog.Warn("failed to marshal discovered models", "backend", r.backend, "error", err)
 			continue
 		}
 		res, err := db.Exec(
 			`UPDATE agents SET models = ?, models_auto_detected = 1
 			 WHERE backend = ? AND (models_auto_detected = 1 OR models IS NULL OR models = '[]' OR models = 'null')`,
-			string(modelsJSON), backend,
+			string(modelsJSON), r.backend,
 		)
 		if err != nil {
-			slog.Warn("failed to persist discovered models", "backend", backend, "error", err)
+			slog.Warn("failed to persist discovered models", "backend", r.backend, "error", err)
 			continue
 		}
 		if n, err := res.RowsAffected(); err == nil && n > 0 {
-			updated = append(updated, backend)
+			updated = append(updated, r.backend)
 		}
 	}
 	return discovered, updated
+}
+
+// StartModelDiscoveryAsync 在后台探测每个 backend 的模型列表，落库后重载
+// 内存，然后调用 onComplete（可为 nil）。它立刻返回，调用方不得假设模型在
+// 返回时已可用。
+//
+// 存在的理由：探测会 fork 各家的 CLI，其中 antigravity 未登录时会挂满超时，
+// 串行合计约 18s。把它移出启动关键路径后，服务可立即开始接受请求，模型列表
+// 稍后到达。
+//
+// withAgentsLock 用于把内存重载与其它读写 Agents/AgentList 的调用方串行。
+// 本包不能 import internal/handler（会形成 import cycle），所以由调用方注入
+// ——生产环境传 handler.WithConfigLock；没有并发读者时（例如测试）传 nil，
+// 此时直接重载。
+//
+// 调用方负责通知前端（本包不能 import internal/ws——ws 已 import 本包）。
+// 必须在 RefreshAgents(SkipDiscovery: true) 之后调用，否则 CLI 探测与 agent
+// 插入尚未完成，后台发现会写不到行。
+func StartModelDiscoveryAsync(db dbutil.Writer, withAgentsLock func(func()), onComplete func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("async model discovery panicked", "panic", r)
+			}
+		}()
+
+		discovered, updated := discoverAndPersistModels(db)
+		slog.Info("async model discovery complete",
+			"backends", len(discovered), "rows_updated", len(updated))
+
+		// 重载内存，让模型选择器拿到新列表。LoadAgentsIntoMemoryFromDB 先建新
+		// map 再原子替换，并发读者不会看到空集合（ISS-302）；但替换本身要与其他
+		// 读写 Agents/AgentList 的调用方（HTTP handler 持 configMutex）串行，
+		// 否则是数据竞争。锁由调用方注入——本包不能 import internal/handler。
+		reload := func() {
+			if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
+				slog.Error("async model discovery: memory reload failed", "error", err)
+			}
+		}
+		if withAgentsLock != nil {
+			withAgentsLock(reload)
+		} else {
+			reload()
+		}
+
+		if onComplete != nil {
+			onComplete()
+		}
+	}()
 }
 
 // saveAgentToDB inserts a minimal agent record.
@@ -520,8 +608,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		newAgentsMap[agent.ID] = agent
 	}
 
-	Agents = newAgentsMap
-	AgentList = agents
+	ReplaceAgents(newAgentsMap, agents)
 	return nil
 }
 

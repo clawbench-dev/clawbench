@@ -48,7 +48,7 @@
               :disabled="creating"
               @click="regenerateLink"
             >
-              <RefreshCw v-if="creating" :size="14" class="share-dialog-spin" />
+              <LoadingIndicator v-if="creating" size="sm" inline class="share-dialog-spin" />
               <RefreshCw v-else :size="14" />
             </button>
           </div>
@@ -143,6 +143,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot, ExternalLink, Info, Link2, RefreshCw, Trash2, User } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'

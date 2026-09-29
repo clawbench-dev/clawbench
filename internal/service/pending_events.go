@@ -375,7 +375,7 @@ func lookupReadSessions(sessionIDs []string) map[string]bool {
 		   AND NOT EXISTS (
 		     SELECT 1 FROM chat_history h
 		     WHERE h.session_id = s.id
-		       AND h.project_path = s.project_path
+		       AND h.project_id = s.project_id
 		       AND h.role = 'assistant'
 		       AND h.streaming = 0
 		       AND COALESCE(h.completed_at, h.created_at) > s.last_read_at

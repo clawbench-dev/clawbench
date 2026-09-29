@@ -2,6 +2,7 @@ package summarize
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -29,6 +30,44 @@ Requirements:
 // reprocessing the whole window every turn.
 type recommendPassProvider interface {
 	DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error)
+}
+
+// recommendMaxTokens is the output cap shared by the recommendation and title
+// passes. They produce one short suggestion, so a small cap keeps latency and
+// cost down. AskAboutContext (the /btw path) deliberately overrides it.
+const recommendMaxTokens = 1024
+
+// askPassProvider is implemented by LLM summarizers that can answer a one-shot
+// question with an explicit output cap. It is the same request channel as
+// recommendPassProvider (system + stable prefix + rolling tail, so the stable
+// context stays eligible for prompt caching) with maxTokens lifted out of the
+// hardcoded recommendation value.
+type askPassProvider interface {
+	DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error)
+}
+
+// ErrOneShotUnsupported is returned by AskAboutContext when the summarizer
+// backend cannot answer one-shot questions (e.g. the "simple" extract-only
+// summarizer). Callers map it to a user-facing "summary model not usable"
+// message rather than a generic failure.
+var ErrOneShotUnsupported = errors.New("summarizer backend does not support one-shot questions")
+
+// AskAboutContext answers a one-shot question from a pre-compressed context
+// block. It reuses the recommendation pass channel so the (potentially large)
+// stable context can hit provider prompt caching across repeated questions in
+// the same session.
+//
+// maxTokens caps the reply; <= 0 falls back to recommendMaxTokens. Returns
+// ErrOneShotUnsupported if the backend cannot answer one-shot questions.
+func AskAboutContext(ctx context.Context, s Summarizer, systemPrompt, contextBlock, question string, maxTokens int) (string, error) {
+	ap, ok := s.(askPassProvider)
+	if !ok {
+		return "", ErrOneShotUnsupported
+	}
+	if maxTokens <= 0 {
+		maxTokens = recommendMaxTokens
+	}
+	return ap.DoAskPass(ctx, systemPrompt, contextBlock, question, maxTokens)
 }
 
 // NewAISummarizer builds an LLM summarizer from the shared AISummaryConfig.

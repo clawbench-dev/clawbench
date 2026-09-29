@@ -182,6 +182,36 @@ async function loadAgents(force = false): Promise<void> {
     return loadPromise
 }
 
+// 模型发现在后台异步跑，完成时服务端广播 agents_updated。此时前端可能已经
+// 用空模型列表渲染过选择器，需要强制重拉一次。与 useMessageClusters 一样
+// 在模块级注册，全应用生命周期只注册一次。
+//
+// 方向是 useAgents → useGlobalEvents：反过来会让 useGlobalEvents 依赖
+// useAgents，而它已被大量模块引用，风险更高。
+//
+// 这条边会闭合一个既有的静态环：
+//   useAgents → useGlobalEvents → useNotification → useSettingsConfig → useAgents
+// 若用静态 import + 模块体里同步调用 useGlobalEvents()，则当 useGlobalEvents
+// 先于 useAgents 求值（任何直接 import useGlobalEvents 的模块作为入口时都会
+// 如此，例如 useMessageClusters）就会命中 TDZ：
+//   ReferenceError: Cannot access 'connected' before initialization
+// （queueMicrotask 也不行——模块加载在模块之间会让出微任务队列，回调仍可能
+// 在 useGlobalEvents 求值到一半时触发。）
+// 因此改用动态 import：它的 promise 按规范在目标模块求值完成后才 resolve，
+// 天然规避该环。注册时机仍远早于任何 WS 事件（WS 在 app 挂载后才连接）。
+// catch 同时兜住两种失败：动态 chunk 加载失败，以及测试里常见的
+// useGlobalEvents 部分 mock（只提供 wsStatus 没有 onEvent）。
+void import('@/composables/useGlobalEvents')
+    .then(({ useGlobalEvents }) => {
+        useGlobalEvents().onEvent((event: string) => {
+            if (event !== 'agents_updated') return
+            void loadAgents(true)
+        })
+    })
+    .catch((err: unknown) => {
+        appLog.e(TAG, 'Failed to register agents_updated listener:', err)
+    })
+
 function getAgentBackend(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.backend || ''

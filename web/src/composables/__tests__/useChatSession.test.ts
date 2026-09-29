@@ -391,8 +391,8 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
-import { chatMessageReducer, resetInFlightSendsForTest } from '@/utils/chatStreamUtils.ts'
-import { addQueued, getQueue, removeQueued, resetQueuesForTest } from '@/composables/useMessageQueue.ts'
+import { chatMessageReducer, resetInFlightSendsForTest, trackInFlightSend, isInFlightSend } from '@/utils/chatStreamUtils.ts'
+import { addQueued, getQueue, removeQueued, resetQueuesForTest, markSendCommitted } from '@/composables/useMessageQueue.ts'
 import { updatePlanEntries, clearPlanState, usePlanProgress } from '@/composables/usePlanProgress'
 
 // Get direct references to the mocked functions from useSessionIdentity
@@ -2499,6 +2499,73 @@ describe('switchSession', () => {
     await session.loadHistory(true, false, false)
 
     expect(getQueue('current-s1')).toHaveLength(0)
+  })
+
+  it('clears a drained-while-backgrounded entry on the authoritative reload', async () => {
+    // Reported: queue a message, background the app, let it finish, return to
+    // the foreground — the queue card was still shown. The drain's WS events
+    // were missed while backgrounded and the queue row is deleted at dequeue, so
+    // the in-flight guard (only released by a snapshot CONTAINING the entry)
+    // held it forever, overriding even the authoritative empty queue.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'A' },
+      { id: 2, role: 'assistant', content: 'A reply' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [
+          { id: 1, role: 'user', content: 'A' },
+          { id: 2, role: 'assistant', content: 'A reply' },
+        ],
+        queue: [],
+        total: 2,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+    // The enqueue POST resolved (row committed), then the message drained while
+    // the app was backgrounded.
+    addQueued('current-s1', { queueId: 'pending-drained', text: 'drained', files: [] })
+    trackInFlightSend('pending-drained')
+    markSendCommitted('pending-drained')
+
+    await session.loadHistory(true, false, false)
+
+    expect(getQueue('current-s1')).toHaveLength(0)
+    expect(isInFlightSend('pending-drained')).toBe(false)
+  })
+
+  it('preserves an un-acked optimistic entry across a reload (POST still in flight)', async () => {
+    // The complementary guard: a snapshot fetched before the enqueue POST
+    // committed legitimately lacks the row, so the optimistic entry must
+    // survive — otherwise the user's just-sent message disappears.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'A' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [{ id: 1, role: 'user', content: 'A' }],
+        queue: [],
+        total: 1,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+    addQueued('current-s1', { queueId: 'pending-inflight', text: 'sending', files: [] })
+    trackInFlightSend('pending-inflight')
+    // No markSendCommitted: the POST has not resolved.
+
+    await session.loadHistory(true, false, false)
+
+    expect(getQueue('current-s1').map((m) => m.queueId)).toEqual(['pending-inflight'])
   })
 
   it('does NOT carry the old session\u2019s queued messages into a new session on switch', async () => {

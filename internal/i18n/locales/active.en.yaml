@@ -7,6 +7,7 @@ ShareSessionNoContent: This conversation has no shareable messages yet
 ShareSessionInvalidSelection: Some selected messages cannot be shared (they may still be generating)
 QueueIdRequired: queueId required
 QueueInjectStranded: Insert failed and the message could not be re-queued — please resend it
+QueueMergeFailed: Failed to merge queued messages
 NewSession: New Session
 NewSessionN: New Session {{.N}}
 FileMessage: File Message
@@ -32,6 +33,8 @@ PathTraversal: path traversal detected
 InternalError: internal server error
 SessionNotFound: session not found
 SummaryModelNotConfigured: AI summary model is not configured
+BtwQuestionRequired: a question is required after /btw
+BtwFailed: failed to answer the side question
 NoUserMessagesToSummarize: no user messages to summarize
 GenerateTitleFailed: failed to generate a title
 TagNameRequired: tag name required
@@ -60,6 +63,7 @@ NoFileProvided: No file provided
 FileTooLargeShort: File too large
 InvalidImage: "Unsupported image: {{.Error}}"
 WriteFailed: "Failed to save: {{.Error}}"
+ReadFailed: "Failed to read: {{.Error}}"
 UploadSaveFailed: "Unable to save file: {{.Error}}"
 FileMustHaveExtension: File must have an extension
 FileTypeNotAllowed: "File type not allowed: {{.Ext}}"

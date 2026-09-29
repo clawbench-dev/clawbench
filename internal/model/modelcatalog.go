@@ -56,6 +56,11 @@ const (
 type ModelSource interface {
 	Backend() string
 	Kind() ModelSourceKind
+	// Timeout bounds a single discovery probe. Zero means "not applicable":
+	// static and plugin sources run in-process and have no CLI command to
+	// bound. Only CLI sources shell out, and this is the value the probe
+	// actually uses, so tests can assert a backend tightened its budget.
+	Timeout() time.Duration
 	Discover() ([]AgentModel, string)
 }
 
@@ -632,8 +637,9 @@ type staticSource struct {
 	catalog []AgentModel
 }
 
-func (s *staticSource) Backend() string       { return s.backend }
-func (s *staticSource) Kind() ModelSourceKind { return SourceKindStatic }
+func (s *staticSource) Backend() string        { return s.backend }
+func (s *staticSource) Kind() ModelSourceKind  { return SourceKindStatic }
+func (s *staticSource) Timeout() time.Duration { return 0 }
 
 func (s *staticSource) Discover() ([]AgentModel, string) {
 	if s.cliCmd != "" && !CheckCLIExists(s.cliCmd) {
@@ -692,8 +698,9 @@ type cliSource struct {
 	opts    CLIOptions
 }
 
-func (s *cliSource) Backend() string       { return s.backend }
-func (s *cliSource) Kind() ModelSourceKind { return SourceKindCLI }
+func (s *cliSource) Backend() string        { return s.backend }
+func (s *cliSource) Kind() ModelSourceKind  { return SourceKindCLI }
+func (s *cliSource) Timeout() time.Duration { return s.opts.Timeout }
 
 func (s *cliSource) Discover() ([]AgentModel, string) {
 	var tried []string
@@ -760,8 +767,9 @@ type pluginSource struct {
 	probe   func() ([]AgentModel, string)
 }
 
-func (s *pluginSource) Backend() string       { return s.backend }
-func (s *pluginSource) Kind() ModelSourceKind { return SourceKindPlugin }
+func (s *pluginSource) Backend() string        { return s.backend }
+func (s *pluginSource) Kind() ModelSourceKind  { return SourceKindPlugin }
+func (s *pluginSource) Timeout() time.Duration { return 0 }
 
 func (s *pluginSource) Discover() ([]AgentModel, string) {
 	if s.probe == nil {

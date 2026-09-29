@@ -971,7 +971,7 @@ func TestServeRAGSessionSearch_BrowseOmitsMessageContent(t *testing.T) {
 
 	insertSession(t, env.ProjectDir, "sess-c", "Session", "2024-01-01 10:00:00", false, "")
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'First message here', ?, 'claude')",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'First message here', ?, 'claude')",
 		env.ProjectDir, "sess-c",
 	)
 	require.NoError(t, err)
@@ -1027,10 +1027,10 @@ func TestServeRAGSessionFirstMessage_ReturnsEarliestMessage(t *testing.T) {
 
 	insertSession(t, env.ProjectDir, "sess-fm", "Session", "2024-01-01 10:00:00", false, "")
 	_, err := service.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, created_at) VALUES
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, created_at) VALUES
 		 (?, 'assistant', 'second', 'sess-fm', 'claude', '2024-01-02 10:00:00'),
 		 (?, 'user', 'first', 'sess-fm', 'claude', '2024-01-01 10:00:00')`,
-		env.ProjectDir, env.ProjectDir,
+		service.ProjectIDForTest(t, env.ProjectDir), service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	require.NoError(t, err)
 
@@ -1054,7 +1054,7 @@ func TestServeRAGSessionFirstMessage_ArchivedSessionAllowed(t *testing.T) {
 
 	insertSession(t, env.ProjectDir, "sess-arch", "Archived", "2024-01-01 10:00:00", true, "")
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, 'user', 'hello', 'sess-arch', 'claude')",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hello', 'sess-arch', 'claude')",
 		env.ProjectDir,
 	)
 	require.NoError(t, err)
@@ -1767,8 +1767,8 @@ func insertSession(t *testing.T, projectPath, id, title, createdAt string, archi
 		sessionType = "chat"
 	}
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
-		id, projectPath, title, sessionType, archivedInt, createdAt, createdAt,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
+		id, service.ProjectIDForTest(t, projectPath), title, sessionType, archivedInt, createdAt, createdAt,
 	)
 	require.NoError(t, err)
 }

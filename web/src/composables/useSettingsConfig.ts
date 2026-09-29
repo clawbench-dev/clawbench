@@ -541,7 +541,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.fork_context_budget': 100000,
   'chat.auto_continue_enabled': false,
   'chat.auto_continue_max_retries': 3,
-  'chat.auto_rename_enabled': false,
+  'chat.auto_rename_enabled': true,
   'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,

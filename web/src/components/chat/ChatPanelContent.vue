@@ -1,5 +1,11 @@
 <template>
   <div class="chat-panel-content">
+    <!-- Long-action feedback. Absolute at the panel's top edge so it is visible
+         regardless of scroll position or viewport width — the button that was
+         clicked may be scrolled out of the horizontally-scrollable action bar.
+         Also mirrored by a sticky toast (startBusy) for the elapsed counter. -->
+    <BusyBar :visible="busy !== null" :label="busyLabel" />
+
     <!-- Messages -->
     <ChatMessageList
       ref="messageListRef"
@@ -16,6 +22,9 @@
       :switching="session.switching.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
+      :btwAnchors="btwAnchors"
+      :forkingMessageId="forkingMessageId"
+      @open-btw="openBtwDrawer"
       @touchstart.passive="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -70,8 +79,10 @@
       :messages="queuedMessages"
       :midTurnSupported="midTurnSupported"
       :busy="pendingActionBusy"
+      :mergeBusy="mergeBusy"
       @remove="handleRemovePending"
       @action="handlePendingAction"
+      @merge="handleMergeQueue"
     />
 
     <!-- Unified input container — hidden when no agents configured -->
@@ -97,8 +108,10 @@
       :currentTransport="identity.currentTransport.value"
       :currentAgentId="identity.currentAgentId.value"
       :acpSyncing="acpSyncing"
+      :busyKind="busy"
       :active="props.active"
       @send="sendMessage"
+      @btw="handleBtw"
       @cancel="stream.cancelStream"
       @add-attached="addAttachedFile"
       @remove-attached="removeAttachedFile"
@@ -190,6 +203,19 @@
     :session-id="sessionShareId"
     @close="sessionShareOpen = false"
   />
+
+  <!-- /btw side-question answer. Mounted here (not in ChatInputBar) so it
+       inherits this component's chatRender/chatSession/chatUI/autoSpeech
+       provides, and the answer renders through the exact same pipeline as a
+       chat message. -->
+  <BtwAnswerDrawer
+    ref="btwDrawerRef"
+    :records="btwDrawerRecords"
+    :expanded-tools="render.expandedTools"
+    :block-tasks="render.blockTasks"
+    :block-ask-questions="render.blockAskQuestions"
+    :static-block-cache="render.staticBlockCache"
+  />
 </template>
 
 <script setup>
@@ -197,16 +223,19 @@ import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, n
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
+import { groupBtwRecords, currentAnchorKey } from '@/utils/btwAnchors.ts'
 import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import ChatMetadataModal from './ChatMetadataModal.vue'
 import ToolDetailDrawer from './ToolDetailDrawer.vue'
 import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
+import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
+import BusyBar from '@/components/common/BusyBar.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
 import { formatToolOutput, revertAskSubmission } from '@/utils/renderToolDetail.ts'
@@ -216,7 +245,7 @@ import { useSessionIdentity, getSessionId } from '@/composables/useSessionIdenti
 import { useSessionManager } from '@/composables/useSessionManager.ts'
 import { createChatMessageStore } from '@/composables/useChatMessageStore.ts'
 import { useAcpSession } from '@/composables/useAcpSession'
-import { queuedMessages, setActiveQueueSession, addQueued, clearQueue } from '@/composables/useMessageQueue.ts'
+import { queuedMessages, setActiveQueueSession, addQueued, clearQueue, markSendCommitted } from '@/composables/useMessageQueue.ts'
 
 import { useAgents, populateACPStateFromCache } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast.ts'
@@ -289,6 +318,8 @@ const midTurnSupported = computed(() => {
 })
 /** queueId (or id) of the queued bubble whose action request is in flight. */
 const pendingActionBusy = ref('')
+/** Whether the queue-wide merge request is in flight. */
+const mergeBusy = ref(false)
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -311,6 +342,9 @@ const metadataModal = ref({
 const metadataDrawer = useTabDrawer('chat')
 const forkAgentSelectorDrawer = useTabDrawer('chat', { autoRestore: false })
 const forkPending = ref(null) // { sessionId, beforeMessageId }
+/** Message id whose fork button is mid-flight — drives its in-place spinner.
+ *  Null when no fork is running. */
+const forkingMessageId = ref(null)
 /** Conversation-share dialog state. The id is captured on open so the dialog
  *  keeps targeting that session even if the user switches away. */
 const sessionShareOpen = ref(false)
@@ -318,6 +352,65 @@ const sessionShareId = ref('')
 const toast = useToast()
 const acpSyncing = ref(false)
 const acpSession = useAcpSession({ currentAgentId: identity.currentAgentId })
+
+/**
+ * Long-action feedback (fork / ACP sync).
+ *
+ * Both actions POST and only touch the message area once the response lands,
+ * which can take many seconds — forking copies the whole history and ACP sync
+ * closes the agent process and replays the session. Without feedback the click
+ * reads as a no-op. Two channels carry the same fact:
+ *   - `BusyBar` at the panel's top edge: always visible, independent of scroll.
+ *   - a sticky toast (`duration: 0`) showing the elapsed seconds, so "still
+ *     working" is distinguishable from "hung".
+ *
+ * ONE action at a time, and the claim is explicit (`startBusy` returns false
+ * when another action already owns the indicator). The toast is a singleton, so
+ * two concurrent tickers would overwrite each other's text and whichever
+ * finished first would dismiss the other's toast. Both entry points are also
+ * disabled while busy (see `busyKind` / `forkingMessageId`), so the losing
+ * claim is a belt-and-braces guard rather than a path the user can reach.
+ *
+ * `stopBusy` deliberately shows NO completion toast: each caller already has a
+ * specific success/failure toast, and emitting a generic one here would double
+ * up (and could overwrite the specific message).
+ */
+const busy = ref(null)
+const busyElapsed = ref(0)
+let busyTimer = null
+
+const busyLabel = computed(() => (busy.value === 'sync' ? t('chat.busy.syncing') : t('chat.busy.forking')))
+
+function busyToastText() {
+  return `${busyLabel.value} ${t('chat.busy.elapsed', { elapsed: busyElapsed.value })}`
+}
+
+/** Claim the indicator for `kind`. Returns false if another action holds it. */
+function startBusy(kind) {
+  if (busy.value !== null) return false
+  busy.value = kind
+  busyElapsed.value = 0
+  toast.show(busyToastText(), { type: 'loading', duration: 0 })
+  // 1Hz is enough to show progress without churning the toast DOM; the counter
+  // exists to answer "is this still alive", not to be a stopwatch.
+  busyTimer = setInterval(() => {
+    busyElapsed.value++
+    toast.show(busyToastText(), { type: 'loading', duration: 0 })
+  }, 1000)
+  return true
+}
+
+/** Release the indicator. Pass `kind` so a late `finally` from one action can
+ *  never clear another action's state (they are serialised, but the guard keeps
+ *  that invariant local instead of implied by call-site ordering). */
+function stopBusy(kind) {
+  if (kind && busy.value !== kind) return
+  if (busyTimer) { clearInterval(busyTimer); busyTimer = null }
+  busy.value = null
+  // Only clear the sticky toast; a result toast from the caller replaces it
+  // anyway (show() overwrites), but on failure paths nothing else would.
+  if (toast.type.value === 'loading') toast.dismiss()
+}
 
 async function handleSyncAcpSession() {
   const sid = identity.currentSessionId.value
@@ -331,6 +424,7 @@ async function handleSyncAcpSession() {
   if (!confirmed) return
 
   acpSyncing.value = true
+  const claimed = startBusy('sync')
   // 同步期间禁用输入：避免用户在 LoadSession 回放窗口内发消息，导致回复通知被
   // 改路由进回放缓冲（而非实时流）。
   const prevInputDisabled = inputDisabled.value
@@ -347,6 +441,7 @@ async function handleSyncAcpSession() {
   } finally {
     inputDisabled.value = prevInputDisabled
     acpSyncing.value = false
+    if (claimed) stopBusy('sync')
   }
 }
 
@@ -1007,7 +1102,7 @@ async function handleForkFromMessage(msg) {
     await agentsComposable.loadAgents()
     // If only one agent, fork directly (inherits source session's agent)
     if (agentsList.value.length <= 1) {
-      await manager.forkSession(sid, msg.id)
+      await runFork(sid, msg.id)
       return
     }
     // Multiple agents — show selector with source session's agent pre-selected
@@ -1021,7 +1116,23 @@ function handleForkAgentSelect(agentId) {
   const pending = forkPending.value
   if (!pending) return
   forkPending.value = null
-  manager.forkSession(pending.sessionId, pending.beforeMessageId, agentId)
+  runFork(pending.sessionId, pending.beforeMessageId, agentId)
+}
+
+/**
+ * Run a fork with the shared busy feedback. The message id drives the in-place
+ * spinner on that message's fork button; the BusyBar/toast cover the rest of
+ * the wait (the POST itself has no other visible progress).
+ */
+async function runFork(sessionId, beforeMessageId, agentId) {
+  if (!startBusy('fork')) return
+  forkingMessageId.value = beforeMessageId ?? null
+  try {
+    await manager.forkSession(sessionId, beforeMessageId, agentId)
+  } finally {
+    forkingMessageId.value = null
+    stopBusy('fork')
+  }
 }
 
 // Rewind/回溯: truncate the current session at this assistant message, reset the
@@ -1051,6 +1162,136 @@ function persistSessionUpdate(fields) {
     body: JSON.stringify(fields),
   }).catch(() => { /* best effort — next POST /api/ai/chat will also persist */ })
 }
+
+// ── /btw side question ──
+// The question is answered by the summary model from a compressed snapshot of
+// this session. It is deliberately NOT routed through sendMessage: it must not
+// be queued, must not start the agent, and must not touch the session's
+// loading state (a /btw question is useful precisely while the agent is busy).
+//
+// Records are persisted server-side and anchored to the message that was last
+// when the question was asked, so the chat list can draw a marker at that
+// position — including while the reply is still streaming (the streaming
+// assistant row already has its stable numeric id).
+const btwDrawerRef = ref(null)
+/** All /btw records for the current session, oldest first. */
+const btwRecords = ref([])
+/** Records currently shown in the drawer (the ones for the clicked anchor). */
+const btwDrawerRecords = ref([])
+
+// A /btw question makes the server call the summary model synchronously, which
+// routinely takes ~10s (compressing the history + one full LLM round-trip). The
+// default 10s API timeout therefore aborts the request right as the answer
+// arrives, surfacing as a bare "signal is aborted without reason" while the
+// server actually returned 200. Keep this above the server's own 120s LLM
+// budget is unnecessary (the server bounds it), but it must comfortably exceed
+// a slow model, so it matches that budget.
+const BTW_REQUEST_TIMEOUT_MS = 120_000
+
+/**
+ * Records grouped by anchor message id. ChatMessageList looks up a message's
+ * anchor count here; anchor 0 ("asked before any message") is included like any
+ * other key. The grouping rule lives in utils/btwAnchors so it is unit-testable.
+ */
+const btwAnchors = computed(() => groupBtwRecords(btwRecords.value))
+
+/** Load this session's /btw records (best effort: anchors are decoration). */
+async function loadBtwRecords(sessionId) {
+  if (!sessionId) {
+    btwRecords.value = []
+    return
+  }
+  // Optimistic entries are not in the server list yet, so a plain replace would
+  // make a still-unanswered question's anchor vanish whenever another question
+  // resolves. Carry them over.
+  const stillPending = btwRecords.value.filter(r => r.pending === true)
+  try {
+    const data = await apiGet(`/api/ai/session/btw?session_id=${encodeURIComponent(sessionId)}`)
+    btwRecords.value = [...(data?.questions || []), ...stillPending]
+  } catch (err) {
+    // A failed list is not worth surfacing — the anchors simply do not render.
+    appLog.w(TAG, 'failed to load btw records', err)
+    btwRecords.value = stillPending
+  }
+}
+
+/** Open the drawer for one anchor position (all questions asked there). */
+function openBtwDrawer(anchorKey) {
+  const records = btwAnchors.value[anchorKey] || []
+  if (records.length === 0) return
+  btwDrawerRecords.value = records
+  btwDrawerRef.value?.open()
+}
+
+async function handleBtw(question) {
+  const sid = identity.currentSessionId.value
+  if (!sid) {
+    toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
+    return
+  }
+
+  // Clear the composer up front: the question is consumed by this request.
+  // The composer is otherwise untouched — no loading state, no disabling — so
+  // the user can keep typing or ask another question while this one is answered.
+  inputBarRef.value?.clearInput()
+
+  // Show the anchor immediately, in its pending state, so the question has a
+  // visible home from the moment it is asked. The anchor key mirrors the
+  // backend's "last persisted message" rule, so the pending anchor lands exactly
+  // where the stored record will and does not jump when the answer arrives.
+  const anchorKey = currentAnchorKey(messages.value)
+  const pendingId = `btw-pending-${Date.now()}`
+  const pendingRec = {
+    id: pendingId,
+    anchorMessageId: Number(anchorKey) || 0,
+    question,
+    answer: '',
+    error: '',
+    createdAt: new Date().toISOString(),
+    pending: true,
+  }
+  btwRecords.value = [...btwRecords.value, pendingRec]
+  // The anchor renders after the last message, i.e. at the bottom of the list.
+  // Asking a side question is explicit intent to see where it landed, so pin to
+  // the bottom with force — the "user scrolled away" latch must not drop it
+  // (same rule as sending a message).
+  scrollBottom(true)
+
+  try {
+    const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question }, { timeoutMs: BTW_REQUEST_TIMEOUT_MS })
+    const rec = data?.record
+    if (!rec) {
+      removePendingBtw(pendingId)
+      toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
+      return
+    }
+    // A model failure still returns a record (with `error` set) so the anchor
+    // appears; the drawer opens below and renders it as a chat-style error card.
+    // No toast: the drawer is already on screen with the same message, and the
+    // request-level failures that DO need a toast never reach here.
+    // Re-read the list so the new anchor (and its count) is authoritative; the
+    // pending entry is dropped first so it cannot double the marker.
+    removePendingBtw(pendingId)
+    await loadBtwRecords(sid)
+    btwDrawerRecords.value = [rec]
+    btwDrawerRef.value?.open()
+  } catch (err) {
+    // Errors that produced no record (no session, empty question, model not
+    // configured) surface as a toast — there is nothing to anchor.
+    removePendingBtw(pendingId)
+    appLog.w(TAG, 'btw question failed', err)
+    const msg = err?.message || t('chat.btw.failed')
+    toast.show(msg, { icon: '⚠️', type: 'error' })
+  }
+}
+
+/** Drop one optimistic /btw entry by its local id. */
+function removePendingBtw(pendingId) {
+  btwRecords.value = btwRecords.value.filter(r => r.id !== pendingId)
+}
+
+// Anchors must be reloaded whenever the session changes (and on first mount).
+watch(() => identity.currentSessionId.value, (sid) => { loadBtwRecords(sid) }, { immediate: true })
 
 async function sendMessage(text) {
     const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')
@@ -1228,6 +1469,11 @@ async function sendMessageNow(text, filePaths, files) {
                 files: (files || []).map(f => typeof f === 'string' ? { path: f, isDir: false } : f),
                 createdAt: new Date().toISOString(),
             })
+            // The POST resolved with the row committed (queued=true), so from
+            // this generation onward a queue snapshot that lacks this entry is
+            // authoritative — its row drained/cancelled — and must drop it
+            // rather than preserving it as an un-acked optimistic entry.
+            markSendCommitted(pendingId)
             render.updateRenderedContents()
             stream.connectStream(identity.currentSessionId.value, { reuseExistingStreaming: true })
             // Proactively sync ACP state for the running session
@@ -1415,6 +1661,17 @@ async function handlePendingAction(queueId, mode) {
         )
     } finally {
         pendingActionBusy.value = ''
+    }
+}
+
+/** Merge every queued message of this session into one (queue-wide action). */
+async function handleMergeQueue() {
+    if (mergeBusy.value) return
+    mergeBusy.value = true
+    try {
+        await manager.handleMergeQueue()
+    } finally {
+        mergeBusy.value = false
     }
 }
 
@@ -1659,6 +1916,10 @@ onUnmounted(() => {
     removeEventHandler()
     cleanupPreviewUrls()
     stream.disconnectStream()
+    // A fork/sync in flight outlives this component (the request keeps running),
+    // so stop the ticker and drop the sticky toast rather than leaving an
+    // orphaned interval updating a toast that no longer belongs to a panel.
+    stopBusy()
     // Clear tool update debounce timers
     for (const timer of toolUpdateFetchDebounce.values()) clearTimeout(timer)
     toolUpdateFetchDebounce.clear()
@@ -1837,17 +2098,15 @@ onUnmounted(() => {
   justify-content: center;
   padding: 24px;
 }
-.tool-call-loading::after {
-  content: '';
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border-color, #e5e7eb);
-  border-top-color: var(--accent-color, #6366f1);
-  border-radius: 50%;
-  animation: tool-call-spin 0.6s linear infinite;
-}
-@keyframes tool-call-spin {
-  to { transform: rotate(360deg); }
+/* The spinner is the shared global .li-spinner (css/components.css) at the
+   component's md tier. It has to be a real element rather than an ::after here
+   because the ring is one implementation shared with the injected mermaid /
+   code-preview / localhost callers. */
+.tool-call-loading .li-spinner {
+  --li-size: 20px;
+  --li-border: 2px;
+  /* Kept from the pre-unification implementation, which spun at 0.6s. */
+  --li-duration: 0.6s;
 }
 .tool-call-empty {
   display: flex;

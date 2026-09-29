@@ -28,18 +28,18 @@ func setupIndexerServiceDB(t *testing.T) *sql.DB {
 	_, err = testDB.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -51,6 +51,10 @@ func setupIndexerServiceDB(t *testing.T) *sql.DB {
 			completed_at DATETIME
 		);
 	`)
+	require.NoError(t, err)
+	// The projects registry: the service functions under test resolve paths
+	// through it, so the fixture schema must carry it.
+	_, err = testDB.Exec(service.ProjectsDDL)
 	require.NoError(t, err)
 
 	cleanup := service.SetDBForTest(testDB, testDB)
@@ -73,9 +77,9 @@ func TestIndexer_InsertFailure_LeavesMessagesUnindexed(t *testing.T) {
 
 	// Insert two indexable messages.
 	_, err := serviceDB.Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
-		 VALUES ('/proj', 'user', 'first searchable message', 'sess-1', 'claude', 0, 0),
-		        ('/proj', 'user', 'second searchable message', 'sess-1', 'claude', 0, 0)`,
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'user', 'first searchable message', 'sess-1', 'claude', 0, 0),
+		        (1, 'user', 'second searchable message', 'sess-1', 'claude', 0, 0)`,
 	)
 	require.NoError(t, err)
 
@@ -135,8 +139,8 @@ func TestIndexer_InsertSuccess_MarksMessagesIndexed(t *testing.T) {
 	serviceDB := setupIndexerServiceDB(t)
 
 	_, err := serviceDB.Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
-		 VALUES ('/proj', 'user', 'a searchable message', 'sess-1', 'claude', 0, 0)`,
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'user', 'a searchable message', 'sess-1', 'claude', 0, 0)`,
 	)
 	require.NoError(t, err)
 
@@ -174,9 +178,9 @@ func TestIndexer_SkippedMessagesMarkedEvenWhenInsertFails(t *testing.T) {
 
 	// Role 'assistant' with a tool-only/empty payload extracts to no text.
 	_, err := serviceDB.Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
-		 VALUES ('/proj', 'assistant', '{"blocks":[]}', 'sess-1', 'claude', 0, 0),
-		        ('/proj', 'user', 'a real searchable message', 'sess-1', 'claude', 0, 0)`,
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'assistant', '{"blocks":[]}', 'sess-1', 'claude', 0, 0),
+		        (1, 'user', 'a real searchable message', 'sess-1', 'claude', 0, 0)`,
 	)
 	require.NoError(t, err)
 
@@ -318,8 +322,8 @@ func TestEnsureChunkUniqueness_DeduplicatesExistingRows(t *testing.T) {
 	for range 3 {
 		res, err := store.db.Exec(
 			`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
-				chunk_index, token_count, has_embedding, embedding_dim, project_path, backend, role, created_at)
-			 VALUES ('s1', 7, 'dup', 'dup', 0, 1, 0, 0, '/p', 'claude', 'user', '2025-01-01')`)
+				chunk_index, token_count, has_embedding, embedding_dim, project_id, backend, role, created_at)
+			 VALUES ('s1', 7, 'dup', 'dup', 0, 1, 0, 0, 1, 'claude', 'user', '2025-01-01')`)
 		require.NoError(t, err)
 		id, _ := res.LastInsertId()
 		_, err = store.db.Exec(`INSERT INTO rag_chunks_fts(rowid, chunk_text_segmented) VALUES (?, ?)`, id, "dup")
@@ -340,8 +344,8 @@ func TestEnsureChunkUniqueness_DeduplicatesExistingRows(t *testing.T) {
 	// The unique index must now reject a fresh duplicate.
 	_, err = store.db.Exec(
 		`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
-			chunk_index, token_count, has_embedding, embedding_dim, project_path, backend, role, created_at)
-		 VALUES ('s1', 7, 'dup', 'dup', 0, 1, 0, 0, '/p', 'claude', 'user', '2025-01-01')`)
+			chunk_index, token_count, has_embedding, embedding_dim, project_id, backend, role, created_at)
+		 VALUES ('s1', 7, 'dup', 'dup', 0, 1, 0, 0, 1, 'claude', 'user', '2025-01-01')`)
 	require.Error(t, err, "the unique index must reject a duplicate (message_id, chunk_index)")
 }
 
@@ -515,8 +519,8 @@ func TestIndexer_DimensionChange_ResetsAndRequeues(t *testing.T) {
 	serviceDB := setupIndexerServiceDB(t)
 
 	_, err := serviceDB.Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
-		 VALUES ('/proj', 'user', 'previously indexed message', 'sess-1', 'claude', 0, 1)`,
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'user', 'previously indexed message', 'sess-1', 'claude', 0, 1)`,
 	)
 	require.NoError(t, err)
 
@@ -557,8 +561,8 @@ func TestIndexer_DimensionChange_ResetsAndRequeues(t *testing.T) {
 func TestIndexer_SameDimension_DoesNotReset(t *testing.T) {
 	serviceDB := setupIndexerServiceDB(t)
 	_, err := serviceDB.Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
-		 VALUES ('/proj', 'user', 'already indexed', 'sess-1', 'claude', 0, 1)`,
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'user', 'already indexed', 'sess-1', 'claude', 0, 1)`,
 	)
 	require.NoError(t, err)
 
@@ -642,8 +646,8 @@ func TestIndexer_TriggerWakesWithoutWaitingForPoll(t *testing.T) {
 	// Queue work AFTER the indexer went idle, so the only way it gets picked up
 	// before the 1h tick is the wake signal.
 	_, err := serviceDB.Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming, indexed)
-		 VALUES ('/proj', 'user', 'woken up immediately', 'sess-wake', 'claude', 0, 0)`,
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming, indexed)
+		 VALUES (1, 'user', 'woken up immediately', 'sess-wake', 'claude', 0, 0)`,
 	)
 	require.NoError(t, err)
 

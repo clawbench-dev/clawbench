@@ -32,9 +32,17 @@ func setupShareHelperDB(t *testing.T) *sql.DB {
 	db.SetMaxOpenConns(1)
 
 	for _, ddl := range []string{
-		`CREATE TABLE IF NOT EXISTS chat_sessions (
+		`CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
@@ -45,7 +53,7 @@ func setupShareHelperDB(t *testing.T) *sql.DB {
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL DEFAULT '',
 			files TEXT,
@@ -103,7 +111,7 @@ func setupShareHelperDB(t *testing.T) *sql.DB {
 func seedHelperSession(t *testing.T, db *sql.DB, sessionID string) {
 	t.Helper()
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model)
 		 VALUES (?, ?, 'codebuddy', 'Fix the login bug', 'codebuddy', 'claude-sonnet-4')`,
 		sessionID, helperProjectRoot,
 	)
@@ -113,7 +121,7 @@ func seedHelperSession(t *testing.T, db *sql.DB, sessionID string) {
 func seedHelperMessage(t *testing.T, db *sql.DB, sessionID, role, content string) int64 {
 	t.Helper()
 	res, err := db.Exec(
-		`INSERT INTO chat_history (project_path, session_id, role, content, backend)
+		`INSERT INTO chat_history (project_id, session_id, role, content, backend)
 		 VALUES (?, ?, ?, ?, 'codebuddy')`,
 		helperProjectRoot, sessionID, role, content,
 	)

@@ -25,9 +25,17 @@ func setupTestDBForSessionShares(t *testing.T) *sql.DB {
 	_, err = db.Exec(service.SessionSharesDDL)
 	require.NoError(t, err)
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			archived INTEGER NOT NULL DEFAULT 0
@@ -47,8 +55,8 @@ func seedListedSession(t *testing.T, db *sql.DB, id, projectPath string, archive
 		arch = 1
 	}
 	_, err := db.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, ?, ?, ?)",
-		id, projectPath, "codebuddy", "t", arch,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, ?, ?, ?)",
+		id, service.ProjectIDForTest(t, projectPath), "codebuddy", "t", arch,
 	)
 	require.NoError(t, err)
 }

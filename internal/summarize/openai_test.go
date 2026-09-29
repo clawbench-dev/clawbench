@@ -258,6 +258,27 @@ func TestOpenAIDoRecommendPass_EmptyStable(t *testing.T) {
 	assert.Len(t, received.Messages, 2)
 }
 
+// A non-positive cap must fall back to the recommendation default rather than
+// sending max_tokens=0 — the guard exists so a caller that forgets to pass a
+// cap still gets a valid request.
+func TestOpenAIDoAskPass_NonPositiveMaxTokensUsesDefault(t *testing.T) {
+	var received openaiChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&received))
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(openaiChatResponse{
+			Choices: []openaiChoice{{Message: openaiChatMessage{Role: "assistant", Content: "ok"}}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewOpenAI(server.URL, "key", "gpt-4o-mini")
+	out, err := s.DoAskPass(context.Background(), "sys", "stable", "rolling", 0)
+	assert.NoError(t, err)
+	assert.Equal(t, "ok", out)
+	assert.Equal(t, 1024, received.MaxTokens)
+}
+
 func TestOpenAIDoRecommendPass_ErrorStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

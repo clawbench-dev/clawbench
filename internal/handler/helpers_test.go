@@ -208,7 +208,10 @@ func TestRequireProject_Valid(t *testing.T) {
 	r.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench_project"), Value: "/tmp"})
 	projectPath, ok := requireProject(w, r)
 	assert.True(t, ok)
-	assert.Equal(t, "/tmp", projectPath)
+	// The cookie path is canonicalized (symlinks resolved) so it can be compared
+	// against the canonical paths stored in the projects registry. On macOS /tmp
+	// is a symlink to /private/tmp.
+	assert.Equal(t, model.NormalizeProjectPath("/tmp"), projectPath)
 }
 
 func TestRequireProject_Missing(t *testing.T) {

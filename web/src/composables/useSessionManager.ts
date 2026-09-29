@@ -7,7 +7,7 @@ import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
-import { clearQueue, removeQueued } from '@/composables/useMessageQueue.ts'
+import { addQueued, clearQueue, getQueue, removeQueued, removeQueuedMany } from '@/composables/useMessageQueue.ts'
 
 /**
  * Unified session manager — ensures consistent cleanup around session operations.
@@ -167,6 +167,14 @@ export function useSessionManager(options: UseSessionManagerOptions) {
    * Returns true when the action took effect. On a decline (turn already
    * finished, backend refused) the message stays queued and the caller simply
    * reports it — nothing is lost either way.
+   *
+   * Only 5xx and transport failures are reported as errors. A 4xx is a
+   * well-formed request the backend declined (409 "not injectable", 403
+   * ownership), and the message is still queued either way — reporting it as a
+   * failure would contradict the reassurance that it is safe in the queue.
+   * Previously ANY non-2xx went to the error toast, which made the benign 409
+   * decline (attachments, turn already ended, stale queueId) show "action
+   * failed" even though the drain loop would still deliver the message.
    */
   async function handlePendingAction(queueId: string, mode: 'insert' | 'interrupt'): Promise<boolean> {
     if (!queueId) return false
@@ -185,16 +193,33 @@ export function useSessionManager(options: UseSessionManagerOptions) {
         msgKey?: string
       } | null
 
-      // A 500 means the message may be stranded (claimed but not restored to
-      // the queue), so it must NOT be reported as "still queued" — the user has
-      // to resend. Distinguish it from the benign 409 decline.
-      if (!resp.ok && mode === 'insert') {
+      // Server-side failure. For insert, a 500 means the message may be
+      // stranded (claimed but not restored to the queue), so it must NOT be
+      // reported as "still queued" — the user has to resend. For interrupt the
+      // request never took effect, so surface it too instead of failing
+      // silently.
+      if (resp.status >= 500) {
         toast.show(
           data?.msgKey === 'QueueInjectStranded'
             ? gt('chat.pending.insertStranded')
             : gt('chat.pending.actionFailed'),
           { icon: '⚠️', type: 'error' },
         )
+        return false
+      }
+
+      // Other 4xx: the request was declined (409 not injectable, 403 ownership).
+      // Nothing was lost, but the user still needs to know the click did not
+      // take effect. `not_queued` gets its own message because it means
+      // something different from "the backend cannot join the turn".
+      if (!resp.ok) {
+        if (mode === 'insert') {
+          toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
+        } else if (data?.reason === 'not_queued') {
+          toast.show(gt('chat.pending.interruptNotQueued'), { icon: '⚠️', type: 'info' })
+        } else {
+          toast.show(gt('chat.pending.actionFailed'), { icon: '⚠️', type: 'error' })
+        }
         return false
       }
 
@@ -206,7 +231,8 @@ export function useSessionManager(options: UseSessionManagerOptions) {
           removeQueued(sessionId, queueId)
           return true
         }
-        // 409 decline: the message is still queued, so it will run on its own.
+        // A 200 without `inserted` is not a documented response, but treat it
+        // like the 409 decline: the message stays queued and runs on its own.
         toast.show(gt('chat.pending.insertFailed'), { icon: '⚠️', type: 'info' })
         return false
       }
@@ -227,6 +253,47 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     } catch {
       toast.show(gt('chat.pending.actionFailed'), { icon: '⚠️', type: 'error' })
       return false
+    }
+  }
+
+  /**
+   * Merge every queued message of a session into one, in place. Backed by the
+   * atomic POST /api/ai/queue/merge: the backend deletes the old rows and
+   * inserts the merged one in a single transaction, then broadcasts
+   * queue_cancel (old entries) + queue_added (the merged one).
+   *
+   * Returns the merged queueId on success, '' on failure. The caller mirrors
+   * the result locally right away (removeQueuedMany + addQueued) so this device
+   * does not wait for the broadcast.
+   */
+  async function handleMergeQueue(): Promise<string> {
+    const sessionId = identity.currentSessionId.value
+    const queued = getQueue(sessionId)
+    if (!sessionId || queued.length < 2) return ''
+
+    try {
+      const resp = await fetch(
+        `/api/ai/queue/merge?session_id=${encodeURIComponent(sessionId)}`,
+        { method: 'POST' },
+      )
+      const data = await resp.json().catch(() => null) as {
+        queueId?: string
+        text?: string
+        files?: FileEntry[]
+      } | null
+      if (!resp.ok || !data?.queueId) {
+        toast.show(gt('chat.pending.mergeFailed'), { icon: '⚠️', type: 'error' })
+        return ''
+      }
+      // The backend row is authoritative; mirror it locally so the panel shows
+      // the single merged entry without waiting for the queue_cancel /
+      // queue_added broadcast.
+      removeQueuedMany(sessionId, queued.map((m) => m.queueId))
+      addQueued(sessionId, { queueId: data.queueId, text: data.text || '', files: data.files || [] })
+      return data.queueId
+    } catch {
+      toast.show(gt('chat.pending.mergeFailed'), { icon: '⚠️', type: 'error' })
+      return ''
     }
   }
 
@@ -432,6 +499,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     enqueueMessage,
     handleRemovePending,
     handlePendingAction,
+    handleMergeQueue,
     // Unified session operations
     switchSession,
     createSession,

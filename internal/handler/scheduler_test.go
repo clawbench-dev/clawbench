@@ -137,6 +137,104 @@ func TestServeTaskByID_Executions_UnreadWithoutLastRead(t *testing.T) {
 	assert.Equal(t, true, exec["isUnread"], "completed execution should be unread when task has no last_read_at")
 }
 
+// TestServeTaskByID_Executions_ScriptResultExposed asserts the gating script's
+// result travels to the client on the execution row, so the detail view can
+// render its card, and is absent for a run whose task has no script.
+func TestServeTaskByID_Executions_ScriptResultExposed(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "ScriptResult",
+		CronExpr:    "0 * * * *",
+		AgentID:     "coder",
+		Prompt:      "Test",
+		RepeatMode:  "unlimited",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	// A gate-closed run: no session, with the script result recorded.
+	execID, err := service.AddTaskExecutionWithStatus(task.ID, "", "auto", "skipped")
+	require.NoError(t, err)
+	require.NoError(t, service.SetTaskExecutionScriptResult(execID, service.ScriptResult{
+		Outcome: service.ScriptFailed, ExitCode: 3,
+		Stdout: "partial out\n", Stderr: "boom\n",
+		Duration: 1500 * time.Millisecond,
+	}))
+
+	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	executions, _ := result["executions"].([]interface{})
+	require.Len(t, executions, 1)
+	exec, _ := executions[0].(map[string]interface{})
+	script, ok := exec["script"].(map[string]interface{})
+	require.True(t, ok, "the execution must expose the gating script result")
+	assert.Equal(t, float64(3), script["exitCode"])
+	assert.Equal(t, "partial out\n", script["stdout"])
+	assert.Equal(t, "boom\n", script["stderr"])
+	assert.Equal(t, float64(1500), script["durationMs"])
+}
+
+// TestServeTaskByID_Executions_NoScriptOmitsField is the converse guard: a run
+// whose task has no script must not carry a fabricated "exit 0" result.
+func TestServeTaskByID_Executions_NoScriptOmitsField(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents = map[string]*model.Agent{
+		"coder": {ID: "coder", Name: "Coder", Backend: "claude"},
+	}
+	defer func() { model.Agents = nil }()
+
+	s := service.NewScheduler()
+	defer s.Stop()
+	service.GlobalScheduler = s
+	defer func() { service.GlobalScheduler = nil }()
+
+	task := &model.ScheduledTask{
+		ProjectPath: env.ProjectDir,
+		Name:        "NoScript",
+		CronExpr:    "0 * * * *",
+		AgentID:     "coder",
+		Prompt:      "Test",
+		RepeatMode:  "unlimited",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	sessionID, _ := service.CreateSession(env.ProjectDir, "claude", "Exec", "coder", "", "default", "scheduled")
+	_, _ = service.AddTaskExecution(task.ID, sessionID, "auto")
+	_ = service.UpdateExecutionStatus(sessionID, "completed")
+
+	req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/tasks/%d/executions", task.ID), nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeTaskByID, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	executions, _ := result["executions"].([]interface{})
+	require.Len(t, executions, 1)
+	exec, _ := executions[0].(map[string]interface{})
+	_, hasScript := exec["script"]
+	assert.False(t, hasScript, "a run with no script must not expose a script result")
+}
+
 func TestServeTaskByID_Executions_RunningNotUnread(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
