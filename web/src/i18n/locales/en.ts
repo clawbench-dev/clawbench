@@ -652,6 +652,8 @@ export default {
       dropToUpload: 'Drop to upload',
       pasteToUpload: 'Pasting files...',
       uploading: 'Uploading...',
+      terminateUpload: 'Terminate',
+      uploadingBatch: 'Uploading {n} file(s)...',
       openFile: 'Open file',
       openCommit: 'Open commit details',
       openWorktree: 'Worktree Actions',

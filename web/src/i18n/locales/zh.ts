@@ -655,6 +655,8 @@ export default {
       dropToUpload: '松开上传文件',
       pasteToUpload: '粘贴上传文件...',
       uploading: '上传中...',
+      terminateUpload: '终止',
+      uploadingBatch: '正在上传 {n} 个文件...',
       openFile: '打开文件',
       openCommit: '打开 Commit 详情',
       openWorktree: 'Worktree 操作',

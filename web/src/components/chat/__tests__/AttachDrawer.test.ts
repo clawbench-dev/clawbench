@@ -16,6 +16,7 @@ vi.mock('lucide-vue-next', () => ({
   Check: { name: 'Check', render: () => h('span', { class: 'icon-check' }) },
   ExternalLink: { name: 'ExternalLink', render: () => h('span', { class: 'icon-external-link' }) },
   Trash2: { name: 'Trash2', render: () => h('span', { class: 'icon-trash2' }) },
+  Square: { name: 'Square', render: () => h('span', { class: 'icon-square' }) },
   Loader2: { name: 'Loader2', render: () => h('span', { class: 'icon-loader2' }) },
   LoaderCircle: { name: 'LoaderCircle', render: () => h('span', { class: 'icon-loader-circle' }) },
   X: { name: 'X', render: () => h('span', { class: 'icon-x' }) },
@@ -41,6 +42,8 @@ const mockDeleteRecentShare = vi.fn()
 const mockDeleteRecentUpload = vi.fn()
 const mockDialogConfirm = vi.fn()
 const mockHandleFileSelect = vi.fn()
+const mockCancelChatUpload = vi.fn()
+const sharedChatUploadCancelled = ref(false)
 
 vi.mock('@/composables/useDialog.ts', () => ({
   useDialog: () => ({
@@ -75,6 +78,8 @@ vi.mock('@/composables/useFileUpload', () => ({
     handleFileSelect: mockHandleFileSelect,
     handleFileDrop: vi.fn(),
     removeFile: vi.fn(),
+    cancelChatUpload: mockCancelChatUpload,
+    chatUploadCancelled: sharedChatUploadCancelled,
   }),
 }))
 
@@ -159,6 +164,9 @@ describe('AttachDrawer', () => {
     mockDialogConfirm.mockClear()
     mockHandleFileSelect.mockReset()
     mockHandleFileSelect.mockResolvedValue([])
+    mockCancelChatUpload.mockReset()
+    mockCancelChatUpload.mockReturnValue([])
+    sharedChatUploadCancelled.value = false
   })
 
   it('renders drawer when open=true', () => {
@@ -360,6 +368,84 @@ describe('AttachDrawer', () => {
     const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/a.png' }] })
     await getRawState(wrapper).onFileSelect({ target: { files: [] } })
     expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('onFileSelect attaches nothing when the batch was terminated mid-flight', async () => {
+    // The terminate button sets the flag while handleFileSelect is still
+    // awaiting; the files that finished before the abort must NOT be attached
+    // (terminate = clear everything).
+    mockHandleFileSelect.mockImplementation(async () => {
+      sharedChatUploadCancelled.value = true
+      return ['.clawbench/uploads/a.png']
+    })
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(getRawState(wrapper).activeTab.value).toBe('current')
+  })
+
+  describe('batch terminate button', () => {
+    beforeEach(() => {
+      sharedPendingFiles.value = []
+      sharedAttachedFiles.value = []
+      sharedRecentUploads.value = []
+    })
+    afterEach(() => {
+      sharedPendingFiles.value = []
+      sharedAttachedFiles.value = []
+      sharedRecentUploads.value = []
+    })
+
+    async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
+      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await nextTick()
+      await nextTick()
+    }
+
+    it('renders the terminate button only while a batch is in flight', async () => {
+      const wrapper = mountDrawer()
+      await openUploadsTab(wrapper)
+      expect(wrapper.find('.ad-terminate-btn').exists()).toBe(false)
+
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+      ]
+      await nextTick()
+      expect(wrapper.find('.ad-terminate-btn').exists()).toBe(true)
+      expect(wrapper.find('.ad-upload-banner').exists()).toBe(true)
+    })
+
+    it('clicking terminate cancels the batch and detaches the finished files', async () => {
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+      ]
+      // cancelChatUpload returns the paths that had already finished.
+      mockCancelChatUpload.mockReturnValue([
+        '.clawbench/uploads/done-a.png',
+        '.clawbench/uploads/done-b.png',
+      ])
+      const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/done-a.png' }] })
+      await openUploadsTab(wrapper)
+      await wrapper.find('.ad-terminate-btn').trigger('click')
+
+      expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+      // Finished files are cleared — but only the ones actually attached.
+      expect(wrapper.emitted('remove-attached')).toEqual([
+        [{ path: '.clawbench/uploads/done-a.png' }],
+      ])
+    })
+
+    it('does not emit remove-attached for finished files that were not attached', async () => {
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+      ]
+      mockCancelChatUpload.mockReturnValue(['.clawbench/uploads/never-attached.png'])
+      const wrapper = mountDrawer({ attachedFiles: [] })
+      await openUploadsTab(wrapper)
+      await wrapper.find('.ad-terminate-btn').trigger('click')
+
+      expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    })
   })
 
   it('getFileName returns baseName for a path', () => {

@@ -27,6 +27,22 @@ export interface PendingFile {
 const pendingFiles = ref<PendingFile[]>([])
 let uploadGeneration = 0
 
+// ── Chat upload batch cancellation (AttachDrawer) ──
+// The chat picker uploads sequentially and shows one terminate button for the
+// whole batch. Directory uploads keep their own flag (dirUploadCancelled) and
+// progress UI, so the two never cancel each other.
+// A ref (not a plain let) so the drawer can tell, after `await handleFileSelect`,
+// whether the batch it was waiting on was terminated.
+const chatUploadCancelled = ref(false)
+// Paths that finished uploading in the CURRENT chat batch. Terminating the
+// batch removes exactly these from the attachment list ("clear everything"),
+// leaving attachments that predate the batch untouched.
+let chatBatchPaths: string[] = []
+// The XHR of the file currently in flight in the chat batch, so terminating
+// the batch aborts the transfer that is actually running (not just the ones
+// queued behind it).
+let activeChatXhr: XMLHttpRequest | null = null
+
 // Error messages collected during a directory upload (file manager). Individual
 // per-file failures are suppressed while uploading and aggregated into a single
 // summary toast at the end, otherwise the per-file error toast is immediately
@@ -114,6 +130,9 @@ export function useFileUpload() {
   function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string): Promise<string | null> {
     // Hoisted out of the executor so the banking step below shares the same cap.
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    // Hoisted so the `.then` below can tell whether this file still owns the
+    // chat batch's in-flight slot.
+    const xhr = new XMLHttpRequest()
 
     const attempt = new Promise<string | null>((resolve) => {
       const isDirUpload = !!dir
@@ -166,9 +185,9 @@ export function useFileUpload() {
       if (dir) formData.append('dir', dir)
       if (relPath) formData.append('relpath', relPath)
 
-      const xhr = new XMLHttpRequest()
       if (entry) entry.xhr = xhr
       if (isDirUpload) activeDirXhr = xhr
+      else activeChatXhr = xhr
       xhr.open('POST', '/api/upload/file')
       xhr.timeout = 300000
 
@@ -263,6 +282,8 @@ export function useFileUpload() {
     // rather than in each caller means a caller cannot forget and stall the bar.
     return attempt.then((path) => {
       if (dir) bankDirProgress(file.size, maxSizeBytes)
+      // The in-flight slot is free once this file settles (success or not).
+      if (!dir && activeChatXhr === xhr) activeChatXhr = null
       return path
     })
   }
@@ -321,6 +342,12 @@ export function useFileUpload() {
       // Size the bar against the whole batch, not the current file.
       beginDirProgress(toUpload, maxSizeBytes)
       dirUploadErrorMsgs = []
+    } else {
+      // Fresh chat batch: clear the terminate flag and forget the previous
+      // batch's paths, so a new upload never inherits an old cancellation.
+      chatUploadCancelled.value = false
+      chatBatchPaths = []
+      activeChatXhr = null
     }
 
     let okCount = 0
@@ -346,13 +373,14 @@ export function useFileUpload() {
       // (including the top-level folder) from webkitRelativePath.
       const relPath = preserveStructure ? folderRelPath(file) || undefined : undefined
       const uploadedPath = await uploadOneFile(file, dir, false, relPath)
-      if (isDirUpload && dirUploadCancelled.value) break
+      if (isDirUpload ? dirUploadCancelled.value : chatUploadCancelled.value) break
       if (isDirUpload) {
         if (uploadedPath) okCount++
         else failCount++
         dirUploadDone.value++
       } else if (uploadedPath) {
         uploadedPaths.push(uploadedPath)
+        chatBatchPaths.push(uploadedPath)
       }
     }
 
@@ -371,9 +399,9 @@ export function useFileUpload() {
     return uploadFiles(files)
   }
 
-  async function handleFileDrop(files: File[]) {
-    if (files.length === 0) return
-    await uploadFiles(files)
+  async function handleFileDrop(files: File[]): Promise<string[]> {
+    if (files.length === 0) return []
+    return uploadFiles(files)
   }
 
   /** Upload files and auto-attach each one after it succeeds (for drag-drop / clipboard paste). */
@@ -391,14 +419,21 @@ export function useFileUpload() {
       toast.show(gt('upload.tooManyFiles', { total: files.length, remaining }), { icon: '⚠️', type: 'error' })
     }
     const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+    // A drag/paste batch is the same "current chat batch" as the picker's: the
+    // terminate button lives in the shared Uploads tab and must stop whichever
+    // one is showing, so both reset the same flag/paths here.
+    chatUploadCancelled.value = false
+    chatBatchPaths = []
+    activeChatXhr = null
     const generation = uploadGeneration
     for (const file of toUpload) {
-      if (generation !== uploadGeneration) break
+      if (generation !== uploadGeneration || chatUploadCancelled.value) break
       if (file.size > maxSizeBytes) {
         toast.show(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }), { icon: '⚠️', type: 'error' })
         continue
       }
-      await uploadOneFile(file, undefined, true)
+      const uploadedPath = await uploadOneFile(file, undefined, true)
+      if (uploadedPath) chatBatchPaths.push(uploadedPath)
     }
   }
 
@@ -502,6 +537,35 @@ export function useFileUpload() {
     activeDownloadAbort = null
     dirUploading.value = false
     dirUploadProgress.value = 0
+  }
+
+  /**
+   * Terminate the whole in-flight chat upload batch (the AttachDrawer button).
+   *
+   * Sets the flag the sequential loop checks between files, aborts the transfer
+   * currently in flight, and returns the paths that had already succeeded so
+   * the caller can clear them from the attachment list ("终止 = 全部清空").
+   *
+   * The failed/aborted in-flight entry is removed from `pendingFiles` here
+   * rather than waiting for the XHR's own error path: `abort()` fires
+   * `onabort`, which only resolves null and never touches `pendingFiles`, so a
+   * row would otherwise linger at its last percentage.
+   */
+  function cancelChatUpload(): string[] {
+    chatUploadCancelled.value = true
+    activeChatXhr?.abort()
+    activeChatXhr = null
+    const done = chatBatchPaths.slice()
+    chatBatchPaths = []
+    // Drop every in-flight row; the loop has stopped, so nothing will clean them.
+    for (const f of pendingFiles.value) {
+      if (f.uploading) {
+        f.cancelled = true
+        if (f.previewUrl) URL.revokeObjectURL(f.previewUrl)
+      }
+    }
+    pendingFiles.value = pendingFiles.value.filter(f => !f.uploading)
+    return done
   }
 
   /**
@@ -669,6 +733,9 @@ export function useFileUpload() {
     removeAttachedFile,
     cleanupPreviewUrls,
     clearPendingFiles,
+    // Chat upload batch termination (AttachDrawer)
+    cancelChatUpload,
+    chatUploadCancelled,
     // Directory upload (file manager)
     dirUploading,
     dirUploadProgress,

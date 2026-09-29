@@ -111,6 +111,20 @@
 
       <!-- Recently uploaded + pending uploads -->
       <template v-if="activeTab === 'uploads'">
+        <!-- Batch terminate bar: one button for the whole in-flight batch. The
+             upload is sequential, so this sits above the rows rather than on
+             each one. Terminating clears the batch entirely (including files
+             that already finished), per the product decision. -->
+        <div v-if="uploadingFiles.length > 0" class="ad-upload-banner">
+          <LoadingIndicator size="sm" inline />
+          <span class="ad-upload-banner-text">
+            {{ t('chat.attach.uploadingBatch', { n: uploadingFiles.length }) }}
+          </span>
+          <button class="ad-terminate-btn" @click="handleTerminateUpload">
+            <Square :size="12" />
+            <span>{{ t('chat.attach.terminateUpload') }}</span>
+          </button>
+        </div>
         <!-- Pending uploads: only the in-flight ones (failed items are removed by
              useFileUpload). Loop over `uploadingFiles` rather than `pendingFiles`
              with v-show, so finished-but-retained entries leave no hidden rows. The
@@ -165,7 +179,7 @@
 
 <script setup lang="ts">
 import { ref, watch, computed, onMounted, onUnmounted, nextTick } from 'vue'
-import { Paperclip, Upload, Check, ExternalLink, Trash2 } from 'lucide-vue-next'
+import { Paperclip, Upload, Check, ExternalLink, Trash2, Square } from 'lucide-vue-next'
 import { buildPathThumbUrl } from '@/utils/fileIcon'
 import FileIcon from '@/components/common/FileIcon.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -216,7 +230,7 @@ const { recentShares, fetchRecentShares, deleteRecentShare } = useShareIn()
 const { recentUploads, fetchRecentUploads, deleteRecentUpload } = useUploadRecent()
 
 // ── Upload logic (now lives inside the drawer) ──
-const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop } = useFileUpload()
+const { pendingFiles, attachedFiles, handleFileSelect, handleFileDrop, cancelChatUpload, chatUploadCancelled } = useFileUpload()
 
 const activeTab = ref('current')
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -269,6 +283,10 @@ function handleUploadClick() {
 async function onFileSelect(e: Event) {
   filePickerOpen.value = false
   const uploadedPaths = await handleFileSelect(e)
+  // Terminated mid-batch: the user asked to clear everything, so do not attach
+  // the files that had already finished. The terminate handler already dropped
+  // them, and `chatUploadCancelled` is only reset when a new batch starts.
+  if (chatUploadCancelled.value) return
   // Switch to the uploads tab and select the freshly uploaded files so the
   // user immediately sees (and has attached) what they just uploaded. Only do
   // this on a successful upload — switching for a cancelled/empty picker would
@@ -277,6 +295,20 @@ async function onFileSelect(e: Event) {
   activeTab.value = 'uploads'
   for (const path of uploadedPaths) {
     if (!isAttached(path)) emit('add-attached', path, false)
+  }
+}
+
+/**
+ * Terminate the whole in-flight upload batch.
+ *
+ * Clears everything, per the product decision: the queued files stop, the
+ * transfer in flight is aborted, and any file that had already finished is
+ * detached again (so the input returns to its pre-upload state).
+ */
+function handleTerminateUpload() {
+  const finished = cancelChatUpload()
+  for (const path of finished) {
+    if (isAttached(path)) emit('remove-attached', { path })
   }
 }
 
@@ -646,6 +678,51 @@ defineExpose({ activeTab, handleFileDrop })
   color: var(--accent-color);
   letter-spacing: -0.3px;
 }
+
+/* Batch terminate bar above the in-flight upload rows */
+.ad-upload-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 14px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+.ad-upload-banner-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ad-terminate-btn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 24px;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  background: none;
+  color: var(--color-red);
+  font-size: var(--font-size-xs);
+  cursor: pointer;
+  transition: background var(--duration-fast), border-color var(--duration-fast);
+}
+.ad-terminate-btn:active {
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+}
+@media (hover: hover) {
+  .ad-terminate-btn:hover {
+    background: color-mix(in srgb, var(--color-red) 12%, transparent);
+    border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+  }
+}
+
 /* Override BottomSheet footer's flex-end alignment to left-align tags */
 .bs-panel > .bs-footer:has(.chat-attachment-tags) {
   justify-content: flex-start;
