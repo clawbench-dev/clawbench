@@ -164,7 +164,10 @@ func (c *ClawBenchACPClient) CreateTerminal(ctx context.Context, req acp.CreateT
 		}
 	}()
 
-	slog.Debug("acp: terminal created", "terminal_id", termID, "command", req.Command)
+	// Log args too: an agent that splits argv across Command and Args (Kimi
+	// sends command=/bin/bash with the real work in args) otherwise logs a
+	// harmless-looking "command=/bin/bash" that hides what actually ran.
+	slog.Debug("acp: terminal created", "terminal_id", termID, "command", req.Command, "args", req.Args)
 	return acp.CreateTerminalResponse{TerminalId: termID}, nil
 }
 
