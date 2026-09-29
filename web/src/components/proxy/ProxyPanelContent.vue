@@ -129,8 +129,10 @@
            Keyed off availability, not the SSH listener alone: an h2-only
            install (port_forward.enabled false, forwards carried over the stream
            tunnel) has no SSH listener yet still forwards ports, so accusing it
-           of being disabled is wrong. -->
-      <div v-if="!isAndroidApp && sshInfo && !sshInfo.enabled && !transportAllowsH2" class="tunnel-banner warning">
+           of being disabled is wrong. Uses the shared `portForwardUnavailable`
+           predicate — the same expression behind the dock tab gate — so this
+           banner can only render on a panel the dock actually shows. -->
+      <div v-if="!isAndroidApp && portForwardUnavailable(sshInfo?.enabled, transportAllowsH2)" class="tunnel-banner warning">
         <AlertTriangle :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.tunnelNoSsh') }}</span>
@@ -315,7 +317,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect.ts'
-import { sshInstallHint } from '@/utils/portForwardUtils.ts'
+import { sshInstallHint, portForwardUnavailable } from '@/utils/portForwardUtils.ts'
 
 const { t } = useI18n()
 
