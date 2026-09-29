@@ -18,7 +18,8 @@ func TestServeBtwQuestion_MethodNotAllowed(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	req := newRequest(t, http.MethodGet, "/api/ai/session/btw?session_id=abc", nil)
+	// POST (ask) and GET (list) are both supported; anything else is rejected.
+	req := newRequest(t, http.MethodDelete, "/api/ai/session/btw?session_id=abc", nil)
 	req = withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeBtwQuestion, req)
@@ -135,7 +136,14 @@ func TestServeBtwQuestion_Success(t *testing.T) {
 	var body map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
 	assert.Equal(t, true, body["ok"])
-	assert.Equal(t, "因为连接池只有 2 个连接。", body["answer"])
+
+	rec, ok := body["record"].(map[string]any)
+	require.True(t, ok, "response must carry the stored record")
+	assert.Equal(t, "因为连接池只有 2 个连接。", rec["answer"])
+	assert.Equal(t, "连接池是多大？", rec["question"])
+	// The anchor is the last message that existed when the question was asked.
+	assert.NotZero(t, rec["anchorMessageId"])
+	assert.Empty(t, rec["error"])
 
 	// The compressed session history is background context, the question is the
 	// rolling tail.
@@ -145,8 +153,9 @@ func TestServeBtwQuestion_Success(t *testing.T) {
 	assert.Contains(t, capturedBody, `"max_tokens":8192`)
 }
 
-// /btw is explicitly transient: it must not add rows to the session history.
-func TestServeBtwQuestion_DoesNotPersist(t *testing.T) {
+// /btw records must not pollute the conversation itself: the question and
+// answer live in btw_questions, never in chat_history.
+func TestServeBtwQuestion_DoesNotTouchChatHistory(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -173,11 +182,18 @@ func TestServeBtwQuestion_DoesNotPersist(t *testing.T) {
 
 	after, err := service.GetMessagesBySessionID(sid)
 	require.NoError(t, err)
-	assert.Equal(t, len(before), len(after), "the /btw question and answer must not be persisted")
+	assert.Equal(t, len(before), len(after), "the /btw exchange must not be added to chat_history")
+
+	// But it IS stored, so the anchor can be rendered.
+	stored, err := service.ListBtwQuestions(sid)
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "顺便问一句", stored[0].Question)
 }
 
-// A failing model call is reported as a server error.
-func TestServeBtwQuestion_ModelFailure(t *testing.T) {
+// A model failure still returns 200 with a stored record: the user asked the
+// question, so its anchor must render and the drawer must explain the failure.
+func TestServeBtwQuestion_ModelFailureStillRecords(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -195,13 +211,18 @@ func TestServeBtwQuestion_ModelFailure(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeBtwQuestion, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "BtwFailed")
+	require.Equal(t, http.StatusOK, w.Code, "a recorded failure is not an HTTP error")
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	rec, ok := body["record"].(map[string]any)
+	require.True(t, ok)
+	assert.NotEmpty(t, rec["error"], "the failure reason must be stored for the drawer")
+	assert.Empty(t, rec["answer"])
 }
 
-// An empty model answer is an error, not a successful empty drawer. The
-// summarize layer rejects empty output, so the handler reports it as a failure.
-func TestServeBtwQuestion_EmptyAnswer(t *testing.T) {
+// An empty model answer is a failure the user should see, not a silent success.
+func TestServeBtwQuestion_EmptyAnswerIsRecordedAsError(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
@@ -220,6 +241,79 @@ func TestServeBtwQuestion_EmptyAnswer(t *testing.T) {
 	req = withProjectCookie(req, env.ProjectDir)
 
 	w := callHandler(ServeBtwQuestion, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-	assert.Contains(t, w.Body.String(), "BtwFailed")
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	rec := body["record"].(map[string]any)
+	assert.NotEmpty(t, rec["error"])
+}
+
+// GET lists the session's records so the client can place anchors.
+func TestServeBtwList_Success(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", "", "", "default", "chat")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage(env.ProjectDir, "claude", sid, "user", "hello", nil, false, "")
+	require.NoError(t, err)
+	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", sid, "assistant", "hi", nil, false, "")
+	require.NoError(t, err)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"answer"}}]}`))
+	}))
+	defer srv.Close()
+	withAISummaryModel(t, srv.URL)
+
+	// Ask two questions at the same position.
+	for _, q := range []string{"第一个问题", "第二个问题"} {
+		ask := newRequest(t, http.MethodPost, "/api/ai/session/btw",
+			map[string]any{"sessionId": sid, "question": q})
+		ask = withProjectCookie(ask, env.ProjectDir)
+		require.Equal(t, http.StatusOK, callHandler(ServeBtwQuestion, ask).Code)
+	}
+
+	req := newRequest(t, http.MethodGet, "/api/ai/session/btw?session_id="+sid, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeBtwQuestion, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body struct {
+		Questions []service.BtwQuestion `json:"questions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Questions, 2)
+	assert.Equal(t, "第一个问题", body.Questions[0].Question)
+	assert.Equal(t, "第二个问题", body.Questions[1].Question)
+	// Both share the same anchor: the assistant message was last both times.
+	assert.Equal(t, msgID, body.Questions[0].AnchorMessageID)
+	assert.Equal(t, msgID, body.Questions[1].AnchorMessageID)
+}
+
+func TestServeBtwList_EmptyIsArrayNotNull(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/session/btw?session_id="+sid, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeBtwQuestion, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	// `[]`, never `null` — the client iterates it directly.
+	assert.Contains(t, w.Body.String(), `"questions":[]`)
+}
+
+func TestServeBtwList_SessionNotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/ai/session/btw?session_id=nonexistent", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeBtwQuestion, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }

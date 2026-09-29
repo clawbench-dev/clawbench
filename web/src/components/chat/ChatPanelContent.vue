@@ -16,6 +16,8 @@
       :switching="session.switching.value"
       :totalMessages="session.totalMessages.value"
       :active="props.active"
+      :btwAnchors="btwAnchors"
+      @open-btw="openBtwDrawer"
       @touchstart.passive="swipeSession.onTouchStart"
       @touchend="swipeSession.onTouchEnd"
       @toggle-tool="render.toggleToolDetail"
@@ -198,9 +200,7 @@
        chat message. -->
   <BtwAnswerDrawer
     ref="btwDrawerRef"
-    :question="btwQuestion"
-    :answer="btwAnswer"
-    :answer-id="btwAnswerId"
+    :records="btwDrawerRecords"
     :expanded-tools="render.expandedTools"
     :block-tasks="render.blockTasks"
     :block-ask-questions="render.blockAskQuestions"
@@ -213,6 +213,7 @@ import { ref, computed, watch, onUnmounted, onMounted, inject, provide, toRef, n
 import { useI18n } from 'vue-i18n'
 import { appLog } from '@/utils/appLog'
 import { NEAR_BOTTOM_PX } from '@/utils/scrollState'
+import { groupBtwRecords } from '@/utils/btwAnchors.ts'
 import { apiGet, apiPost, apiPatch } from '@/utils/api'
 import { gt } from '@/composables/useLocale'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -1074,10 +1075,47 @@ function persistSessionUpdate(fields) {
 // this session. It is deliberately NOT routed through sendMessage: it must not
 // be queued, must not start the agent, and must not touch the session's
 // loading state (a /btw question is useful precisely while the agent is busy).
+//
+// Records are persisted server-side and anchored to the message that was last
+// when the question was asked, so the chat list can draw a marker at that
+// position — including while the reply is still streaming (the streaming
+// assistant row already has its stable numeric id).
 const btwDrawerRef = ref(null)
-const btwQuestion = ref('')
-const btwAnswer = ref('')
-const btwAnswerId = ref(0)
+/** All /btw records for the current session, oldest first. */
+const btwRecords = ref([])
+/** Records currently shown in the drawer (the ones for the clicked anchor). */
+const btwDrawerRecords = ref([])
+
+/**
+ * Records grouped by anchor message id. ChatMessageList looks up a message's
+ * anchor count here; anchor 0 ("asked before any message") is included like any
+ * other key. The grouping rule lives in utils/btwAnchors so it is unit-testable.
+ */
+const btwAnchors = computed(() => groupBtwRecords(btwRecords.value))
+
+/** Load this session's /btw records (best effort: anchors are decoration). */
+async function loadBtwRecords(sessionId) {
+  if (!sessionId) {
+    btwRecords.value = []
+    return
+  }
+  try {
+    const data = await apiGet(`/api/ai/session/btw?session_id=${encodeURIComponent(sessionId)}`)
+    btwRecords.value = data?.questions || []
+  } catch (err) {
+    // A failed list is not worth surfacing — the anchors simply do not render.
+    appLog.w(TAG, 'failed to load btw records', err)
+    btwRecords.value = []
+  }
+}
+
+/** Open the drawer for one anchor position (all questions asked there). */
+function openBtwDrawer(anchorKey) {
+  const records = btwAnchors.value[anchorKey] || []
+  if (records.length === 0) return
+  btwDrawerRecords.value = records
+  btwDrawerRef.value?.open()
+}
 
 async function handleBtw(question) {
   const sid = identity.currentSessionId.value
@@ -1092,18 +1130,24 @@ async function handleBtw(question) {
 
   try {
     const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question })
-    const answer = data?.answer || ''
-    if (!answer) {
+    const rec = data?.record
+    if (!rec) {
       toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })
       return
     }
-    btwQuestion.value = question
-    btwAnswer.value = answer
-    btwAnswerId.value += 1
+    // A model failure still returns a record (with `error` set) so the anchor
+    // appears; surface the failure as a toast too, and let the drawer show the
+    // question with the reason.
+    if (rec.error) {
+      toast.show(rec.error, { icon: '⚠️', type: 'error' })
+    }
+    // Re-read the list so the new anchor (and its count) is authoritative.
+    await loadBtwRecords(sid)
+    btwDrawerRecords.value = [rec]
     btwDrawerRef.value?.open()
   } catch (err) {
-    // Errors (model not configured, request failure) surface as a toast — an
-    // empty drawer would be worse than no drawer.
+    // Errors that produced no record (no session, empty question, model not
+    // configured) surface as a toast — there is nothing to anchor.
     appLog.w(TAG, 'btw question failed', err)
     const msg = err?.message || t('chat.btw.failed')
     toast.show(msg, { icon: '⚠️', type: 'error' })
@@ -1111,6 +1155,9 @@ async function handleBtw(question) {
     inputBarRef.value?.setBtwLoading?.(false)
   }
 }
+
+// Anchors must be reloaded whenever the session changes (and on first mount).
+watch(() => identity.currentSessionId.value, (sid) => { loadBtwRecords(sid) }, { immediate: true })
 
 async function sendMessage(text) {
     const inputText = text !== undefined ? text : (inputBarRef.value?.inputText?.trim() || '')

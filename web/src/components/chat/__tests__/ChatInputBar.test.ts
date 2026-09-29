@@ -1487,18 +1487,72 @@ describe('ChatInputBar', () => {
     mockSupportsACP.mockReturnValue(false)
   })
 
-  it('shows both entries when a ClawBench and agent command share a name', async () => {
+  it('hides an agent command that collides with a ClawBench built-in', async () => {
     mockSupportsACP.mockReturnValue(true)
     mockSessionTransport.value = 'acp-stdio'
     // An agent command literally named /cb-task collides with the built-in.
-    // Both must remain visible, distinguished by source.
+    // ClawBench intercepts /cb-task before it can reach the agent, so the
+    // agent's copy could never run — only the ClawBench entry is shown.
     mockAvailableCommands.value = [{ name: 'cb-task', description: 'Agent task', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/cb-task'
     await wrapper.vm.$nextTick()
     const items = wrapper.findAll('.completion-item')
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(1)
     expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  // CodeBuddy ACP ships its own /btw. ClawBench intercepts /btw before the
+  // agent sees it, so the native copy must not appear in the menu.
+  it('hides the AI backend native /btw in favour of the ClawBench one', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: 'btw', description: 'Native side question', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toContain('/btw')
+    expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('hides a slash-prefixed native /btw too', async () => {
+    // Names arrive either slashless or slash-prefixed depending on the source.
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: '/btw', description: 'Native side question', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
+    expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('still shows unrelated agent commands', async () => {
+    // The dedupe must only drop the ClawBench-owned names, not everything.
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [
+      { name: 'btw', description: 'Native', inputHint: '' },
+      { name: 'mmx-cli', description: 'MMX', inputHint: '' },
+    ]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const labels = wrapper.findAll('.completion-item .completion-label').map(i => i.text())
+    expect(labels.some(l => l.includes('/mmx-cli'))).toBe(true)
     expect(wrapper.findAll('.completion-item--agent')).toHaveLength(1)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''

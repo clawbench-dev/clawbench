@@ -1,6 +1,7 @@
 package service_test
 
 import (
+	"strconv"
 	"testing"
 
 	"clawbench/internal/model"
@@ -59,6 +60,53 @@ func TestForkSession_NormalFlow(t *testing.T) {
 	summary, found := service.GetSummary("chat_message", newAsstID)
 	assert.True(t, found)
 	assert.Equal(t, "Greeting exchange", summary)
+}
+
+// ---------- ForkSession: copies /btw questions, re-anchored ----------
+
+// A fork copies the /btw markers so the branched conversation keeps its side
+// questions, re-anchored to the copied message they sat after (the ids change
+// on copy). A marker whose anchor was truncated away by the fork point is
+// skipped, matching the tool/thinking copy.
+func TestForkSession_CopiesBtwQuestionsReanchored(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original")
+
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
+	assert.NoError(t, err)
+	asstID, err := service.AddChatMessage("/project", "claude", sessID, "assistant", "Hi", nil, false, "")
+	assert.NoError(t, err)
+	laterID, err := service.AddChatMessage("/project", "claude", sessID, "user", "again", nil, false, "")
+	assert.NoError(t, err)
+
+	// One marker anchored to the first assistant reply, one to a later message.
+	for _, anchor := range []int64{asstID, laterID} {
+		_, err := service.UnsafeDBForTest().Exec(
+			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer)
+			 VALUES (?, '/project', ?, ?, 'a')`,
+			sessID, anchor, "q-"+strconv.FormatInt(anchor, 10),
+		)
+		assert.NoError(t, err)
+	}
+
+	// Fork at the assistant reply, so the later user message (and its marker)
+	// is beyond the fork point and must be dropped.
+	newSessID, err := service.ForkSession(sessID, "/project", "[Fork] Original", asstID, "")
+	assert.NoError(t, err)
+
+	got, err := service.ListBtwQuestions(newSessID)
+	assert.NoError(t, err)
+	require.Len(t, got, 1, "only the marker whose anchor was copied survives")
+
+	// The copied marker is re-anchored to the fork's own message id, not the
+	// source id.
+	newMsgs, err := service.GetChatHistory("/project", "claude", newSessID)
+	assert.NoError(t, err)
+	require.Len(t, newMsgs, 2)
+	assert.Equal(t, newMsgs[1].ID, got[0].AnchorMessageID)
+	assert.NotEqual(t, asstID, got[0].AnchorMessageID)
+	assert.Equal(t, "q-"+strconv.FormatInt(asstID, 10), got[0].Question)
 }
 
 // ---------- ForkSession: does NOT copy external_session_id ----------

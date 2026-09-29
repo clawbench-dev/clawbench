@@ -823,6 +823,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	if _, err := WriteExec(SessionSharesDDL); err != nil {
 		return fmt.Errorf("failed to create session_shares table: %w", err)
 	}
+	// "/btw" side questions. Defined in btw.go as a constant so tests share one
+	// source of truth for the schema.
+	if _, err := WriteExec(BtwQuestionsDDL); err != nil {
+		return fmt.Errorf("failed to create btw_questions table: %w", err)
+	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
 	//
 	// Existing rows backfill to '' (unknown) rather than 'https'. The distinction

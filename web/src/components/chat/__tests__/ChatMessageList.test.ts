@@ -755,3 +755,49 @@ describe('ChatMessageList — ask-card key forwarding', () => {
     expect(src).toMatch(/@send-message="\(text, cardKey\) => \$emit\('send-message', text, cardKey\)"/)
   })
 })
+
+// ── /btw anchors ──
+// A /btw marker is rendered after the message it was anchored to. Grouping and
+// counting live in utils/btwAnchors (unit-tested separately); these guards pin
+// the component wiring so the marker cannot silently disappear.
+describe('ChatMessageList — /btw anchors', () => {
+  async function source(component: string): Promise<string> {
+    const mod = await import(/* @vite-ignore */ `@/components/chat/${component}?raw`)
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('renders the anchor after its message, one per position', async () => {
+    const src = await source('ChatMessageList.vue')
+    // The v-for must be a <template> wrapper, otherwise there is nowhere to put
+    // a sibling after ChatMessageItem.
+    expect(src).toMatch(/<template v-for="\(msg, i\) in messages"/)
+    expect(src).toMatch(/v-if="anchorCountFor\(msg\) > 0"/)
+    expect(src).toContain('class="btw-anchor"')
+  })
+
+  it('renders the pre-message anchor (anchor 0) at the top of the list', async () => {
+    const src = await source('ChatMessageList.vue')
+    // Anchor 0 is looked up with optional chaining on the map.
+    expect(src).toContain("btwAnchors?.['0']")
+    expect(src).toContain('btw-anchor-top')
+  })
+
+  it('shows a count badge only when several questions share a position', async () => {
+    const src = await source('ChatMessageList.vue')
+    expect(src).toMatch(/v-if="anchorCountFor\(msg\) > 1"[\s\S]{0,120}btw-anchor-count/)
+  })
+
+  it('emits the anchor key on click so the parent can resolve the records', async () => {
+    const src = await source('ChatMessageList.vue')
+    expect(src).toMatch(/@click="\$emit\('open-btw', anchorKeyFor\(msg\)\)"/)
+    expect(src).toContain("'open-btw'")
+  })
+
+  it('only anchors settled numeric ids (optimistic/placeholder ids cannot match rows)', async () => {
+    const src = await source('ChatMessageList.vue')
+    // The rule itself lives in the util; the component must delegate to it
+    // rather than re-implementing a weaker check.
+    expect(src).toContain("import { anchorCount } from '@/utils/btwAnchors.ts'")
+    expect(src).toMatch(/anchorCount\(props\.btwAnchors, msg\)/)
+  })
+})

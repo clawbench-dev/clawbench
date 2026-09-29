@@ -476,6 +476,9 @@ export default {
       answering: '正在回答…',
       questionRequired: '/btw 后面需要跟随一个问题',
       failed: '回答失败',
+      failedWithReason: '回答失败：{reason}',
+      anchorLabel: '顺便问过',
+      anchorTitle: '查看在这里问的旁路问题',
       close: '关闭',
     },
     slashCommand: {

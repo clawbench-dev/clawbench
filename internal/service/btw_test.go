@@ -107,13 +107,174 @@ func TestAnswerBtwQuestion_Success(t *testing.T) {
 	insertSessionWithTitle(t, "sess-answer", "t", TitleSourcePlaceholder)
 	insertAutoRenameUserMessage(t, 301, "sess-answer", "上下文里的一句话")
 
-	answer, err := AnswerBtwQuestion(context.Background(), "sess-answer", "连接池是多大？")
+	rec, err := AnswerBtwQuestion(context.Background(), "sess-answer", "连接池是多大？")
 	require.NoError(t, err)
 	// The answer is trimmed before it reaches the drawer.
-	assert.Equal(t, "连接池只有 2 个连接。", answer)
+	assert.Equal(t, "连接池只有 2 个连接。", rec.Answer)
 	assert.Contains(t, capturedBody, "上下文里的一句话")
 	assert.Contains(t, capturedBody, "连接池是多大？")
 	assert.Contains(t, capturedBody, "8192")
+	// The record is persisted with the anchor at the last message (301).
+	assert.NotZero(t, rec.ID, "record must be persisted")
+	assert.Equal(t, int64(301), rec.AnchorMessageID)
+	assert.Equal(t, "sess-answer", rec.SessionID)
+	assert.Equal(t, "/test", rec.ProjectPath)
+	assert.Empty(t, rec.Error)
+
+	stored, err := ListBtwQuestions("sess-answer")
+	require.NoError(t, err)
+	require.Len(t, stored, 1)
+	assert.Equal(t, "连接池是多大？", stored[0].Question)
+	assert.Equal(t, "连接池只有 2 个连接。", stored[0].Answer)
+	assert.Equal(t, int64(301), stored[0].AnchorMessageID)
+}
+
+// A model failure is still recorded: the user asked the question, so the anchor
+// must exist and the drawer must be able to explain why it failed.
+func TestAnswerBtwQuestion_FailureIsPersisted(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+	withBtwSummaryModel(t, srv.URL)
+
+	insertSessionWithTitle(t, "sess-fail", "t", TitleSourcePlaceholder)
+	insertAutoRenameUserMessage(t, 501, "sess-fail", "一句话")
+
+	rec, err := AnswerBtwQuestion(context.Background(), "sess-fail", "为什么会失败？")
+	require.Error(t, err)
+	assert.NotZero(t, rec.ID, "a failed question must still be persisted")
+	assert.Empty(t, rec.Answer)
+	assert.NotEmpty(t, rec.Error, "the failure reason must be stored")
+	assert.Equal(t, int64(501), rec.AnchorMessageID)
+
+	stored, listErr := ListBtwQuestions("sess-fail")
+	require.NoError(t, listErr)
+	require.Len(t, stored, 1)
+	assert.NotEmpty(t, stored[0].Error)
+}
+
+// Anchor 0: a question asked before the session had any message must still be
+// recorded, anchored to 0 (the client renders it at the top of the list).
+func TestAnswerBtwQuestion_NoMessagesAnchorsToZero(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer srv.Close()
+	withBtwSummaryModel(t, srv.URL)
+
+	insertSessionWithTitle(t, "sess-empty", "t", TitleSourcePlaceholder)
+
+	rec, err := AnswerBtwQuestion(context.Background(), "sess-empty", "空会话也能问？")
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), rec.AnchorMessageID)
+}
+
+// The list is chronological (oldest first) so the client can group by anchor
+// and keep the questions in the order they were asked.
+func TestListBtwQuestions_Chronological(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-order", "t", TitleSourcePlaceholder)
+	for i, q := range []string{"第一个", "第二个", "第三个"} {
+		_, err := WriteExec(
+			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer)
+			 VALUES (?, '/test', ?, ?, 'a')`,
+			"sess-order", 600+i, q,
+		)
+		require.NoError(t, err)
+	}
+
+	got, err := ListBtwQuestions("sess-order")
+	require.NoError(t, err)
+	require.Len(t, got, 3)
+	assert.Equal(t, []string{"第一个", "第二个", "第三个"}, []string{got[0].Question, got[1].Question, got[2].Question})
+}
+
+// The list is scoped to one session.
+func TestListBtwQuestions_ScopedToSession(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-a", "t", TitleSourcePlaceholder)
+	insertSessionWithTitle(t, "sess-b", "t", TitleSourcePlaceholder)
+	for _, sid := range []string{"sess-a", "sess-b"} {
+		_, err := WriteExec(
+			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question) VALUES (?, '/test', 1, ?)`,
+			sid, "q-"+sid,
+		)
+		require.NoError(t, err)
+	}
+
+	got, err := ListBtwQuestions("sess-a")
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, "q-sess-a", got[0].Question)
+}
+
+// HardDeleteSession must remove the session's /btw rows (no FK to chat_sessions,
+// so without the explicit delete they would linger as orphans).
+func TestHardDeleteSession_RemovesBtwQuestions(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-del", "t", TitleSourcePlaceholder)
+	_, err := WriteExec(
+		`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question) VALUES ('sess-del', '/test', 1, 'q')`,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, HardDeleteSession("sess-del"))
+
+	var count int
+	require.NoError(t, dbRead.QueryRow("SELECT COUNT(*) FROM btw_questions WHERE session_id = 'sess-del'").Scan(&count))
+	assert.Equal(t, 0, count, "hard delete must remove btw rows")
+}
+
+// Rewind removes the messages after the anchor; /btw markers anchored into that
+// removed range must go with them, while a marker at or before the anchor stays.
+func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-rw", "t", TitleSourcePlaceholder)
+	for id := int64(701); id <= 704; id++ {
+		_, err := WriteExec(
+			"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'assistant', '{}', 'sess-rw', 0)",
+			id,
+		)
+		require.NoError(t, err)
+	}
+	// Anchored at the anchor message (701, survives) and at a removed one (703).
+	for _, anchor := range []int64{701, 703} {
+		_, err := WriteExec(
+			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question) VALUES ('sess-rw', '/test', ?, 'q')`,
+			anchor,
+		)
+		require.NoError(t, err)
+	}
+
+	_, err := TruncateSessionAfterMessage("sess-rw", 701)
+	require.NoError(t, err)
+
+	var anchors []int64
+	rows, err := dbRead.Query("SELECT anchor_message_id FROM btw_questions WHERE session_id = 'sess-rw' ORDER BY anchor_message_id")
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var a int64
+		require.NoError(t, rows.Scan(&a))
+		anchors = append(anchors, a)
+	}
+	assert.Equal(t, []int64{701}, anchors, "only the marker inside the removed range is deleted")
 }
 
 func TestAnswerBtwQuestion_ModelFailure(t *testing.T) {

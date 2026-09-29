@@ -588,14 +588,26 @@ describe('ChatPanelContent — /btw side question', () => {
     expect(region).not.toMatch(/loading\.value\s*=/)
   })
 
-  it('opens the drawer only after a non-empty answer arrives', async () => {
+  it('opens the drawer only when a record came back', async () => {
     const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
-    // Guard against an empty answer before opening.
-    expect(region).toMatch(/if\s*\(!answer\)/)
+    // No record (e.g. a 4xx that stored nothing) → toast, no drawer.
+    expect(region).toMatch(/if\s*\(!rec\)/)
     expect(region).toMatch(/btwDrawerRef\.value\?\.open\(\)/)
   })
 
-  it('toasts instead of opening an empty drawer when the request fails', async () => {
+  it('refreshes the anchor list after a successful question', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    // The new anchor's count must be authoritative, so the list is re-read
+    // rather than the record being appended locally.
+    expect(region).toMatch(/await loadBtwRecords\(sid\)/)
+  })
+
+  it('surfaces a recorded model failure as a toast but still opens the drawer', async () => {
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/if\s*\(rec\.error\)[\s\S]*?toast\.show\(/)
+  })
+
+  it('toasts instead of opening a drawer when the request fails outright', async () => {
     const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
     expect(region).toMatch(/catch\s*\(err\)[\s\S]*?toast\.show\(/)
   })
@@ -609,6 +621,31 @@ describe('ChatPanelContent — /btw side question', () => {
     const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
     expect(source).toMatch(/@btw="handleBtw"/)
+  })
+
+  it('loads the anchors when the session changes, and passes them to the list', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    // Anchors are per-session; a switch must reload them (immediate for first mount).
+    expect(source).toMatch(/watch\(\(\) => identity\.currentSessionId\.value[\s\S]*?loadBtwRecords\(sid\)[\s\S]*?immediate:\s*true/)
+    expect(source).toMatch(/:btwAnchors="btwAnchors"/)
+  })
+
+  it('opens the drawer for an anchor position through the open-btw event', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/@open-btw="openBtwDrawer"/)
+    // The handler resolves the anchor's records before opening, and is a no-op
+    // for an unknown anchor.
+    const region = source.slice(source.indexOf('function openBtwDrawer'), source.indexOf('async function handleBtw'))
+    expect(region).toMatch(/btwAnchors\.value\[anchorKey\]/)
+    expect(region).toMatch(/if\s*\(records\.length === 0\)\s*return/)
+  })
+
+  it('passes the clicked anchor records (not a single answer) to the drawer', async () => {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    expect(source).toMatch(/:records="btwDrawerRecords"/)
   })
 })
 

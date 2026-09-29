@@ -473,6 +473,9 @@ export default {
       answering: 'Answering…',
       questionRequired: 'A question is required after /btw',
       failed: 'Failed to answer',
+      failedWithReason: 'Failed to answer: {reason}',
+      anchorLabel: 'Asked by the way',
+      anchorTitle: 'View the side question asked here',
       close: 'Close',
     },
     slashCommand: {

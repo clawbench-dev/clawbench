@@ -355,6 +355,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		t.Fatalf("failed to create session share tables: %v", err)
 	}
 
+	// Create /btw side-question table (production DDL, so it cannot drift)
+	if _, err := db.Exec(service.BtwQuestionsDDL); err != nil {
+		t.Fatalf("failed to create btw_questions table: %v", err)
+	}
+
 	// Create forge binding + sync tables
 	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
 		if _, err := db.Exec(ddl); err != nil {

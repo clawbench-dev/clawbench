@@ -998,12 +998,18 @@ function setBtwLoading(v) { btwLoading.value = v }
 // the same command cannot appear twice.
 const slashCandidates = computed(() => {
   const items = []
+  // Canonical names ClawBench itself handles. Seeded BEFORE the agent commands
+  // are scanned so an agent command with the same name is dropped: ClawBench
+  // intercepts these before they can reach the agent, so showing the agent's
+  // copy would offer the user a command that cannot run (e.g. CodeBuddy ACP
+  // ships its own /btw, which must not shadow ClawBench's).
+  const seen = new Set()
   for (const cmd of clawbenchCommands.value) {
+    seen.add(cmd.key.startsWith('/') ? cmd.key.slice(1) : cmd.key)
     items.push({ key: cmd.key, label: cmd.label, description: cmd.description, source: 'clawbench' })
   }
   if (isACPTransport.value) {
     const toSlash = (name) => (name.startsWith('/') ? name : '/' + name)
-    const seen = new Set()
     for (const cmd of availableCommands.value) {
       const canonical = cmd.name.startsWith('/') ? cmd.name.slice(1) : cmd.name
       if (!canonical || seen.has(canonical)) continue

@@ -3177,6 +3177,9 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 	// same cleanup; this retention path was missed).
 	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id IN ("+placeholders+")", args...)
 
+	// Delete /btw side questions for purged sessions (no FK to chat_sessions).
+	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id IN ("+placeholders+")", args...)
+
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)
 	if err != nil {
@@ -3224,6 +3227,9 @@ func HardDeleteSession(sessionID string) error {
 	// chat_sessions, so without this the rows would linger forever. The tag
 	// definitions themselves are preserved (other sessions may use them).
 	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id = ?", sessionID)
+	// /btw side questions belong to the conversation they were asked about;
+	// without this they would linger as orphan markers.
+	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err
@@ -3262,6 +3268,9 @@ func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []Re
 	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
+	// The replayed history replaces the whole conversation, so the /btw markers
+	// anchored into the old message ids no longer point at anything.
+	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id = ?", sessionID)
 	if _, err := tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID); err != nil {
 		return 0, err
 	}

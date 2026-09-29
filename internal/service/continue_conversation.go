@@ -582,6 +582,68 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 		}
 	}
 
+	// btw_questions: the /btw markers follow their conversation into the fork,
+	// re-anchored to the copied message they sat after. A marker whose anchor
+	// message was truncated away by the fork point is skipped, exactly like the
+	// tool/thinking rows above — it would otherwise float at the end of the new
+	// session with no relationship to its position.
+	if err := copySessionBtwQuestions(idMap, sourceSessionID, newSessionID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// copySessionBtwQuestions copies a session's /btw records into its fork,
+// re-anchoring each to the copied message it sat after. Rows whose anchor is
+// absent from idMap (truncated away by the fork point) are skipped.
+//
+// Split out of copySessionDetailTables so that function stays within the
+// cyclomatic-complexity budget; the shape mirrors the tool/thinking copies.
+func copySessionBtwQuestions(idMap map[int64]int64, sourceSessionID, newSessionID string) error {
+	rows, err := dbRead.Query(
+		"SELECT anchor_message_id, project_path, question, answer, model, error, created_at FROM btw_questions WHERE session_id = ?",
+		sourceSessionID,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to query source btw questions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	type btwRow struct {
+		anchorID    int64
+		projectPath string
+		question    string
+		answer      string
+		model       string
+		errMsg      string
+		createdAt   time.Time
+	}
+	var list []btwRow
+	for rows.Next() {
+		var r btwRow
+		if err := rows.Scan(&r.anchorID, &r.projectPath, &r.question, &r.answer, &r.model, &r.errMsg, &r.createdAt); err != nil {
+			return fmt.Errorf("failed to scan btw question: %w", err)
+		}
+		list = append(list, r)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, r := range list {
+		newAnchor, ok := idMap[r.anchorID]
+		if !ok {
+			continue
+		}
+		if _, err := WriteExec(
+			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer, model, error, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			newSessionID, r.projectPath, newAnchor, r.question, r.answer, r.model, r.errMsg, r.createdAt,
+		); err != nil {
+			return fmt.Errorf("failed to copy btw question: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -790,6 +852,14 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	// but are cleaned anyway to avoid accumulating stale follow-up suggestions.
 	_, _ = tx.Exec(
 		"DELETE FROM chat_recommendations WHERE session_id = ? AND message_id IN ("+childPred+")",
+		sessionID, sessionID, anchorID,
+	)
+	// btw_questions: a rewind removes the messages after the anchor, so any /btw
+	// marker anchored into that removed range has nothing left to sit after.
+	// Deleted alongside the messages it points at; markers anchored at or before
+	// the anchor survive.
+	_, _ = tx.Exec(
+		"DELETE FROM btw_questions WHERE session_id = ? AND anchor_message_id IN ("+childPred+")",
 		sessionID, sessionID, anchorID,
 	)
 

@@ -24,7 +24,7 @@
 | 决策点 | 选择 | 理由 |
 |---|---|---|
 | 抽屉内容 | **仅助手回答** | 问题在输入框里刚打过，不需要重复；抽屉是一段"补充说明" |
-| 持久化 | **完全临时** | 不写 `chat_history`，不写 `chat_sessions`；关掉即消失 |
+| 持久化 | ~~完全临时~~ → **落库到独立表 `btw_questions`**（2026-09-29 修订） | 需要在聊天区渲染锚点，刷新后仍在；但仍不写 `chat_history`/`chat_sessions`，不污染对话本身 |
 | 呈现节奏 | **等待完成后一次性弹出** | 先显示输入框加载态，拿到完整答案再弹抽屉、一次性渲染 |
 | 上下文范围 | **整个当前会话，走分叉压缩** | 复用 `BuildForkContextWithOptions` |
 | 预算 | **固定常量，100K 上下文的 80%** | 见下 |
@@ -171,3 +171,72 @@ const btwContextBudgetChars = 120000
 - 不做流式渲染（用户明确选一次性弹出）。
 - 不改摘要模型的推荐/摘要现有路径的行为（maxTokens=0 保持 1024）。
 - 不引入 tokenizer 或模型上下文元数据（用户选固定常量）。
+
+---
+
+## 修订（2026-09-29）：持久化 + 聊天区锚点
+
+用户要求：抽屉里助手回答通宽无边距、用户提问渲染成真正的用户气泡；主聊天区在
+「提问时正在流式或已完成的那条消息」之后插入锚点，点击打开抽屉；数据库存下这次
+问答。
+
+### 决策（用户确认）
+
+| 决策点 | 选择 |
+|---|---|
+| 样式改动范围 | **只改 /btw 抽屉**（主聊天区完全不动） |
+| 抽屉里的提问 | **渲染成真正的用户气泡**（迷你对话：用户气泡 + 助手气泡） |
+| 同一位置多次 /btw | **合并成一个锚点**（显示数量，点开列出全部） |
+| 额外字段 | project_path、model、created_at、error 全要 |
+
+### 表 `btw_questions`
+
+```sql
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+session_id TEXT NOT NULL,
+project_path TEXT NOT NULL DEFAULT '',
+anchor_message_id INTEGER NOT NULL DEFAULT 0,   -- 提问时最后一条消息 id；0 = 尚无消息
+question TEXT NOT NULL,
+answer TEXT NOT NULL DEFAULT '',
+model TEXT NOT NULL DEFAULT '',
+error TEXT NOT NULL DEFAULT '',                 -- 失败原因（失败也落库）
+created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+```
+
+索引 `(session_id, anchor_message_id, id)`。无 FK 到 `chat_history`：`anchor_message_id`
+是位置标记，rewind 合法地删除被锚定的消息，同一语句清理该行即可。
+
+### 关键实现点
+
+- **锚点 id 在流式开始时就稳定**：助手消息的行在流式开始时 INSERT 并广播
+  `stream_start`（`run_turn.go:275-301`），完成只是 UPDATE 同一行。所以「正在流式」
+  与「已完成」两种情况都能拿到同一个 numeric id，锚点位置一致。
+- **失败也落库**：用户确实问过，锚点必须出现；抽屉用 `error` 解释失败原因。POST 因此
+  在「已产生记录」时返回 200（即使模型失败），只有「无法产生记录」（会话不存在/空问题/
+  未配置摘要模型）才返回 4xx。
+- **`anchor_message_id = 0`**：会话还没有任何消息时提问，锚点渲染在列表顶部。
+- **级联清理四处**：`HardDeleteSession`、`PurgeArchivedData`、`ReplaceSessionHistory`、
+  `TruncateSessionAfterMessage`（rewind 按范围删除）。漏一处就会留下孤儿锚点。
+- **分叉复制**：`copySessionDetailTables` 复制 `btw_questions` 并重映射
+  `anchor_message_id`；锚点被分叉点截掉的行跳过（与 tool/thinking 一致）。
+- **前端分组逻辑抽到 `utils/btwAnchors.ts`**：`groupBtwRecords` / `messageAnchorKey` /
+  `anchorCount`，可单测；组件只负责渲染。`messageAnchorKey` 只接受**已定型的 numeric id**
+  （`pending-*`/`drain-*` 等占位 id 不可能匹配已落库的行）。
+- **锚点位置**：`ChatMessageList` 的 `v-for` 从裸 `ChatMessageItem` 改成
+  `<template v-for>` 包裹，锚点作为兄弟节点插在目标消息之后（`margin-top` 负值让它贴近
+  上一条消息）。这是全仓第一处「消息之间的元素」。
+- **抽屉样式**：`ChatMessageItem` 照旧渲染，仅覆盖宽度——助手 `max-width:100%`、
+  用户气泡去掉 `margin-right`，让两者都通宽。
+
+### 遮蔽 AI 后端原生的同名命令
+
+CodeBuddy ACP 自带一个原生的 `/btw`。因为 ClawBench 的 `/btw` 在**发给 agent 之前**
+就被 `dispatchSend` 拦截，原生那个永远不可能被执行——如果同时列在补全菜单里，用户会
+选到一个点了没反应的命令。
+
+修法：`slashCandidates` 的去重集合 `seen` **先用 ClawBench 自己的命令名播种**，再扫描
+agent 命令，同名者直接跳过。这同时修掉了一个既有的同类缺陷——`/cb-*` 与 agent 命令同名
+时此前也会重复展示（原测试把重复当契约，已改为断言「只显示 ClawBench 那个」）。
+
+注意：这是**展示层**的遮蔽。后端无需改动——`/btw` 根本不走 `/api/ai/chat`，
+`IsClawbenchCommand` 也管不到它。

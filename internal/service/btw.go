@@ -3,11 +3,59 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 )
+
+// BtwQuestionsDDL creates the table holding "/btw" side questions.
+//
+// Each row records one side question asked while the user was at a particular
+// point in the conversation. anchor_message_id is the message the question was
+// asked "after" — the last message that existed when the question was sent, so
+// the chat list can render a marker at that position even after the reply
+// finishes streaming. 0 means the session had no messages yet (the marker then
+// sits at the top of the list).
+//
+// Both the answer and the error are stored: a failed question is still a thing
+// the user asked, and the marker must appear for it too (the drawer then shows
+// why it failed rather than silently omitting it).
+//
+// No foreign key to chat_history: anchor_message_id is a position marker, and
+// rewind legitimately deletes the anchored message while the /btw record is
+// cleaned up by the same statement. session_id is indexed so every
+// session-deletion path can clean up in one statement.
+const BtwQuestionsDDL = `
+CREATE TABLE IF NOT EXISTS btw_questions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	project_path TEXT NOT NULL DEFAULT '',
+	anchor_message_id INTEGER NOT NULL DEFAULT 0,
+	question TEXT NOT NULL,
+	answer TEXT NOT NULL DEFAULT '',
+	model TEXT NOT NULL DEFAULT '',
+	error TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_btw_questions_session ON btw_questions(session_id, anchor_message_id, id);
+`
+
+// BtwQuestion is one stored "/btw" side question.
+type BtwQuestion struct {
+	ID              int64  `json:"id"`
+	SessionID       string `json:"sessionId"`
+	ProjectPath     string `json:"projectPath"`
+	AnchorMessageID int64  `json:"anchorMessageId"`
+	Question        string `json:"question"`
+	Answer          string `json:"answer"`
+	Model           string `json:"model"`
+	Error           string `json:"error"`
+	CreatedAt       string `json:"createdAt"`
+}
 
 // btwContextBudgetChars bounds the session history handed to the summary model
 // for a "/btw" question.
@@ -62,17 +110,27 @@ func BuildBtwContext(sessionID string) string {
 var ErrBtwEmptyQuestion = errors.New("btw question is empty")
 
 // AnswerBtwQuestion answers a side question about a session using the shared AI
-// summary model.
+// summary model, and records it.
 //
 // The session history is compressed with the fork-context compressor
 // (BuildBtwContext) and sent as the stable, cacheable prefix; the question is
-// the rolling tail. Nothing is persisted — the answer exists only for the
-// caller to display.
-func AnswerBtwQuestion(ctx context.Context, sessionID, question string) (string, error) {
+// the rolling tail.
+//
+// The record is persisted whether the model call succeeds or fails: a failed
+// question is still something the user asked, and the chat list must be able to
+// show its marker (the drawer then explains the failure). The anchor is the
+// last message id at ask time, so the marker lands where the user was.
+//
+// The returned BtwQuestion is the stored row. On failure both the row and the
+// error are returned — callers that only care about the error can ignore the row.
+func AnswerBtwQuestion(ctx context.Context, sessionID, question string) (BtwQuestion, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
-		return "", ErrBtwEmptyQuestion
+		return BtwQuestion{}, ErrBtwEmptyQuestion
 	}
+
+	anchorID := lastMessageID(sessionID)
+	projectPath := GetSessionProjectPath(sessionID)
 
 	// Resolve from config (not the TTS summarizer global): ai_summary is the
 	// user's chosen summary model and NewAISummarizer auto-detects the API
@@ -80,14 +138,104 @@ func AnswerBtwQuestion(ctx context.Context, sessionID, question string) (string,
 	// answer questions.
 	summarizer := summarize.NewAISummarizer(model.ConfigInstance.AISummary)
 	if summarizer == nil {
-		return "", ErrSummaryModelNotConfigured
+		rec := persistBtwQuestion(sessionID, projectPath, anchorID, question, "", "", ErrSummaryModelNotConfigured.Error())
+		return rec, ErrSummaryModelNotConfigured
 	}
+
+	modelName := model.ConfigInstance.AISummary.Model
 
 	// NewAISummarizer returns nil or a real LLM summarizer (both support the ask
 	// pass), so ErrOneShotUnsupported is unreachable here and needs no mapping.
 	answer, err := summarize.AskAboutContext(ctx, summarizer, BtwSystemPrompt, BuildBtwContext(sessionID), question, btwMaxTokens)
 	if err != nil {
-		return "", err
+		rec := persistBtwQuestion(sessionID, projectPath, anchorID, question, "", modelName, err.Error())
+		return rec, err
 	}
-	return strings.TrimSpace(answer), nil
+	answer = strings.TrimSpace(answer)
+	return persistBtwQuestion(sessionID, projectPath, anchorID, question, answer, modelName, ""), nil
+}
+
+// lastMessageID returns the highest chat_history id for a session, or 0 when
+// the session has no messages. This is the /btw anchor: the position the user
+// was looking at when they asked.
+func lastMessageID(sessionID string) int64 {
+	var id int64
+	_ = dbRead.QueryRowContext(context.Background(),
+		"SELECT COALESCE(MAX(id), 0) FROM chat_history WHERE session_id = ?", sessionID).Scan(&id)
+	return id
+}
+
+// persistBtwQuestion inserts a /btw record and returns it with its assigned id
+// and created_at. A write failure is logged rather than returned: the answer is
+// already in hand, and losing the anchor row must not turn a successful
+// question into an error the user sees. The row is still returned (with id 0)
+// so the caller can render it.
+func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question, answer, modelName, errMsg string) BtwQuestion {
+	rec := BtwQuestion{
+		SessionID:       sessionID,
+		ProjectPath:     projectPath,
+		AnchorMessageID: anchorID,
+		Question:        question,
+		Answer:          answer,
+		Model:           modelName,
+		Error:           errMsg,
+	}
+	res, err := WriteExec(
+		`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer, model, error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		sessionID, projectPath, anchorID, question, answer, modelName, errMsg,
+	)
+	if err != nil {
+		slog.Error("failed to persist btw question", "session_id", sessionID, "err", err)
+		return rec
+	}
+	if id, idErr := res.LastInsertId(); idErr == nil {
+		rec.ID = id
+	}
+	// created_at is written by SQLite's CURRENT_TIMESTAMP default, so read it
+	// back rather than writing a Go time (which would break the string ordering
+	// every other table relies on).
+	if rec.ID > 0 {
+		_ = dbRead.QueryRowContext(context.Background(),
+			"SELECT created_at FROM btw_questions WHERE id = ?", rec.ID).Scan(&rec.CreatedAt)
+	}
+	return rec
+}
+
+// ListBtwQuestions returns a session's /btw records in chronological order,
+// oldest first. The chat list groups them by anchor to render its markers.
+func ListBtwQuestions(sessionID string) ([]BtwQuestion, error) {
+	rows, err := dbRead.QueryContext(context.Background(),
+		`SELECT id, session_id, project_path, anchor_message_id, question, answer, model, error, created_at
+		 FROM btw_questions WHERE session_id = ? ORDER BY id ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query btw questions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []BtwQuestion
+	for rows.Next() {
+		var r BtwQuestion
+		var createdAt time.Time
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.ProjectPath, &r.AnchorMessageID, &r.Question, &r.Answer, &r.Model, &r.Error, &createdAt); err != nil {
+			return nil, fmt.Errorf("failed to scan btw question: %w", err)
+		}
+		r.CreatedAt = formatBtwTime(createdAt)
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// formatBtwTime renders a stored timestamp as RFC3339. The frontend formats it
+// for display; sending the raw value keeps the timezone decision in one place.
+func formatBtwTime(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(time.RFC3339)
 }

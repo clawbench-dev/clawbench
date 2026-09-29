@@ -215,7 +215,7 @@ CREATE TABLE IF NOT EXISTS session_tag_links (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	UNIQUE(session_id, tag_id)
 );
-`
+` + service.BtwQuestionsDDL
 
 // setupDB creates an in-memory SQLite database with the required schema,
 // sets service.DB, and returns a cleanup function.

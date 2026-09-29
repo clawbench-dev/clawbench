@@ -86,6 +86,9 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
+	// /btw side questions. Uses the production DDL constant so this test schema
+	// cannot drift from the real table.
+	_, _ = db.Exec(BtwQuestionsDDL)
 
 	cleanup := SetDBForTest(db, db)
 	teardown := func() {

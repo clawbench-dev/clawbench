@@ -1495,8 +1495,11 @@ paths:
       tags: [Sessions]
       summary: 旁路问答（/btw）
       description: >-
-        用会话历史（复用分叉压缩）向 AI 摘要模型提一个旁路问题，返回答案。不经过当前会话的
-        agent，不写入任何历史。sessionId 缺省时回退到查询参数 / 会话 Cookie。
+        用会话历史（复用分叉压缩）向 AI 摘要模型提一个旁路问题并落库，返回存储后的记录。
+        不经过当前会话的 agent。记录锚定在提问时最后一条消息之后（anchorMessageId），
+        供聊天区渲染锚点。模型失败也会落库（record.error 非空）并返回 200，因为用户确实
+        问过这个问题、锚点仍须出现；只有无法产生记录的情况（会话不存在/空问题/未配置摘要
+        模型）才返回 4xx。sessionId 缺省时回退到查询参数 / 会话 Cookie。
       operationId: sessionBtw
       requestBody:
         required: true
@@ -1511,7 +1514,23 @@ paths:
                   type: string
       responses:
         "200":
-          description: 摘要模型的回答
+          description: 存储后的旁路问答记录
+    get:
+      tags: [Sessions]
+      summary: 列出会话的旁路问答
+      description: >-
+        按时间顺序返回该会话的全部 /btw 记录，客户端据此在聊天区放置锚点。
+      operationId: sessionBtwList
+      parameters:
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 会话 ID；缺省时回退到会话 Cookie。
+      responses:
+        "200":
+          description: 旁路问答记录列表
 
   /api/ai/session/reset:
     post:
