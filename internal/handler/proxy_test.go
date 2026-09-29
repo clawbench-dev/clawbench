@@ -649,12 +649,13 @@ func TestServeProxyPorts_IncludesDirection(t *testing.T) {
 	assert.True(t, directions[model.DirectionReverse])
 }
 
-// With `port_forward.transport: ssh` and `enabled: false`, main() no longer
-// creates a ProxyRegistry (see cmd/server/proxy_registry_gate.go), so every
-// handler on this surface must refuse with 503 rather than dereference a nil
-// singleton. Before the gate became conditional these handlers could assume a
-// non-nil registry; the panic would surface as a middleware-recovered 500, not
-// a crash, but "port forwarding unavailable" is the honest answer.
+// With no ProxyRegistry (manually nil'd here — no configuration produces this
+// any more, since shouldCreateProxyRegistry is unconditional; see
+// cmd/server/proxy_registry_gate.go), every handler on this surface must refuse
+// with 503 rather than dereference a nil singleton. The nil guard remains
+// load-bearing for a failed creation or a future refactor; before it existed
+// these handlers could assume a non-nil registry, and the panic would surface
+// as a middleware-recovered 500 rather than "port forwarding unavailable".
 func TestProxyHandlers_NilRegistryReturns503(t *testing.T) {
 	origProxy := service.ProxyService
 	service.ProxyService = nil

@@ -98,52 +98,55 @@ sequenceDiagram
 
 ## 传输方式
 
-端口转发支持两种线缆，配置项 `port_forward.transport` 保留三值（`internal/model/port_forward.go`）。
+端口转发支持两种线缆，配置项 `port_forward.transport` 仍保留三值（`internal/model/port_forward.go`），但**服务端已把它钉死为 `both`**：`internal/model/defaults.go` 的 `ApplyDefaults` 无条件归一（yaml 写 `ssh` / `h2` / `both` / 非法值 / 缺省，最终都是 `both`），PATCH 路径同样忽略传入值。**「服务端只准 ssh」这个状态不存在。**
 
-**关键语义（已固化在实现里）：`enabled` 只管 SSH 监听，`transport` 不是「服务端端点闸门」。** 服务端**不据此启停任何监听器或端点**；它现在只剩两个服务端内部用途：
+**为什么钉死**：该字段的消费方已只剩一处——web 端健康检查门控（`web/src/composables/usePortForward.ts` 的 `tunnelTransportAllowsH2()`）。两个原生客户端都不消费它（见下），因此 `transport: ssh` 对客户端**没有约束力**——已开 h2 的客户端照样能走 h2，服务端无法阻止。一个无法执行的设置比没有设置更糟，故直接移除其可配置性（review M5）。
 
-1. **registry 门控**——`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry`；
-2. **web 端健康检查门控**——`web/src/composables/usePortForward.ts` 的 `tunnelTransportAllowsH2()`（读服务端配置，**仍认 `'both'`**）。
+> **⚠️ 字段与 `both` 值必须保留，不能删除**：web 的 `tunnelTransportAllowsH2()` 读 `/api/config` 的 `port_forward.transport`，仅 `'h2' | 'both'` 为真。若字段消失，前端读到 `undefined` → 判为 ssh-only → **反而隐藏 h2 面板与横幅**（与本 PR 的 h2 修复冲突）。所以正确形态是「字段保留、值恒为 `both`」。
 
-> **⚠️ 两个原生客户端已不再消费该值**（原先「客户端读 `/api/config` 后决定探测哪条线」的语义已失效）：
+> **⚠️ 两个原生客户端本就不消费该值**（原先「客户端读 `/api/config` 后决定探测哪条线」的语义已失效）：
 > - **Electron 写死 SSH**：`desktop/src/main/bridge.ts` 的 `native:set-tunnel-transport` handler **只对 `'ssh'` 调用 `setTransportPreference`**，`'h2'` / `'both'` 被忽略；`tunnel.ts` 的三值能力与测试保持不变。
 > - **Android 用本地开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；Android 侧只有一个本地布尔开关，**没有 `BOTH`**，不做失败回退。
 > - 前端向原生推送 `transport` 的 `syncTunnelTransportToNative` 已删除（连同 `clawbenchNative.ts` 的 `setTunnelTransport?` 声明）。
 
-因此下表描述的是**服务端配置语义**，而非当前原生客户端的实际行为：
+因此下表描述的是**字段的历史语义**，现已全部收敛为 `both`：
 
-| 值 | 服务端配置语义（历史「客户端行为」） | 服务端效果 |
+| 值 | 曾经的语义 | 现状 |
 |---|---|---|
-| `ssh` | 仅 SSH 通道 | 无（不影响任何服务端监听/端点） |
-| `h2` | 仅 h2（h2-over-TLS → h2c） | 无 |
-| `both` | **默认**。优先 h2，失败回退 SSH | 无 |
+| `ssh` | 仅 SSH 通道 | **不可达**：`ApplyDefaults` 与 PATCH 均归一为 `both` |
+| `h2` | 仅 h2（h2-over-TLS → h2c） | **不可达**：同上 |
+| `both` | **默认**。优先 h2，失败回退 SSH | **唯一取值** |
 
 `transport` 与两个服务端事实的关系：
 
-- **SSH 监听器只由 `port_forward.enabled` 控制**（`cmd/server/main.go` 的 `ssh.NewServer` 分支），`transport` 不参与。因此 **`transport: h2` 时 SSH 仍监听 `mainPort+1`**。
-- **h2 的两个端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）只要注册表存在就始终可用**，与 `transport` 取值无关。因此 **`transport: ssh` 时 h2 端点仍然可用**（不会因 `transport` 而关闭）。**注意 `POST /api/tunnel/control` 仅接受 HTTP/2**：认领流的作用域是 `Binding.ConnID = r.RemoteAddr`，只有在 h2 上多条流共享同一会话时才正确标识对端；h1 下控制流独占其 TCP 连接，认领流必然另开连接、`RemoteAddr` 不同，认领会被判为「他人 token」而得到 403。服务端因此在 h1 上直接返回 **`426 Upgrade Required`**，而不是等到认领阶段才 403。`-R` 在 HTTP/1.1 下请走 SSH 传输。
-- 注册表是否需要创建由 `shouldCreateProxyRegistry` 决定（见下文「端口守卫与注册表门控」）：`cfg.PortForward.Enabled || cfg.PortForward.Transport != model.TransportSSH`。**唯一让 h2 端点返回 `503 PortForwardUnavailable` 的组合是 `enabled:false && transport:ssh`**（此时注册表为 nil）。
+- **SSH 监听器只由 `port_forward.enabled` 控制**（`cmd/server/main.go` 的 `ssh.NewServer` 分支）。因此 **SSH 仍监听 `mainPort+1`**，与 `transport` 无关。
+- **h2 的两个端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）始终可用**：注册表现在**恒创建**（见下），端点因此不会返回 503。**注意 `POST /api/tunnel/control` 仅接受 HTTP/2**：认领流的作用域是 `Binding.ConnID = r.RemoteAddr`，只有在 h2 上多条流共享同一会话时才正确标识对端；h1 下控制流独占其 TCP 连接，认领流必然另开连接、`RemoteAddr` 不同，认领会被判为「他人 token」而得到 403。服务端因此在 h1 上直接返回 **`426 Upgrade Required`**，而不是等到认领阶段才 403。`-R` 在 HTTP/1.1 下请走 SSH 传输。
+- **注册表恒创建**：`shouldCreateProxyRegistry` 已简化为 `return true`（删除了原先的 `Transport != "ssh"` 比较——`Transport` 恒为 `both`，该比较恒真）。**不再存在让 h2 端点返回 `503 PortForwardUnavailable` 的配置组合**；503 现在只可能来自「手动把 `service.ProxyService` 置 nil」（测试）或进程异常。
 
-**默认值 `both`**（`model.DefaultPortForwardTransport`，`internal/model/defaults.go` 的 `ApplyDefaults` 在值非法或缺失时收敛到它）。对已启用 SSH 的用户行为不变，同时提供 h2；`transport` 不进入已持久化的端口行，因此**无 DB / SharedPreferences 迁移**。
+**唯一取值 `both`**（`model.DefaultPortForwardTransport`，`internal/model/defaults.go` 的 `ApplyDefaults` 无条件写入）。对既有安装行为中性——`both` 本就是默认值；`transport` 不进入已持久化的端口行，因此**无 DB / SharedPreferences 迁移**。
+
+> **有意变更**：显式写 `transport: ssh` 的安装，行为会变——h2 端点从 `503` 变为可用。这是本次改动的**目的**（消除「服务端声称只准 ssh、客户端却能走 h2」的不可执行状态）。
 
 ### 服务端端点可用性（实测）
 
-fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，故「`502` = 到达数据面但 dial 失败」与「`503` = 门控拒绝」是区分依据：
+fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，故「`502` = 到达数据面但 dial 失败」与「`503` = 门控拒绝」是区分依据。
 
-| `enabled` | `transport` | `/api/tunnel/stream` | `/api/tunnel/control` | SSH（mainPort+1） |
-|---|---|---|---|---|
-| true | ssh | 502（数据面可达，目标不可达） | 200 | 监听 |
-| true | both | 502 | 200 | 监听 |
-| true | h2 | 502 | 200 | **监听** |
-| false | both | 502 | 200 | 不监听 |
-| false | ssh | **503** | **503** | 不监听 |
+下表是**钉死前**的实测矩阵（保留作为历史记录）。`transport` 列现已被归一，只有 `both` 行仍可达；`ssh` / `h2` 两行是当时的行为，今天写什么都会落进 `both` 行：
 
-表中两处与直觉不符、但均为已确认的正确行为：
+| `enabled` | `transport` | `/api/tunnel/stream` | `/api/tunnel/control` | SSH（mainPort+1） | 现状 |
+|---|---|---|---|---|---|
+| true | ssh | 502（数据面可达，目标不可达） | 200 | 监听 | 归一为 `both` 行 |
+| true | both | 502 | 200 | 监听 | **可达** |
+| true | h2 | 502 | 200 | **监听** | 归一为 `both` 行 |
+| false | both | 502 | 200 | 不监听 | **可达** |
+| false | ssh | **503** | **503** | 不监听 | **已不可达**（归一为 `both`） |
 
-1. **`transport: h2` 时 SSH 仍监听 `mainPort+1`**——SSH 监听器只由 `enabled` 控制。
-2. **`transport: ssh` 时 h2 端点仍返回 502 而非 503**——注册表因 `enabled:true` 而被创建，端点可用；502 只是探测目标端口无人监听。
+钉死后的两点结论：
 
-该语义由 `cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 与 `cmd/server/proxy_registry_gate_test.go` 的表格测试钉死。
+1. **SSH 仍监听 `mainPort+1`**——SSH 监听器只由 `enabled` 控制，与 `transport` 无关。
+2. **h2 端点不再有 503 组合**——注册表恒创建，唯一历史 503 单元格（`enabled:false && transport:ssh`）已不可表达。
+
+该语义由 `cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry`（`return true`）与 `cmd/server/proxy_registry_gate_test.go` 的表格测试钉死。
 
 ### 传输优先级链
 
@@ -159,11 +162,15 @@ fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，�
 
 > **浏览器端零改动**：`fetch()` 的 Fetch 规范里 `RequestDuplex` 只有 `"half"`（`"full"` 保留未用），无法全双工；且流式请求体仅 Chromium 支持。因此 h2 隧道只面向 Electron 与 Android 原生客户端，Web 前端不参与。详见设计文档 §2.3。
 
-### 后续可清理项：`transport` 对原生客户端已失效
+### `transport` 对客户端已失效 → 服务端已钉死为 `both`
 
-服务端 `port_forward.transport` 仍保留三值、默认 `both`，但**两个原生客户端都不再消费它**——Electron 在 bridge 层 clamp 到 `ssh`，Android 用本地 SharedPreferences 开关。于是 `/api/config` 下发的 `port_forward.transport` 对原生客户端已是**事实上的死配置**，只剩 registry 门控与 web 端健康检查门控两个服务端内部用途（见上文「传输方式」）。
+`port_forward.transport` 仍保留三值与 `both` 值，但**服务端已无条件归一为 `both`**（`ApplyDefaults` 与 PATCH 路径均如此），`ssh` / `h2` 不再可达。两个原生客户端本就不消费它——Electron 在 bridge 层 clamp 到 `ssh`，Android 用本地 SharedPreferences 开关——因此它只剩一个消费者：web 端健康检查门控（`tunnelTransportAllowsH2()`）。
 
-后续版本可考虑把「客户端传输提示」与「服务端 registry 门控」拆成两个独立配置项，或直接移除对客户端无意义的 `h2`/`both` 下发。**本次刻意不动**：改动会触碰 `port_forward.enabled` 的默认值陷阱——`cmd/server/proxy_registry_gate_test.go` 的回归守卫会拒绝把默认值从 `both` 改成 `ssh`（那会让从未显式配置的安装在 `enabled:false` 时失去注册表，h2 隧道请求拿到 503）。设计依据见设计文档 §10「后续可清理项」。
+**为什么不删除字段**：删掉会让 web 读到 `undefined` → 判为 ssh-only → 隐藏 h2 面板（见上文「传输方式」的警告）。保留字段 + 恒 `both` 是唯一不破坏 web 的形态。
+
+**为什么钉死而非继续可配**：`transport: ssh` 对客户端无约束力（客户端不读它），服务端也无法据此关闭 h2 端点，所以那是个**不可执行**的设置；保留它只会制造「服务端说 ssh、客户端走 h2」的矛盾（review M5）。钉死后该状态不存在，矛盾自然消失。
+
+后续若要把「客户端传输提示」与「服务端事实」彻底分开，可考虑移除该字段（需同时改 web 的 `tunnelTransportAllowsH2()` 与其测试）。本次**刻意不动 web**（用户要求只改服务端）。
 
 ## h2 流隧道
 
@@ -337,7 +344,7 @@ sequenceDiagram
 
 ### 端口守卫与注册表门控
 
-- **注册表不再仅限 SSH**：`ProxyRegistry`（`service.ProxyService`）现在是**两种传输共用**的白名单 / 保留端口 / `SetReverseBound` 面。`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 把创建条件从「仅 `PortForward.Enabled`」放宽为「`Enabled` 或 `transport != "ssh"`」——**唯一的 `false` 单元格是 `transport: "ssh"` 且 `Enabled == false`**（此时没有 SSH 监听、h2 也被显式排除）。零值配置（未跑 `ApplyDefaults` 的空 `Transport`）按 h2-capable 处理，否则 `port_forward.enabled=false` 会给隧道请求一个 nil 注册表和 503。创建注册表对 SSH 无副作用：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，**不绑任何端口**。
+- **注册表恒创建**：`ProxyRegistry`（`service.ProxyService`）是**两种传输共用**的白名单 / 保留端口 / `SetReverseBound` 面。`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 现为 `return true`——原先的 `Enabled || transport != "ssh"` 比较已删除（`transport` 恒为 `both`，比较恒真，留着只是伪装成可配置）。**不再存在「不创建注册表」的配置**；否则 `port_forward.enabled=false` 会给隧道请求一个 nil 注册表和 503。创建注册表对 SSH 无副作用：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，**不绑任何端口**（监听仍是 SSH server 的职责，仍受 `Enabled` 门控）。
 - **保留端口**：`reservedPortsFor` 恒保护主 HTTP 端口；SSH 端口仅在 SSH 启用时加入（`sshPort == 0` 表示「无 SSH 端口需保护」，**不**展开为 `mainPort+1`——h2 守卫的 `SSHPort` 字段已硬拒 `mainPort+1`）。
 
 ### h2 设计要点

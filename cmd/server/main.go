@@ -1062,7 +1062,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// h2 stream tunnel handlers, which ride the always-on main HTTP server (see
 	// server_protocols.go). It used to be created only when SSH was enabled,
 	// which handed the tunnel handlers a nil registry and a blanket 503 — see
-	// shouldCreateProxyRegistry.
+	// shouldCreateProxyRegistry, which now always answers true.
 	var sshServerRef *ssh.Server
 	if shouldCreateProxyRegistry(cfg) {
 		proxyService := service.NewProxyRegistry(port)
@@ -1768,13 +1768,10 @@ func reserveSSHPorts(mainPort, sshPort int) {
 func hotReloadSSH(cfg model.Config, port int) {
 	sshRef := handler.GetSSHServer()
 
-	// Ensure the shared registry exists whenever the CURRENT configuration
-	// needs it. Startup creates it under the same predicate
-	// (shouldCreateProxyRegistry), but port_forward.transport is hot-reloadable,
-	// so the one startup configuration with no registry — `transport: ssh` plus
-	// SSH disabled — can be switched to h2 at runtime. Without this the h2
-	// handlers would keep answering 503 (nil registry) until a restart, while
-	// the PATCH response said no restart was needed.
+	// Ensure the shared registry exists. Startup creates it under the same
+	// predicate (shouldCreateProxyRegistry), which is now unconditionally true;
+	// this guard is kept as a cheap nil check so the h2 handlers can never see
+	// a nil registry after a hot-reload.
 	if service.ProxyService == nil && shouldCreateProxyRegistry(cfg) {
 		service.ProxyService = service.NewProxyRegistry(port)
 		slog.Info("hot-reload: proxy registry created (transport now needs it)")

@@ -13,82 +13,82 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestShouldCreateProxyRegistry pins the gate that used to be
-// `cfg.PortForward.Enabled` alone. The h2 stream tunnel handlers ride the main
-// HTTP server, so disabling SSH must NOT nil the registry — that produced a
-// blanket 503 from internal/handler/tunnel_stream.go:59 and
-// tunnel_control.go:297.
+// TestShouldCreateProxyRegistry pins the fact that the gate is now
+// unconditionally true. The h2 stream tunnel handlers ride the main HTTP
+// server, so disabling SSH must NOT nil the registry — that produced a blanket
+// 503 from internal/handler/tunnel_stream.go:59 and tunnel_control.go:297.
 //
-// The single "false" cell is `transport: ssh` + SSH disabled: h2 is explicitly
-// excluded and the SSH listener is off, so nothing can reach the registry.
+// The gate used to have exactly one false cell: `transport: ssh` with SSH
+// disabled. That cell is gone — model.ApplyDefaults pins the transport to
+// "both", so the comparison that produced it was always true, and the
+// comparison has been deleted rather than left as a tautology. Every row below
+// therefore wants true, including the one that used to be the exception.
 func TestShouldCreateProxyRegistry(t *testing.T) {
 	tests := []struct {
 		name string
 		cfg  model.Config
-		want bool
 	}{
 		{
 			name: "SSH enabled, transport unset (pre-T8 config)",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: true, Port: 20001}},
-			want: true,
 		},
 		{
 			name: "SSH disabled, transport unset — h2 tunnel still needs the registry",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: false}},
-			want: true,
 		},
 		{
 			name: "zero-value config",
 			cfg:  model.Config{},
-			want: true,
 		},
 
-		// --- T8: port_forward.transport ---
+		// --- port_forward.transport is pinned to "both", so it can no longer
+		// --- select a "no registry" configuration. These are the old T8 rows.
 		{
 			name: "transport=ssh, SSH enabled",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: true, Transport: model.TransportSSH}},
-			want: true,
 		},
 		{
-			name: "transport=ssh, SSH disabled — the only provably-unused configuration",
+			name: "transport=ssh, SSH disabled — the former false cell, now unreachable",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportSSH}},
-			want: false,
 		},
 		{
 			name: "transport=h2, SSH disabled — h2 rides the main server",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportH2}},
-			want: true,
 		},
 		{
 			name: "transport=h2, SSH enabled",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: true, Transport: model.TransportH2}},
-			want: true,
 		},
 		{
-			name: "transport=both, SSH disabled — the default must keep the registry",
+			name: "transport=both, SSH disabled — the default",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportBoth}},
-			want: true,
 		},
 		{
 			name: "transport=both, SSH enabled",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: true, Transport: model.TransportBoth}},
-			want: true,
 		},
 		{
-			// An unvalidated/garbage value must not disable the registry: treating
-			// it as h2-capable is the safe direction, and ApplyDefaults converges
-			// it to "both" before this function ever sees it in production.
-			name: "unrecognized transport is treated as h2-capable",
+			name: "unrecognized transport still creates the registry",
 			cfg:  model.Config{PortForward: model.PortForwardConfig{Enabled: false, Transport: "quic"}},
-			want: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, shouldCreateProxyRegistry(tt.cfg))
+			require.True(t, shouldCreateProxyRegistry(tt.cfg),
+				"the registry gate is unconditional — every config must create it")
 		})
 	}
+}
+
+// TestShouldCreateProxyRegistry_FormerFalseCellNowTrue is the focused guard for
+// the exact configuration that used to be the only "no registry" cell. It is
+// asserted directly (not via the table) so a regression that reintroduces a
+// transport-based condition fails on the intended line.
+func TestShouldCreateProxyRegistry_FormerFalseCellNowTrue(t *testing.T) {
+	require.True(t, shouldCreateProxyRegistry(model.Config{
+		PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportSSH},
+	}), "enabled:false + transport:ssh must no longer disable the registry — the transport is pinned to both")
 }
 
 // TestShouldCreateProxyRegistry_DefaultTransportCreatesRegistry is the direct
@@ -102,7 +102,7 @@ func TestShouldCreateProxyRegistry(t *testing.T) {
 // install that never heard of port_forward.transport still gets a registry.
 func TestShouldCreateProxyRegistry_DefaultTransportCreatesRegistry(t *testing.T) {
 	require.Equal(t, model.TransportBoth, model.DefaultPortForwardTransport,
-		"the default transport must be 'both' — 'ssh' would disable the registry for installs that never set it")
+		"the pinned transport must be 'both' — 'ssh' would disable the registry for installs that never set it")
 	require.True(t,
 		shouldCreateProxyRegistry(model.Config{
 			PortForward: model.PortForwardConfig{Transport: model.DefaultPortForwardTransport},
@@ -110,29 +110,24 @@ func TestShouldCreateProxyRegistry_DefaultTransportCreatesRegistry(t *testing.T)
 		"a defaulted config (transport=both, SSH disabled) must still create the registry")
 }
 
-// TestProxyRegistryGate_SSHDisabledSSHTransportYields503 wires the whole
-// documented chain together: `enabled:false, transport:ssh` is the one config
-// cell where shouldCreateProxyRegistry is false, so no registry is created, so
-// BOTH h2 tunnel endpoints answer 503.
+// TestProxyRegistryGate_NilRegistryYields503 wires the remaining chain together:
+// with no registry (manually nil'd here — no longer reachable through
+// configuration, see TestShouldCreateProxyRegistry_FormerFalseCellNowTrue) BOTH
+// h2 tunnel endpoints must answer 503 rather than dereference a nil singleton.
 //
-// TestShouldCreateProxyRegistry already pins the predicate and the handler
-// tests pin the 503 for a manually-nil'd service.ProxyService, but nothing tied
-// the two together through the gate. A regression that made the gate return
-// true here (or the handler stop checking nil) would have passed both.
-func TestProxyRegistryGate_SSHDisabledSSHTransportYields503(t *testing.T) {
+// The gate no longer produces this state, but the handler nil guard is still
+// load-bearing (a failed creation, a future refactor, a test double), so the
+// handlers' behavior under nil is pinned independently of how the nil arose.
+func TestProxyRegistryGate_NilRegistryYields503(t *testing.T) {
 	origProxy := service.ProxyService
 	service.ProxyService = nil
 	t.Cleanup(func() { service.ProxyService = origProxy })
 
-	cfg := model.Config{
+	// No config can ask for "no registry" any more.
+	require.True(t, shouldCreateProxyRegistry(model.Config{
 		PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportSSH},
-	}
-
-	// The gate must say "no registry" for exactly this cell.
-	require.False(t, shouldCreateProxyRegistry(cfg),
-		"transport=ssh with SSH disabled is the only provably-unused configuration")
-	// Nothing created a registry, mirroring main()'s `if shouldCreateProxyRegistry`.
-	require.Nil(t, service.ProxyService, "no registry must exist for the disabled cell")
+	}), "the former no-registry config now creates one")
+	require.Nil(t, service.ProxyService, "no registry exists (manually nil'd)")
 
 	for _, tc := range []struct {
 		name    string
@@ -153,11 +148,10 @@ func TestProxyRegistryGate_SSHDisabledSSHTransportYields503(t *testing.T) {
 }
 
 // TestHotReloadSSH_CreatesRegistryWhenTransportSwitchesToH2 covers the
-// registry-creation path in hotReloadSSH (cmd/server/main.go:1787). The
-// documented behavior is that a running server started with the one
-// no-registry configuration (`enabled:false, transport:ssh`) can be switched to
-// h2 at runtime without a restart: the next hot-reload creates the registry so
-// the h2 handlers stop answering 503.
+// registry-creation path in hotReloadSSH (cmd/server/main.go). It is kept even
+// though the gate is now unconditional: the nil check remains the safety net
+// for a server that somehow has no registry, and the whitelist application must
+// not be skipped when the registry is created here.
 func TestHotReloadSSH_CreatesRegistryWhenTransportSwitchesToH2(t *testing.T) {
 	origProxy := service.ProxyService
 	origSSH := handler.GetSSHServer()
@@ -171,11 +165,9 @@ func TestHotReloadSSH_CreatesRegistryWhenTransportSwitchesToH2(t *testing.T) {
 		handler.SetSSHServer(origSSH)
 	})
 
-	// Precondition: the startup configuration with no registry.
+	// Precondition: a server with no registry.
 	require.Nil(t, service.ProxyService)
 
-	// The transport is hot-reloaded to h2 (SSH still disabled). The registry
-	// must now be created.
 	hotReloadSSH(model.Config{
 		PortForward: model.PortForwardConfig{
 			Enabled:      false,
@@ -185,7 +177,7 @@ func TestHotReloadSSH_CreatesRegistryWhenTransportSwitchesToH2(t *testing.T) {
 	}, 20000)
 
 	require.NotNil(t, service.ProxyService,
-		"switching transport to h2 must create the registry so the h2 handlers stop returning 503")
+		"a hot-reload with no registry must create one so the h2 handlers stop returning 503")
 
 	// The configured whitelist must be applied, not NewProxyRegistry's fallback.
 	require.True(t, service.ProxyService.IsPortAllowed(3500),
@@ -194,16 +186,19 @@ func TestHotReloadSSH_CreatesRegistryWhenTransportSwitchesToH2(t *testing.T) {
 		"the 1024-65535 fallback must not survive the hot-reload")
 }
 
-// TestHotReloadSSH_DoesNotCreateRegistryForDisabledSSHTransport is the negative
-// control for the creation path: the same call with the disabled cell must NOT
-// create a registry (it would only start a health-check goroutine and restore
-// rows for a dead feature).
-func TestHotReloadSSH_DoesNotCreateRegistryForDisabledSSHTransport(t *testing.T) {
+// TestHotReloadSSH_CreatesRegistryForFormerDisabledCell is the updated negative
+// control: the configuration that used to be the only no-registry cell
+// (`enabled:false, transport:ssh`) now creates a registry like every other one,
+// because the transport is pinned to "both".
+func TestHotReloadSSH_CreatesRegistryForFormerDisabledCell(t *testing.T) {
 	origProxy := service.ProxyService
 	origSSH := handler.GetSSHServer()
 	service.ProxyService = nil
 	handler.SetSSHServer(nil)
 	t.Cleanup(func() {
+		if service.ProxyService != nil && service.ProxyService != origProxy {
+			service.ProxyService.Stop()
+		}
 		service.ProxyService = origProxy
 		handler.SetSSHServer(origSSH)
 	})
@@ -212,8 +207,8 @@ func TestHotReloadSSH_DoesNotCreateRegistryForDisabledSSHTransport(t *testing.T)
 		PortForward: model.PortForwardConfig{Enabled: false, Transport: model.TransportSSH},
 	}, 20000)
 
-	require.Nil(t, service.ProxyService,
-		"the disabled cell must not create a registry")
+	require.NotNil(t, service.ProxyService,
+		"the former disabled cell now creates a registry — the transport is pinned to both")
 }
 
 // TestReservedPortsFor_MainPortAlwaysReserved is the regression guard for the

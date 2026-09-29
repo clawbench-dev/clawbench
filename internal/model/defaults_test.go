@@ -1034,29 +1034,29 @@ func TestApplyDefaults_ZeroMeansOff_NotRewritten(t *testing.T) {
 	}
 }
 
-// TestApplyDefaultsPortForwardTransport pins port_forward.transport's default
-// and its convergence of unrecognized values.
+// TestApplyDefaultsPortForwardTransport pins the fact that
+// port_forward.transport is CONVERGED to "both" unconditionally: every input —
+// omitted, an explicit ssh/h2/both, a typo, a value from a build that knew more
+// transports — comes out as "both".
 //
-// "both" (not "ssh") is the default so an existing install keeps working
-// without a manual switch: the client probes h2 first and falls back to SSH, so
-// an old SSH-only server is still reachable. The zero value "" must NOT survive
-// ApplyDefaults — it is not a transport, and leaving it would send every client
-// down an empty branch of the selection.
+// The field is no longer configurable. Its only remaining consumer is the web
+// client's tunnelTransportAllowsH2(), which reads /api/config and treats
+// `h2`/`both` as truthy; pinning the value means the state "the server says
+// ssh-only" cannot exist, so no client can be said to bypass it.
 func TestApplyDefaultsPortForwardTransport(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
-		want  string
 	}{
-		{name: "omitted (zero value) becomes both", input: "", want: TransportBoth},
-		{name: "explicit ssh preserved", input: TransportSSH, want: TransportSSH},
-		{name: "explicit h2 preserved", input: TransportH2, want: TransportH2},
-		{name: "explicit both preserved", input: TransportBoth, want: TransportBoth},
+		{name: "omitted (zero value)", input: ""},
+		{name: "explicit ssh is not preserved", input: TransportSSH},
+		{name: "explicit h2 is not preserved", input: TransportH2},
+		{name: "explicit both stays both", input: TransportBoth},
 		// Hand-edited config.yaml, or a downgrade from a build that knew more
 		// transports. Converging beats storing a value no client can interpret.
-		{name: "unknown value converges to both", input: "quic", want: TransportBoth},
-		{name: "wrong case is not normalized, it converges", input: "SSH", want: TransportBoth},
-		{name: "whitespace converges", input: " ssh ", want: TransportBoth},
+		{name: "unknown value", input: "quic"},
+		{name: "wrong case", input: "SSH"},
+		{name: "whitespace", input: " ssh "},
 	}
 
 	for _, tt := range tests {
@@ -1065,16 +1065,16 @@ func TestApplyDefaultsPortForwardTransport(t *testing.T) {
 			cfg := Config{}
 			cfg.PortForward.Transport = tt.input
 			ApplyDefaults(&cfg, nil)
-			if cfg.PortForward.Transport != tt.want {
-				t.Errorf("Transport = %q, want %q", cfg.PortForward.Transport, tt.want)
+			if cfg.PortForward.Transport != TransportBoth {
+				t.Errorf("Transport = %q, want %q (the field is pinned)", cfg.PortForward.Transport, TransportBoth)
 			}
 		})
 	}
 }
 
-// A config that explicitly writes port_forward.transport must not have it
-// rewritten by the presence-map path (the bool trap that exists for `enabled`
-// does not apply to strings, and this pins that no such handling crept in).
+// The presence map must not make an explicit port_forward.transport survive
+// either — the pin is unconditional, so "user wrote ssh" is treated exactly
+// like "user omitted it".
 func TestApplyDefaultsPortForwardTransportPresenceNoEffect(t *testing.T) {
 	setupTestBinDir(t)
 
@@ -1085,8 +1085,9 @@ func TestApplyDefaultsPortForwardTransportPresenceNoEffect(t *testing.T) {
 		"port_forward.transport": true,
 	})
 
-	if cfg.PortForward.Transport != TransportSSH {
-		t.Errorf("explicit Transport rewritten to %q, want %q", cfg.PortForward.Transport, TransportSSH)
+	if cfg.PortForward.Transport != TransportBoth {
+		t.Errorf("explicit Transport = %q, want %q — presence must not preserve it",
+			cfg.PortForward.Transport, TransportBoth)
 	}
 }
 

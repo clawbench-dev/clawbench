@@ -385,14 +385,15 @@ paths:
         偏好，不在配置中。
 
         `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`transport` 是服务端保留的隧道传输提示：`ssh`
-        （仅 SSH 通道）、`h2`（仅 HTTP/2 流隧道，走主端口）、`both`（默认）。
+        `allowed_ports` 不下发）。`transport` **恒为 `both`**：服务端已把该字段
+        钉死（`ApplyDefaults` 无条件归一），yaml 里写 `ssh` / `h2` / `both` /
+        非法值最终都是 `both`。
 
-        它目前**只驱动服务端 registry 门控与 web 端健康检查门控**；两个原生
-        客户端都不再消费该值——Electron 在 IPC 边界固定为 `ssh`，Android 改用
+        它现在只剩一个消费者：web 端健康检查门控（`tunnelTransportAllowsH2()`
+        读该值，仅 `h2` / `both` 为真）——因此字段保留、值恒为 `both`，不能删除
+        （删掉会让前端读到 `undefined` 而误判为 ssh-only，反而隐藏 h2 面板）。
+        两个原生客户端都不消费该值——Electron 在 IPC 边界固定为 `ssh`，Android 用
         本地 SharedPreferences 开关（`tunnel_transport_h2_enabled`，默认关 = SSH）。
-        这个「配置项对原生客户端已失效」的状态属后续可清理项，本次不动（改默认值
-        会触发 registry 门控回归守卫）。
       operationId: getConfig
       responses:
         "200":
@@ -406,9 +407,11 @@ paths:
         须经专用端点写入；每设备的壁纸选择（来源 / 开关 / 选中项）存在浏览器
         localStorage，PATCH 会被白名单拒绝。
 
-        `port_forward.transport` 为白名单键，仅接受 `ssh` / `h2` / `both`，
-        其他值返回 400（`port_forward.transport must be one of: ssh,h2,both`），
-        非字符串返回 400（`port_forward.transport must be a string`）。
+        `port_forward.transport` 仍为白名单键，但**值被忽略**：`ssh` / `h2` /
+        `both` 都返回 200，存储值恒为 `both`（与 `ApplyDefaults` 一致，避免运行时
+        出现「重启后才被归一」的中间状态）。其他值返回 400
+        （`port_forward.transport must be one of: ssh,h2,both`），非字符串返回 400
+        （`port_forward.transport must be a string`）。
       operationId: patchConfig
       requestBody:
         required: true

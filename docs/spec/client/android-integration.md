@@ -90,7 +90,7 @@ flowchart LR
 - **WebView 容器**：Android WebView 承载前端 Vue App，通过 `AndroidNative` JS Bridge 暴露原生能力。Web 和原生之间通过 Bridge 双向通信
 - **启动 splash 兜底**：启动 splash 的正常关闭路径是 JS 侧初始化完成后调 `dismissSplash()`，但"JS 初始化失败"恰恰会让这一步永不发生——原生若只等回调，用户就永久停在启动页（issue #449）。因此原生侧在 `onPageFinished` 时同时布防一个 15 秒 fail-safe 定时器：无论 JS 是否活着，超时即撤掉 splash 露出 WebView（此时页面可能报错，但至少可交互、可看日志）。JS 侧初始化统一走 `guardStartupWithSplash()` 包裹——单出口 try/catch/finally，异常不向上抛（避免变成未处理的 rejection 再阻断后续初始化），先置就绪再关 splash
 - **统一日志 AppLog**：所有 Android Java/Kotlin 代码**必须**使用 `AppLog.d/i/w/e()` 替代原始 `android.util.Log`（仅 `AppLog.java` 自身和测试代码允许裸 `android.util.Log`）。`AppLog` 同时写入 logcat 并 POST `/api/client-log`，服务端汇入统一 `client.log`（`[android]` 标记）；Web 前端同样使用 `/api/client-log`（`[js]` 标记）
-- **BackgroundService（后台服务）**：管理端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知。端口映射有两条传输：**SSH 隧道**（默认）与 **h2 流隧道**（实验性，走主端口 20000），由**本地开关** `tunnel_transport_h2_enabled` 选择——Android **不消费服务端 `port_forward.transport` 配置**（该配置现在只用于服务端 registry 门控与 web 端健康检查门控）
+- **BackgroundService（后台服务）**：管理端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知。端口映射有两条传输：**SSH 隧道**（默认）与 **h2 流隧道**（实验性，走主端口 20000），由**本地开关** `tunnel_transport_h2_enabled` 选择——Android **不消费服务端 `port_forward.transport` 配置**（该配置已被服务端钉死为 `both`，仅剩 web 端健康检查门控一个消费者）
   - 关键 API：`setNativePushEnabled(boolean)`（总开关）、`getTrustAllSSLContext()`（给 PendingEventsWorker 共享 TLS）、`postEventNotificationFromWorker(ctx, eventType, data)`（跨进程触发通知）
 - **PendingEventsWorker**：WS 不可达时由 WorkManager 周期调度，通过 HTTP `GET /api/ai/events/pending?after=...` 拉取漏发事件，作为离线通知回退
 - **BootCompletedReceiver**：设备开机后恢复 BackgroundService + 调度 PendingEventsWorker
