@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/ai"
@@ -19,7 +20,10 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	projectB := env.WatchDir + "/project-b"
+	// Canonical, because the overview resolves each session's project_id back to
+	// the registry's canonical path (which filepath.Join would not match on
+	// Windows, where the separator differs).
+	projectB := canonPath(filepath.Join(env.WatchDir, "project-b"))
 	db := service.UnsafeDBForTest()
 
 	// projectA: running session A1

@@ -236,7 +236,9 @@ func TestGetProjectFromCookie_NormalExtraction(t *testing.T) {
 	})
 
 	result := middleware.GetProjectFromCookie(req)
-	assert.Equal(t, "/home/user/myproject", result)
+	// Canonicalized: on Windows filepath.Abs("/home/...") yields a drive-rooted
+	// path, so the raw cookie spelling is not what the caller sees.
+	assert.Equal(t, model.NormalizeProjectPath("/home/user/myproject"), result)
 }
 
 func TestGetProjectFromCookie_URLEncodedValueDecoded(t *testing.T) {
@@ -248,7 +250,7 @@ func TestGetProjectFromCookie_URLEncodedValueDecoded(t *testing.T) {
 	})
 
 	result := middleware.GetProjectFromCookie(req)
-	assert.Equal(t, "/home/user/my project", result)
+	assert.Equal(t, model.NormalizeProjectPath("/home/user/my project"), result)
 }
 
 func TestGetProjectFromCookie_NoCookie_ReturnsEmpty(t *testing.T) {

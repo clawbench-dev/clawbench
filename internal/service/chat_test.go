@@ -3350,7 +3350,7 @@ func TestGetSessionFullInfo(t *testing.T) {
 	info := service.GetSessionFullInfo(sid)
 	assert.NotNil(t, info)
 	assert.Equal(t, "claude", info.Backend)
-	assert.Equal(t, "/my/project", info.ProjectPath)
+	assert.Equal(t, service.NormalizeProjectPath("/my/project"), info.ProjectPath)
 	assert.Equal(t, "Full Info Test", info.Title)
 	assert.Equal(t, "my-agent", info.AgentID)
 	assert.Equal(t, "gpt-4o", info.Model)
@@ -3814,19 +3814,19 @@ func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
 	// A1: unread assistant message → unread > 0
 	a1, ok := byID["session-A1"]
 	require.True(t, ok, "session-A1 should be present")
-	assert.Equal(t, "/projectA", a1.ProjectPath)
+	assert.Equal(t, service.NormalizeProjectPath("/projectA"), a1.ProjectPath)
 	assert.Equal(t, 1, a1.UnreadCount, "A1 has one unread assistant message")
 
 	// A2: read → unread == 0
 	a2, ok := byID["session-A2"]
 	require.True(t, ok, "session-A2 should be present")
-	assert.Equal(t, "/projectA", a2.ProjectPath)
+	assert.Equal(t, service.NormalizeProjectPath("/projectA"), a2.ProjectPath)
 	assert.Equal(t, 0, a2.UnreadCount, "A2 was read, no unread messages")
 
 	// B1: no messages → unread == 0
 	b1, ok := byID["session-B1"]
 	require.True(t, ok, "session-B1 should be present")
-	assert.Equal(t, "/projectB", b1.ProjectPath)
+	assert.Equal(t, service.NormalizeProjectPath("/projectB"), b1.ProjectPath)
 	assert.Equal(t, 0, b1.UnreadCount, "B1 has no messages")
 
 	// Archived session must not be returned
@@ -4647,7 +4647,7 @@ func TestGetSessionProjectPath(t *testing.T) {
 	sid := helperCreateSession(t, "/my/project", "claude", "Test")
 
 	path := service.GetSessionProjectPath(sid)
-	assert.Equal(t, "/my/project", path)
+	assert.Equal(t, service.NormalizeProjectPath("/my/project"), path)
 }
 
 func TestGetSessionProjectPath_NonExistent(t *testing.T) {

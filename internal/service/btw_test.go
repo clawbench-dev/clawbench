@@ -118,7 +118,7 @@ func TestAnswerBtwQuestion_Success(t *testing.T) {
 	assert.NotZero(t, rec.ID, "record must be persisted")
 	assert.Equal(t, int64(301), rec.AnchorMessageID)
 	assert.Equal(t, "sess-answer", rec.SessionID)
-	assert.Equal(t, "/test", rec.ProjectPath)
+	assert.Equal(t, NormalizeProjectPath("/test"), rec.ProjectPath)
 	assert.Empty(t, rec.Error)
 
 	stored, err := ListBtwQuestions("sess-answer")

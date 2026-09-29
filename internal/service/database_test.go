@@ -1820,7 +1820,7 @@ func TestGetChatQuickSend_ProjectScope(t *testing.T) {
 	for _, it := range projA {
 		if it.Label == "项目A" {
 			assert.True(t, it.ProjectOnly)
-			assert.Equal(t, "/proj/a", it.ProjectPath)
+			assert.Equal(t, NormalizeProjectPath("/proj/a"), it.ProjectPath)
 		}
 	}
 }
@@ -2829,7 +2829,7 @@ func TestSchema_RenameSessionDeletedToArchived(t *testing.T) {
 
 	// Step 5: Verify index still functions after rename
 	var activeCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/proj') AND archived = 0 AND session_type = 'chat'").Scan(&activeCount)
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) AND archived = 0 AND session_type = 'chat'", NormalizeProjectPath("/proj")).Scan(&activeCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, activeCount)
 }
@@ -3240,7 +3240,7 @@ func TestGetQuickCommands_ProjectScope(t *testing.T) {
 	for _, c := range projA {
 		if c.Label == "项目A" {
 			assert.True(t, c.ProjectOnly)
-			assert.Equal(t, "/proj/a", c.ProjectPath)
+			assert.Equal(t, NormalizeProjectPath("/proj/a"), c.ProjectPath)
 		}
 	}
 }
@@ -3268,7 +3268,7 @@ func TestQuickCommand_AutoExecutePerProject(t *testing.T) {
 	assert.Equal(t, 1, globalAuto)
 
 	// Each project's own rows have exactly one auto-execute.
-	for _, proj := range []string{"/proj/a", "/proj/b"} {
+	for _, proj := range []string{NormalizeProjectPath("/proj/a"), NormalizeProjectPath("/proj/b")} {
 		cmds, _ := GetQuickCommands(proj)
 		scopedAuto := 0
 		for _, c := range cmds {
@@ -3292,7 +3292,7 @@ func TestQuickCommand_AutoExecuteScopedClear(t *testing.T) {
 	for _, c := range cmds {
 		if c.ID == id2 {
 			assert.True(t, c.AutoExecute)
-		} else if c.ProjectPath == "/proj/a" {
+		} else if c.ProjectPath == NormalizeProjectPath("/proj/a") {
 			assert.False(t, c.AutoExecute)
 		}
 	}
@@ -3302,7 +3302,7 @@ func TestQuickCommand_AutoExecuteScopedClear(t *testing.T) {
 	projACmds, _ := GetQuickCommands("/proj/a")
 	scopedAuto := 0
 	for _, c := range projACmds {
-		if c.ProjectPath == "/proj/a" && c.AutoExecute {
+		if c.ProjectPath == NormalizeProjectPath("/proj/a") && c.AutoExecute {
 			scopedAuto++
 		}
 	}

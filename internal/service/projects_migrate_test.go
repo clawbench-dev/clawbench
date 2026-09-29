@@ -561,7 +561,7 @@ func TestMigrateProjectsToIDs_FoldsForgeOptOut(t *testing.T) {
 
 	var optOut int
 	requireNoError(t, db.QueryRow(
-		"SELECT forge_bind_opt_out FROM projects WHERE path = '/tmp/proj'").Scan(&optOut))
+		"SELECT forge_bind_opt_out FROM projects WHERE path = ?", NormalizeProjectPath("/tmp/proj")).Scan(&optOut))
 	if optOut != 1 {
 		t.Errorf("forge_bind_opt_out = %d, want 1", optOut)
 	}

@@ -1176,7 +1176,7 @@ func TestScanDingTalkSessionInfos_MultipleRows(t *testing.T) {
 	require.Len(t, results, 2)
 	assert.Equal(t, "scan-1", results[0].ID)
 	assert.Equal(t, "Session 1", results[0].Title)
-	assert.Equal(t, "/proj", results[0].ProjectPath)
+	assert.Equal(t, NormalizeProjectPath("/proj"), results[0].ProjectPath)
 	assert.Equal(t, "claude", results[0].Backend)
 	assert.Equal(t, "agent1", results[0].AgentID)
 	assert.Equal(t, "model-a", results[0].Model)
@@ -1204,7 +1204,7 @@ func TestDingTalkSessionInfo_AllFields(t *testing.T) {
 	info := results[0]
 	assert.Equal(t, "full-info-1", info.ID)
 	assert.Equal(t, "Full Info", info.Title)
-	assert.Equal(t, "/proj", info.ProjectPath)
+	assert.Equal(t, NormalizeProjectPath("/proj"), info.ProjectPath)
 	assert.Equal(t, "claude", info.Backend)
 	assert.Equal(t, "agent1", info.AgentID)
 	assert.Equal(t, "model-x", info.Model)
@@ -2688,8 +2688,7 @@ func TestGetSessionInfoForPush(t *testing.T) {
 
 	sessionID := "dt-info-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = '/proj/info'), 'claude', 'Info Session', 'agent1', 'default', '', 'chat', 0)",
-		sessionID,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'Info Session', 'agent1', 'default', '', 'chat', 0)", sessionID, NormalizeProjectPath("/proj/info"),
 	)
 	require.NoError(t, err)
 
@@ -2697,7 +2696,7 @@ func TestGetSessionInfoForPush(t *testing.T) {
 		info, err := GetSessionInfoForPush(sessionID)
 		require.NoError(t, err)
 		assert.Equal(t, sessionID, info.ID)
-		assert.Equal(t, "/proj/info", info.ProjectPath)
+		assert.Equal(t, NormalizeProjectPath("/proj/info"), info.ProjectPath)
 		assert.Equal(t, "Info Session", info.Title)
 	})
 

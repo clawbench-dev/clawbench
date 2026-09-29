@@ -272,7 +272,7 @@ func TestGetTaskByID(t *testing.T) {
 	task, err := service.GetTaskByID(taskID)
 	assert.NoError(t, err)
 	assert.Equal(t, taskID, task.ID)
-	assert.Equal(t, "/proj", task.ProjectPath)
+	assert.Equal(t, service.NormalizeProjectPath("/proj"), task.ProjectPath)
 	assert.Equal(t, "Task 1", task.Name)
 	assert.Equal(t, "0 * * * *", task.CronExpr)
 	assert.Equal(t, "agent1", task.AgentID)
@@ -601,7 +601,7 @@ func TestLoadTasksFromDB(t *testing.T) {
 	// Active task should be loaded; paused task should be skipped
 	// Get the active task's ID
 	var activeID int64
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE status = 'active' AND project_id = (SELECT id FROM projects WHERE path = '/proj')").Scan(&activeID)
+	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE status = 'active' AND project_id = (SELECT id FROM projects WHERE path = ?)", service.NormalizeProjectPath("/proj")).Scan(&activeID)
 
 	// We verify by checking that the active task can be removed without error
 	s.RemoveTask(activeID)
@@ -629,8 +629,8 @@ func TestLoadTasksFromDB_AllProjects(t *testing.T) {
 
 	// Both tasks should be loaded — verify by getting their IDs and removing them
 	var id1, id2 int64
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = '/proj1')").Scan(&id1)
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = '/proj2')").Scan(&id2)
+	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = ?)", service.NormalizeProjectPath("/proj1")).Scan(&id1)
+	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = ?)", service.NormalizeProjectPath("/proj2")).Scan(&id2)
 
 	s.RemoveTask(id1)
 	s.RemoveTask(id2)

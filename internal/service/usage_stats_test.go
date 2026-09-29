@@ -13,6 +13,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// canonProject is the canonical form of a fixture project path. The usage
+// report resolves a project_id back to the canonical path stored in the
+// registry, so assertions must compare through the same normalization: on
+// Windows filepath.Abs("/a") yields a drive-rooted path, so the raw literal
+// never matches.
+func canonProject(p string) string {
+	return service.NormalizeProjectPath(p)
+}
+
 // ensureAgentsTable creates the agents table in the in-memory test DB (the
 // shared service schema const does not include it).
 func ensureAgentsTable(t *testing.T, db *sql.DB) {
@@ -734,12 +743,12 @@ func TestUsageStatsProjectDimGroupsByProject(t *testing.T) {
 	for _, r := range res.Rows {
 		byProject[r.Key["project"]] = r
 	}
-	require.Contains(t, byProject, "/a")
-	require.Contains(t, byProject, "/b")
-	assert.Equal(t, int64(150), byProject["/a"].Total)
-	assert.Equal(t, int64(300), byProject["/b"].Total)
+	require.Contains(t, byProject, canonProject("/a"))
+	require.Contains(t, byProject, canonProject("/b"))
+	assert.Equal(t, int64(150), byProject[canonProject("/a")].Total)
+	assert.Equal(t, int64(300), byProject[canonProject("/b")].Total)
 	// Sorted by total desc, so the heavier project leads.
-	assert.Equal(t, "/b", res.Rows[0].Key["project"])
+	assert.Equal(t, canonProject("/b"), res.Rows[0].Key["project"])
 }
 
 // TestUsageStatsProjectDimEmptyBucket covers the "(empty)" bucket: a project
@@ -792,7 +801,7 @@ func TestUsageStatsScopeAllTrendKeepsProjectDim(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Len(t, res.Trend, 1, "topN=1 must keep exactly the heaviest project")
-	assert.Equal(t, "/b", res.Trend[0].Key["project"])
+	assert.Equal(t, canonProject("/b"), res.Trend[0].Key["project"])
 	assert.Equal(t, int64(300), res.Trend[0].Total)
 	assert.NotEmpty(t, res.Trend[0].Day)
 }
@@ -813,7 +822,7 @@ func TestUsageStatsAllFourDimsAccepted(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	require.Len(t, res.Rows, 2)
-	assert.Equal(t, "/b", res.Rows[0].Key["project"])
+	assert.Equal(t, canonProject("/b"), res.Rows[0].Key["project"])
 	assert.Equal(t, "opus", res.Rows[0].Key["model"])
 	assert.Equal(t, "claude", res.Rows[0].Key["backend"])
 	assert.Equal(t, "Other", res.Rows[0].Key["agent"])

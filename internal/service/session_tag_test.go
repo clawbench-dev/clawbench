@@ -9,9 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	tagProjectA = "/proj/a"
-	tagProjectB = "/proj/b"
+// The project paths are canonicalized because the tag rows store a project id
+// and the accessors resolve it back to the registry's canonical path — on
+// Windows filepath.Abs("/proj/a") is a drive-rooted path, not "/proj/a".
+var (
+	tagProjectA = service.NormalizeProjectPath("/proj/a")
+	tagProjectB = service.NormalizeProjectPath("/proj/b")
 )
 
 // namesOf is a tiny projection helper so assertions read as tag names.

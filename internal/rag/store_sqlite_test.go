@@ -284,7 +284,7 @@ func TestSQLiteStore_SearchFTS_FiltersByProject(t *testing.T) {
 	hits, err := store.SearchFTS("database", 5, "/project/a", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, hits, 1)
-	assert.Equal(t, "/project/a", hits[0].ProjectPath)
+	assert.Equal(t, model.NormalizeProjectPath("/project/a"), hits[0].ProjectPath)
 }
 
 func TestSQLiteStore_SearchFTS_TimeRangeBoundaries(t *testing.T) {

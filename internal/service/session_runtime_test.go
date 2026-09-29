@@ -299,7 +299,7 @@ func TestCancelSession_CancelsContextAndLeavesQueueToTheRun(t *testing.T) {
 	SeedTestProjectsForTest(t)
 
 	sessionID := "session-cancel-queue"
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'Cancel')", sessionID)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'Cancel')", sessionID, NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	ctx, created := TryClaimSessionRun(sessionID)
@@ -1125,7 +1125,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	assert.Equal(t, "session-emit-1", data.SessionID)
 	assert.Equal(t, "**加粗**和`代码`以及[链接](http://example.com)", data.ResponsePreview)
 	assert.Equal(t, "加粗和代码以及链接", data.ResponsePreviewPlain)
-	assert.Equal(t, "/home/user/test-project", data.ProjectPath)
+	assert.Equal(t, NormalizeProjectPath("/home/user/test-project"), data.ProjectPath)
 	assert.Equal(t, "agent-1", data.AgentID)
 }
 
@@ -1319,7 +1319,7 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	assert.Equal(t, "completed", data.Status)
 	assert.Equal(t, "100", data.ExecutionID)
 	assert.Equal(t, "session-task-1", data.SessionID)
-	assert.Equal(t, "/home/user/project", data.ProjectPath)
+	assert.Equal(t, NormalizeProjectPath("/home/user/project"), data.ProjectPath)
 	assert.Equal(t, "test task", data.SessionTitle)
 	assert.Equal(t, "task-agent-1", data.AgentID)
 }
@@ -1508,7 +1508,7 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	assert.Equal(t, "failed", data1.Status)
 	assert.Equal(t, fmt.Sprintf("%d", taskID), data1.TaskID)
 	assert.NotEmpty(t, data1.SessionID, "failed event should have session_id")
-	assert.Equal(t, "/test-project", data1.ProjectPath, "failed event should have project_path")
+	assert.Equal(t, NormalizeProjectPath("/test-project"), data1.ProjectPath, "failed event should have project_path")
 }
 
 // --- executeTask: ExecuteStream error path (covers scheduler.go:681-687) ---
@@ -1886,7 +1886,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	assert.Equal(t, "session-pp-1", data.SessionID)
 	assert.Equal(t, "WriteTextFile", data.ToolName)
 	assert.Equal(t, `{"command":"echo hello"}`, data.ToolInput)
-	assert.Equal(t, "/home/user/project", data.ProjectPath)
+	assert.Equal(t, NormalizeProjectPath("/home/user/project"), data.ProjectPath)
 }
 
 // --- triggerChatSummarization with WS broadcast ---
@@ -1905,7 +1905,7 @@ func TestTriggerChatSummarization_BroadcastsWSUpdate(t *testing.T) {
 
 	// Insert session + messages
 	sessionID := "test-simple-broadcast"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (200, '/test', 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"Here's the answer."}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
@@ -1935,7 +1935,7 @@ func TestTriggerChatSummarization_SaveSummaryError(t *testing.T) {
 	_, _ = db.Exec("DROP TABLE summaries")
 
 	sessionID := "test-simple-save-error"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (500, '/test', 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"The answer is 42."}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
@@ -2557,7 +2557,7 @@ func TestTriggerChatSummarization_AlwaysExtracts(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-enabled-always"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
 	assistantContent := `{"blocks":[{"type":"text","text":"Answer"}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
@@ -2603,7 +2603,7 @@ func TestSummarizeSimple_NilWSManager(t *testing.T) {
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "test-simple-nil-ws"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "The answer."}}
 
@@ -2654,7 +2654,7 @@ func TestRespondPermission_SessionNotRunning(t *testing.T) {
 	// Create a session with an agent_id
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-1")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-1", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	// No ACP connection — GetConn returns nil
@@ -2675,7 +2675,7 @@ func TestRespondPermission_PermPrefixStripped(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	// ToolCallID with perm_ prefix — the function will fail at GetConn (no ACP conn)
@@ -3203,7 +3203,7 @@ func TestRespondPermission_NilClient(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	mgr := ai.GetACPConnManager()
@@ -3225,7 +3225,7 @@ func TestRespondPermission_EmptyAcpSID(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3249,7 +3249,7 @@ func TestRespondPermission_NoPendingPermission(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3273,7 +3273,7 @@ func TestRespondPermission_ShortToolCallID_NoPrefixStrip(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3297,7 +3297,7 @@ func TestRespondPermission_PermPrefixStrippedThenNoPending(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-strip")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-strip", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3321,7 +3321,7 @@ func TestRespondPermission_Success(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-ok")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-ok", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3347,7 +3347,7 @@ func TestRespondPermission_Cancelled(t *testing.T) {
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel", NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()

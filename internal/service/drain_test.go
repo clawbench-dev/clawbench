@@ -102,8 +102,7 @@ func setupDrainSession(t *testing.T, sessionID string) {
 		db.Close()
 	})
 	_, err = db.Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'Drain')`,
-		sessionID,
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'Drain')`, sessionID, NormalizeProjectPath("/test"),
 	)
 	assert.NoError(t, err)
 }

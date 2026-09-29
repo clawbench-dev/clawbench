@@ -337,7 +337,7 @@ func TestContinueFromExecution_FieldInheritance(t *testing.T) {
 	var projPath string
 	err = service.UnsafeDBForTest().QueryRow("SELECT COALESCE(p.path, '') FROM chat_sessions s LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?", newSessID).Scan(&projPath)
 	assert.NoError(t, err)
-	assert.Equal(t, "/project", projPath)
+	assert.Equal(t, service.NormalizeProjectPath("/project"), projPath)
 
 	// External session ID should be inherited from source session
 	// (source session's external_session_id is empty — not yet captured)
