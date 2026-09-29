@@ -309,6 +309,10 @@ func sortedKeys(m map[string]interface{}) []string {
 	return keys
 }
 
+// maxConcurrentProbes 限制同时运行的探针数。每个 CLI 探针会 fork 一个进程
+// （部分会拉 Node），14 个同时起会打爆启动期的 CPU/内存，所以有界并行。
+const maxConcurrentProbes = 4
+
 // discoverAndPersistModels probes every backend that has a model source and
 // writes the result to the agents whose model list is auto-managed.
 //
@@ -324,32 +328,53 @@ func sortedKeys(m map[string]interface{}) []string {
 // list and no flag, so excluding it would leave every freshly installed backend
 // with an empty model picker until a manual refresh.
 func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []string) {
+	backends := RegisteredModelSources()
+	type probeResult struct {
+		backend string
+		models  []AgentModel
+	}
+
+	results := make([]probeResult, len(backends))
+	sem := make(chan struct{}, maxConcurrentProbes)
+	var wg sync.WaitGroup
+	for i, backend := range backends {
+		wg.Add(1)
+		go func(i int, backend string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			// DiscoverModels 内部有 per-backend 探针锁 + TTL 缓存，
+			// 并发调用不会重复探测同一 backend。
+			results[i] = probeResult{backend: backend, models: DiscoverModels(backend)}
+		}(i, backend)
+	}
+	wg.Wait()
+
+	// 落库串行执行：探测阶段才需要并发，写库保持单 goroutine 以避免并发写同一个 *sql.DB。
 	discovered := make(map[string][]AgentModel)
 	var updated []string
-
-	for _, backend := range RegisteredModelSources() {
-		models := DiscoverModels(backend)
-		if len(models) == 0 {
+	for _, r := range results {
+		if len(r.models) == 0 {
 			continue
 		}
-		discovered[backend] = models
+		discovered[r.backend] = r.models
 
-		modelsJSON, err := json.Marshal(models)
+		modelsJSON, err := json.Marshal(r.models)
 		if err != nil {
-			slog.Warn("failed to marshal discovered models", "backend", backend, "error", err)
+			slog.Warn("failed to marshal discovered models", "backend", r.backend, "error", err)
 			continue
 		}
 		res, err := db.Exec(
 			`UPDATE agents SET models = ?, models_auto_detected = 1
 			 WHERE backend = ? AND (models_auto_detected = 1 OR models IS NULL OR models = '[]' OR models = 'null')`,
-			string(modelsJSON), backend,
+			string(modelsJSON), r.backend,
 		)
 		if err != nil {
-			slog.Warn("failed to persist discovered models", "backend", backend, "error", err)
+			slog.Warn("failed to persist discovered models", "backend", r.backend, "error", err)
 			continue
 		}
 		if n, err := res.RowsAffected(); err == nil && n > 0 {
-			updated = append(updated, backend)
+			updated = append(updated, r.backend)
 		}
 	}
 	return discovered, updated

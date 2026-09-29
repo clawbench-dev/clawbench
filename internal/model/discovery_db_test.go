@@ -2,10 +2,12 @@ package model
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -652,4 +654,38 @@ func TestRefreshAgents_DoesNotClearLevelsWithoutSpec(t *testing.T) {
 	var levelsJSON string
 	require.NoError(t, db.QueryRow("SELECT thinking_effort_levels FROM agents WHERE id = 'keep'").Scan(&levelsJSON))
 	assert.Contains(t, levelsJSON, "xhigh", "an absent spec must not wipe the stored levels")
+}
+
+// TestDiscoverAndPersistModels_RunsProbesConcurrently 断言各 backend 的探针
+// 是并发跑的：3 个各 sleep 200ms 的探针，串行需 >=600ms，并发应 <400ms。
+func TestDiscoverAndPersistModels_RunsProbesConcurrently(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+
+	// The registry is global and already holds every real backend's source. Clear
+	// it for the duration of the test, or the elapsed time would be dominated by
+	// those probes (opencode/pi/codebuddy each take seconds) and the assertion
+	// would measure them rather than the three slow probes under test.
+	restore := isolateModelSources(t)
+	defer restore()
+
+	const n = 3
+	const delay = 200 * time.Millisecond
+	for i := range n {
+		backend := fmt.Sprintf("slow-probe-%d", i)
+		// 先插一个空 models、flag=0 的 agent，让 discovery 有行可写。
+		_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected)
+			VALUES (?, ?, ?, '[]', 0)`, backend, backend, backend)
+		require.NoError(t, err)
+		RegisterModelSource(PluginSource(backend, func() ([]AgentModel, string) {
+			time.Sleep(delay)
+			return []AgentModel{{ID: "m-" + backend, Name: "M"}}, ""
+		}))
+	}
+
+	start := time.Now()
+	discoverAndPersistModels(db)
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 3*delay,
+		"探针应并发执行（串行为 %v，并发应明显更快）", 3*delay)
 }
