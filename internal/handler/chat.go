@@ -268,7 +268,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// (the session's owning project), which overrides the cookie project for ownership
 	// verification. Only an exact match with the session's own project is accepted, so
 	// this cannot be used to bypass access control.
-	if qp := r.URL.Query().Get("project_path"); qp != "" {
+	if qp := service.NormalizeProjectPath(r.URL.Query().Get("project_path")); qp != "" {
 		if sp := service.GetSessionProjectPath(sessionID); sp != "" && sp == qp {
 			// The session belongs to the requested project. Switch the working
 			// project to the session's owner so every subsequent write (user
@@ -960,7 +960,7 @@ func MarkChatRead(w http.ResponseWriter, r *http.Request) {
 	// Verify the session belongs to the requesting project. Support marking an
 	// external project's session read: ?project_path= (the session's owning
 	// project) overrides the cookie project; only an exact match is accepted.
-	if qp := r.URL.Query().Get("project_path"); qp != "" {
+	if qp := service.NormalizeProjectPath(r.URL.Query().Get("project_path")); qp != "" {
 		if sp := service.GetSessionProjectPath(sessionID); sp == "" || sp != qp {
 			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 			return

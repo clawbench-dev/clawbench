@@ -39,14 +39,14 @@ type testEnv struct {
 func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	t.Helper()
 
-	// Create temp directories — project must be under WatchDir to match production
-	watchDir := t.TempDir()
-	// Note: We intentionally do NOT resolve symlinks here.
-	// On macOS, /var/folders → /private/var/folders, but we want model.RootPaths
-	// to match what production code uses (ListRootPaths returns "/" on Unix,
-	// which doesn't need resolution). The isPathUnderAnyRoot function handles
-	// symlink resolution internally, so RootPaths and path arguments can use
-	// either resolved or unresolved forms.
+	// Create temp directories — project must be under WatchDir to match production.
+	//
+	// watchDir is CANONICALIZED (symlinks resolved): the projects registry stores
+	// canonical paths, and handlers now compare the cookie path against them, so
+	// a raw t.TempDir() path would differ on macOS (/var is a symlink to
+	// /private/var) and every ownership/path assertion would fail. Canonicalizing
+	// the root once makes every path derived from it canonical too.
+	watchDir := canonPath(t.TempDir())
 	projectDir := filepath.Join(watchDir, "project")
 	_ = os.MkdirAll(projectDir, 0o755)
 

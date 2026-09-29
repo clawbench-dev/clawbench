@@ -6,10 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"path/filepath"
-	"strings"
 
 	"clawbench/internal/forge"
+	"clawbench/internal/model"
 )
 
 // ProjectForgesDDL creates the project_forges table and its indexes.
@@ -71,20 +70,11 @@ func (p ProjectForge) RepoKey() ForgeRepoKey {
 // maps to one binding row. It resolves symlinks when possible, cleans the path,
 // and strips a trailing separator. On any error it falls back to the cleaned
 // path rather than failing the caller.
+//
+// Delegates to model.NormalizeProjectPath so the HTTP boundary (which may only
+// import model) and the service layer share one implementation.
 func NormalizeProjectPath(p string) string {
-	p = strings.TrimSpace(p)
-	if p == "" {
-		return ""
-	}
-	if abs, err := filepath.Abs(p); err == nil {
-		p = abs
-	}
-	if resolved, err := filepath.EvalSymlinks(p); err == nil {
-		p = resolved
-	}
-	p = filepath.Clean(p)
-	// filepath.Clean already removes trailing separators except for the root.
-	return p
+	return model.NormalizeProjectPath(p)
 }
 
 // GetProjectForge returns the binding for a project, or (nil, nil) when none

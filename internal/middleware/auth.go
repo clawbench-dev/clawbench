@@ -78,6 +78,13 @@ func Auth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // GetProjectFromCookie extracts the current project path from cookie.
+//
+// The value is canonicalized before returning (model.NormalizeProjectPath:
+// absolute + symlinks resolved). Handlers compare this path against project
+// paths stored in the projects registry, which are canonical, so returning the
+// raw cookie value would break ownership checks wherever the two spellings
+// differ — most visibly on macOS, where a path under /var (the raw cookie) is
+// the same directory as one under /private/var (the stored form).
 func GetProjectFromCookie(r *http.Request) string {
 	cookie, err := r.Cookie(model.ScopedCookieName("clawbench_project"))
 	if err != nil || cookie == nil || cookie.Value == "" {
@@ -85,7 +92,7 @@ func GetProjectFromCookie(r *http.Request) string {
 	}
 	decoded, decErr := url.QueryUnescape(cookie.Value)
 	if decErr != nil {
-		return cookie.Value
+		decoded = cookie.Value
 	}
-	return decoded
+	return model.NormalizeProjectPath(decoded)
 }

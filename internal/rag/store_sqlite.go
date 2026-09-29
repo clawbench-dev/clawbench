@@ -440,6 +440,42 @@ func (s *Store) projectPathForID(id int64) string {
 	return path
 }
 
+// appendEqualityFilters appends one " AND <col> = ?" clause and its bind value
+// for every filter whose value is non-empty, preserving order. It keeps the
+// optional-filter chains in the search builders flat.
+func appendEqualityFilters(query string, args []any, filters ...[2]string) (string, []any) {
+	for _, f := range filters {
+		if f[1] == "" {
+			continue
+		}
+		query += " AND " + f[0] + " = ?"
+		args = append(args, f[1])
+	}
+	return query, args
+}
+
+// resolveSearchProjectID turns an optional project path into the id a search
+// filter should use.
+//
+// A read must not register a project, so this uses projectIDByPath. An unknown
+// path (or a store opened before the registry exists) means "no data" — the
+// caller must return no hits rather than run an unfiltered search, because 0 is
+// the "no filter" sentinel to the query builders. Returns ok=false to signal
+// that.
+func (s *Store) resolveSearchProjectID(projectPath string) (id int64, ok bool, err error) {
+	if projectPath == "" {
+		return 0, true, nil
+	}
+	id, found, err := s.projectIDByPath(projectPath)
+	if err != nil {
+		return 0, false, err
+	}
+	if !found {
+		return 0, false, nil
+	}
+	return id, true, nil
+}
+
 // fillProjectPaths sets ProjectPath on each hit from its project id, resolving
 // each distinct id once.
 //
@@ -964,16 +1000,12 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 	// "no project filter" to vectorFilterSQL, so passing it through would return
 	// every project's hits. A search is also a read — it must not register the
 	// project as a side effect.
-	var projectID int64
-	if projectPath != "" {
-		id, ok, idErr := s.projectIDByPath(projectPath)
-		if idErr != nil {
-			return nil, idErr
-		}
-		if !ok {
-			return nil, nil
-		}
-		projectID = id
+	projectID, ok, idErr := s.resolveSearchProjectID(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
+	if !ok {
+		return nil, nil
 	}
 	query := `
 		SELECT v.rowid, v.distance,
@@ -1097,31 +1129,22 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 	`
 	args := []any{ftsQuery}
 
-	if projectPath != "" {
-		// Read-only resolve: an unknown project simply has no chunks, which is
-		// the same result as before when nothing was ever indexed for it.
-		projectID, ok, idErr := s.projectIDByPath(projectPath)
-		if idErr != nil {
-			return nil, idErr
-		}
-		if !ok {
-			return nil, nil
-		}
+	projectID, ok, idErr := s.resolveSearchProjectID(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
+	if !ok {
+		return nil, nil
+	}
+	if projectID != 0 {
 		query += " AND rag_chunks.project_id = ?"
 		args = append(args, projectID)
 	}
-	if backend != "" {
-		query += " AND rag_chunks.backend = ?"
-		args = append(args, backend)
-	}
-	if role != "" {
-		query += " AND rag_chunks.role = ?"
-		args = append(args, role)
-	}
-	if sessionID != "" {
-		query += " AND rag_chunks.session_id = ?"
-		args = append(args, sessionID)
-	}
+	query, args = appendEqualityFilters(query, args,
+		[2]string{"rag_chunks.backend", backend},
+		[2]string{"rag_chunks.role", role},
+		[2]string{"rag_chunks.session_id", sessionID},
+	)
 	if excludeSessionID != "" {
 		query += " AND rag_chunks.session_id != ?"
 		args = append(args, excludeSessionID)

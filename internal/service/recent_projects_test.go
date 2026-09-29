@@ -67,14 +67,17 @@ func insertProjectWithTime(t *testing.T, db *sql.DB, path string, accessedAt tim
 	assert.NoError(t, err)
 }
 
-// createTempProjectDir creates a temporary directory and returns its path.
-// The directory is cleaned up after the test.
+// createTempProjectDir creates a temporary directory and returns its CANONICAL
+// path (symlinks resolved), matching the form the projects registry stores and
+// the recent-project accessors return. A raw os.MkdirTemp path would differ on
+// macOS, where /var is a symlink to /private/var. The directory is cleaned up
+// after the test.
 func createTempProjectDir(t *testing.T) string {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "recent-project-test-*")
 	assert.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	return dir
+	return service.NormalizeProjectPath(dir)
 }
 
 func TestGetRecentProjects_Empty(t *testing.T) {

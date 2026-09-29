@@ -282,3 +282,42 @@ func TestValidatePath_FileInBaseDir(t *testing.T) {
 	assert.True(t, valid)
 	assert.Contains(t, path, "readme.md")
 }
+
+// NormalizeProjectPath is the identity function for a project: the registry
+// stores this form, and any path arriving from a cookie / query string must be
+// normalized the same way before comparison.
+func TestNormalizeProjectPath(t *testing.T) {
+	assert.Equal(t, "", model.NormalizeProjectPath(""))
+	assert.Equal(t, "", model.NormalizeProjectPath("   "))
+
+	dir := t.TempDir()
+	// An existing directory canonicalizes to its symlink-resolved, cleaned form.
+	assert.Equal(t, dir, model.NormalizeProjectPath(dir))
+	// A redundant "/." segment and a trailing separator collapse away.
+	assert.Equal(t, dir, model.NormalizeProjectPath(dir+string(filepath.Separator)+"."))
+	assert.Equal(t, dir, model.NormalizeProjectPath(dir+string(filepath.Separator)))
+	// A relative path is made absolute.
+	assert.Equal(t, dir, model.NormalizeProjectPath(filepath.Join(dir, ".", "")))
+}
+
+// A symlinked spelling must resolve to the target, which is what makes a raw
+// cookie path comparable to the canonical registry path (macOS /var).
+func TestNormalizeProjectPath_ResolvesSymlink(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	assert.Equal(t, target, model.NormalizeProjectPath(link))
+}
+
+// A non-existent path cannot be symlink-resolved, so it falls back to the
+// cleaned absolute form rather than failing.
+func TestNormalizeProjectPath_NonExistentFallsBackToClean(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist", "..", "does-not-exist")
+
+	got := model.NormalizeProjectPath(missing)
+	assert.True(t, filepath.IsAbs(got))
+	assert.Equal(t, filepath.Clean(missing), got)
+}

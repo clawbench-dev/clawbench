@@ -87,8 +87,8 @@ func TestGetConversationProjects_Empty(t *testing.T) {
 func TestGetConversationProjects_ListsSessionsNewestFirst(t *testing.T) {
 	db := setupConversationProjectsDB(t)
 
-	older := t.TempDir()
-	newer := t.TempDir()
+	older := canon(t, t.TempDir())
+	newer := canon(t, t.TempDir())
 	insertSessionRow(t, db, older, "s1", "2024-01-01 10:00:00")
 	insertSessionRow(t, db, newer, "s2", "2024-03-01 10:00:00")
 
@@ -106,7 +106,7 @@ func TestGetConversationProjects_ListsSessionsNewestFirst(t *testing.T) {
 func TestGetConversationProjects_KeepsDeletedDirectories(t *testing.T) {
 	db := setupConversationProjectsDB(t)
 
-	dir := t.TempDir()
+	dir := canon(t, t.TempDir())
 	insertSessionRow(t, db, dir, "s1", "2024-01-01 10:00:00")
 	require.NoError(t, os.RemoveAll(dir))
 
@@ -123,7 +123,7 @@ func TestGetConversationProjects_KeepsDeletedDirectories(t *testing.T) {
 func TestGetConversationProjects_IncludesLedgerOnlyProjects(t *testing.T) {
 	db := setupConversationProjectsDB(t)
 
-	ledgerOnly := filepath.Join(t.TempDir(), "ledger-only")
+	ledgerOnly := canon(t, filepath.Join(t.TempDir(), "ledger-only"))
 	insertMetadataRow(t, db, ledgerOnly, "2024-05-01 10:00:00")
 
 	projects, err := service.GetConversationProjects()

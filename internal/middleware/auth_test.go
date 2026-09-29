@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -265,4 +267,36 @@ func TestGetProjectFromCookie_EmptyValue_ReturnsEmpty(t *testing.T) {
 
 	result := middleware.GetProjectFromCookie(req)
 	assert.Equal(t, "", result)
+}
+
+// The cookie value is canonicalized before it is returned. Handlers compare it
+// against project paths from the registry, which are canonical, so a raw value
+// with an unresolved symlink ancestor (macOS /var -> /private/var) would fail
+// every ownership check. A symlinked temp dir reproduces the mismatch on any OS.
+func TestGetProjectFromCookie_CanonicalizesSymlinkedPath(t *testing.T) {
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.AddCookie(&http.Cookie{
+		Name:  model.ScopedCookieName("clawbench_project"),
+		Value: url.QueryEscape(link),
+	})
+
+	result := middleware.GetProjectFromCookie(req)
+	assert.Equal(t, target, result, "the symlinked spelling must resolve to the canonical path")
+	assert.Equal(t, model.NormalizeProjectPath(link), result)
+}
+
+// A malformed percent-escape must fall back to the raw value rather than
+// dropping the project: the cookie is still the user's selection.
+func TestGetProjectFromCookie_MalformedEscapeFallsBackToRaw(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+	req.Header.Set("Cookie", model.ScopedCookieName("clawbench_project")+"=%zz")
+
+	result := middleware.GetProjectFromCookie(req)
+	assert.Equal(t, model.NormalizeProjectPath("%zz"), result)
 }
