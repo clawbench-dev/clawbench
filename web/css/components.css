@@ -907,3 +907,70 @@
 .settings-item__slider-reset:active {
   color: var(--accent-color);
 }
+
+/* ==========================================================================
+   Shared loading ring (the visual core of LoadingIndicator)
+   ==========================================================================
+
+   The ring itself is declared GLOBALLY, not in LoadingIndicator's <style
+   scoped> block, because not every caller can render a Vue component:
+
+     - chat tool-call body      → injected as an HTML string (v-html)
+     - mermaid diagram loading  → injected via innerHTML in a util
+     - localhost open button    → a CSS ::after pseudo-element
+
+   Those three get no `data-v-*` attribute, so a scoped rule can never match
+   them (design-guide red line 1: scoped styles silently miss injected DOM).
+   Keeping one global definition is what makes the ring a single
+   implementation instead of five lookalikes.
+
+   What the component owns is only the wrapper layout (.loading-indicator).
+   Callers may mark up either:
+     - <LoadingIndicator> — renders <div class="li-spinner">
+     - a plain `<span class="li-spinner">` — for injected HTML
+
+   Size comes from `--li-size` (default md). The `size-*` tiers below are the
+   component's wrapper classes; a caller that cannot render the component sets
+   `--li-size` on the ring element itself instead (specificity 0,2,0 beats the
+   0,1,0 base, and such callers never sit inside a `size-*` wrapper, so the two
+   mechanisms cannot collide). Border weight is derived so every tier keeps the
+   same optical ratio. Colour: `--li-color` for the moving arc,
+   `--li-track-color` for the resting ring — both fall back to theme tokens.
+
+   `--li-duration` exists so a call site can keep the speed it shipped with
+   without forking the shape: the callers migrated onto this ring used 0.6s,
+   while the component's own default is 0.8s. Prefer the default unless a site
+   has a specific reason. */
+.li-spinner {
+  --li-size: 28px; /* default md */
+  --li-border: calc(var(--li-size) / 9);
+  --li-duration: 0.8s;
+  /* inline-block (not block) so a bare <span class="li-spinner"> works where a
+     component cannot be rendered. Inside the component's flex wrapper it is a
+     flex item, which blockifies anyway, so this changes nothing there. */
+  display: inline-block;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: var(--li-size);
+  height: var(--li-size);
+  border-radius: 50%;
+  border: var(--li-border) solid var(--li-track-color, var(--border-color, #e9ecef));
+  border-top-color: var(--li-color, var(--accent-color, #0066cc));
+  animation: li-spin var(--li-duration) linear infinite;
+}
+
+.size-sm .li-spinner {
+  --li-size: 14px;
+}
+
+.size-md .li-spinner {
+  --li-size: 28px;
+}
+
+.size-lg .li-spinner {
+  --li-size: 36px;
+}
+
+@keyframes li-spin {
+  to { transform: rotate(360deg); }
+}

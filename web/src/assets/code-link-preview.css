@@ -241,16 +241,14 @@ body.code-preview-dragging * {
   flex: 1;
 }
 
-/* Loading spinner. Lives in the global stylesheet (not the parent component's
-   scoped block) because the element is rendered by CodePreviewBody. */
+/* Loading spinner. Shape/rotation come from the shared global .li-spinner
+   (css/components.css) — only the size and colours are overridden here. The
+   larger border is set explicitly because 20px is not one of the component's
+   size tiers, so the derived `--li-border` ratio does not apply. */
 .code-preview-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: code-preview-spin 0.8s linear infinite;
-  flex-shrink: 0;
+  --li-size: 20px;
+  --li-border: 2px;
+  --li-track-color: rgba(0, 0, 0, 0.1);
 }
 
 .code-preview-scroll {
@@ -403,14 +401,13 @@ body.code-preview-dragging * {
   color: var(--text-muted, #8c8c8c);
 }
 
+/* Expand-bar spinner: the shared global .li-spinner at a smaller size, keeping
+   the lighter 1.5px border the 10px ring needs (the derived ratio would give
+   ~1.1px, which reads as a hairline at this size). */
 .code-preview-expand-spinner {
-  width: 10px;
-  height: 10px;
-  border: 1.5px solid rgba(0, 0, 0, 0.12);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: code-preview-spin 0.8s linear infinite;
-  flex-shrink: 0;
+  --li-size: 10px;
+  --li-border: 1.5px;
+  --li-track-color: rgba(0, 0, 0, 0.12);
 }
 
 .code-preview-title.is-clickable {
@@ -673,12 +670,6 @@ body.code-preview-dragging * {
 .code-preview-tooltip-fade-enter-from,
 .code-preview-tooltip-fade-leave-to {
   opacity: 0;
-}
-
-@keyframes code-preview-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* ── Media preview body (image / SVG / video / audio / PDF) ─────────────────

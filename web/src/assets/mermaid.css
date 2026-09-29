@@ -7,13 +7,14 @@
   justify-content: center;
   padding: 24px;
 }
+/* Shape/rotation come from the shared global .li-spinner (css/components.css);
+   only the size is overridden. Declared globally (not scoped) because the
+   loading markup is injected via innerHTML from a util. */
 .mermaid .mermaid-spinner {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border-color);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: mermaid-spin 0.6s linear infinite;
+  --li-size: 20px;
+  --li-border: 2px;
+  /* Kept from the pre-unification implementation, which spun at 0.6s. */
+  --li-duration: 0.6s;
 }
 
 /* Error pre — replaces inline styles for consistency */
@@ -54,8 +55,4 @@
 .mermaid .mermaid-retry-btn:focus-visible {
   outline: 2px solid var(--accent-color);
   outline-offset: 2px;
-}
-
-@keyframes mermaid-spin {
-  to { transform: rotate(360deg); }
 }

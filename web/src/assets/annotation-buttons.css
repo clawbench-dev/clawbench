@@ -195,20 +195,24 @@ a.chat-file-path-inert:hover,
   pointer-events: none;
 }
 
-.chat-url-open-btn.loading::after {
-  content: '';
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid var(--border-color);
-  border-top-color: var(--accent-color, #4a90d9);
-  border-radius: 50%;
-  animation: url-btn-spin 0.6s linear infinite;
+/* The ring is the shared global .li-spinner (css/components.css) at the small
+   size the button needs. Hidden unless the button is mid-open, so the resting
+   button shows only its icon.
+
+   The hide/show selectors are compound on purpose: `.li-spinner` alone also
+   sets `display`, so a single-class rule would tie on specificity and depend on
+   which stylesheet the bundler emits first. */
+.chat-url-open-btn .chat-url-open-btn-spinner {
+  --li-size: 8px;
+  --li-border: 1.5px;
+  /* Kept from the pre-unification ::after ring, which spun at 0.6s. */
+  --li-duration: 0.6s;
+  display: none;
   margin-left: var(--space-1);
-  display: inline-block;
 }
 
-@keyframes url-btn-spin {
-  to { transform: rotate(360deg); }
+.chat-url-open-btn.loading .chat-url-open-btn-spinner {
+  display: inline-block;
 }
 
 /* ── Worktree button ── */

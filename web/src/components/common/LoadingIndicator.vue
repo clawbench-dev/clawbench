@@ -42,6 +42,15 @@ withDefaults(
   font-size: var(--font-size-md);
 }
 
+/* The ring (.li-spinner, its size tiers and @keyframes li-spin) is declared
+   GLOBALLY in css/components.css — see the note there. It has to be global
+   because some callers cannot render this component: chat tool-call bodies and
+   mermaid diagrams are injected as HTML strings, and the localhost open button
+   paints its spinner from a ::after pseudo-element. None of those carry a
+   data-v-* attribute, so a scoped rule would silently miss them.
+
+   What stays here is only the wrapper's own layout, which the injected callers
+   do not use. */
 .li-label {
   color: var(--text-muted, #999);
 }
@@ -79,45 +88,12 @@ withDefaults(
   justify-content: center;
 }
 
-/* ── Classic single-ring spinner (same language as the chat tool banner) ──
-   Gray ring with a single accent arc on top, rotating linearly. No separate
-   track, no center dot — the arc color is consumed via the --li-color custom
-   property so callers override it by setting the property on this root.
-   The ring base color can be overridden via --li-track-color (used on dark
-   backdrops where the default --border-color gray is invisible). */
-.li-spinner {
-  --li-size: 28px; /* default md */
-  --li-border: calc(var(--li-size) / 9);
-  box-sizing: border-box;
-  flex-shrink: 0;
-  width: var(--li-size);
-  height: var(--li-size);
-  border-radius: 50%;
-  border: var(--li-border) solid var(--li-track-color, var(--border-color, #e9ecef));
-  border-top-color: var(--li-color, var(--accent-color, #0066cc));
-  animation: li-spin 0.8s linear infinite;
-}
-
-.size-sm .li-spinner {
-  --li-size: 14px;
-}
-
-.size-md .li-spinner {
-  --li-size: 28px;
-}
-
-.size-lg .li-spinner {
-  --li-size: 36px;
-}
-
-/* Overlays: a gentle glow lifts the loader off busy backgrounds. */
+/* Overlays: a gentle glow lifts the loader off busy backgrounds. This one stays
+   scoped — it targets the component's own wrapper (`.overlay` / `.fixed`), which
+   the injected callers never render. */
 .loading-indicator.overlay .li-spinner,
 .loading-indicator.fixed .li-spinner {
   filter: drop-shadow(0 4px 14px color-mix(in srgb, var(--li-color, var(--accent-color, #0066cc)) 25%, transparent));
-}
-
-@keyframes li-spin {
-  to { transform: rotate(360deg); }
 }
 </style>
 

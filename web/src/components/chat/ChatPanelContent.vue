@@ -2078,17 +2078,15 @@ onUnmounted(() => {
   justify-content: center;
   padding: 24px;
 }
-.tool-call-loading::after {
-  content: '';
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--border-color, #e5e7eb);
-  border-top-color: var(--accent-color, #6366f1);
-  border-radius: 50%;
-  animation: tool-call-spin 0.6s linear infinite;
-}
-@keyframes tool-call-spin {
-  to { transform: rotate(360deg); }
+/* The spinner is the shared global .li-spinner (css/components.css) at the
+   component's md tier. It has to be a real element rather than an ::after here
+   because the ring is one implementation shared with the injected mermaid /
+   code-preview / localhost callers. */
+.tool-call-loading .li-spinner {
+  --li-size: 20px;
+  --li-border: 2px;
+  /* Kept from the pre-unification implementation, which spun at 0.6s. */
+  --li-duration: 0.6s;
 }
 .tool-call-empty {
   display: flex;
