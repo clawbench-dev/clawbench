@@ -214,6 +214,14 @@
   .bottom-dock-wrapper  z-index:1（壁纸时）
 ```
 
+### 软键盘与底部 dock
+
+- **键盘弹起时隐藏 dock**（`v-show` 上挂 `!isSoftKeyboardOpen`，状态来自 `web/src/composables/useSoftKeyboard.ts`），**两端一致，含 Android WebView**。
+- 为什么不是把 dock 顶上去：手机浏览器弹键盘只缩**视觉视口**，`position:fixed; inset:0` 的 `.app-container` 与其中的 dock 仍按完整布局高度排布；用 `bottom: <键盘高>px` 补偿实测会差约 20%，仍被遮住。Android WebView 走 `adjustResize`（布局视口本身缩短）所以从不复现——别用「安卓没事」推断浏览器也没事。
+- 判定要点：`focusin/focusout` 认**任意可编辑元素**（不只聊天框/终端）+ 阈值（≥120px，排除浏览器地址栏）+ 轮询（部分 WebView 不发 resize 事件）。
+- 隐藏是 `display:none` 切换，Android WebView 可能不派发该转变的 ResizeObserver 回调，故必须保留键盘关闭后 `nextTick` 重测 dock 宽度的安全网（否则溢出布局按隐藏期的宽度算）。
+- `useChatKeyboard` / `useTerminalKeyboard` 仍在，但它们只负责**内容区**不被键盘遮住（`.chat-keyboard-open` / `.terminal-keyboard-open` 的 `bottom` 收缩），与 dock 可见性是两件事。
+
 ### 宽屏 vs 窄屏
 
 - 阈值（`useWideScreenLayout.ts:8`）：CSS 宽度 ≥1024px，**或**物理宽度 ≥1280px **且**横屏。
