@@ -380,6 +380,41 @@ func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []stri
 	return discovered, updated
 }
 
+// StartModelDiscoveryAsync 在后台探测每个 backend 的模型列表，落库后重载
+// 内存，然后调用 onComplete（可为 nil）。它立刻返回，调用方不得假设模型在
+// 返回时已可用。
+//
+// 存在的理由：探测会 fork 各家的 CLI，其中 antigravity 未登录时会挂满超时，
+// 串行合计约 18s。把它移出启动关键路径后，服务可立即开始接受请求，模型列表
+// 稍后到达。
+//
+// 调用方负责通知前端（本包不能 import internal/ws——ws 已 import 本包）。
+// 必须在 RefreshAgents(SkipDiscovery: true) 之后调用，否则 CLI 探测与 agent
+// 插入尚未完成，后台发现会写不到行。
+func StartModelDiscoveryAsync(db dbutil.Writer, onComplete func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				slog.Error("async model discovery panicked", "panic", r)
+			}
+		}()
+
+		discovered, updated := discoverAndPersistModels(db)
+		slog.Info("async model discovery complete",
+			"backends", len(discovered), "rows_updated", len(updated))
+
+		// 重载内存，让模型选择器拿到新列表。LoadAgentsIntoMemoryFromDB 先建新
+		// map 再原子替换，并发读者不会看到空集合（ISS-302）。
+		if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
+			slog.Error("async model discovery: memory reload failed", "error", err)
+		}
+
+		if onComplete != nil {
+			onComplete()
+		}
+	}()
+}
+
 // saveAgentToDB inserts a minimal agent record.
 func saveAgentToDB(db dbutil.Writer, agent *Agent) error {
 	modelsJSON, err := json.Marshal(agent.Models)

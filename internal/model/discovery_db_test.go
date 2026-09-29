@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -688,4 +689,47 @@ func TestDiscoverAndPersistModels_RunsProbesConcurrently(t *testing.T) {
 
 	assert.Less(t, elapsed, 3*delay,
 		"探针应并发执行（串行为 %v，并发应明显更快）", 3*delay)
+}
+
+// TestStartModelDiscoveryAsync_PersistsAndReloads 断言后台发现完成时：
+// 模型已落库、内存已重载、回调被调用。
+func TestStartModelDiscoveryAsync_PersistsAndReloads(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	// 清空真实后端的 model source：否则后台发现会真的去 fork 各家 CLI，
+	// 既拖慢测试（antigravity 未登录时挂满超时），又会往本 DB 的其它行写数据，
+	// 让「只探测 async-probe」这一前提不成立。
+	restore := isolateModelSources(t)
+	defer restore()
+	// 后台发现结束时会整体替换全局 Agents/AgentList，测完必须还原，
+	// 否则污染同包其它测试。
+	isolateAgentGlobals(t)
+
+	const backend = "async-probe"
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected)
+		VALUES (?, ?, ?, '[]', 0)`, backend, backend, backend)
+	require.NoError(t, err)
+	// 第二个参数是 CLI 命令：留空表示该 backend 无 CLI（mock/ACP-only），
+	// 否则 StaticSource 会去 PATH 查 "async-probe" 并返回空列表。
+	RegisterModelSource(StaticSource(backend, "", []AgentModel{{ID: "m1", Name: "M1"}}))
+
+	done := make(chan struct{})
+	StartModelDiscoveryAsync(db, func() { close(done) })
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("异步发现未在 5s 内完成")
+	}
+
+	var modelsJSON string
+	require.NoError(t, db.QueryRow(
+		`SELECT models FROM agents WHERE backend = ?`, backend).Scan(&modelsJSON))
+	assert.Contains(t, modelsJSON, "m1", "发现的模型必须已落库")
+
+	// 内存必须已重载：Agents 是 map[string]*Agent，按 agent id 索引；这里
+	// agent id == backend。
+	require.NotNil(t, GetAgent(backend), "agent 应已在内存中")
+	assert.True(t, slices.ContainsFunc(GetAgent(backend).Models,
+		func(m AgentModel) bool { return m.ID == "m1" }),
+		"内存里的 agent 必须带上刚发现的模型")
 }
