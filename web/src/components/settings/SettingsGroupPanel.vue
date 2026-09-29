@@ -10,14 +10,14 @@
       <div class="group-panel__enable-left">
         <span class="group-panel__enable-label">{{ t(config.enableLabelKey!) }}</span>
       </div>
-      <label class="group-panel__switch" @click.stop>
+      <label class="settings-item__switch" @click.stop>
         <input
           type="checkbox"
-          class="group-panel__switch-input"
+          class="settings-item__switch-input"
           :checked="!!localValues[config.enableKey]"
           @change="onEnableToggle"
         />
-        <span class="group-panel__switch-track"></span>
+        <span class="settings-item__switch-track"></span>
       </label>
     </div>
 
@@ -752,7 +752,7 @@ watch(localValues, () => {
   align-items: center;
   justify-content: space-between;
   padding:0 var(--space-7);
-  min-height: 48px;
+  min-height: 38px;
   background: transparent;
   position: relative;
 }
@@ -778,58 +778,13 @@ watch(localValues, () => {
   color: var(--text-primary);
 }
 
-/* iOS-style switch toggle */
-.group-panel__switch {
-  position: relative;
-  display: inline-block;
-  width: 51px;
-  height: 31px;
-  cursor: pointer;
-}
-
-.group-panel__switch-input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-}
-
-.group-panel__switch-track {
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-lg);
-  background: var(--bg-tertiary);
-  transition: background var(--duration-slow) ease;
-}
-
-.group-panel__switch-track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background: var(--bg-primary);
-  transition: transform var(--duration-slow) ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-}
-
-.group-panel__switch-input:checked + .group-panel__switch-track {
-  background: var(--accent-color);
-}
-
-.group-panel__switch-input:checked + .group-panel__switch-track::after {
-  transform: translateX(20px);
-}
-
 /* Entry selector row */
 .group-panel__entry-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding:0 var(--space-7);
-  min-height: 48px;
+  min-height: 38px;
   cursor: pointer;
   background: transparent;
   position: relative;
@@ -994,9 +949,9 @@ watch(localValues, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-6) var(--space-7);
+  padding: var(--space-4) var(--space-7);
   cursor: pointer;
-  min-height: 44px;
+  min-height: 38px;
   position: relative;
 }
 

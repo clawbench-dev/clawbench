@@ -230,6 +230,19 @@
     background: color-mix(in srgb, var(--accent-color) 18%, transparent);
 }
 
+/* Trailing "this option is currently on" check, pushed to the right edge of a
+   menu row. Declared globally because BOTH menus use it — the file header's
+   dropdown (word wrap / line numbers / sticky scroll / share link) and the
+   session list's context menu (share conversation). Keeping the base rule in
+   one place is what makes the two menus read identically; a scoped copy would
+   only style the menu of the component that declared it. */
+.wrap-check {
+    margin-left: auto;
+    color: var(--accent-color);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+}
+
 .context-menu-item.danger {
     color: #ef4444;
 }
@@ -790,4 +803,107 @@
             rgba(255, 255, 255, 0.2)
         );
     }
+}
+
+/* ── Settings controls (shared) ───────────────────────────────────────────────
+   Single source of truth for the settings controls that were previously
+   duplicated across components: the switch (copied verbatim into SettingsItem
+   AND WallpaperSetting, plus a third copy under `.group-panel__switch`), and
+   the slider trio (slider / slider-value / slider-reset, copied into both).
+   A size change had to be made in 2–3 places and silently diverged when one
+   was missed.
+
+   Why global and not scoped: a scoped rule compiles to `.foo[data-v-x]`
+   (0,2,0), which OUTRANKS this single class (0,1,0). Any geometry left behind
+   in a component's scoped block would silently win and undo the shared size —
+   so the components keep only layout (flex/margin) and all shape declarations
+   live here. Guard: settingsControls.css.test.ts.
+
+   Sizes align with the `.fbtn` pill language (30px tall) used by the settings
+   buttons; see docs/spec/client/design-guide.md. */
+
+/* iOS-style switch. 44x26 with a 22px thumb: travel = 44 - 22 - 2*2 = 18px. */
+.settings-item__switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 26px;
+  cursor: pointer;
+}
+
+.settings-item__switch-input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+
+.settings-item__switch-track {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-lg);
+  background: var(--bg-tertiary);
+  transition: background var(--duration-slow) ease;
+}
+
+.settings-item__switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-primary);
+  transition: transform var(--duration-slow) ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.settings-item__switch-input:checked + .settings-item__switch-track {
+  background: var(--accent-color);
+}
+
+.settings-item__switch-input:checked + .settings-item__switch-track::after {
+  transform: translateX(18px);
+}
+
+/* Slider row: numeric readout + range + resident reset button. */
+.settings-item__slider-value {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+  min-width: 36px;
+  text-align: right;
+}
+
+.settings-item__slider {
+  width: 100px;
+  cursor: pointer;
+  accent-color: var(--accent-color);
+}
+
+/* Resident (never v-if'd) so the control cluster width is constant — the
+   button vanishing on reset was the reported layout shift. Inert at the
+   default value via :disabled + the "unusable" opacity token. */
+.settings-item__slider-reset {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.settings-item__slider-reset:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.settings-item__slider-reset:active {
+  color: var(--accent-color);
 }

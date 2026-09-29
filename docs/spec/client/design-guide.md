@@ -248,6 +248,24 @@
 - 次要按钮的边框从**文字色**混出来（`color-mix(--text-secondary 40%)`），不用 `--border-color`——后者在浅色主题上太接近 `--bg-tertiary`，按钮会融进面板。
 - 深色主题下 hover 用 `--text-primary` 提亮而非换灰，否则浅色文字压在同色底上。
 - **复用自 `<a>` 的类必须显式 `border: none`**，图标按钮同理（`components.css:129`）——`<a>` 的 UA 边框不会自己消失。
+- **设置面板内的按钮一律复用 `.fbtn`**（不新建按钮类）：行内动作按钮、编辑器确认按钮、主题重试按钮等。
+  30px 高是设置面板的**控件基准高度**——开关、滑块行、分段按钮都对齐它。
+  scoped 块里只留布局（`flex-shrink` / `flex` / `margin`），形状与配色全交给 `.fbtn`。
+  **组件若独立使用 `.fbtn`（而非经 ModalDialog 继承），必须自己 `import '@/assets/modal-footer-btn.css'`**，
+  不能依赖祖先恰好导入过。
+
+### 设置面板控件（`.settings-item__switch` / `__slider*`）
+
+开关、滑块、滑块重置按钮的**形状只定义一次**，在全局 `web/css/components.css` 的
+「Settings controls (shared)」段——它们原先在 `SettingsItem.vue` 与 `WallpaperSetting.vue`
+里逐字重复（开关还多出第三份 `.group-panel__switch`），改尺寸要改 2~3 处且漏一处就静默发散。
+
+- 开关 **44×26**（滑块 22px、位移 18px = 44−22−2×2）；滑块宽 **100px**；重置按钮 **26×26**。
+- **必须全局，不能 scoped**：scoped 规则编译成 `.foo[data-v-x]`（0,2,0），特异性**高于**全局单类（0,1,0），
+  scoped 里残留的任何几何声明都会静默压过共享尺寸（同[红线 2](#红线-2共享类必须全局而且基规则也必须全局)）。
+  组件里只留布局。守卫 `settingsControls.css.test.ts` 同时钉「形状只在全局」与「scoped 不得重加几何」。
+- **输入框是刻意的例外：保持圆角矩形**（`--radius-sm`），不跟随药丸——否则「可输入」与「可点击」在形状上无法区分。
+  高度仍对齐 30px 基准；**字号不缩**（输入值不得小于其标签，见 `settingsRowTypography.css.test.ts`）。
 
 ### 行内重置按钮（`.settings-item__slider-reset`）
 
@@ -256,7 +274,7 @@
 - **为什么**：按值出现/消失会让控件簇宽度变化——重置的瞬间按钮消失，滑块和数值标签横向跳动（用户实测「很难受」）。
 - **做法**：`:disabled="当前值 === 默认值"`，CSS 用 `opacity: var(--opacity-disabled)` + `cursor: not-allowed` 灰显。按钮留在文档流里，宽度恒定。
 - **唯一允许的 `v-if` 是 `defaultValue !== undefined`**：整行没有可重置的目标时，按钮应当是**不存在**而不是永久禁用（永不生效的控件是噪音，同 §壁纸那条）。判据是「该控件**能否**生效」，不是「此刻**是否**已生效」。
-- 两份实现：`SettingsItem.vue`（共享行）与 `WallpaperSetting.vue`（手写行）各有一份同名类，改一处必须改另一处。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
+- 形状只在 `css/components.css` 定义一次（见 §设置面板控件）；两个组件只保留模板与 `:disabled` 绑定。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
 
 ### 角标
 
@@ -434,6 +452,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/settings/__tests__/settingsRowTypography.css.test.ts` | 设置行字号层级 |
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
 | `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
+| `components/settings/__tests__/settingsControls.css.test.ts` | 设置控件形状全局唯一（开关/滑块/重置）、尺寸对齐 30px、scoped 不得重加几何、按钮复用 `.fbtn` |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |

@@ -2165,6 +2165,8 @@ export default {
       wallpaperGalleryEmpty: '图库为空，上传图片后会显示在这里',
       wallpaperGalleryCount: '共 {count} / {max} 张',
       wallpaperGalleryDelete: '删除',
+      wallpaperApply: '应用',
+      wallpaperView: '查看大图',
       wallpaperGalleryLimit: '图库最多 {max} 张，请先删除部分图片',
       wallpaperUploadPartial: '已添加 {ok} 张，{failed} 张失败',
       wallpaperUploadTooMany: '单次最多上传 {max} 张',

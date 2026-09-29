@@ -80,6 +80,8 @@ describe('i18n wallpaper keys completeness', () => {
     'wallpaperGalleryEmpty',
     'wallpaperGalleryCount',
     'wallpaperGalleryDelete',
+    'wallpaperApply',
+    'wallpaperView',
     'wallpaperGalleryLimit',
     'wallpaperUploadPartial',
     'wallpaperUploadTooMany',

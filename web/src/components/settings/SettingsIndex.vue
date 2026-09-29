@@ -130,7 +130,7 @@ const groups = computed(() =>
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 48px;
+  height: 42px;
   padding:0 var(--space-7);
   cursor: pointer;
   gap: var(--space-6);

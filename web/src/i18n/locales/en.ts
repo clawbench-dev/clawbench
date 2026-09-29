@@ -2167,6 +2167,8 @@ export default {
       wallpaperGalleryEmpty: 'Your gallery is empty — uploaded images will appear here',
       wallpaperGalleryCount: '{count} / {max} images',
       wallpaperGalleryDelete: 'Delete',
+      wallpaperApply: 'Apply',
+      wallpaperView: 'View full size',
       wallpaperGalleryLimit: 'The gallery holds up to {max} images — delete some first',
       wallpaperUploadPartial: 'Added {ok} image(s), {failed} failed',
       wallpaperUploadTooMany: 'Up to {max} images per upload',

@@ -171,7 +171,7 @@
       <div class="settings-item">
         <div class="settings-item__right settings-item__right--start">
           <button
-            class="settings-item__action"
+            class="fbtn settings-item__action"
             :disabled="!enabled || styleParamsAreDefault"
             @click.stop="onResetStyleParams"
           >
@@ -192,7 +192,7 @@
         </div>
         <div class="settings-item__right">
           <button
-            class="settings-item__action"
+            class="fbtn settings-item__action"
             :disabled="!enabled || busy || syncing"
             @click.stop="onSyncBing"
           >
@@ -216,9 +216,16 @@
           </div>
         </div>
         <div v-if="bingStatus.file" class="wallpaper-thumb-wrap">
-          <img :src="galleryImageUrl(bingStatus.file, bingStatus.abs_path)" class="wallpaper-thumb" :class="{ 'local-media-hidden': thumbErrors.has(bingStatus.file) }" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" @error="onThumbError(bingStatus.file)" />
           <button
-            class="settings-item__action"
+            class="wallpaper-thumb-btn"
+            :title="t('settings.items.wallpaperView')"
+            :aria-label="t('settings.items.wallpaperView')"
+            @click.stop="onOpenLightbox(bingStatus.file)"
+          >
+            <img :src="galleryImageUrl(bingStatus.file, bingStatus.abs_path)" class="wallpaper-thumb" :class="{ 'local-media-hidden': thumbErrors.has(bingStatus.file) }" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" @error="onThumbError(bingStatus.file)" />
+          </button>
+          <button
+            class="fbtn settings-item__action"
             :disabled="!enabled || busy || saving || atLimit"
             :title="atLimit ? t('settings.items.wallpaperGalleryLimit', { max: maxGalleryItems }) : ''"
             @click.stop="onSaveBingToGallery"
@@ -246,7 +253,7 @@
           </div>
         </div>
         <div class="settings-item__right">
-          <button class="settings-item__action settings-item__action--primary" :disabled="!enabled || busy || atLimit" @click.stop="triggerUpload">
+          <button class="fbtn fbtn-primary settings-item__action" :disabled="!enabled || busy || atLimit" @click.stop="triggerUpload">
             {{ t('settings.items.wallpaperGalleryUpload') }}
           </button>
           <input
@@ -279,8 +286,17 @@
               :class="{ 'local-media-hidden': thumbErrors.has(item.file) }"
               :alt="item.name"
               @error="onThumbError(item.file)"
-              @click="onSelectItem(item.file)"
+              @click="onOpenLightbox(item.file)"
             />
+            <button
+              v-if="item.file !== selected"
+              class="wallpaper-gallery__apply"
+              :disabled="busy"
+              :title="t('settings.items.wallpaperApply')"
+              @click.stop="onSelectItem(item.file)"
+            >
+              {{ t('settings.items.wallpaperApply') }}
+            </button>
             <button
               class="wallpaper-gallery__delete"
               :disabled="busy"
@@ -357,7 +373,7 @@
           </div>
         </div>
         <div class="settings-item__right">
-          <label class="settings-item__switch" :class="{ 'settings-item__switch--disabled': !hasImageWallpaper }">
+          <label class="settings-item__switch">
             <input
               type="checkbox"
               class="settings-item__switch-input"
@@ -380,7 +396,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useToast } from '@/composables/useToast'
 import {
@@ -391,6 +407,7 @@ import {
   saveBingToGallery,
   SaveToGalleryError,
   galleryImageUrl,
+  fullSizeImageUrl,
   invalidateGalleryImageUrls,
   resolveWallpaperMode,
   resolveAnimatedStyleId,
@@ -419,6 +436,48 @@ defineProps<{ description?: string }>()
 const { t } = useI18n()
 const toast = useToast()
 const { serverConfig, localConfig, loadConfig, setLocalConfig } = useSettingsConfig()
+
+/**
+ * Full-screen viewer, provided by App.vue's Lightbox. Injected rather than
+ * imported so this panel does not pull the viewer into its own bundle graph.
+ * Absent in tests / isolated mounts, hence the optional type and the guard.
+ *
+ * `openMdImages` is used rather than `openLightbox` because it takes an
+ * explicit image list: the lightbox then gets prev/next navigation across the
+ * gallery without trying to resolve file-manager siblings (these images are
+ * not in the browsed directory, so directory navigation would find nothing).
+ */
+const openMdImages = inject<((imgs: { src: string; name: string }[], idx: number) => void) | null>(
+  'openMdImages',
+  null,
+)
+
+/**
+ * All viewable wallpaper images (Bing first, then the gallery) paired with the
+ * URLs the lightbox needs. Full-size, not the 144px thumbnails the grid draws —
+ * a thumbnail stretched to viewport size is visibly blurry.
+ */
+function viewableWallpapers(): { src: string; name: string }[] {
+  const list: { src: string; name: string }[] = []
+  const bingFile = bingStatus.value.file
+  if (bingFile) {
+    list.push({ src: fullSizeImageUrl(bingFile), name: bingStatus.value.title || bingFile })
+  }
+  for (const item of galleryItems.value) {
+    list.push({ src: fullSizeImageUrl(item.file), name: item.name })
+  }
+  return list
+}
+
+/** Open the shared lightbox on `file`, positioned within the wallpaper set. */
+function onOpenLightbox(file: string) {
+  if (typeof openMdImages !== 'function') return
+  const list = viewableWallpapers()
+  // Match by file name embedded in the URL — display names can collide (two
+  // uploads of "a.png"), while the generated stored name is unique.
+  const idx = list.findIndex((it) => it.src.includes(encodeURIComponent(file)))
+  openMdImages(list, idx >= 0 ? idx : 0)
+}
 
 /** Matches the server-side cap in internal/wallpaper (MaxGalleryItems). */
 const maxGalleryItems = 50
@@ -988,40 +1047,6 @@ onUnmounted(() => {
   word-break: break-word;
 }
 
-.settings-item__slider-value {
-  font-size: var(--font-size-md);
-  color: var(--text-secondary);
-  min-width: 36px;
-  text-align: right;
-}
-
-.settings-item__slider {
-  width: 120px;
-  cursor: pointer;
-  accent-color: var(--accent-color);
-}
-
-.settings-item__slider-reset {
-  font-size: var(--font-size-lg);
-  color: var(--text-muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  line-height: 1;
-}
-/* Inert at the default value. Kept in flow (not removed) so the row's control
-   cluster keeps a constant width — a button that vanished on reset made the
-   slider and value label jump. Dimmed + not-allowed, matching the other
-   disabled controls in this panel. Mirrors SettingsItem. */
-.settings-item__slider-reset:disabled {
-  opacity: var(--opacity-disabled);
-  cursor: not-allowed;
-}
-.settings-item__slider-reset:active {
-  color: var(--accent-color);
-}
-
 /* ── Source mode segmented control ─────────────────────────────── */
 .wallpaper-mode {
   display: inline-flex;
@@ -1030,8 +1055,13 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* Joined segmented group: the container supplies the outer radius, so these
+   keep square corners and only carry the shared 30px control height. */
 .wallpaper-mode__btn {
-  padding: var(--space-3) 14px;
+  display: inline-flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 var(--space-6);
   border: none;
   background: var(--bg-tertiary);
   color: var(--text-primary);
@@ -1091,7 +1121,37 @@ onUnmounted(() => {
   height: 100%;
   object-fit: cover;
   display: block;
+  cursor: zoom-in;
+}
+
+/* "Apply" action on a tile. Shown only when the tile is not the active
+   wallpaper, so the selected tile carries just the ✓ badge (and the button
+   cannot be pressed to a no-op).
+   Always visible, like the delete button in the opposite corner: it was
+   hover-revealed at first, which read as "there is no such button" (the tile
+   only showed it if you happened to move the pointer over it). */
+.wallpaper-gallery__apply {
+  position: absolute;
+  bottom: 2px;
+  right: 2px;
+  padding: 0 var(--space-3);
+  height: 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: var(--font-size-xs);
+  line-height: 1;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.wallpaper-gallery__apply:hover {
+  background: var(--accent-color);
+}
+.wallpaper-gallery__apply:disabled {
+  opacity: var(--opacity-muted);
+  cursor: not-allowed;
 }
 
 .wallpaper-gallery__delete {
@@ -1136,10 +1196,32 @@ onUnmounted(() => {
   color: var(--text-muted);
 }
 
-/* Thumbnail + actions on the wallpaper row */
+/* Thumbnail + actions on the wallpaper row.
+   The text block is wide (label + date + title + credit), so this group almost
+   always wraps onto its own line. On that line the image stays at the LEFT edge
+   (matching the text above it) and only the action button is pushed to the
+   right — `margin-left: auto` on the button, not on the group, so the
+   thumbnail does not get dragged along with it. */
 .wallpaper-thumb-wrap {
   display: flex;
   align-items: center;
+  width: 100%;
+}
+
+/* Click target for the preview: a bare <img> is not focusable/keyboard
+   reachable, and this also gives the thumbnail a pointer cursor. */
+.wallpaper-thumb-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: zoom-in;
+  flex-shrink: 0;
+  display: flex;
+}
+
+/* Pushes the action button to the row's right edge, leaving the image left. */
+.wallpaper-thumb-wrap .settings-item__action {
+  margin-left: auto;
 }
 
 /* Matches a gallery tile exactly, so the Bing preview and the uploaded-image
@@ -1151,32 +1233,6 @@ onUnmounted(() => {
   object-fit: cover;
   border: 1px solid var(--border-color);
   margin-right: var(--space-2);
-}
-
-.settings-item__action {
-  padding: 7px 14px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-  font-size: var(--font-size-md);
-  cursor: pointer;
-  margin-left: var(--space-2);
-  white-space: nowrap;
-}
-
-.settings-item__action--primary {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  color: #fff;
-  font-weight: var(--font-weight-medium);
-}
-.settings-item__action:active {
-  opacity: var(--opacity-hover);
-}
-.settings-item__action:disabled {
-  opacity: var(--opacity-muted);
-  cursor: not-allowed;
 }
 
 .wallpaper-file-input {
@@ -1191,45 +1247,4 @@ onUnmounted(() => {
   word-break: break-word;
 }
 
-/* iOS-style switch (mirrors SettingsItem) */
-.settings-item__switch {
-  position: relative;
-  display: inline-block;
-  width: 51px;
-  height: 31px;
-  cursor: pointer;
-}
-
-.settings-item__switch-input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-}
-
-.settings-item__switch-track {
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-lg);
-  background: var(--bg-tertiary);
-  transition: background var(--duration-slow) ease;
-}
-.settings-item__switch-track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background: var(--bg-primary);
-  transition: transform var(--duration-slow) ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-}
-.settings-item__switch-input:checked + .settings-item__switch-track {
-  background: var(--accent-color);
-}
-.settings-item__switch-input:checked + .settings-item__switch-track::after {
-  transform: translateX(20px);
-}
 </style>

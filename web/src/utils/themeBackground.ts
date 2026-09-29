@@ -113,6 +113,21 @@ export function invalidateGalleryImageUrls(names?: string[]): void {
   for (const n of names) galleryUrlCache.delete(n)
 }
 
+/**
+ * Full-size URL for a gallery/Bing image, by bare file name.
+ *
+ * Distinct from galleryImageUrl(), which returns a 144px thumbnail. The
+ * lightbox renders the image at up to full viewport size, so feeding it a
+ * thumbnail would show a visibly blurry picture once zoomed — this hits the
+ * same endpoint without the `w` scaling parameter.
+ *
+ * Not cached: opening the lightbox is a user action (not a per-render call),
+ * so a fresh version keeps a replaced file from showing stale bytes.
+ */
+export function fullSizeImageUrl(name: string): string {
+  return buildImageUrl(name)
+}
+
 /** Scrim overlay color for a resolved theme base. */
 export function wallpaperScrim(dark: boolean): string {
   return dark ? 'rgba(0, 0, 0, 0.35)' : 'rgba(0, 0, 0, 0.12)'
