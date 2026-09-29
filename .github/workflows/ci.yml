@@ -409,22 +409,38 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps
 
-      - name: Build Go binary
-        run: go build -o clawbench ./cmd/server
-
-      - name: Build ACP mock agent
-        run: go build -o acp-mock ./cmd/acp-mock
-
       - name: Build Excalidraw vendor bundle
         # Same reason as the go:embed steps above: the root `npm run build` does
         # not produce vendor/excalidraw/, so the server would 404 the iframe.
+        # Must precede `Build frontend`, which copies .clawbench-web/ wholesale
+        # into internal/frontend/dist — excalidraw output included.
         working-directory: web/vendor-build/excalidraw
         run: |
           npm ci
           npm run build
 
       - name: Build frontend
-        run: npm run build
+        # MUST run before `Build Go binary`. `go build ./cmd/server` compiles
+        # internal/frontend/embed.go, whose `//go:embed all:dist` resolves at
+        # COMPILE time against internal/frontend/dist/ — a generated, gitignored
+        # directory that does not exist on a fresh checkout. Building the Go
+        # binary first fails with "pattern all:dist: no matching files found".
+        #
+        # `npm run build` alone is NOT enough: vite's outDir is .clawbench-web/,
+        # a sibling of dist/, so the copy below is what actually populates the
+        # embed directory (the same two steps build.sh performs, and the same
+        # ones the `Build frontend (for go:embed)` steps in the other jobs run).
+        run: |
+          npm run build
+          rm -rf internal/frontend/dist
+          cp -r .clawbench-web internal/frontend/dist
+        shell: bash
+
+      - name: Build Go binary
+        run: go build -o clawbench ./cmd/server
+
+      - name: Build ACP mock agent
+        run: go build -o acp-mock ./cmd/acp-mock
 
       - name: Run E2E tests
         run: npx playwright test --config e2e/playwright.config.ts
