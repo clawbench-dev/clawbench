@@ -10,10 +10,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const uuidTestSchema = `
+const uuidTestSchema = ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -80,7 +80,7 @@ func TestGenerateUUID_ConflictResolution(t *testing.T) {
 	// Insert an ID into the table
 	id1 := generateUUID("", "chat_sessions", "id")
 	assert.NotEmpty(t, id1)
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/', 'test', 'test')", id1)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, '/', 'test', 'test')", id1)
 	assert.NoError(t, err)
 
 	// Next ID should be different

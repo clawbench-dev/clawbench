@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 	"clawbench/internal/ws"
 
 	// Blank import registers the sqlite-vec virtual table extension so vec0
@@ -68,6 +69,15 @@ func Init(cfg model.RAGConfig) error {
 
 	mu.Lock()
 	GlobalStore = store
+	// The service package owns RenameProject but cannot import this one (this
+	// package imports it), so it invalidates through this hook instead. Without
+	// it the store would keep serving the pre-rename path→id mapping, and a
+	// later project created at the freed-up old path would be attributed to the
+	// renamed project's id.
+	//
+	// Registered on every Init: a Reconfigure swaps GlobalStore, so the hook must
+	// always point at the store currently in use.
+	service.RegisterProjectRenamedHook(store.InvalidateProjectPathCache)
 
 	// Initialize embedding client (only when enabled)
 	if cfg.VectorEnabled && cfg.BaseURL != "" && cfg.Model != "" {

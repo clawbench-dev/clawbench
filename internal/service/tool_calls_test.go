@@ -24,11 +24,11 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 
 	// Create a session and message first (FK dependency)
 	sessionID := "test-session-001"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
 
 	var msgID int64
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -181,9 +181,9 @@ func TestGetToolCallsBySession(t *testing.T) {
 	}()
 
 	sessionID := "tc-session-all"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -287,10 +287,10 @@ func TestInitDB_MigratesChatToolCallsDurationColumn(t *testing.T) {
 	}
 
 	// New column should default to 0 for pre-existing rows.
-	if _, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s', '/p', 'b', 'T')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s', 1, 'b', 'T')`); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
-	res, err := db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/p', 'assistant', '{}', 's', 'b')`)
+	res, err := db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', '{}', 's', 'b')`)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -323,7 +323,7 @@ func TestInitDB_MigratesChatThinkingSeq(t *testing.T) {
 	if _, err := oldDB.Exec(`
 		CREATE TABLE chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -331,9 +331,17 @@ func TestInitDB_MigratesChatThinkingSeq(t *testing.T) {
 			streaming INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE TABLE chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -344,7 +352,7 @@ func TestInitDB_MigratesChatThinkingSeq(t *testing.T) {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE chat_thinking (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,8 +365,8 @@ func TestInitDB_MigratesChatThinkingSeq(t *testing.T) {
 		);
 		CREATE INDEX idx_thinking_message ON chat_thinking(message_id);
 		CREATE INDEX idx_thinking_session ON chat_thinking(session_id, created_at DESC);
-		INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s', '/p', 'b', 'T');
-		INSERT INTO chat_history (id, project_path, role, content, session_id, backend) VALUES (1, '/p', 'assistant', '{"blocks":[]}', 's', 'b');
+		INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s', '/p', 'b', 'T');
+		INSERT INTO chat_history (id, project_id, role, content, session_id, backend) VALUES (1, '/p', 'assistant', '{"blocks":[]}', 's', 'b');
 		INSERT INTO chat_thinking (id, message_id, session_id, think_id, text) VALUES (1, 1, 's', 'th_old1', 'full thinking text');
 	`); err != nil {
 		t.Fatalf("create old schema: %v", err)

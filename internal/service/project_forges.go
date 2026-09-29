@@ -17,18 +17,18 @@ import (
 // in their test databases, keeping one source of truth for the schema.
 const ProjectForgesDDL = `
 CREATE TABLE IF NOT EXISTS project_forges (
-	id           INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
-	platform     TEXT NOT NULL,
-	host         TEXT NOT NULL,
-	scheme       TEXT NOT NULL DEFAULT '',
-	owner        TEXT NOT NULL,
-	repo         TEXT NOT NULL,
-	source       TEXT NOT NULL DEFAULT 'auto',
-	created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
-	updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+	id         INTEGER PRIMARY KEY AUTOINCREMENT,
+	project_id INTEGER NOT NULL,
+	platform   TEXT NOT NULL,
+	host       TEXT NOT NULL,
+	scheme     TEXT NOT NULL DEFAULT '',
+	owner      TEXT NOT NULL,
+	repo       TEXT NOT NULL,
+	source     TEXT NOT NULL DEFAULT 'auto',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
-CREATE UNIQUE INDEX IF NOT EXISTS idx_project_forges_path ON project_forges(project_path);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_project_forges_path ON project_forges(project_id);
 CREATE INDEX IF NOT EXISTS idx_project_forges_repo ON project_forges(platform, host, owner, repo);
 `
 
@@ -93,14 +93,19 @@ func GetProjectForge(projectPath string) (*ProjectForge, error) {
 	if dbRead == nil {
 		return nil, nil
 	}
-	projectPath = NormalizeProjectPath(projectPath)
-	if projectPath == "" {
+	projectID, _, idErr := ProjectIDByPath(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
+	if !projectID2Valid(projectID) {
 		return nil, nil
 	}
 	row := dbRead.QueryRow(
-		`SELECT id, project_path, platform, host, scheme, owner, repo, source, created_at, updated_at
-		 FROM project_forges WHERE project_path = ?`,
-		projectPath,
+		`SELECT f.id, COALESCE(p.path, ''), f.platform, f.host, f.scheme, f.owner, f.repo, f.source, f.created_at, f.updated_at
+		   FROM project_forges f
+		   LEFT JOIN projects p ON p.id = f.project_id
+		  WHERE f.project_id = ?`,
+		projectID,
 	)
 	return scanProjectForge(row)
 }
@@ -127,21 +132,24 @@ func UpsertProjectForge(pf ProjectForge) error {
 	if db == nil {
 		return nil
 	}
-	projectPath := NormalizeProjectPath(pf.ProjectPath)
-	if projectPath == "" {
+	if NormalizeProjectPath(pf.ProjectPath) == "" {
 		return fmt.Errorf("project_forges: project path is required")
 	}
 	if pf.Platform == "" || pf.Host == "" || pf.Owner == "" || pf.Repo == "" {
 		return fmt.Errorf("project_forges: platform, host, owner and repo are required")
+	}
+	projectID, idErr := ProjectIDForPath(pf.ProjectPath)
+	if idErr != nil {
+		return idErr
 	}
 	source := pf.Source
 	if source == "" {
 		source = "manual"
 	}
 	_, err := WriteExec(
-		`INSERT INTO project_forges (project_path, platform, host, scheme, owner, repo, source)
+		`INSERT INTO project_forges (project_id, platform, host, scheme, owner, repo, source)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(project_path) DO UPDATE SET
+		 ON CONFLICT(project_id) DO UPDATE SET
 			platform = excluded.platform,
 			host = excluded.host,
 			scheme = excluded.scheme,
@@ -149,10 +157,10 @@ func UpsertProjectForge(pf ProjectForge) error {
 			repo = excluded.repo,
 			source = excluded.source,
 			updated_at = CURRENT_TIMESTAMP`,
-		projectPath, pf.Platform, pf.Host, pf.Scheme, pf.Owner, pf.Repo, source,
+		projectID, pf.Platform, pf.Host, pf.Scheme, pf.Owner, pf.Repo, source,
 	)
 	if err != nil {
-		slog.Warn("project_forges: upsert failed", "error", err, "project_path", projectPath)
+		slog.Warn("project_forges: upsert failed", "error", err, "project_id", projectID)
 	}
 	return err
 }
@@ -162,11 +170,14 @@ func DeleteProjectForge(projectPath string) error {
 	if db == nil {
 		return nil
 	}
-	projectPath = NormalizeProjectPath(projectPath)
-	if projectPath == "" {
+	projectID, ok, idErr := ProjectIDByPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
+	if !ok || !projectID2Valid(projectID) {
 		return nil
 	}
-	_, err := WriteExec("DELETE FROM project_forges WHERE project_path = ?", projectPath)
+	_, err := WriteExec("DELETE FROM project_forges WHERE project_id = ?", projectID)
 	return err
 }
 
@@ -187,25 +198,28 @@ func AutoBindProjectForge(projectPath string, remote forge.Remote) (bool, error)
 	if db == nil {
 		return false, nil
 	}
-	projectPath = NormalizeProjectPath(projectPath)
-	if projectPath == "" {
+	if NormalizeProjectPath(projectPath) == "" {
 		return false, nil
 	}
 	if remote.Platform == "" || remote.Host == "" || remote.Owner == "" || remote.Repo == "" {
 		return false, fmt.Errorf("project_forges: platform, host, owner and repo are required")
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return false, idErr
+	}
 	res, err := WriteExec(
-		`INSERT INTO project_forges (project_path, platform, host, scheme, owner, repo, source)
+		`INSERT INTO project_forges (project_id, platform, host, scheme, owner, repo, source)
 		 SELECT ?, ?, ?, ?, ?, ?, 'auto'
 		 WHERE NOT EXISTS (
-			SELECT 1 FROM project_meta
-			WHERE project_path = ? AND forge_bind_opt_out = 1
+			SELECT 1 FROM projects
+			WHERE id = ? AND forge_bind_opt_out = 1
 		 )
-		 ON CONFLICT(project_path) DO NOTHING`,
-		projectPath, string(remote.Platform), remote.Host, remote.Scheme, remote.Owner, remote.Repo, projectPath,
+		 ON CONFLICT(project_id) DO NOTHING`,
+		projectID, string(remote.Platform), remote.Host, remote.Scheme, remote.Owner, remote.Repo, projectID,
 	)
 	if err != nil {
-		slog.Warn("project_forges: auto-bind failed", "error", err, "project_path", projectPath)
+		slog.Warn("project_forges: auto-bind failed", "error", err, "project_id", projectID)
 		return false, err
 	}
 	// The count is advisory (did this call create the row?). The statement itself
@@ -226,21 +240,21 @@ func SetForgeBindOptOut(projectPath string, optedOut bool) error {
 	if db == nil {
 		return nil
 	}
-	projectPath = NormalizeProjectPath(projectPath)
-	if projectPath == "" {
+	if NormalizeProjectPath(projectPath) == "" {
 		return nil
 	}
 	v := 0
 	if optedOut {
 		v = 1
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
+	// project_meta was folded into projects; the flag is now a column there.
 	_, err := WriteExec(
-		`INSERT INTO project_meta (project_path, forge_bind_opt_out)
-		 VALUES (?, ?)
-		 ON CONFLICT(project_path) DO UPDATE SET
-			forge_bind_opt_out = excluded.forge_bind_opt_out,
-			updated_at = CURRENT_TIMESTAMP`,
-		projectPath, v,
+		`UPDATE projects SET forge_bind_opt_out = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		v, projectID,
 	)
 	return err
 }
@@ -251,13 +265,16 @@ func IsForgeBindOptedOut(projectPath string) (bool, error) {
 	if dbRead == nil {
 		return false, nil
 	}
-	projectPath = NormalizeProjectPath(projectPath)
-	if projectPath == "" {
+	projectID, _, idErr := ProjectIDByPath(projectPath)
+	if idErr != nil {
+		return false, idErr
+	}
+	if !projectID2Valid(projectID) {
 		return false, nil
 	}
 	var v int
 	err := dbRead.QueryRow(
-		`SELECT forge_bind_opt_out FROM project_meta WHERE project_path = ?`, projectPath,
+		`SELECT forge_bind_opt_out FROM projects WHERE id = ?`, projectID,
 	).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -274,8 +291,10 @@ func ListProjectForges() ([]ProjectForge, error) {
 		return nil, nil
 	}
 	rows, err := dbRead.Query(
-		`SELECT id, project_path, platform, host, scheme, owner, repo, source, created_at, updated_at
-		 FROM project_forges ORDER BY updated_at DESC`,
+		`SELECT f.id, COALESCE(p.path, ''), f.platform, f.host, f.scheme, f.owner, f.repo, f.source, f.created_at, f.updated_at
+		   FROM project_forges f
+		   LEFT JOIN projects p ON p.id = f.project_id
+		  ORDER BY f.updated_at DESC`,
 	)
 	if err != nil {
 		return nil, err

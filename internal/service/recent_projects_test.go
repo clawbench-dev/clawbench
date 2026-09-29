@@ -15,14 +15,24 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const recentProjectsSchema = `
+const recentProjectsSchema = service.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS recent_projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT UNIQUE NOT NULL,
+	project_id INTEGER NOT NULL,
 	accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	is_default INTEGER NOT NULL DEFAULT 0
+	is_default INTEGER NOT NULL DEFAULT 0,
+	UNIQUE(project_id)
 );
 `
+
+// projectID resolves a path to its registry id, creating the projects row. Tests
+// assert on paths, but recent_projects is keyed by id, so they need the mapping.
+func projectID(t *testing.T, path string) int64 {
+	t.Helper()
+	id, err := service.ProjectIDForPath(path)
+	assert.NoError(t, err)
+	return id
+}
 
 func setupRecentProjectsDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -51,8 +61,8 @@ func setupRecentProjectsDB(t *testing.T) *sql.DB {
 func insertProjectWithTime(t *testing.T, db *sql.DB, path string, accessedAt time.Time) {
 	t.Helper()
 	_, err := db.Exec(
-		"INSERT INTO recent_projects (project_path, accessed_at) VALUES (?, ?)",
-		path, accessedAt.Format("2006-01-02 15:04:05"),
+		"INSERT INTO recent_projects (project_id, accessed_at) VALUES (?, ?)",
+		projectID(t, path), accessedAt.Format("2006-01-02 15:04:05"),
 	)
 	assert.NoError(t, err)
 }
@@ -214,7 +224,7 @@ func TestGetDefaultProject_IsDefaultRow(t *testing.T) {
 	insertProjectWithTime(t, db, dirB, baseTime.Add(1*time.Second))
 
 	// Set dirA as default (not the most recently accessed)
-	_, err := db.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", dirA)
+	_, err := db.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_id = ?", projectID(t, dirA))
 	assert.NoError(t, err)
 
 	path, err := service.GetDefaultProject()
@@ -258,7 +268,7 @@ func TestGetDefaultProject_StaleDefaultCleared(t *testing.T) {
 	insertProjectWithTime(t, db, nonExistentPath, baseTime.Add(1*time.Second))
 
 	// Set nonexistent path as default
-	_, err := db.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", nonExistentPath)
+	_, err := db.Exec("UPDATE recent_projects SET is_default = 1 WHERE project_id = ?", projectID(t, nonExistentPath))
 	assert.NoError(t, err)
 
 	path, err := service.GetDefaultProject()
@@ -267,7 +277,7 @@ func TestGetDefaultProject_StaleDefaultCleared(t *testing.T) {
 
 	// Verify stale default was cleared
 	var isDefault int
-	err = db.QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", nonExistentPath).Scan(&isDefault)
+	err = db.QueryRow("SELECT is_default FROM recent_projects WHERE project_id = ?", projectID(t, nonExistentPath)).Scan(&isDefault)
 	if err == nil { // row may have been removed by GetRecentProjects stale cleanup
 		assert.Equal(t, 0, isDefault, "stale default should be cleared")
 	}
@@ -294,7 +304,7 @@ func TestSetDefaultProject_ClearsOldDefault(t *testing.T) {
 	assert.Equal(t, 1, count, "only one project should be default")
 
 	var defaultPath string
-	err = db.QueryRow("SELECT project_path FROM recent_projects WHERE is_default = 1").Scan(&defaultPath)
+	err = db.QueryRow("SELECT p.path FROM recent_projects r JOIN projects p ON p.id = r.project_id WHERE r.is_default = 1").Scan(&defaultPath)
 	assert.NoError(t, err)
 	assert.Equal(t, dirB, defaultPath, "dirB should be the default")
 }
@@ -308,7 +318,7 @@ func TestSetDefaultProject_UpsertsProject(t *testing.T) {
 	assert.NoError(t, service.SetDefaultProject(newDir))
 
 	var defaultPath string
-	err := db.QueryRow("SELECT project_path FROM recent_projects WHERE is_default = 1").Scan(&defaultPath)
+	err := db.QueryRow("SELECT p.path FROM recent_projects r JOIN projects p ON p.id = r.project_id WHERE r.is_default = 1").Scan(&defaultPath)
 	assert.NoError(t, err)
 	assert.Equal(t, newDir, defaultPath)
 
@@ -327,7 +337,7 @@ func TestRemoveRecentProject_ClearsDefaultFlag(t *testing.T) {
 
 	// Verify it's default
 	var isDefault int
-	err := db.QueryRow("SELECT is_default FROM recent_projects WHERE project_path = ?", dirA).Scan(&isDefault)
+	err := db.QueryRow("SELECT is_default FROM recent_projects WHERE project_id = ?", projectID(t, dirA)).Scan(&isDefault)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, isDefault)
 
@@ -336,7 +346,7 @@ func TestRemoveRecentProject_ClearsDefaultFlag(t *testing.T) {
 
 	// Verify it's gone
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", dirA).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_id = ?", projectID(t, dirA)).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "removed project should not be in DB")
 }
@@ -370,7 +380,7 @@ func TestGetRecentProjects_FiltersNonExistent(t *testing.T) {
 
 	// Verify the non-existent entry was cleaned from the database
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", nonExistentPath).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_id = ?", projectID(t, nonExistentPath)).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "non-existent project should be removed from DB")
 }
@@ -396,7 +406,7 @@ func TestGetRecentProjects_FiltersFilePath(t *testing.T) {
 
 	// File path should have been removed from the database
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", filePath).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_id = ?", projectID(t, filePath)).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "file path (not a directory) should be removed from DB")
 }
@@ -443,7 +453,7 @@ func TestGetRecentProjects_DeletedAfterListed(t *testing.T) {
 	assert.Empty(t, paths)
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", dir).Scan(&count)
+	err = db.QueryRow("SELECT COUNT(*) FROM recent_projects WHERE project_id = ?", projectID(t, dir)).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "deleted project should be removed from DB")
 }

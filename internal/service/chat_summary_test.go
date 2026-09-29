@@ -28,10 +28,13 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 	_, _ = db.Exec("PRAGMA busy_timeout=5000")
 
 	// Create minimal tables needed for enrichMessagesWithSummaries
+	// The projects registry: the service functions under test resolve paths
+	// through it, so the fixture schema must carry it.
+	_, _ = db.Exec(ProjectsDDL)
 	_, _ = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			title_source TEXT NOT NULL DEFAULT '',
@@ -41,7 +44,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 	_, _ = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			files TEXT,
@@ -57,7 +60,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 		CREATE TABLE IF NOT EXISTS queued_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '',
 			queue_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -80,7 +83,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 		CREATE TABLE IF NOT EXISTS chat_recommendations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			message_id INTEGER NOT NULL DEFAULT 0,
 			recommendation TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -206,10 +209,10 @@ func TestTriggerChatSummarization_ExtractsLastAnswer(t *testing.T) {
 
 	// Insert session + messages
 	sessionID := "test-simple-session"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (100, '/test', 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (100, 1, 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"Let me check."},{"type":"tool_use","name":"Bash","id":"t1"},{"type":"text","text":"The answer is 42."}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (101, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (101, 1, 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	triggerChatSummarization(context.Background(), sessionID)
 
@@ -224,10 +227,10 @@ func TestTriggerChatSummarization_NoTextAfterToolUse(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-simple-notext"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (110, '/test', 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (110, 1, 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"tool_use","name":"Bash","id":"t1"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (111, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (111, 1, 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	triggerChatSummarization(context.Background(), sessionID)
 
@@ -241,20 +244,20 @@ func TestBackfillMissingSummaries_GeneratesMissingSummaries(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-backfill"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 'test')", sessionID)
 
 	// Message with existing summary — should be skipped
 	contentWithSummary := `{"blocks":[{"type":"text","text":"already summarized"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (200, '/test', 'assistant', ?, ?, 0)", contentWithSummary, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (200, 1, 'assistant', ?, ?, 0)", contentWithSummary, sessionID)
 	_ = SaveSummary("chat_message", 200, "existing summary")
 
 	// Message without summary — should be backfilled
 	contentNoSummary := `{"blocks":[{"type":"text","text":"needs summary"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", contentNoSummary, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (201, 1, 'assistant', ?, ?, 0)", contentNoSummary, sessionID)
 
 	// Streaming message — should be skipped
 	contentStreaming := `{"blocks":[{"type":"text","text":"still running"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (202, '/test', 'assistant', ?, ?, 1)", contentStreaming, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (202, 1, 'assistant', ?, ?, 1)", contentStreaming, sessionID)
 
 	// Simulate what enrichMessagesWithSummaries does: build messages, query summaries, call backfill
 	messages, _ := GetMessagesBySessionID(sessionID)
@@ -294,9 +297,9 @@ func TestSummarizeMessageOnce_Dedup(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-summary-dedup"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 'test')", sessionID)
 	content := `{"blocks":[{"type":"text","text":"dedup me"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (300, '/test', 'assistant', ?, ?, 0)", content, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (300, 1, 'assistant', ?, ?, 0)", content, sessionID)
 
 	blocks, err := parseMessageBlocks(content)
 	require.NoError(t, err)
@@ -343,9 +346,9 @@ func TestTriggerChatSummarization_DoesNotBlockOnRecommendation(t *testing.T) {
 	model.ConfigInstance.AISummary.Format = "openai"
 
 	sessionID := "sess-summary-async-rec"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (500, '/test', 'user', 'hello', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The answer is 42.\"}]}', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (500, 1, 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (501, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The answer is 42.\"}]}', ?, 0)", sessionID)
 
 	start := time.Now()
 	triggerChatSummarization(context.Background(), sessionID)

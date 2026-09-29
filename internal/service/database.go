@@ -236,7 +236,14 @@ func UnsafeDBForTest() *sql.DB { return db }
 func SetDBForTest(writeDB, readDB *sql.DB) func() {
 	origDB, origDBRead := db, dbRead
 	db, dbRead = writeDB, readDB
-	return func() { db, dbRead = origDB, origDBRead }
+	// The path -> id cache is keyed by canonical path, so ids from the previous
+	// database would resolve against the new one and silently address rows that
+	// do not exist. Clear it whenever the handle changes.
+	ResetProjectIDCacheForTest()
+	return func() {
+		db, dbRead = origDB, origDBRead
+		ResetProjectIDCacheForTest()
+	}
 }
 
 // mutexDBWriter implements dbutil.Writer. Exec/ExecContext acquire writeMu
@@ -379,30 +386,6 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		slog.Info("renamed chat_sessions.deleted column to archived")
 	}
 
-	// Pre-migration: add the chat_metadata ledger attribution columns before
-	// createTables runs. On an existing database the CREATE TABLE below is a
-	// no-op, so the new index on (project_path, created_at) would reference a
-	// column that does not exist yet and abort the whole multi-statement Exec,
-	// breaking startup. Mirrors the chat_history.indexed handling above.
-	var chatMetadataExists int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&chatMetadataExists)
-	if chatMetadataExists > 0 {
-		for _, col := range []struct{ name, ddl string }{
-			{"project_path", "ALTER TABLE chat_metadata ADD COLUMN project_path TEXT DEFAULT ''"},
-			{"backend", "ALTER TABLE chat_metadata ADD COLUMN backend TEXT DEFAULT ''"},
-			{"agent_id", "ALTER TABLE chat_metadata ADD COLUMN agent_id TEXT DEFAULT ''"},
-			{"clawbench_session_id", "ALTER TABLE chat_metadata ADD COLUMN clawbench_session_id TEXT DEFAULT ''"},
-		} {
-			var hasCol int
-			_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
-			if hasCol == 0 {
-				if _, err := WriteExec(col.ddl); err != nil {
-					return fmt.Errorf("failed to add chat_metadata.%s column: %w", col.name, err)
-				}
-			}
-		}
-	}
-
 	// Pre-migration: add project_meta.forge_bind_opt_out before createTables runs.
 	// The CREATE TABLE below is a no-op on an existing database, so the column
 	// would never appear there. On a fresh database the table does not exist yet
@@ -420,11 +403,84 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: make sure file_shares carries project_id before createTables
+	// indexes it. A database can hold file_shares WITHOUT any project-scoped
+	// chat table (an install that only ever used file sharing), in which case the
+	// projects migration above does not run and CREATE TABLE IF NOT EXISTS leaves
+	// the legacy table untouched — so its index would reference a missing column
+	// and abort the whole Exec.
+	var fileSharesExists int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='file_shares'").Scan(&fileSharesExists)
+	if fileSharesExists > 0 {
+		var hasShareProject int
+		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='project_id'").Scan(&hasShareProject)
+		if hasShareProject == 0 {
+			if _, err := WriteExec("ALTER TABLE file_shares ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
+				return fmt.Errorf("failed to add file_shares.project_id column: %w", err)
+			}
+		}
+	}
+
+	// Pre-migration: replace every project *path* column with a project *id*,
+	// backed by the new projects registry.
+	//
+	// This MUST run before createTables: createTables is a no-op for existing
+	// tables (CREATE TABLE IF NOT EXISTS) but its CREATE INDEX statements still
+	// run and now name project_id, so on an old database they would reference a
+	// column that does not exist and abort the whole Exec. Same hazard the
+	// chat_history.indexed and chat_metadata blocks above handle.
+	//
+	// Detected by ANY project-scoped table still carrying project_path: a fresh
+	// install creates them with project_id already, so it skips this entirely.
+	// Checking every candidate rather than just chat_history matters because a
+	// database can hold a subset of the tables (a test fixture, or an install
+	// that only ever used file sharing), and createTables would then abort on
+	// the missing project_id column of whichever table does exist.
+	var hasLegacyProjectPath int
+	for _, tbl := range legacyProjectPathTables {
+		var n int
+		_ = db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", tbl).Scan(&n)
+		if n > 0 {
+			hasLegacyProjectPath = 1
+			break
+		}
+	}
+	if hasLegacyProjectPath > 0 {
+		if err := migrateProjectsToIDs(); err != nil {
+			return fmt.Errorf("failed to migrate project paths to ids: %w", err)
+		}
+	}
+
+	// Pre-migration: add the chat_metadata ledger attribution columns before
+	// createTables runs. On an existing database the CREATE TABLE below is a
+	// no-op, so the new index on (project_id, created_at) would reference a
+	// column that does not exist yet and abort the whole multi-statement Exec,
+	// breaking startup. Mirrors the chat_history.indexed handling above.
+	var chatMetadataExists int
+	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&chatMetadataExists)
+	if chatMetadataExists > 0 {
+		for _, col := range []struct{ name, ddl string }{
+			{"project_id", "ALTER TABLE chat_metadata ADD COLUMN project_id INTEGER DEFAULT 0"},
+			{"backend", "ALTER TABLE chat_metadata ADD COLUMN backend TEXT DEFAULT ''"},
+			{"agent_id", "ALTER TABLE chat_metadata ADD COLUMN agent_id TEXT DEFAULT ''"},
+			{"clawbench_session_id", "ALTER TABLE chat_metadata ADD COLUMN clawbench_session_id TEXT DEFAULT ''"},
+		} {
+			var hasCol int
+			_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
+			if hasCol == 0 {
+				if _, err := WriteExec(col.ddl); err != nil {
+					return fmt.Errorf("failed to add chat_metadata.%s column: %w", col.name, err)
+				}
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -438,7 +494,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -450,26 +506,39 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT UNIQUE NOT NULL,
+			project_id INTEGER NOT NULL,
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			is_default INTEGER NOT NULL DEFAULT 0
+			is_default INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(project_id)
 		);
-		CREATE TABLE IF NOT EXISTS project_meta (
-			project_path TEXT PRIMARY KEY,
-			next_session_number INTEGER NOT NULL DEFAULT 0,
-			-- Set when the user explicitly unbinds the forge repository, so the
-			-- auto-bind on GET does not immediately bind it straight back.
+		-- The project registry. Every project-scoped table stores project_id
+		-- (an integer) instead of the project path, so renaming or moving a
+		-- project directory is a single UPDATE here rather than a rewrite of
+		-- every table. path is canonical (see NormalizeProjectPath), and
+		-- UNIQUE(path) is what collapses two spellings of one directory.
+		--
+		-- forge_bind_opt_out is folded in from the former project_meta table,
+		-- which had exactly one live column; its next_session_number was dead.
+		--
+		-- No foreign key is declared from the other tables: project_id = 0 is a
+		-- reserved sentinel (global tags, unattributable file shares) that has
+		-- no row here. See ProjectsDDL in projects.go.
+		CREATE TABLE IF NOT EXISTS projects (
+			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+			path               TEXT NOT NULL,
 			forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			created_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP,
+			UNIQUE(path)
 		);
+
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
@@ -499,33 +568,33 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 		-- Create indexes for efficient queries
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 		CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
-		CREATE INDEX IF NOT EXISTS idx_sessions_type ON chat_sessions(session_type, project_path, archived);
+		CREATE INDEX IF NOT EXISTS idx_sessions_type ON chat_sessions(session_type, project_id, archived);
 
 		-- Covering index for session-based queries (GetChatMessageCount, GetAssistantMessageCount,
 		-- unread subquery, GetChatHistoryPaged) — avoids full table scan through large content rows.
 		CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 		-- Index for task listing by project
-		CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_id, created_at DESC);
 		-- Covering index for unread count subquery in GetSessions/GetSessionsPaged:
-		-- WHERE project_path = ? AND role = 'assistant' AND streaming = 0 AND created_at > ?
-		-- Without this, the unread subquery can only use the project_path prefix of idx_history_session,
+		-- WHERE project_id = ? AND role = 'assistant' AND streaming = 0 AND created_at > ?
+		-- Without this, the unread subquery can only use the project_id prefix of idx_history_session,
 		-- requiring a full scan of all messages in the project to filter by role and streaming.
-		CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
+		CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_id, role, streaming, created_at);
 		-- Covering index for the PER-SESSION unread count subquery (GetSessions,
 		-- GetSessionsPaged, GetOverviewSessions). Those queries ask "how many unread
 		-- replies does THIS session have", so session_id must lead.
 		--
 		-- session_id must come first, and that is the whole point of this index.
-		-- idx_history_unread leads with project_path, and the moment the subquery
-		-- mentions project_path (which it must — a message row's project_path is
+		-- idx_history_unread leads with project_id, and the moment the subquery
+		-- mentions project_id (which it must — a message row's project_id is
 		-- not guaranteed to equal its session's, see the ISS-420 note below) the
 		-- planner prefers idx_history_unread and rescans the whole project for
 		-- EVERY listed session. That turned a 0.0ms seek into a 186ms scan.
 		--
-		-- The column list stops at project_path deliberately. Adding completed_at
+		-- The column list stops at project_id deliberately. Adding completed_at
 		-- or created_at (to make it fully covering) was measured to be no faster
 		-- (0.01ms either way — the seek already narrows to a handful of rows), and
 		-- it BREAKS the completed_at migration: SQLite refuses
@@ -534,13 +603,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- pre-completed_at database. Keep this list to columns that migrations
 		-- never drop.
 		--
-		-- NOTE: the equality on h.project_path = s.project_path is kept even though
+		-- NOTE: the equality on h.project_id = s.project_id is kept even though
 		-- it is redundant for rows written by current code. Historic rows can
 		-- disagree (messages persisted under the cookie's project rather than the
 		-- session's), and dropping the predicate would count those as unread here
 		-- while UpdateLastRead anchors on a different set — the two sides must
 		-- agree or the badge never clears.
-		CREATE INDEX IF NOT EXISTS idx_history_sess_unread ON chat_history(session_id, role, streaming, project_path);
+		CREATE INDEX IF NOT EXISTS idx_history_sess_unread ON chat_history(session_id, role, streaming, project_id);
 		-- Covering index for RAG indexing progress queries:
 		-- TotalMessageCount (WHERE streaming = 0) and IndexedMessageCount (WHERE indexed = 1 AND streaming = 0)
 		CREATE INDEX IF NOT EXISTS idx_history_indexing ON chat_history(streaming, indexed);
@@ -562,7 +631,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE TABLE IF NOT EXISTS queued_messages (
 			id           INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id   TEXT NOT NULL,
-			project_path TEXT NOT NULL,
+			project_id   INTEGER NOT NULL,
 			backend      TEXT NOT NULL DEFAULT '',
 			queue_id     TEXT NOT NULL,
 			content      TEXT NOT NULL,
@@ -609,9 +678,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE INDEX IF NOT EXISTS idx_thinking_message ON chat_thinking(message_id);
 		CREATE INDEX IF NOT EXISTS idx_thinking_session ON chat_thinking(session_id, created_at DESC);
 		-- Covering index for session list ORDER BY + cursor pagination:
-		-- WHERE session_type = 'chat' AND project_path = ? AND archived = 0 ORDER BY created_at DESC, id DESC
+		-- WHERE session_type = 'chat' AND project_id = ? AND archived = 0 ORDER BY created_at DESC, id DESC
 		-- Without this, idx_sessions_type covers WHERE but requires a filesort for ORDER BY.
-		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, created_at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, created_at DESC, id DESC);
 
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -640,15 +709,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 
-		-- One auto_execute command per project scope: COALESCE(NULL->'') lets a
-		-- single global command and one per project coexist.
+		-- One auto_execute command per project scope: COALESCE(NULL->0) lets a
+		-- single global command and one per project coexist. (0 is the reserved
+		-- global-scope sentinel; see GlobalScopeProjectID.)
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
-			ON terminal_quick_commands(COALESCE(project_path, ''), auto_execute)
+			ON terminal_quick_commands(COALESCE(project_id, 0), auto_execute)
 			WHERE auto_execute = 1;
 
 		CREATE TABLE IF NOT EXISTS terminal_key_config (
@@ -666,7 +736,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -674,7 +744,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- Usage ledger. Deliberately has NO foreign key to chat_history: a row
 		-- records tokens/cost that were actually consumed and must survive the
 		-- session/message being deleted (hard-delete, rewind, ACP replay
-		-- replace) so usage statistics never under-count. project_path/backend/
+		-- replace) so usage statistics never under-count. project_id/backend/
 		-- agent_id are denormalized at write time so the stats query needs no
 		-- join back to the (possibly deleted) session; agent_name is still
 		-- resolved live via LEFT JOIN agents.
@@ -714,7 +784,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			finish_reason TEXT DEFAULT '',
 			outcome TEXT DEFAULT '',
 			agent_phase TEXT DEFAULT '',
-			project_path TEXT DEFAULT '',
+			project_id INTEGER DEFAULT 0,
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
@@ -722,7 +792,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
-		CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_path, created_at);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_id, created_at);
 
 		-- Pending events for offline push notifications (added 2026-07)
 		CREATE TABLE IF NOT EXISTS pending_events (
@@ -788,7 +858,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		CREATE TABLE IF NOT EXISTS chat_recommendations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			message_id INTEGER NOT NULL DEFAULT 0,
 			recommendation TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -800,14 +870,24 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- token WITHOUT auth; removing the row revokes the link immediately.
 		-- root confines the link to a directory (resolved at creation time,
 		-- while the request is still authenticated); see FileSharesDDL.
+		--
+		-- project_id scopes the management list to the project the file was
+		-- shared FROM (so the "shared files" drawer matches the project-scoped
+		-- "shared conversations" drawer). It is 0 when the share predates the
+		-- column and could not be attributed. root stays a frozen PATH, not an
+		-- id: it is the security boundary the unauthenticated read endpoints
+		-- enforce, and resolving it through a mutable projects row would
+		-- silently retarget a live link when a project is renamed.
 		CREATE TABLE IF NOT EXISTS file_shares (
 			token TEXT PRIMARY KEY,
 			path TEXT NOT NULL,
 			name TEXT NOT NULL,
 			root TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
+		CREATE INDEX IF NOT EXISTS idx_file_shares_project ON file_shares(project_id);
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
@@ -1100,7 +1180,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"finish_reason", "ALTER TABLE chat_metadata ADD COLUMN finish_reason TEXT DEFAULT ''"},
 		{"outcome", "ALTER TABLE chat_metadata ADD COLUMN outcome TEXT DEFAULT ''"},
 		{"agent_phase", "ALTER TABLE chat_metadata ADD COLUMN agent_phase TEXT DEFAULT ''"},
-		// NOTE: project_path/backend/agent_id/clawbench_session_id (the ledger
+		// NOTE: project_id/backend/agent_id/clawbench_session_id (the ledger
 		// attribution columns) are added in the pre-migration block before
 		// createTables, because createTables creates an index over them.
 	}
@@ -1223,7 +1303,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
 			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
 		}
-		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
+		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
 			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 		}
 	}
@@ -1256,7 +1336,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
 			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
 		}
-		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, sort_order ASC, created_at DESC, id DESC)"); err != nil {
+		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, sort_order ASC, created_at DESC, id DESC)"); err != nil {
 			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 		}
 	}
@@ -1283,13 +1363,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Tags are a separate registry (not a JSON column on chat_sessions) so a
 	// label can be deleted globally and so the candidate list for a project is
 	// a cheap indexed lookup. `scope` is 'project' or 'global':
-	//   - project tags are visible/selectable only inside their project_path
-	//   - global tags are visible/selectable in every project (project_path='')
+	//   - project tags are visible/selectable only inside their project_id
+	//   - global tags are visible/selectable in every project (project_id = 0)
 	//
-	// Uniqueness is (name, project_path), NOT name alone: two projects may each
+	// Uniqueness is (name, project_id), NOT name alone: two projects may each
 	// own a label called "bug" without one leaking into the other's candidate
-	// list. Global tags live at project_path='' and therefore never collide with
-	// a project row.
+	// list. Global tags live at project_id = 0 (GlobalScopeProjectID) and
+	// therefore never collide with a project row.
+	//
+	// project_id is NOT NULL deliberately. SQLite treats NULLs as distinct in a
+	// UNIQUE constraint, so a nullable column would let two global tags named
+	// "bug" coexist and silently break this uniqueness.
 	// Both tables are created unconditionally (CREATE TABLE IF NOT EXISTS), so
 	// existing databases pick them up on the next startup.
 	if _, err := WriteExec(`
@@ -1297,9 +1381,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			scope TEXT NOT NULL DEFAULT 'project',
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(name, project_path)
+			UNIQUE(name, project_id)
 		);
 		CREATE TABLE IF NOT EXISTS session_tag_links (
 			session_id TEXT NOT NULL,
@@ -1307,7 +1391,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(session_id, tag_id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_session_tags_project ON session_tags(project_path, name);
+		CREATE INDEX IF NOT EXISTS idx_session_tags_project ON session_tags(project_id, name);
 		CREATE INDEX IF NOT EXISTS idx_session_tag_links_session ON session_tag_links(session_id);
 		CREATE INDEX IF NOT EXISTS idx_session_tag_links_tag ON session_tag_links(tag_id);
 	`); err != nil {
@@ -1626,9 +1710,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
-	// Migrate: add project_path to quick-send / quick-command tables for
-	// project-scoped (仅本项目) items. NULL means global; a value scopes the
-	// item to that project only.
+	// Migrate: ensure the project scope column on the quick-send /
+	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
+	// a value scopes the item to that project only.
 	if err := migrateQuickProjectScope(); err != nil {
 		return err
 	}
@@ -1732,7 +1816,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 // history) silently destroyed the token/cost record for work that really was
 // performed, under-counting usage statistics. SQLite cannot drop a constraint
 // with ALTER TABLE, so the table is rebuilt without the FK. Denormalized
-// attribution columns (project_path/backend/agent_id/clawbench_session_id) are
+// attribution columns (project_id/backend/agent_id/clawbench_session_id) are
 // then backfilled from the still-present chat_history/chat_sessions rows.
 //
 // Idempotent: skips when the table has no foreign key (fresh installs create it
@@ -1762,15 +1846,15 @@ func migrateChatMetadataLedger() error {
 
 	// Backfill attribution for rows written before these columns existed. Only
 	// rows whose chat_history row still exists can be recovered; rows already
-	// orphaned by a past cascade delete stay empty. The `h.project_path != ''`
+	// orphaned by a past cascade delete stay empty. The `h.project_id != 0`
 	// term keeps this a true no-op on later startups: a row whose history
-	// project_path is itself empty cannot be attributed, so it must not match
-	// the predicate again (otherwise the UPDATE would re-run every boot).
+	// project is itself unattributed (0) cannot be recovered, so it must not
+	// match the predicate again (otherwise the UPDATE would re-run every boot).
 	var needsBackfill int
 	if err := db.QueryRow(`
 		SELECT COUNT(*) FROM chat_metadata m
-		WHERE m.project_path = ''
-		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_path != '')
+		WHERE m.project_id = 0
+		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_id != 0)
 	`).Scan(&needsBackfill); err != nil {
 		return err
 	}
@@ -1780,12 +1864,12 @@ func migrateChatMetadataLedger() error {
 
 	_, err := WriteExec(`
 		UPDATE chat_metadata SET
-			project_path = COALESCE((SELECT h.project_path FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
+			project_id = COALESCE((SELECT h.project_id FROM chat_history h WHERE h.id = chat_metadata.message_id), 0),
 			backend = COALESCE((SELECT h.backend FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
 			clawbench_session_id = COALESCE((SELECT h.session_id FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
 			agent_id = COALESCE((SELECT s.agent_id FROM chat_history h JOIN chat_sessions s ON s.id = h.session_id WHERE h.id = chat_metadata.message_id), '')
-		WHERE project_path = ''
-		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = chat_metadata.message_id AND h.project_path != '')
+		WHERE project_id = 0
+		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = chat_metadata.message_id AND h.project_id != 0)
 	`)
 	if err != nil {
 		return fmt.Errorf("backfill ledger attribution: %w", err)
@@ -1804,7 +1888,7 @@ func rebuildChatMetadataWithoutFK() error {
 		"cache_creation_tokens, cache_hit_tokens, cache_miss_tokens, credit, " +
 		"usage_by_category, session_id, request_id, trace_id, agent_message_id, " +
 		"message_request_id, request_model_name, response_model_id, finish_reason, " +
-		"outcome, agent_phase, project_path, backend, agent_id, clawbench_session_id, created_at"
+		"outcome, agent_phase, project_id, backend, agent_id, clawbench_session_id, created_at"
 
 	tx, err := WriteBegin()
 	if err != nil {
@@ -1846,7 +1930,7 @@ func rebuildChatMetadataWithoutFK() error {
 		finish_reason TEXT DEFAULT '',
 		outcome TEXT DEFAULT '',
 		agent_phase TEXT DEFAULT '',
-		project_path TEXT DEFAULT '',
+		project_id INTEGER DEFAULT 0,
 		backend TEXT DEFAULT '',
 		agent_id TEXT DEFAULT '',
 		clawbench_session_id TEXT DEFAULT '',
@@ -1870,7 +1954,7 @@ func rebuildChatMetadataWithoutFK() error {
 	for _, stmt := range []string{
 		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model)",
 		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at)",
-		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_path, created_at)",
+		"CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_id, created_at)",
 	} {
 		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("recreate chat_metadata index: %w", err)
@@ -1959,23 +2043,28 @@ func migrateChatThinkingSeq() error {
 	return tx.Commit()
 }
 
-// migrateQuickProjectScope adds the project_path column to the quick-send and
-// quick-command tables (for existing databases) and rebuilds the per-project
-// auto_execute unique index. Idempotent: skips if the column already exists.
+// migrateQuickProjectScope ensures the quick-send and quick-command tables carry
+// the project scope column and rebuilds the per-project auto_execute unique
+// index. Idempotent: skips if the column already exists.
+//
+// The column is project_id, not project_path: migrateProjectsToIDs converts
+// these tables along with every other project-scoped one. This function only
+// has to cover databases old enough to predate project scoping entirely.
 func migrateQuickProjectScope() error {
 	for _, table := range []string{"terminal_quick_commands", "chat_quick_send"} {
 		var hasCol int
-		_ = dbRead.QueryRow("SELECT COUNT(*) FROM pragma_table_info('" + table + "') WHERE name='project_path'").Scan(&hasCol)
+		_ = dbRead.QueryRow("SELECT COUNT(*) FROM pragma_table_info('" + table + "') WHERE name='project_id'").Scan(&hasCol)
 		if hasCol == 0 {
-			if _, err := WriteExec("ALTER TABLE " + table + " ADD COLUMN project_path TEXT DEFAULT NULL"); err != nil {
-				return fmt.Errorf("failed to add project_path column to %s: %w", table, err)
+			if _, err := WriteExec("ALTER TABLE " + table + " ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
+				return fmt.Errorf("failed to add project_id column to %s: %w", table, err)
 			}
 		}
 	}
-	// Rebuild the auto_execute unique index to be per-project scope.
+	// Rebuild the auto_execute unique index to be per-project scope. 0 stands in
+	// for the NULL (global) scope so a global row and one per project coexist.
 	_, _ = WriteExec("DROP INDEX IF EXISTS idx_quick_commands_auto_execute")
 	if _, err := WriteExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
-		ON terminal_quick_commands(COALESCE(project_path, ''), auto_execute)
+		ON terminal_quick_commands(COALESCE(project_id, 0), auto_execute)
 		WHERE auto_execute = 1`); err != nil {
 		return fmt.Errorf("failed to rebuild auto_execute index: %w", err)
 	}
@@ -2269,8 +2358,8 @@ func migrateQueuedMessagesToOwnTable() error {
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`
-		INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files, created_at)
-		SELECT COALESCE(h.session_id, ''), h.project_path, h.backend,
+		INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content, files, created_at)
+		SELECT COALESCE(h.session_id, ''), h.project_id, h.backend,
 		       CASE WHEN h.queue_id = '' OR h.queue_id IS NULL THEN 'q-migrated-' || h.id ELSE h.queue_id END,
 		       h.content, h.files, h.created_at
 		FROM chat_history h
@@ -2543,9 +2632,9 @@ func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
 
 // sessionOrderIndexSQL is the desired definition of idx_sessions_order: the
 // covering index for the session list's ORDER BY (pinned DESC, sort_order ASC,
-// created_at DESC, id DESC) under the WHERE (session_type, project_path,
+// created_at DESC, id DESC) under the WHERE (session_type, project_id,
 // archived) prefix.
-const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC)"
+const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, sort_order ASC, created_at DESC, id DESC)"
 
 // rebuildSessionOrderIndexIfNeeded rebuilds idx_sessions_order when its stored
 // definition does not match sessionOrderIndexSQL.
@@ -2677,11 +2766,16 @@ type quickCommandExtra struct {
 type chatQuickSendExtra struct{ projectPath string }
 
 // QuickCommandHelpers exposes the shared CRUD helpers for terminal_quick_commands.
+//
+// The scan list resolves project_id back to its path with a scalar subquery, so
+// scanFn and the JSON contract (project_path / project_only) are unchanged even
+// though the column now holds an id. A global row has project_id IS NULL, which
+// COALESCE turns into ” — i.e. exactly the old "no project" reading.
 var QuickCommandHelpers = crudHelpers[QuickCommand, quickCommandExtra]{
 	table:     "terminal_quick_commands",
-	scanCols:  "id, label, command, hidden, auto_execute, sort_order, project_path",
-	insertSQL: "INSERT INTO terminal_quick_commands (label, command, hidden, auto_execute, sort_order, project_path) VALUES (?, ?, ?, ?, ?, ?)",
-	updateSQL: "UPDATE terminal_quick_commands SET label = ?, command = ?, hidden = ?, auto_execute = ?, project_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	scanCols:  "id, label, command, hidden, auto_execute, sort_order, COALESCE((SELECT path FROM projects WHERE projects.id = terminal_quick_commands.project_id), '')",
+	insertSQL: "INSERT INTO terminal_quick_commands (label, command, hidden, auto_execute, sort_order, project_id) VALUES (?, ?, ?, ?, ?, ?)",
+	updateSQL: "UPDATE terminal_quick_commands SET label = ?, command = ?, hidden = ?, auto_execute = ?, project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 	scanFn: func(rows *sql.Rows) (QuickCommand, error) {
 		var cmd QuickCommand
 		var hidden, autoExec int
@@ -2709,11 +2803,12 @@ var QuickCommandHelpers = crudHelpers[QuickCommand, quickCommandExtra]{
 }
 
 // ChatQuickSendHelpers exposes the shared CRUD helpers for chat_quick_send.
+// See QuickCommandHelpers for why the scan list resolves the path back out.
 var ChatQuickSendHelpers = crudHelpers[ChatQuickSendItem, chatQuickSendExtra]{
 	table:     "chat_quick_send",
-	scanCols:  "id, label, command, sort_order, project_path",
-	insertSQL: "INSERT INTO chat_quick_send (label, command, sort_order, project_path) VALUES (?, ?, ?, ?)",
-	updateSQL: "UPDATE chat_quick_send SET label = ?, command = ?, project_path = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	scanCols:  "id, label, command, sort_order, COALESCE((SELECT path FROM projects WHERE projects.id = chat_quick_send.project_id), '')",
+	insertSQL: "INSERT INTO chat_quick_send (label, command, sort_order, project_id) VALUES (?, ?, ?, ?)",
+	updateSQL: "UPDATE chat_quick_send SET label = ?, command = ?, project_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 	scanFn: func(rows *sql.Rows) (ChatQuickSendItem, error) {
 		var item ChatQuickSendItem
 		var proj sql.NullString
@@ -2741,18 +2836,25 @@ type crudHelpers[T any, E any] struct {
 }
 
 // list returns all rows from the helper's table for the given project scope,
-// ordered by sort_order. Global rows (project_path IS NULL) are always included;
+// ordered by sort_order. Global rows (project_id IS NULL) are always included;
 // when projectPath is non-empty, that project's scoped rows are included too.
 func (h crudHelpers[T, E]) list(projectPath string) ([]T, error) {
 	query := "SELECT " + h.scanCols + " FROM " + h.table
 	var rows *sql.Rows
 	var err error
 	if projectPath == "" {
-		query += " WHERE project_path IS NULL ORDER BY sort_order"
+		query += " WHERE project_id IS NULL ORDER BY sort_order"
 		rows, err = dbRead.Query(query)
 	} else {
-		query += " WHERE project_path IS NULL OR project_path = ? ORDER BY sort_order"
-		rows, err = dbRead.Query(query, projectPath)
+		// Resolve path -> id WITHOUT creating a row: a read must not register a
+		// project as a side effect. An unknown project has no scoped rows, so it
+		// sees the global ones only — the same as before the id refactor.
+		projectID, _, idErr := ProjectIDByPath(projectPath)
+		if idErr != nil {
+			return nil, idErr
+		}
+		query += " WHERE project_id IS NULL OR project_id = ? ORDER BY sort_order"
+		rows, err = dbRead.Query(query, projectID)
 	}
 	if err != nil {
 		return nil, err
@@ -2769,7 +2871,7 @@ func (h crudHelpers[T, E]) list(projectPath string) ([]T, error) {
 	return items, nil
 }
 
-// extraProjectPath returns the project_path carried by a table-specific extra.
+// extraProjectPath returns the project path carried by a table-specific extra.
 func extraProjectPath(e any) string {
 	switch v := e.(type) {
 	case quickCommandExtra:
@@ -2780,23 +2882,42 @@ func extraProjectPath(e any) string {
 	return ""
 }
 
+// projectIDArg converts a project path to the value bound to project_id: nil for
+// the global scope (so the column stays NULL and the partial unique index's
+// COALESCE treats it as its own scope), otherwise the resolved id.
+//
+// This is a WRITE path, so it registers an unknown project (ProjectIDForPath
+// upserts). That matters for the quick-command/quick-send tables: scoping a row
+// to a project that has never had a session must still work, and the read side
+// resolves the id back to a path through the same registry.
+func projectIDArg(projectPath string) (any, error) {
+	if projectPath == "" {
+		return nil, nil
+	}
+	return ProjectIDForPath(projectPath)
+}
+
 // clearAutoExecuteForScope clears the auto_execute flag on other rows in the
 // same project scope (global scope when projectPath is empty), enforcing the
 // single-auto-execute-per-scope invariant. excludeID>0 skips that row (used by update).
 func clearAutoExecuteForScope(table string, excludeID int64, projectPath string) error {
-	if projectPath == "" {
+	projectID, err := projectIDArg(projectPath)
+	if err != nil {
+		return err
+	}
+	if projectID == nil {
 		if excludeID > 0 {
-			_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_path IS NULL AND id != ?", excludeID)
+			_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id IS NULL AND id != ?", excludeID)
 			return err
 		}
-		_, err := WriteExec("UPDATE " + table + " SET auto_execute = 0 WHERE auto_execute = 1 AND project_path IS NULL")
+		_, err := WriteExec("UPDATE " + table + " SET auto_execute = 0 WHERE auto_execute = 1 AND project_id IS NULL")
 		return err
 	}
 	if excludeID > 0 {
-		_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_path = ? AND id != ?", projectPath, excludeID)
+		_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id = ? AND id != ?", projectID, excludeID)
 		return err
 	}
-	_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_path = ?", projectPath)
+	_, err = WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id = ?", projectID)
 	return err
 }
 
@@ -2818,9 +2939,9 @@ func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 	if maxOrder.Valid {
 		sortOrder = int(maxOrder.Int64) + 1
 	}
-	var projectArg any
-	if projectPath != "" {
-		projectArg = projectPath
+	projectArg, err := projectIDArg(projectPath)
+	if err != nil {
+		return 0, err
 	}
 	var args []any
 	if e, ok := any(extra).(quickCommandExtra); ok {
@@ -2846,9 +2967,9 @@ func (h crudHelpers[T, E]) update(id int64, item T) error {
 			return err
 		}
 	}
-	var projectArg any
-	if projectPath != "" {
-		projectArg = projectPath
+	projectArg, err := projectIDArg(projectPath)
+	if err != nil {
+		return err
 	}
 	var args []any
 	if e, ok := any(extra).(quickCommandExtra); ok {
@@ -2856,7 +2977,7 @@ func (h crudHelpers[T, E]) update(id int64, item T) error {
 	} else {
 		args = []any{label, command, projectArg, id}
 	}
-	_, err := WriteExec(h.updateSQL, args...)
+	_, err = WriteExec(h.updateSQL, args...)
 	return err
 }
 

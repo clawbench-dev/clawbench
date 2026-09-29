@@ -20,7 +20,7 @@ import (
 const schedulerSchema = `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 	content TEXT NOT NULL,
 	files TEXT,
@@ -33,9 +33,17 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	completed_at DATETIME
 );
+CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -50,11 +58,11 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	UNIQUE(project_path, backend, id)
+	UNIQUE(backend, id)
 );
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
@@ -84,8 +92,8 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 `
 
@@ -208,12 +216,12 @@ func TestGetTasks_AllProjects(t *testing.T) {
 
 	now := time.Now()
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj1", "Task 1", "0 * * * *", "agent1", "prompt1", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj1"), "Task 1", "0 * * * *", "agent1", "prompt1", "", "active", "unlimited", now, now,
 	)
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj2", "Task 2", "0 * * * *", "agent1", "prompt2", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj2"), "Task 2", "0 * * * *", "agent1", "prompt2", "", "active", "unlimited", now, now,
 	)
 
 	tasks, err := service.GetTasks("")
@@ -232,12 +240,12 @@ func TestGetTasks_OrdersByCreatedAtDesc(t *testing.T) {
 
 	now := time.Now()
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "First", "0 * * * *", "agent1", "p", "", "active", "unlimited", now.Add(-1*time.Hour), now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "First", "0 * * * *", "agent1", "p", "", "active", "unlimited", now.Add(-1*time.Hour), now,
 	)
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Second", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Second", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 
 	tasks, err := service.GetTasks("/proj")
@@ -255,8 +263,8 @@ func TestGetTaskByID(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, max_runs, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task 1", "0 * * * *", "agent1", "prompt1", "sess-1", "active", "unlimited", 0, 3, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, max_runs, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task 1", "0 * * * *", "agent1", "prompt1", "sess-1", "active", "unlimited", 0, 3, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -579,12 +587,12 @@ func TestLoadTasksFromDB(t *testing.T) {
 	// Insert tasks directly into DB
 	now := time.Now()
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Active Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Active Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", now, now,
 	)
 
 	err := s.LoadTasksFromDB("/proj")
@@ -593,7 +601,7 @@ func TestLoadTasksFromDB(t *testing.T) {
 	// Active task should be loaded; paused task should be skipped
 	// Get the active task's ID
 	var activeID int64
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE status = 'active' AND project_path = '/proj'").Scan(&activeID)
+	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE status = 'active' AND project_id = (SELECT id FROM projects WHERE path = '/proj')").Scan(&activeID)
 
 	// We verify by checking that the active task can be removed without error
 	s.RemoveTask(activeID)
@@ -608,12 +616,12 @@ func TestLoadTasksFromDB_AllProjects(t *testing.T) {
 
 	now := time.Now()
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj1", "Task 1", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj1"), "Task 1", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj2", "Task 2", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj2"), "Task 2", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 
 	err := s.LoadTasksFromDB("") // empty = all projects
@@ -621,8 +629,8 @@ func TestLoadTasksFromDB_AllProjects(t *testing.T) {
 
 	// Both tasks should be loaded — verify by getting their IDs and removing them
 	var id1, id2 int64
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_path = '/proj1'").Scan(&id1)
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_path = '/proj2'").Scan(&id2)
+	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = '/proj1')").Scan(&id1)
+	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = '/proj2')").Scan(&id2)
 
 	s.RemoveTask(id1)
 	s.RemoveTask(id2)
@@ -639,8 +647,8 @@ func TestLoadTasksFromDB_InvalidCronSkipped(t *testing.T) {
 
 	now := time.Now()
 	_, _ = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Bad Cron", "invalid", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Bad Cron", "invalid", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 
 	// Should not error — invalid cron tasks are logged and skipped
@@ -665,8 +673,8 @@ func TestAddTaskExecution(t *testing.T) {
 	// Insert a task
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -692,8 +700,8 @@ func TestAddTaskExecution_MultipleExecutions(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -715,8 +723,8 @@ func TestUpdateExecutionStatus(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -745,8 +753,8 @@ func TestUpdateTaskStats(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Stats Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Stats Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -773,8 +781,8 @@ func TestUpdateTaskStats_DoesNotOverwritePausedStatus(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", 0, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -889,8 +897,8 @@ func TestRunCount_AtomicIncrement(t *testing.T) {
 	// Insert a task directly
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "RC Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "RC Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -974,7 +982,7 @@ func TestPurgeArchivedData_CleansTaskExecutions(t *testing.T) {
 	// Create task_execution
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		"/purge-proj", "Purge Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
@@ -1020,8 +1028,8 @@ func TestDeleteTaskExecution(t *testing.T) {
 	// Create a task
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "DelExec Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "DelExec Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1084,8 +1092,8 @@ func TestDeleteTaskExecution_RunningExecution(t *testing.T) {
 	// Create a task and a running execution
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Running Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Running Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1135,8 +1143,8 @@ func TestDeleteTaskExecution_RunCountClampToZero(t *testing.T) {
 	// Create a task with run_count = 0
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Zero Count", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Zero Count", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1170,8 +1178,8 @@ func TestDeleteAllTaskExecutions(t *testing.T) {
 	// Create a task with run_count = 3
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "DelAll Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "DelAll Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1213,8 +1221,8 @@ func TestDeleteAllTaskExecutions_PreservesRunning(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Mixed Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 2, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Mixed Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 2, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1250,8 +1258,8 @@ func TestDeleteAllTaskExecutions_NoExecutions(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Empty Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Empty Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1278,8 +1286,8 @@ func TestHasUnreadTasks_NoExecutions(t *testing.T) {
 
 	now := time.Now()
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 
@@ -1294,8 +1302,8 @@ func TestHasUnreadTasks_UnreadExecution(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1318,8 +1326,8 @@ func TestHasUnreadTasks_ReadExecution(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1343,8 +1351,8 @@ func TestHasUnreadTasks_ScopedByProjectPath(t *testing.T) {
 	now := time.Now()
 	// Task in /proj-a with unread execution
 	resultA, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj-a", "Task A", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj-a"), "Task A", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskIDA, _ := resultA.LastInsertId()
@@ -1356,8 +1364,8 @@ func TestHasUnreadTasks_ScopedByProjectPath(t *testing.T) {
 
 	// Task in /proj-b with no executions
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj-b", "Task B", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj-b"), "Task B", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 
@@ -1376,8 +1384,8 @@ func TestHasUnreadTasks_EmptyProjectPath(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1400,8 +1408,8 @@ func TestHasUnreadTasks_RunningExecutionNotUnread(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1432,8 +1440,8 @@ func TestHasUnreadTasks_SkippedExecutionNotUnread(t *testing.T) {
 
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1477,8 +1485,8 @@ func TestCronReparseFailure_SetsStatusToPaused(t *testing.T) {
 	// Insert a task with a valid cron expression and session_id
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Cron Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Cron Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1508,8 +1516,8 @@ func TestCronReparseFailure_InvalidExprCannotBeResumed(t *testing.T) {
 	// Insert a task with an invalid cron expression directly into DB
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Broken Cron", "not-a-valid-cron", "agent1", "p", "", "paused", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Broken Cron", "not-a-valid-cron", "agent1", "p", "", "paused", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1783,8 +1791,8 @@ func TestCleanZombieExecutions(t *testing.T) {
 	// Create a task
 	now := time.Now()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Zombie Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Zombie Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1829,8 +1837,8 @@ func TestCleanZombieExecutions_NoZombies(t *testing.T) {
 	// Insert a task with no executions
 	now := time.Now()
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Clean Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Clean Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 
@@ -2013,8 +2021,8 @@ func TestMarkTaskExecutionsRead_PerExecution(t *testing.T) {
 
 	now := time.Now()
 	res, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := res.LastInsertId()
@@ -2053,8 +2061,8 @@ func TestUnread_IgnoresLastReadAtWatermark(t *testing.T) {
 	now := time.Now()
 	older := now.Add(-time.Hour)
 	res, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
-		"/proj", "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now, now,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := res.LastInsertId()

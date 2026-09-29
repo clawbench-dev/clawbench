@@ -174,7 +174,7 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 	require.NoError(t, err)
 	service.UpdateExternalSessionID(sid, "acp-1")
 	_, err = service.WriteExec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'existing', 'm1')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'existing', 'm1')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)
@@ -227,12 +227,12 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 
 	// Live-created messages: EMPTY external_message_id.
 	_, err = service.WriteExec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)
 	_, err = service.WriteExec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)

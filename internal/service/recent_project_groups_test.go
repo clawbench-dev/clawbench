@@ -204,7 +204,7 @@ func TestGetRecentProjectGroups_FiltersAndCleansStalePaths(t *testing.T) {
 
 	var count int
 	require.NoError(t, db.QueryRow(
-		"SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", dead,
+		"SELECT COUNT(*) FROM recent_projects WHERE project_id = ?", dead,
 	).Scan(&count))
 	assert.Zero(t, count, "stale row is cleaned up, as the flat listing did")
 }

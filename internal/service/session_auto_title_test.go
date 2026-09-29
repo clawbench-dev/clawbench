@@ -37,20 +37,41 @@ func titleServer(body string) http.HandlerFunc {
 	}
 }
 
-func insertSessionWithTitle(t *testing.T, sessionID, title, source string) {
+// testProjectID is the projects.id these fixtures attach their rows to. It is
+// registered on demand so a path -> id lookup finds a real project: several
+// assertions read the project path back out through the registry.
+const testProjectID = 1
+
+// testProjectPath is the path testProjectID maps to.
+const testProjectPath = "/test"
+
+// ensureTestProject registers testProjectPath in the projects registry, so
+// fixtures that store project_id = testProjectID can resolve it back to a path.
+func ensureTestProject(t *testing.T) {
 	t.Helper()
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, title_source) VALUES (?, '/test', 'claude', ?, ?)",
-		sessionID, title, source,
+		"INSERT INTO projects (id, path) VALUES (?, ?) ON CONFLICT(id) DO NOTHING",
+		testProjectID, testProjectPath,
+	)
+	require.NoError(t, err)
+}
+
+func insertSessionWithTitle(t *testing.T, sessionID, title, source string) {
+	t.Helper()
+	ensureTestProject(t)
+	_, err := WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, title_source) VALUES (?, ?, 'claude', ?, ?)",
+		sessionID, testProjectID, title, source,
 	)
 	require.NoError(t, err)
 }
 
 func insertAutoRenameUserMessage(t *testing.T, id int64, sessionID, content string) {
 	t.Helper()
+	ensureTestProject(t)
 	_, err := WriteExec(
-		"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'user', ?, ?, 0)",
-		id, content, sessionID,
+		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, ?, 'user', ?, ?, 0)",
+		id, testProjectID, content, sessionID,
 	)
 	require.NoError(t, err)
 }
@@ -327,7 +348,7 @@ func TestCollectSessionUserMessages_SkipsNonUserAndEmptyText(t *testing.T) {
 	insertSessionWithTitle(t, "sess-filter", "t", TitleSourcePlaceholder)
 	// assistant row — must be skipped by the role filter
 	_, err := WriteExec(
-		"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'assistant', ?, ?, 0)",
+		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 0)",
 		int64(201), "assistant text", "sess-filter",
 	)
 	require.NoError(t, err)

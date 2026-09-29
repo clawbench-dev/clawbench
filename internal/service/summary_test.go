@@ -15,7 +15,7 @@ func TestGenerateMessageSummaryOnDemand_GeneratesAndSaves(t *testing.T) {
 	db, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude')",
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-1', 'claude')",
 		`{"blocks":[{"type":"text","text":"让我看看"},{"type":"tool_use","text":"Bash"},{"type":"text","text":"最终结论：搞定"}]}`)
 	assert.NoError(t, err)
 
@@ -34,7 +34,7 @@ func TestGenerateMessageSummaryOnDemand_ReturnsExisting(t *testing.T) {
 	db, teardown := setupTestDBForTriggerSummary(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude')",
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-1', 'claude')",
 		`{"blocks":[{"type":"text","text":"已有摘要的消息"}]}`)
 	assert.NoError(t, err)
 	_, err = db.Exec("INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', 1, '已经存在')")
@@ -51,7 +51,7 @@ func TestGenerateMessageSummaryOnDemand_NoTextReturnsNotOK(t *testing.T) {
 	defer teardown()
 
 	// Assistant message whose blocks contain no extractable answer text.
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude')",
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-1', 'claude')",
 		`{"blocks":[{"type":"tool_use","text":"Bash"}]}`)
 	assert.NoError(t, err)
 
@@ -78,7 +78,7 @@ func TestGenerateMessageSummaryOnDemand_UnparseableContent(t *testing.T) {
 	defer teardown()
 
 	// Content is not valid blocks JSON — treated as no summary available.
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', 'not json at all', 'sess-1', 'claude')")
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', 'not json at all', 'sess-1', 'claude')")
 	assert.NoError(t, err)
 
 	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
@@ -92,7 +92,7 @@ func TestGenerateMessageSummaryOnDemand_SkipsUserAndStreaming(t *testing.T) {
 	defer teardown()
 
 	// A user message should never be summarized.
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', '我的问题', 'sess-1', 'claude')")
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'user', '我的问题', 'sess-1', 'claude')")
 	assert.NoError(t, err)
 	summary, _, ok, err := GenerateMessageSummaryOnDemand(1)
 	assert.NoError(t, err)
@@ -100,7 +100,7 @@ func TestGenerateMessageSummaryOnDemand_SkipsUserAndStreaming(t *testing.T) {
 	assert.Equal(t, "", summary)
 
 	// A streaming assistant message should not get an incomplete summary.
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-1', 'claude', 1)",
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'assistant', ?, 'sess-1', 'claude', 1)",
 		`{"blocks":[{"type":"text","text":"还在生成中"}]}`)
 	assert.NoError(t, err)
 	summary, _, ok, err = GenerateMessageSummaryOnDemand(2)
@@ -252,7 +252,7 @@ func setupTestDBForMigration(t *testing.T) func() {
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -294,7 +294,7 @@ func TestMigrateTaskExecutionSummaries_ConvertsToChatMessage(t *testing.T) {
 
 	// Set up: task_execution → session → assistant message
 	_, _ = db.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (1, 10, 'sess-1', 'completed')")
-	_, _ = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', '{\"blocks\":[]}', 'sess-1', 'claude', 0)")
+	_, _ = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'assistant', '{\"blocks\":[]}', 'sess-1', 'claude', 0)")
 	// Get the assistant message ID
 	var msgID int64
 	_ = dbRead.QueryRow("SELECT id FROM chat_history WHERE session_id = 'sess-1' AND role = 'assistant'").Scan(&msgID)
@@ -344,7 +344,7 @@ func TestMigrateTaskExecutionSummaries_Idempotent(t *testing.T) {
 
 	// Set up
 	_, _ = db.Exec("INSERT INTO task_executions (id, task_id, session_id, status) VALUES (3, 30, 'sess-idem', 'completed')")
-	_, _ = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', '{\"blocks\":[]}', 'sess-idem', 'claude', 0)")
+	_, _ = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'assistant', '{\"blocks\":[]}', 'sess-idem', 'claude', 0)")
 	_, _ = db.Exec("INSERT INTO summaries (target_type, target_id, summary, created_at) VALUES ('task_execution', 3, 'Idempotent summary', CURRENT_TIMESTAMP)")
 
 	// Run migration twice

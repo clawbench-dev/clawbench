@@ -42,10 +42,10 @@ func setupDrainTest(t *testing.T) {
 
 // drainTestSchema is the chat_history/chat_sessions schema used by drain tests
 // (mirrors the main test schema in chat_test.go but lives in package service).
-const drainTestSchema = `
+const drainTestSchema = ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 	content TEXT NOT NULL,
 	files TEXT,
@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 CREATE TABLE IF NOT EXISTS queued_messages (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	session_id TEXT NOT NULL,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL DEFAULT '',
 	queue_id TEXT NOT NULL,
 	content TEXT NOT NULL,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS queued_messages (
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -95,12 +95,14 @@ func setupDrainSession(t *testing.T, sessionID string) {
 	_, err = db.Exec(drainTestSchema)
 	assert.NoError(t, err)
 	cleanup := SetDBForTest(db, db)
+	// The fixture references projects by path literals in SQL subqueries.
+	SeedTestProjectsForTest(t)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
 	})
 	_, err = db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Drain')`,
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'Drain')`,
 		sessionID,
 	)
 	assert.NoError(t, err)

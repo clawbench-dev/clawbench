@@ -17,14 +17,22 @@ import (
 // conversationProjectsSchema is the minimum slice of the real schema the query
 // touches: both chat_sessions and the chat_metadata ledger contribute paths.
 const conversationProjectsSchema = `
+CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_metadata (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT DEFAULT '',
+	project_id INTEGER DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -51,8 +59,8 @@ func setupConversationProjectsDB(t *testing.T) *sql.DB {
 func insertSessionRow(t *testing.T, db *sql.DB, projectPath, id, createdAt string) {
 	t.Helper()
 	_, err := db.Exec(
-		"INSERT INTO chat_sessions (id, project_path, created_at) VALUES (?, ?, ?)",
-		id, projectPath, createdAt,
+		"INSERT INTO chat_sessions (id, project_id, created_at) VALUES (?, ?, ?)",
+		id, service.ProjectIDForTest(t, projectPath), createdAt,
 	)
 	require.NoError(t, err)
 }
@@ -60,8 +68,8 @@ func insertSessionRow(t *testing.T, db *sql.DB, projectPath, id, createdAt strin
 func insertMetadataRow(t *testing.T, db *sql.DB, projectPath, createdAt string) {
 	t.Helper()
 	_, err := db.Exec(
-		"INSERT INTO chat_metadata (project_path, created_at) VALUES (?, ?)",
-		projectPath, createdAt,
+		"INSERT INTO chat_metadata (project_id, created_at) VALUES (?, ?)",
+		service.ProjectIDForTest(t, projectPath), createdAt,
 	)
 	require.NoError(t, err)
 }

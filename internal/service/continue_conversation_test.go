@@ -335,7 +335,7 @@ func TestContinueFromExecution_FieldInheritance(t *testing.T) {
 
 	// Project path should be inherited
 	var projPath string
-	err = service.UnsafeDBForTest().QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", newSessID).Scan(&projPath)
+	err = service.UnsafeDBForTest().QueryRow("SELECT COALESCE(p.path, '') FROM chat_sessions s LEFT JOIN projects p ON p.id = s.project_id WHERE s.id = ?", newSessID).Scan(&projPath)
 	assert.NoError(t, err)
 	assert.Equal(t, "/project", projPath)
 
@@ -502,8 +502,8 @@ func TestContinueFromExecution_TitleSourceIsPlaceholder(t *testing.T) {
 func helperCreateScheduledTask(t *testing.T, projectPath, name, agentID string) int64 {
 	t.Helper()
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status) VALUES (?, ?, '0 8 * * *', ?, 'Do task', 'active')",
-		projectPath, name, agentID,
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status) VALUES (?, ?, '0 8 * * *', ?, 'Do task', 'active')",
+		service.ProjectIDForTest(t, projectPath), name, agentID,
 	)
 	assert.NoError(t, err)
 	id, err := result.LastInsertId()
@@ -545,9 +545,9 @@ func TestContinueFromExecution_CopiesChatMessageSummary(t *testing.T) {
 	// Create task + session + assistant message + execution
 	taskID := helperCreateScheduledTask(t, projectPath, "Summary Test", "agent1")
 	sessionID := helperCreateScheduledSessionWithDetails(t, projectPath, "claude", "Summary Test", "agent1", "", "")
-	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_history (session_id, project_path, role, content, backend) VALUES (?, ?, 'user', 'hello', 'claude')", sessionID, projectPath)
+	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_history (session_id, project_id, role, content, backend) VALUES (?, ?, 'user', 'hello', 'claude')", sessionID, service.ProjectIDForTest(t, projectPath))
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("INSERT INTO chat_history (session_id, project_path, role, content, backend) VALUES (?, ?, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"response\"}]}', 'claude')", sessionID, projectPath)
+	_, err = service.UnsafeDBForTest().Exec("INSERT INTO chat_history (session_id, project_id, role, content, backend) VALUES (?, ?, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"response\"}]}', 'claude')", sessionID, service.ProjectIDForTest(t, projectPath))
 	assert.NoError(t, err)
 	execID := helperCreateTaskExecution(t, taskID, sessionID, "completed")
 
@@ -712,7 +712,7 @@ func TestContinueFromExecution_DedupPrefersActiveOverDeleted(t *testing.T) {
 	_ = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_sessions WHERE id = ?", sessB).Scan(new(string))
 	// sessB shouldn't exist yet
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?)",
 		sessB, "/project", "claude", "Manual B", "", "default", "", sessID, sessID,
 	)
 	assert.NoError(t, err)
@@ -900,7 +900,7 @@ func TestContinueFromExecution_CreatedAtFormatConsistent(t *testing.T) {
 			SELECT h.session_id, COUNT(*) AS cnt
 			FROM chat_history h
 			JOIN chat_sessions s2 ON s2.id = h.session_id
-			WHERE h.project_path = ?
+			WHERE h.project_id = (SELECT id FROM projects WHERE path = ?)
 			  AND h.role = 'assistant' AND h.streaming = 0
 			  AND (s2.last_read_at IS NULL OR h.created_at > s2.last_read_at)
 			GROUP BY h.session_id

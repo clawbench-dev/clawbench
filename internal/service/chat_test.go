@@ -26,7 +26,7 @@ import (
 const schema = `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 	content TEXT NOT NULL,
 	files TEXT,
@@ -41,7 +41,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 CREATE TABLE IF NOT EXISTS queued_messages (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	session_id TEXT NOT NULL,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL DEFAULT '',
 	queue_id TEXT NOT NULL,
 	content TEXT NOT NULL,
@@ -50,9 +50,17 @@ CREATE TABLE IF NOT EXISTS queued_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_queued_session ON queued_messages(session_id, id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_identity ON queued_messages(session_id, queue_id);
+CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -72,16 +80,16 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	last_read_at DATETIME,
-	UNIQUE(project_path, backend, id)
+	UNIQUE(backend, id)
 );
 CREATE TABLE IF NOT EXISTS recent_projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT UNIQUE NOT NULL,
+	project_id INTEGER NOT NULL,
 	accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	is_default INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE IF NOT EXISTS project_meta (
-	project_path TEXT PRIMARY KEY,
+	project_id INTEGER PRIMARY KEY,
 	next_session_number INTEGER NOT NULL DEFAULT 0,
 	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -89,7 +97,7 @@ CREATE TABLE IF NOT EXISTS project_meta (
 );
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
@@ -120,13 +128,13 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
-CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, sort_order ASC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_id, role, streaming, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, sort_order ASC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS summaries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_type TEXT NOT NULL,
@@ -170,7 +178,7 @@ CREATE TABLE IF NOT EXISTS chat_metadata (
 	finish_reason TEXT DEFAULT '',
 	outcome TEXT DEFAULT '',
 	agent_phase TEXT DEFAULT '',
-	project_path TEXT DEFAULT '',
+	project_id INTEGER DEFAULT 0,
 	backend TEXT DEFAULT '',
 	agent_id TEXT DEFAULT '',
 	clawbench_session_id TEXT DEFAULT '',
@@ -205,9 +213,9 @@ CREATE TABLE IF NOT EXISTS session_tags (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	name TEXT NOT NULL,
 	scope TEXT NOT NULL DEFAULT 'project',
-	project_path TEXT NOT NULL DEFAULT '',
+	project_id INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	UNIQUE(name, project_path)
+	UNIQUE(name, project_id)
 );
 CREATE TABLE IF NOT EXISTS session_tag_links (
 	session_id TEXT NOT NULL,
@@ -269,8 +277,10 @@ func insertSessionWithTypeAndTime(t *testing.T, projectPath, id, title, sessionT
 	if archived {
 		archivedInt = 1
 	}
-	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_path, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
-		id, projectPath, title, sessionType, archivedInt, createdAt, createdAt)
+	// The column is an id, but these helpers speak paths: resolve (and register)
+	// the project so rows stay attributable.
+	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
+		id, service.ProjectIDForTest(t, projectPath), title, sessionType, archivedInt, createdAt, createdAt)
 	require.NoError(t, err)
 }
 
@@ -1422,12 +1432,12 @@ func TestGetMessageIDBeforeTime(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "BeforeTime")
 
 	// Insert messages with known timestamps
-	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		"/project", "claude", sid, "user", "msg1", "2025-01-01 10:00:00")
-	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		"/project", "claude", sid, "assistant", "msg2", "2025-01-01 10:00:01")
-	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		"/project", "claude", sid, "user", "msg3", "2025-01-01 10:00:02")
+	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/project"), "claude", sid, "user", "msg1", "2025-01-01 10:00:00")
+	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/project"), "claude", sid, "assistant", "msg2", "2025-01-01 10:00:01")
+	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		service.ProjectIDForTest(t, "/project"), "claude", sid, "user", "msg3", "2025-01-01 10:00:02")
 
 	// Query for messages before 10:00:02 — should return max ID of messages before that time
 	id, err := service.GetMessageIDBeforeTime("/project", "claude", sid, "2025-01-01 10:00:02")
@@ -1613,8 +1623,8 @@ func TestUpdateLastRead_AnchorsToNewestAssistantMessage(t *testing.T) {
 	// deterministic regardless of second boundaries.
 	const msgCreated = "2025-01-01 10:00:00"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', 'final', 0, ?)",
-		"/project", "claude", sid, msgCreated,
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', 'final', 0, ?)",
+		service.ProjectIDForTest(t, "/project"), "claude", sid, msgCreated,
 	)
 	assert.NoError(t, err)
 
@@ -1661,7 +1671,7 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 
 	// Previous turn: a finalized assistant reply from an earlier time.
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
 		"/project", sid,
 	)
 	require.NoError(t, err)
@@ -1669,7 +1679,7 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 	// Current turn: user cancelled while the reply row is still streaming=1 —
 	// exactly the state mark-read sees before FinalizeStreamingMessage runs.
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
 		"/project", sid,
 	)
 	require.NoError(t, err)
@@ -1709,15 +1719,15 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 
 	// Previous turn, finalized long ago.
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// Current turn starts at 10:00:00 — the streaming placeholder is created
 	// then, so created_at is the TURN START (the bug's premise).
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// The user opens the session mid-turn at 10:00:30. The frontend always marks
@@ -1761,12 +1771,12 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 
 	// A question, then the streaming reply it is waiting on.
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'user', 'what is 2+2?', 0)",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'user', 'what is 2+2?', 0)",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'assistant', '', 1)",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'assistant', '', 1)",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	msgID, qID, qContent := service.GetLiveRunState(sid)
@@ -1794,8 +1804,8 @@ func TestUnread_MarkReadAfterCompletionClearsBadge(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Read After Completion")
 
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// The reply lands while the user is viewing the session (the completion
@@ -1826,8 +1836,8 @@ func TestUnread_LegacyRowWithoutCompletedAtFallsBackToCreatedAt(t *testing.T) {
 
 	// Legacy finalized row: completed_at is NULL.
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'legacy reply', 0, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'legacy reply', 0, '2025-01-01 10:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// Never read → unread (last_read_at NULL).
@@ -1852,8 +1862,8 @@ func TestFinalizeStreamingMessage_StampsCompletedAt(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Completed At")
 
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
@@ -1887,8 +1897,8 @@ func TestUnread_CancelledTurnTheUserWasWatchingStaysRead(t *testing.T) {
 
 	// The interrupted reply, created at turn start (10:00:00).
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial', 1, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial', 1, '2025-01-01 10:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// The user cancels at 10:00:05 while watching; the frontend marks read then.
@@ -1923,8 +1933,8 @@ func TestUnread_CompletedTurnWhileAwayIsUnread(t *testing.T) {
 
 	// Previous reply, finalized and read.
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 	_, err = service.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET last_read_at = '2025-01-01 09:30:00' WHERE id = ?", sid)
@@ -1933,8 +1943,8 @@ func TestUnread_CompletedTurnWhileAwayIsUnread(t *testing.T) {
 	// A new turn starts at 10:00:00 and the user stays on it briefly, then
 	// switches away. The turn keeps running and only lands at 10:05:00.
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		"/project", sid)
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
+		service.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
@@ -3746,12 +3756,12 @@ func TestGetSessions_UnreadCount_IgnoresHistoryFromOtherProject(t *testing.T) {
 	insertSessionWithTime(t, "/projectA", "sess-a", "A", "2025-01-01 10:00:00", false)
 
 	// One legitimate unread reply for sess-a, in sess-a's own project.
-	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'real reply', '2025-01-01 10:00:05')", "/projectA", "sess-a")
+	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'real reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectA"), "sess-a")
 	require.NoError(t, err)
 
 	// A stray reply for the SAME session id but tagged with another project.
 	// This is the ISS-420 shape: it must not be attributed to sess-a.
-	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'stray reply', '2025-01-01 10:00:06')", "/projectB", "sess-a")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'stray reply', '2025-01-01 10:00:06')", service.ProjectIDForTest(t, "/projectB"), "sess-a")
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions("/projectA", "")
@@ -3781,13 +3791,13 @@ func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
 	insertSessionWithTime(t, "/projectB", "session-B1", "B1 empty", "2025-01-01 10:00:02", false)
 	insertSessionWithTime(t, "/projectA", "session-archived", "Archived", "2025-01-01 10:00:03", true)
 
-	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'user', 'hello', '2025-01-01 10:00:00')", "/projectA", "session-A1")
+	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'user', 'hello', '2025-01-01 10:00:00')", service.ProjectIDForTest(t, "/projectA"), "session-A1")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'unread reply', '2025-01-01 10:00:05')", "/projectA", "session-A1")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'unread reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectA"), "session-A1")
 	require.NoError(t, err)
 
 	// A2 is read: assistant message created before last_read_at
-	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', '2025-01-01 10:00:02')", "/projectA", "session-A2")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', '2025-01-01 10:00:02')", service.ProjectIDForTest(t, "/projectA"), "session-A2")
 	require.NoError(t, err)
 	_, err = db.Exec("UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:10' WHERE id = 'session-A2'")
 	require.NoError(t, err)
@@ -3826,7 +3836,7 @@ func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
 
 // TestGetOverviewSessions_sameIDAcrossProjects ensures unread counts stay
 // isolated when two projects share the same session id (the natural key is
-// UNIQUE(project_path, backend, id)). A regression test for the case where
+// UNIQUE(backend, id)). A regression test for the case where
 // the unread subquery is keyed only by session_id and would let one project's
 // count leak into the other.
 //
@@ -3840,7 +3850,7 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(`CREATE TABLE chat_sessions (
 		id TEXT NOT NULL,
-		project_path TEXT NOT NULL,
+		project_id INTEGER NOT NULL,
 		backend TEXT NOT NULL,
 		title TEXT NOT NULL,
 		agent_id TEXT DEFAULT '',
@@ -3856,7 +3866,7 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		last_read_at DATETIME,
-		PRIMARY KEY (project_path, backend, id)
+		PRIMARY KEY (project_id, backend, id)
 	)`)
 	require.NoError(t, err)
 
@@ -3866,12 +3876,12 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 
 	// projectA: 2 unread assistant messages (last_read_at is NULL → all unread)
 	for range 2 {
-		_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'a reply', '2025-01-01 10:00:05')", "/projectA", "shared-session")
+		_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'a reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectA"), "shared-session")
 		require.NoError(t, err)
 	}
 	// projectB: 3 unread assistant messages
 	for range 3 {
-		_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'b reply', '2025-01-01 10:00:05')", "/projectB", "shared-session")
+		_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'b reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectB"), "shared-session")
 		require.NoError(t, err)
 	}
 
@@ -5878,9 +5888,9 @@ func TestReplaceSessionHistory_ReplacesMessages(t *testing.T) {
 	projectPath := "/proj"
 	sid := helperCreateSession(t, projectPath, "claude", "Test")
 
-	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'old1', 'm1')", projectPath, sid)
+	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'old1', 'm1')", projectPath, sid)
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', 'old2', 'm2')", projectPath, sid)
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', 'old2', 'm2')", projectPath, sid)
 	require.NoError(t, err)
 
 	// Replace with a single new message.
@@ -5944,7 +5954,7 @@ func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
 	projectPath := "/proj"
 	sid := helperCreateSession(t, projectPath, "claude", "Test")
 
-	_, err := db.Exec("INSERT INTO chat_history (project_path, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'old', 'm1')", projectPath, sid)
+	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'old', 'm1')", projectPath, sid)
 	require.NoError(t, err)
 
 	// Force the transaction to fail AFTER the DELETE has removed the old rows: an
@@ -6551,7 +6561,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	// Force a shared sort_order, which is what an un-dragged list looks like
 	// (and what the migration backfill produces). Ties then fall back to
 	// created_at DESC, id DESC — so the newest session (ids[5]) leads.
-	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_path = ?", projectPath)
+	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projectPath)
 	require.NoError(t, err)
 
 	// Pin the OLDEST session so the page boundary falls between the pinned block

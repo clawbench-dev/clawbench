@@ -56,7 +56,7 @@ func TestBuildBtwContext_IncludesHistoryAndEnvelope(t *testing.T) {
 	insertSessionWithTitle(t, "sess-btw", "t", TitleSourcePlaceholder)
 	insertAutoRenameUserMessage(t, 201, "sess-btw", "为什么并发一高就慢")
 	_, err := WriteExec(
-		"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'assistant', ?, ?, 0)",
+		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 0)",
 		202, `{"blocks":[{"type":"text","text":"让我查一下连接池"}]}`, "sess-btw",
 	)
 	require.NoError(t, err)
@@ -186,8 +186,8 @@ func TestListBtwQuestions_Chronological(t *testing.T) {
 	insertSessionWithTitle(t, "sess-order", "t", TitleSourcePlaceholder)
 	for i, q := range []string{"第一个", "第二个", "第三个"} {
 		_, err := WriteExec(
-			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer)
-			 VALUES (?, '/test', ?, ?, 'a')`,
+			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer)
+			 VALUES (?, 1, ?, ?, 'a')`,
 			"sess-order", 600+i, q,
 		)
 		require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestListBtwQuestions_ScopedToSession(t *testing.T) {
 	insertSessionWithTitle(t, "sess-b", "t", TitleSourcePlaceholder)
 	for _, sid := range []string{"sess-a", "sess-b"} {
 		_, err := WriteExec(
-			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question) VALUES (?, '/test', 1, ?)`,
+			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question) VALUES (?, 1, 1, ?)`,
 			sid, "q-"+sid,
 		)
 		require.NoError(t, err)
@@ -228,7 +228,7 @@ func TestHardDeleteSession_RemovesBtwQuestions(t *testing.T) {
 
 	insertSessionWithTitle(t, "sess-del", "t", TitleSourcePlaceholder)
 	_, err := WriteExec(
-		`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question) VALUES ('sess-del', '/test', 1, 'q')`,
+		`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question) VALUES ('sess-del', 1, 1, 'q')`,
 	)
 	require.NoError(t, err)
 
@@ -248,7 +248,7 @@ func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
 	insertSessionWithTitle(t, "sess-rw", "t", TitleSourcePlaceholder)
 	for id := int64(701); id <= 704; id++ {
 		_, err := WriteExec(
-			"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'assistant', '{}', 'sess-rw', 0)",
+			"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', '{}', 'sess-rw', 0)",
 			id,
 		)
 		require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
 	// Anchored at the anchor message (701, survives) and at a removed one (703).
 	for _, anchor := range []int64{701, 703} {
 		_, err := WriteExec(
-			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question) VALUES ('sess-rw', '/test', ?, 'q')`,
+			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question) VALUES ('sess-rw', 1, ?, 'q')`,
 			anchor,
 		)
 		require.NoError(t, err)
@@ -310,7 +310,7 @@ func TestBuildBtwContext_OmissionNoticeOnOverflow(t *testing.T) {
 	big := strings.Repeat("这是一段很长的历史内容。", 4000)
 	for i := range 5 {
 		_, err := WriteExec(
-			"INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (?, '/test', 'assistant', ?, ?, 0)",
+			"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 0)",
 			int64(410+i), `{"blocks":[{"type":"text","text":"`+big+`"}]}`, "sess-big",
 		)
 		require.NoError(t, err)

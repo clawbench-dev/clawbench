@@ -1640,7 +1640,7 @@ func TestSQLiteStore_NewSQLiteStore_SharedCacheInMemory(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := store.db.Exec("INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented, chunk_index, token_count, has_embedding, embedding_dim, project_path, backend, role, created_at) VALUES ('goroutine-test', 1, 'test', 'test', 0, 1, 0, 0, '/test', 'test', 'user', CURRENT_TIMESTAMP)")
+		_, err := store.db.Exec("INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented, chunk_index, token_count, has_embedding, embedding_dim, project_id, backend, role, created_at) VALUES ('goroutine-test', 1, 'test', 'test', 0, 1, 0, 0, 1, 'test', 'user', CURRENT_TIMESTAMP)")
 		done <- err
 	}()
 
@@ -1661,6 +1661,17 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 	db, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 
+	// The registry: the seeded chunks carry testProjectID, and SearchVector now
+	// resolves testProjectPath read-only, so the row must exist for the lookup to
+	// find the migrated vectors.
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		path TEXT NOT NULL UNIQUE
+	)`)
+	require.NoError(t, err)
+	_, err = db.Exec("INSERT INTO projects (id, path) VALUES (?, ?)", testProjectID, testProjectPath)
+	require.NoError(t, err)
+
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS rag_chunks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1673,7 +1684,7 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 			embedding BLOB,
 			has_embedding INTEGER NOT NULL DEFAULT 0,
 			embedding_dim INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL,
 			role TEXT NOT NULL,
 			created_at DATETIME NOT NULL
@@ -1704,10 +1715,10 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 	res1, err := db.Exec(`
 		INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
 			chunk_index, token_count, embedding, has_embedding, embedding_dim,
-			project_path, backend, role, created_at)
+			project_id, backend, role, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1024, ?, ?, ?, ?)`,
 		"sess-old-1", 1, "old chunk text 1", "old chunk text 1",
-		0, 4, blob1, testProjectPath, testBackendClaude, testRoleAssistant,
+		0, 4, blob1, testProjectID, testBackendClaude, testRoleAssistant,
 		time.Now().Truncate(time.Millisecond))
 	require.NoError(t, err)
 	id1, _ := res1.LastInsertId()
@@ -1715,10 +1726,10 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 	res2, err := db.Exec(`
 		INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
 			chunk_index, token_count, embedding, has_embedding, embedding_dim,
-			project_path, backend, role, created_at)
+			project_id, backend, role, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1024, ?, ?, ?, ?)`,
 		"sess-old-2", 2, "old chunk text 2", "old chunk text 2",
-		0, 4, blob2, testProjectPath, testBackendCodebuddy, testRoleUser,
+		0, 4, blob2, testProjectID, testBackendCodebuddy, testRoleUser,
 		time.Now().Truncate(time.Millisecond))
 	require.NoError(t, err)
 	_, _ = res2.LastInsertId()
@@ -1727,10 +1738,10 @@ func TestSQLiteStore_MigrateExistingEmbeddings_ToVec0(t *testing.T) {
 	_, err = db.Exec(`
 		INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
 			chunk_index, token_count, embedding, has_embedding, embedding_dim,
-			project_path, backend, role, created_at)
+			project_id, backend, role, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?)`,
 		"sess-no-emb", 3, "no embedding chunk", "no embedding chunk",
-		0, 3, nil, testProjectPath, testBackendClaude, testRoleAssistant,
+		0, 3, nil, testProjectID, testBackendClaude, testRoleAssistant,
 		time.Now().Truncate(time.Millisecond))
 	require.NoError(t, err)
 
@@ -1885,4 +1896,47 @@ func TestSQLiteStore_SearchFTS_DoubleQuotesInQuery(t *testing.T) {
 	// Should not crash on double quotes in the query
 	_, err := store.SearchFTS(`"quoted"`, 5, "", "", "", "", "", "", "")
 	assert.NoError(t, err, "SearchFTS should handle double quotes in query without error")
+}
+
+// TestSQLiteStore_SearchDoesNotRegisterProject pins that a search is a read: it
+// must not create a projects row for a path it has never indexed. Both search
+// paths used to resolve through the upserting helper, so querying an unknown
+// project silently invented one.
+func TestSQLiteStore_SearchDoesNotRegisterProject(t *testing.T) {
+	store := setupSQLiteStore(t)
+	_, _ = store.db.Exec("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE)")
+
+	countProjects := func() int {
+		var n int
+		require.NoError(t, store.db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&n))
+		return n
+	}
+	require.Equal(t, 0, countProjects(), "fixture starts with no projects")
+
+	_, err := store.SearchFTS("anything", 5, "/never-opened", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, countProjects(), "an FTS search must not register the project")
+
+	_, err = store.SearchVector(makeTestEmbedding(), 5, "/never-opened-2", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.Equal(t, 0, countProjects(), "a vector search must not register the project")
+}
+
+// TestSQLiteStore_SearchVectorUnknownProjectReturnsNothing pins the scope of the
+// project filter: 0 means "no filter" to vectorFilterSQL, so an unknown project
+// passed through as 0 would return EVERY project's hits. It must instead return
+// nothing, matching SearchFTS.
+func TestSQLiteStore_SearchVectorUnknownProjectReturnsNothing(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+	_, _ = store.db.Exec("CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE)")
+	_, _ = store.db.Exec("INSERT INTO projects (id, path) VALUES (1, '/indexed')")
+
+	// One chunk belonging to /indexed.
+	require.NoError(t, store.InsertChunks([]Chunk{makeTestChunk("sess-a", 1, 0, testDBQueryOptimization)}))
+
+	// Searching for a project that does not exist must not fall back to an
+	// unfiltered search.
+	hits, err := store.SearchVector(makeTestEmbedding(), 5, "/not-a-project", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, hits, "an unknown project must yield no hits, not every project's hits")
 }

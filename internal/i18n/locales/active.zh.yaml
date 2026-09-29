@@ -7,6 +7,7 @@ ShareSessionNoContent: 该会话暂无可分享的消息
 ShareSessionInvalidSelection: 部分选中的消息无法分享（可能仍在生成中）
 QueueIdRequired: queueId 为必填项
 QueueInjectStranded: 插入失败且消息无法回到队列，请重新发送该消息
+QueueMergeFailed: 合并排队消息失败
 NewSession: 新会话
 NewSessionN: 新会话 {{.N}}
 FileMessage: 文件消息

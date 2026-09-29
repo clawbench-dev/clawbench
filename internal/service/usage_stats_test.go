@@ -61,21 +61,25 @@ func insertUsageSeed(t *testing.T, db *sql.DB, s usageSeed) {
 		}
 	}
 
+	// Project-scoped columns store an id, so resolve (and register) the path the
+	// seed names; the report resolves it back to a path for the group label.
+	projectID := service.ProjectIDForTest(t, s.project)
+
 	// Chat session: insert only if not present.
 	var sid string
 	err := db.QueryRow("SELECT id FROM chat_sessions WHERE id = ?", s.sessionID).Scan(&sid)
 	if errors.Is(err, sql.ErrNoRows) {
 		if _, err := db.Exec(
-			"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, 't', ?)",
-			s.sessionID, s.project, s.backend, s.agentID,
+			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, ?, 't', ?)",
+			s.sessionID, projectID, s.backend, s.agentID,
 		); err != nil {
 			t.Fatalf("insert session: %v", err)
 		}
 	}
 
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', '{}', 0, ?)",
-		s.project, s.backend, s.sessionID, s.createdAt,
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', '{}', 0, ?)",
+		projectID, s.backend, s.sessionID, s.createdAt,
 	)
 	if err != nil {
 		t.Fatalf("insert history: %v", err)
@@ -86,10 +90,10 @@ func insertUsageSeed(t *testing.T, db *sql.DB, s usageSeed) {
 	if _, err := db.Exec(
 		`INSERT INTO chat_metadata (message_id, model, input_tokens, output_tokens, total_tokens,
 			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at,
-			project_path, backend, agent_id, clawbench_session_id)
+			project_id, backend, agent_id, clawbench_session_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		msgID, s.model, s.input, s.output, s.total, s.cacheHit, s.cacheMiss, s.credit, s.costUSD, s.createdAt,
-		s.project, s.backend, s.agentID, s.sessionID,
+		projectID, s.backend, s.agentID, s.sessionID,
 	); err != nil {
 		t.Fatalf("insert metadata: %v", err)
 	}
@@ -485,35 +489,35 @@ func TestUsageStatsResendAfterRewindNotDoubleCounted(t *testing.T) {
 
 	sessID := "s-rewind"
 	_, err := db.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/p', 'claude', 't', 'a')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'claude', 't', 'a')",
 		sessID,
 	)
 	require.NoError(t, err)
 
 	// Turn 1: assistant reply consumed 100 tokens.
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES ('/p', 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:00:00')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (1, 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:00:00')",
 		sessID,
 	)
 	require.NoError(t, err)
 	asst1ID, _ := res.LastInsertId()
 	_, err = db.Exec(
-		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_path, backend, agent_id, clawbench_session_id)
-		 VALUES (?, 'opus', 100, 100, '2026-01-10 10:00:00', '/p', 'claude', 'a', ?)`,
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_id, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 100, 100, '2026-01-10 10:00:00', 1, 'claude', 'a', ?)`,
 		asst1ID, sessID,
 	)
 	require.NoError(t, err)
 
 	// Turn 2: another assistant reply, then rewind back to turn 1.
 	res, err = db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES ('/p', 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:05:00')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (1, 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:05:00')",
 		sessID,
 	)
 	require.NoError(t, err)
 	asst2ID, _ := res.LastInsertId()
 	_, err = db.Exec(
-		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_path, backend, agent_id, clawbench_session_id)
-		 VALUES (?, 'opus', 50, 50, '2026-01-10 10:05:00', '/p', 'claude', 'a', ?)`,
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_id, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 50, 50, '2026-01-10 10:05:00', 1, 'claude', 'a', ?)`,
 		asst2ID, sessID,
 	)
 	require.NoError(t, err)
@@ -530,15 +534,15 @@ func TestUsageStatsResendAfterRewindNotDoubleCounted(t *testing.T) {
 
 	// Re-send: a new AUTOINCREMENT id, so a new distinct ledger row.
 	res, err = db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES ('/p', 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:10:00')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (1, 'claude', ?, 'assistant', '{}', 0, '2026-01-10 10:10:00')",
 		sessID,
 	)
 	require.NoError(t, err)
 	asst3ID, _ := res.LastInsertId()
 	require.NotEqual(t, asst2ID, asst3ID, "AUTOINCREMENT must not reuse ids")
 	_, err = db.Exec(
-		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_path, backend, agent_id, clawbench_session_id)
-		 VALUES (?, 'opus', 100, 100, '2026-01-10 10:10:00', '/p', 'claude', 'a', ?)`,
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, created_at, project_id, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 100, 100, '2026-01-10 10:10:00', 1, 'claude', 'a', ?)`,
 		asst3ID, sessID,
 	)
 	require.NoError(t, err)
@@ -566,18 +570,18 @@ func TestUsageStatsForkDoesNotDoubleCountOnBackfill(t *testing.T) {
 	ensureAgentsTable(t, db)
 
 	sid := "fork-src"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/p', 'claude', 'T', 'a')", sid)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'claude', 'T', 'a')", sid)
 	require.NoError(t, err)
 	content := `{"blocks":[{"type":"text","text":"hi"}],"metadata":{"model":"opus","inputTokens":100,"totalTokens":100}}`
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('/p','claude',?,'assistant',?,0)",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (1,'claude',?,'assistant',?,0)",
 		sid, content,
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
 	_, err = db.Exec(
-		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, project_path, backend, agent_id, clawbench_session_id)
-		 VALUES (?, 'opus', 100, 100, '/p', 'claude', 'a', ?)`, msgID, sid,
+		`INSERT INTO chat_metadata (message_id, model, input_tokens, total_tokens, project_id, backend, agent_id, clawbench_session_id)
+		 VALUES (?, 'opus', 100, 100, 1, 'claude', 'a', ?)`, msgID, sid,
 	)
 	require.NoError(t, err)
 
@@ -607,10 +611,10 @@ func TestSaveMetadataAttributionPopulated(t *testing.T) {
 	ensureAgentsTable(t, db)
 
 	sid := "attr-sess"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/proj', 'codebuddy', 'T', 'codebuddy')", sid)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'codebuddy', 'T', 'codebuddy')", sid)
 	require.NoError(t, err)
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES ('/proj','codebuddy',?,'assistant','{}',0)",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (1,'codebuddy',?,'assistant','{}',0)",
 		sid,
 	)
 	require.NoError(t, err)
@@ -618,11 +622,12 @@ func TestSaveMetadataAttributionPopulated(t *testing.T) {
 
 	require.NoError(t, service.SaveMetadata(msgID, &ai.Metadata{Model: "glm", TotalTokens: 5}))
 
-	var project, backend, agentID, clawSID string
+	var projectID int64
+	var backend, agentID, clawSID string
 	require.NoError(t, db.QueryRow(
-		"SELECT project_path, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
-	).Scan(&project, &backend, &agentID, &clawSID))
-	assert.Equal(t, "/proj", project)
+		"SELECT project_id, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
+	).Scan(&projectID, &backend, &agentID, &clawSID))
+	assert.Equal(t, service.ProjectIDForTest(t, "/proj"), projectID)
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "codebuddy", agentID)
 	assert.Equal(t, sid, clawSID)

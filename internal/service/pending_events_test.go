@@ -1036,9 +1036,17 @@ func setupReadGateDB(t *testing.T) (*sql.DB, func()) {
 			expires_at DATETIME NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			title TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
@@ -1046,7 +1054,7 @@ func setupReadGateDB(t *testing.T) (*sql.DB, func()) {
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -1118,10 +1126,10 @@ func TestGetPendingEvents_ReadSessionSuppressed(t *testing.T) {
 	defer cleanup()
 
 	// Session read at "now"; the reply landed before that, so it is read.
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_read', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_read', 1, datetime('now'))`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
-		VALUES ('/p', 'assistant', 'reply', 's_read', 0, datetime('now','-1 hour'))`)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, streaming, completed_at)
+		VALUES (1, 'assistant', 'reply', 's_read', 0, datetime('now','-1 hour'))`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1155,11 +1163,11 @@ func TestGetPendingEvents_ProjectPathCorrelation(t *testing.T) {
 	// Session lives in /p and was read one hour ago. The timestamps must be
 	// distinct: the comparison is `>`, so equal (same-second) values would make
 	// this test pass with or without the correlation and prove nothing.
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_mismatch', '/p', datetime('now','-1 hour'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_mismatch', 1, datetime('now','-1 hour'))`)
 	require.NoError(t, err)
 	// The reply row carries the OTHER project (the ISS-420 shape) and is NEWER
 	// than last_read_at, so only the project_path correlation excludes it.
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, streaming, completed_at)
 		VALUES ('/other', 'assistant', 'reply', 's_mismatch', 0, datetime('now'))`)
 	require.NoError(t, err)
 
@@ -1182,10 +1190,10 @@ func TestGetPendingEvents_UnreadSessionNotifies(t *testing.T) {
 	defer cleanup()
 
 	// last_read_at is before the reply, so the reply is unread.
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_unread', '/p', datetime('now','-2 hours'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_unread', 1, datetime('now','-2 hours'))`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
-		VALUES ('/p', 'assistant', 'reply', 's_unread', 0, datetime('now','-1 hour'))`)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, streaming, completed_at)
+		VALUES (1, 'assistant', 'reply', 's_unread', 0, datetime('now','-1 hour'))`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1205,7 +1213,7 @@ func TestGetPendingEvents_NeverReadSessionNotifies(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path) VALUES ('s_new', '/p')`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id) VALUES ('s_new', 1)`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1226,7 +1234,7 @@ func TestGetPendingEvents_PermissionPendingNeverSuppressed(t *testing.T) {
 	defer cleanup()
 
 	// Fully read session — but permission_pending is exempt from the gate.
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_perm', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_perm', 1, datetime('now'))`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(7 * 24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1299,10 +1307,10 @@ func TestGetPendingEvents_TaskExecutionIsAuthorityOverSession(t *testing.T) {
 	defer cleanup()
 
 	// Session fully read, with no newer reply after the read.
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_both', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_both', 1, datetime('now'))`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
-		VALUES ('/p', 'assistant', 'reply', 's_both', 0, datetime('now','-1 hour'))`)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, streaming, completed_at)
+		VALUES (1, 'assistant', 'reply', 's_both', 0, datetime('now','-1 hour'))`)
 	require.NoError(t, err)
 
 	// The run itself is UNREAD (no read_at) — the task badge is lit.
@@ -1329,7 +1337,7 @@ func TestGetPendingEvents_ReadTaskExecutionWithReadSessionSuppressed(t *testing.
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_both2', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_both2', 1, datetime('now'))`)
 	require.NoError(t, err)
 	_, err = db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status, read_at)
 		VALUES (100, 1, 's_both2', 'completed', datetime('now'))`)
@@ -1357,7 +1365,7 @@ func TestGetPendingEvents_TaskEventWithoutExecutionIdNotifies(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_noexec', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_noexec', 1, datetime('now'))`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1380,10 +1388,10 @@ func TestGetPendingEvents_CursorAdvancesPastSuppressedEvent(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_read2', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_read2', 1, datetime('now'))`)
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, streaming, completed_at)
-		VALUES ('/p', 'assistant', 'reply', 's_read2', 0, datetime('now','-1 hour'))`)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, streaming, completed_at)
+		VALUES (1, 'assistant', 'reply', 's_read2', 0, datetime('now','-1 hour'))`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1412,7 +1420,7 @@ func TestGetPendingEvents_UserMessageNotReadGated(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, last_read_at) VALUES ('s_um', '/p', datetime('now'))`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_um', 1, datetime('now'))`)
 	require.NoError(t, err)
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)

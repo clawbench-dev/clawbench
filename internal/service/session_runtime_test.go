@@ -295,9 +295,11 @@ func TestCancelSession_CancelsContextAndLeavesQueueToTheRun(t *testing.T) {
 		cleanup()
 		db.Close()
 	}()
+	// The fixture references projects by path literals in SQL subqueries.
+	SeedTestProjectsForTest(t)
 
 	sessionID := "session-cancel-queue"
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'codebuddy', 'Cancel')", sessionID)
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'Cancel')", sessionID)
 	require.NoError(t, err)
 
 	ctx, created := TryClaimSessionRun(sessionID)
@@ -551,9 +553,15 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
+	// The projects registry: rows below store project ids, and the resolver
+	// registers paths through it.
+	_, err = db.Exec(ProjectsDDL)
+	if err != nil {
+		t.Fatalf("create projects table: %v", err)
+	}
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS chat_history (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		project_path TEXT NOT NULL,
+		project_id INTEGER NOT NULL,
 		role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 		content TEXT NOT NULL,
 		files TEXT,
@@ -574,8 +582,8 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 
 func insertTestMessage(t *testing.T, db *sql.DB, sessionID, role, content string) {
 	t.Helper()
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 0)",
-		"/test", role, content, sessionID)
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 0)",
+		ProjectIDForTest(t, "/test"), role, content, sessionID)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -994,7 +1002,7 @@ func TestGetSessionResponsePreviewRaw_IgnoresSummaryStripping(t *testing.T) {
 	insertTestMessage(t, db, "session-preview-summary", "user", "问题")
 	var asstID int64
 	require.NoError(t, db.QueryRow(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-preview-summary', 'claude', 0) RETURNING id",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-preview-summary', 'claude', 0) RETURNING id",
 		string(contentJSON)).Scan(&asstID))
 
 	// Insert a reading summary for the assistant message — this causes
@@ -1032,12 +1040,12 @@ func TestGetAssistantRawContents_ReturnsUnmodifiedContent(t *testing.T) {
 	insertTestMessage(t, db, "session-raw-1", "user", "问题")
 	insertTestMessage(t, db, "session-raw-1", "assistant", string(contentJSON))
 	// Streaming assistant message must be excluded
-	_, err := db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"流式中"}]}`)
+	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'session-raw-1', 'claude', 1)", `{"blocks":[{"type":"text","text":"流式中"}]}`)
 	require.NoError(t, err)
 	// Queued message must be excluded. It lives in queued_messages now (no
 	// chat_history row until dequeue), so seeding it there is what pins the
 	// exclusion: nothing from the queue may leak into the raw contents.
-	_, err = db.Exec("INSERT INTO queued_messages (project_path, session_id, backend, queue_id, content) VALUES ('/test', 'session-raw-1', 'claude', 'q-raw-1', ?)", `{"blocks":[{"type":"text","text":"排队中"}]}`)
+	_, err = db.Exec("INSERT INTO queued_messages (project_id, session_id, backend, queue_id, content) VALUES ('/test', 'session-raw-1', 'claude', 'q-raw-1', ?)", `{"blocks":[{"type":"text","text":"排队中"}]}`)
 	require.NoError(t, err)
 
 	contents, err := GetAssistantRawContents("session-raw-1")
@@ -1087,10 +1095,10 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	insertTestMessage(t, db, "session-emit-1", "assistant", string(contentJSON))
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
-		"session-emit-1", "/home/user/test-project", "codebuddy", "Test Session", "agent-1")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
+		"session-emit-1", ProjectIDForTest(t, "/home/user/test-project"), "codebuddy", "Test Session", "agent-1")
 	require.NoError(t, err)
 
 	// Set up ws manager and a subscriber to capture the event
@@ -1283,10 +1291,10 @@ func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	defer cleanup()
 
 	// Insert a session row with an agent so the event carries agent_id
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
-		"session-task-1", "/home/user/project", "codebuddy", "test task", "task-agent-1")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
+		"session-task-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "test task", "task-agent-1")
 	require.NoError(t, err)
 
 	mgr := ws.NewManagerForTest()
@@ -1352,10 +1360,10 @@ func TestEmitTaskEvent_NilManager(t *testing.T) {
 
 // --- executeTask tests (covers emitTaskEvent call sites in scheduler.go) ---
 
-const execTaskSchema = `
+const execTaskSchema = ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 	content TEXT NOT NULL,
 	files TEXT,
@@ -1370,7 +1378,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -1384,11 +1392,11 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	UNIQUE(project_path, backend, id)
+	UNIQUE(backend, id)
 );
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
@@ -1416,8 +1424,8 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 `
 
@@ -1428,6 +1436,10 @@ func setupExecTaskDB(t *testing.T) *sql.DB {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(execTaskSchema)
 	require.NoError(t, err)
+	// The fixture references projects by path literals in SQL subqueries. Seeded
+	// on the local handle: this helper returns before any caller installs the DB
+	// globally, so the package-level seeding helper would use a stale handle.
+	SeedTestProjectsOnDB(t, db)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -1451,7 +1463,7 @@ func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	// Insert a task into DB so the foreign key in task_executions works
-	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"/test-project", "Test Task", "0 * * * *", "test-unsupported-backend", "hello", "unlimited", "active")
 	require.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1527,7 +1539,7 @@ func TestExecuteTask_ExecuteStreamError(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	// Insert a task into DB
-	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"/test-project", "Stream Error Task", "0 * * * *", "test-codex", "hello", "unlimited", "active")
 	require.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1607,7 +1619,7 @@ func TestExecuteTask_AgentNotFound(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	// Insert a task
-	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+	result, err := db.Exec(`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, repeat_mode, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"/test-project", "Missing Agent Task", "0 * * * *", "nonexistent-agent", "hello", "unlimited", "active")
 	require.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1679,7 +1691,7 @@ func TestExecuteTask_SessionExecutor_CompletedWithTerminalEvent(t *testing.T) {
 		finish_reason TEXT DEFAULT '',
 		outcome TEXT DEFAULT '',
 		agent_phase TEXT DEFAULT '',
-		project_path TEXT DEFAULT '',
+		project_id INTEGER DEFAULT 0,
 		backend TEXT DEFAULT '',
 		agent_id TEXT DEFAULT '',
 		clawbench_session_id TEXT DEFAULT '',
@@ -1845,10 +1857,10 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	defer cleanup()
 
 	// Insert a session row so GetSessionProjectPath can look it up
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
-		"session-pp-1", "/home/user/project", "codebuddy", "Test Session")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+		"session-pp-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Test Session")
 	require.NoError(t, err)
 
 	mgr := ws.NewManagerForTest()
@@ -1893,10 +1905,10 @@ func TestTriggerChatSummarization_BroadcastsWSUpdate(t *testing.T) {
 
 	// Insert session + messages
 	sessionID := "test-simple-broadcast"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (200, '/test', 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (200, '/test', 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"Here's the answer."}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	triggerChatSummarization(context.Background(), sessionID)
 
@@ -1923,10 +1935,10 @@ func TestTriggerChatSummarization_SaveSummaryError(t *testing.T) {
 	_, _ = db.Exec("DROP TABLE summaries")
 
 	sessionID := "test-simple-save-error"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (500, '/test', 'user', 'hello', ?, 0)", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (500, '/test', 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"The answer is 42."}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	// Should not panic, just log warning and return
 	triggerChatSummarization(context.Background(), sessionID)
@@ -2109,7 +2121,7 @@ func TestFinalizeOrphanedStreamingMessages_WithOrphan(t *testing.T) {
 	// Insert a streaming=1 assistant message (orphan)
 	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", validContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2155,7 +2167,7 @@ func TestFinalizeOrphanedStreamingMessages_WithAlreadyCancelledContent(t *testin
 	// Insert a streaming=1 message that already has cancelled=true
 	cancelledContent := `{"blocks":[{"type":"text","text":"stopped"}],"cancelled":true}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", cancelledContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2192,7 +2204,7 @@ func TestFinalizeOrphanedStreamingMessages_WithInvalidJSON(t *testing.T) {
 	// Insert a streaming=1 message with invalid JSON content
 	invalidContent := "this is not JSON at all"
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", invalidContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2254,7 +2266,7 @@ func TestFinalizeOrphanedStreamingMessages_ThinkingBackfilled(t *testing.T) {
 	sessionID := "session-orphan-thinking"
 	content := `{"blocks":[{"type":"thinking","text":"deep reasoning..."},{"type":"text","text":"partial"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", content, sessionID,
 	)
 	require.NoError(t, err)
@@ -2318,7 +2330,7 @@ func TestFinalizeOrphanedStreamingMessages_ThinkingAlreadySlimmed(t *testing.T) 
 	existingID := "think-orphan-1"
 	content := `{"blocks":[{"type":"thinking","think_id":"` + existingID + `"},{"type":"text","text":"partial"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", content, sessionID,
 	)
 	require.NoError(t, err)
@@ -2366,7 +2378,7 @@ func TestFinalizeOrphanedStreamingMessages_UserCancelNoWarning(t *testing.T) {
 	// Insert a streaming=1 assistant message (orphan)
 	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", validContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2405,12 +2417,12 @@ func TestFinalizeOrphanedStreamingMessages_MultipleOrphans(t *testing.T) {
 	content1 := `{"blocks":[{"type":"text","text":"first partial"}]}`
 	content2 := `{"blocks":[{"type":"text","text":"second partial"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", content1, sessionID,
 	)
 	require.NoError(t, err)
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", content2, sessionID,
 	)
 	require.NoError(t, err)
@@ -2443,7 +2455,7 @@ func TestSetSessionRunning_False_NoOrphanFinalization(t *testing.T) {
 	// Insert a streaming=1 orphan message
 	validContent := `{"blocks":[{"type":"text","text":"orphaned text"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", validContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2477,7 +2489,7 @@ func TestFinalizeOrphanedMessages_ExplicitCall(t *testing.T) {
 	// Insert a streaming=1 orphan message
 	validContent := `{"blocks":[{"type":"text","text":"orphaned text"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", validContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2510,7 +2522,7 @@ func TestFinalizeOrphanedMessages_UserCancelNoWarning(t *testing.T) {
 	// Insert a streaming=1 orphan message
 	validContent := `{"blocks":[{"type":"text","text":"partial answer"}]}`
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", validContent, sessionID,
 	)
 	require.NoError(t, err)
@@ -2545,9 +2557,9 @@ func TestTriggerChatSummarization_AlwaysExtracts(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-enabled-always"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"Answer"}]}`
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_path, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
+	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
 	// Summarization is always enabled — a summary should be created.
 	triggerChatSummarization(context.Background(), sessionID)
@@ -2591,7 +2603,7 @@ func TestSummarizeSimple_NilWSManager(t *testing.T) {
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "test-simple-nil-ws"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/test', 'claude', 'test')", sessionID)
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'claude', 'test')", sessionID)
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "The answer."}}
 
@@ -2640,9 +2652,9 @@ func TestRespondPermission_SessionNotRunning(t *testing.T) {
 	defer cleanup()
 
 	// Create a session with an agent_id
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-1")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-1")
 	require.NoError(t, err)
 
 	// No ACP connection — GetConn returns nil
@@ -2661,9 +2673,9 @@ func TestRespondPermission_PermPrefixStripped(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix")
 	require.NoError(t, err)
 
 	// ToolCallID with perm_ prefix — the function will fail at GetConn (no ACP conn)
@@ -2682,10 +2694,10 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 	defer cleanup()
 
 	// Create a session with a title
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
-		"session-cancelled-1", "/home/user/project", "codebuddy", "Cancelled Session")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+		"session-cancelled-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Cancelled Session")
 	require.NoError(t, err)
 
 	mgr := ws.NewManagerForTest()
@@ -2730,10 +2742,10 @@ func TestEmitSessionEvent_Completed_DingTalkStarted(t *testing.T) {
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 	`)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
-		"session-dt-1", "/home/user/project", "codebuddy", "DT Test")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+		"session-dt-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "DT Test")
 	require.NoError(t, err)
 
 	content := model.ContentBlock{Type: "text", Text: "AI response"}
@@ -2791,9 +2803,9 @@ func setupPushNotificationTest(t *testing.T, sessionID string) *sql.DB {
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 	`)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/home/user/project", "codebuddy", "Push Test")
 	require.NoError(t, err)
 
@@ -3100,7 +3112,7 @@ func TestFinalizeOrphanedStreamingMessages_ScanError(t *testing.T) {
 
 	_, err = db.Exec(`CREATE TABLE chat_history (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		project_path TEXT NOT NULL,
+		project_id INTEGER NOT NULL,
 		role TEXT NOT NULL,
 		content TEXT NOT NULL,
 		files TEXT,
@@ -3115,13 +3127,13 @@ func TestFinalizeOrphanedStreamingMessages_ScanError(t *testing.T) {
 	// Create a view that swaps id and content columns to force a scan error
 	// When Scan(&m.id, &m.content) gets (string, int), it will fail on the id scan.
 	_, err = db.Exec(`CREATE VIEW chat_history_bad_scan AS
-		SELECT content as id, CAST(id AS TEXT) as content, project_path, role, session_id, backend, streaming
+		SELECT content as id, CAST(id AS TEXT) as content, project_id, role, session_id, backend, streaming
 		FROM chat_history`)
 	require.NoError(t, err)
 
 	sessionID := "session-scan-err"
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", "not-a-number", sessionID,
 	)
 	require.NoError(t, err)
@@ -3150,7 +3162,7 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 	for _, d := range []*sql.DB{readDB, writeDB} {
 		_, err = d.Exec(`CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			files TEXT,
@@ -3167,7 +3179,7 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 
 	sessionID := "session-write-err"
 	_, err = readDB.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 1)",
 		"/test", "assistant", `{"blocks":[{"type":"text","text":"partial"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -3189,9 +3201,9 @@ func TestRespondPermission_NilClient(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client")
 	require.NoError(t, err)
 
 	mgr := ai.GetACPConnManager()
@@ -3211,9 +3223,9 @@ func TestRespondPermission_EmptyAcpSID(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid")
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3235,9 +3247,9 @@ func TestRespondPermission_NoPendingPermission(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending")
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3259,9 +3271,9 @@ func TestRespondPermission_ShortToolCallID_NoPrefixStrip(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id")
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3283,9 +3295,9 @@ func TestRespondPermission_PermPrefixStrippedThenNoPending(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-strip")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-strip")
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3307,9 +3319,9 @@ func TestRespondPermission_Success(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-ok")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-ok")
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3333,9 +3345,9 @@ func TestRespondPermission_Cancelled(t *testing.T) {
 	cleanup := SetDBForTest(db, db)
 	defer cleanup()
 
-	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = '/test'), 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel")
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3375,10 +3387,10 @@ func TestEmitSessionEvent_Completed_FeishuStarted(t *testing.T) {
 		CREATE INDEX IF NOT EXISTS idx_pending_expires ON pending_events(expires_at);
 	`)
 	require.NoError(t, err)
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_path TEXT, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
+	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, ?, ?)",
-		"session-feishu-1", "/home/user/project", "codebuddy", "Feishu Test")
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+		"session-feishu-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Feishu Test")
 	require.NoError(t, err)
 
 	content := model.ContentBlock{Type: "text", Text: "AI response"}

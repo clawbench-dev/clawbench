@@ -27,9 +27,17 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 	db.SetMaxOpenConns(1)
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -47,11 +55,11 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -65,7 +73,7 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 		CREATE TABLE IF NOT EXISTS queued_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL DEFAULT '',
 			queue_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -124,6 +132,14 @@ func setupTestDBForSessionCommand(t *testing.T) *sql.DB {
 
 	cleanup := SetDBForTest(db, db)
 	t.Cleanup(cleanup)
+
+	// Seed the registry rows the fixtures below reference: numeric ids 1 and 2,
+	// plus the path literals used in SQL subqueries (several assertions read the
+	// path back out). Seeding goes through WriteExec, so it must run AFTER the
+	// test DB is installed.
+	_, err = db.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj'), (2, '/proj2')")
+	require.NoError(t, err)
+	SeedTestProjectsForTest(t)
 	return db
 }
 
@@ -163,7 +179,7 @@ func TestBuildChatRequest_CompactedFlagConsumedOnce(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'T', '', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'T', '', 'default', '', 'chat')",
 		"sess-compact",
 	)
 	require.NoError(t, err)
@@ -190,7 +206,7 @@ func TestBuildChatRequest_CompactCommandDoesNotConsumeFlag(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'T', '', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'T', '', 'default', '', 'chat')",
 		"sess-cmd",
 	)
 	require.NoError(t, err)
@@ -214,7 +230,7 @@ func TestFindSessionsByPrefix_ArchivedExcluded(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, '/proj', 'codebuddy', 'Archived', 'agent1', 'default', '', 'chat', 1)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, 1, 'codebuddy', 'Archived', 'agent1', 'default', '', 'chat', 1)",
 		"a1b2c3d4-1111-1111-1111-111111111111",
 	)
 	if err != nil {
@@ -235,14 +251,14 @@ func TestFindSessionsByPrefix(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test Session', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Test Session', 'agent1', 'default', '', 'chat')",
 		"a1b2c3d4-1111-1111-1111-111111111111",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Another Session', 'agent2', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Another Session', 'agent2', 'default', '', 'chat')",
 		"b2c3d4e5-2222-2222-2222-222222222222",
 	)
 	if err != nil {
@@ -282,7 +298,7 @@ func TestFindSessionsByPrefix_CaseInsensitive(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
 		"a1b2c3d4-1111-1111-1111-111111111111",
 	)
 	if err != nil {
@@ -303,7 +319,7 @@ func TestFindRunningSessionsByPrefix(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
 		"a1b2c3d4-1111-1111-1111-111111111111",
 	)
 	if err != nil {
@@ -350,14 +366,14 @@ func TestListRecentSessions(t *testing.T) {
 
 	// Insert two sessions
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Session A', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Session A', 'agent1', 'default', '', 'chat')",
 		"a1b2c3d4-1111-1111-1111-111111111111",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Session B', 'agent2', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Session B', 'agent2', 'default', '', 'chat')",
 		"b2c3d4e5-2222-2222-2222-222222222222",
 	)
 	if err != nil {
@@ -648,12 +664,12 @@ func TestBuildChatRequest_ResumeWithExternalID_NonACP(t *testing.T) {
 
 	sessionID := "sess-resume-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat', ?)",
 		sessionID, "ext-123",
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"hello"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -672,17 +688,17 @@ func TestBuildChatRequest_ResumeWithoutExternalID_Fork(t *testing.T) {
 
 	sessionID := "sess-fork-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"user message"}]}`, sessionID,
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"assistant reply"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -706,17 +722,17 @@ func TestBuildChatRequest_ResumeACPWithForkContext(t *testing.T) {
 
 	sessionID := "sess-acp-fork"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"msg"}]}`, sessionID,
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"reply"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -735,12 +751,12 @@ func TestBuildChatRequest_ResumeACPWithExternalID(t *testing.T) {
 
 	sessionID := "sess-acp-ext"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat', ?)",
 		sessionID, "ext-acp-123",
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"hi"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -894,13 +910,13 @@ func TestBuildForkContext_WithMessages(t *testing.T) {
 	sessionID := "fork-sess-1"
 	// Insert user message
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"hello user"}]}`, sessionID,
 	)
 	require.NoError(t, err)
 	// Insert assistant message
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"hello assistant"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -917,7 +933,7 @@ func TestBuildForkContext_SkipsEmptyContent(t *testing.T) {
 	sessionID := "fork-sess-empty"
 	// Insert user message with no text blocks
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -938,7 +954,7 @@ func TestBuildForkContext_SkipsInvalidJSON(t *testing.T) {
 	// sync replay) never reached the forked session. It is now recovered as
 	// plain text, so the model sees the same history a direct send would inject.
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", "not valid json", sessionID,
 	)
 	require.NoError(t, err)
@@ -955,7 +971,7 @@ func TestBuildForkContext_SkipsEmptyTextBlocks(t *testing.T) {
 	sessionID := "fork-sess-4"
 	// Insert message with empty text block
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":""}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -971,7 +987,7 @@ func TestBuildForkContext_MultipleTextBlocks(t *testing.T) {
 	sessionID := "fork-sess-5"
 	// Insert message with multiple text blocks
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"first part"},{"type":"thinking","text":"thinking part"},{"type":"text","text":"second part"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -993,14 +1009,14 @@ func TestBuildForkContext_PreservesSummarizedAssistant(t *testing.T) {
 
 	sessionID := "fork-sess-summarized"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"user question"}]}`, sessionID,
 	)
 	require.NoError(t, err)
 	// Insert assistant message, then give it a reading summary — this used to
 	// trigger content stripping in GetMessagesBySessionID.
 	res, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"assistant answer"},{"type":"tool_use","id":"t1","name":"Read","input":{},"output":"file contents"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1062,7 +1078,7 @@ func TestHandleACPCleanup_NonACPTransport(t *testing.T) {
 	// Insert session so GetSessionTransport doesn't panic on nil DB
 	sessionID := "cleanup-cli-sess"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'cli-agent', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', 'cli-agent', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1077,7 +1093,7 @@ func TestHandleACPCleanup_SessionTransportACP(t *testing.T) {
 
 	sessionID := "acp-session-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, transport) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat', ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, transport) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat', ?)",
 		sessionID, "acp-stdio",
 	)
 	require.NoError(t, err)
@@ -1098,7 +1114,7 @@ func TestHandleACPCleanup_NoSessionTransport_AgentACP(t *testing.T) {
 
 	sessionID := "acp-agent-sess"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'acp-agent', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', 'acp-agent', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1117,7 +1133,7 @@ func TestHandleACPCleanup_UnknownAgent(t *testing.T) {
 
 	sessionID := "unknown-agent-sess"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'nonexistent-agent', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', 'nonexistent-agent', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1139,18 +1155,18 @@ func TestScanDingTalkSessionInfos_MultipleRows(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj1', 'claude', 'Session 1', 'agent1', 'default', 'model-a', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Session 1', 'agent1', 'default', 'model-a', 'chat')",
 		"scan-1",
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj2', 'codebuddy', 'Session 2', 'agent2', 'default', 'model-b', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 2, 'codebuddy', 'Session 2', 'agent2', 'default', 'model-b', 'chat')",
 		"scan-2",
 	)
 	require.NoError(t, err)
 
 	rows, err := dbRead.Query(
-		`SELECT id, title, project_path, backend, agent_id, model FROM chat_sessions WHERE id IN (?, ?) ORDER BY id`,
+		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model FROM chat_sessions s LEFT JOIN projects p ON p.id = s.project_id WHERE s.id IN (?, ?) ORDER BY s.id`,
 		"scan-1", "scan-2",
 	)
 	require.NoError(t, err)
@@ -1160,7 +1176,7 @@ func TestScanDingTalkSessionInfos_MultipleRows(t *testing.T) {
 	require.Len(t, results, 2)
 	assert.Equal(t, "scan-1", results[0].ID)
 	assert.Equal(t, "Session 1", results[0].Title)
-	assert.Equal(t, "/proj1", results[0].ProjectPath)
+	assert.Equal(t, "/proj", results[0].ProjectPath)
 	assert.Equal(t, "claude", results[0].Backend)
 	assert.Equal(t, "agent1", results[0].AgentID)
 	assert.Equal(t, "model-a", results[0].Model)
@@ -1176,7 +1192,7 @@ func TestDingTalkSessionInfo_AllFields(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Full Info', 'agent1', 'default', 'model-x', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Full Info', 'agent1', 'default', 'model-x', 'chat')",
 		"full-info-1",
 	)
 	require.NoError(t, err)
@@ -1204,7 +1220,7 @@ func TestListRecentSessions_ZeroOrNegativeLimit(t *testing.T) {
 
 	// Insert a session
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Session', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Session', 'agent1', 'default', '', 'chat')",
 		"limit-test-1",
 	)
 	require.NoError(t, err)
@@ -1238,12 +1254,12 @@ func TestFindRunningSessionsByPrefix_PrefixFilter(t *testing.T) {
 
 	// Insert two sessions
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Sess A', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Sess A', 'agent1', 'default', '', 'chat')",
 		"prefix-aaa-1111",
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Sess B', 'agent2', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Sess B', 'agent2', 'default', '', 'chat')",
 		"prefix-bbb-2222",
 	)
 	require.NoError(t, err)
@@ -1335,7 +1351,7 @@ func TestSendMessageToSessionFromDingTalk_SessionExists_QueuedMessage(t *testing
 
 	sessionID := "dt-send-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1405,13 +1421,13 @@ func TestBuildForkContext_ExcludesStreamingMessages(t *testing.T) {
 	sessionID := "fork-streaming"
 	// Insert a streaming (in-progress) message - should be excluded
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/proj", `{"blocks":[{"type":"text","text":"streaming content"}]}`, sessionID,
 	)
 	require.NoError(t, err)
 	// Insert a non-streaming message
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"final content"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1459,7 +1475,7 @@ func TestSendMessageToSessionFromDingTalk_LaunchPath(t *testing.T) {
 
 	sessionID := "dt-launch-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1486,7 +1502,7 @@ func TestScanDingTalkSessionInfos_ScanError(t *testing.T) {
 
 	// Insert a session with all required fields
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat')",
 		"scan-err-1",
 	)
 	require.NoError(t, err)
@@ -1535,7 +1551,7 @@ func TestFindRunningSessionsByPrefix_CaseInsensitive(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
 		"UPPER-case-id",
 	)
 	require.NoError(t, err)
@@ -1560,7 +1576,7 @@ func TestUpdateAndClearExternalSessionID(t *testing.T) {
 
 	sessionID := "ext-sess-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, '/proj', 'claude', 'Ext Test', 'agent1', 'default', '', 'chat', '')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, 1, 'claude', 'Ext Test', 'agent1', 'default', '', 'chat', '')",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1596,7 +1612,7 @@ func TestGetExpiredArchivedSessions_WithExpired(t *testing.T) {
 
 	// Insert a archived session with an old timestamp
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived, updated_at) VALUES (?, 1, 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
 		"expired-sess",
 	)
 	require.NoError(t, err)
@@ -1612,14 +1628,14 @@ func TestPurgeArchivedData(t *testing.T) {
 
 	// Insert a archived session with old timestamp
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived, updated_at) VALUES (?, '/proj', 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived, updated_at) VALUES (?, 1, 'claude', 'Old', 'a1', 'default', '', 'chat', 1, '2020-01-01T00:00:00')",
 		"purge-sess",
 	)
 	require.NoError(t, err)
 
 	// Insert chat history for the session
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/proj', 'user', 'hello', 'purge-sess', 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'user', 'hello', 'purge-sess', 'claude', 0)",
 	)
 	require.NoError(t, err)
 
@@ -1647,13 +1663,13 @@ func TestHardDeleteSession(t *testing.T) {
 
 	sessionID := "hard-del-sess"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Del', 'a1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Del', 'a1', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
 
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/proj', 'user', 'hello', ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'user', 'hello', ?, 'claude', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1687,13 +1703,13 @@ func TestGetMessageContent_Found(t *testing.T) {
 
 	sessionID := "msg-content-sess"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Msg', 'a1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Msg', 'a1', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
 
 	res, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/proj', 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'user', ?, ?, 'claude', 0)",
 		`{"blocks":[{"type":"text","text":"hello world"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1728,7 +1744,7 @@ func TestSendMessageToSessionFromDingTalk_AlreadyRunning_EnqueuesMessage(t *test
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "dingtalk-emit-2"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model, transport, auto_approve) VALUES (?, '/test', 'codebuddy', 'test', '', '', '', 0)", sessionID)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, transport, auto_approve) VALUES (?, 1, 'codebuddy', 'test', '', '', '', 0)", sessionID)
 	require.NoError(t, err)
 
 	var writeMu sync.Mutex
@@ -1770,7 +1786,7 @@ func TestFindRunningSessionsByPrefix_PrefixShorterThanID(t *testing.T) {
 
 	// Insert and mark a session as running with a long ID
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
 		"abc123-long-id",
 	)
 	require.NoError(t, err)
@@ -1794,7 +1810,7 @@ func TestFindRunningSessionsByPrefix_QueryError(t *testing.T) {
 
 	// Insert and mark session as running
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Test', 'agent1', 'default', '', 'chat')",
 		"query-err-id",
 	)
 	require.NoError(t, err)
@@ -1819,7 +1835,7 @@ func TestSendMessageToSessionFromDingTalk_AddChatMessageFails(t *testing.T) {
 
 	sessionID := "dt-msg-fail"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -1848,7 +1864,7 @@ func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
 	// that messages with only thinking blocks produce empty fork context
 	// (thinking blocks are now excluded, tool_use blocks are included).
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"thinking","text":"thinking content"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1865,7 +1881,7 @@ func TestBuildForkContext_ToolUseBlock(t *testing.T) {
 	sessionID := "fork-tooluse"
 	// Insert assistant message with tool_use block + text
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"I'll read the file"},{"type":"tool_use","name":"Read","id":"toolu_1","status":"success","done":true,"duration_ms":150,"summary":"Read /path/to/file.go"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1894,7 +1910,7 @@ func TestBuildForkContext_ToolUseBlockWithoutDetail(t *testing.T) {
 	sessionID := "fork-tooluse-no-detail"
 	// Insert assistant message with tool_use block but no matching detail record
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"tool_use","name":"Bash","id":"toolu_2","status":"success","done":true}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1916,7 +1932,7 @@ func TestBuildForkContext_ThinkingExcluded(t *testing.T) {
 	sessionID := "fork-thinking-excl"
 	// Insert assistant message with thinking + text
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"thinking","text":"I should think about this"},{"type":"text","text":"Here is my answer"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -1934,7 +1950,7 @@ func TestBuildForkContext_ToolUseBlockOutputTruncated(t *testing.T) {
 	longOutput := strings.Repeat("x", 600)
 	// Insert assistant message with tool_use block
 	_, err := WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"tool_use","name":"Read","id":"toolu_trunc","status":"success","done":true}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -2167,13 +2183,13 @@ func TestBuildChatRequest_ResumeWithForkContext(t *testing.T) {
 	sessionID := "fork-integration-1"
 	// Insert session without external_session_id
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type) VALUES (?, '/proj', 'claude', 'Test', '', 'default', '', 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'claude', 'Test', '', 'default', '', 'chat')",
 		sessionID,
 	)
 	require.NoError(t, err)
 	// Insert messages for fork context
 	_, err = WriteExec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"previous answer"}]}`, sessionID,
 	)
 	require.NoError(t, err)
@@ -2378,7 +2394,7 @@ func TestExecuteStreamRunShared_BroadcastsStreamStart(t *testing.T) {
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "stream-start-sess"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/tmp', 'test-stream-start', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = '/tmp'), 'test-stream-start', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID)
 	require.NoError(t, err)
 
 	var writeMu sync.Mutex
@@ -2449,7 +2465,7 @@ func TestExecuteStreamRunShared_StreamStartFails_CoversAbsErrAndReasonKeys(t *te
 
 	// Create a chat session for AddChatMessage
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/tmp', 'test-stream-err', 'Test', 'test-agent', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = '/tmp'), 'test-stream-err', 'Test', 'test-agent', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -2490,7 +2506,7 @@ func TestSendMessageToSessionFromFeishu_AlreadyRunning_EnqueuesMessage(t *testin
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "feishu-enqueue-1"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model, transport, auto_approve) VALUES (?, '/test', 'codebuddy', 'test', '', '', '', 0)", sessionID)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model, transport, auto_approve) VALUES (?, 1, 'codebuddy', 'test', '', '', '', 0)", sessionID)
 	require.NoError(t, err)
 
 	// Mark session as running
@@ -2518,7 +2534,7 @@ func TestSendMessageToSessionFromFeishu_LaunchPath(t *testing.T) {
 
 	sessionID := "feishu-launch-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -2538,7 +2554,7 @@ func TestSendMessageToSessionFromFeishu_AddChatMessageFails(t *testing.T) {
 
 	sessionID := "feishu-msg-fail"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -2583,7 +2599,7 @@ func TestDrainReplyFollowsItsQuestion(t *testing.T) {
 	defer func() { model.Agents = origAgents }()
 
 	sid := "queue-reply-order"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, '/test', 'mock-queue', 'Q', 'mock-agent')", sid)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'mock-queue', 'Q', 'mock-agent')", sid)
 	require.NoError(t, err)
 
 	// Message 1 executes directly.
@@ -2642,7 +2658,7 @@ func TestSendMessageToSessionFromDingTalk_WithFilesPersistsAttachments(t *testin
 
 	sessionID := "dt-attach-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -2672,7 +2688,7 @@ func TestGetSessionInfoForPush(t *testing.T) {
 
 	sessionID := "dt-info-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj/info', 'claude', 'Info Session', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = '/proj/info'), 'claude', 'Info Session', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)
@@ -2761,7 +2777,7 @@ func TestSendMessageToSessionFromPush_CarriesQueueID(t *testing.T) {
 
 	sessionID := "dt-qid-1"
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, '/proj', 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, 1, 'claude', 'Test', 'agent1', 'default', '', 'chat', 0)",
 		sessionID,
 	)
 	require.NoError(t, err)

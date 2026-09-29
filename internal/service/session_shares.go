@@ -112,9 +112,10 @@ func GetSessionShareProjectByToken(token string) (projectPath string, ok bool, e
 		return "", false, nil
 	}
 	row := ReadDB().QueryRow(
-		`SELECT cs.project_path
+		`SELECT COALESCE(p.path, '')
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id
+		   LEFT JOIN projects p ON p.id = cs.project_id
 		  WHERE sh.token = ?`,
 		token,
 	)
@@ -207,13 +208,17 @@ type SessionShare struct {
 // join against. (Archiving is NOT a delete: an archived session keeps both its
 // row and its share.)
 func ListSessionShares(projectPath string) ([]SessionShare, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
 	rows, err := ReadDB().Query(
 		`SELECT sh.token, sh.session_id, sh.title, sh.backend, sh.message_count, sh.created_at, cs.archived
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id
-		  WHERE cs.project_path = ?
+		  WHERE cs.project_id = ?
 		  ORDER BY sh.rowid DESC`,
-		projectPath,
+		projectID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list session shares: %w", err)

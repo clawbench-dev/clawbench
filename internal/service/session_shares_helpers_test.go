@@ -28,8 +28,14 @@ func TestGetSessionShareProjectByToken_ResolvesArchivedSession(t *testing.T) {
 	db := setupShareHelperDB(t)
 	defer func() { _ = db.Close() }()
 
+	// The row points at project id 1; register that project so the assertion
+	// below can read its path back out.
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES ('s1', '/proj', 'codebuddy', 't', 1)`,
+		`INSERT INTO projects (id, path) VALUES (1, '/proj') ON CONFLICT(id) DO NOTHING`,
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES ('s1', 1, 'codebuddy', 't', 1)`,
 	)
 	require.NoError(t, err)
 	token, _, err := UpsertSessionShare("s1", "t", "codebuddy", 1, `{}`)
@@ -148,7 +154,7 @@ func TestListSessionShares_ScanErrorSurfaces(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES ('s1', '/proj', 'codebuddy', 't', 0)`,
+		`INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES ('s1', 1, 'codebuddy', 't', 0)`,
 	)
 	require.NoError(t, err)
 	_, _, err = UpsertSessionShare("s1", "t", "codebuddy", 1, `{}`)

@@ -24,9 +24,17 @@ func setupTestDBForSessionSharePayload(t *testing.T) *sql.DB {
 	db.SetMaxOpenConns(1)
 
 	for _, ddl := range []string{
-		`CREATE TABLE IF NOT EXISTS chat_sessions (
+		`CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '',
 			title TEXT NOT NULL DEFAULT '',
 			agent_id TEXT NOT NULL DEFAULT '',
@@ -37,7 +45,7 @@ func setupTestDBForSessionSharePayload(t *testing.T) *sql.DB {
 		)`,
 		`CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL DEFAULT '',
 			files TEXT,
@@ -84,7 +92,7 @@ func setupTestDBForSessionSharePayload(t *testing.T) *sql.DB {
 		`CREATE TABLE IF NOT EXISTS queued_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL DEFAULT '',
 			queue_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -108,7 +116,7 @@ const testProjectRoot = "/home/u/proj"
 func seedSession(t *testing.T, db *sql.DB, sessionID string) { //nolint:unparam // general-purpose seed helper; all current callers use "s1"
 	t.Helper()
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, model)
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model)
 		 VALUES (?, ?, 'codebuddy', 'Fix the login bug', 'codebuddy', 'claude-sonnet-4')`,
 		sessionID, testProjectRoot,
 	)
@@ -125,7 +133,7 @@ func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, stre
 	t.Helper()
 	if queued != 0 {
 		res, err := db.Exec(
-			`INSERT INTO queued_messages (project_path, session_id, backend, queue_id, content)
+			`INSERT INTO queued_messages (project_id, session_id, backend, queue_id, content)
 			 VALUES (?, ?, 'codebuddy', ?, ?)`,
 			testProjectRoot, sessionID, content, content,
 		)
@@ -135,7 +143,7 @@ func seedMessage(t *testing.T, db *sql.DB, sessionID, role, content string, stre
 		return id
 	}
 	res, err := db.Exec(
-		`INSERT INTO chat_history (project_path, session_id, role, content, backend, streaming)
+		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming)
 		 VALUES (?, ?, ?, ?, 'codebuddy', ?)`,
 		testProjectRoot, sessionID, role, content, streaming,
 	)

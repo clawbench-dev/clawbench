@@ -491,6 +491,17 @@ func (idx *Indexer) chunkMessages(messages []service.UnindexedMessage) ([]msgChu
 			textChunks = textChunks[:50]
 		}
 
+		// Resolved once per message, outside any write transaction: the store
+		// inserts these chunks inside one, and resolving there would re-enter
+		// the write mutex.
+		projectID, idErr := service.ProjectIDForPath(msg.ProjectPath)
+		if idErr != nil {
+			slog.Warn("rag: cannot resolve project for message, skipping",
+				slog.Int64("message_id", msg.ID), slog.String("err", idErr.Error()))
+			results = append(results, msgChunkResult{msg: msg})
+			continue
+		}
+
 		chunks := make([]Chunk, len(textChunks))
 		for i, tc := range textChunks {
 			chunks[i] = Chunk{
@@ -500,6 +511,7 @@ func (idx *Indexer) chunkMessages(messages []service.UnindexedMessage) ([]msgChu
 				ChunkTextSegmented: SegmentText(tc.Text),
 				ChunkIndex:         tc.Index,
 				TokenCount:         tc.TokenCount,
+				ProjectID:          projectID,
 				ProjectPath:        msg.ProjectPath,
 				Backend:            msg.Backend,
 				Role:               msg.Role,

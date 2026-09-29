@@ -33,7 +33,7 @@ const BtwQuestionsDDL = `
 CREATE TABLE IF NOT EXISTS btw_questions (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	session_id TEXT NOT NULL,
-	project_path TEXT NOT NULL DEFAULT '',
+	project_id INTEGER NOT NULL DEFAULT 0,
 	anchor_message_id INTEGER NOT NULL DEFAULT 0,
 	question TEXT NOT NULL,
 	answer TEXT NOT NULL DEFAULT '',
@@ -180,10 +180,15 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 		Model:           modelName,
 		Error:           errMsg,
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		slog.Error("failed to resolve project for btw question", "session_id", sessionID, "err", idErr)
+		return rec
+	}
 	res, err := WriteExec(
-		`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer, model, error)
+		`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer, model, error)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		sessionID, projectPath, anchorID, question, answer, modelName, errMsg,
+		sessionID, projectID, anchorID, question, answer, modelName, errMsg,
 	)
 	if err != nil {
 		slog.Error("failed to persist btw question", "session_id", sessionID, "err", err)
@@ -206,8 +211,10 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 // oldest first. The chat list groups them by anchor to render its markers.
 func ListBtwQuestions(sessionID string) ([]BtwQuestion, error) {
 	rows, err := dbRead.QueryContext(context.Background(),
-		`SELECT id, session_id, project_path, anchor_message_id, question, answer, model, error, created_at
-		 FROM btw_questions WHERE session_id = ? ORDER BY id ASC`,
+		`SELECT b.id, b.session_id, COALESCE(p.path, ''), b.anchor_message_id, b.question, b.answer, b.model, b.error, b.created_at
+		   FROM btw_questions b
+		   LEFT JOIN projects p ON p.id = b.project_id
+		  WHERE b.session_id = ? ORDER BY b.id ASC`,
 		sessionID,
 	)
 	if err != nil {

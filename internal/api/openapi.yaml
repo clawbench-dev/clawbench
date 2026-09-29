@@ -1716,6 +1716,34 @@ paths:
         "200":
           description: 已中断
 
+  /api/ai/queue/merge:
+    post:
+      tags: [Queue]
+      summary: 合并全部排队消息
+      description: |
+        把该会话当前**全部**排队消息合并成一条：旧的排队行被删除，插入一条新的
+        排队行（正文按入队顺序以空行拼接，附件按同序拼接并去重）。整个「删旧 + 建新」
+        在**一个事务**内完成，因此失败不会出现重复或丢消息。
+
+        合并后的正文/附件在响应里返回，客户端无需再拉取；服务端同时广播
+        `queue_cancel`（旧 queueId）与 `queue_added`（新 queueId）供其他设备同步。
+
+        队列少于两条时无内容可合并，返回 409 婉拒（`reason: "not_enough"`），不是错误。
+      operationId: queueMerge
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已合并
+        "409":
+          description: 队列不足两条，无可合并内容
+        "500":
+          description: 合并失败（事务已回滚，队列保持原样）
+
   # ── Events ────────────────────────────────────────────────────────────────
   /api/ai/events/ws:
     get:

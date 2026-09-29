@@ -79,8 +79,10 @@
       :messages="queuedMessages"
       :midTurnSupported="midTurnSupported"
       :busy="pendingActionBusy"
+      :mergeBusy="mergeBusy"
       @remove="handleRemovePending"
       @action="handlePendingAction"
+      @merge="handleMergeQueue"
     />
 
     <!-- Unified input container — hidden when no agents configured -->
@@ -316,6 +318,8 @@ const midTurnSupported = computed(() => {
 })
 /** queueId (or id) of the queued bubble whose action request is in flight. */
 const pendingActionBusy = ref('')
+/** Whether the queue-wide merge request is in flight. */
+const mergeBusy = ref(false)
 const messages = ref([])
 const messageStore = createChatMessageStore(messages)
 /** Rendered messages = persisted messages (pending messages already in messages.value with pending: true) */
@@ -1657,6 +1661,17 @@ async function handlePendingAction(queueId, mode) {
         )
     } finally {
         pendingActionBusy.value = ''
+    }
+}
+
+/** Merge every queued message of this session into one (queue-wide action). */
+async function handleMergeQueue() {
+    if (mergeBusy.value) return
+    mergeBusy.value = true
+    try {
+        await manager.handleMergeQueue()
+    } finally {
+        mergeBusy.value = false
     }
 }
 

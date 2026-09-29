@@ -6,15 +6,18 @@ import (
 
 // Shared test constants to avoid goconst duplicates across test files.
 const (
-	testModelBgeM3Latest    = "bge-m3:latest"
-	testModelBgeM3          = "bge-m3"
-	testV1Models            = "/v1/models"
-	testV1Embeddings        = "/v1/embeddings"
-	testRoleAssistant       = "assistant"
-	testRoleUser            = "user"
-	testSession1            = "sess-1"
-	testSession2            = "sess-2"
-	testProjectPath         = "/test"
+	testModelBgeM3Latest = "bge-m3:latest"
+	testModelBgeM3       = "bge-m3"
+	testV1Models         = "/v1/models"
+	testV1Embeddings     = "/v1/embeddings"
+	testRoleAssistant    = "assistant"
+	testRoleUser         = "user"
+	testSession1         = "sess-1"
+	testSession2         = "sess-2"
+	testProjectPath      = "/test"
+	// testProjectID is the projects.id that testProjectPath maps to in the
+	// fixtures that create a projects row (see ensureTestProject).
+	testProjectID           = 1
 	testBackendClaude       = "claude"
 	testBackendCodebuddy    = "codebuddy"
 	testNeedsBackfill       = "needs backfill"

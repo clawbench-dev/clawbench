@@ -95,11 +95,11 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 
 	// 3. Get task name and validate project ownership
 	var taskName string
-	var taskProjectPath string
+	var taskProjectID int64
 	err = dbRead.QueryRow(
-		"SELECT name, project_path FROM scheduled_tasks WHERE id = ?",
+		"SELECT name, project_id FROM scheduled_tasks WHERE id = ?",
 		taskID,
-	).Scan(&taskName, &taskProjectPath)
+	).Scan(&taskName, &taskProjectID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, fmt.Errorf("task %d not found", taskID)
 	}
@@ -107,17 +107,24 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		return "", false, err
 	}
 
-	// 4. Validate project ownership
-	if taskProjectPath != projectPath {
+	// 4. Validate project ownership (compare ids, not paths, so a renamed
+	//    project directory cannot break the check).
+	callerProjectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return "", false, idErr
+	}
+	if taskProjectID != callerProjectID {
 		return "", false, fmt.Errorf("execution %d does not belong to project %q", execID, projectPath)
 	}
 
 	// 5. Get source session metadata (without archived=0 — archived sessions still have valid metadata)
-	var backend, agentID, agentSource, modelName, sessProjectPath, externalSessionID string
+	var backend, agentID, agentSource, modelName, externalSessionID string
+	var sessProjectID int64
 	err = dbRead.QueryRow(
-		"SELECT backend, agent_id, agent_source, model, project_path, external_session_id FROM chat_sessions WHERE id = ?",
+		`SELECT s.backend, s.agent_id, s.agent_source, s.model, s.project_id, s.external_session_id
+		   FROM chat_sessions s WHERE s.id = ?`,
 		sourceSessionID,
-	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath, &externalSessionID)
+	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectID, &externalSessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, fmt.Errorf("source session %s not found", sourceSessionID)
 	}
@@ -149,8 +156,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if model.SessionMaxCount > 0 {
 		var count int
 		err = dbRead.QueryRow(
-			"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
-			sessProjectPath,
+			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+			sessProjectID,
 		).Scan(&count)
 		if err != nil {
 			return "", false, err
@@ -171,8 +178,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// sort_order stays at its default 0 so the new session lands at the top of the
 	// manual order (#492) via the created_at DESC tiebreak.
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
-		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
+		newSessionID, sessProjectID, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
 	)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create continued session: %w", err)
@@ -203,7 +210,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// h.created_at > s2.last_read_at). Instead, we let the database assign CURRENT_TIMESTAMP,
 	// which guarantees format consistency. Message ordering relies on auto-increment id, not created_at.
 	rows, err := dbRead.Query(
-		"SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
+		"SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
 		sourceSessionID,
 	)
 	if err != nil {
@@ -212,17 +219,17 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	defer func() { _ = rows.Close() }()
 
 	type sourceMsg struct {
-		id          int64
-		projectPath string
-		role        string
-		content     string
-		files       sql.NullString
-		backend     string
+		id        int64
+		projectID int64
+		role      string
+		content   string
+		files     sql.NullString
+		backend   string
 	}
 	var messages []sourceMsg
 	for rows.Next() {
 		var m sourceMsg
-		if err := rows.Scan(&m.id, &m.projectPath, &m.role, &m.content, &m.files, &m.backend); err != nil {
+		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend); err != nil {
 			return "", false, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
@@ -232,8 +239,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
 		result, err := WriteExec(
-			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
-			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
+			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
+			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
 		)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to copy message %d: %w", m.id, err)
@@ -280,10 +287,14 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64, overrideAgentID string) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
+	var sessProjectID int64
 	err := dbRead.QueryRow(
-		"SELECT backend, agent_id, agent_source, model, project_path FROM chat_sessions WHERE id = ? AND archived = 0",
+		`SELECT s.backend, s.agent_id, s.agent_source, s.model, s.project_id, COALESCE(p.path, '')
+		   FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ? AND s.archived = 0`,
 		sourceSessionID,
-	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectPath)
+	).Scan(&backend, &agentID, &agentSource, &modelName, &sessProjectID, &sessProjectPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("source session %s not found", sourceSessionID)
 	}
@@ -306,8 +317,13 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		}
 	}
 
-	// 2. Validate project ownership
-	if sessProjectPath != projectPath {
+	// 2. Validate project ownership by id: a renamed project directory must not
+	//    make a session look like it belongs elsewhere.
+	callerProjectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return "", idErr
+	}
+	if sessProjectID != callerProjectID {
 		return "", fmt.Errorf("session %s does not belong to project %q", sourceSessionID, projectPath)
 	}
 
@@ -361,8 +377,8 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	// manual order (#492) via the created_at DESC tiebreak.
 	newSessionID := generateSessionID()
 	_, err = WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
-		newSessionID, sessProjectPath, backend, title, agentID, agentSource, modelName, sourceSessionID,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
+		newSessionID, sessProjectID, backend, title, agentID, agentSource, modelName, sourceSessionID,
 	)
 	if err != nil {
 		return "", fmt.Errorf("failed to create forked session: %w", err)
@@ -403,10 +419,14 @@ func checkSessionLimit(projectPath string) error {
 	if model.SessionMaxCount <= 0 {
 		return nil
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
 	var count int
 	err := dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
-		projectPath,
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+		projectID,
 	).Scan(&count)
 	if err != nil {
 		return err
@@ -421,7 +441,7 @@ func checkSessionLimit(projectPath string) error {
 // If beforeMessageID > 0, only messages with id <= beforeMessageID are copied.
 // Returns a map from old message IDs to new message IDs.
 func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID int64) (map[int64]int64, error) {
-	query := "SELECT id, project_path, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0"
+	query := "SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0"
 	args := []any{sourceSessionID}
 	if beforeMessageID > 0 {
 		query += " AND id <= ?"
@@ -435,17 +455,17 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 	defer func() { _ = rows.Close() }()
 
 	type sourceMsg struct {
-		id          int64
-		projectPath string
-		role        string
-		content     string
-		files       sql.NullString
-		backend     string
+		id        int64
+		projectID int64
+		role      string
+		content   string
+		files     sql.NullString
+		backend   string
 	}
 	var messages []sourceMsg
 	for rows.Next() {
 		var m sourceMsg
-		if err := rows.Scan(&m.id, &m.projectPath, &m.role, &m.content, &m.files, &m.backend); err != nil {
+		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend); err != nil {
 			return nil, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
@@ -454,8 +474,8 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
 		result, err := WriteExec(
-			"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
-			m.projectPath, m.role, m.content, m.files, newSessionID, m.backend,
+			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
+			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy message %d: %w", m.id, err)
@@ -602,7 +622,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 // cyclomatic-complexity budget; the shape mirrors the tool/thinking copies.
 func copySessionBtwQuestions(idMap map[int64]int64, sourceSessionID, newSessionID string) error {
 	rows, err := dbRead.Query(
-		"SELECT anchor_message_id, project_path, question, answer, model, error, created_at FROM btw_questions WHERE session_id = ?",
+		"SELECT anchor_message_id, project_id, question, answer, model, error, created_at FROM btw_questions WHERE session_id = ?",
 		sourceSessionID,
 	)
 	if err != nil {
@@ -611,18 +631,18 @@ func copySessionBtwQuestions(idMap map[int64]int64, sourceSessionID, newSessionI
 	defer func() { _ = rows.Close() }()
 
 	type btwRow struct {
-		anchorID    int64
-		projectPath string
-		question    string
-		answer      string
-		model       string
-		errMsg      string
-		createdAt   time.Time
+		anchorID  int64
+		projectID int64
+		question  string
+		answer    string
+		model     string
+		errMsg    string
+		createdAt time.Time
 	}
 	var list []btwRow
 	for rows.Next() {
 		var r btwRow
-		if err := rows.Scan(&r.anchorID, &r.projectPath, &r.question, &r.answer, &r.model, &r.errMsg, &r.createdAt); err != nil {
+		if err := rows.Scan(&r.anchorID, &r.projectID, &r.question, &r.answer, &r.model, &r.errMsg, &r.createdAt); err != nil {
 			return fmt.Errorf("failed to scan btw question: %w", err)
 		}
 		list = append(list, r)
@@ -637,9 +657,9 @@ func copySessionBtwQuestions(idMap map[int64]int64, sourceSessionID, newSessionI
 			continue
 		}
 		if _, err := WriteExec(
-			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer, model, error, created_at)
+			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer, model, error, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			newSessionID, r.projectPath, newAnchor, r.question, r.answer, r.model, r.errMsg, r.createdAt,
+			newSessionID, r.projectID, newAnchor, r.question, r.answer, r.model, r.errMsg, r.createdAt,
 		); err != nil {
 			return fmt.Errorf("failed to copy btw question: %w", err)
 		}

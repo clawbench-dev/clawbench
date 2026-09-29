@@ -83,8 +83,8 @@ func TestForkSession_CopiesBtwQuestionsReanchored(t *testing.T) {
 	// One marker anchored to the first assistant reply, one to a later message.
 	for _, anchor := range []int64{asstID, laterID} {
 		_, err := service.UnsafeDBForTest().Exec(
-			`INSERT INTO btw_questions (session_id, project_path, anchor_message_id, question, answer)
-			 VALUES (?, '/project', ?, ?, 'a')`,
+			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer)
+			 VALUES (?, 1, ?, ?, 'a')`,
 			sessID, anchor, "q-"+strconv.FormatInt(anchor, 10),
 		)
 		assert.NoError(t, err)

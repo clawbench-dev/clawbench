@@ -26,16 +26,16 @@ func createQueueSession(t *testing.T, env *testEnv, sessionID string) {
 	if err != nil {
 		// Fallback: insert directly if CreateSession signature changed
 		_, err2 := service.UnsafeDBForTest().Exec(
-			`INSERT OR IGNORE INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, 'claude', 'Queue Session')`,
-			sessionID, env.ProjectDir,
+			`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, 'claude', 'Queue Session')`,
+			sessionID, service.ProjectIDForTest(t, env.ProjectDir),
 		)
 		assert.NoError(t, err2)
 		return
 	}
 	// Use the requested session id directly.
 	_, _ = service.UnsafeDBForTest().Exec(
-		`INSERT OR IGNORE INTO chat_sessions (id, project_path, backend, title) VALUES (?, ?, 'claude', 'Queue Session')`,
-		sessionID, env.ProjectDir,
+		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, 'claude', 'Queue Session')`,
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
 	)
 }
 
@@ -587,8 +587,14 @@ func TestQueueHandler_Enqueue_CrossProject_403(t *testing.T) {
 	otherProject := t.TempDir()
 	_ = otherProject
 	sessionID := "q-cross-project"
+	// Register the foreign project first, then point the session at it: the
+	// subquery returns NULL for an unknown path and the NOT NULL constraint
+	// would reject the row.
 	_, err := service.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/other/project', 'claude', 'Other')`,
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+	assert.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
 	assert.NoError(t, err)
@@ -606,8 +612,14 @@ func TestQueueHandler_Get_CrossProject_403(t *testing.T) {
 	defer teardown()
 
 	sessionID := "q-cross-project-get"
+	// Register the foreign project first, then point the session at it: the
+	// subquery returns NULL for an unknown path and the NOT NULL constraint
+	// would reject the row.
 	_, err := service.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/other/project', 'claude', 'Other')`,
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+	assert.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
 	assert.NoError(t, err)
@@ -624,8 +636,14 @@ func TestQueueHandler_Delete_CrossProject_403(t *testing.T) {
 	defer teardown()
 
 	sessionID := "q-cross-project-del"
+	// Register the foreign project first, then point the session at it: the
+	// subquery returns NULL for an unknown path and the NOT NULL constraint
+	// would reject the row.
 	_, err := service.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES (?, '/other/project', 'claude', 'Other')`,
+		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
+	assert.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
 	assert.NoError(t, err)
@@ -1075,4 +1093,138 @@ func TestQueueInterruptHandler_StaleTurnIDDoesNotKillReplacement(t *testing.T) {
 		t.Fatal("the replacement turn must be left running")
 	default:
 	}
+}
+
+// ── QueueMergeHandler ───────────────────────────────────────────────────────
+
+// TestQueueMergeHandler_MethodNotAllowed pins the method guard.
+func TestQueueMergeHandler_MethodNotAllowed(t *testing.T) {
+	req := newRequest(t, http.MethodGet, "/api/ai/queue/merge?session_id=s", nil)
+	w := callHandler(QueueMergeHandler, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestQueueMergeHandler_RequiresSessionID verifies the session is mandatory.
+func TestQueueMergeHandler_RequiresSessionID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/merge", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueMergeHandler, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, "SessionIdRequired", body["msgKey"])
+}
+
+// TestQueueMergeHandler_MergesAndBroadcasts verifies the happy path: the merged
+// entry is returned, the old queue ids are announced as cancelled, and the
+// merged entry is announced as added so other devices converge.
+func TestQueueMergeHandler_MergesAndBroadcasts(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-merge-happy"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "alpha", nil, "q-a", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "beta", nil, "q-b", "")
+	require.NoError(t, err)
+
+	// Set up a WS manager with a real connection so EmitToSession buffers the
+	// events (the same pattern the enqueue test uses).
+	origMgr := ws.GetManager()
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	defer ws.SetManagerForTest(origMgr)
+
+	conn := newTestWSConn(t)
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(conn, &writeMu, "test-queue-merge", "")
+	mgr.StreamHub().Subscribe("test-queue-merge", sessionID)
+	require.NotNil(t, sub)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/merge?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueMergeHandler, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, true, body["merged"])
+	assert.Equal(t, "alpha\n\nbeta", body["text"])
+	mergedQueueID, _ := body["queueId"].(string)
+	require.NotEmpty(t, mergedQueueID)
+
+	// The queue now holds exactly the merged entry.
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Equal(t, "alpha\n\nbeta", queued[0].Text)
+	assert.Equal(t, mergedQueueID, queued[0].QueueID)
+
+	// Both events must be broadcast: queue_cancel for the old ids, then
+	// queue_added for the merged one.
+	var cancelIDs []string
+	var addedQueueID string
+	require.Eventually(t, func() bool {
+		for _, ev := range sub.GetBufferedEvents() {
+			if ev.Event != "chat_stream" {
+				continue
+			}
+			data, ok := ev.Data.(ws.ChatStreamData)
+			if !ok {
+				continue
+			}
+			payload, _ := data.Payload.(map[string]any)
+			switch data.EventType {
+			case "queue_cancel":
+				if ids, ok := payload["queueIds"].([]string); ok {
+					cancelIDs = ids
+				}
+			case "queue_added":
+				if qid, ok := payload["queueId"].(string); ok {
+					addedQueueID = qid
+				}
+			}
+		}
+		return len(cancelIDs) > 0 && addedQueueID != ""
+	}, 2*time.Second, 20*time.Millisecond, "expected queue_cancel + queue_added")
+
+	assert.ElementsMatch(t, []string{"q-a", "q-b"}, cancelIDs)
+	assert.Equal(t, mergedQueueID, addedQueueID)
+}
+
+// TestQueueMergeHandler_NotEnoughIsConflict verifies a queue with fewer than two
+// entries is a benign 409 decline (the UI only offers merge at 2+), not a 500.
+func TestQueueMergeHandler_NotEnoughIsConflict(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-merge-not-enough"
+	createQueueSession(t, env, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	_, err := service.AddQueuedMessage(env.ProjectDir, "claude", sessionID, "only", nil, "q-only", "")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/queue/merge?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueMergeHandler, req)
+
+	assert.Equal(t, http.StatusConflict, w.Code)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	assert.Equal(t, false, body["merged"])
+	assert.Equal(t, "not_enough", body["reason"])
+
+	// The single message must be untouched.
+	queued, qerr := service.GetQueuedMessages(sessionID)
+	require.NoError(t, qerr)
+	require.Len(t, queued, 1)
+	assert.Equal(t, "only", queued[0].Text)
 }

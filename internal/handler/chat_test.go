@@ -2041,9 +2041,9 @@ func TestMarkChatRead(t *testing.T) {
 
 	// Session with an unread assistant message (no last_read_at yet).
 	sessionID := "mark-read-endpoint"
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'codebuddy', 'mark-read', 'codebuddy', 'default', '', 'chat', 0)`, sessionID, env.ProjectDir)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'codebuddy', 'mark-read', 'codebuddy', 'default', '', 'chat', 0)`, sessionID, service.ProjectIDForTest(t, env.ProjectDir))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread reply', ?, 'codebuddy', 0)`, env.ProjectDir, sessionID)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread reply', ?, 'codebuddy', 0)`, service.ProjectIDForTest(t, env.ProjectDir), sessionID)
 	require.NoError(t, err)
 
 	// Before: session shows 1 unread and last_read_at is nil.
@@ -2095,7 +2095,7 @@ func TestMarkChatRead_RejectsForeignSession(t *testing.T) {
 	foreignProject := env.WatchDir + "/foreign"
 
 	sessionID := "mark-read-foreign"
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'codebuddy', 'foreign', 'codebuddy', 'default', '', 'chat', 0)`, sessionID, foreignProject)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'codebuddy', 'foreign', 'codebuddy', 'default', '', 'chat', 0)`, sessionID, service.ProjectIDForTest(t, foreignProject))
 	require.NoError(t, err)
 
 	// Request comes from env.ProjectDir but session belongs to foreignProject.
@@ -2116,9 +2116,9 @@ func TestMarkChatRead_ExternalProjectPath(t *testing.T) {
 	foreignProject := env.WatchDir + "/foreign-ext"
 
 	sessionID := "mark-read-ext"
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'codebuddy', 'foreign-ext', 'codebuddy', 'default', '', 'chat', 0)`, sessionID, foreignProject)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'codebuddy', 'foreign-ext', 'codebuddy', 'default', '', 'chat', 0)`, sessionID, service.ProjectIDForTest(t, foreignProject))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread', ?, 'codebuddy', 0)`, foreignProject, sessionID)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread', ?, 'codebuddy', 0)`, service.ProjectIDForTest(t, foreignProject), sessionID)
 	require.NoError(t, err)
 
 	// Request from env.ProjectDir context with the external session's project path.
@@ -2248,9 +2248,9 @@ func TestAIChat_Get_DoesNotMarkRead(t *testing.T) {
 
 	db := service.UnsafeDBForTest()
 	sessionID := "get-does-not-mark-read"
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'get no mark', 'claude', 'default', '', 'chat', 0)`, sessionID, env.ProjectDir)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'get no mark', 'claude', 'default', '', 'chat', 0)`, sessionID, service.ProjectIDForTest(t, env.ProjectDir))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread reply', ?, 'claude', 0)`, env.ProjectDir, sessionID)
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread reply', ?, 'claude', 0)`, service.ProjectIDForTest(t, env.ProjectDir), sessionID)
 	require.NoError(t, err)
 
 	// Before: session shows 1 unread and last_read_at is nil.
@@ -2381,7 +2381,7 @@ func TestAIChat_Post_ExternalProjectPath(t *testing.T) {
 	// the session's owner, not the requester's cookie project.
 	var queuedProject string
 	err = service.ReadDB().QueryRow(
-		"SELECT project_path FROM queued_messages WHERE session_id = ?", sessionID,
+		`SELECT COALESCE(pj.path, '') FROM queued_messages q LEFT JOIN projects pj ON pj.id = q.project_id WHERE q.session_id = ?`, sessionID,
 	).Scan(&queuedProject)
 	require.NoError(t, err)
 	assert.Equal(t, canonPath(otherProject), canonPath(queuedProject),
@@ -3819,8 +3819,8 @@ func TestBuildChatRequest_ContinuedSessionUsesExternalSessionID(t *testing.T) {
 	// Create task + execution
 	var taskID int64
 	result, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, status) VALUES (?, ?, '0 8 * * *', ?, 'Do task', 'active')",
-		env.ProjectDir, "Task", "codebuddy",
+		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status) VALUES (?, ?, '0 8 * * *', ?, 'Do task', 'active')",
+		service.ProjectIDForTest(t, env.ProjectDir), "Task", "codebuddy",
 	)
 	assert.NoError(t, err)
 	taskID, _ = result.LastInsertId()

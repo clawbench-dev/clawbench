@@ -22,10 +22,10 @@ import (
 // schedulerScriptSchema is the schema needed for the script-phase executeTask
 // tests. It mirrors schedulerExecSchema but is declared here so the tests can
 // evolve independently.
-const schedulerScriptSchema = `
+const schedulerScriptSchema = ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 	content TEXT NOT NULL,
 	files TEXT,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -57,11 +57,11 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	UNIQUE(project_path, backend, id)
+	UNIQUE(backend, id)
 );
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
@@ -94,8 +94,8 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 `
 
@@ -212,7 +212,7 @@ func TestExecuteTask_ScriptSkip_NoSessionNoEvent(t *testing.T) {
 	// No session was created.
 	var sessionCount int
 	require.NoError(t, dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ?", task.ProjectPath).Scan(&sessionCount))
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ?", ProjectIDForTest(t, task.ProjectPath)).Scan(&sessionCount))
 	assert.Zero(t, sessionCount, "a skipped run must not create a chat session")
 
 	// No chat message was written.

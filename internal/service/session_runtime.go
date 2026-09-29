@@ -1089,9 +1089,17 @@ func triggerChatRecommendation(ctx context.Context, sessionID, projectPath strin
 // SaveChatRecommendation persists a conversation recommendation so it can be
 // fetched later (e.g. when a client that was offline opens the session).
 func SaveChatRecommendation(sessionID, projectPath string, messageID int64, recommendation string) {
+	// project_id is an INTEGER column: binding the path here would store the raw
+	// string (SQLite's INTEGER affinity does not convert non-numeric text), so the
+	// row would be unattributable to any project.
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		slog.Debug("failed to resolve project for chat recommendation", slog.String("session_id", sessionID), slog.String("err", idErr.Error()))
+		return
+	}
 	_, err := WriteExec(
-		"INSERT INTO chat_recommendations (session_id, project_path, message_id, recommendation) VALUES (?, ?, ?, ?)",
-		sessionID, projectPath, messageID, recommendation,
+		"INSERT INTO chat_recommendations (session_id, project_id, message_id, recommendation) VALUES (?, ?, ?, ?)",
+		sessionID, projectID, messageID, recommendation,
 	)
 	if err != nil {
 		slog.Debug("failed to persist chat recommendation", slog.String("session_id", sessionID), slog.String("err", err.Error()))

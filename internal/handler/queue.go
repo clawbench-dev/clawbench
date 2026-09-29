@@ -205,6 +205,82 @@ func QueueInterruptHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"interrupted": true})
 }
 
+// QueueMergeHandler collapses every queued message of a session into one. It
+// backs the expanded queue panel's "merge" action, which is offered only when
+// more than one message is waiting.
+//
+// POST /api/ai/queue/merge?session_id=xxx
+//
+// The merge is ATOMIC: the service deletes the old rows and inserts the merged
+// one in a single transaction, so a failure cannot duplicate or lose a message
+// (doing it as "insert then delete N" from the client would). A session with
+// fewer than two queued messages has nothing to merge and is reported as a 409
+// decline rather than an error.
+func QueueMergeHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+		return
+	}
+
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "SessionIdRequired")
+		return
+	}
+
+	if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+		return
+	}
+
+	merged, oldQueueIDs, ok, err := service.MergeQueuedMessages(sessionID, "")
+	if err != nil {
+		slog.Error("queue: merge failed",
+			slog.String("session", sessionID),
+			slog.String("error", err.Error()))
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "QueueMergeFailed")
+		return
+	}
+	if !ok {
+		// Fewer than two queued messages: nothing to merge. A decline, not an
+		// error — the UI only offers the action when 2+ are present, so this is
+		// a race (a drain emptied the queue between render and click).
+		writeJSON(w, http.StatusConflict, map[string]any{"merged": false, "reason": "not_enough"})
+		return
+	}
+
+	// Tell clients the old entries are gone. queue_cancel removes them from the
+	// queue panel on every device; the merged entry then arrives as queue_added.
+	// Two events rather than one keeps the existing client handling untouched.
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "queue_cancel",
+		QueueEvent: &ai.QueueEventData{
+			SessionID: sessionID,
+			QueueIDs:  oldQueueIDs,
+		},
+	})
+	ws.EmitToSession(sessionID, ai.StreamEvent{
+		Type: "queue_added",
+		QueueAdded: &ai.QueueAddedData{
+			QueueID: merged.QueueID,
+			Text:    merged.Content,
+			Files:   merged.Files,
+		},
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"merged":  true,
+		"queueId": merged.QueueID,
+		"text":    merged.Content,
+		"files":   merged.Files,
+	})
+}
+
 func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {

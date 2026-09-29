@@ -174,11 +174,17 @@ func stripSystemInstructions(t string) (string, bool) {
 // persistReplayMessages 批量插入回放消息及其 tool calls，并记录外部 messageId。
 // 返回实际插入条数。
 func persistReplayMessages(sessionID, projectPath, backend string, messages []replayMessage) int {
+	// Resolved once, outside the loop: every message belongs to the same project.
+	projectID, err := service.ProjectIDForPath(projectPath)
+	if err != nil {
+		slog.Error("handler: cannot resolve project for replay messages", "error", err)
+		return 0
+	}
 	inserted := 0
 	for _, msg := range messages {
 		res, err := service.WriteExec(
-			"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed, external_message_id) VALUES (?, ?, ?, ?, ?, 0, 0, ?)",
-			projectPath, backend, sessionID, msg.role, msg.content, msg.extMsgID,
+			"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, indexed, external_message_id) VALUES (?, ?, ?, ?, ?, 0, 0, ?)",
+			projectID, backend, sessionID, msg.role, msg.content, msg.extMsgID,
 		)
 		if err != nil {
 			slog.Error("handler: failed to save LoadSession replay message", "error", err)
@@ -244,12 +250,20 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 校验会话归属当前项目，并读取 external_session_id
-	var sessProject, extID string
+	// The session stores a project id, so resolve the caller's project to
+	// compare ids (a renamed directory must not break the ownership check).
+	callerProjectID, idErr := service.ProjectIDForPath(projectPath)
+	if idErr != nil {
+		model.WriteError(w, model.Internal(idErr))
+		return
+	}
+	var sessProjectID int64
+	var extID string
 	err := service.ReadDB().QueryRowContext(
 		r.Context(),
-		"SELECT project_path, external_session_id FROM chat_sessions WHERE id = ?",
+		"SELECT project_id, external_session_id FROM chat_sessions WHERE id = ?",
 		req.SessionID,
-	).Scan(&sessProject, &extID)
+	).Scan(&sessProjectID, &extID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return
@@ -258,7 +272,7 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 		model.WriteError(w, model.Internal(err))
 		return
 	}
-	if sessProject != projectPath {
+	if sessProjectID != callerProjectID {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}

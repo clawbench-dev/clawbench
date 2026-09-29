@@ -7,7 +7,7 @@ import { buildSendChannels, type FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatMessageAction } from '@/utils/chatStreamUtils.ts'
 import { isSubagentToolName } from '@/utils/chatStreamUtils.ts'
 import { clearAskStatesByPrefix, askSessionPrefix } from '@/utils/askQuestionState.ts'
-import { clearQueue, removeQueued } from '@/composables/useMessageQueue.ts'
+import { addQueued, clearQueue, getQueue, removeQueued, removeQueuedMany } from '@/composables/useMessageQueue.ts'
 
 /**
  * Unified session manager — ensures consistent cleanup around session operations.
@@ -256,6 +256,47 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     }
   }
 
+  /**
+   * Merge every queued message of a session into one, in place. Backed by the
+   * atomic POST /api/ai/queue/merge: the backend deletes the old rows and
+   * inserts the merged one in a single transaction, then broadcasts
+   * queue_cancel (old entries) + queue_added (the merged one).
+   *
+   * Returns the merged queueId on success, '' on failure. The caller mirrors
+   * the result locally right away (removeQueuedMany + addQueued) so this device
+   * does not wait for the broadcast.
+   */
+  async function handleMergeQueue(): Promise<string> {
+    const sessionId = identity.currentSessionId.value
+    const queued = getQueue(sessionId)
+    if (!sessionId || queued.length < 2) return ''
+
+    try {
+      const resp = await fetch(
+        `/api/ai/queue/merge?session_id=${encodeURIComponent(sessionId)}`,
+        { method: 'POST' },
+      )
+      const data = await resp.json().catch(() => null) as {
+        queueId?: string
+        text?: string
+        files?: FileEntry[]
+      } | null
+      if (!resp.ok || !data?.queueId) {
+        toast.show(gt('chat.pending.mergeFailed'), { icon: '⚠️', type: 'error' })
+        return ''
+      }
+      // The backend row is authoritative; mirror it locally so the panel shows
+      // the single merged entry without waiting for the queue_cancel /
+      // queue_added broadcast.
+      removeQueuedMany(sessionId, queued.map((m) => m.queueId))
+      addQueued(sessionId, { queueId: data.queueId, text: data.text || '', files: data.files || [] })
+      return data.queueId
+    } catch {
+      toast.show(gt('chat.pending.mergeFailed'), { icon: '⚠️', type: 'error' })
+      return ''
+    }
+  }
+
   // ── Cleanup ──
 
   /**
@@ -458,6 +499,7 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     enqueueMessage,
     handleRemovePending,
     handlePendingAction,
+    handleMergeQueue,
     // Unified session operations
     switchSession,
     createSession,

@@ -30,7 +30,7 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 	_, err = testDB.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -46,11 +46,11 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -86,11 +86,15 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
+	require.NoError(t, err)
+	// The projects registry: the service functions under test resolve paths
+	// through it, so the fixture schema must carry it.
+	_, err = testDB.Exec(service.ProjectsDDL)
 	require.NoError(t, err)
 
 	cleanup := service.SetDBForTest(testDB, testDB)
@@ -118,8 +122,8 @@ func insertTestUserMessages(t *testing.T, sessionID string, contents []string) {
 	t.Helper()
 	for _, c := range contents {
 		_, err := service.UnsafeDBForTest().Exec(
-			"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
-			"/proj", c, sessionID,
+			"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+			1, c, sessionID,
 		)
 		assert.NoError(t, err)
 	}

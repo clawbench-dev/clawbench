@@ -352,9 +352,17 @@ func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 	db.Exec("PRAGMA busy_timeout=5000")
 
 	_, err = db.Exec(`
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -372,7 +380,7 @@ func setupTestDBForAutoApprove(t *testing.T) (*sql.DB, func()) {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 	`)
 	if err != nil {
@@ -392,7 +400,7 @@ func TestUpdateSessionAutoApprove_SetsFlag(t *testing.T) {
 	defer teardown()
 
 	// Insert a test session
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('test-session', '/proj', 'claude', 'Test')`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('test-session', 1, 'claude', 'Test')`)
 	assert.NoError(t, err)
 
 	// Default is 0
@@ -432,7 +440,7 @@ func TestScheduler_ExternalSessionID_SessionCapture(t *testing.T) {
 	sessionID := "sched-test-session-1"
 	// Create session — external_session_id defaults to the ClawBench UUID (sessionID)
 	// This mirrors CreateSession which sets external_session_id = sessionID as placeholder
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, '/proj', 'opencode', 'Test', ?)`, sessionID, sessionID)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id) VALUES (?, 1, 'opencode', 'Test', ?)`, sessionID, sessionID)
 	assert.NoError(t, err)
 
 	// Verify default: external_session_id == sessionID (the placeholder)
@@ -458,7 +466,7 @@ func TestScheduler_ExternalSessionID_MetadataFallback(t *testing.T) {
 
 	sessionID := "sched-test-session-2"
 	// Create session with placeholder external_session_id (mirrors CreateSession behavior)
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, '/proj', 'codex', 'Test', ?)`, sessionID, sessionID)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id) VALUES (?, 1, 'codex', 'Test', ?)`, sessionID, sessionID)
 	assert.NoError(t, err)
 
 	// Default: placeholder
@@ -550,7 +558,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	// happens after the gate closes, so the subscriber is guaranteed to see it.
 	var sessionID string
 	assert.Eventually(t, func() bool {
-		err := dbRead.QueryRow("SELECT id FROM chat_sessions WHERE project_path = '/tmp' ORDER BY created_at DESC LIMIT 1").Scan(&sessionID)
+		err := dbRead.QueryRow("SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/tmp') ORDER BY created_at DESC LIMIT 1").Scan(&sessionID)
 		return err == nil && sessionID != ""
 	}, 2*time.Second, 20*time.Millisecond)
 	require.NotEmpty(t, sessionID, "executeTask must create a session")
@@ -602,7 +610,7 @@ func TestScheduler_ExternalSessionID_ContinueInheritance(t *testing.T) {
 	sourceID := "sched-source-session"
 	cliSessionID := "ses_real_cli_id"
 	_, err := db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, '/proj', 'opencode', 'Task', ?)`,
+		`INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id) VALUES (?, 1, 'opencode', 'Task', ?)`,
 		sourceID, cliSessionID,
 	)
 	assert.NoError(t, err)
@@ -613,7 +621,7 @@ func TestScheduler_ExternalSessionID_ContinueInheritance(t *testing.T) {
 	// Simulate what ContinueFromExecution does: copy external_session_id to new session
 	continuedID := "continued-session-1"
 	_, err = db.Exec(
-		`INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id, external_session_id) VALUES (?, '/proj', 'opencode', 'Continued', ?, ?)`,
+		`INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, external_session_id) VALUES (?, 1, 'opencode', 'Continued', ?, ?)`,
 		continuedID, sourceID, cliSessionID,
 	)
 	assert.NoError(t, err)

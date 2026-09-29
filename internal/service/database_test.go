@@ -30,6 +30,12 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
 
+	// The projects registry: rows below store project ids, and the resolver
+	// registers paths through it.
+	_, err = db.Exec(ProjectsDDL)
+	if err != nil {
+		t.Fatalf("failed to create projects table: %v", err)
+	}
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS tts_summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,7 +55,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -62,7 +68,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -78,7 +84,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 	`)
 	if err != nil {
@@ -86,6 +92,9 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 	}
 
 	cleanup := SetDBForTest(db, db)
+	// Seeding goes through WriteExec, so it must run AFTER the test DB is
+	// installed (before that, the package-level handle is nil).
+	SeedTestProjectsForTest(t)
 	teardown := func() {
 		cleanup()
 		db.Close()
@@ -106,13 +115,16 @@ func setupTestDBForQuickSend(t *testing.T) func() {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
 
+	// The projects registry: the service functions under test resolve paths
+	// through it, so the fixture schema must carry it.
+	_, _ = db.Exec(ProjectsDDL)
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_quick_send (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -405,15 +417,15 @@ func TestSchema_TitleSourceBackfill(t *testing.T) {
 	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
 	require.NoError(t, err)
 	// custom: renamed by the user.
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-custom', '/p', 'claude', 'Mine', 1)")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, title_renamed) VALUES ('s-custom', 1, 'claude', 'Mine', 1)")
 	require.NoError(t, err)
 	// auto: has a user message, not renamed.
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-auto', '/p', 'claude', 'Auto', 0)")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, title_renamed) VALUES ('s-auto', 1, 'claude', 'Auto', 0)")
 	require.NoError(t, err)
-	_, err = raw.Exec("INSERT INTO chat_history (project_path, role, content, session_id) VALUES ('/p', 'user', 'hi', 's-auto')")
+	_, err = raw.Exec("INSERT INTO chat_history (project_id, role, content, session_id) VALUES (1, 'user', 'hi', 's-auto')")
 	require.NoError(t, err)
 	// placeholder: no messages, not renamed.
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, title_renamed) VALUES ('s-ph', '/p', 'claude', 'New Session 1', 0)")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, title_renamed) VALUES ('s-ph', 1, 'claude', 'New Session 1', 0)")
 	require.NoError(t, err)
 	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN title_source")
 	require.NoError(t, err)
@@ -464,11 +476,11 @@ func TestSchema_SortOrderMigration(t *testing.T) {
 	require.NoError(t, err)
 	// Three sessions: 'old' is oldest, 'pinned' is the oldest of all but pinned,
 	// 'new' is newest.
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('old', '/p', 'claude', 'Old', 0, '2024-01-01 00:00:00')")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at) VALUES ('old', 1, 'claude', 'Old', 0, '2024-01-01 00:00:00')")
 	require.NoError(t, err)
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('pinned', '/p', 'claude', 'Pinned', 1, '2023-01-01 00:00:00')")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at) VALUES ('pinned', 1, 'claude', 'Pinned', 1, '2023-01-01 00:00:00')")
 	require.NoError(t, err)
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('new', '/p', 'claude', 'New', 0, '2025-01-01 00:00:00')")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, pinned, created_at) VALUES ('new', 1, 'claude', 'New', 0, '2025-01-01 00:00:00')")
 	require.NoError(t, err)
 	_, err = raw.Exec("DROP INDEX IF EXISTS idx_sessions_order")
 	require.NoError(t, err)
@@ -565,9 +577,9 @@ func TestSchema_CompletedAtMigration(t *testing.T) {
 	_, err = raw.Exec("ALTER TABLE chat_history DROP COLUMN completed_at")
 	require.NoError(t, err)
 	// A finalized legacy reply plus a session that has never been read.
-	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('legacy-at', '/p', 'claude', 'Legacy')")
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('legacy-at', 1, 'claude', 'Legacy')")
 	require.NoError(t, err)
-	_, err = raw.Exec("INSERT INTO chat_history (project_path, role, content, session_id, streaming, created_at) VALUES ('/p', 'assistant', 'old reply', 'legacy-at', 0, '2025-01-01 10:00:00')")
+	_, err = raw.Exec("INSERT INTO chat_history (project_id, role, content, session_id, streaming, created_at) VALUES (1, 'assistant', 'old reply', 'legacy-at', 0, '2025-01-01 10:00:00')")
 	require.NoError(t, err)
 	raw.Close()
 
@@ -819,7 +831,7 @@ func TestMigrateAddsExternalMessageID(t *testing.T) {
 	require.NoError(t, err)
 	_, err = oldDB.Exec(`CREATE TABLE chat_history (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		project_path TEXT NOT NULL, role TEXT NOT NULL,
+		project_id INTEGER NOT NULL, role TEXT NOT NULL,
 		content TEXT NOT NULL, session_id TEXT,
 		backend TEXT NOT NULL DEFAULT 'claude',
 		streaming INTEGER NOT NULL DEFAULT 0,
@@ -861,7 +873,7 @@ func TestMigrateQueuedMessagesToOwnTable(t *testing.T) {
 		// The pre-refactor shape: queue_id + queued live on chat_history.
 		_, err = oldDB.Exec(`CREATE TABLE chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL, role TEXT NOT NULL,
+			project_id INTEGER NOT NULL, role TEXT NOT NULL,
 			content TEXT NOT NULL, session_id TEXT,
 			files TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
@@ -874,8 +886,8 @@ func TestMigrateQueuedMessagesToOwnTable(t *testing.T) {
 		require.NoError(t, err)
 		// One finalized message and two queued ones (one with a queue_id, one
 		// without — the latter must get a deterministic q-migrated-<id> id).
-		_, err = oldDB.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, queue_id, queued)
-			VALUES ('/p', 'user', 'answered', 's1', '', 0),
+		_, err = oldDB.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, queue_id, queued)
+			VALUES (1, 'user', 'answered', 's1', '', 0),
 			       ('/p', 'user', 'pending-a', 's1', 'q-a', 1),
 			       ('/p', 'user', 'pending-b', 's1', '', 1)`)
 		require.NoError(t, err)
@@ -1004,7 +1016,7 @@ func TestInitDB_UpgradesLegacyChatMetadata(t *testing.T) {
 	defer CloseDB()
 
 	columns := getTableColumns(t, UnsafeDBForTest(), "chat_metadata")
-	for _, col := range []string{"project_path", "backend", "agent_id", "clawbench_session_id"} {
+	for _, col := range []string{"project_id", "backend", "agent_id", "clawbench_session_id"} {
 		assert.Contains(t, columns, col, "chat_metadata should have %s after upgrade", col)
 	}
 
@@ -1206,17 +1218,17 @@ func TestInitDB_CreatesSessionTagTables(t *testing.T) {
 	var colCount int
 	err := db.QueryRow(`
 		SELECT COUNT(*) FROM pragma_table_info('session_tags')
-		WHERE name IN ('name', 'project_path')`).Scan(&colCount)
+		WHERE name IN ('name', 'project_id')`).Scan(&colCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, colCount)
 
 	// A global tag (project_path='') and a project tag may share a name.
-	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'global', '')`)
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_id) VALUES ('bug', 'global', '')`)
 	assert.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'project', '/proj/a')`)
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_id) VALUES ('bug', 'project', 1)`)
 	assert.NoError(t, err)
 	// ...but the same (name, project_path) twice must be rejected.
-	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES ('bug', 'project', '/proj/a')`)
+	_, err = db.Exec(`INSERT INTO session_tags (name, scope, project_id) VALUES ('bug', 'project', 1)`)
 	assert.Error(t, err, "duplicate (name, project_path) must violate the unique constraint")
 }
 
@@ -1233,7 +1245,7 @@ func TestInitDB_CleansOrphanedStreamingJSON(t *testing.T) {
 	}
 	contentJSON, _ := json.Marshal(content)
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/test", string(contentJSON), "sess-1",
 	)
 	assert.NoError(t, err)
@@ -1290,7 +1302,7 @@ func TestInitDB_CleansOrphanedStreamingPlain(t *testing.T) {
 	defer teardown()
 
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/test", "plain text response", "sess-2",
 	)
 	assert.NoError(t, err)
@@ -1352,7 +1364,7 @@ func TestInitDB_CLIModeSkipsOrphanCleanup(t *testing.T) {
 	}
 	contentJSON, _ := json.Marshal(content)
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/test", string(contentJSON), "sess-active",
 	)
 	assert.NoError(t, err)
@@ -1381,7 +1393,7 @@ func TestInitDB_ServerModeCleansOrphans(t *testing.T) {
 	}
 	contentJSON, _ := json.Marshal(content)
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/test", string(contentJSON), "sess-orphan",
 	)
 	assert.NoError(t, err)
@@ -1435,13 +1447,13 @@ func TestInitDB_ServerStartupFinalizesOrphansEndToEnd(t *testing.T) {
 		"blocks": []any{map[string]any{"type": "text", "text": "partial response"}},
 	})
 	_, err = raw.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/p', 'assistant', ?, 'sess-orphan', 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'assistant', ?, 'sess-orphan', 'claude', 1)",
 		string(orphanContent),
 	)
 	require.NoError(t, err)
 	// A finalized row must be left alone — the cleanup is not "clear all".
 	_, err = raw.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/p', 'assistant', '{\"blocks\":[]}', 'sess-done', 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'assistant', '{\"blocks\":[]}', 'sess-done', 'claude', 0)",
 	)
 	require.NoError(t, err)
 	require.NoError(t, raw.Close())
@@ -1503,7 +1515,7 @@ func TestInitDB_CLIModeLeavesOrphansEndToEnd(t *testing.T) {
 	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
 	require.NoError(t, err)
 	_, err = raw.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES ('/p', 'assistant', '{\"blocks\":[]}', 'sess-live', 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (1, 'assistant', '{\"blocks\":[]}', 'sess-live', 'claude', 1)",
 	)
 	require.NoError(t, err)
 	require.NoError(t, raw.Close())
@@ -2125,7 +2137,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 		);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
@@ -2133,11 +2145,11 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -2148,7 +2160,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
 			cron_expr TEXT NOT NULL,
 			agent_id TEXT NOT NULL,
@@ -2184,7 +2196,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -2193,13 +2205,13 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT UNIQUE NOT NULL,
+			project_id INTEGER NOT NULL,
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			is_default INTEGER NOT NULL DEFAULT 0
 		);
@@ -2526,7 +2538,7 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 	_, err = oldDB.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -2538,15 +2550,15 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 		);
 		CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, deleted, created_at);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
-			id TEXT PRIMARY KEY, project_path TEXT NOT NULL, backend TEXT NOT NULL,
+			id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, backend TEXT NOT NULL,
 			title TEXT NOT NULL, agent_id TEXT DEFAULT '', agent_source TEXT DEFAULT 'default',
 			model TEXT DEFAULT '', session_type TEXT NOT NULL DEFAULT 'chat',
 			external_session_id TEXT DEFAULT '', deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, project_path TEXT NOT NULL, name TEXT NOT NULL,
+			id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, name TEXT NOT NULL,
 			cron_expr TEXT NOT NULL, agent_id TEXT NOT NULL, prompt TEXT NOT NULL,
 			status TEXT DEFAULT 'active', repeat_mode TEXT NOT NULL DEFAULT 'unlimited',
 			max_runs INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -2562,7 +2574,7 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			protocol TEXT NOT NULL DEFAULT 'http', created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS recent_projects (
-			id INTEGER PRIMARY KEY AUTOINCREMENT, project_path TEXT UNIQUE NOT NULL,
+			id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL,
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS summaries (
@@ -2579,26 +2591,26 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, command TEXT NOT NULL,
 			hidden INTEGER NOT NULL DEFAULT 0, auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE TABLE IF NOT EXISTS chat_quick_send (
 			id INTEGER PRIMARY KEY AUTOINCREMENT, label TEXT NOT NULL, command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	assert.NoError(t, err)
 
 	// Insert data: some messages with deleted=0, some with deleted=1
-	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
-	_, err = oldDB.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, deleted) VALUES ('/proj', 'user', 'hello', 'sess-1', 'claude', 0)")
+	_, err = oldDB.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, deleted) VALUES (1, 'user', 'hello', 'sess-1', 'claude', 0)")
 	assert.NoError(t, err)
-	_, err = oldDB.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, deleted) VALUES ('/proj', 'assistant', 'world', 'sess-1', 'claude', 0)")
+	_, err = oldDB.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, deleted) VALUES (1, 'assistant', 'world', 'sess-1', 'claude', 0)")
 	assert.NoError(t, err)
-	_, err = oldDB.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend, deleted) VALUES ('/proj', 'assistant', 'deleted reply', 'sess-1', 'claude', 1)")
+	_, err = oldDB.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, deleted) VALUES (1, 'assistant', 'deleted reply', 'sess-1', 'claude', 1)")
 	assert.NoError(t, err)
 
 	// Verify deleted column exists before migration
@@ -2692,7 +2704,7 @@ func TestSchema_DropsLegacyRawResponsesTable(t *testing.T) {
 	_, err = oldDB.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -2762,25 +2774,31 @@ func TestSchema_RenameSessionDeletedToArchived(t *testing.T) {
 	oldDB.Exec("PRAGMA journal_mode=WAL")
 	oldDB.Exec("PRAGMA busy_timeout=5000")
 
+	_, err = oldDB.Exec(ProjectsDDL)
+	assert.NoError(t, err)
 	_, err = oldDB.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			deleted INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, deleted, updated_at DESC, id DESC);
+		CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, deleted, updated_at DESC, id DESC);
 	`)
 	assert.NoError(t, err)
 
-	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES ('active-sess', '/proj', 'claude', 'Active', 0)")
+	// The fixture stores project_id directly, so register the matching project:
+	// the assertion below resolves it back to a path.
+	_, err = oldDB.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj') ON CONFLICT(id) DO NOTHING")
 	assert.NoError(t, err)
-	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, deleted) VALUES ('archived-sess', '/proj', 'claude', 'Archived', 1)")
+	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, deleted) VALUES ('active-sess', 1, 'claude', 'Active', 0)")
+	assert.NoError(t, err)
+	_, err = oldDB.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, deleted) VALUES ('archived-sess', 1, 'claude', 'Archived', 1)")
 	assert.NoError(t, err)
 
 	// Verify deleted column exists before migration
@@ -2811,7 +2829,7 @@ func TestSchema_RenameSessionDeletedToArchived(t *testing.T) {
 
 	// Step 5: Verify index still functions after rename
 	var activeCount int
-	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_path = '/proj' AND archived = 0 AND session_type = 'chat'").Scan(&activeCount)
+	err = db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/proj') AND archived = 0 AND session_type = 'chat'").Scan(&activeCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, activeCount)
 }
@@ -2830,6 +2848,9 @@ func setupTestDBForQuickCommands(t *testing.T) func() {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
 
+	// The projects registry: the service functions under test resolve paths
+	// through it, so the fixture schema must carry it.
+	_, _ = db.Exec(ProjectsDDL)
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS terminal_quick_commands (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2838,12 +2859,12 @@ func setupTestDBForQuickCommands(t *testing.T) func() {
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
-			ON terminal_quick_commands(COALESCE(project_path, ''), auto_execute) WHERE auto_execute = 1;
+			ON terminal_quick_commands(COALESCE(project_id, 0), auto_execute) WHERE auto_execute = 1;
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
@@ -3361,18 +3382,18 @@ func setupTestDBForToolCallMigration(t *testing.T) func() {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			session_type TEXT NOT NULL DEFAULT 'chat',
 			archived INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			session_id TEXT,
@@ -3416,7 +3437,7 @@ func TestMigrateToolCallsFromContent_ExtractsToolCalls(t *testing.T) {
 	defer teardown()
 
 	// Insert a session
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	// Insert assistant message with old-format content: tool_use block with input and output
@@ -3428,7 +3449,7 @@ func TestMigrateToolCallsFromContent_ExtractsToolCalls(t *testing.T) {
 		]
 	}`
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
@@ -3485,7 +3506,7 @@ func TestMigrateToolCallsFromContent_MultipleToolUseBlocks(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-2', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-2', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	// Message with multiple tool_use blocks
@@ -3497,7 +3518,7 @@ func TestMigrateToolCallsFromContent_MultipleToolUseBlocks(t *testing.T) {
 		]
 	}`
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-2",
 	)
 	assert.NoError(t, err)
@@ -3530,7 +3551,7 @@ func TestMigrateToolCallsFromContent_Idempotent(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-3', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-3', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	oldContent := `{
@@ -3539,7 +3560,7 @@ func TestMigrateToolCallsFromContent_Idempotent(t *testing.T) {
 		]
 	}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-3",
 	)
 	assert.NoError(t, err)
@@ -3558,7 +3579,7 @@ func TestMigrateToolCallsFromContent_SkipsSlimFormat(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-4', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-4', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	// Already slim format content (no input field in tool_use)
@@ -3568,7 +3589,7 @@ func TestMigrateToolCallsFromContent_SkipsSlimFormat(t *testing.T) {
 		]
 	}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", slimContent, "sess-4",
 	)
 	assert.NoError(t, err)
@@ -3585,13 +3606,13 @@ func TestMigrateToolCallsFromContent_SkipsUserMessages(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-5', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-5', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	// User message with "input" keyword (should not be processed)
 	userContent := `{"blocks": [{"type": "text", "text": "Please check the input validation"}]}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", userContent, "sess-5",
 	)
 	assert.NoError(t, err)
@@ -3607,7 +3628,7 @@ func TestMigrateToolCallsFromContent_SkipsStreamingMessages(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-6', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-6', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	// Streaming message with tool_use (should not be processed — still in progress)
@@ -3617,7 +3638,7 @@ func TestMigrateToolCallsFromContent_SkipsStreamingMessages(t *testing.T) {
 		]
 	}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/proj", streamingContent, "sess-6",
 	)
 	assert.NoError(t, err)
@@ -3633,13 +3654,13 @@ func TestMigrateToolCallsFromContent_NoToolUseBlocks(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-7', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-7', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	// Assistant message with no tool_use blocks
 	textContent := `{"blocks": [{"type": "text", "text": "Hello world"}]}`
 	_, err = db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", textContent, "sess-7",
 	)
 	assert.NoError(t, err)
@@ -3660,14 +3681,14 @@ func TestMigrateToolCallsFromContent_MoreThanOneBatch(t *testing.T) {
 	teardown := setupTestDBForToolCallMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-8', '/proj', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-8', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	const total = 450
 	for i := range total {
 		oldContent := fmt.Sprintf(`{"blocks":[{"type":"tool_use","name":"Bash","id":"toolu_%03d","input":{"command":"ls"},"output":"out","status":"success","done":true}]}`, i)
 		_, err = db.Exec(
-			"INSERT INTO chat_history (project_path, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
+			"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 			"/proj", oldContent, "sess-8",
 		)
 		assert.NoError(t, err)
@@ -3707,7 +3728,7 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 	_, err = testDB.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -3723,11 +3744,11 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -3743,7 +3764,7 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -3766,7 +3787,7 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 func insertUserMessage(t *testing.T, sessionID, content string, files string, streaming int) {
 	t.Helper()
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, ?, ?, 'claude', ?)",
+		"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, ?, ?, 'claude', ?)",
 		"/proj", content, files, sessionID, streaming,
 	)
 	assert.NoError(t, err)
@@ -3876,7 +3897,7 @@ func TestGetUserMessageStats_ExcludesFileAttachments(t *testing.T) {
 	insertUserMessage(t, "sess-1", "hello", "", 0)
 	// Message with NULL files should be included
 	_, err := db.Exec(
-		"INSERT INTO chat_history (project_path, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, NULL, ?, 'claude', 0)",
+		"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, 'user', ?, NULL, ?, 'claude', 0)",
 		"/proj", "null files message", "sess-1",
 	)
 	assert.NoError(t, err)
@@ -3949,7 +3970,7 @@ func setupTestDBForClusters(t *testing.T) func() {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -4178,7 +4199,7 @@ func TestSchema_ProjectForgesTableExists(t *testing.T) {
 	defer CloseDB()
 
 	columns := getTableColumns(t, UnsafeDBForTest(), "project_forges")
-	for _, col := range []string{"id", "project_path", "platform", "host", "owner", "repo", "source", "created_at", "updated_at"} {
+	for _, col := range []string{"id", "project_id", "platform", "host", "owner", "repo", "source", "created_at", "updated_at"} {
 		assert.True(t, columns[col], "project_forges should have %s column", col)
 	}
 }
@@ -4217,8 +4238,7 @@ func TestSchema_ForgeItemsCommentsBaselinedMigration(t *testing.T) {
 			seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (platform, host, owner, repo, item_type, number));`)
 	require.NoError(t, err)
-	_, err = legacy.Exec(`INSERT INTO forge_items
-		(platform,host,owner,repo,item_type,number,state,merged,last_comment_id)
+	_, err = legacy.Exec(`INSERT INTO forge_items (platform,host,owner,repo,item_type,number,state,merged,last_comment_id)
 		VALUES ('github','github.com','a','b','issue',1,'open',0,42),
 		       ('github','github.com','a','b','issue',2,'open',0,0)`)
 	require.NoError(t, err)
@@ -4274,9 +4294,11 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
 	legacy, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
 	require.NoError(t, err)
+	_, err = legacy.Exec(ProjectsDDL)
+	require.NoError(t, err)
 	_, err = legacy.Exec(`CREATE TABLE project_forges (
 		id           INTEGER PRIMARY KEY AUTOINCREMENT,
-		project_path TEXT NOT NULL,
+		project_id INTEGER NOT NULL,
 		platform     TEXT NOT NULL,
 		host         TEXT NOT NULL,
 		owner        TEXT NOT NULL,
@@ -4286,9 +4308,13 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 		updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
 	require.NoError(t, err)
+	// Seed the registry row this binding points at, so the lookup below can
+	// resolve the path back through it.
+	_, err = legacy.Exec("INSERT INTO projects (path) VALUES (?)", projPath)
+	require.NoError(t, err)
 	_, err = legacy.Exec(
-		`INSERT INTO project_forges (project_path, platform, host, owner, repo)
-		 VALUES (?, 'gitlab', 'gitlab.internal', 'group', 'widgets')`, projPath)
+		`INSERT INTO project_forges (project_id, platform, host, owner, repo)
+		 VALUES ((SELECT id FROM projects WHERE path = ?), 'gitlab', 'gitlab.internal', 'group', 'widgets')`, projPath)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 
@@ -4304,7 +4330,7 @@ func TestSchema_ProjectForgesSchemeMigration(t *testing.T) {
 	// would override the credential's hint on an http-only instance.
 	var scheme string
 	require.NoError(t, UnsafeDBForTest().QueryRow(
-		"SELECT scheme FROM project_forges WHERE project_path = ?", projPath).Scan(&scheme))
+		"SELECT scheme FROM project_forges WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projPath).Scan(&scheme))
 	assert.Empty(t, scheme, "existing rows must backfill to unknown, not https")
 
 	// And the migrated table must be usable through the real accessors, which is
@@ -4477,9 +4503,8 @@ func TestSchema_ScriptColumnMigration(t *testing.T) {
 
 	// A legacy task row with history that must survive the migration.
 	_, err = raw.Exec(
-		`INSERT INTO scheduled_tasks
-		 (project_path, name, cron_expr, agent_id, prompt, run_count)
-		 VALUES ('/p', 'Legacy task', '0 9 * * *', 'default', 'do work', 7)`)
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, run_count)
+		 VALUES (1, 'Legacy task', '0 9 * * *', 'default', 'do work', 7)`)
 	require.NoError(t, err)
 	raw.Close()
 
@@ -4571,8 +4596,7 @@ func TestSchema_ForgeSyncStatePerTypeWatermarkMigration(t *testing.T) {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			PRIMARY KEY (platform, host, owner, repo));`)
 	require.NoError(t, err)
-	_, err = legacy.Exec(`INSERT INTO forge_sync_state
-		(platform,host,owner,repo,watermark) VALUES ('github','github.com','acme','widgets','2026-09-21 14:44:53')`)
+	_, err = legacy.Exec(`INSERT INTO forge_sync_state (platform,host,owner,repo,watermark) VALUES ('github','github.com','acme','widgets','2026-09-21 14:44:53')`)
 	require.NoError(t, err)
 	require.NoError(t, legacy.Close())
 

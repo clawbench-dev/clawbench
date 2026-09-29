@@ -869,6 +869,7 @@ describe('useSessionManager', () => {
             expect(result).toEqual({ exists: false, sessionId: '' })
         })
     })
+
     // ── handlePendingAction toast reporting ──
     //
     // The insert action has two distinct failure flavours and they must not be
@@ -1004,6 +1005,80 @@ describe('useSessionManager', () => {
 
             expect(ok).toBe(true)
             expect(getQueue('session-1')).toHaveLength(0)
+            fetchSpy.mockRestore()
+        })
+    })
+
+    // ── handleMergeQueue ──
+    //
+    // Merging is a queue-WIDE action backed by the atomic POST
+    // /api/ai/queue/merge: the backend replaces N rows with 1 in a single
+    // transaction, and this device mirrors that locally without waiting for the
+    // broadcast.
+    describe('handleMergeQueue', () => {
+        function jsonResponse(status: number, body: unknown): Response {
+            return {
+                ok: status >= 200 && status < 300,
+                status,
+                json: async () => body,
+            } as unknown as Response
+        }
+
+        it('replaces the local queue with the single merged entry', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'first' })
+            addQueued('session-1', { queueId: 'q2', text: 'second' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(200, { merged: true, queueId: 'q-merged', text: 'first\n\nsecond', files: [] }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const mergedId = await mgr.handleMergeQueue()
+
+            expect(mergedId).toBe('q-merged')
+            const queue = getQueue('session-1')
+            expect(queue).toHaveLength(1)
+            expect(queue[0].queueId).toBe('q-merged')
+            expect(queue[0].text).toBe('first\n\nsecond')
+            // The request carries only the session, not a queueId list.
+            expect(fetchSpy).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue/merge?session_id=session-1'),
+                expect.objectContaining({ method: 'POST' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('is a no-op (no request) when fewer than two messages are queued', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'only' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const mergedId = await mgr.handleMergeQueue()
+
+            expect(mergedId).toBe('')
+            expect(fetchSpy).not.toHaveBeenCalled()
+            expect(getQueue('session-1')).toHaveLength(1)
+            fetchSpy.mockRestore()
+        })
+
+        it('leaves the queue untouched and reports an error on failure', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'first' })
+            addQueued('session-1', { queueId: 'q2', text: 'second' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(500, { msgKey: 'QueueMergeFailed' }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const mergedId = await mgr.handleMergeQueue()
+
+            expect(mergedId).toBe('')
+            expect(getQueue('session-1').map((m) => m.queueId)).toEqual(['q1', 'q2'])
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.mergeFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
             fetchSpy.mockRestore()
         })
     })

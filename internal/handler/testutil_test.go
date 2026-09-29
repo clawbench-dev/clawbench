@@ -73,10 +73,14 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	_, _ = db.Exec("PRAGMA busy_timeout=5000")
 
 	// Create tables
+	_, err = db.Exec(service.ProjectsDDL)
+	if err != nil {
+		t.Fatalf("failed to create projects table: %v", err)
+	}
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			files TEXT,
@@ -91,7 +95,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		CREATE TABLE IF NOT EXISTS queued_messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL DEFAULT '',
 			queue_id TEXT NOT NULL,
 			content TEXT NOT NULL,
@@ -102,7 +106,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_identity ON queued_messages(session_id, queue_id);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -122,24 +126,18 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT UNIQUE NOT NULL,
+			project_id INTEGER NOT NULL,
 			accessed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			is_default INTEGER NOT NULL DEFAULT 0
-		);
-		CREATE TABLE IF NOT EXISTS project_meta (
-			project_path TEXT PRIMARY KEY,
-			next_session_number INTEGER NOT NULL DEFAULT 0,
-			forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+			is_default INTEGER NOT NULL DEFAULT 0,
+			UNIQUE(project_id)
 		);
 		CREATE TABLE IF NOT EXISTS scheduled_tasks (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			name TEXT NOT NULL,
 			description TEXT,
 			cron_expr TEXT NOT NULL,
@@ -173,14 +171,14 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 		CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 		CREATE INDEX IF NOT EXISTS idx_sessions_source_session ON chat_sessions(source_session_id) WHERE source_session_id IS NOT NULL;
 		CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 		CREATE TABLE IF NOT EXISTS chat_recommendations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id TEXT NOT NULL,
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			message_id INTEGER NOT NULL DEFAULT 0,
 			recommendation TEXT NOT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -208,7 +206,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			hidden INTEGER NOT NULL DEFAULT 0,
 			auto_execute INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -217,7 +215,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			label TEXT NOT NULL,
 			command TEXT NOT NULL,
 			sort_order INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT DEFAULT NULL,
+			project_id INTEGER DEFAULT NULL,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
@@ -263,7 +261,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			finish_reason TEXT DEFAULT '',
 			outcome TEXT DEFAULT '',
 			agent_phase TEXT DEFAULT '',
-			project_path TEXT DEFAULT '',
+			project_id INTEGER DEFAULT '',
 			backend TEXT DEFAULT '',
 			agent_id TEXT DEFAULT '',
 			clawbench_session_id TEXT DEFAULT '',
@@ -271,7 +269,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_model ON chat_metadata(model);
 		CREATE INDEX IF NOT EXISTS idx_chat_metadata_created ON chat_metadata(created_at);
-		CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_path, created_at);
+		CREATE INDEX IF NOT EXISTS idx_chat_metadata_project_created ON chat_metadata(project_id, created_at);
 		CREATE TABLE IF NOT EXISTS chat_tool_calls (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			message_id INTEGER NOT NULL REFERENCES chat_history(id) ON DELETE CASCADE,
@@ -305,9 +303,9 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
 			scope TEXT NOT NULL DEFAULT 'project',
-			project_path TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(name, project_path)
+			UNIQUE(name, project_id)
 		);
 		CREATE TABLE IF NOT EXISTS session_tag_links (
 			session_id TEXT NOT NULL,

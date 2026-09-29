@@ -368,9 +368,10 @@ func (s *Scheduler) RemoveTask(id int64) {
 
 	// Cascade: archive associated chat sessions
 	rows, err := dbRead.Query(`
-		SELECT te.session_id, cs.project_path, cs.backend
+		SELECT te.session_id, COALESCE(p.path, ''), cs.backend
 		FROM task_executions te
 		JOIN chat_sessions cs ON cs.id = te.session_id
+		LEFT JOIN projects p ON p.id = cs.project_id
 		WHERE te.task_id = ?`, id)
 	if err != nil {
 		slog.Error(
@@ -1493,22 +1494,30 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	var args []interface{}
 
 	if projectPath == "" {
-		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
+		query = `SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
 			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
-			FROM scheduled_tasks s ORDER BY s.created_at DESC`
+			FROM scheduled_tasks s
+			LEFT JOIN projects p ON p.id = s.project_id
+			ORDER BY s.created_at DESC`
 	} else {
-		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
+		projectID, idErr := ProjectIDForPath(projectPath)
+		if idErr != nil {
+			return nil, idErr
+		}
+		query = `SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
 			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
-			FROM scheduled_tasks s WHERE s.project_path = ? ORDER BY s.created_at DESC`
-		args = []interface{}{projectPath}
+			FROM scheduled_tasks s
+			LEFT JOIN projects p ON p.id = s.project_id
+			WHERE s.project_id = ? ORDER BY s.created_at DESC`
+		args = []interface{}{projectID}
 	}
 
 	rows, err := dbRead.Query(query, args...)
@@ -1542,13 +1551,15 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var t model.ScheduledTask
 	var lastRun, nextRun, lastRead sql.NullTime
 	err := dbRead.QueryRow(
-		`SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
+		`SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 		s.trigger_mode, s.event_types,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
 		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
-		FROM scheduled_tasks s WHERE s.id = ?`,
+		FROM scheduled_tasks s
+		LEFT JOIN projects p ON p.id = s.project_id
+		WHERE s.id = ?`,
 		id,
 	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
 	if err != nil {
@@ -1568,10 +1579,14 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 
 // insertTask inserts a new task into the database and sets the auto-generated ID.
 func insertTask(task *model.ScheduledTask) error {
+	projectID, idErr := ProjectIDForPath(task.ProjectPath)
+	if idErr != nil {
+		return idErr
+	}
 	result, err := WriteExec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
+		projectID, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -1702,7 +1717,9 @@ func DeleteTaskExecution(executionID int64) error {
 	// Only archive the associated chat session AFTER successful execution deletion.
 	var projectPath, backend string
 	err = dbRead.QueryRow(
-		"SELECT project_path, backend FROM chat_sessions WHERE id = ?",
+		`SELECT COALESCE(p.path, ''), s.backend FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ?`,
 		sessionID,
 	).Scan(&projectPath, &backend)
 	if err == nil {
@@ -1726,9 +1743,10 @@ func DeleteTaskExecution(executionID int64) error {
 func DeleteAllTaskExecutions(taskID int64) error {
 	// Collect all non-running executions with their session info
 	rows, err := dbRead.Query(`
-		SELECT te.id, te.session_id, cs.project_path, cs.backend
+		SELECT te.id, te.session_id, COALESCE(p.path, ''), cs.backend
 		FROM task_executions te
 		JOIN chat_sessions cs ON cs.id = te.session_id
+		LEFT JOIN projects p ON p.id = cs.project_id
 		WHERE te.task_id = ? AND te.status != 'running'`, taskID)
 	if err != nil {
 		return fmt.Errorf("failed to query executions: %w", err)
@@ -1782,12 +1800,16 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
 		).Scan(&count)
 	} else {
+		projectID, idErr := ProjectIDForPath(projectPath)
+		if idErr != nil {
+			return false, idErr
+		}
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
-			 WHERE s.project_path = ?
+			 WHERE s.project_id = ?
 			 AND (SELECT COUNT(*) FROM task_executions e
 			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
-			projectPath,
+			projectID,
 		).Scan(&count)
 	}
 	return count > 0, err

@@ -38,11 +38,12 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	}
 	rows, err := dbRead.QueryContext(
 		context.Background(),
-		`SELECT id, title, project_path, backend, agent_id, model
-		 FROM chat_sessions
-		 WHERE LOWER(id) LIKE LOWER(?) AND archived = 0 AND session_type = 'chat'
-		 ORDER BY updated_at DESC
-		 LIMIT 10`,
+		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
+		   FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type = 'chat'
+		  ORDER BY s.updated_at DESC
+		  LIMIT 10`,
 		prefix+"%",
 	)
 	if err != nil {
@@ -62,11 +63,12 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 	}
 	rows, err := dbRead.QueryContext(
 		context.Background(),
-		`SELECT id, title, project_path, backend, agent_id, model
-		 FROM chat_sessions
-		 WHERE archived = 0 AND session_type = 'chat'
-		 ORDER BY updated_at DESC
-		 LIMIT ?`,
+		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
+		   FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.archived = 0 AND s.session_type = 'chat'
+		  ORDER BY s.updated_at DESC
+		  LIMIT ?`,
 		limit,
 	)
 	if err != nil {
@@ -111,9 +113,10 @@ func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 	rows, err := dbRead.QueryContext(
 		context.Background(),
 		fmt.Sprintf(
-			`SELECT id, title, project_path, backend, agent_id, model
-			 FROM chat_sessions
-			 WHERE id IN (%s) AND archived = 0`,
+			`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
+			   FROM chat_sessions s
+			   LEFT JOIN projects p ON p.id = s.project_id
+			  WHERE s.id IN (%s) AND s.archived = 0`,
 			sb.String(),
 		),
 		args...,

@@ -143,8 +143,8 @@ func TestMigration_TaskUnreadBackfill(t *testing.T) {
 
 	watermark := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 	_, err = raw.Exec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at)
-		 VALUES ('/proj','Task','0 * * * *','agent1','p','','active','unlimited',?,?,?)`,
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at)
+		 VALUES (1,'Task','0 * * * *','agent1','p','','active','unlimited',?,?,?)`,
 		watermark, watermark, watermark)
 	require.NoError(t, err)
 	var taskID int64
