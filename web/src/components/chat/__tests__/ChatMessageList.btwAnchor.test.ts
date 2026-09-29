@@ -48,7 +48,16 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({ default: { render: () => n
 // Renders an identifiable node: the pending anchor swaps its icon for this
 // spinner, and the test asserts that swap happened.
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({
-  default: defineComponent({ name: 'LoadingIndicator', render: () => h('i', { class: 'li-stub' }) }),
+  default: defineComponent({
+    name: 'LoadingIndicator',
+    props: { size: { type: String, default: 'md' } },
+    // Mirror the real component's size-tier class, so a test can pin that the
+    // spinner matches the icon's footprint (the real bug was a numeric `size`
+    // producing a class that matched nothing and fell back to 28px).
+    setup(props, { attrs }) {
+      return () => h('i', { ...attrs, class: ['li-stub', `size-${props.size}`, (attrs as any).class] })
+    },
+  }),
 }))
 vi.mock('@/components/common/ProviderIcon.vue', () => ({ default: { render: () => null } }))
 vi.mock('../UserMsgIndexDrawer.vue', () => ({ default: { render: () => null } }))
@@ -191,14 +200,44 @@ describe('ChatMessageList — /btw anchor (mounted)', () => {
   // ── Pending state ──
   // A question asked just now is inserted optimistically, so its anchor must
   // show an in-progress state immediately rather than waiting for the server.
-  it('shows a spinner and the answering label while a question is pending', () => {
+  it('shows a spinner in place of the icon while a question is pending', () => {
     const wrapper = mountList({ btwAnchors: { 10: [{ id: 'btw-pending-1', anchorMessageId: 10, pending: true }] } })
     const anchor = wrapper.find('.btw-anchor')
     expect(anchor.exists()).toBe(true)
     expect(anchor.classes()).toContain('btw-anchor--pending')
-    expect(anchor.text()).toContain('Answering…')
-    // The icon is replaced by the spinner, not shown alongside it.
+    // The icon is REPLACED by the spinner, not shown alongside it.
     expect(anchor.find('.btw-anchor-spinner').exists()).toBe(true)
+    expect(anchor.find('svg').exists()).toBe(false)
+  })
+
+  it('keeps the label and footprint identical while pending', () => {
+    // The pending state must not resize or reword the pill: it only swaps the
+    // 14px icon for a 14px spinner and solidifies the border. A different label
+    // or a mis-sized spinner would make the anchor jump when a question starts.
+    const resting = mountList({ btwAnchors: { 10: [{ id: 1, anchorMessageId: 10, answer: 'a' }] } })
+    const pending = mountList({ btwAnchors: { 10: [{ id: 'btw-pending-1', anchorMessageId: 10, pending: true }] } })
+    expect(pending.find('.btw-anchor-label').text())
+      .toBe(resting.find('.btw-anchor-label').text())
+    // The spinner must use the same size tier as the icon it replaces.
+    const spinner = pending.find('.btw-anchor-spinner')
+    expect(spinner.classes()).toContain('size-sm')
+    expect(spinner.classes()).not.toContain('size-14')
+  })
+
+  it('marks the pending anchor busy and describes the wait out-of-band', () => {
+    // The wait must be conveyed without changing the visible text, so it lives
+    // in title/aria-label (which do not affect layout) plus aria-busy.
+    const pending = mountList({ btwAnchors: { 10: [{ id: 'btw-pending-1', anchorMessageId: 10, pending: true }] } })
+    const resting = mountList({ btwAnchors: { 10: [{ id: 1, anchorMessageId: 10, answer: 'a' }] } })
+    const p = pending.find('.btw-anchor')
+    const r = resting.find('.btw-anchor')
+    expect(p.attributes('aria-busy')).toBe('true')
+    expect(r.attributes('aria-busy')).toBe('false')
+    expect(p.attributes('title')).toBe('Answering…')
+    expect(p.attributes('aria-label')).toBe('Answering…')
+    expect(r.attributes('title')).toBe('View the side question')
+    // The visible label is NOT the pending text.
+    expect(p.find('.btw-anchor-label').text()).not.toContain('Answering')
   })
 
   it('returns to the resting state once the answer is stored', () => {

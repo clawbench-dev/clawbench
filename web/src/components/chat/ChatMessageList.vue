@@ -68,13 +68,18 @@
       v-if="(btwAnchors?.['0']?.length || 0) > 0"
       class="btw-anchor btw-anchor-top"
       :class="{ 'btw-anchor--pending': anchorKeyPending(btwAnchors, '0') }"
-      :title="t('chat.btw.anchorTitle')"
-      :aria-label="t('chat.btw.anchorTitle')"
+      :title="anchorKeyPending(btwAnchors, '0') ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+      :aria-label="anchorKeyPending(btwAnchors, '0') ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+      :aria-busy="anchorKeyPending(btwAnchors, '0')"
       @click="$emit('open-btw', '0')"
     >
-      <LoadingIndicator v-if="anchorKeyPending(btwAnchors, '0')" :size="14" inline class="btw-anchor-spinner" />
+      <!-- The pending state must NOT resize the pill, so the visible label and
+           its footprint stay identical: only the 14px icon is swapped for an
+           equally-sized spinner, and the wait is described via title/aria
+           (which do not affect layout). -->
+      <LoadingIndicator v-if="anchorKeyPending(btwAnchors, '0')" size="sm" inline class="btw-anchor-spinner" />
       <MessageCircleQuestion v-else :size="14" />
-      <span class="btw-anchor-label">{{ anchorKeyPending(btwAnchors, '0') ? t('chat.btw.answering') : t('chat.btw.anchorLabel') }}</span>
+      <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
       <span v-if="btwAnchors['0'].length > 1" class="btw-anchor-count">{{ btwAnchors['0'].length }}</span>
     </button>
 
@@ -114,13 +119,17 @@
         v-if="anchorCountFor(msg) > 0"
         class="btw-anchor"
         :class="{ 'btw-anchor--pending': anchorPendingFor(msg) }"
-        :title="t('chat.btw.anchorTitle')"
-        :aria-label="t('chat.btw.anchorTitle')"
+        :title="anchorPendingFor(msg) ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+        :aria-label="anchorPendingFor(msg) ? t('chat.btw.answering') : t('chat.btw.anchorTitle')"
+        :aria-busy="anchorPendingFor(msg)"
         @click="$emit('open-btw', anchorKeyFor(msg))"
       >
-        <LoadingIndicator v-if="anchorPendingFor(msg)" :size="14" inline class="btw-anchor-spinner" />
+        <!-- Same label and icon footprint as the resting state, so the pill does
+             not resize when a question starts or finishes; the wait is described
+             via title/aria, which do not affect layout. -->
+        <LoadingIndicator v-if="anchorPendingFor(msg)" size="sm" inline class="btw-anchor-spinner" />
         <MessageCircleQuestion v-else :size="14" />
-        <span class="btw-anchor-label">{{ anchorPendingFor(msg) ? t('chat.btw.answering') : t('chat.btw.anchorLabel') }}</span>
+        <span class="btw-anchor-label">{{ t('chat.btw.anchorLabel') }}</span>
         <span v-if="anchorCountFor(msg) > 1" class="btw-anchor-count">{{ anchorCountFor(msg) }}</span>
       </button>
     </template>
