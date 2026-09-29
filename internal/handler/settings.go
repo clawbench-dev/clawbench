@@ -35,7 +35,20 @@ import (
 
 // configMutex protects ConfigInstance from concurrent access.
 // PATCH acquires a full lock; GET acquires a read lock to allow concurrent reads.
+//
+// It also serializes access to the agent globals (model.Agents / model.AgentList):
+// the agent handlers read and write them under this same lock (see agent.go).
 var configMutex sync.RWMutex
+
+// WithConfigLock runs fn while holding the config write lock. Code outside this
+// package that mutates the agent globals (model.Agents / model.AgentList) must
+// go through this so it serializes with the HTTP handlers, which read and write
+// those globals under configMutex.
+func WithConfigLock(fn func()) {
+	configMutex.Lock()
+	defer configMutex.Unlock()
+	fn()
+}
 
 // hotReloadFields is the set of config dot-paths that take effect immediately
 // via applyHotReloadGlobals() and do NOT require a server restart.

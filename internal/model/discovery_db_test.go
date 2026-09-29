@@ -713,7 +713,7 @@ func TestStartModelDiscoveryAsync_PersistsAndReloads(t *testing.T) {
 	RegisterModelSource(StaticSource(backend, "", []AgentModel{{ID: "m1", Name: "M1"}}))
 
 	done := make(chan struct{})
-	StartModelDiscoveryAsync(db, func() { close(done) })
+	StartModelDiscoveryAsync(db, nil, func() { close(done) })
 
 	select {
 	case <-done:
@@ -732,4 +732,37 @@ func TestStartModelDiscoveryAsync_PersistsAndReloads(t *testing.T) {
 	assert.True(t, slices.ContainsFunc(GetAgent(backend).Models,
 		func(m AgentModel) bool { return m.ID == "m1" }),
 		"内存里的 agent 必须带上刚发现的模型")
+}
+
+// TestStartModelDiscoveryAsync_UsesInjectedLock 断言注入的锁被用来包裹内存重载，
+// 这样后台重载才不会与 HTTP handler 读 Agents 竞争。
+func TestStartModelDiscoveryAsync_UsesInjectedLock(t *testing.T) {
+	db := setupTestDBForDiscovery(t)
+	restore := isolateModelSources(t)
+	defer restore()
+	isolateAgentGlobals(t)
+
+	const backend = "lock-probe"
+	_, err := db.Exec(`INSERT INTO agents (id, name, backend, models, models_auto_detected)
+		VALUES (?, ?, ?, '[]', 0)`, backend, backend, backend)
+	require.NoError(t, err)
+	RegisterModelSource(StaticSource(backend, "", []AgentModel{{ID: "m1", Name: "M1"}}))
+
+	var lockedDuringReload bool
+	lock := func(fn func()) {
+		fn()
+		// 若重载真的在锁内发生，此刻内存里应已有该 agent。
+		lockedDuringReload = GetAgent(backend) != nil
+	}
+
+	done := make(chan struct{})
+	StartModelDiscoveryAsync(db, lock, func() { close(done) })
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("异步发现未在 5s 内完成")
+	}
+	assert.True(t, lockedDuringReload,
+		"内存重载必须在注入的锁内完成（否则与 handler 读 Agents 竞争）")
 }

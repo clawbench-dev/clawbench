@@ -388,10 +388,15 @@ func discoverAndPersistModels(db dbutil.Writer) (map[string][]AgentModel, []stri
 // 串行合计约 18s。把它移出启动关键路径后，服务可立即开始接受请求，模型列表
 // 稍后到达。
 //
+// withAgentsLock 用于把内存重载与其它读写 Agents/AgentList 的调用方串行。
+// 本包不能 import internal/handler（会形成 import cycle），所以由调用方注入
+// ——生产环境传 handler.WithConfigLock；没有并发读者时（例如测试）传 nil，
+// 此时直接重载。
+//
 // 调用方负责通知前端（本包不能 import internal/ws——ws 已 import 本包）。
 // 必须在 RefreshAgents(SkipDiscovery: true) 之后调用，否则 CLI 探测与 agent
 // 插入尚未完成，后台发现会写不到行。
-func StartModelDiscoveryAsync(db dbutil.Writer, onComplete func()) {
+func StartModelDiscoveryAsync(db dbutil.Writer, withAgentsLock func(func()), onComplete func()) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -404,9 +409,18 @@ func StartModelDiscoveryAsync(db dbutil.Writer, onComplete func()) {
 			"backends", len(discovered), "rows_updated", len(updated))
 
 		// 重载内存，让模型选择器拿到新列表。LoadAgentsIntoMemoryFromDB 先建新
-		// map 再原子替换，并发读者不会看到空集合（ISS-302）。
-		if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
-			slog.Error("async model discovery: memory reload failed", "error", err)
+		// map 再原子替换，并发读者不会看到空集合（ISS-302）；但替换本身要与其他
+		// 读写 Agents/AgentList 的调用方（HTTP handler 持 configMutex）串行，
+		// 否则是数据竞争。锁由调用方注入——本包不能 import internal/handler。
+		reload := func() {
+			if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
+				slog.Error("async model discovery: memory reload failed", "error", err)
+			}
+		}
+		if withAgentsLock != nil {
+			withAgentsLock(reload)
+		} else {
+			reload()
 		}
 
 		if onComplete != nil {

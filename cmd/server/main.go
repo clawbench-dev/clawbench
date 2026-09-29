@@ -903,13 +903,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Set global port for cookie name scoping (multi-instance on same hostname)
 	model.ServerPort = port
 
-	// 1. Bring agents and model lists in line with what is installed.
-	// This is a single pass: detect CLIs, load YAML agents, discover models,
-	// persist, and reload memory. It replaces five separate steps that each
-	// re-queried the database and re-ran the same discovery probes.
+	// 1. 同步：探测已安装的 CLI、插入 agent、加载 YAML、重载内存。
+	// 跳过模型发现——那一步会 fork 各家 CLI（串行约 18s），已移到下面的
+	// 后台 goroutine，否则会拖住启动。
 	//
+	// 必须同步完成的部分：model.Agents / AgentList 要在默认 agent 选择
+	// （下方）与 scheduler.LoadTasksFromDB（其会校验 task.AgentID 是否存在，
+	// 否则静默跳过注册）之前就绪。
 	if _, err := model.RefreshAgents(service.WriteDB(), model.RefreshOptions{
-		ConfigDir: filepath.Dir(configPath),
+		ConfigDir:     filepath.Dir(configPath),
+		SkipDiscovery: true,
 	}); err != nil {
 		slog.Error("failed to refresh agents", "error", err)
 	}
@@ -1184,6 +1187,19 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	ws.InitManager()
 	dingtalk.RegisterClientChecker(ws.GetManager())
 	feishu.RegisterClientChecker(ws.GetManager())
+
+	// 模型发现放到后台：探测会 fork 各家 CLI（antigravity 未登录时挂满超时），
+	// 串行约 18s。这里必须晚于 ws.InitManager，否则广播时 Manager 还没建好。
+	//
+	// withAgentsLock 用 handler.WithConfigLock：后台重载会替换 model.Agents/
+	// AgentList，而 HTTP handler 在同一把锁下读写它们。
+	model.StartModelDiscoveryAsync(service.WriteDB(), handler.WithConfigLock, func() {
+		ws.GetManager().BroadcastEvent(ws.ServerMessage{
+			Type:  ws.MessageTypeEvent,
+			ID:    ws.GenerateEventID(),
+			Event: "agents_updated",
+		})
+	})
 
 	// Initialize cluster worker (on-demand, no cron) — must be after ws.InitManager()
 	mgr := ws.GetManager()
