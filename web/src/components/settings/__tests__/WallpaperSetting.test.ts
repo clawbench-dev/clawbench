@@ -71,6 +71,10 @@ const i18n = createI18n({
           wallpaperBingSyncedAt: 'Synced {date}',
           wallpaperBingNoImage: 'No image fetched yet',
           wallpaperBingFailed: 'Sync failed',
+          wallpaperBingSaveToGallery: 'Add to gallery',
+          wallpaperBingSaving: 'Saving…',
+          wallpaperBingSaved: 'Bing wallpaper saved to gallery',
+          wallpaperBingSaveFailed: 'Failed to save Bing wallpaper to gallery',
           wallpaperGallery: 'Local gallery',
           wallpaperGalleryDesc: 'Desc',
           wallpaperGalleryUpload: 'Upload images',
@@ -509,6 +513,83 @@ describe('WallpaperSetting', () => {
         vi.useRealTimers()
       }
     }, 20000)
+
+    it('saves the Bing image to the gallery, reloads, and toasts success', async () => {
+      // The gallery reload (loadConfig → serverConfig) is what makes the new
+      // item visible; without it the user sees the toast but no new tile.
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/save-to-gallery') {
+          return { ok: true, status: 200, json: async () => ({ item: { file: 'local-new-a.jpg', name: 'Bing 20260910.jpg', uploaded_at: 1, size: 9 } }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Add to gallery')!
+      expect(saveBtn).toBeTruthy()
+      await saveBtn.trigger('click')
+
+      // The handler chains save → reload → toast; let the microtask queue drain.
+      await vi.waitFor(() => expect(toastShow).toHaveBeenCalled())
+
+      expect(fetchMock.mock.calls.some(c => c[0] === '/api/theme/bing/save-to-gallery')).toBe(true)
+      expect(mockLoadConfig).toHaveBeenCalled()
+      expect(toastShow.mock.calls.map(c => c[0])).toContain('Bing wallpaper saved to gallery')
+      expect(wrapper.find('.wallpaper-error').exists()).toBe(false)
+    })
+
+    it('shows the capacity hint (not a generic error) when the gallery is full', async () => {
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/save-to-gallery') {
+          return { ok: false, status: 400, json: async () => ({}) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Add to gallery')!
+      await saveBtn.trigger('click')
+      await vi.waitFor(() => expect(wrapper.find('.wallpaper-error').exists()).toBe(true))
+
+      const err = wrapper.find('.wallpaper-error')
+      expect(err.text()).toContain('Limit 50')
+      expect(toastShow).not.toHaveBeenCalled()
+    })
+
+    it('disables the save button while a save is in flight', async () => {
+      let release!: () => void
+      const gate = new Promise<void>((r) => { release = r })
+      const fetchMock = vi.fn(async (url: string) => {
+        if (url === '/api/theme/bing/save-to-gallery') {
+          await gate
+          return { ok: true, status: 200, json: async () => ({ item: { file: 'local-new-a.jpg', name: 'n', uploaded_at: 1, size: 9 } }) }
+        }
+        return { ok: true, status: 200, json: async () => ({}) }
+      })
+      vi.stubGlobal('fetch', fetchMock)
+      serverConfig.value = serverWith([], { file: 'bing-20260910.jpg', last_success_date: '20260910' })
+      chooseDevice('bing')
+
+      const wrapper = mountSetting()
+      await nextTick()
+      const saveBtn = wrapper.findAll('button').find(b => b.text() === 'Add to gallery')!
+      await saveBtn.trigger('click')
+      await nextTick()
+      // In flight: the label flips to "Saving…" and the control is disabled.
+      const inFlight = wrapper.findAll('button').find(b => b.text() === 'Saving…')!
+      expect(inFlight.attributes('disabled')).toBeDefined()
+      release()
+      await nextTick()
+      await nextTick()
+    })
   })
 
   describe('gallery', () => {

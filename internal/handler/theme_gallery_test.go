@@ -767,3 +767,103 @@ func TestGalleryItemsToViews_PreservesFields(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.Equal(t, galleryItemView{File: "local-1-a.png", Name: "a.png", UploadedAt: 111, Size: 222}, out[0])
 }
+
+// ── Bing save-to-gallery ───────────────────────────────────────────────────────
+
+func TestThemeBingSaveToGallery_Success(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	require.NoError(t, wallpaper.WriteAtomic(wallpaper.BingDir(), "bing-20260929.jpg", makeJPEG(16, 12)))
+	model.ConfigInstance.Appearance.Bing = model.BingWallpaperConfig{
+		File:            "bing-20260929.jpg",
+		LastSuccessDate: "20260929",
+		Title:           "Test Bing Image",
+		Copyright:       "© Test",
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/save-to-gallery", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBingSaveToGallery, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp saveToGalleryResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// The new item must be in the local gallery.
+	require.Len(t, model.ConfigInstance.Appearance.Local.Items, 1)
+	assert.Equal(t, resp.Item.File, model.ConfigInstance.Appearance.Local.Items[0].File)
+	assert.Equal(t, "Bing 20260929.jpg", model.ConfigInstance.Appearance.Local.Items[0].Name)
+
+	// The file must exist on disk under theme/local.
+	abs, ok := wallpaper.FilePath(resp.Item.File)
+	require.True(t, ok, "saved file must be resolvable")
+	data, err := os.ReadFile(abs)
+	require.NoError(t, err)
+	img, _, err := image.Decode(bytes.NewReader(data))
+	require.NoError(t, err)
+	assert.Equal(t, 16, img.Bounds().Dx())
+	assert.Equal(t, 12, img.Bounds().Dy())
+
+	// The original Bing file must still exist (save is a copy, not a move).
+	assert.FileExists(t, filepath.Join(wallpaper.BingDir(), "bing-20260929.jpg"))
+}
+
+func TestThemeBingSaveToGallery_NoImage_Returns404(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.Appearance.Bing = model.BingWallpaperConfig{File: ""}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/save-to-gallery", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBingSaveToGallery, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// TestThemeBingSaveToGallery_FileVanished_Returns404 covers the race with the
+// daily sync: config still names a Bing file that was already rotated off disk.
+// That is a missing image (404), not a server fault (500).
+func TestThemeBingSaveToGallery_FileVanished_Returns404(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.Appearance.Bing = model.BingWallpaperConfig{File: "bing-20260929.jpg"}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/save-to-gallery", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBingSaveToGallery, req)
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestThemeBingSaveToGallery_GalleryFull_Returns400(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	require.NoError(t, wallpaper.WriteAtomic(wallpaper.BingDir(), "bing-20260929.jpg", makeJPEG(8, 8)))
+	model.ConfigInstance.Appearance.Bing = model.BingWallpaperConfig{File: "bing-20260929.jpg"}
+
+	// Fill the gallery to the cap.
+	for i := range wallpaper.MaxGalleryItems {
+		model.ConfigInstance.Appearance.Local.Items = append(
+			model.ConfigInstance.Appearance.Local.Items, seedGalleryItem(t, fmt.Sprintf("local-%d-a.png", i)),
+		)
+	}
+
+	before, err := os.ReadDir(wallpaper.LocalDir())
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/save-to-gallery", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeBingSaveToGallery, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// The Bing file must still exist (we refused to save it, not delete it).
+	assert.FileExists(t, filepath.Join(wallpaper.BingDir(), "bing-20260929.jpg"))
+
+	// The rollback must have removed the copy written before appendGalleryItems
+	// rejected it — otherwise every refused save leaks an orphan in theme/local.
+	after, err := os.ReadDir(wallpaper.LocalDir())
+	require.NoError(t, err)
+	assert.Len(t, after, len(before), "a refused save must not leave an orphan file in the gallery dir")
+}

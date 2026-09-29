@@ -545,6 +545,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/BingStatus"
 
+  /api/theme/bing/save-to-gallery:
+    post:
+      tags: [Theme]
+      summary: 将当前 Bing 壁纸加入本地图库
+      description: |
+        将服务器缓存的 Bing 每日壁纸复制到 `<DataDir>/theme/local/` 图库目录，
+        使其不受每日轮换影响而永久保留。图库已满时返回 400。
+      operationId: themeBingSaveToGallery
+      responses:
+        "200":
+          description: 已加入图库，返回图库条目
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveToGalleryResponse"
+        "400":
+          description: 图库已满
+        "404":
+          description: 当前无缓存的 Bing 图片
+
   /api/file/theme-wallpaper:
     get:
       tags: [Theme]
@@ -4730,7 +4750,8 @@ components:
     GalleryItem:
       type: object
       description: |
-        图库中的一张图片，由 `POST /api/theme/local/upload` 返回。
+        图库中的一张图片，由 `POST /api/theme/local/upload` 或
+        `POST /api/theme/bing/save-to-gallery` 返回。
         注意：绝对路径 `abs_path` 不在此响应中，只出现在 `GET /api/config` 的
         `appearance.local.items[]` 里。
       properties:
@@ -4739,11 +4760,20 @@ components:
           description: 存储用的生成文件名。
         name:
           type: string
-          description: 上传时的原始文件名。
+          description: 展示名。上传时为原始文件名；Bing 保存时为 `Bing <日期><扩展名>`。
         uploaded_at:
           type: integer
         size:
           type: integer
+
+    SaveToGalleryResponse:
+      type: object
+      description: |
+        `POST /api/theme/bing/save-to-gallery` 的响应。只有一张来源图片，故不存在
+        逐文件错误列表——失败通过 HTTP 状态码表达。
+      properties:
+        item:
+          $ref: "#/components/schemas/GalleryItem"
 
     BingStatus:
       type: object

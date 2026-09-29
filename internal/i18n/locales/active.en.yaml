@@ -62,6 +62,7 @@ NoFileProvided: No file provided
 FileTooLargeShort: File too large
 InvalidImage: "Unsupported image: {{.Error}}"
 WriteFailed: "Failed to save: {{.Error}}"
+ReadFailed: "Failed to read: {{.Error}}"
 UploadSaveFailed: "Unable to save file: {{.Error}}"
 FileMustHaveExtension: File must have an extension
 FileTypeNotAllowed: "File type not allowed: {{.Ext}}"

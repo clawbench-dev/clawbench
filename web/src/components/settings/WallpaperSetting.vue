@@ -217,6 +217,14 @@
         </div>
         <div v-if="bingStatus.file" class="wallpaper-thumb-wrap">
           <img :src="galleryImageUrl(bingStatus.file, bingStatus.abs_path)" class="wallpaper-thumb" :class="{ 'local-media-hidden': thumbErrors.has(bingStatus.file) }" :alt="bingStatus.title || t('settings.items.wallpaperPreview')" @error="onThumbError(bingStatus.file)" />
+          <button
+            class="settings-item__action"
+            :disabled="!enabled || busy || saving || atLimit"
+            :title="atLimit ? t('settings.items.wallpaperGalleryLimit', { max: maxGalleryItems }) : ''"
+            @click.stop="onSaveBingToGallery"
+          >
+            {{ saving ? t('settings.items.wallpaperBingSaving') : t('settings.items.wallpaperBingSaveToGallery') }}
+          </button>
         </div>
       </div>
 
@@ -380,6 +388,8 @@ import {
   deleteGalleryItem,
   syncBingNow,
   fetchBingStatus,
+  saveBingToGallery,
+  SaveToGalleryError,
   galleryImageUrl,
   invalidateGalleryImageUrls,
   resolveWallpaperMode,
@@ -418,6 +428,7 @@ const maxUploadsPerRequest = 10
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const busy = ref(false)
 const syncing = ref(false)
+const saving = ref(false)
 const error = ref('')
 
 // Set on unmount so a detached background refresh stops before touching state
@@ -733,6 +744,28 @@ async function pollBingUntilSettled(): Promise<{ status: BingStatus; settled: bo
     settled = !!status.last_error || status.last_success_date === todayStamp()
   }
   return { status, settled }
+}
+
+async function onSaveBingToGallery() {
+  saving.value = true
+  error.value = ''
+  try {
+    await saveBingToGallery()
+    // The new item is a fresh gallery row — reload so the local gallery list
+    // (and its count/limit state) reflects it without a manual refresh.
+    await reloadFromServer()
+    toast.show(t('settings.items.wallpaperBingSaved'), { icon: '💾', type: 'success', duration: 2500 })
+  } catch (e) {
+    // A 400 means the gallery filled up (e.g. from another device) after this
+    // button was enabled — surface the capacity hint rather than a generic error.
+    if (e instanceof SaveToGalleryError && e.status === 400) {
+      error.value = t('settings.items.wallpaperGalleryLimit', { max: maxGalleryItems })
+    } else {
+      error.value = t('settings.items.wallpaperBingSaveFailed')
+    }
+  } finally {
+    saving.value = false
+  }
 }
 
 /** Trigger a Bing fetch and poll until it settles or the wait budget runs out. */

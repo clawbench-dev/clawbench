@@ -444,3 +444,32 @@ export async function fetchBingStatus(): Promise<BingStatus> {
   if (!resp.ok) throw new Error(`bing status failed: HTTP ${resp.status}`)
   return (await resp.json()) as BingStatus
 }
+
+/** Result of saving the Bing wallpaper to the local gallery. */
+export interface SaveToGalleryResult {
+  item: GalleryItem
+}
+
+/**
+ * Error thrown by saveBingToGallery. `status` carries the HTTP status so the
+ * caller can distinguish "gallery full" (400) from a real failure.
+ */
+export class SaveToGalleryError extends Error {
+  status: number
+
+  constructor(status: number) {
+    super(`save Bing to gallery failed: HTTP ${status}`)
+    this.name = 'SaveToGalleryError'
+    this.status = status
+  }
+}
+
+/**
+ * Copy the currently cached Bing wallpaper into the local gallery via
+ * POST /api/theme/bing/save-to-gallery.
+ */
+export async function saveBingToGallery(): Promise<SaveToGalleryResult> {
+  const resp = await fetch('/api/theme/bing/save-to-gallery', { method: 'POST' })
+  if (!resp.ok) throw new SaveToGalleryError(resp.status)
+  return (await resp.json()) as SaveToGalleryResult
+}

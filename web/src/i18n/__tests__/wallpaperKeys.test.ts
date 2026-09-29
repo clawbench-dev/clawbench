@@ -69,6 +69,10 @@ describe('i18n wallpaper keys completeness', () => {
     'wallpaperBingSyncedAt',
     'wallpaperBingNoImage',
     'wallpaperBingFailed',
+    'wallpaperBingSaveToGallery',
+    'wallpaperBingSaving',
+    'wallpaperBingSaved',
+    'wallpaperBingSaveFailed',
     // Local gallery.
     'wallpaperGallery',
     'wallpaperGalleryDesc',
