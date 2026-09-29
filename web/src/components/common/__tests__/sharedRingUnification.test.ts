@@ -95,7 +95,9 @@ describe('shared loading ring', () => {
     ] as const
     for (const [file, cls] of sites) {
       const src = await source(file)
-      const rule = src.match(new RegExp(`\\.${cls}\\s*\\{([\\s\\S]*?)\\}`))
+      // Allow a descendant part: the callers scope themselves under a container
+      // so they outrank the global .li-spinner instead of tying with it.
+      const rule = src.match(new RegExp(`[^\\n{}]*\\.${cls}\\s*\\{([\\s\\S]*?)\\}`))
       expect(rule, `.${cls} rule must exist`).not.toBeNull()
       const body = rule![1]
       // Match a real declaration at the start of a declaration, so `--li-border:`
@@ -110,6 +112,32 @@ describe('shared loading ring', () => {
         .not.toMatch(/(^|;)\s*border\s*:/)
       expect(body, `.${cls} must size via --li-size`).toContain('--li-size')
     }
+  })
+
+  it('outranks the global ring instead of tying with it', async () => {
+    // `.li-spinner` is a single class (0,1,0). An override written as a single
+    // class too would tie, leaving the winner to stylesheet order — the size
+    // would silently fall back to 28px if the bundler reordered the chunks.
+    // Every override must therefore carry a descendant part.
+    const overrides = [
+      ['@/assets/code-link-preview.css', 'code-preview-spinner', '.code-preview-status'],
+      ['@/assets/code-link-preview.css', 'code-preview-expand-spinner', '.code-preview-expand-loading'],
+      ['@/assets/mermaid.css', 'mermaid-spinner', '.mermaid'],
+      ['@/assets/annotation-buttons.css', 'chat-url-open-btn-spinner', '.chat-url-open-btn'],
+    ] as const
+    for (const [file, cls, ancestor] of overrides) {
+      const src = await source(file)
+      const rule = src.match(new RegExp(`([^\\n{}]*)\\.${cls}\\s*\\{`))
+      expect(rule, `.${cls} rule must exist`).not.toBeNull()
+      const selector = rule![1].trim()
+      expect(
+        selector.startsWith(ancestor),
+        `.${cls} must be scoped under ${ancestor} so it outranks .li-spinner (got "${selector}")`,
+      ).toBe(true)
+    }
+    // The tool-call override is already compound (.tool-call-loading .li-spinner).
+    const cpc = await source('@/components/chat/ChatPanelContent.vue')
+    expect(cpc).toMatch(/\.tool-call-loading \.li-spinner\s*\{/)
   })
 
   it('keeps each site at the speed it shipped with', async () => {
