@@ -946,3 +946,50 @@ func TestRegisterProjectRenamedHook_IgnoresNil(t *testing.T) {
 
 	requireNoError(t, RenameProject(dir, t.TempDir()))
 }
+
+// SeedTestProjectsForTest must register the CANONICAL form of each fixture path.
+// The fixtures look these paths up by their literal spelling inside SQL
+// subqueries; the registry stores canonical paths, so seeding the raw literal
+// would leave the lookup with no row on macOS, where /tmp is a symlink to
+// /private/tmp.
+//
+// The symlinked entry below reproduces that mismatch on any OS, so this test
+// fails wherever the seed stops canonicalizing — not only on macOS.
+func TestSeedTestProjectsForTest_StoresCanonicalPaths(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := symlinkOrSkip(t, target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	orig := seedTestProjectPaths
+	seedTestProjectPaths = append(append([]string{}, orig...), link)
+	t.Cleanup(func() { seedTestProjectPaths = orig })
+
+	SeedTestProjectsForTest(t)
+
+	for _, p := range seedTestProjectPaths {
+		want := NormalizeProjectPath(p)
+		var got string
+		if err := db.QueryRow("SELECT path FROM projects WHERE path = ?", want).Scan(&got); err != nil {
+			t.Fatalf("seeded path %q not found in canonical form %q: %v", p, want, err)
+		}
+		if got != want {
+			t.Errorf("stored path = %q, want canonical %q", got, want)
+		}
+	}
+	// The symlinked spelling must NOT be stored raw: that is the exact row the
+	// fixtures' literal lookups would miss.
+	var rawCount int
+	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects WHERE path = ?", link).Scan(&rawCount))
+	if rawCount != 0 {
+		t.Errorf("the raw symlinked path %q must not be seeded", link)
+	}
+}

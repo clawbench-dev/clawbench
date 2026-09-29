@@ -2394,7 +2394,7 @@ func TestExecuteStreamRunShared_BroadcastsStreamStart(t *testing.T) {
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "stream-start-sess"
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = '/tmp'), 'test-stream-start', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID)
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'test-stream-start', 'Test', 'test-agent', 'default', '', 'chat', 0)", sessionID, NormalizeProjectPath("/tmp"))
 	require.NoError(t, err)
 
 	var writeMu sync.Mutex
@@ -2465,8 +2465,8 @@ func TestExecuteStreamRunShared_StreamStartFails_CoversAbsErrAndReasonKeys(t *te
 
 	// Create a chat session for AddChatMessage
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = '/tmp'), 'test-stream-err', 'Test', 'test-agent', 'default', '', 'chat', 0)",
-		sessionID,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'test-stream-err', 'Test', 'test-agent', 'default', '', 'chat', 0)",
+		sessionID, NormalizeProjectPath("/tmp"),
 	)
 	require.NoError(t, err)
 

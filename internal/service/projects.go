@@ -266,6 +266,10 @@ func ProjectIDForTest(t interface {
 
 // seedTestProjectPaths is the fixed set of project paths the test fixtures
 // reference by literal (inside SQL subqueries, or through ProjectIDForTest).
+//
+// These are canonicalized before they are inserted: the registry stores the
+// canonical form, so seeding the raw literal would create a row the fixtures'
+// own lookups cannot find on macOS (where /tmp is a symlink to /private/tmp).
 var seedTestProjectPaths = []string{
 	"/test", "/proj", "/proj1", "/proj2", "/proj/info", "/tmp", "/project", "/p",
 }
@@ -284,7 +288,7 @@ func SeedTestProjectsForTest(t interface {
 	t.Helper()
 	for _, p := range seedTestProjectPaths {
 		if _, err := WriteExec(
-			"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", p,
+			"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", NormalizeProjectPath(p),
 		); err != nil {
 			t.Fatalf("seed project %q: %v", p, err)
 		}
@@ -303,7 +307,7 @@ func SeedTestProjectsOnDB(t interface {
 	for _, p := range seedTestProjectPaths {
 		if _, err := db.ExecContext(
 			context.Background(),
-			"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", p,
+			"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", NormalizeProjectPath(p),
 		); err != nil {
 			t.Fatalf("seed project %q: %v", p, err)
 		}

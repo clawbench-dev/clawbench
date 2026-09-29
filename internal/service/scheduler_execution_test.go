@@ -558,7 +558,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	// happens after the gate closes, so the subscriber is guaranteed to see it.
 	var sessionID string
 	assert.Eventually(t, func() bool {
-		err := dbRead.QueryRow("SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/tmp') ORDER BY created_at DESC LIMIT 1").Scan(&sessionID)
+		err := dbRead.QueryRow("SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1", NormalizeProjectPath("/tmp")).Scan(&sessionID)
 		return err == nil && sessionID != ""
 	}, 2*time.Second, 20*time.Millisecond)
 	require.NotEmpty(t, sessionID, "executeTask must create a session")

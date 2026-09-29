@@ -612,7 +612,8 @@ func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
 
 	var sessionID string
 	if err := dbRead.QueryRow(
-		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/tmp') ORDER BY created_at DESC LIMIT 1",
+		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1",
+		NormalizeProjectPath("/tmp"),
 	).Scan(&sessionID); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
@@ -708,7 +709,8 @@ func TestScheduler_ExecuteTask_AutoContinueHonorsExactRetryBudget(t *testing.T) 
 
 	var sessionID string
 	if err := dbRead.QueryRow(
-		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/tmp') ORDER BY created_at DESC LIMIT 1",
+		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1",
+		NormalizeProjectPath("/tmp"),
 	).Scan(&sessionID); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
@@ -738,7 +740,8 @@ func TestScheduler_ExecuteTask_NoAutoContinueWhenDisabled(t *testing.T) {
 
 	var sessionID string
 	if err := dbRead.QueryRow(
-		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = '/tmp') ORDER BY created_at DESC LIMIT 1",
+		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1",
+		NormalizeProjectPath("/tmp"),
 	).Scan(&sessionID); err != nil {
 		t.Fatalf("query session: %v", err)
 	}

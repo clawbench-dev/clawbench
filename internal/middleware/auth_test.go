@@ -287,8 +287,11 @@ func TestGetProjectFromCookie_CanonicalizesSymlinkedPath(t *testing.T) {
 	})
 
 	result := middleware.GetProjectFromCookie(req)
-	assert.Equal(t, target, result, "the symlinked spelling must resolve to the canonical path")
-	assert.Equal(t, model.NormalizeProjectPath(link), result)
+	// The symlinked spelling must resolve to the canonical target. Compare via
+	// NormalizeProjectPath rather than the raw t.TempDir() value: on macOS that
+	// raw path is /var/... while the canonical form is /private/var/....
+	assert.Equal(t, model.NormalizeProjectPath(target), result)
+	assert.NotEqual(t, link, result, "the raw symlinked spelling must not survive")
 }
 
 // A malformed percent-escape must fall back to the raw value rather than
