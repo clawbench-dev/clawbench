@@ -38,8 +38,13 @@ export interface ClawBenchNative {
   updateLastSeenEventId(id: string): void
   setKeepScreenOn(on: boolean): void
   log(level: string, tag: string, msg: string): void
-  /** Dismiss the host splash overlay once the app is ready (Android; no-op on desktop). */
+  /** Dismiss the host splash overlay once the app is ready (Android and desktop). */
   dismissSplash(): void
+  /**
+   * Abort a connection attempt from the host splash overlay's cancel button
+   * (desktop only; absent on Android, whose splash cancels natively).
+   */
+  cancelSplash?(): void
   /** Stop the host background service when no ports are enabled (Android; no-op on desktop). */
   stopBackgroundService(): void
   /** Forward hardware volume keys to the terminal (Android; no-op on desktop). */
@@ -93,6 +98,17 @@ export interface ClawBenchNative {
 
   // Async writes / actions
   saveServer(url: string, password: string): Promise<void>
+  /**
+   * Save a server together with its optional display name (empty clears it).
+   *
+   * A distinct method name, not an overload of saveServer(): Android's WebView
+   * bridge resolves @JavascriptInterface methods by name and overloads collide
+   * there.
+   *
+   * Optional: an older host lacks it, and the caller then falls back to
+   * saveServer() — the entry still persists, just without a name.
+   */
+  saveServerNamed?(url: string, password: string, name: string): Promise<void>
   removeServer(url: string): Promise<void>
   setSSHPassword(pwd: string): Promise<void>
   connectToServer(url: string, password: string): Promise<void>
@@ -116,7 +132,27 @@ export interface ClawBenchNative {
   removeReverseForwardedPort?(serverPort: number): Promise<void>
   reconnectTunnel(): Promise<boolean>
   reconnectTunnelAsync(): Promise<void>
+  /** Download a project file (legacy, no progress). */
   downloadFile(path: string): Promise<void>
+  /**
+   * Download a project file with in-product progress. Hosts stream the response
+   * and dispatch `clawbench-download-progress` CustomEvents (detail: {id,
+   * received, total, done, error, cancelled}) so the progress bar can track
+   * them. `downloadId` is echoed back unchanged; the renderer allocates it and
+   * ignores stale ids.
+   *
+   * Optional: an older host lacks it, and the caller then falls back to
+   * downloadFile() — the file still downloads, just without a progress bar.
+   * It is a distinct method name rather than an overload of downloadFile()
+   * because Android's WebView JavaScript bridge resolves @JavascriptInterface
+   * methods by name and overloads collide there.
+   */
+  downloadFileWithProgress?(path: string, fileName: string, downloadId: number): Promise<void>
+  /**
+   * Cancel an in-flight download started by downloadFileWithProgress().
+   * Optional: older hosts lack it, and the UI then only hides the bar.
+   */
+  cancelDownload?(id: number): Promise<void> | void
   downloadUrl(url: string, fileName: string): Promise<void>
   downloadBlob(base64: string, fileName: string): Promise<void>
   openInBrowser(port: number, protocol: string, host: string, path: string): Promise<void>
@@ -152,6 +188,27 @@ export interface ClawBenchNative {
    * caller falls back to CSS zoom when this is absent.
    */
   setZoomFactor?(factor: number): void
+
+  // ── Frameless window controls (Electron on Windows/Linux) ──
+  /**
+   * Whether this host draws its own window controls, i.e. the window has no
+   * native frame. True only for the Electron shell on Windows/Linux; false on
+   * macOS (native traffic lights), Android and the plain browser.
+   *
+   * Answered by the main process so the platform table lives in exactly one
+   * place (`desktop/src/main/windowChrome.ts`). The renderer must not re-derive
+   * it from the user agent: the UA is absent in the sandboxed preload, and a
+   * second copy of the table would silently drift.
+   */
+  hasCustomWindowControls?(): boolean
+  /** Minimize the window. Present exactly when `hasCustomWindowControls()` is true. */
+  windowMinimize?(): void
+  /** Toggle the window between maximized and restored. */
+  windowToggleMaximize?(): void
+  /** Close the window (quits the app, matching the native close button). */
+  windowClose?(): void
+  /** Current maximize state, for the button's initial glyph. */
+  isWindowMaximized?(): Promise<boolean>
 }
 
 /** Navigation target for a native notification click. */

@@ -14,21 +14,21 @@ var launchConsumerExecution = LaunchSessionExecution
 
 // QueueReaper is a safety net for stranded queued messages.
 //
-// A user message is persisted with queued=1 and then handed to a consumer
+// A user message is inserted into queued_messages and then handed to a consumer
 // (TrySetSessionRunning + a drain loop, or the enqueue self-heal). That handoff
 // has historically been lossy: if the session's running flag is stale — or the
 // consumer exits in the window between the claim and the handoff — the row stays
-// queued=1 with nobody left to dequeue it. The user then sees a message that
-// never gets an AI response until they cancel and re-send (cancel clears the
-// stuck running flag and the queue, so the re-send starts cleanly).
+// queued with nobody left to claim it. The user then sees a message that never
+// gets an AI response until they cancel and re-send (cancel clears the stuck
+// running flag and the queue, so the re-send starts cleanly).
 //
-// This worker periodically finds such rows — queued=1, older than a grace
-// period, on a session that is not running and not archived — and starts a
+// This worker periodically finds such rows — in queued_messages, older than a
+// grace period, on a session that is not running and not archived — and starts a
 // consumer for them. It does not need to know WHY the row was stranded; it only
 // needs to notice that it is.
 //
-// The grace period matters: a freshly inserted row is legitimately queued=1 for
-// a moment while the request that inserted it claims the session, so reaping
+// The grace period matters: a freshly inserted row is legitimately queued for a
+// moment while the request that inserted it claims the session, so reaping
 // immediately would race the normal path and could start a second consumer.
 type QueueReaper struct {
 	grace    time.Duration
@@ -180,7 +180,7 @@ func (w *QueueReaper) reap() {
 }
 
 // findStrandedQueuedSessions returns the session IDs that have at least one
-// queued=1 message older than grace, skipping archived sessions.
+// queued message older than grace, skipping archived sessions.
 //
 // created_at is written by SQLite as CURRENT_TIMESTAMP (UTC, "YYYY-MM-DD
 // HH:MM:SS"), so the cutoff is computed in UTC and compared as a string —
@@ -189,12 +189,11 @@ func findStrandedQueuedSessions(grace time.Duration) ([]string, error) {
 	cutoff := time.Now().UTC().Add(-grace).Format("2006-01-02 15:04:05")
 
 	rows, err := dbRead.QueryContext(context.Background(), `
-		SELECT DISTINCT h.session_id
-		FROM chat_history h
-		JOIN chat_sessions s ON s.id = h.session_id
-		WHERE h.queued = 1
-		  AND h.session_id != ''
-		  AND h.created_at < ?
+		SELECT DISTINCT q.session_id
+		FROM queued_messages q
+		JOIN chat_sessions s ON s.id = q.session_id
+		WHERE q.session_id != ''
+		  AND q.created_at < ?
 		  AND s.archived = 0
 	`, cutoff)
 	if err != nil {
@@ -221,11 +220,11 @@ func findStrandedQueuedSessions(grace time.Duration) ([]string, error) {
 // execution, false when the session was already running (nothing to recover)
 // or could not be started.
 //
-// The first queued row is deliberately NOT dequeued here: the launched
-// execution's drain loop claims it (via DequeueQueuedMessage) as part of its
-// normal loop. That keeps this function free of the insert/claim bookkeeping
-// the HTTP paths do, and means a failed launch leaves the row queued for the
-// next reap pass instead of losing it.
+// The first queued row IS claimed and materialized here (via the shared
+// dequeueQueuedMessage indirection), then handed to the execution directly:
+// LaunchSessionExecution runs cfg.Message, so the row must be consumed before
+// the launch or the drain loop would run it a second time. A failed launch
+// leaves the materialized row visible in history rather than losing it.
 func EnsureConsumer(sessionID string) bool {
 	if sessionID == "" {
 		return false
@@ -254,7 +253,7 @@ func EnsureConsumer(sessionID string) bool {
 
 	// Re-verify there is still something to run: the queue may have been
 	// cleared (user cancel) or drained between the scan and the claim.
-	msg, ok, err := dequeueQueuedMessage(sessionID)
+	row, msgID, ok, err := dequeueQueuedMessage(sessionID)
 	if err != nil {
 		// A real DB error, not an empty queue. Release the claim so the next
 		// pass can retry instead of leaving the session stuck as "running"
@@ -271,9 +270,10 @@ func EnsureConsumer(sessionID string) bool {
 		return false
 	}
 
-	// We hold the claimed row, so hand it to the execution directly. Using
-	// LaunchSessionExecution (rather than letting the drain loop re-dequeue)
-	// avoids re-queueing it and keeps the reply anchored to this message.
+	// Announce the materialized user message so every device renders it inline.
+	emitUserMessage(sessionID, msgID, row)
+
+	// We hold the claimed row, so hand it to the execution directly.
 	//
 	// Files MUST be carried: executeStreamRunShared builds the prompt itself and
 	// never goes through the handler's builder, so a missing Files silently
@@ -285,9 +285,8 @@ func EnsureConsumer(sessionID string) bool {
 		ProjectPath: info.ProjectPath,
 		BackendName: info.Backend,
 		AgentID:     info.AgentID,
-		Message:     msg.Content,
-		Files:       msg.Files,
-		QueueID:     msg.QueueID,
+		Message:     row.Content,
+		Files:       row.Files,
 		RunCtx:      runCtx,
 	})
 	return true

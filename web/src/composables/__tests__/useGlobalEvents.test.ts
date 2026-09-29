@@ -695,6 +695,27 @@ describe('useGlobalEvents', () => {
         })
     })
 
+    describe('session_title_update event dispatch', () => {
+        it('dispatches clawbench-session-title-update with the new title', () => {
+            const dispatchSpy = vi.spyOn(window, 'dispatchEvent')
+            const ws = connectAndGetWs()
+
+            ws.receive({
+                type: 'event',
+                id: nextId(),
+                event: 'session_title_update',
+                data: { session_id: 's1', title: 'AI 标题', project_path: '/p' },
+            })
+
+            const evt = dispatchSpy.mock.calls
+                .map((call: any[]) => call[0])
+                .find((e: any) => e?.type === 'clawbench-session-title-update')
+            expect(evt).toBeDefined()
+            expect((evt as CustomEvent).detail).toMatchObject({ session_id: 's1', title: 'AI 标题' })
+            dispatchSpy.mockRestore()
+        })
+    })
+
     describe('reconnect state refresh event', () => {
         it('does NOT dispatch clawbench-reconnect on the first connect (startup already loads state)', () => {
             const dispatchSpy = vi.spyOn(window, 'dispatchEvent')

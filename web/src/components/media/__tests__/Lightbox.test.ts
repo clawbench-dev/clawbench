@@ -54,7 +54,7 @@ vi.mock('@/utils/fileType.ts', () => ({
 vi.mock('@/utils/download.ts', () => ({
   downloadBlob: vi.fn(),
   buildLocalFileUrl: (path: string, opts?: any) => {
-    const base = `/api/local-file/${path}`
+    const base = `/api/fs/raw/${path}`
     return opts?.timestamp ? `${base}?t=1234567890` : base
   },
   downloadFileByPath: vi.fn(),
@@ -65,7 +65,7 @@ vi.mock('@/utils/lightbox.ts', () => ({
     try {
       const url = new URL(src, 'http://localhost')
       const path = decodeURIComponent(url.pathname)
-      const prefix = '/api/local-file/'
+      const prefix = '/api/fs/raw/'
       if (path.startsWith(prefix)) {
         return path.slice(prefix.length).split('/').pop() || ''
       }
@@ -316,11 +316,11 @@ describe('Lightbox', () => {
       // strip left the ".0" glued to the filename, so the lightbox requested
       // "b.png.0" and showed a broken image. The value must be treated as
       // opaque, not as an integer.
-      vm.open('/api/local-file/a/b.png?t=1758000000000.0')
+      vm.open('/api/fs/raw/a/b.png?t=1758000000000.0')
       await nextTick()
 
       const url = vm.currentUrl as string
-      expect(url).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(url).toMatch(/^\/api\/fs\/raw\/a\/b\.png\?t=\d+$/)
       expect(url).not.toContain('.png.0')
       expect(url).not.toContain('.0?')
     })
@@ -331,11 +331,11 @@ describe('Lightbox', () => {
 
       // ImagePreview.mediaUrl already appends ?t=<mediaTimestamp>; chat passes
       // a clean data-full-src. Both must end up with a single clean ?t= param.
-      vm.open('/api/local-file/a/b.png?t=100')
+      vm.open('/api/fs/raw/a/b.png?t=100')
       await nextTick()
 
       const url = vm.currentUrl as string
-      expect(url).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(url).toMatch(/^\/api\/fs\/raw\/a\/b\.png\?t=\d+$/)
       expect(url.split('t=').length).toBe(2)
       expect(url).not.toContain('&t=')
     })
@@ -358,19 +358,19 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/a/b.png?t=100')
+      vm.open('/api/fs/raw/a/b.png?t=100')
       await nextTick()
 
       // Simulate a source that already carried a cache-buster, then refresh twice.
       // Each refresh must yield one clean ?t= (the malformed path&t= case).
       vm.resetAndRefresh()
       const first = vm.currentUrl as string
-      expect(first).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(first).toMatch(/^\/api\/fs\/raw\/a\/b\.png\?t=\d+$/)
       expect(first).not.toContain('&')
 
       vm.resetAndRefresh()
       const second = vm.currentUrl as string
-      expect(second).toMatch(/^\/api\/local-file\/a\/b\.png\?t=\d+$/)
+      expect(second).toMatch(/^\/api\/fs\/raw\/a\/b\.png\?t=\d+$/)
       expect(second).not.toContain('&')
     })
 
@@ -414,17 +414,17 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/image.png')
+      vm.open('/api/fs/raw/image.png')
       await nextTick()
 
-      expect(vm.displayUrl).toContain('/api/local-file/image.png')
+      expect(vm.displayUrl).toContain('/api/fs/raw/image.png')
     })
 
     it('refreshes the displayed URL after the file is reported changed', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/image.png')
+      vm.open('/api/fs/raw/image.png')
       await nextTick()
       const before = vm.displayUrl
 
@@ -433,7 +433,7 @@ describe('Lightbox', () => {
       await nextTick()
 
       expect(vm.displayUrl).not.toBe(before)
-      expect(vm.displayUrl).toContain('/api/local-file/image.png')
+      expect(vm.displayUrl).toContain('/api/fs/raw/image.png')
       expect(vm.displayUrl).toContain('t=1')
     })
 
@@ -441,7 +441,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/image.png')
+      vm.open('/api/fs/raw/image.png')
       await nextTick()
 
       bumpMediaVersion('image.png')
@@ -884,7 +884,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+      vm.open('/api/fs/raw/assets/logo.png', '', 'assets/logo.png')
       await nextTick()
 
       expect(vm.currentFilePath).toBe('assets/logo.png')
@@ -896,7 +896,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/project/image.png')
+      vm.open('/api/fs/raw/project/image.png')
       await nextTick()
 
       expect(vm.currentFilePath).toBe('/project/image.png')
@@ -913,7 +913,7 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
 
-      vm.open('/api/local-file/assets/logo.png', '', 'assets/logo.png')
+      vm.open('/api/fs/raw/assets/logo.png', '', 'assets/logo.png')
       await nextTick()
 
       expect(vm.siblingFiles.map((e: any) => e.name)).toEqual(['logo.png', 'banner.png'])
@@ -1103,15 +1103,15 @@ describe('Lightbox', () => {
 
       const container = document.createElement('div')
       container.innerHTML =
-        '<img src="/api/file/thumb?path=photo.png&w=1200" data-full-src="/api/local-file/photo.png" alt="A">' +
-        '<img src="/api/file/thumb?path=photo.jpg&w=1200" data-full-src="/api/local-file/photo.jpg" alt="B">'
+        '<img src="/api/fs/thumb?target=photo.png&w=1200" data-full-src="/api/fs/raw/photo.png" alt="A">' +
+        '<img src="/api/fs/thumb?target=photo.jpg&w=1200" data-full-src="/api/fs/raw/photo.jpg" alt="B">'
       document.body.appendChild(container)
 
       const result = vm.collectMdImages(container, container.querySelectorAll('img')[1], null)
-      expect(result.list[0].src).toBe('/api/local-file/photo.png')
-      expect(result.list[1].src).toBe('/api/local-file/photo.jpg')
-      expect(result.list[0].src).not.toContain('/api/file/thumb')
-      expect(result.list[1].src).not.toContain('/api/file/thumb')
+      expect(result.list[0].src).toBe('/api/fs/raw/photo.png')
+      expect(result.list[1].src).toBe('/api/fs/raw/photo.jpg')
+      expect(result.list[0].src).not.toContain('/api/fs/thumb')
+      expect(result.list[1].src).not.toContain('/api/fs/thumb')
 
       document.body.removeChild(container)
     })
@@ -1354,24 +1354,24 @@ describe('Lightbox', () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
       // collectMdImages pre-resolves data-full-src into src
-      vm.mdImages = [{ src: '/api/local-file/photo.png', name: 'photo.png' }]
+      vm.mdImages = [{ src: '/api/fs/raw/photo.png', name: 'photo.png' }]
 
       vm.navigateMdImage(0, 'next')
       await nextTick()
 
-      expect(vm.currentUrl).toContain('/api/local-file/photo.png')
+      expect(vm.currentUrl).toContain('/api/fs/raw/photo.png')
     })
 
     it('openMdImages uses pre-resolved src for plain objects', async () => {
       const wrapper = mountLightbox()
       const vm = wrapper.vm as any
       // collectMdImages pre-resolves data-full-src into src
-      const imgs = [{ src: '/api/local-file/photo.jpg', name: 'photo.jpg' }]
+      const imgs = [{ src: '/api/fs/raw/photo.jpg', name: 'photo.jpg' }]
 
       vm.openMdImages(imgs, 0)
       await nextTick()
 
-      expect(vm.currentUrl).toContain('/api/local-file/photo.jpg')
+      expect(vm.currentUrl).toContain('/api/fs/raw/photo.jpg')
     })
   })
 
@@ -1444,6 +1444,131 @@ describe('Lightbox', () => {
       expect(vm.mdCurrentIndex).toBe(0)
       expect(vm.currentUrl).toContain('http://localhost/a.png')
       expect(vm.currentSvg).toBe('')
+    })
+  })
+
+  // ── Load failure ──
+  describe('image load failure', () => {
+    /**
+     * Before this, a failed image left the lightbox permanently blank: `@error`
+     * only cleared the spinner, so the user stared at an empty overlay with no
+     * hint that the file was missing. It now shows the shared MediaLoadError
+     * element (same one the chat fallback and the media preview card render).
+     *
+     * The lightbox content is Teleported to <body>, so these assertions query
+     * the document rather than the wrapper — `wrapper.find` cannot see through
+     * the teleport and would report "not found" for everything.
+     */
+    function openImage() {
+      const wrapper = mountLightbox()
+      const vm = wrapper.vm as any
+      // Pass the path explicitly: without it the name falls back to the store's
+      // current file, which is what the file-viewer caller relies on but not
+      // what this test is asserting.
+      vm.open('/api/fs/raw/missing.png', '', '/project/missing.png')
+      return { wrapper, vm }
+    }
+
+    function errEl(): HTMLElement | null {
+      return document.querySelector('.media-load-error')
+    }
+
+    it('shows the shared failure element instead of an empty overlay', async () => {
+      const { vm } = openImage()
+      await nextTick()
+      expect(errEl()).toBeNull()
+
+      vm.onImageError()
+      await nextTick()
+
+      const err = errEl()
+      expect(err).not.toBeNull()
+      // The lightbox has nothing else to show, so it fills the overlay.
+      expect(err!.classList.contains('media-load-error--fill')).toBe(true)
+      expect(err!.textContent).toContain('Media failed to load')
+      expect(err!.textContent).toContain('missing.png')
+      // The spinner must not keep spinning behind the failure.
+      expect(vm.imageLoading).toBe(false)
+    })
+
+    it('reacts to the <img> error event itself, not just the handler', async () => {
+      // Guards the template binding: calling `vm.onImageError()` directly (as
+      // the other cases do) would still pass if `@error` were wired to the old
+      // spinner-only expression. Dispatch the real event the browser fires.
+      openImage()
+      await nextTick()
+      const img = document.querySelector('.lightbox-content img') as HTMLImageElement
+      expect(img).not.toBeNull()
+
+      img.dispatchEvent(new Event('error'))
+      await nextTick()
+
+      expect(errEl()).not.toBeNull()
+      expect(img.classList.contains('local-media-hidden')).toBe(true)
+    })
+
+    it('hides the broken <img> so no glyph shows through', async () => {
+      const { vm } = openImage()
+      await nextTick()
+      vm.onImageError()
+      await nextTick()
+
+      // The element stays in the DOM (so a retry can reuse it) but is hidden.
+      const img = document.querySelector('.lightbox-content img') as HTMLImageElement
+      expect(img.classList.contains('local-media-hidden')).toBe(true)
+    })
+
+    it('clears the failure when the image later loads', async () => {
+      const { vm } = openImage()
+      await nextTick()
+      vm.onImageError()
+      await nextTick()
+      expect(errEl()).not.toBeNull()
+
+      vm.onImageLoad()
+      await nextTick()
+
+      expect(errEl()).toBeNull()
+      const img = document.querySelector('.lightbox-content img') as HTMLImageElement
+      expect(img.classList.contains('local-media-hidden')).toBe(false)
+    })
+
+    it('clears the failure when another image is opened', async () => {
+      const { vm } = openImage()
+      await nextTick()
+      vm.onImageError()
+      await nextTick()
+      expect(errEl()).not.toBeNull()
+
+      vm.open('/api/fs/raw/other.png')
+      await nextTick()
+
+      expect(errEl()).toBeNull()
+    })
+
+    it('retries via resetAndRefresh, clearing the failure state', async () => {
+      const { vm } = openImage()
+      await nextTick()
+      vm.onImageError()
+      await nextTick()
+      expect(errEl()).not.toBeNull()
+
+      vm.resetAndRefresh()
+      await nextTick()
+
+      expect(errEl()).toBeNull()
+      expect(vm.imageLoading).toBe(true)
+    })
+
+    it('styles the failure card for the always-dark backdrop', async () => {
+      // The lightbox backdrop is dark in every theme (--lb-bg), so the shared
+      // card's theme text tokens would be unreadable here. This is a
+      // source-contract check: jsdom does not apply scoped CSS, so the override
+      // can only be asserted on the stylesheet text.
+      const { readWebFile } = await import('@/testUtils/readWebFile')
+      const src = readWebFile('src/components/media/Lightbox.vue')
+      expect(src).toMatch(/\.lightbox-content\s*:deep\(\.media-load-error\)/)
+      expect(src).toMatch(/\.lightbox-content\s*:deep\(\.media-load-error-text\)/)
     })
   })
 })

@@ -34,6 +34,7 @@ import { buildKatexFontCss } from '@/utils/katexFontEmbed.ts'
 // The share SPA (ShareView) and this export embed the SAME chrome stylesheet so
 // the exported document keeps the exact look of the public share page.
 import shareChromeCss from '../../css/share-chrome.css?raw'
+import { COPY_ICON_SVG, CHECK_ICON_SVG, COPY_FEEDBACK_MS } from '@/utils/copyButton.ts'
 
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
@@ -97,7 +98,7 @@ interface BatchBase64Response {
 }
 
 /**
- * Extract image paths from /api/local-file/ URLs in the container DOM, call
+ * Extract image paths from /api/fs/raw/ URLs in the container DOM, call
  * batch-base64 API, and replace src with data URIs. Prefers data-full-src
  * (full-size original) over an inline thumbnail src.
  */
@@ -111,7 +112,7 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
 
     for (const img of imgs) {
         // Prefer the original full-size URL when present (inline src may be a
-        // low-res /api/file/thumb thumbnail); fall back to the visible src.
+        // low-res /api/fs/thumb thumbnail); fall back to the visible src.
         const src = img.getAttribute('data-full-src') || img.getAttribute('src') || ''
 
         // Skip data URIs (already self-contained)
@@ -124,8 +125,8 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
             continue
         }
 
-        // Extract path from /api/local-file/...?t=...
-        const match = src.match(/^\/api\/local-file\/(.+?)(?:\?.*)?$/)
+        // Extract path from /api/fs/raw/...?t=...
+        const match = src.match(/^\/api\/fs\/raw\/(.+?)(?:\?.*)?$/)
         if (!match) continue
 
         let imgPath: string
@@ -145,7 +146,7 @@ async function inlineImages(container: HTMLElement): Promise<{ skipped: number; 
     // Batch fetch base64. Chunked because the endpoint rejects more than
     // MAX_BATCH_BASE64_PATHS with 400 TooManyPaths — and a document can easily
     // reference more images than that. Un-chunked, a single oversized request
-    // failed the WHOLE batch, so every local image kept its `/api/local-file/...`
+    // failed the WHOLE batch, so every local image kept its `/api/fs/raw/...`
     // src and showed up broken in the standalone export.
     const paths = Array.from(pathToImg.keys())
     let skipped = 0
@@ -252,7 +253,7 @@ function selectorReferencesContent(selector: string): boolean {
         '.mermaid-error', '.line-flash', '.copy-flash', '.char-flash',
         '.chat-audio-player', '.chat-audio-wrapper', '.chat-video-player',
         '.chat-video-wrapper', '.code-line', '.line-num', '.code-text',
-        '.code-block-pre', '.copied-feedback', '.toc-', '.export-lightbox',
+        '.code-block-pre', '.toc-', '.export-lightbox',
     ]
     return contentTokens.some(tok => selector.includes(tok))
 }
@@ -583,6 +584,12 @@ function buildCodeBlockJs(locale: string): string {
     const copiedText = isZh ? '已复制' : 'Copied'
     const wrapOnText = isZh ? '自动换行已开启' : 'Word wrap on'
     const wrapOffText = isZh ? '自动换行已关闭' : 'Word wrap off'
+    // Same glyphs and timing as the in-app copy buttons (utils/copyButton.ts).
+    // The exported .html is standalone — it cannot import the app — so the
+    // values are inlined here rather than referenced.
+    const copyIconSvg = COPY_ICON_SVG
+    const checkIconSvg = CHECK_ICON_SVG
+    const feedbackMs = COPY_FEEDBACK_MS
     return `
 (function() {
     function closeAllTableMenus(except) {
@@ -677,6 +684,9 @@ function buildCodeBlockJs(locale: string): string {
         }
     });
 
+    var COPY_ICON_SVG = ${JSON.stringify(copyIconSvg)};
+    var CHECK_ICON_SVG = ${JSON.stringify(checkIconSvg)};
+
     function copyText(text, btn) {
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(text);
@@ -689,16 +699,24 @@ function buildCodeBlockJs(locale: string): string {
             document.execCommand('copy');
             document.body.removeChild(ta);
         }
-        var orig = btn.innerHTML;
+        // Menu items carry a text label as their identity (Markdown / HTML /
+        // TSV) — the tint alone is their feedback; replacing the label with a
+        // check would hide which format was copied.
+        if (btn.classList.contains('table-block-copy-menu-item')) {
+            btn.classList.add('is-copied');
+            setTimeout(function() { btn.classList.remove('is-copied'); }, ${feedbackMs});
+            return;
+        }
+        if (btn.classList.contains('is-copied')) return;
         var origTitle = btn.getAttribute('title') || '';
-        btn.innerHTML = '<span class="copied-feedback">${copiedText}</span>';
+        btn.innerHTML = CHECK_ICON_SVG;
         btn.classList.add('is-copied');
         btn.setAttribute('title', '${copiedText}');
         setTimeout(function() {
-            btn.innerHTML = orig;
+            btn.innerHTML = COPY_ICON_SVG;
             btn.classList.remove('is-copied');
             btn.setAttribute('title', origTitle);
-        }, 1500);
+        }, ${feedbackMs});
     }
 
     function tableRows(table) {
@@ -1258,7 +1276,6 @@ ${katexFontCss}
 .mermaid-error { border: 1px dashed var(--border-color); padding: 12px; margin: 8px 0; border-radius: 6px; color: var(--text-muted); font-size: 13px; }
 
 /* ─── Copied feedback text ─── */
-.copied-feedback { font-size: 11px; color: var(--accent-color); }
 
 /* ─── Share chrome (shared stylesheet — same file ShareView.vue imports) ─── */
 ${shareChromeCss}

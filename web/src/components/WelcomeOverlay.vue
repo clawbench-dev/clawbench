@@ -12,6 +12,16 @@
         </div>
         <p class="welcome-desc">{{ t('welcomeInfo.desc') }}<span class="desc-highlight">{{ t('welcomeInfo.descHighlight') }}</span></p>
         <div class="backends-list">
+          <!-- Backend catalogue is only assigned once BOTH fetches resolve
+               (see loadBackends), and /api/agents runs a real detection scan
+               that can take seconds. Until then the list is empty, so without
+               this section-level spinner the whole area renders blank. -->
+          <LoadingIndicator
+            v-if="loading && sortedBackends.length === 0"
+            class="backends-loading"
+            size="md"
+            :label="t('welcomeInfo.detecting')"
+          />
           <div
             v-for="b in sortedBackends"
             :key="b.id"
@@ -321,6 +331,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.backends-loading {
+  flex: 1;
+  --li-color: var(--text-muted);
 }
 
 .backend-item {

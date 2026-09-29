@@ -1,0 +1,851 @@
+<template>
+  <BottomSheet
+    :open="drawer.effectiveOpen.value"
+    auto
+    maximized
+    panel-class="content-search-sheet"
+    @close="handleClose"
+  >
+    <template #header>
+      <SearchCode :size="16" class="bs-header-icon" />
+      <!-- Fixed prefix + a muted, dynamic suffix naming what gets searched.
+           The suffix carries scope AND recursion, so the header states the
+           search root outright instead of leaving it to the FolderTree
+           button's highlight to convey. -->
+      <span class="bs-header-title">
+        {{ t('file.contentSearch.title') }}
+        <span class="cs-header-scope">{{ scopeSuffix }}</span>
+      </span>
+    </template>
+
+    <div class="cs-body">
+      <!-- Search row: query + the option toggles. -->
+      <div class="cs-input-row">
+        <SearchInput
+          ref="inputRef"
+          v-model="search.state.query"
+          :placeholder="t('file.contentSearch.placeholder')"
+          @enter="listNav.confirm"
+          @down="moveSelection(1)"
+          @up="moveSelection(-1)"
+        />
+        <button
+          class="cs-toggle-btn"
+          :class="{ active: search.state.caseSensitive }"
+          :title="t('file.contentSearch.caseSensitive')"
+          :aria-pressed="search.state.caseSensitive"
+          @click="toggle('caseSensitive')"
+        >
+          <CaseSensitive :size="15" />
+        </button>
+        <button
+          class="cs-toggle-btn"
+          :class="{ active: search.state.wholeWord }"
+          :title="t('file.contentSearch.wholeWord')"
+          :aria-pressed="search.state.wholeWord"
+          @click="toggle('wholeWord')"
+        >
+          <WholeWord :size="15" />
+        </button>
+        <button
+          class="cs-toggle-btn"
+          :class="{ active: search.state.regex }"
+          :title="t('file.contentSearch.regex')"
+          :aria-pressed="search.state.regex"
+          @click="toggle('regex')"
+        >
+          <Regex :size="15" />
+        </button>
+        <button
+          class="cs-toggle-btn"
+          :class="{ active: isRecursiveEffective }"
+          :disabled="isGlobalScope"
+          :title="t('file.search.recursive')"
+          :aria-pressed="isRecursiveEffective"
+          @click="toggle('recursive')"
+        >
+          <FolderTree :size="15" />
+        </button>
+        <button
+          class="cs-toggle-btn"
+          :class="{ active: isGlobalScope }"
+          :title="t('file.search.scopeGlobal')"
+          :aria-pressed="isGlobalScope"
+          @click="toggleScope"
+        >
+          <Globe :size="15" />
+        </button>
+        <button
+          class="cs-toggle-btn"
+          :class="{ active: filtersOpen }"
+          :title="t('file.contentSearch.filters')"
+          :aria-expanded="filtersOpen"
+          @click="filtersOpen = !filtersOpen"
+        >
+          <ListFilter :size="15" />
+        </button>
+      </div>
+
+      <!-- Include / exclude globs — collapsed by default (VSCode hides these
+           behind a disclosure for the same reason: they are rarely needed). -->
+      <div v-if="filtersOpen" class="cs-filters">
+        <label class="cs-filter-row">
+          <span class="cs-filter-label">{{ t('file.contentSearch.includeLabel') }}</span>
+          <input
+            v-model="search.state.include"
+            class="cs-filter-input"
+            type="text"
+            spellcheck="false"
+            :placeholder="t('file.contentSearch.includePlaceholder')"
+            @keydown.enter="rerun"
+          />
+        </label>
+        <label class="cs-filter-row">
+          <span class="cs-filter-label">{{ t('file.contentSearch.excludeLabel') }}</span>
+          <input
+            v-model="search.state.exclude"
+            class="cs-filter-input"
+            type="text"
+            spellcheck="false"
+            :placeholder="t('file.contentSearch.excludePlaceholder')"
+            @keydown.enter="rerun"
+          />
+        </label>
+      </div>
+
+      <div class="cs-content">
+        <!-- Invalid pattern: the backend reports this in-band because an
+             EventSource cannot read a 4xx body. -->
+        <div v-if="search.state.error" class="cs-error">
+          <TriangleAlert :size="16" />
+          <span>{{ search.state.error }}</span>
+        </div>
+
+        <template v-else-if="!hasQuery">
+          <div class="cs-empty">
+            <SearchCode :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <p class="cs-empty-text">{{ t('file.contentSearch.hint') }}</p>
+          </div>
+        </template>
+
+        <template v-else-if="search.state.searching && search.state.results.length === 0">
+          <!-- Nothing has matched yet. The stop button belongs here too: on a
+               large tree the first hit can take a while, and waiting for one
+               just to be able to abort is exactly when you want out. -->
+          <div class="cs-loading">
+            <LoadingIndicator size="md" :label="t('file.search.searching')" />
+            <button class="cs-stop-btn" :title="t('file.contentSearch.stop')" @click="search.stopSearch()">
+              <Square :size="12" fill="currentColor" />
+              <span>{{ t('file.contentSearch.stop') }}</span>
+            </button>
+          </div>
+        </template>
+
+        <template v-else-if="search.state.results.length === 0 && search.state.stopped">
+          <!-- Stopped before anything matched. "No files found" would be a lie:
+               the walk never finished, so the absence of hits proves nothing. -->
+          <div class="cs-empty">
+            <SearchX :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <p class="cs-empty-text">{{ t('file.contentSearch.stoppedEmpty') }}</p>
+          </div>
+        </template>
+
+        <template v-else-if="search.state.results.length === 0">
+          <div class="cs-empty">
+            <SearchX :size="56" :stroke-width="1.25" class="cs-empty-icon" />
+            <p class="cs-empty-text">{{ t('file.search.noResults') }}</p>
+            <p class="cs-empty-hint">{{ t('file.contentSearch.noResultsHint') }}</p>
+          </div>
+        </template>
+
+        <template v-else>
+          <div class="cs-summary">
+            <!-- Live counts while the walk is still running. state.matches is
+                 only finalised by the `done` event, so reading it mid-flight
+                 would show "N files, 0 matches" next to visibly arriving
+                 results; loadedMatches sums what has actually landed. -->
+            <span class="cs-summary-text">
+              <LoadingIndicator v-if="search.state.searching" size="sm" inline />
+              {{ summaryText }}
+            </span>
+            <!-- Stop an in-flight search. Only meaningful while searching: the
+                 walk can take a while on a large tree, and the partial results
+                 stay on screen afterwards. -->
+            <button
+              v-if="search.state.searching"
+              class="cs-stop-btn"
+              :title="t('file.contentSearch.stop')"
+              @click="search.stopSearch()"
+            >
+              <Square :size="12" fill="currentColor" />
+              <span>{{ t('file.contentSearch.stop') }}</span>
+            </button>
+          </div>
+
+          <div class="cs-results">
+            <div v-for="file in search.state.results" :key="file.path" class="cs-file">
+              <button
+                class="cs-file-head"
+                :class="{ collapsed: isCollapsed(file.path) }"
+                :title="file.path"
+                @click="toggleCollapse(file.path)"
+              >
+                <ChevronRight :size="13" class="cs-chevron" />
+                <FileIcon :path="file.path" :size="15" class="cs-file-icon" />
+                <span class="cs-file-name">{{ file.name }}</span>
+                <span v-if="parentDirOf(file.path)" class="cs-file-dir">{{ parentDirOf(file.path) }}</span>
+                <span class="cs-file-count" :class="{ 'cs-count-plus': file.truncated }">
+                  {{ file.truncated ? `${file.matches.length}+` : file.matches.length }}
+                </span>
+              </button>
+
+              <div v-show="!isCollapsed(file.path)" class="cs-file-matches">
+                <div
+                  v-for="(m, idx) in file.matches"
+                  :key="`${m.line}-${idx}`"
+                  class="cs-match"
+                  :class="{ 'cs-match-active': listNav.activeIndex.value === flatIndex(file.path, idx) }"
+                  :data-flat-index="flatIndex(file.path, idx)"
+                  :title="`${file.path}:${m.line}`"
+                  @click="openMatch(file.path, m.line)"
+                >
+                  <span class="cs-match-line">{{ m.line }}</span>
+                  <span class="cs-match-text" v-html="highlightRanges(m.text, m.ranges)"></span>
+                </div>
+                <div v-if="file.truncated" class="cs-match-more">
+                  {{ t('file.contentSearch.fileTruncated', { total: file.total }) }}
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </BottomSheet>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, nextTick } from 'vue'
+import { useI18n } from 'vue-i18n'
+import {
+  SearchCode, SearchX, CaseSensitive, WholeWord, Regex, FolderTree, Globe,
+  ListFilter, ChevronRight, TriangleAlert, Square,
+} from 'lucide-vue-next'
+import BottomSheet from '@/components/common/BottomSheet.vue'
+import SearchInput from '@/components/common/SearchInput.vue'
+import FileIcon from '@/components/common/FileIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { useFileContentSearch } from '@/composables/useFileContentSearch'
+import { useListNav } from '@/composables/useListNav'
+import { useTabDrawer } from '@/composables/useTabDrawer'
+import { highlightRanges, parentDirOf } from '@/utils/contentSearchMark'
+
+const { t } = useI18n()
+
+const props = defineProps<{
+  /** Directory the search starts from (project-relative or absolute). */
+  currentDir: string
+}>()
+
+const emit = defineEmits<{
+  close: []
+  /** A hit was chosen: open the file at that line. */
+  openFile: [path: string, line: number]
+}>()
+
+// Bound to the file-manager (browse) tab. BottomSheet teleports to <body>, so
+// it would otherwise survive a tab switch and float over an unrelated panel.
+// Binding it means: leave browse -> hidden; come back -> restored with the
+// results still there. autoRestore stays at its default (true) because a search
+// is an in-progress task, not a fire-and-forget popover — closing it on tab
+// return would throw away the query and results the user was working through.
+const drawer = useTabDrawer('browse')
+
+const search = useFileContentSearch()
+const inputRef = ref<InstanceType<typeof SearchInput> | null>(null)
+const filtersOpen = ref(false)
+/** Paths the user has folded shut; everything else starts expanded. */
+const collapsed = ref(new Set<string>())
+
+const hasQuery = computed(() => !!search.state.query.trim())
+const isGlobalScope = computed(() => search.state.scope === 'global')
+const isRecursiveEffective = computed(() => search.effectiveRecursive.value)
+
+/**
+ * The muted suffix after the "Search in files" prefix, naming what gets
+ * searched. Three states, because scope and recursion are two independent
+ * toggles but only three combinations are reachable:
+ *
+ *   current, non-recursive -> "only this directory"
+ *   current, recursive     -> "this directory and below"
+ *   global                 -> "the whole project"
+ *
+ * Global always recurses (the recursive toggle is disabled and rendered
+ * active), so it collapses to one label instead of a scope+recursion pair —
+ * naming recursion there would imply a state the user cannot turn off.
+ *
+ * Deliberately a separate i18n namespace from the filename search's
+ * `wordCurrent` / `wordGlobal` phrases: those read as a sentence fragment
+ * ("in the current directory") for the search placeholder, whereas this is a
+ * standalone noun phrase in the header.
+ */
+const scopeSuffix = computed(() => {
+  if (isGlobalScope.value) return t('file.contentSearch.scopeProject')
+  return isRecursiveEffective.value
+    ? t('file.contentSearch.scopeRecursive')
+    : t('file.contentSearch.scopeCurrent')
+})
+
+/**
+ * The result-count line, shown while streaming and after completion.
+ *
+ * Counts come from what has actually arrived (`loadedMatches`, and
+ * `results.length`) while the walk runs, because `state.files` / `state.matches`
+ * are only finalised by the `done` event — using them mid-flight would render
+ * "3 files, 0 matches" beside three files full of visible hits.
+ *
+ * Once finished, a stopped search is labelled as partial: the walk never
+ * completed, so its counts are a lower bound, not a total. This is the same
+ * reason `truncated` gets its own wording.
+ */
+const summaryText = computed(() => {
+  // state.matches is only finalised by the `done` event, so it is still 0 both
+  // while streaming AND after a stop (the stop aborts the request, so `done`
+  // never arrives). loadedMatches sums what has actually landed in either case.
+  const finalised = !search.state.searching && !search.state.stopped
+  const files = finalised ? search.state.files : search.state.results.length
+  const matches = finalised ? search.state.matches : search.loadedMatches.value
+
+  if (search.state.stopped) {
+    return t('file.contentSearch.summaryStopped', { files, matches })
+  }
+  if (finalised && search.state.truncated) {
+    return t('file.contentSearch.summaryPlus', { files: search.getDisplayLimit(), matches })
+  }
+  return t('file.contentSearch.summary', { files, matches })
+})
+
+function isCollapsed(path: string) {
+  return collapsed.value.has(path)
+}
+
+function toggleCollapse(path: string) {
+  const next = new Set(collapsed.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  collapsed.value = next
+}
+
+/**
+ * Toggle one search option and immediately re-run. Re-running on toggle (rather
+ * than waiting for the next keystroke) matches VSCode, where flipping Aa/ab/.*
+ * re-queries instantly.
+ */
+function toggle(key: 'caseSensitive' | 'wholeWord' | 'regex' | 'recursive') {
+  search.state[key] = !search.state[key]
+  rerun()
+}
+
+function toggleScope() {
+  search.state.scope = isGlobalScope.value ? 'current' : 'global'
+  rerun()
+}
+
+function rerun() {
+  if (hasQuery.value) search.startSearch(props.currentDir, true)
+}
+
+/** Re-run when include/exclude settle (debounced by the composable). */
+watch(() => [search.state.include, search.state.exclude], () => {
+  if (drawer.effectiveOpen.value && hasQuery.value) search.startSearch(props.currentDir)
+})
+
+/**
+ * Debounced search while typing. Folding state is reset per query because the
+ * file set is replaced wholesale — a collapse left over from the previous
+ * query would apply to an unrelated file.
+ */
+watch(() => search.state.query, () => {
+  collapsed.value = new Set()
+  search.startSearch(props.currentDir)
+})
+
+// Reset folding whenever the result set is replaced.
+watch(() => search.state.results, () => {
+  collapsed.value = new Set()
+})
+
+// Focus the input once the sheet has finished sliding in. Focusing during the
+// animation makes the browser scroll the still-animating panel, which reads as
+// the dialog jumping — see the SearchDrawer/UserMsgIndexDrawer precedent.
+//
+// Keyed off effectiveOpen (not a prop): the drawer is tab-bound, so returning
+// to the browse tab re-opens it and must re-focus. Re-running the query on
+// return refreshes results that may have gone stale while the user was away.
+watch(() => drawer.effectiveOpen.value, async (isOpen) => {
+  if (isOpen) {
+    await new Promise(r => setTimeout(r, 300))
+    nextTick(() => inputRef.value?.focus())
+    if (hasQuery.value) search.startSearch(props.currentDir, true)
+  } else {
+    search.cancelSearch()
+  }
+})
+
+// A directory change invalidates the search root.
+watch(() => props.currentDir, () => {
+  if (drawer.effectiveOpen.value && hasQuery.value) search.startSearch(props.currentDir, true)
+})
+
+function openMatch(path: string, line: number) {
+  // Reuse the shared path-annotation opener rather than hand-rolling a
+  // `open-file-overlay` dispatch. That dispatch only pushes onto the file nav
+  // stack and switches tabs — it never loads the file, so a bare dispatch opens
+  // an empty viewer. openFilePath owns the whole pipeline: existence check with
+  // a "file not found" toast, project-external handling, `store.selectFile`
+  // (which fetches the content), then the overlay event with the line target,
+  // which the coordinator turns into scroll + highlight.
+  //
+  // Source is 'browse': the dialog lives inside the file manager, so Back must
+  // return to the browse tab rather than treating this as a chat/task jump.
+  emit('openFile', path, line)
+}
+
+/**
+ * Flattened (file, match) list — the arrow-key navigation unit.
+ *
+ * Navigation is over individual matches rather than files so Enter can open the
+ * exact line. Collapsed files are still included: folding is a display choice,
+ * and skipping them would make the highlight and the arrow keys disagree.
+ */
+const flatMatches = computed(() => {
+  const out: Array<{ path: string; line: number }> = []
+  for (const file of search.state.results) {
+    for (const m of file.matches) out.push({ path: file.path, line: m.line })
+  }
+  return out
+})
+
+/** Index of one match within flatMatches, or -1 when absent. */
+function flatIndex(path: string, matchIdx: number): number {
+  let index = 0
+  for (const file of search.state.results) {
+    if (file.path === path) return index + matchIdx
+    index += file.matches.length
+  }
+  return -1
+}
+
+const listNav = useListNav({
+  getCount: () => flatMatches.value.length,
+  onConfirm: (idx) => {
+    const hit = flatMatches.value[idx]
+    if (hit) openMatch(hit.path, hit.line)
+  },
+  onActiveChange: scrollActiveIntoView,
+})
+
+function moveSelection(delta: number) {
+  if (delta > 0) listNav.down()
+  else listNav.up()
+}
+
+function scrollActiveIntoView(index: number) {
+  nextTick(() => {
+    const el = document.querySelector(`.cs-match[data-flat-index="${index}"]`)
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ behavior: 'auto', block: 'nearest' })
+    }
+  })
+}
+
+// Drop the highlight whenever the result set is replaced, so Enter never opens
+// a match that no longer exists.
+watch(() => search.state.results, () => listNav.reset())
+
+function handleClose() {
+  search.cancelSearch()
+  drawer.close()
+}
+
+defineExpose({
+  /** Open the dialog (used by the toolbar button and Ctrl+Shift+F). */
+  open: () => drawer.open(),
+  close: () => drawer.close(),
+  focusInput() {
+    inputRef.value?.focus()
+  },
+  searchState: search.state,
+})
+</script>
+
+<style scoped>
+/* The muted scope suffix in the header. Sits inside .bs-header-title (whose
+   color is --text-primary), so it re-colors itself down to a secondary tone and
+   drops the weight the prefix carries — the prefix names the tool, the suffix
+   is the current setting. */
+.bs-header-title .cs-header-scope {
+  font-weight: var(--font-weight-normal);
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+}
+
+.cs-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Search row ── */
+.cs-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-6);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+}
+
+.cs-input-row :deep(.search-pill) {
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-base), color var(--duration-base);
+}
+
+@media (hover: hover) {
+  .cs-toggle-btn:hover:not(:disabled) {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.06));
+  }
+}
+
+.cs-toggle-btn.active {
+  color: var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+.cs-toggle-btn:disabled {
+  opacity: var(--opacity-muted);
+  cursor: default;
+}
+
+/* ── Include / exclude ── */
+.cs-filters {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+  background: var(--bg-secondary, #f8f9fa);
+  flex-shrink: 0;
+}
+
+.cs-filter-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.cs-filter-label {
+  flex-shrink: 0;
+  width: 64px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.cs-filter-input {
+  flex: 1;
+  min-width: 0;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  outline: none;
+}
+
+.cs-filter-input:focus {
+  border-color: var(--accent-color);
+}
+
+/* ── Content ── */
+.cs-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Empty states (pre-query hint and no-results). Mirrors the filename search's
+   empty state in FileManagerContent (.fs-search-empty) so the two search
+   surfaces in the same panel look alike: a large muted icon over the text. */
+.cs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  padding: 40px var(--space-8);
+  text-align: center;
+}
+
+.cs-empty-icon {
+  color: var(--text-muted, #999);
+  opacity: var(--opacity-muted);
+}
+
+.cs-empty-text {
+  margin: 0;
+  font-size: var(--font-size-md);
+  color: var(--text-secondary, #666);
+}
+
+/* Secondary line under the no-results message: suggests how to widen the
+   search instead of leaving the user at a dead end. */
+.cs-empty-hint {
+  margin: calc(-1 * var(--space-2)) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted, #999);
+}
+
+.cs-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin: var(--space-5) var(--space-6) 0;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--color-red) 10%, transparent);
+  color: var(--color-red);
+  font-size: var(--font-size-sm);
+  overflow-wrap: anywhere;
+}
+
+.cs-summary {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-6);
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  background: var(--bg-tertiary, #f8f8f8);
+  border-bottom: 1px solid var(--border-color, #e5e5e5);
+}
+
+.cs-summary-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+/* Stop button for an in-flight search. Muted at rest and tinted on hover: it
+   sits in a low-emphasis count line, but is the only way out of a long walk. */
+.cs-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--border-color, #e5e5e5);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary, #fff);
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .cs-stop-btn:hover {
+    color: var(--color-red);
+    border-color: color-mix(in srgb, var(--color-red) 40%, transparent);
+  }
+}
+
+/* Initial "nothing yet" state: the spinner plus the same stop affordance. */
+.cs-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-5);
+  padding: 40px var(--space-6);
+}
+
+/* ── Grouped results ── */
+.cs-results {
+  flex: 1;
+}
+
+.cs-file {
+  border-bottom: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+
+.cs-file-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  padding: var(--space-3) var(--space-5);
+  border: none;
+  background: none;
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+  text-align: left;
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .cs-file-head:hover {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  }
+}
+
+.cs-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  transform: rotate(90deg);
+  transition: transform var(--duration-base);
+}
+
+.cs-file-head.collapsed .cs-chevron {
+  transform: rotate(0deg);
+}
+
+.cs-file-icon {
+  flex-shrink: 0;
+}
+
+.cs-file-name {
+  flex-shrink: 0;
+  font-weight: var(--font-weight-medium);
+}
+
+/* The directory is secondary and truncates first — the file name is the
+   identity, so it keeps its width. */
+.cs-file-dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.cs-file-count {
+  flex-shrink: 0;
+  min-width: 22px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary, #eee);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.cs-file-count.cs-count-plus {
+  background: color-mix(in srgb, var(--accent-color) 16%, transparent);
+  color: var(--accent-color);
+}
+
+/* ── Matches ── */
+/* Match text is the primary content of this panel, so it uses the same size as
+   a file-browser row (.file-item, --font-size-md) rather than the dense-meta
+   --font-size-xs it used to: at 11px in a monospace face the lines read as
+   thin and hard to scan. The secondary pieces around it (directory, count,
+   summary) stay a step smaller, mirroring .file-meta in the browser. */
+.cs-file-matches {
+  padding-bottom: var(--space-2);
+}
+
+.cs-match {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5) var(--space-3) var(--space-10);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-snug);
+}
+
+@media (hover: hover) {
+  .cs-match:hover {
+    background: var(--bg-hover, rgba(0, 0, 0, 0.04));
+  }
+}
+
+.cs-match.cs-match-active {
+  background: color-mix(in srgb, var(--accent-color) 12%, transparent);
+}
+
+/* Line numbers share the code's size and are de-emphasized by opacity instead
+   of a smaller face — the same approach the code viewer's gutter takes, and it
+   keeps the gutter aligned with the code it labels. */
+.cs-match-line {
+  flex-shrink: 0;
+  min-width: 34px;
+  text-align: right;
+  color: var(--text-muted);
+  opacity: var(--opacity-muted);
+  user-select: none;
+}
+
+.cs-match-text {
+  flex: 1;
+  min-width: 0;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-secondary);
+}
+
+.cs-match-text :deep(mark) {
+  background: color-mix(in srgb, var(--accent-color) 28%, transparent);
+  color: var(--text-primary);
+  border-radius: 2px;
+}
+
+.cs-match-more {
+  padding: var(--space-2) var(--space-5) var(--space-2) var(--space-10);
+  color: var(--text-muted);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+}
+</style>
+
+<style>
+/* Wide-screen: the content search benefits from extra width — code lines and
+   paths wrap badly in a narrow card. Mirrors .session-search-sheet. Only takes
+   effect in BottomSheet's wide-screen card mode; the narrow-mode bottom sheet
+   ignores --modal-max-width and stays a full-height drawer. */
+.content-search-sheet {
+  --modal-max-width: 900px;
+}
+</style>

@@ -13,7 +13,7 @@
         v-for="tag in sortedTags"
         :key="tag.name"
         class="tag-row"
-        @click="$emit('switch-tag', tag)"
+        @click="handleRowClick(tag)"
       >
         <div class="tag-info">
           <div class="tag-main">
@@ -51,7 +51,11 @@ const props = defineProps<{
   error?: boolean
 }>()
 
-defineEmits(['retry', 'switch-tag', 'delete-tag'])
+const emit = defineEmits(['retry', 'switch-tag', 'delete-tag'])
+
+function handleRowClick(tag: Record<string, unknown>) {
+  emit('switch-tag', tag)
+}
 
 // Most recent tags first
 const sortedTags = computed(() =>

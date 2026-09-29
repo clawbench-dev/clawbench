@@ -3,16 +3,29 @@
  * These have no Vue reactivity dependencies and can be tested in isolation.
  */
 import { baseName } from '@/utils/path.ts'
-import { gt } from '@/composables/useLocale'
 import { extractPlainText } from '@/utils/userMsgIndexUtils'
-import i18n from '@/i18n'
+
+/** Options for parseAssistantContent. */
+export interface ParseAssistantContentOptions {
+  /**
+   * The row being parsed belongs to a turn that is STILL RUNNING (the server
+   * reports `streaming: true` and the session is live). In that case `done` is
+   * authoritative — the backend writes it from the ACP tool status and flips it
+   * only when the tool actually completes — so it must be preserved verbatim.
+   *
+   * Default false (finalized/historical rows), where `done` may be missing
+   * entirely because old data never persisted it.
+   */
+  liveStreaming?: boolean
+}
 
 /**
  * Parse assistant content string into structured blocks.
  * Handles JSON blocks, tool_use deduplication, and fallback to text.
  */
-export function parseAssistantContent(content: string) {
+export function parseAssistantContent(content: string, opts?: ParseAssistantContentOptions) {
   if (!content) return { blocks: [], metadata: null }
+  const liveStreaming = opts?.liveStreaming === true
   try {
     const parsed = JSON.parse(content)
     if ('blocks' in parsed && !Array.isArray(parsed.blocks)) {
@@ -24,7 +37,15 @@ export function parseAssistantContent(content: string) {
       const mapped = parsed.blocks.map((b: any) => {
         if (b.type === 'tool_use') {
           if (!b.name) b.name = ''
-          if (b.done === undefined || b.done === false) b.done = true
+          // Historical rows may not carry `done` at all (it was not persisted
+          // before Done-field support), so an absent/false value there means
+          // "we cannot know it finished" and the row is rendered as settled.
+          //
+          // A LIVE row is the opposite: `done: false` is a real, current fact —
+          // the tool is still running. Forcing it to true made a running
+          // sub-agent's Agent pill show its green check while the sub-agent was
+          // still producing output (and the same for any long tool).
+          if (!liveStreaming && (b.done === undefined || b.done === false)) b.done = true
           if (!b.output && b.input && b.input.output) {
             b.output = b.input.output
             delete b.input.output
@@ -34,12 +55,21 @@ export function parseAssistantContent(content: string) {
           // ACP agents) embedded into the text field, so the message never
           // renders as a literal JSON string.
           b.text = extractPlainText(b.text)
+        } else if (b.type === 'thinking' && !liveStreaming && b.in_progress) {
+          // `in_progress` is a streaming-row-only signal: it tells the render
+          // layer "more deltas are coming, lazy-load the prefix". On a row that
+          // is NOT live the turn is over (or the snapshot was taken after it
+          // ended), so the flag is stale and must not survive parsing — it would
+          // keep the block in its "still writing" state forever.
+          //
+          // The backend clears it on finalize, but a snapshot read mid-finalize
+          // can still carry it, and historical rows may predate the clearing.
+          delete b.in_progress
         }
         return b
       })
       const result: Record<string, unknown>[] = []
       const toolIndex = new Map()
-      let thinkingIdx = 0
       for (const b of mapped) {
         if (b.type === 'tool_use' && b.id) {
           const prevIdx = toolIndex.get(b.id)
@@ -63,9 +93,6 @@ export function parseAssistantContent(content: string) {
             continue
           }
           toolIndex.set(b.id, result.length)
-        } else if (b.type === 'thinking' && !b._key) {
-          // Assign stable _key to thinking blocks parsed from DB
-          b._key = `thinking-${thinkingIdx++}`
         }
         result.push(b)
       }
@@ -159,29 +186,6 @@ export function hasImagesInContent(content: string | null | undefined): boolean 
 }
 
 /**
- * Format a timestamp into a relative time string (e.g., "5 min ago", "2d ago").
- * Falls back to "M/D HH:mm" for dates older than 7 days.
- */
-export function formatMessageTime(createdAt: string): string {
-  const date = new Date(createdAt)
-  const now = new Date()
-  const diffMs = now.getTime() - date.getTime()
-  const diffMins = Math.floor(diffMs / 60000)
-
-  if (diffMins < 1) return gt('time.justNow')
-  if (diffMins < 60) return gt('time.minutesAgo', { count: diffMins })
-
-  const diffHours = Math.floor(diffMins / 60)
-  if (diffHours < 24) return gt('time.hoursAgo', { count: diffHours })
-
-  const diffDays = Math.floor(diffHours / 24)
-  if (diffDays < 7) return gt('time.daysAgo', { count: diffDays })
-
-  const d = new Date(createdAt)
-  return d.toLocaleDateString(i18n.global.locale.value === 'zh' ? 'zh-CN' : 'en-US', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
-}
-
-/**
  * Format a timestamp into a detailed "YYYY-MM-DD HH:mm:ss" string.
  */
 export function formatDetailTime(createdAt: string): string {
@@ -203,4 +207,50 @@ export function truncate(str: string | null | undefined, len: number): string {
   if (!str) return ''
   const runes = [...str]
   return runes.length > len ? runes.slice(0, len).join('') + '...' : str
+}
+
+/**
+ * Merge DB-history blocks with a live stream's blocks for the task-execution
+ * detail view.
+ *
+ * The DB row is flushed every 500ms WHILE the turn runs, so for a running
+ * execution its content already carries the very same blocks the live stream is
+ * appending to — a slim `{think_id}` marker for a thinking block, or a full
+ * `tool_use` with the same tool-call `id`. Concatenating blindly emits those
+ * twice, and the renderer keys blocks by exactly those fields
+ * (`computeStableBlockKey`: tool_use by `id`, thinking by `think_id`) — a
+ * duplicate key corrupts Vue's keyed diff.
+ *
+ * So a DB block is dropped when a live block already carries its identity:
+ *   - thinking → same `think_id`
+ *   - tool_use → same `id`
+ * Blocks with no identity (text, or a thinking block without a think_id) are
+ * always kept from both sides; they key by index, which cannot collide.
+ *
+ * Order is preserved: DB history first (earlier content), then live increments.
+ */
+export function mergeDbBlocksWithLive<T extends Record<string, unknown>>(
+  dbBlocks: T[] | undefined | null,
+  liveBlocks: T[],
+): T[] {
+  if (!dbBlocks || dbBlocks.length === 0) return liveBlocks
+
+  const liveThinkIDs = new Set(
+    liveBlocks
+      .filter((b) => b?.type === 'thinking' && b.think_id)
+      .map((b) => b.think_id as string),
+  )
+  const liveToolIDs = new Set(
+    liveBlocks
+      .filter((b) => b?.type === 'tool_use' && b.id)
+      .map((b) => b.id as string),
+  )
+  if (liveThinkIDs.size === 0 && liveToolIDs.size === 0) return [...dbBlocks, ...liveBlocks]
+
+  const dbOnly = dbBlocks.filter((b) => {
+    if (b?.type === 'thinking' && b.think_id) return !liveThinkIDs.has(b.think_id as string)
+    if (b?.type === 'tool_use' && b.id) return !liveToolIDs.has(b.id as string)
+    return true
+  })
+  return [...dbOnly, ...liveBlocks]
 }

@@ -52,7 +52,7 @@
             <ProviderIcon :model-name="m.name || m.id" :size="16" />
             <span class="model-item-labels">
               <span class="model-item-name">{{ m.name }}</span>
-              <span v-if="m.id !== m.name" class="model-item-id">{{ m.id }}</span>
+              <span v-if="m.id !== m.name" class="model-item-id">{{ formatModelIdForDisplay(m.id) }}</span>
             </span>
             <span v-if="m.id === defaultModelId" class="default-label">
               <span class="default-text">{{ t('chat.sessionSetting.defaultBadge') }}</span>
@@ -221,6 +221,7 @@ import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
 import { useSessionIdentity, clearModeState, clearCommandState, clearThinkingEffortState } from '@/composables/useSessionIdentity'
 import { apiPost } from '@/utils/api'
+import { formatModelIdForDisplay } from '@/utils/modelDisplay'
 import { patchAgentPref } from '@/composables/useSettingsConfig'
 import { useToast } from '@/composables/useToast'
 
@@ -300,7 +301,13 @@ const defaultTransport = computed(() => {
 const filteredModels = computed(() => {
   const q = searchQuery.value.toLowerCase().trim()
   if (!q) return models.value
-  return models.value.filter(m => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+  // Match the formatted id too: the list shows the readable form, so a query
+  // typed against what the user sees must hit (the raw id may not contain it).
+  return models.value.filter(m =>
+    m.name.toLowerCase().includes(q) ||
+    m.id.toLowerCase().includes(q) ||
+    formatModelIdForDisplay(m.id).toLowerCase().includes(q),
+  )
 })
 
 // ── Keyboard ↑/↓ + Enter navigation over the active tab's list ──

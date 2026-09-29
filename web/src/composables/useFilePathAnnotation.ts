@@ -11,6 +11,7 @@ import {
 } from '@/utils/lineRanges.ts'
 import { store } from '@/stores/app.ts'
 import { gt } from '@/composables/useLocale'
+import { isShareMode } from '@/share/shareMode'
 import { clearCommitHashCache } from '@/composables/useCommitHashAnnotation.ts'
 import type { NavigationSurface } from '@/composables/useNavigationContext'
 // NOTE: do NOT import clearWorktreeCache from useWorktreeAnnotation here —
@@ -53,6 +54,41 @@ function tryDecodeUri(uri: string): string {
 
 // ── File URI parsing ───────────────────────────────────────────────────────────
 
+/**
+ * Matching decoration pairs an AI routinely wraps a path in when it writes a
+ * markdown link: ``[label](`path`)`` or `[label]("path")`.
+ *
+ * CommonMark treats the backticks/quotes as PART OF the destination, and marked
+ * percent-encodes the quote family (`%60`/`%22`/`%27`) in the emitted `href`.
+ * Both spellings must be recognized. Only a MATCHING pair is decoration — a
+ * lone backtick is a real (if unusual) filename character.
+ */
+const WRAPPING_PAIRS: ReadonlyArray<readonly [string, string]> = [
+    ['`', '`'],
+    ["'", "'"],
+    ['"', '"'],
+    ['%60', '%60'],
+    ['%27', '%27'],
+    ['%22', '%22'],
+]
+
+/**
+ * Strip ONE matching wrapping decoration pair from a raw path string.
+ *
+ * Runs before line-suffix parsing because the suffix sits INSIDE the wrapping
+ * (`\`src/main.go:10\``) — the suffix regex anchors on `$`, so a trailing
+ * backtick would otherwise hide the line target entirely. The empty-content
+ * guard keeps a lone decoration character from being reduced to nothing.
+ */
+function stripWrappingDecoration(raw: string): string {
+    for (const [open, close] of WRAPPING_PAIRS) {
+        if (raw.length > open.length + close.length && raw.startsWith(open) && raw.endsWith(close)) {
+            return raw.slice(open.length, raw.length - close.length)
+        }
+    }
+    return raw
+}
+
 export interface ParsedFileUri {
     /** Clean filesystem path (percent-decoded, no file:// / hash / :line suffix). */
     path: string
@@ -83,7 +119,11 @@ export function parseFileUri(rawInput: string): ParsedFileUri {
     const input = (rawInput ?? '').trim()
     if (!input) return { path: '', lineRanges: [] }
 
-    let raw = input
+    // 0. Strip a matching wrapping decoration pair. Must precede the file://
+    //    strip below (the decoration wraps the whole URI) and the line-suffix
+    //    parse (`\`src/main.go:10\`` has the suffix inside the backticks, where
+    //    the `$`-anchored suffix regex can never see it).
+    let raw = stripWrappingDecoration(input)
 
     // 1. Strip the file:// scheme (handles file:///path and file://host/path).
     if (raw.startsWith('file://')) {
@@ -212,10 +252,23 @@ function resolveAgainstProjectRoot(path: string, projectRoot: string): ResolveRe
 function shouldRejectPath(path: string): boolean {
     // Note: backslash is NOT rejected — it is the Windows path separator
     // (e.g. E:\git\...). Only glob wildcards and shell chars are rejected.
-    if (/[*?[\]<>]/.test(path) || path.includes('**')) return true
+    if (hasGlobChars(path)) return true
     if (/^https?:\/\//i.test(path)) return true
     if (/\$/.test(path)) return true
     return false
+}
+
+/**
+ * True when a path is a glob pattern rather than a real file path.
+ *
+ * Mirrors the backend's `containsGlobChars` (internal/handler/file.go), which
+ * short-circuits such paths to `'none'` in `/api/file/batch-exists` WITHOUT
+ * touching the filesystem. Keeping the two in sync matters: a mismatch would
+ * either annotate a link the server can never resolve, or leave a real file
+ * unannotated.
+ */
+function hasGlobChars(path: string): boolean {
+    return /[*?[\]<>]/.test(path) || path.includes('**')
 }
 
 /**
@@ -502,6 +555,85 @@ export function annotateFilePaths(
     return { html: doc.body.innerHTML, detectedPaths }
 }
 
+/** Class marking a path the app knows cannot be opened (missing / glob). */
+export const INERT_PATH_CLASS = 'chat-file-path-inert'
+
+/**
+ * Line-target attributes stashed on a verified-missing path before the live
+ * `data-line-*` ones are stripped.
+ *
+ * The live names cannot be kept: `data-line-start` et al. are the contract for
+ * "this annotation points at a line in a real file", and the click interceptors
+ * (`readLineTargetFromEl`, `extractTargetFromElement`) read them unconditionally
+ * for verified paths. Leaving them on an inert element would make it look like a
+ * resolvable line target. They are preserved under a separate namespace so that
+ * clicking the chip can still search for the file and, if a candidate is chosen,
+ * land on the originally-intended line.
+ */
+const INERT_LINE_ATTRS = [
+    ['data-line-start', 'data-inert-line-start'],
+    ['data-line-end', 'data-inert-line-end'],
+    ['data-line-ranges', 'data-inert-line-ranges'],
+] as const
+
+/** Move the live line-target attributes to their inert-namespaced equivalents. */
+export function stashLineTargetAttrs(el: Element): void {
+    for (const [live, stashed] of INERT_LINE_ATTRS) {
+        const value = el.getAttribute(live)
+        if (value !== null) el.setAttribute(stashed, value)
+        el.removeAttribute(live)
+    }
+}
+
+/**
+ * Read the stashed line target from an inert path element.
+ *
+ * Mirrors `readLineTargetFromEl`'s precedence: the full range list is
+ * authoritative, `start`/`end` are the fallback for single ranges.
+ */
+export function readInertLineTarget(el: Element): { lineStart?: number; lineEnd?: number; lineRanges?: string } {
+    const rangesAttr = el.getAttribute('data-inert-line-ranges')
+    if (rangesAttr) {
+        const ranges = parseLineRanges(rangesAttr)
+        if (ranges.length > 0) {
+            return { lineRanges: serializeLineRanges(ranges), ...firstLineTarget(ranges) }
+        }
+    }
+    const startAttr = el.getAttribute('data-inert-line-start')
+    const endAttr = el.getAttribute('data-inert-line-end')
+    const lineStart = startAttr ? parseInt(startAttr, 10) : undefined
+    const lineEnd = endAttr ? parseInt(endAttr, 10) : undefined
+    if (lineStart === undefined) return {}
+    return { lineStart, ...(lineEnd !== undefined ? { lineEnd } : {}) }
+}
+
+/**
+ * Make a local `<a>` link visibly non-navigable while keeping its text.
+ *
+ * Used for two cases that share the same defect: a glob pattern (never a real
+ * file) and a path verified as missing. Both used to render as an ordinary
+ * link that either silently did nothing or toasted "File not found" on click,
+ * with no visual difference from a working link.
+ *
+ * The `href` is removed so the browser cannot navigate (a `file:` URL from a
+ * web context fails anyway, and a relative one would 404 against the site
+ * root); the anchor degrades to an inert inline element. The original href is
+ * stashed in `data-inert-href` for diagnostics — nothing reads it to navigate.
+ * `data-path-type="none"` participates in the same contract as verified paths,
+ * so the click interceptors (which only act on `file`/`dir`) ignore it.
+ */
+function markInertLink(a: Element, title: string): void {
+    const href = a.getAttribute('href')
+    if (href) {
+        a.setAttribute('data-inert-href', href)
+        a.removeAttribute('href')
+    }
+    a.classList.add(INERT_PATH_CLASS)
+    a.setAttribute('data-path-type', 'none')
+    a.setAttribute('title', title)
+    a.setAttribute('aria-disabled', 'true')
+}
+
 /**
  * Annotate file paths inside an already-parsed Document, mutating it in place.
  *
@@ -524,6 +656,14 @@ export function annotateFilePathsIn(
         if (/^(https?:|\/\/|mailto:|tel:|#)/i.test(href)) continue
         const parsed = parseFileUri(href)
         if (!parsed.path) continue
+        // A glob pattern (`src/*.go`, `**/*.ts`) is a pattern, not a file, so
+        // the backend short-circuits it to 'none' and it can never be opened.
+        // Left alone it renders as an ordinary-looking dead link with no hint;
+        // mark it non-navigable so the inertness is visible and explained.
+        if (hasGlobChars(parsed.path)) {
+            markInertLink(a, gt('file.toast.globPattern'))
+            continue
+        }
         const resolved = (isAbsolutePath(parsed.path) || !baseDir)
             ? resolveFilePath(parsed.path, projectRoot, homeDir)
             : resolveRelativePath(parsed.path, baseDir)
@@ -727,6 +867,15 @@ async function drainBatch(): Promise<void> {
  * click target rather than something to strip.
  */
 export async function verifyFilePaths(paths: string[], containerEl: HTMLElement): Promise<void> {
+    // The share page is anonymous and reaches this function through a DIFFERENT
+    // pipeline than the file-preview one: the chat renderer (renderMarkdown →
+    // useChatRender → ContentBlocks.reverifyAnnotations) annotates paths WITHOUT
+    // a share branch, unlike buildMarkdownPreviewDom. Without this guard every
+    // share page fires POST /api/file/batch-exists, gets 401, and — because
+    // fetchPathTypes returns null for a non-OK response — leaves the chips
+    // unverified. Returning early keeps them inert without the request.
+    if (isShareMode()) return
+
     const unique = [...new Set(paths)]
     if (unique.length === 0) return
 
@@ -816,24 +965,85 @@ export async function verifyFilePaths(paths: string[], containerEl: HTMLElement)
         }
         if (swapped) continue
 
-        // No fallback available — remove annotation
+        // No fallback available — the path is verified missing. Mark it
+        // visibly instead of stripping every trace of the annotation.
+        //
+        // Stripping was the old behavior and produced the issue #501 symptom:
+        // a <span> unwrapped to bare text, and an <a> / <code> kept its element
+        // and (for <a>) its href but lost the class — so a dead link still
+        // looked and clicked like a live one, only toasting "File not found".
+        // A visible "missing" chip with a tooltip explains the state up front,
+        // and the user can still read (and copy) the path.
+        //
+        // The annotation class is deliberately KEPT: it is what gives the path
+        // its chip look, so a missing path still reads as "this was a file
+        // reference", just muted. `data-file-path` is kept too, so a later
+        // re-verification pass (see ContentBlocks.reverifyAnnotations) can
+        // re-mark it after a list remount rebuilds the DOM from cached HTML —
+        // `data-path-type="none"` is what tells the click interceptors (which
+        // only act on `file`/`dir`) to leave it alone.
+        //
+        // `data-file-path` also separates the two inert shapes for the click
+        // layer: a glob pattern never got one (markInertLink fires before the
+        // annotation class is added), so only a verified-missing path is
+        // clickable — it can be searched for by name. The line target is moved
+        // to the `data-inert-line-*` namespace rather than deleted so that
+        // picking a candidate can still land on the intended line.
         containerEl.querySelectorAll(`.chat-file-open-btn[data-file-path="${CSS.escape(path)}"]`).forEach(btn => {
             btn.remove()
         })
         containerEl.querySelectorAll(`.chat-file-path[data-file-path="${CSS.escape(path)}"], .code-file-path[data-file-path="${CSS.escape(path)}"]`).forEach(el => {
-            if (el.tagName === 'A' || el.tagName === 'CODE') {
-                // Keep the element but drop its file-open affordances.
-                el.classList.remove('chat-file-path', 'code-file-path')
-                el.removeAttribute('data-file-path')
-                el.removeAttribute('data-fallback-path')
-                el.removeAttribute('data-external')
-                el.removeAttribute('data-line-start')
-                el.removeAttribute('data-line-end')
-                el.removeAttribute('data-line-ranges')
-            } else {
-                el.replaceWith(...el.childNodes)
+            el.classList.add(INERT_PATH_CLASS)
+            el.setAttribute('data-path-type', 'none')
+            el.setAttribute('title', gt('file.toast.fileRemovedSearchable'))
+            el.removeAttribute('data-fallback-path')
+            el.removeAttribute('data-external')
+            stashLineTargetAttrs(el)
+            // An <a> must not stay navigable: it would 404 against the site
+            // root (relative href) or fail in the web context (file:). Keep the
+            // element and its text so the path remains readable.
+            //
+            // `aria-disabled` is deliberately NOT set: the chip is now an
+            // interactive affordance (clicking searches for the file by name),
+            // and marking an operable control disabled would hide it from
+            // assistive tech. The glob case in markInertLink still sets it —
+            // that one really is non-interactive.
+            if (el.tagName === 'A') {
+                const href = el.getAttribute('href')
+                if (href) {
+                    el.setAttribute('data-inert-href', href)
+                    el.removeAttribute('href')
+                }
             }
         })
+    }
+}
+
+/**
+ * Drop only the NEGATIVE ('none') entries, keeping verified 'file'/'dir' ones.
+ *
+ * A 'none' result is a point-in-time observation that a path did not exist —
+ * and the frontend has no way to learn it later became real. That is fine for
+ * a path that never exists, but an AI turn routinely creates files it already
+ * mentioned earlier in the same turn: some pass (an earlier turn's
+ * post-streaming render, or a tool-detail markdown the user expanded) annotates
+ * and verifies the path BEFORE the file is written, caching 'none'. When a
+ * later pass reports that path, verification hits the cached 'none' and STRIPS
+ * the annotation — the file exists, yet the path stays dead until a hard
+ * refresh resets the module-level cache.
+ *
+ * Called when a turn ends (streaming true → false). The post-streaming render
+ * re-runs the full pipeline and re-verifies every span, so the just-created
+ * files resolve on that pass. Clearing here — before that render's nextTick
+ * verification — is what makes it succeed.
+ *
+ * Only negatives are dropped: 'file'/'dir' cannot be invalidated by a turn
+ * creating files, and keeping them avoids re-requesting every path in a long
+ * session on each turn boundary.
+ */
+export function invalidateNegativePathCache(): void {
+    for (const [key, value] of verifiedCache) {
+        if (value === 'none') verifiedCache.delete(key)
     }
 }
 
@@ -863,6 +1073,7 @@ export function useFilePathAnnotation() {
         navToFileInManager,
         revealInFileManager,
         clearVerifiedCache,
+        invalidateNegativePathCache,
     }
 }
 
@@ -917,6 +1128,15 @@ export function tryResolveCodeString(
  * If the file doesn't exist, shows a toast and does not navigate.
  */
 export async function openFilePath(resolvedPath: string, lineStart?: number, lineEnd?: number, source?: NavigationSurface, lineRanges?: string): Promise<boolean> {
+    // Load-bearing on the public share page, and NOT redundant with the
+    // handleShareLinkClick interceptor in MarkdownPreview: that interceptor
+    // deliberately declines modified clicks (Ctrl/Cmd/Shift) so the browser can
+    // open a new tab, after which the click chain continues and reaches this
+    // function through handleAnchorClick — which routes ANY relative link here.
+    // Without this guard an anonymous reader would fire an auth-protected file
+    // request and could probe the creator's directory layout.
+    if (isShareMode()) return false
+
     const parsed = parseFileUri(resolvedPath)
     let targetPath = parsed.path
     if (!targetPath) return false

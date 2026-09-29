@@ -51,7 +51,7 @@ import {
   getPendingNavigationJson,
 } from './notification'
 import { markRendererReady, markRendererLoading, resetRendererReady } from './navReady'
-import { NAV_CHANNELS } from '../shared/types'
+import { NAV_CHANNELS, WINDOW_STATE_CHANNEL } from '../shared/types'
 
 /**
  * The preload cannot import NAV_CHANNELS (sandboxed preloads may not require()
@@ -76,6 +76,13 @@ describe('preload channel list stays in sync', () => {
     // 'electron' specifier is allowed.
     const imports = [...preloadSrc.matchAll(/^\s*import\s[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1])
     expect(imports).toEqual(['electron'])
+  })
+
+  it('mirrors the window-state channel literal', () => {
+    // Same constraint as NAV_CHANNELS: the preload cannot import shared/types,
+    // so it hard-codes the channel name. A rename on one side only would make
+    // the maximize glyph stop updating with no error anywhere.
+    expect(preloadSrc).toContain(`'${WINDOW_STATE_CHANNEL}'`)
   })
 })
 

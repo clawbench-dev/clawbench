@@ -276,57 +276,6 @@ func TestFilePath_MissingDirIsNotOk(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestResolveActive_DisabledReturnsNotOk(t *testing.T) {
-	cfg := &model.Config{}
-	cfg.Appearance.WallpaperMode = "local"
-	cfg.Appearance.WallpaperEnabled = false
-	cfg.Appearance.Local.Selected = "local-1-a.png"
-
-	name, ok := ResolveActive(cfg)
-	assert.False(t, ok, "disabled wallpaper must resolve to none")
-	assert.Empty(t, name)
-}
-
-func TestResolveActive_BingThenLocalPrecedence(t *testing.T) {
-	// Each mode resolves to its own source.
-	bingCfg := &model.Config{}
-	bingCfg.Appearance.WallpaperMode = "bing"
-	bingCfg.Appearance.WallpaperEnabled = true
-	bingCfg.Appearance.Bing.File = "bing-20260910.jpg"
-	bingCfg.Appearance.Local.Selected = "local-1-a.png"
-
-	name, ok := ResolveActive(bingCfg)
-	require.True(t, ok)
-	assert.Equal(t, "bing-20260910.jpg", name)
-
-	localCfg := &model.Config{}
-	localCfg.Appearance.WallpaperMode = "local"
-	localCfg.Appearance.WallpaperEnabled = true
-	localCfg.Appearance.Bing.File = "bing-20260910.jpg"
-	localCfg.Appearance.Local.Selected = "local-1-a.png"
-
-	name, ok = ResolveActive(localCfg)
-	require.True(t, ok)
-	assert.Equal(t, "local-1-a.png", name)
-}
-
-func TestResolveActive_EmptySourceReturnsNotOk(t *testing.T) {
-	// Mode set but nothing cached yet (e.g. first Bing fetch still pending).
-	cfg := &model.Config{}
-	cfg.Appearance.WallpaperMode = "bing"
-	cfg.Appearance.WallpaperEnabled = true
-
-	name, ok := ResolveActive(cfg)
-	assert.False(t, ok)
-	assert.Empty(t, name)
-}
-
-func TestResolveActive_LegacyEmptyReturnsNotOk(t *testing.T) {
-	cfg := &model.Config{}
-	_, ok := ResolveActive(cfg)
-	assert.False(t, ok)
-}
-
 func TestBingMktForLocale(t *testing.T) {
 	cases := map[string]string{
 		"zh":      "zh-CN",

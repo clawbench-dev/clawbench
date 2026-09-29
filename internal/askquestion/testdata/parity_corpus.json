@@ -68,6 +68,43 @@
    ]
   },
   {
+   "name": "bold run containing a dash is one label",
+   "text": "\u003cclawbench-ask-question\u003e\n**修复方案**\n\n采用哪个方案？（无论选哪个我都会补回归测试）\n\n- **A — 回合结束时失效负缓存（推荐，最小改动）** — 在 ContentBlocks.vue 已有的 watch(() =\u003e props.streaming) 流结束分支里，只清掉 verifiedCache 里的 'none' 项。\n- **A + B — 同时不再制造假负缓存** — 在 A 基础上，让 thinking 块流式期间也跳过路径标注。\n- **C — 干脆不缓存 'none'（改 TTL）** — 给负缓存一个短 TTL。\n\u003c/clawbench-ask-question\u003e",
+   "wantParsed": [
+    true
+  ],
+   "wantItems": [
+    [
+     {
+      "header": "修复方案",
+      "multiSelect": false,
+      "question": "采用哪个方案？（无论选哪个我都会补回归测试）",
+      "options": [
+       {
+        "label": "A — 回合结束时失效负缓存（推荐，最小改动）",
+        "description": "在 ContentBlocks.vue 已有的 watch(() =\u003e props.streaming) 流结束分支里，只清掉 verifiedCache 里的 'none' 项。"
+      },
+       {
+        "label": "A + B — 同时不再制造假负缓存",
+        "description": "在 A 基础上，让 thinking 块流式期间也跳过路径标注。"
+      },
+       {
+        "label": "C — 干脆不缓存 'none'（改 TTL）",
+        "description": "给负缓存一个短 TTL。"
+      }
+     ]
+    }
+   ]
+  ],
+   "wantStripped": "",
+   "wantFallbacks": [
+    ""
+  ],
+   "wantReasons": [
+    ""
+  ]
+  },
+  {
    "name": "markdown multi select",
    "text": "\u003cclawbench-ask-question\u003e\n**需要启用哪些**\n- [ ] 语法高亮\n- [ ] 自动换行\n\u003c/clawbench-ask-question\u003e",
    "wantParsed": [

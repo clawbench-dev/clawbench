@@ -31,6 +31,52 @@ describe('normalizeFileEntry', () => {
   it('handles object with undefined path', () => {
     expect(normalizeFileEntry({ path: undefined as any })).toEqual({ path: '', isDir: false })
   })
+
+  // This function rebuilds the entry field-by-field on EVERY render and dedupe
+  // pass, so any quote field it forgets is silently lost. sourceKind decides
+  // how the drawer labels the quote, and it cannot be re-derived — a terminal
+  // quote ('selection') has no path and no url, exactly like a chat quote.
+  it('preserves a quote sourceKind through normalization', () => {
+    const normalized = normalizeFileEntry({
+      path: '', kind: 'quote', id: 'q1', text: 'npm run build', sourceKind: 'selection',
+    })
+
+    expect(normalized.sourceKind).toBe('selection')
+    expect(normalized.text).toBe('npm run build')
+  })
+
+  it('omits sourceKind when absent rather than writing undefined', () => {
+    const normalized = normalizeFileEntry({ path: '/a.ts' })
+
+    expect('sourceKind' in normalized).toBe(false)
+  })
+
+  // Same silent-loss hazard as sourceKind above, one step worse: these are the
+  // only route back to the origin, so dropping one here makes the quote
+  // unjumpable with no visible symptom.
+  it('preserves every source locator through normalization', () => {
+    const normalized = normalizeFileEntry({
+      path: '每日构建 (#12)', kind: 'quote', id: 'q1', text: '构建失败',
+      commitSha: 'a1b2c3d', taskId: 12, sessionId: 'sess-abc',
+      messageId: 42, executionId: 'exec-7',
+    })
+
+    expect(normalized.commitSha).toBe('a1b2c3d')
+    expect(normalized.taskId).toBe(12)
+    expect(normalized.sessionId).toBe('sess-abc')
+    expect(normalized.messageId).toBe(42)
+    expect(normalized.executionId).toBe('exec-7')
+  })
+
+  it('omits absent locators rather than writing undefined', () => {
+    const normalized = normalizeFileEntry({ path: '/a.ts' })
+
+    expect('commitSha' in normalized).toBe(false)
+    expect('taskId' in normalized).toBe(false)
+    expect('sessionId' in normalized).toBe(false)
+    expect('messageId' in normalized).toBe(false)
+    expect('executionId' in normalized).toBe(false)
+  })
 })
 
 describe('isUploadPath', () => {

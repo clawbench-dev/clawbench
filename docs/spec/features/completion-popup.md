@@ -58,7 +58,7 @@ flowchart TD
 
 | 维度 | 应用内通知 | 系统通知（浏览器/桌面） |
 |---|---|---|
-| 焦点条件 | 用户没在看该会话就弹 | 页面失焦才弹 |
+| 焦点条件 | 用户没在看该会话就弹（聊天面板被折叠也算没在看） | 页面失焦才弹 |
 | 事件覆盖 | 完全相同 | 完全相同 |
 | 存活依赖 | 需页面存活 | Electron 主进程路径不依赖页面 JS |
 | 自动关闭 | 固定 5 秒 | 由操作系统决定 |
@@ -68,7 +68,7 @@ flowchart TD
 
 ### 设计要点
 
-- **不弹的边界是"用户正看着结果"**：聊天界面在前台且正是目标会话时不弹。判断同时考虑 PC 宽屏聊天面板常驻的情况，避免宽屏下误判
+- **不弹的边界是"用户正看着结果"**：聊天面板真正可见且正是目标会话时不弹。判定统一走 `useWideScreenLayout` 的 `isChatPanelVisible`（纯函数，收 `isWideScreen`/`chatCollapsed`/`activeTab` 三个**已解包**的值），覆盖三种情况：窄屏只有 chat tab 可见；宽屏聊天面板常驻故任何左栏 tab 都算可见；宽屏下聊天面板被折叠（`SplitView` 的 `rightCollapsed`，即 `display:none`）时不算可见——即使 `activeTab` 仍写着 `chat`。**不要内联 `isWideScreen || ...`**：`isWideScreen` 是 ref，`<script setup>` 里不会自动解包，该表达式恒为真，会把「当前会话」的完成/审批通知在任何 tab 下都吞掉（移动端原生通知在应用前台时也被 `MainActivity.isForeground` 抑制，两条通道同时静默）
 - **通知是 WS 事件的投影而非独立通道**：不建立新连接，直接消费 `session_update` / `task_update` / `forge_event`。事件携带的 `response_preview_plain`、`session_title`、`project_path`、`agent_id` 由后端终态处理时一次性装配
 - **合并只作用于队列**：正在展示的卡片不会在用户眼前突然变样——同 `groupKey` 的新事件在 active 命中时作为独立排队项，只有排队中的条目才合并
 - **已读走独立端点**：标记已读不需要也不应该重发消息。跨项目会话通过 `project_path` 参数显式声明归属，后端只接受与会话自身项目精确匹配的请求

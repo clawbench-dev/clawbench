@@ -201,14 +201,27 @@ vi.mock('@/composables/useLocale.ts', () => ({
 const mockDrawerOpen = vi.fn()
 const mockDrawerClose = vi.fn()
 const mockDrawerToggle = vi.fn()
+// Records every useTabDrawer(tabId, opts) call so tests can assert a popup was
+// registered as tab-scoped (and with which options).
+const mockUseTabDrawerCalls: any[][] = []
+// Distinct refs so a test can prove which one a popup's `:show` is bound to.
+// `effectiveOpen` is the tab-gated value (false while the owning tab is
+// inactive); `isOpen` is the raw drawer state, which stays true across a tab
+// switch. Binding to the wrong one silently reintroduces the "popup stays open
+// over the new tab" bug, so the distinction must be observable here.
+const mockEffectiveOpen = ref(false)
+const mockIsOpen = ref(false)
 vi.mock('@/composables/useTabDrawer', () => ({
-  useTabDrawer: () => ({
-    effectiveOpen: { value: false },
-    isOpen: { value: false },
-    open: mockDrawerOpen,
-    close: mockDrawerClose,
-    toggle: mockDrawerToggle,
-  }),
+  useTabDrawer: (...args: any[]) => {
+    mockUseTabDrawerCalls.push(args)
+    return {
+      effectiveOpen: mockEffectiveOpen,
+      isOpen: mockIsOpen,
+      open: mockDrawerOpen,
+      close: mockDrawerClose,
+      toggle: mockDrawerToggle,
+    }
+  },
   onTabSwitch: vi.fn(),
   resetTabDrawerState: vi.fn(),
 }))
@@ -275,6 +288,15 @@ vi.mock('@/utils/fileManager.ts', () => ({
 vi.mock('@/utils/chatInputUtils.ts', () => ({
   computeRecentReferencedFiles: () => [],
   isImeCompositionEvent: (e: any) => !!(e && e.isComposing) || (e && e.keyCode === 229),
+}))
+
+// Visual-row measurement needs real layout, which jsdom has none of, so the
+// default fake reports "unmeasurable" and the component falls back to counting
+// newlines exactly as before. Cases that exercise the soft-wrap guard override
+// the return value to model a wrapped draft.
+const mockCaretVisualRows = vi.hoisted(() => vi.fn((): { caretRow: number; totalRows: number } | null => null))
+vi.mock('@/utils/textareaVisualRows.ts', () => ({
+  measureCaretVisualRows: mockCaretVisualRows,
 }))
 
 vi.mock('@/utils/fileIcon.ts', () => ({
@@ -430,13 +452,25 @@ afterEach(() => {
   for (const id of pendingIntervals) { clearInterval(id) }
   pendingIntervals.length = 0
   mockPendingFilesValue.value = []
+  // Module-level: without clearing, `find()`-style assertions below match a
+  // registration left by an earlier mount and pass regardless of this test.
+  mockUseTabDrawerCalls.length = 0
+  // Same reason: these drive the `:show` binding, so a value left true by one
+  // case would make the next case's popup render open.
+  mockEffectiveOpen.value = false
+  mockIsOpen.value = false
   // The text draft store is module-level (survives component remounts on
   // purpose), so drafts must be cleared between tests or they leak across cases.
   _resetChatDraftsForTesting()
+  // Reset to the "unmeasurable" default: a `mockReturnValue` set by one case
+  // would otherwise decide the caret row for every case after it.
+  mockCaretVisualRows.mockReturnValue(null)
 })
 
 const stubs = {
-  PopupMenu: { template: '<div><slot /></div>' },
+  // `show` is declared so tests can assert which ref a popup's visibility is
+  // bound to (an undeclared prop would fall through to $attrs instead).
+  PopupMenu: { name: 'PopupMenu', props: ['show'], template: '<div><slot /></div>' },
   SessionDrawer: true,
   AttachDrawer: true,
   QuickSendDrawer: true,
@@ -465,8 +499,11 @@ const stubs = {
 }
 
 describe('ChatInputBar', () => {
-  function mountBar(props = {}) {
+  function mountBar(props = {}, { attachTo }: { attachTo?: Element } = {}) {
     return mount(ChatInputBar, {
+      // jsdom only moves document.activeElement for an element that is actually
+      // in the document, so focus assertions need attachTo.
+      ...(attachTo ? { attachTo } : {}),
       props: {
         inputDisabled: false,
         currentSessionId: '',
@@ -927,6 +964,20 @@ describe('ChatInputBar', () => {
     expect(archiveBtn.classes()).toContain('disabled')
   })
 
+  it('archive button is the LAST session action button in the action bar', () => {
+    // Archive is the terminal/destructive action on the session, so it sits at
+    // the far right of the session buttons (before the auto-speech / refresh
+    // toggles) rather than between the navigation buttons.
+    const wrapper = mountBar({ currentSessionId: 'sess-1' })
+    const children = Array.from(wrapper.find('.chat-top-actions').element.children) as HTMLElement[]
+    const archiveIdx = children.findIndex(el => el.classList.contains('chat-action-btn-archive'))
+    const speakIdx = children.findIndex(el => el.classList.contains('auto-speech-btn'))
+    expect(archiveIdx).toBeGreaterThan(-1)
+    expect(speakIdx).toBeGreaterThan(archiveIdx)
+    // The button right before archive is another action button (not a group label).
+    expect(children[archiveIdx - 1].classList.contains('chat-action-btn')).toBe(true)
+  })
+
   it('archive button is enabled when currentSessionId exists', () => {
     const wrapper = mountBar({ currentSessionId: 'session-1' })
     const archiveBtn = wrapper.find('.chat-action-btn-archive')
@@ -1175,6 +1226,39 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('send')).toBeFalsy()
   })
 
+  // The quick-send menu is a PopupMenu (teleported to <body>, fixed z-index) and
+  // the dock buttons use @click.stop, so its document-level outside-click handler
+  // never fires on a tab switch — it would hover over the newly shown tab.
+  it('closes the quick-send menu when the chat pane becomes inactive', async () => {
+    const wrapper = mountBar({ active: true })
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(true)
+
+    await wrapper.setProps({ active: false })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(false)
+  })
+
+  it('leaves the quick-send menu open on a wide screen (chat pane stays visible)', async () => {
+    // `active` is false only when the chat pane is actually hidden; on a wide
+    // screen the pane remains visible while a left-column tab is active, so the
+    // menu must not be dismissed by unrelated activity.
+    const wrapper = mountBar({ active: true })
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(true)
+
+    // A re-render that does not change `active` must not close it.
+    await wrapper.setProps({ chatRunning: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showQuickMenu).toBe(true)
+  })
+
   it('handleAttachFile emits add-attached', async () => {
     const wrapper = mountBar()
     wrapper.vm.handleAttachFile('/path/to/file.ts')
@@ -1349,10 +1433,92 @@ describe('ChatInputBar', () => {
 
   it('usage info shows when context size > 0', async () => {
     mockContextSize.value = 100000
-    mockContextUsed.value = 50000
+    mockContextUsed.value = 5000
     const wrapper = mountBar({ currentModelName: 'gpt-4' })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.session-info-usage').exists()).toBe(true)
+  })
+
+  // Regression: the context usage popup teleports to <body> with a fixed
+  // z-index, so a plain local ref kept it visible over the Settings tab after
+  // switching away from chat. It must be a tab-scoped drawer with
+  // autoRestore:false so useTabDrawer closes it on tab switch.
+  it('registers the context usage popup as a tab-scoped drawer (autoRestore: false)', async () => {
+    mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    const usageCall = mockUseTabDrawerCalls.find(
+      ([, opts]) => opts && opts.autoRestore === false,
+    )
+    expect(usageCall).toBeTruthy()
+    expect(usageCall![0]).toBe('chat')
+  })
+
+  // The tab-gating lives in `effectiveOpen`, not in `isOpen`. Binding the popup
+  // to `isOpen` compiles and renders, but the raw drawer state survives a tab
+  // switch — so the popup would once again hover over the newly shown tab.
+  // Assert the wiring, since a same-valued stub cannot catch it by behaviour.
+  it('binds the usage popup visibility to effectiveOpen (tab-gated), not isOpen', async () => {
+    mockContextSize.value = 100000
+    mockContextUsed.value = 50000
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    const popup = wrapper
+      .findAllComponents({ name: 'PopupMenu' })
+      .find((c) => c.html().includes('usage-popup'))
+    expect(popup).toBeTruthy()
+
+    // Raw state true while the tab-gated value is false: only a popup bound to
+    // effectiveOpen reports hidden.
+    mockIsOpen.value = true
+    mockEffectiveOpen.value = false
+    await nextTick()
+    expect(popup!.props('show')).toBe(false)
+
+    mockEffectiveOpen.value = true
+    await nextTick()
+    expect(popup!.props('show')).toBe(true)
+  })
+
+  it('clicking the usage chip toggles the usage drawer, not a local ref', async () => {
+    mockContextSize.value = 100000
+    mockContextUsed.value = 50000
+    mockDrawerToggle.mockClear()
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await wrapper.find('.session-info-usage').trigger('click')
+    expect(mockDrawerToggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('PopupMenu close intent (update:show=false) closes the usage drawer', async () => {
+    mockContextSize.value = 100000
+    mockContextUsed.value = 50000
+    mockDrawerClose.mockClear()
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    // Several PopupMenus are mounted — pick the usage one by its slot content.
+    const popup = wrapper
+      .findAllComponents({ name: 'PopupMenu' })
+      .find((c) => c.html().includes('usage-popup'))
+    expect(popup).toBeTruthy()
+    popup!.vm.$emit('update:show', false)
+    await nextTick()
+    expect(mockDrawerClose).toHaveBeenCalled()
+  })
+
+  it('compact button closes the usage drawer instead of mutating a local ref', async () => {
+    mockContextUsed.value = 80000
+    mockContextSize.value = 100000
+    mockAvailableCommands.value = [{ name: '/compact', description: 'Compact' }]
+    mockSessionTransport.value = 'acp-stdio'
+    mockDrawerClose.mockClear()
+    const wrapper = mountBar({ currentModelName: 'gpt-4' })
+    await nextTick()
+    await wrapper.find('.usage-popup-compact-btn').trigger('click')
+    expect(mockDrawerClose).toHaveBeenCalled()
+
+    mockContextUsed.value = 0
+    mockContextSize.value = 0
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
   })
 
   it('groups all token/cost rows under the Token Detail section header', async () => {
@@ -2323,15 +2489,23 @@ describe('ChatInputBar', () => {
       wrapper.unmount()
     })
 
-    it('excludes pending and queued messages from history', async () => {
+    it('builds history from the messages array only (queued messages are not in it)', async () => {
+      // The old test excluded rows carrying `pending`/`queued` flags. Those
+      // fields no longer exist on a chat message: a queued message lives in the
+      // queue store (useMessageQueue) and is never passed to ChatInputBar via
+      // `messages`, so historyInputs has no queue filter at all — it is simply
+      // every user row with text, newest first. Pin that source-of-truth
+      // contract (and that assistant rows are skipped).
       const wrapper = mountBar({
         currentSessionId: 's1',
         messages: [
           { id: 1, role: 'user', content: 'confirmed message' },
-          { id: 2, role: 'user', content: 'still pending', pending: true },
-          { id: 3, role: 'user', content: 'still queued', queued: true },
+          { id: 2, role: 'assistant', content: 'a reply' },
+          { id: 3, role: 'user', content: 'later question' },
         ],
       })
+      await pressArrow(wrapper, 'ArrowUp')
+      expect(wrapper.vm.inputText).toBe('later question')
       await pressArrow(wrapper, 'ArrowUp')
       expect(wrapper.vm.inputText).toBe('confirmed message')
       wrapper.unmount()
@@ -2402,6 +2576,87 @@ describe('ChatInputBar', () => {
       await flushPromises()
       await wrapper.vm.$nextTick()
       expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('does not navigate history while the caret has soft-wrapped rows above it', async () => {
+      // A long single line with NO newline still wraps onto several visual rows.
+      // Counting newlines would call this a one-row draft and steal ArrowUp for
+      // history; the measured caret row must keep the key for caret movement.
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const draft = 'a very long draft that soft wraps without any newline at all'
+      wrapper.vm.inputText = draft
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(draft.length, draft.length)
+      // Caret on the LAST visual row (row 2 of 3).
+      mockCaretVisualRows.mockReturnValue({ caretRow: 2, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      // History must not have replaced the draft
+      expect(wrapper.vm.inputText).toBe(draft)
+      wrapper.unmount()
+    })
+
+    it('navigates history from the first visual row of a soft-wrapped draft', async () => {
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      const draft = 'a very long draft that soft wraps without any newline at all'
+      wrapper.vm.inputText = draft
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(0, 0)
+      // Caret on the FIRST visual row (row 0 of 3) — now history takes over.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 0, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('padded message')
+      wrapper.unmount()
+    })
+
+    it('ArrowDown keeps the caret inside a soft-wrapped history entry instead of leaving it', async () => {
+      // Regression shape: the user has stepped into history (so ArrowDown WOULD
+      // normally step back out), the loaded entry soft-wraps, and the caret sits
+      // mid-entry with rows below. ArrowDown must move the caret, not abandon the
+      // entry. Counting newlines sees a one-row entry and leaves; the measured
+      // caret row is what stops it.
+      const longEntry = 'x'.repeat(120)
+      const wrapper = mountBar({
+        currentSessionId: 's1',
+        messages: [{ id: 1, role: 'user', content: longEntry }],
+      })
+      const ta = wrapper.find('.chat-textarea')
+      // Step into history from the first visual row.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 0, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe(longEntry)
+      // Caret is now mid-entry (row 1 of 3) — there is a row below it.
+      mockCaretVisualRows.mockReturnValue({ caretRow: 1, totalRows: 3 })
+      await ta.trigger('keydown', { key: 'ArrowDown' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      // History navigation must NOT have run: the entry stays loaded.
+      expect(wrapper.vm.inputText).toBe(longEntry)
+      wrapper.unmount()
+    })
+
+    it('falls back to logical rows when the visual row is unmeasurable', async () => {
+      // jsdom has no layout, so this is the real default: measurement returns
+      // null and the newline count decides. A multiline draft with the caret on
+      // the second line must still protect the caret.
+      const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
+      wrapper.vm.inputText = 'line one\nline two'
+      await wrapper.vm.$nextTick()
+      const ta = wrapper.find('.chat-textarea')
+      ta.element.setSelectionRange(9, 9)
+      expect(mockCaretVisualRows()).toBeNull()
+      await ta.trigger('keydown', { key: 'ArrowUp' })
+      await flushPromises()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.vm.inputText).toBe('line one\nline two')
       wrapper.unmount()
     })
 
@@ -2984,6 +3239,314 @@ describe('ChatInputBar', () => {
     expect(wrapper.vm.inputText).toBe('采纳的建议')
     expect(wrapper.vm.showRecommendationChip).toBe(false)
     wrapper.unmount()
+  })
+
+  // ── Restore after the accepted text is cleared ──
+  //
+  // Accepting moves the suggestion into the input box and hides the banner. If
+  // the user then empties the box, the suggestion is no longer applied — hiding
+  // it would silently lose it, so it must come back.
+
+  it('brings the recommendation back when the accepted text is cleared', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.inputText).toBe('继续实现功能')
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+
+    // Clear the box the way the user would.
+    wrapper.vm.inputText = ''
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(true)
+    expect(wrapper.vm.recommendation).toBe('继续实现功能')
+
+    wrapper.unmount()
+  })
+
+  it('keeps the recommendation hidden while the accepted text is still there', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Editing the filled text must NOT resurrect the banner — only emptying it.
+    wrapper.vm.inputText = '继续实现功能 并补充测试'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+
+    wrapper.unmount()
+  })
+
+  it('does not resurrect the recommendation when the input is cleared after sending', async () => {
+    // Sending empties the input too. `loading` flips true in the same tick,
+    // which invalidates the session's slot outright, so nothing may resurface.
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('继续实现功能')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Send: text is cleared and streaming starts in the same tick.
+    wrapper.vm.inputText = ''
+    await wrapper.setProps({ loading: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    expect(wrapper.vm.recommendation).toBe('')
+
+    wrapper.unmount()
+  })
+
+  // ── Accept handoff animation (采纳确认动效) ──────────
+  //
+  // Accepting used to be observable only as "the chip vanished": the text
+  // landing in the input box is easy to miss, and rec.accept() dismisses the
+  // entry synchronously, so the banner was already gone by the next paint. The
+  // banner is now held through a handoff flight — green + flying down into the
+  // input box — which the stylesheet drives; these tests pin the state machine
+  // that holds it open for exactly that long.
+
+  it('holds the banner through the accept flight, then retires it', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+
+    // Confirmation window: the underlying recommendation is already dismissed
+    // (rec.accept()), yet the banner must still be on screen — this is the whole
+    // point, so assert BOTH halves.
+    expect(wrapper.vm.showRecommendationChip).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+    // The snapshot keeps the label from blanking out mid-animation.
+    expect(wrapper.vm.displayedRecommendation).toBe('采纳我')
+    expect(wrapper.vm.inputText).toBe('采纳我')
+
+    // The button reads as confirmed and the container pulses.
+    const acceptBtn = wrapper.find('.recommendation-accept')
+    expect(acceptBtn.classes()).toContain('accepted')
+    expect(wrapper.find('.recommendation-chip').classes()).toContain('accepted')
+    expect(wrapper.find('.chat-input-container').classes()).toContain('accept-pulse')
+    // The checkmark replaces the plain label — that is the actual "confirm"
+    // signal, so pin it rather than trusting the class alone.
+    expect(acceptBtn.find('.recommendation-accept-check').exists()).toBe(true)
+    // It cannot be accepted twice.
+    expect(acceptBtn.attributes('disabled')).toBeDefined()
+
+    vi.advanceTimersByTime(300)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    expect(wrapper.find('.chat-input-container').classes()).not.toContain('accept-pulse')
+
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('focuses the textarea with the caret after the filled text on accept', async () => {
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG }, { attachTo: document.body })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('落点')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    const ta = wrapper.find('.chat-textarea').element as HTMLTextAreaElement
+    expect(document.activeElement).toBe(ta)
+    expect(ta.selectionStart).toBe(2)
+    wrapper.unmount()
+  })
+
+  it('a new recommendation supersedes an in-flight confirmation', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('第一条')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+
+    dispatchRecommendation('第二条')
+    await wrapper.vm.$nextTick()
+    // The stale confirmation must not keep the banner showing the OLD text, and
+    // the new recommendation must be visible immediately.
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    expect(wrapper.vm.displayedRecommendation).toBe('第二条')
+
+    // The superseded timer must not fire later and tear the new banner down.
+    vi.advanceTimersByTime(300)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showRecommendationBanner).toBe(true)
+    expect(wrapper.vm.displayedRecommendation).toBe('第二条')
+
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('a session switch clears an in-flight confirmation', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+
+    await wrapper.setProps({ currentSessionId: 's2', messages: [] })
+    await wrapper.vm.$nextTick()
+    // The confirmation is per-session feedback; s2 must not inherit s1's chip.
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('streaming starting clears an in-flight confirmation', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(true)
+
+    await wrapper.setProps({ loading: true })
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.recommendationAccepting).toBe(false)
+    expect(wrapper.vm.showRecommendationBanner).toBe(false)
+    wrapper.unmount()
+    vi.useRealTimers()
+  })
+
+  it('cancels the accept confirmation timer on unmount', async () => {
+    vi.useFakeTimers()
+    const wrapper = mountBar({ currentSessionId: 's1', messages: ASSISTANT_LAST_MSG })
+    await wrapper.vm.$nextTick()
+    dispatchRecommendation('采纳我')
+    await wrapper.vm.$nextTick()
+
+    // The accept timer is identified by its delay (the confirmation window),
+    // which is unique among the bar's timers. Asserting on a bare timer COUNT
+    // would not work: onBeforeUnmount also clears unrelated timers (placeholder
+    // rotation, paste overlay, action-bar measure), so the count drops either
+    // way and the mutation survives.
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout')
+    wrapper.vm.acceptRecommendation()
+    await wrapper.vm.$nextTick()
+    const acceptIds = setTimeoutSpy.mock.calls
+      .map((c, i) => ({ ms: c[1], id: setTimeoutSpy.mock.results[i].value }))
+      .filter(x => x.ms === 300)
+    expect(acceptIds, 'accept must schedule exactly one confirmation timer').toHaveLength(1)
+
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout')
+    wrapper.unmount()
+    expect(
+      clearTimeoutSpy.mock.calls.some(c => c[0] === acceptIds[0].id),
+      'unmount must cancel the pending accept timer',
+    ).toBe(true)
+    // restoreMocks is not enabled for this suite, so these spies would otherwise
+    // keep wrapping the globals for every later test in the file.
+    setTimeoutSpy.mockRestore()
+    clearTimeoutSpy.mockRestore()
+    vi.useRealTimers()
+  })
+
+  it('resolves the confirmation label in both locales', () => {
+    const en = createI18n({ legacy: false, locale: 'en', messages: { en: enLocale } })
+    const zh = createI18n({ legacy: false, locale: 'zh', messages: { zh: zhLocale } })
+    expect(en.global.t('tool.askUser.recommendationFilled')).toBe('Filled')
+    expect(zh.global.t('tool.askUser.recommendationFilled')).toBe('已填入')
+  })
+
+  it('drops the decorative motion but keeps the chip flight under reduced motion', async () => {
+    // jsdom has no CSS engine, so this is a source guard — the same pattern the
+    // flash family uses.
+    //
+    // The button pop and the ring pulse are decorative and must be dropped. The
+    // chip's flight must NOT be: the flight IS the information ("the text moved
+    // into the box"), and there is no other channel carrying it. Opting it out
+    // also made the whole feature invisible to anyone with OS-level animations
+    // disabled — which is how it was reported (Windows, reduce=true).
+    //
+    // This assertion is INVERTED on purpose (same precedent as the session row
+    // status slot, see sessionStatusSlot.css.test.ts). Do not "restore" it to
+    // expecting `animation: none` without reading the stylesheet comment.
+    const mod = await import('../ChatInputBar.vue?raw')
+    const source = String(mod.default)
+    // Slice from the LAST reduced-motion media query: an earlier one (the banner
+    // slide transition) also exists, and a lazy match from the first would span
+    // both — passing even with the accept rules absent.
+    const start = source.lastIndexOf('@media (prefers-reduced-motion: reduce)')
+    expect(start, 'a reduced-motion block must exist').toBeGreaterThan(-1)
+    const block = source.slice(start)
+    expect(block).toMatch(/\.recommendation-accept\.accepted\s*\{[^}]*animation: none/)
+    expect(block).toMatch(/\.chat-input-container\.accept-pulse\s*\{[^}]*animation: none/)
+    // The flight is deliberately exempt from the preference.
+    expect(block, 'the chip flight must NOT be opted out of reduced motion')
+      .not.toMatch(/\.recommendation-chip\.accepted\s*\{[^}]*animation: none/)
+    // The static green confirmation is NOT disabled by the reduced-motion block.
+    expect(source).toContain('.recommendation-accept.accepted {')
+    expect(source).toContain('background: var(--color-success')
+    // ...and the flight itself is still declared, so this cannot pass by the
+    // animation having been deleted outright.
+    expect(source).toContain('animation: recommendation-chip-fly')
+  })
+
+  it('flies the chip DOWN into the input box on accept (the handoff reads as a fill)', async () => {
+    // jsdom has no CSS engine, so this is a source guard. The whole point of the
+    // accept feedback is that the text reads as *moved into the input box*: the
+    // chip must translate downward, and it must be the chip (not the slot) that
+    // carries the motion — the slot owns the height collapse, and putting the
+    // flight on the same element would make the collapse pull up against it.
+    const mod = await import('../ChatInputBar.vue?raw')
+    const source = String(mod.default)
+
+    const flightRule = source.match(/\.recommendation-chip\.accepted\s*\{([^}]*)\}/)
+    expect(flightRule, '.recommendation-chip.accepted must exist').not.toBeNull()
+    expect(flightRule[1]).toMatch(/animation:\s*recommendation-chip-fly/)
+
+    const keyframes = source.match(/@keyframes recommendation-chip-fly\s*\{([\s\S]*?)\n\}/)
+    expect(keyframes, 'the flight keyframes must exist').not.toBeNull()
+    // A positive translateY is downward (the input box sits below the chip).
+    // Capture the sign explicitly so a reversed flight fails on the direction
+    // assertion rather than on an unexpected non-match.
+    const end = keyframes[1].match(/100%\s*\{[^}]*translateY\(\s*(-?\d+)px/)
+    expect(end, 'the flight must end with a translateY offset').not.toBeNull()
+    expect(Number(end[1]), 'the chip must fly DOWN into the input box').toBeGreaterThan(0)
+    // It must also fade out, otherwise the chip would still be visible when the
+    // height collapse retires it.
+    expect(keyframes[1]).toMatch(/100%\s*\{[^}]*opacity:\s*0/)
+
+    // The slot is the Transition target and must NOT carry the flight.
+    expect(source).toContain('.recommendation-slot {')
+    expect(source).not.toMatch(/\.recommendation-slot\s*\{[^}]*recommendation-chip-fly/)
+
+    // The flight must be visible OVER the input box, not behind it.
+    // `.chat-input-container` is `position: relative` (for `.paste-overlay`), and
+    // a positioned element paints after an in-flow non-positioned sibling — so
+    // the banner needs its own stacking position or the chip disappears behind
+    // the input box mid-flight (reported from a real browser).
+    const slotRule = source.match(/\.recommendation-slot\s*\{([^}]*)\}/)
+    expect(slotRule, '.recommendation-slot must exist').not.toBeNull()
+    expect(slotRule[1], 'the banner must be positioned to paint over the input box')
+      .toMatch(/position:\s*relative/)
+    expect(slotRule[1], 'the banner needs a stacking order above the input container')
+      .toMatch(/z-index:\s*\d+/)
   })
 
   it('ignores recommendation with empty text', async () => {

@@ -43,6 +43,61 @@ const dirUploadCancelled = ref(false)
 let activeDirXhr: XMLHttpRequest | null = null
 let activeDownloadAbort: AbortController | null = null
 
+// Cumulative byte progress for the current batch (dir upload or tree download).
+//
+// The bar must advance ACROSS files, so progress is reported against the whole
+// batch. Reporting each file's own 0-100 (as it did before) made the bar restart
+// at every file boundary — a two-file upload produced [50,100,50,100], which
+// reads as "stuck / jumping backwards".
+let dirUploadTotalBytes = 0
+let dirUploadLoadedBytes = 0
+
+/**
+ * Sum the batch's bytes and reset the bar. Call once per batch, before any file.
+ *
+ * Oversized files are excluded: they are rejected before a single byte is sent,
+ * so counting them would leave the bar permanently short of 100%.
+ */
+function beginDirProgress(files: Iterable<{ size: number }>, maxSizeBytes: number): void {
+  let total = 0
+  for (const f of files) {
+    const size = f.size || 0
+    if (maxSizeBytes > 0 && size > maxSizeBytes) continue
+    total += size
+  }
+  dirUploadTotalBytes = total
+  dirUploadLoadedBytes = 0
+  dirUploadProgress.value = 0
+}
+
+/**
+ * Advance the bar to `loaded` cumulative bytes.
+ *
+ * Monotonic by construction: a later file's early progress events must never
+ * undo bytes already banked for earlier files. A batch whose bytes are all
+ * unknown (every file empty) leaves the bar at 0 rather than dividing by zero.
+ */
+function reportDirProgress(loaded: number): void {
+  if (dirUploadTotalBytes <= 0) return
+  const pct = Math.min(100, Math.round((loaded / dirUploadTotalBytes) * 100))
+  if (pct > dirUploadProgress.value) dirUploadProgress.value = pct
+}
+
+/**
+ * Bank a finished file's bytes so the next file's progress continues from here.
+ *
+ * The full declared size is banked even when the file failed: a partially-sent
+ * file would otherwise leave a permanent gap and the bar could never reach 100%.
+ * Oversized files are skipped — they were excluded from the total, so banking
+ * them would overshoot. (They also never reach here: they are rejected before
+ * the request is built.)
+ */
+function bankDirProgress(size: number, maxSizeBytes: number): void {
+  if (maxSizeBytes > 0 && size > maxSizeBytes) return
+  dirUploadLoadedBytes += size || 0
+  reportDirProgress(dirUploadLoadedBytes)
+}
+
 export function useFileUpload() {
   const toast = useToast()
 
@@ -51,7 +106,10 @@ export function useFileUpload() {
   const { attachedFiles, addAttachedFile, removeAttachedFile } = useChatContext()
 
   function uploadOneFile(file: File, dir?: string, autoAttach?: boolean, relPath?: string) {
-    return new Promise((resolve) => {
+    // Hoisted out of the executor so the banking step below shares the same cap.
+    const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
+
+    const attempt = new Promise<boolean>((resolve) => {
       const isDirUpload = !!dir
 
       // Route a failure reason either to an immediate toast (chat attachment)
@@ -73,7 +131,6 @@ export function useFileUpload() {
       // Pre-flight size check: prevent sending a request that will be
       // rejected by the server's MaxBytesReader (which causes onerror
       // instead of a readable error response).
-      const maxSizeBytes = store.state.uploadMaxSizeMB * 1024 * 1024
       if (file.size > maxSizeBytes) {
         notifyError(gt('upload.fileTooLarge', { name: file.name, max: store.state.uploadMaxSizeMB }))
         resolve(false)
@@ -111,9 +168,11 @@ export function useFileUpload() {
 
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) {
-          const pct = Math.round((e.loaded / e.total) * 100)
-          if (entry) entry.progress = pct
-          if (isDirUpload) dirUploadProgress.value = pct
+          if (entry) entry.progress = Math.round((e.loaded / e.total) * 100)
+          // Batch progress = bytes banked for finished files + this file's
+          // sent bytes, so the bar keeps climbing across file boundaries
+          // instead of restarting from 0 on each one.
+          if (isDirUpload) reportDirProgress(dirUploadLoadedBytes + e.loaded)
         }
       }
 
@@ -192,6 +251,14 @@ export function useFileUpload() {
 
       xhr.send(formData)
     })
+
+    // Bank this file's bytes on every settle path (success, failure, abort) so
+    // the batch bar continues from here instead of restarting. Doing it here
+    // rather than in each caller means a caller cannot forget and stall the bar.
+    return attempt.then((ok) => {
+      if (dir) bankDirProgress(file.size, maxSizeBytes)
+      return ok
+    })
   }
 
   /** Aggregate the dir-upload result into a single summary toast. */
@@ -245,7 +312,8 @@ export function useFileUpload() {
       activeDirXhr = null
       dirUploadTotal.value = toUpload.length
       dirUploadDone.value = 0
-      dirUploadProgress.value = 0
+      // Size the bar against the whole batch, not the current file.
+      beginDirProgress(toUpload, maxSizeBytes)
       dirUploadErrorMsgs = []
     }
 
@@ -377,7 +445,9 @@ export function useFileUpload() {
     const total = result.files.length + result.emptyDirs.length
     dirUploadTotal.value = total
     dirUploadDone.value = 0
-    dirUploadProgress.value = 0
+    // Size the bar against the whole batch, not the current file. Empty dirs
+    // carry no bytes, so they do not affect the byte total.
+    beginDirProgress(result.files.map((f) => f.file), maxSizeBytes)
     let done = 0
     let okCount = 0
     let failCount = 0
@@ -455,6 +525,8 @@ export function useFileUpload() {
     }
     const tree = files ?? []
     dirUploadTotal.value = tree.length
+    // Size the bar against every file in the tree, not the current one.
+    beginDirProgress(tree, 0)
 
     let rootHandle: FileSystemDirectoryHandle
     try {
@@ -480,14 +552,15 @@ export function useFileUpload() {
 
         const reader = resp.body!.getReader()
         const chunks: BlobPart[] = []
-        const total = f.size || 1
         let received = 0
         for (;;) {
           const { done: rd, value } = await reader.read()
           if (rd) break
           chunks.push(value as unknown as BlobPart)
           received += value.length
-          dirUploadProgress.value = Math.min(100, Math.round((received / total) * 100))
+          // Batch progress: bytes banked for earlier files + this file's so
+          // far, so the bar keeps climbing across file boundaries.
+          reportDirProgress(dirUploadLoadedBytes + received)
         }
         const blob = new Blob(chunks)
         await writeFileToTree(rootHandle, f.rel, blob)
@@ -495,6 +568,10 @@ export function useFileUpload() {
         dirUploadDone.value = done
       } catch {
         if (abort.signal.aborted) break
+      } finally {
+        // Bank on every path (success, skip, failure) so the bar keeps moving
+        // and a single bad file cannot stall it for the rest of the tree.
+        bankDirProgress(f.size, 0)
       }
     }
 

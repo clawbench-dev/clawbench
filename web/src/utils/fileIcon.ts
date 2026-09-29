@@ -34,7 +34,7 @@ export function getFileIconColor(path: string): string | undefined {
 
 /** Build a thumbnail URL for an absolute file path. */
 export function buildPathThumbUrl(path: string, width = 80): string {
-  return `/api/file/thumb?path=${encodeURIComponent(path)}&w=${width}`
+  return `/api/fs/thumb?target=${encodeURIComponent(path)}&w=${width}`
 }
 
 /**

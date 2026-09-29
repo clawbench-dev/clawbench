@@ -5,6 +5,7 @@ import { shouldRetryToolFetch, resolveEffectiveMsgId, type ContentBlock } from '
 import { formatToolOutput, verifyToolOutputAnnotations } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { appLog } from '@/utils/appLog'
+import { getShareToolCall } from '@/share/shareMode'
 
 const TAG = 'ToolDetailDrawer'
 
@@ -175,6 +176,26 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
       toolDetailData.value.inputHtml = '<div class="tool-call-loading"></div>'
     }
     try {
+      // Session-share mode inlines the tool payload, so render straight from the
+      // snapshot instead of calling the authenticated detail endpoint.
+      const shared = getShareToolCall(msgId, String(toolId))
+      if (shared) {
+        const { formatToolInput } = chatRender
+        if (shared.input) {
+          toolDetailData.value.inputHtml = formatToolInput(shared.input as Record<string, unknown>, block.name || '', { done: shared.done ?? block.done, status: shared.status ?? block.status, output: shared.output || '', askKey: askKeyForToolBlock(block) })
+        } else {
+          toolDetailData.value.inputHtml = toolCallEmptyState(t('chat.contentBlocks.detailsUnavailable'))
+        }
+        if (shared.output) {
+          toolDetailData.value.outputHtml = formatToolOutput(shared.output, block.name || '')
+        }
+        if (shared.done !== undefined) toolDetailData.value.done = !!shared.done
+        if (shared.status) toolDetailData.value.status = shared.status
+        if (shared.durationMs !== undefined && shared.durationMs > 0) toolDetailData.value.duration = shared.durationMs
+        _verifyAnnotations()
+        return
+      }
+
       let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(toolId)}&message_id=${encodeURIComponent(msgId)}`
       const sid = sessionId?.()
       if (sid) url += `&session_id=${encodeURIComponent(sid)}`

@@ -65,6 +65,35 @@ func TestParseItems_MarkdownFormat(t *testing.T) {
 			in:   "Q?\n- **甲**\n- 乙",
 			item: Item{Question: "Q?", Options: []Option{{Label: "甲"}, {Label: "乙"}}},
 		},
+		{
+			// A dash inside the bold run is part of the label, not a
+			// separator. Splitting on it truncated the label to "**A" and
+			// left the unmatched "**" visible (production message 52484).
+			name: "separator inside bold run does not split",
+			in:   "Q?\n- **A — 回合结束时失效负缓存（推荐）** — 在 ContentBlocks.vue 里清缓存。",
+			item: Item{Question: "Q?", Options: []Option{{
+				Label:       "A — 回合结束时失效负缓存（推荐）",
+				Description: "在 ContentBlocks.vue 里清缓存。",
+			}}},
+		},
+		{
+			name: "bold label with no description",
+			in:   "Q?\n- **A — 方案一**",
+			item: Item{Question: "Q?", Options: []Option{{Label: "A — 方案一"}}},
+		},
+		{
+			name: "separator after the bold run still splits",
+			in:   "Q?\n- **甲** — 说明",
+			item: Item{Question: "Q?", Options: []Option{{Label: "甲", Description: "说明"}}},
+		},
+		{
+			name: "later plain option still splits normally",
+			in:   "Q?\n- **A — 标签** — 描述\n- 乙 — 乙说明",
+			item: Item{Question: "Q?", Options: []Option{
+				{Label: "A — 标签", Description: "描述"},
+				{Label: "乙", Description: "乙说明"},
+			}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

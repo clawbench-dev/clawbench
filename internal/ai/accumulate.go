@@ -11,6 +11,15 @@ import (
 // Both text and thinking events are coalesced into the most recent block of
 // the same type; tool_use events are deduplicated by ID.
 //
+// It returns the identity of a thinking block so the caller can put it on the
+// outbound event: thinkID is the block's stable think_id, or empty for any
+// other event. The executor forwards the event to WS clients after
+// accumulating, so a client learns a block's identity the moment it appears
+// rather than having to infer it later from a DB snapshot.
+//
+// The return value may be ignored (most call sites do); only the streaming
+// executor needs it.
+//
 // When AI models (e.g. GLM-5.1) interleave thinking_delta and text_delta events,
 // the last block may not be the same type as the incoming event. Instead of only
 // checking the last block, we search backward for the most recent block of the
@@ -20,16 +29,29 @@ import (
 // tiny blocks when events alternate, while preserving the semantic separation
 // around tool calls.
 //
+// Sub-agent attribution (ParentToolCallID) narrows the search: an event may only
+// coalesce into a block of its own parent, and only its own parent's tool_use is
+// a boundary. Other parents' blocks are stepped over — concurrent sub-agents
+// interleave on the wire, so they are interleaving noise, not separators.
+//
 //nolint:gocognit,gocyclo // complex stream parsing logic
-func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
+func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID string) {
 	// findLastBlockOfType searches backward for the most recent block of the
-	// given type, but stops at tool_use boundaries (they are natural separators)
-	// and at a sub-agent parent boundary (a block belonging to a different
-	// parent — or top-level — must not absorb a sub-agent's deltas).
+	// given type, stopping at tool_use boundaries (natural separators).
+	//
+	// Blocks belonging to a DIFFERENT parent (another sub-agent, or top-level)
+	// are skipped, not treated as a boundary. Concurrent sub-agents interleave
+	// their deltas on the wire, so agent A's next delta is usually separated
+	// from A's previous block by several of agent B's blocks. Treating the
+	// first foreign block as a boundary fragmented one continuous thought into
+	// one block per interleaved run (measured: a single agent's reasoning split
+	// into thousands of 3-70 char fragments). Skipping them lets A's deltas
+	// coalesce into A's own most recent block, which is what the sender meant;
+	// a tool_use of A's OWN parent still separates (semantic boundary).
 	findLastBlockOfType := func(typ, parent string) (int, bool) {
 		for i := len(*blocks) - 1; i >= 0; i-- {
 			if (*blocks)[i].ParentToolCallID != parent {
-				return -1, false
+				continue
 			}
 			if (*blocks)[i].Type == typ {
 				return i, true
@@ -53,16 +75,56 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 		}
 	case "thinking":
 		parent := event.ParentToolCallID
+		// Empty deltas carry no content and must not open a block. The WS
+		// coalescer filters them, but it only gates the outbound frame — the
+		// accumulator is fed the RAW event (session_executor.handleNonTerminalEvent),
+		// so without this guard a stray empty delta appended
+		// `{type:"thinking", text:""}` with no think_id and no done, which
+		// rendered as an empty spinner and got a think_id + a text-less marker
+		// at Finalize (a lazy-load that 404s). Merging into an existing block is
+		// also a no-op for an empty delta, so skipping is strictly better.
+		if event.Content == "" {
+			// Explicit "" rather than a bare return: the function has a named
+			// result, so a naked return here would trip nakedret.
+			return ""
+		}
 		// Coalesce incremental thinking deltas into the most recent thinking block.
 		if idx, found := findLastBlockOfType("thinking", parent); found {
+			// Same block: report its identity so the caller stamps every delta
+			// of this block with it.
 			(*blocks)[idx].Text += event.Content
-		} else {
-			*blocks = append(*blocks, model.ContentBlock{Type: "thinking", Text: event.Content, ParentToolCallID: parent})
+			return (*blocks)[idx].ThinkID
 		}
+		// A new block. Mint its identity HERE, at the moment it opens, so the
+		// event that opens it can carry the id and the client never has to
+		// infer it. Assigning at flush time (the old behavior) meant the id
+		// only reached the client via a DB snapshot, which it had to match back
+		// to a live block by position — and mispaired whenever the two sides
+		// disagreed on ordering.
+		id := model.GenerateThinkingID()
+		*blocks = append(*blocks, model.ContentBlock{
+			Type:             "thinking",
+			Text:             event.Content,
+			ThinkID:          id,
+			ParentToolCallID: parent,
+		})
+		return id
 	case "thinking_done":
-		// Mark the last thinking block as done — the thinking content is complete.
-		// Without this, the frontend spinner stays until the entire response finishes.
+		// Mark the most recent thinking block OF THIS PARENT as done — the
+		// thinking content is complete. Without this, the frontend spinner stays
+		// until the entire response finishes.
+		//
+		// The parent filter is required, not cosmetic: with concurrent
+		// sub-agents interleaving on the wire, an unfiltered "mark the last
+		// thinking block" let agent B's completion mark agent A's block, while
+		// B's own block stayed done=false — which the frontend renders as a
+		// perpetual spinner with no content once the DB marker is adopted.
+		// Other parents' blocks are stepped over (interleaving noise).
+		parent := event.ParentToolCallID
 		for i := len(*blocks) - 1; i >= 0; i-- {
+			if (*blocks)[i].ParentToolCallID != parent {
+				continue
+			}
 			if (*blocks)[i].Type == "thinking" {
 				(*blocks)[i].Done = true
 				break
@@ -188,6 +250,27 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) {
 			ErrorDetail: event.ErrorDetail,
 		})
 	}
+	return ""
+}
+
+// MarkAllThinkingDone flags every thinking block as complete. Call it on a
+// terminal path (turn end / finalize): once the turn is over no thinking block
+// can still be running, so a lingering done=false is stale by definition.
+//
+// This exists because thinking_done is not guaranteed per block. It is emitted
+// on the transitions the ACP layer observes (a following content chunk, a tool
+// call, a completed think-tool), so a turn that ENDS on reasoning — or a
+// sub-agent whose completion signal was never routed — leaves its last block
+// done=false. The frontend renders such a block as a spinner forever, and
+// Finalize persists the same flag, so a session switch surfaced a headless
+// "输出中" block with no content.
+func MarkAllThinkingDone(blocks []model.ContentBlock) []model.ContentBlock {
+	for i := range blocks {
+		if blocks[i].Type == "thinking" {
+			blocks[i].Done = true
+		}
+	}
+	return blocks
 }
 
 // MergeConsecutiveThinkingBlocks merges adjacent thinking blocks, including

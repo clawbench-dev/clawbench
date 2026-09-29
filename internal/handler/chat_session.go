@@ -107,10 +107,17 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// hasMore stay correct — filtering only the loaded page client-side
 		// would show "no matches" until the user scrolled far enough.
 		tagName := strings.TrimSpace(r.URL.Query().Get("tag"))
-		// cursor_pinned completes the keyset: the list is ordered by
-		// (pinned DESC, created_at DESC, id DESC), so paging on created_at alone
-		// re-returns pinned rows on every page. Absent/empty keeps the legacy
-		// created_at-only predicate for older clients.
+		// cursor_sort_order + cursor_pinned complete the keyset: the list is
+		// ordered by (pinned DESC, sort_order ASC, created_at DESC, id DESC), so
+		// paging on created_at alone re-returns rows sharing the cursor's
+		// (pinned, sort_order) on every page. Absent/empty keeps the legacy
+		// created_at-only predicate.
+		var cursorSortOrder *int
+		if p := r.URL.Query().Get("cursor_sort_order"); p != "" {
+			if v, err := strconv.Atoi(p); err == nil {
+				cursorSortOrder = &v
+			}
+		}
 		var cursorPinned *bool
 		if p := r.URL.Query().Get("cursor_pinned"); p != "" {
 			v := p == "1" || strings.EqualFold(p, "true")
@@ -129,7 +136,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		var err error
 
 		if limit > 0 {
-			sessions, hasMore, err = service.GetSessionsPaged(projectPath, "", limit, cursor, cursorID, cursorPinned, tagName)
+			sessions, hasMore, err = service.GetSessionsPaged(projectPath, "", limit, cursor, cursorID, cursorSortOrder, cursorPinned, tagName)
 		} else {
 			sessions, err = service.GetSessions(projectPath, "")
 			hasMore = false
@@ -211,16 +218,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 		// "NewSession N" placeholder may be replaced by first-message auto-titling.
 		lockTitle := title != ""
 		if title == "" {
-			// Numbering is per project: the new unnamed session takes
-			// max(existing numbered unnamed sessions) + 1, so unnamed sessions
-			// are numbered 1, 2, 3, ... regardless of agent. Explicitly-named
-			// sessions don't affect it.
-			n, err := service.NextSessionNumber(projectPath, T(r, "NewSession"))
-			if err == nil {
-				title = T(r, "NewSessionN", map[string]any{"N": n})
-			} else {
-				title = T(r, "NewSession")
-			}
+			title = newUnnamedSessionTitle(r, projectPath)
 		}
 		createSession := service.CreateSession
 		if lockTitle {
@@ -241,6 +239,55 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// newUnnamedSessionTitle builds the localized placeholder title for a session
+// the caller did not name, numbering it per project.
+//
+// Numbering is per project: the new unnamed session takes
+// max(existing numbered unnamed sessions) + 1, so unnamed sessions are numbered
+// 1, 2, 3, ... regardless of agent. Explicitly-named sessions don't affect it.
+//
+// Every unnamed-session creation path must go through here — the manual
+// "new session" POST and the implicit creation when a project has no sessions
+// at all (AIChat GET). Two paths numbering independently would both hand out
+// the same number.
+func newUnnamedSessionTitle(r *http.Request, projectPath string) string {
+	n, err := service.NextSessionNumber(projectPath, T(r, "NewSession"))
+	if err != nil {
+		return T(r, "NewSession")
+	}
+	return T(r, "NewSessionN", map[string]any{"N": n})
+}
+
+// ServeSessionsReorder handles PUT /api/ai/sessions/reorder — persists a manual
+// drag order for the current project's chat sessions (#492).
+//
+// The body carries the visible order as `{ids: [...]}`; each session's
+// sort_order becomes its index. The client can only reorder rows it has loaded,
+// so ids is a prefix of the project's sessions — the untouched tail is
+// renumbered after the prefix in its previous relative order (see
+// service.ReorderSessions).
+func ServeSessionsReorder(w http.ResponseWriter, r *http.Request) {
+	projectPath, ok := requireProject(w, r)
+	if !ok {
+		return
+	}
+	if !requireMethod(w, r, http.MethodPut) {
+		return
+	}
+	var req struct {
+		IDs []string `json:"ids"`
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxChatBodySize)
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := service.ReorderSessions(projectPath, req.IDs); err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to reorder sessions")))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true})
 }
 
 // ArchiveSession handles DELETE for archiving a single session.

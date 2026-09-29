@@ -1,7 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { ref } from 'vue'
 
-const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDefaultAgentId, mockPopulateACPStateFromCache } = vi.hoisted(() => ({
+const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDeleteAgent, mockDefaultAgentId, mockPopulateACPStateFromCache, mockAgentsLoaded } = vi.hoisted(() => ({
   mockGetAgent: vi.fn(),
   mockLoadAgents: vi.fn().mockResolvedValue(undefined),
   mockPatchAgentField: vi.fn().mockResolvedValue(undefined),
@@ -9,6 +10,9 @@ const { mockGetAgent, mockLoadAgents, mockPatchAgentField, mockToastShow, mockDe
   mockDeleteAgent: vi.fn().mockResolvedValue(undefined),
   mockDefaultAgentId: { value: 'other-agent' },
   mockPopulateACPStateFromCache: vi.fn().mockResolvedValue(undefined),
+  // Plain hoisted holder; the mock factory below turns it into a real ref so
+  // the component's computed tracks it (see the vi.mock body).
+  mockAgentsLoaded: { value: true },
 }))
 
 vi.mock('vue-i18n', () => ({
@@ -40,6 +44,9 @@ vi.mock('vue-i18n', () => ({
         'settings.items.agentDeleteDefault': 'Cannot delete default agent',
         'settings.items.agentDeleted': 'Deleted',
         'settings.items.agentDeleteFailed': 'Delete failed',
+        'settings.items.agentNotFound': 'Agent not found or already removed',
+        'settings.items.agentNotFoundHint': 'It may have been deleted.',
+        'settings.items.agentBackToList': 'Back to agent list',
       }
       if (key === 'settings.items.agentModelCount' && params) return `${params.count} models`
       if (key === 'settings.items.agentDeleteConfirm' && params) return `Delete ${params.name}?`
@@ -48,15 +55,26 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({
-    getAgent: mockGetAgent,
-    loadAgents: mockLoadAgents,
-    deleteAgent: mockDeleteAgent,
-    defaultAgentId: mockDefaultAgentId,
-  }),
-  populateACPStateFromCache: mockPopulateACPStateFromCache,
-}))
+vi.mock('@/composables/useAgents', async () => {
+  // Dynamic import: the factory is hoisted above the top-level `import { ref }`,
+  // so referencing that binding here would hit the TDZ.
+  const { ref: vueRef } = await import('vue')
+  const loadedRef = vueRef(mockAgentsLoaded.value)
+  Object.defineProperty(mockAgentsLoaded, 'value', {
+    get: () => loadedRef.value,
+    set: (v: boolean) => { loadedRef.value = v },
+  })
+  return {
+    useAgents: () => ({
+      getAgent: mockGetAgent,
+      loadAgents: mockLoadAgents,
+      agentsLoaded: loadedRef,
+      deleteAgent: mockDeleteAgent,
+      defaultAgentId: mockDefaultAgentId,
+    }),
+    populateACPStateFromCache: mockPopulateACPStateFromCache,
+  }
+})
 
 vi.mock('@/composables/useSettingsConfig', () => ({
   patchAgentField: mockPatchAgentField,
@@ -103,10 +121,24 @@ function mountDetail(agentOverrides: Record<string, any> = {}) {
   })
 }
 
+/** Mount for an agent id the (already loaded) list does not contain. */
+function mountMissingAgent() {
+  mockGetAgent.mockReturnValue(undefined)
+  return mount(SettingsAgentDetail, {
+    props: { agentId: 'ghost-agent' },
+    global: {
+      stubs: {
+        SettingsItem: true,
+      },
+    },
+  })
+}
+
 describe('SettingsAgentDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetAgent.mockReturnValue(baseAgent)
+    mockAgentsLoaded.value = true
   })
 
   it('renders SettingsItem children for a basic CLI agent', () => {
@@ -297,6 +329,25 @@ describe('SettingsAgentDetail', () => {
       expect(options.map(o => o.sublabel)).toEqual(['deepseek-v4-pro', 'deepseek-v4-pro-exclusive'])
     })
 
+    it('renders a JSON-shaped wire id as provider/model, not raw JSON', () => {
+      // DeepSeek Harness identifies a model by a JSON-stringified pair; the id
+      // must stay untouched (it is the wire value) but the sublabel must be
+      // readable rather than a JSON blob.
+      const wrapper = mountDetail({
+        models: [
+          { id: '["deepseek-official","deepseek-v4-pro"]', name: 'DeepSeek-V4-Pro', default: true },
+        ],
+      })
+      const items = wrapper.findAllComponents({ name: 'SettingsItem' })
+      const item = items.find((it: any) => it.props('label') === 'Preferred Model')
+
+      const options = item!.props('options') as Array<{ label: string; value: string; sublabel?: string }>
+      // The value (what gets sent to the agent) is unchanged...
+      expect(options[0].value).toBe('["deepseek-official","deepseek-v4-pro"]')
+      // ...while the sublabel is the readable form.
+      expect(options[0].sublabel).toBe('deepseek-official/deepseek-v4-pro')
+    })
+
     it('omits the sublabel when the display name already is the id', () => {
       const wrapper = mountDetail({
         models: [{ id: 'gpt-5.1-codex', name: 'gpt-5.1-codex', default: true }],
@@ -332,6 +383,53 @@ describe('SettingsAgentDetail', () => {
       const vm = wrapper.vm as any
       const value = vm.$.setupState.getItemValue({ key: 'auto_approve' })
       expect(value).toBe(true)
+    })
+  })
+
+  // ─── Stale reference: the agent no longer exists ──────────
+  // A deep link (or a lingering nav-stack entry) can outlive the agent it
+  // points at — it was deleted, or dropped by a rescan. The page must say so
+  // and offer a way back, instead of rendering an empty shell whose only
+  // controls are a copy button and a delete button that silently no-ops.
+  describe('stale agent reference', () => {
+    it('shows the fallback when the list is loaded but lacks the agent', () => {
+      mockAgentsLoaded.value = true
+
+      const wrapper = mountMissingAgent()
+
+      expect(wrapper.find('.settings-agent-detail--missing').exists()).toBe(true)
+      // No cards, and the dead delete button must not be offered at all.
+      expect(wrapper.findAllComponents({ name: 'SettingsItem' }).length).toBe(0)
+      expect(wrapper.text()).toContain('Agent not found or already removed')
+    })
+
+    it('does NOT show the fallback before the list has loaded (no false "removed")', () => {
+      // A valid agent looks identical to a deleted one until the list lands,
+      // so claiming "removed" here would be a lie.
+      mockAgentsLoaded.value = false
+
+      const wrapper = mountMissingAgent()
+
+      expect(wrapper.find('.settings-agent-detail--missing').exists()).toBe(false)
+    })
+
+    it('emits back (not deleted) when the fallback button is clicked', async () => {
+      mockAgentsLoaded.value = true
+
+      const wrapper = mountMissingAgent()
+      await wrapper.find('.settings-agent-detail--missing button').trigger('click')
+
+      // `back` leaves without deleting; `deleted` is reserved for a real delete.
+      expect(wrapper.emitted('back')).toHaveLength(1)
+      expect(wrapper.emitted('deleted')).toBeUndefined()
+    })
+
+    it('renders normally when the agent exists', () => {
+      mockAgentsLoaded.value = true
+      const wrapper = mountDetail()
+
+      expect(wrapper.find('.settings-agent-detail--missing').exists()).toBe(false)
+      expect(wrapper.findAllComponents({ name: 'SettingsItem' }).length).toBeGreaterThan(0)
     })
   })
 })

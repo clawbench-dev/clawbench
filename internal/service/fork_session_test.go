@@ -7,6 +7,7 @@ import (
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------- ForkSession: normal flow ----------
@@ -763,4 +764,106 @@ func TestForkSession_OverrideAgentID_Unknown(t *testing.T) {
 	).Scan(&backend)
 	assert.NoError(t, err)
 	assert.Equal(t, "claude", backend, "unknown agent should be ignored, source backend preserved")
+}
+
+// ---------- ForkSession: title stays replaceable (#477 follow-up) ----------
+
+// A fork inherits the source title as a PLACEHOLDER, so the first message after
+// the fork point names the branch. The source's title describes the source's
+// topic, not the branch's, and a fork copies history — so gating auto-titling on
+// "first message of the session" (count == 1) never fired for a fork and it kept
+// the "🔀 <source title>" prefix forever.
+func TestForkSession_FirstMessageAfterForkRenamesSession(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original Session")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "梳理日志上报链路", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sessID, "assistant", "好的", nil, false, "")
+	assert.NoError(t, err)
+
+	newSessID, err := service.ForkSession(sessID, "/project", "🔀 梳理日志上报链路", 0, "")
+	assert.NoError(t, err)
+
+	// The fork inherits the source title until the branch says what it is for.
+	title, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, "🔀 梳理日志上报链路", title)
+
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "改成看采样和聚合", nil, false, "")
+	assert.NoError(t, err)
+
+	title, err = service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, "改成看采样和聚合", title,
+		"the first message after the fork point should name the branch")
+}
+
+// Only the FIRST message after the copied history re-titles. Once the title
+// becomes 'auto' its rank blocks later messages, so a long forked conversation
+// keeps the title its opening message earned instead of drifting to whatever
+// was asked most recently.
+func TestForkSession_OnlyFirstMessageAfterForkRenames(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original Session")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "original question", nil, false, "")
+	assert.NoError(t, err)
+
+	newSessID, err := service.ForkSession(sessID, "/project", "🔀 original question", 0, "")
+	assert.NoError(t, err)
+
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "branch question", nil, false, "")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "a later question", nil, false, "")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, "branch question", title, "a later message must not re-title the fork")
+}
+
+// The user's own rename wins. A manual rename writes title_source='custom'
+// (rank 2), which outranks the auto title (rank 1), so the fork's first message
+// must leave it alone.
+func TestForkSession_ManualRenameSurvivesFirstMessage(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original Session")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "hello", nil, false, "")
+	assert.NoError(t, err)
+
+	newSessID, err := service.ForkSession(sessID, "/project", "🔀 hello", 0, "")
+	assert.NoError(t, err)
+
+	require.NoError(t, service.SetSessionTitleLocked(newSessID, "我的分支"))
+
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "this must not become the title", nil, false, "")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, "我的分支", title, "a manual rename must survive the fork's first message")
+}
+
+// A fork records title_source='placeholder', not 'custom': that is what makes
+// the first message able to replace it. Guards the regression directly, since
+// the behavior above would also pass if the fork happened to have no history.
+func TestForkSession_TitleSourceIsPlaceholder(t *testing.T) {
+	setupDB(t)
+
+	sessID := helperCreateSession(t, "/project", "claude", "Original Session")
+	_, err := service.AddChatMessage("/project", "claude", sessID, "user", "hi", nil, false, "")
+	assert.NoError(t, err)
+
+	newSessID, err := service.ForkSession(sessID, "/project", "🔀 hi", 0, "")
+	assert.NoError(t, err)
+
+	var source string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", newSessID,
+	).Scan(&source)
+	assert.NoError(t, err)
+	assert.Equal(t, "placeholder", source,
+		"a fork title is inherited, not chosen — it must stay replaceable")
 }

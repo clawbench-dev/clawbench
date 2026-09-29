@@ -7,7 +7,7 @@ import { readAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
 
 // buildLocalFileUrl is the single source of the media URL; mock it so the
 // assertions read cleanly instead of depending on the path-encoding rules.
-const mockBuildLocalFileUrl = vi.hoisted(() => vi.fn((p: string) => `/api/local-file/${p}`))
+const mockBuildLocalFileUrl = vi.hoisted(() => vi.fn((p: string) => `/api/fs/raw/${p}`))
 vi.mock('@/utils/download.ts', () => ({
   buildLocalFileUrl: (p: string) => mockBuildLocalFileUrl(p),
 }))
@@ -80,7 +80,7 @@ describe('MediaPreviewBody', () => {
     const wrapper = mountBody('image')
     const img = wrapper.find('img.code-preview-media-img')
     expect(img.exists()).toBe(true)
-    expect(img.attributes('src')).toContain('/api/local-file/assets/logo.png')
+    expect(img.attributes('src')).toContain('/api/fs/raw/assets/logo.png')
     // Cache-busting param keeps a re-opened file from serving stale bytes.
     expect(img.attributes('src')).toMatch(/t=\d+/)
   })
@@ -114,24 +114,56 @@ describe('MediaPreviewBody', () => {
     expect(pdf.props('file')).toEqual({ path: 'docs/report.pdf', name: 'report.pdf' })
   })
 
-  it('shows the fallback when the media fails to load', async () => {
+  it('shows the shared failure element when the media fails to load', async () => {
+    // The failure UI is the shared MediaLoadError component (same element the
+    // chat fallback and the other viewers render), not a card-local overlay.
     const wrapper = mountBody('image')
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(false)
+    expect(wrapper.find('.media-load-error').exists()).toBe(false)
 
     await wrapper.find('img').trigger('error')
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(true)
-    expect(wrapper.find('.code-preview-media-error').text()).toContain('Failed to load media file')
+    const err = wrapper.find('.media-load-error')
+    expect(err.exists()).toBe(true)
+    expect(err.text()).toContain('Media failed to load')
+    // The card has no other content to show, so the element fills the pane.
+    expect(err.classes()).toContain('media-load-error--fill')
+    // Names the file the reader expected.
+    expect(err.text()).toContain('logo.png')
+  })
+
+  it('hides the failed element so no broken glyph shows beside the card', async () => {
+    // The reported symptom: the browser's broken-image glyph (and its alt text)
+    // sat next to the failure card. Every surface must hide the element it
+    // replaced, not just overlay it.
+    const wrapper = mountBody('image', 'assets/logo.png')
+    await wrapper.find('img').trigger('error')
+
+    expect(wrapper.find('img.code-preview-media-img').classes()).toContain('local-media-hidden')
+    // Still present, so a retry (path / refreshNonce change) can revive it.
+    expect(wrapper.find('img.code-preview-media-img').exists()).toBe(true)
+  })
+
+  it('hides failed video and audio elements too', async () => {
+    const video = mountBody('video', 'clip.mp4')
+    await video.find('video').trigger('error')
+    expect(video.find('video.code-preview-media-video').classes()).toContain('local-media-hidden')
+
+    // The audio block hides as a whole (icon + name + player) — one class on
+    // the container, so no child can be left visible by a missed binding.
+    const audio = mountBody('audio', 'voice.mp3')
+    await audio.find('audio').trigger('error')
+    expect(audio.find('.code-preview-media-audio').classes()).toContain('local-media-hidden')
+    expect(audio.find('audio.code-preview-media-audio-player').exists()).toBe(true)
   })
 
   it('clears the error and re-fetches when the path changes', async () => {
     const wrapper = mountBody('image')
     await wrapper.find('img').trigger('error')
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(true)
+    expect(wrapper.find('.media-load-error').exists()).toBe(true)
 
     await wrapper.setProps({ path: 'other.png' })
     await flushPromises()
 
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(false)
+    expect(wrapper.find('.media-load-error').exists()).toBe(false)
     expect(wrapper.find('img').attributes('src')).toContain('other.png')
   })
 
@@ -147,29 +179,33 @@ describe('MediaPreviewBody', () => {
     expect(wrapper.emitted('loaded')).toBeUndefined()
   })
 
-  it('shows the fallback for video and audio errors too', async () => {
+  it('shows the fallback for video and audio errors too, with a matching icon', async () => {
     const video = mountBody('video', 'clip.mp4')
     await video.find('video').trigger('error')
-    expect(video.find('.code-preview-media-error').exists()).toBe(true)
+    const videoErr = video.find('.media-load-error')
+    expect(videoErr.exists()).toBe(true)
+    expect(videoErr.find('.media-load-error-icon svg').attributes('class')).toContain('lucide-video-off')
 
     const audio = mountBody('audio', 'voice.mp3')
     await audio.find('audio').trigger('error')
-    expect(audio.find('.code-preview-media-error').exists()).toBe(true)
+    const audioErr = audio.find('.media-load-error')
+    expect(audioErr.exists()).toBe(true)
+    expect(audioErr.find('.media-load-error-icon svg').attributes('class')).toContain('lucide-audio-lines')
   })
 
   it('re-requests the media when refreshNonce changes', async () => {
     const wrapper = mountBody('image')
     const first = wrapper.find('img').attributes('src')
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(false)
+    expect(wrapper.find('.media-load-error').exists()).toBe(false)
 
     await wrapper.find('img').trigger('error')
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(true)
+    expect(wrapper.find('.media-load-error').exists()).toBe(true)
 
     // A refresh bump clears the error state and changes the cache-busting URL.
     await wrapper.setProps({ refreshNonce: 1 })
     await flushPromises()
 
-    expect(wrapper.find('.code-preview-media-error').exists()).toBe(false)
+    expect(wrapper.find('.media-load-error').exists()).toBe(false)
     expect(wrapper.find('img').attributes('src')).not.toBe(first)
   })
 

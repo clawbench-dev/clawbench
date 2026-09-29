@@ -23,7 +23,7 @@
 </p>
 
 - **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/TERMUX.md) 在安卓手机上完全运行
-- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode
+- **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode
 
 📖 **使用手册**：[桌面端使用说明](docs/user-guid/user-guid.md) · [移动端使用说明](docs/user-guid/user-guid-mobile.md)
 
@@ -106,7 +106,7 @@ clawbench
 | 🎨 **代码预览与编辑** | CodeMirror 浏览/编辑双模式、语法高亮、自动补全（11 种语言）、**Sticky Scroll**、VS Code 风格搜索条、文件改动闪烁高亮、**Excalidraw 画布**、路径跳转与行范围导航 |
 | 📝 **Markdown** | 渲染/源码切换、TOC 抽屉、LaTeX 公式、Mermaid 图表、图片灯箱、**代码链接预览浮层**、**自包含 HTML 导出**（KaTeX 字体内联） |
 | 📄 **文档与媒体** | Word / Excel / PowerPoint 原生渲染、PDF 分页缩放、图片/音频/视频内联播放、灯箱放大 |
-| 🤖 **AI 智能体** | **14 个后端**（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、VeCLI、CodeWhale、MiMo、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）、流式响应、思维过程可见、**子智能体内容分组**、深度思考档位、模型选择持久化、ACP 上下文状态持久化、本地技能扫描 |
+| 🤖 **AI 智能体** | **15 个后端**（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、VeCLI、CodeWhale、DeepSeek Harness、MiMo、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）、流式响应、思维过程可见、**子智能体内容分组**、深度思考档位、模型选择持久化、ACP 上下文状态持久化、本地技能扫描 |
 | 💬 **AI 对话** | 工具调用可视化、**交互式提问卡**、推荐回复、斜杠命令（合并 ACP 与内置）、引用提问、消息队列、断连保护、消息回溯（Rewind）与分叉、自动摘要、RAG 结果卡片、输入草稿恢复、完成弹窗 |
 | 📂 **会话管理** | 多会话创建/切换/归档、**会话标签**（按项目隔离、哈希配色）、未读按**条目**计数、按项目恢复上次会话、滑动切换开关 |
 | ⏰ **任务调度** | 定时（Cron 预设 + 自定义）与**事件触发**（`issue.opened` / `pr.merged` / `pipeline_done`）、3 级面包屑导航、执行详情续接对话、完成推送 |

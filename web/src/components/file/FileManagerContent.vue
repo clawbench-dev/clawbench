@@ -77,7 +77,7 @@
           <button v-if="toolbarInlineIds.includes('upload')" class="toolbar-btn" :disabled="dirUploading" @click="triggerUpload()" :title="t('file.uploadHere')">
             <Upload :size="16" />
           </button>
-          <button v-if="!isAppMode && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
+          <button v-if="!isAndroidApp && toolbarInlineIds.includes('uploadFolder')" class="toolbar-btn" :disabled="dirUploading" @click="triggerFolderUpload()" :title="t('file.uploadFolder')">
             <FolderUp :size="16" />
           </button>
           <button v-if="toolbarInlineIds.includes('viewToggle')" class="toolbar-btn" @click="viewMode = viewMode === 'grid' ? 'list' : 'grid'" :title="viewMode === 'grid' ? t('file.viewList') : t('file.viewGrid')">
@@ -99,6 +99,9 @@
           </button>
           <button v-if="toolbarInlineIds.includes('sharedFiles')" class="toolbar-btn" @click="sharedDrawerRef?.open()" :title="t('sharedFiles.button')">
             <ScreenShare :size="16" />
+          </button>
+          <button v-if="toolbarInlineIds.includes('contentSearch')" class="toolbar-btn" @click="openContentSearch()" :title="t('file.contentSearch.button')">
+            <SearchCode :size="16" />
           </button>
           <template v-if="showMoreDropdown">
           <div ref="moreDropdownWrapRef" class="toolbar-dropdown-wrap">
@@ -131,7 +134,7 @@
                   <span>{{ t('file.uploadHere') }}</span>
                 </button>
               </template>
-              <template v-if="!isAppMode && toolbarCollapsedIds.includes('uploadFolder')">
+              <template v-if="!isAndroidApp && toolbarCollapsedIds.includes('uploadFolder')">
                 <button class="toolbar-dropdown-item" :disabled="dirUploading" @click="triggerFolderUpload(); moreMenuOpen = false">
                   <FolderUp :size="14" />
                   <span>{{ t('file.uploadFolder') }}</span>
@@ -175,6 +178,12 @@
                   <span>{{ t('sharedFiles.button') }}</span>
                 </button>
               </template>
+              <template v-if="toolbarCollapsedIds.includes('contentSearch')">
+                <button class="toolbar-dropdown-item" @click="openContentSearch(); moreMenuOpen = false">
+                  <SearchCode :size="14" />
+                  <span>{{ t('file.contentSearch.button') }}</span>
+                </button>
+              </template>
             </div>
             </Teleport>
           </div>
@@ -207,8 +216,8 @@
     <!-- Hidden file input for upload -->
     <input type="file" ref="uploadInputRef" @change="onUploadFileSelect" style="display:none" multiple />
 
-    <!-- Hidden directory input for folder upload (PC only, preserves structure) -->
-    <input v-if="!isAppMode" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
+    <!-- Hidden directory input for folder upload (Chromium only: web + Electron) -->
+    <input v-if="!isAndroidApp" type="file" ref="folderInputRef" @change="onFolderUploadSelect" style="display:none" webkitdirectory multiple />
 
     <!-- Upload progress bar (byte-based bar + count progress below) -->
     <UploadProgressBar
@@ -283,14 +292,11 @@
           :data-path="pathOf(entry)"
           :title="entryTitle(entry)"
         >
-          <div class="file-icon-wrap" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+          <div class="file-icon-wrap" :ref="(el) => thumbObserve(el, entry)">
             <img v-if="entry.type !== 'dir' && shouldMountThumb(entry)" class="file-thumb" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
             <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="28" class="file-icon" />
             <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
               <Link2 :size="12" />
-            </span>
-            <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
-              <Paperclip :size="12" />
             </span>
           </div>
           <div class="file-info">
@@ -357,14 +363,11 @@
         :data-path="pathOf(entry)"
         :title="entryTitle(entry)"
       >
-        <div class="grid-thumb" :class="{ 'has-attach': hasAttachedFile(pathOf(entry)) }" :ref="(el) => thumbObserve(el, entry)">
+        <div class="grid-thumb" :ref="(el) => thumbObserve(el, entry)">
           <img v-if="shouldMountThumb(entry)" :src="thumbUrlFor(entry)" :alt="entry.name" loading="lazy" @error="onThumbError(entry)" />
           <FileIcon v-else :path="searchHasQuery ? entry.path : entry.name" :is-dir="entry.type === 'dir'" :size="32" class="grid-icon" />
           <span v-if="entry.symlink" class="symlink-badge" :class="{ broken: entry.broken }" :title="entry.broken ? t('file.symlinkBroken') : t('file.symlink')">
             <Link2 :size="12" />
-          </span>
-          <span v-if="hasAttachedFile(pathOf(entry))" class="attach-badge" @click.stop="toggleAttach(pathOf(entry), entry.type === 'dir')">
-            <Paperclip :size="12" />
           </span>
         </div>
         <div class="grid-name" v-if="searchHasQuery" v-html="highlightName(entry.name, entry.matchedIndices)"></div>
@@ -506,7 +509,7 @@
           </div>
           <div class="context-menu-item" @click.stop="doAttachToChat">
             <Paperclip :size="14" />
-            {{ ctxMenu.entry && hasAttachedFile(ctxMenu.entry.path) ? t('chat.attach.removeFromChat') : t('chat.actions.attachToChat') }}
+            {{ t('chat.actions.attachToChat') }}
           </div>
           <div class="context-menu-item danger" @click.stop="doDelete">
             <Trash2 :size="14" />
@@ -529,6 +532,17 @@
       <div v-if="ctxMenu.visible" class="ctx-overlay" @click="closeCtxMenu" @contextmenu.prevent="handleCtxMenu" />
     </Teleport>
     <JumpDirDialog :open="jumpOpen" @close="jumpOpen = false" @confirm="handleJumpConfirm" />
+
+    <!-- Independent content (grep) search dialog. Kept separate from the
+         resident filename filter above: that one narrows the listing you are
+         looking at, while this one searches inside file contents across the
+         tree and jumps to a line. The dialog owns its own browse-tab binding,
+         so it hides on tab switch and restores on return. -->
+    <ContentSearchDialog
+      ref="contentSearchDialogRef"
+      :current-dir="currentDir"
+      @open-file="onContentSearchOpenFile"
+    />
     <SharedFilesDrawer ref="sharedDrawerRef" @selectFile="onSharedFileOpen" />
 
     <!-- Drop upload overlay — covers the whole file manager panel -->
@@ -548,7 +562,7 @@ import { getNative } from '@/utils/clawbenchNative'
 import { joinPath, normalizeSlashes, baseName, dirName, isAbsolutePath } from '@/utils/path'
 import { useDirPreview } from '@/composables/useDirPreview'
 import { mediaVersionFor } from '@/composables/useMediaWatch.ts'
-import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft } from 'lucide-vue-next'
+import { FileText, ArrowDownAz, ArrowUpZa, ChevronDown, ChevronUp, Clock, HardDrive, Eye, EyeOff, Copy, Scissors, ClipboardPaste, FilePlus, FolderPlus, FolderUp, Pencil, Download, Trash2, FolderOpen, RotateCw, Terminal as TerminalIcon, CheckSquare, X, LayoutList, LayoutGrid, Package, Upload, MoreHorizontal, Paperclip, Share2, ScreenShare, FileX, LocateFixed, FolderDown, FolderSearch, FolderTree, Globe, WholeWord, Link2, ScanEye, ArrowLeft, SearchCode } from 'lucide-vue-next'
 import {
   buildThumbUrl,
   isThumbable as isThumbableEntry, isThumbableExt, formatSize as formatFileSize,
@@ -556,7 +570,7 @@ import {
   numberedName,
 } from '@/utils/fileManager.ts'
 import { store } from '@/stores/app.ts'
-import { navToFileInManager } from '@/composables/useFilePathAnnotation.ts'
+import { navToFileInManager, openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -566,7 +580,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { setAttachDragData, setMultiAttachDragData, hasAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag'
-import { downloadFileByPath } from '@/utils/download.ts'
+import { downloadFileByPath, postForBlobWithProgress } from '@/utils/download.ts'
 import { useToolbarOverflow } from '@/composables/useToolbarOverflow'
 import { useCodeLinkPreview } from '@/composables/useCodeLinkPreview.ts'
 import SplitView from '@/components/common/SplitView.vue'
@@ -577,15 +591,24 @@ import ExternalBadge from './ExternalBadge.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
 import JumpDirDialog from './JumpDirDialog.vue'
+import ContentSearchDialog from './ContentSearchDialog.vue'
 import SharedFilesDrawer from './SharedFilesDrawer.vue'
 import CodeLinkPreview from './CodeLinkPreview.vue'
 import DirPreviewBody from './DirPreviewBody.vue'
 import { useFileSearch } from '@/composables/useFileSearch'
+import { requestAttachmentTarget } from '@/composables/useConversationTarget.ts'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
 const { isAppMode, isDesktopApp } = useAppMode()
 const { isPC } = usePlatformDetect()
+/**
+ * True only in the Android WebView shell. `isAppMode` is just `isNativeApp()`,
+ * so it is ALSO true in the Electron desktop shell — gating desktop-capable
+ * features on `!isAppMode` hides them there. Same predicate as
+ * SettingsCategory.vue and the keyboard-shortcut guard below.
+ */
+const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
@@ -811,7 +834,7 @@ const sharedDrawerRef = ref(null)
 function onSharedFileOpen(path) {
   emit('selectFile', path)
 }
-const { addAttachedFile, hasAttachedFile, removeAttachedFileByPath } = useChatContext()
+const { addAttachedFile } = useChatContext()
 const { terminalRuntimeEnabled } = useTerminalStatus()
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
 const { isWideScreen } = useWideScreenLayout()
@@ -874,10 +897,16 @@ watch(moreMenuOpen, (open) => {
 // Responsive toolbar overflow. The demotable list is the same on every
 // platform — preview mode is available on mobile too, so it takes a slot like
 // any other button and can collapse into the More dropdown.
+//
+// ORDER IS PRIORITY: useToolbarOverflow keeps a PREFIX inline and collapses the
+// tail, so the first entries are the last to collapse. `contentSearch` sits
+// early (right after the create/upload basics) because it is a primary action
+// users look for in the toolbar — leaving it last made it the very first button
+// to disappear into the More menu, which reads as "the feature is missing".
 const dirToolbarRef = ref(null)
 const demotableToolbarIds = computed(() => [
-  'refresh', 'newFile', 'newFolder', 'upload', 'uploadFolder', 'viewToggle',
-  'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
+  'refresh', 'newFile', 'newFolder', 'contentSearch', 'upload', 'uploadFolder',
+  'viewToggle', 'previewMode', 'multiselect', 'hidden', 'jump', 'sharedFiles',
 ])
 const { inlineIds: toolbarInlineIds, collapsedIds: toolbarCollapsedIds, startObserving: startToolbarResize, stopObserving: stopToolbarResize } = useToolbarOverflow(
   () => dirToolbarRef.value,
@@ -1088,7 +1117,7 @@ function thumbUrlFor(entry) {
     // Search results carry a project-relative path already (parent directory
     // may differ per result), so build the thumb URL straight from the path.
     if (searchHasQuery.value) {
-        return appendThumbVersion(`/api/file/thumb?path=${encodeURIComponent(entry.path)}&w=80`, entry.path)
+        return appendThumbVersion(`/api/fs/thumb?target=${encodeURIComponent(entry.path)}&w=80`, entry.path)
     }
     return appendThumbVersion(buildThumbUrl(props.currentDir || '', entry.name), joinPath(props.currentDir || '', entry.name))
 }
@@ -1110,7 +1139,7 @@ function appendThumbVersion(url, path) {
  * Thumbnails are only mounted once their row scrolls into view.
  *
  * The list renders every entry in the directory at once, so entering a folder
- * with dozens of images previously fired one /api/file/thumb request per image
+ * with dozens of images previously fired one /api/fs/thumb request per image
  * in the same tick. `loading="lazy"` does NOT prevent that: it defers the
  * browser's own fetch but still creates the <img>, and for the whole initial
  * viewport it fetches immediately — the request burst happens regardless.
@@ -1320,6 +1349,43 @@ function onSearchDockEscape() {
 /** Focus the resident search box — used by App Ctrl+F. */
 function openSearch() {
     nextTick(() => searchInputRef.value?.focus())
+}
+
+// ── Content (grep) search dialog ──
+// A separate surface from the resident filename filter: this one searches
+// inside file contents and jumps to a line. The dialog owns its open state and
+// its browse-tab binding; the parent just forwards the two entry points, which
+// are also exposed so App can bind a shortcut.
+const contentSearchDialogRef = ref(null)
+
+function openContentSearch() {
+    contentSearchDialogRef.value?.open()
+}
+
+function closeContentSearch() {
+    contentSearchDialogRef.value?.close()
+}
+
+/**
+ * A content-search hit was chosen: open the file at that line.
+ *
+ * Delegates to the shared `openFilePath`, which owns the entire open pipeline
+ * (existence check + toast, project-external handling, content fetch via
+ * `store.selectFile`, then the overlay event carrying the line target that the
+ * navigation coordinator turns into scroll + highlight). Dispatching
+ * `open-file-overlay` directly would skip the content fetch and land on an
+ * empty viewer.
+ *
+ * Source is 'browse' — the dialog lives in the file manager, so Back should
+ * return to the browse tab rather than treating this as a chat/task jump.
+ *
+ * The dialog is deliberately NOT closed here: it is tab-bound, so switching to
+ * the view tab hides it, and returning to browse restores the results the user
+ * was working through.
+ */
+function onContentSearchOpenFile(path, line) {
+    if (!path) return
+    void openFilePath(path, line, undefined, 'browse')
 }
 
 /** Enter in the search box opens the highlighted result (files keep search).
@@ -1607,6 +1673,8 @@ defineExpose({
     _setIsDragOver(val) { isDragOver.value = val },
     openSearch,
     closeSearch: exitSearch,
+    openContentSearch,
+    closeContentSearch,
     exitMultiSelect,
     focusSearchInput() { searchInputRef.value?.focus() },
 })
@@ -2348,17 +2416,22 @@ async function doArchive(paths, zipName) {
     if (!paths.length) return
     if (toast) toast.show(t('file.toast.archiving', { n: paths.length }), { icon: '📦', type: 'info', duration: 0 })
     try {
-        const resp = await fetch('/api/file/archive', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paths }),
-        })
-        if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ error: 'Unknown error' }))
-            if (toast) toast.show(t('file.toast.archiveFailedDetail', { error: err.error || '' }), { icon: '❌', type: 'error', duration: 3000 })
+        // The archive is built and streamed on the fly, so the server sends no
+        // Content-Length — the progress bar runs indeterminately while it
+        // arrives, then the blob is handed to the platform's save path.
+        const result = await postForBlobWithProgress('/api/file/archive', { paths }, zipName || 'archive.zip')
+        if (result.cancelled) return
+        if (!result.blob) {
+            if (toast) {
+                if (result.errorDetail) {
+                    toast.show(t('file.toast.archiveFailedDetail', { error: result.errorDetail }), { icon: '❌', type: 'error', duration: 3000 })
+                } else {
+                    toast.show(t('file.toast.archiveFailed'), { icon: '❌', type: 'error', duration: 2000 })
+                }
+            }
             return
         }
-        const blob = await resp.blob()
+        const blob = result.blob
         const native = getNative()
         if (isAppMode.value && native && native.downloadBlob) {
             // Android native: convert blob to base64 and pass to native bridge
@@ -2418,11 +2491,14 @@ function doAttachToChat() {
     const path = ctxMenu.entry.path
     const isDir = ctxMenu.entry.type === 'dir'
     closeCtxMenu()
-    if (hasAttachedFile(path)) {
-        removeAttachedFileByPath(path)
-        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
-        return
-    }
+    // Add-only: there is no per-file "attached" indicator any more (the target
+    // session can be any session, so no single icon could represent it), hence
+    // no toggle-to-remove branch here. Removal lives in the chat input's own
+    // attachment strip, where the user can see which session holds it.
+    //
+    // Destination is only ambiguous when the chat panel is off screen; with it
+    // visible the file goes straight into the current session's input.
+    if (requestAttachmentTarget({ path, isDir })) return
     addAttachedFile(path, isDir)
     toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
 
@@ -2436,16 +2512,6 @@ function doAttachToChat() {
                 to: { x: animTo.left + animTo.width / 2, y: animTo.top + animTo.height / 2 },
             }
         }))
-    }
-}
-
-function toggleAttach(path, isDir = false) {
-    if (hasAttachedFile(path)) {
-        removeAttachedFileByPath(path)
-        toast.show(t('chat.attach.removedFromChat'), { icon: '📎', type: 'info', duration: 1500 })
-    } else {
-        addAttachedFile(path, isDir)
-        toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
 }
 
@@ -3213,29 +3279,6 @@ function scrollSelectedIntoView(path) {
     height: 28px;
 }
 
-.attach-badge {
-    position: absolute;
-    bottom: -5px;
-    left: -5px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-    border-radius: 50%;
-    padding: var(--space-1);
-    cursor: pointer;
-    z-index: 2;
-    transition: transform var(--duration-base), background var(--duration-base);
-}
-
-@media (hover: hover) {
-    .attach-badge:hover {
-        transform: scale(1.2);
-        background: #ef4444;
-    }
-}
-
 .symlink-badge {
     position: absolute;
     top: -5px;
@@ -3407,29 +3450,6 @@ function scrollSelectedIntoView(path) {
     transition: background var(--duration-base), box-shadow var(--duration-base);
 }
 
-.grid-thumb .attach-badge {
-    position: absolute;
-    bottom: 4px;
-    right: 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-    border-radius: 50%;
-    padding: var(--space-1);
-    cursor: pointer;
-    z-index: 2;
-    transition: transform var(--duration-base), background var(--duration-base);
-}
-
-@media (hover: hover) {
-    .grid-thumb .attach-badge:hover {
-        transform: scale(1.2);
-        background: #ef4444;
-    }
-}
-
 .grid-thumb img {
     width: 100%;
     height: 100%;
@@ -3506,7 +3526,8 @@ function scrollSelectedIntoView(path) {
 }
 
 /* Upload progress bar and drop overlay styles live in their shared components
-   (components/common/UploadProgressBar.vue and DropOverlay.vue). */
+   (components/common/TransferProgressBar.vue via UploadProgressBar.vue, and
+   DropOverlay.vue). */
 
 /* ── Paste overlay ── */
 .paste-overlay {

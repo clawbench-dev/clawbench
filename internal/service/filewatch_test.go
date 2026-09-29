@@ -1287,3 +1287,188 @@ func TestWatchEvent_Fields(t *testing.T) {
 	assert.Equal(t, "dir_change", we.Type)
 	assert.Equal(t, "/project", we.Path)
 }
+
+// ---------- Re-target must not silently drop an in-flight event ----------
+//
+// The frontend re-sends `watch` whenever the set of on-screen images changes
+// (useFileWatch watches `mediaPaths`, which is derived from the live DOM). During
+// an AI turn that happens often — streamed markdown and tool cards add/remove
+// <img> nodes constantly. UpdateWatch used to cancel EVERY pending debounce timer
+// for the client, so a file_change that landed inside the 200ms debounce window
+// was deleted before it could fire and the preview silently stayed stale until
+// the user hit refresh.
+//
+// A pending event whose target is STILL covered by the new watch set must be
+// flushed (delivered) instead; only events whose target is no longer watched may
+// be dropped.
+
+func TestUpdateWatch_FlushesPendingEventForStillWatchedFile(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.txt")
+	fw.UpdateWatch("c1", dir, file)
+
+	// Simulate an event that arrived and is sitting in the debounce window.
+	key := "c1|file_change|" + file
+	fw.mu.Lock()
+	fw.debounceTimers[key] = time.AfterFunc(5*time.Second, func() {})
+	fw.debouncePending[key] = WatchEvent{Type: "file_change", Path: file}
+	fw.mu.Unlock()
+
+	// Re-target: the SAME file stays watched (e.g. only the media list changed).
+	fw.UpdateWatch("c1", dir, file, filepath.Join(dir, "img.png"))
+
+	events := collectEvents(ch, 1, 500*time.Millisecond)
+	if assert.Len(t, events, 1, "pending file_change for a still-watched file must be flushed, not dropped") {
+		assert.Equal(t, "file_change", events[0].Type)
+		assert.Equal(t, file, events[0].Path)
+	}
+
+	fw.mu.Lock()
+	_, hasTimer := fw.debounceTimers[key]
+	_, hasPending := fw.debouncePending[key]
+	fw.mu.Unlock()
+	assert.False(t, hasTimer, "flushed timer must be cleared")
+	assert.False(t, hasPending, "flushed pending event must be cleared")
+}
+
+func TestUpdateWatch_DropsPendingEventForNoLongerWatchedFile(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	other := filepath.Join(dir, "other.txt")
+	gone := filepath.Join(dir, "gone.txt")
+	fw.UpdateWatch("c1", dir, other)
+
+	// Pending event for a file this client is NOT watching.
+	key := "c1|file_change|" + gone
+	fw.mu.Lock()
+	fw.debounceTimers[key] = time.AfterFunc(5*time.Second, func() {})
+	fw.debouncePending[key] = WatchEvent{Type: "file_change", Path: gone}
+	fw.mu.Unlock()
+
+	fw.UpdateWatch("c1", dir, other)
+
+	events := collectEvents(ch, 1, 300*time.Millisecond)
+	assert.Empty(t, events, "an event for an unwatched path must not be delivered")
+}
+
+func TestUpdateWatch_DropsPendingDirChangeWhenDirUnchangedButNotRetargeted(t *testing.T) {
+	// A dir_change pending for the browsed directory stays valid while that
+	// directory is still the browsed one.
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	fw.UpdateWatch("c1", dir, "")
+
+	key := "c1|dir_change"
+	fw.mu.Lock()
+	fw.debounceTimers[key] = time.AfterFunc(5*time.Second, func() {})
+	fw.debouncePending[key] = WatchEvent{Type: "dir_change", Path: dir}
+	fw.mu.Unlock()
+
+	// Re-target with the same browsed dir (a media-list-only update).
+	fw.UpdateWatch("c1", dir, "", filepath.Join(dir, "img.png"))
+
+	events := collectEvents(ch, 1, 500*time.Millisecond)
+	if assert.Len(t, events, 1, "pending dir_change for the still-browsed dir must be flushed") {
+		assert.Equal(t, "dir_change", events[0].Type)
+	}
+}
+
+func TestUpdateWatch_DropsPendingDirChangeWhenDirChanges(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	fw.UpdateWatch("c1", oldDir, "")
+
+	key := "c1|dir_change"
+	fw.mu.Lock()
+	fw.debounceTimers[key] = time.AfterFunc(5*time.Second, func() {})
+	fw.debouncePending[key] = WatchEvent{Type: "dir_change", Path: oldDir}
+	fw.mu.Unlock()
+
+	// Navigate away — the pending listing change is for the OLD dir.
+	fw.UpdateWatch("c1", newDir, "")
+
+	events := collectEvents(ch, 1, 300*time.Millisecond)
+	assert.Empty(t, events, "a pending dir_change for the previous directory must be dropped")
+}
+
+func TestUpdateWatch_FlushDoesNotLeakToOtherClients(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch1 := fw.RegisterClient("c1")
+	ch2 := fw.RegisterClient("c2")
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.txt")
+	fw.UpdateWatch("c1", dir, file)
+	fw.UpdateWatch("c2", dir, file)
+
+	key := "c1|file_change|" + file
+	fw.mu.Lock()
+	fw.debounceTimers[key] = time.AfterFunc(5*time.Second, func() {})
+	fw.debouncePending[key] = WatchEvent{Type: "file_change", Path: file}
+	fw.mu.Unlock()
+
+	fw.UpdateWatch("c1", dir, file)
+
+	events1 := collectEvents(ch1, 1, 500*time.Millisecond)
+	assert.Len(t, events1, 1, "c1's flushed event must be delivered")
+	events2 := collectEvents(ch2, 1, 200*time.Millisecond)
+	assert.Empty(t, events2, "c2 must not receive c1's flushed event")
+}
+
+// TestFileWatcher_RealEventSurvivesInWindowRetarget is the end-to-end
+// reproduction of the reported bug, using real fsnotify events:
+//
+//  1. the client watches a file (as the file preview does),
+//  2. the file is written (as the AI's Edit/Write does),
+//  3. the client re-targets within the 200ms debounce window (as useFileWatch
+//     does whenever the set of on-screen images changes mid-turn),
+//  4. the file_change must still be delivered.
+//
+// Before the fix step 3 deleted the pending event and the preview stayed stale
+// until the user pressed refresh.
+func TestFileWatcher_RealEventSurvivesInWindowRetarget(t *testing.T) {
+	fw := setupFileWatcher(t)
+	ch := fw.RegisterClient("c1")
+
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a.txt")
+	img := filepath.Join(dir, "img.png")
+	require.NoError(t, os.WriteFile(file, []byte("initial"), 0o644))
+	require.NoError(t, os.WriteFile(img, []byte("png"), 0o644))
+
+	fw.UpdateWatch("c1", dir, file)
+	time.Sleep(100 * time.Millisecond)
+
+	// Step 2: the AI writes the file (atomic temp+rename, as file_ops.go does).
+	tmp := filepath.Join(dir, ".clawbench-write-tmp")
+	require.NoError(t, os.WriteFile(tmp, []byte("edited"), 0o644))
+	require.NoError(t, os.Rename(tmp, file))
+
+	// Step 3: re-target inside the debounce window (media list changed).
+	time.Sleep(50 * time.Millisecond)
+	fw.UpdateWatch("c1", dir, file, img)
+
+	// Step 4: the change must still arrive.
+	//
+	// Drain for a fixed window instead of stopping at the first event: the
+	// atomic write also creates the temp file, which produces a dir_change for
+	// the browsed directory, and map iteration order decides which lands first.
+	events := collectEvents(ch, 10, 2*time.Second)
+	found := false
+	for _, e := range events {
+		if e.Type == "file_change" && e.Path == file {
+			found = true
+		}
+	}
+	assert.True(t, found, "file_change must survive an in-window re-target, got %+v", events)
+}

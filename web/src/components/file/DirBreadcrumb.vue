@@ -41,20 +41,18 @@
       >{{ part }}</span>
     </template>
     <span class="crumb-sep" />
-    <button class="crumb-copy-btn" :class="{ copied }" :title="t('jump.copyPath')" @click.stop="copyFullPath">
-      <Copy :size="13" />
-    </button>
+    <CopyButton :text="fullPath" :size="13" title-key="jump.copyPath" class="crumb-copy-btn" @click.stop />
   </div>
 </template>
 
 <script setup>
-import { computed, inject, ref } from 'vue'
-import { Home, Copy, HardDrive } from 'lucide-vue-next'
+import { computed } from 'vue'
+import { Home, HardDrive } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import { splitPath, normalizeSlashes, isAbsolutePath } from '@/utils/path.ts'
-import { copyText } from '@/utils/clipboard.ts'
 import { store } from '@/stores/app.ts'
 import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/utils/attachDrag.ts'
+import CopyButton from '@/components/common/CopyButton.vue'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 const props = defineProps({
@@ -68,8 +66,6 @@ const props = defineProps({
 })
 defineEmits(['navigate'])
 const { t } = useI18n()
-const toast = inject('toast', null)
-const copied = ref(false)
 const { isWideScreen } = useWideScreenLayout()
 
 /** Browsing a directory outside the project (only meaningful when scoped). */
@@ -108,24 +104,22 @@ function onCrumbDragStart(path, name, e) {
   e.dataTransfer.setDragImage(ghost, 14, 16)
 }
 
-function copyFullPath() {
+/**
+ * Absolute path for the current breadcrumb.
+ *
+ * `props.path` is either project-relative (FileManager) or already absolute
+ * (ProjectDialog browsing arbitrary dirs). Only combine with the project root
+ * for relative paths; copy absolute paths as-is (separators normalized).
+ */
+const fullPath = computed(() => {
   const value = props.path
-  if (!value) return
-  // props.path is either project-relative (FileManager) or already absolute
-  // (ProjectDialog browsing arbitrary dirs). Only combine with the project
-  // root for relative paths; copy absolute paths as-is (separators normalized).
+  if (!value) return ''
   const normValue = normalizeSlashes(value)
   const root = normalizeSlashes(store.state.projectRoot || '')
-  const absPath = isAbsolutePath(value)
+  return isAbsolutePath(value)
     ? normValue
     : root ? root.replace(/\/+$/, '') + '/' + normValue.replace(/^\/+/, '') : normValue.replace(/^\/+/, '')
-  const doCopy = () => {
-    copied.value = true
-    setTimeout(() => { copied.value = false }, 800)
-    if (toast) toast.show(t('common.copied'), { icon: '📋', type: 'success', duration: 1500 })
-  }
-  copyText(absPath, doCopy, doCopy)
-}
+})
 
 // Reconstruct a path from breadcrumb segments,
 // using the appropriate separator for the platform.
@@ -287,8 +281,4 @@ const homeDragPath = computed(() => normalizeSlashes(store.state.projectRoot || 
     background: var(--bg-secondary, #e0e0e0);
     color: var(--accent-color, #4a90d9);
   }
-}
-.crumb-copy-btn.copied {
-  color: #22c55e;
-}
-</style>
+}</style>

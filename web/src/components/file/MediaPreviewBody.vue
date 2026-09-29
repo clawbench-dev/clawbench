@@ -2,12 +2,16 @@
   <div class="code-preview-media" :class="`is-${kind}`">
     <!-- Raster image / SVG: shown at natural aspect, contained in the pane.
          Draggable (wide-screen) onto the chat column to attach the existing
-         file — same internal payload the file manager uses, no re-upload. -->
+         file — same internal payload the file manager uses, no re-upload.
+         A failed element is HIDDEN (not removed) so the broken-image glyph and
+         its alt text do not sit beside the failure card below, while a retry
+         (path / refreshNonce change) can still revive the same element. -->
     <img
       v-if="kind === 'image'"
       :src="mediaUrl"
       :alt="fileName"
       class="code-preview-media-img"
+      :class="{ 'local-media-hidden': loadFailed }"
       :draggable="isWideScreen"
       @load="onLoad"
       @error="onError"
@@ -20,6 +24,7 @@
       v-else-if="kind === 'video'"
       :src="mediaUrl"
       class="code-preview-media-video"
+      :class="{ 'local-media-hidden': loadFailed }"
       controls
       preload="metadata"
       @loadedmetadata="onLoad"
@@ -27,7 +32,11 @@
     />
 
     <!-- Audio: compact player with the file identity above it -->
-    <div v-else-if="kind === 'audio'" class="code-preview-media-audio">
+    <div
+      v-else-if="kind === 'audio'"
+      class="code-preview-media-audio"
+      :class="{ 'local-media-hidden': loadFailed }"
+    >
       <div class="code-preview-media-audio-icon">
         <Music :size="40" />
       </div>
@@ -46,19 +55,16 @@
          event, so a load failure surfaces through the viewer's own UI. -->
     <PdfPreview v-else-if="kind === 'pdf'" :file="{ path, name: fileName }" />
 
-    <!-- Load failure fallback: overlays the failed element so the card stays
-         usable (Open file still works). -->
-    <div v-if="loadFailed" class="code-preview-media-error">
-      <FileX :size="32" />
-      <span>{{ t('file.codePreview.mediaLoadError') }}</span>
-    </div>
+    <!-- Load failure fallback: the shared element, filling the pane so the card
+         still reads as a deliberate state rather than a blank box. -->
+    <MediaLoadError v-if="loadFailed" :kind="mediaErrorKind" :name="fileName" fill />
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch, onUnmounted, defineAsyncComponent } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { FileX, Music } from 'lucide-vue-next'
+import { Music } from 'lucide-vue-next'
+import MediaLoadError from '@/components/media/MediaLoadError.vue'
 import { buildLocalFileUrl } from '@/utils/download.ts'
 import { buildAsyncComponentOptions } from '@/composables/useAsyncComponent'
 import { startAttachDrag, cleanupDragGhost } from '@/utils/attachDrag'
@@ -80,10 +86,20 @@ const props = defineProps<{
   refreshNonce?: number
 }>()
 
-const { t } = useI18n()
 const { isWideScreen } = useWideScreenLayout()
 
 const fileName = computed(() => props.path.split('/').pop() || props.path)
+
+/**
+ * Which icon the failure element shows. Only the image / video / audio branches
+ * set `loadFailed` — the PDF viewer reports its own failures and never reaches
+ * this state — so the generic `file` icon only covers the transient frame
+ * before `kind` settles.
+ */
+const mediaErrorKind = computed<'image' | 'video' | 'audio' | 'file'>(() => {
+  if (props.kind === 'image' || props.kind === 'video' || props.kind === 'audio') return props.kind
+  return 'file'
+})
 
 /** Drag the previewed image onto the chat column → attach this path (no upload). */
 function onImageDragStart(e: DragEvent) {
@@ -117,7 +133,7 @@ watch(() => props.path, (path) => {
 }, { immediate: true })
 onUnmounted(() => { untrackMedia?.() })
 
-// Raw bytes come from /api/local-file/ (correct MIME, inline, no 10 MiB cap),
+// Raw bytes come from /api/fs/raw/ (correct MIME, inline, no 10 MiB cap),
 // not /api/file — which is JSON and reports raster images as binary.
 const mediaUrl = computed(() => {
   const base = buildLocalFileUrl(props.path)

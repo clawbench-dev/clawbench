@@ -50,10 +50,6 @@ type TurnSpec struct {
 	// FileDir is the working directory handed to the executor.
 	FileDir string
 
-	// QueueID anchors the reply row to the user message it answers, so the
-	// frontend can pair interleaved queued messages with their replies.
-	QueueID string
-
 	// LocalizeError formats user-facing error strings. Nil means "use the raw
 	// error text" (the scheduler and the service-layer paths do this; the HTTP
 	// handler passes its i18n implementation).
@@ -277,11 +273,10 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	// updates, so a failure here means the reply has nowhere to land.
 	emptyContent, _ := json.Marshal(map[string]any{contentKeyBlocks: []any{}})
 	streamingMsgID, err := AddChatMessage(spec.ProjectPath, spec.BackendName, spec.SessionID,
-		roleAssistant, string(emptyContent), nil, true, "", spec.QueueID)
+		roleAssistant, string(emptyContent), nil, true, "")
 	if err != nil {
 		slog.Error("failed to create streaming assistant placeholder",
 			slog.String("session", spec.SessionID),
-			slog.String("queueID", spec.QueueID),
 			slog.String("err", err.Error()))
 		at.earlyFails = spec.failTurn(err, reasonStreamStartFailed)
 		// The stream is already producing into eventCh but no executor will
@@ -293,8 +288,7 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	at.msgID = streamingMsgID
 	slog.Info("chat: created streaming assistant placeholder",
 		slog.String("session", spec.SessionID),
-		slog.Int64("streamingMsgID", streamingMsgID),
-		slog.String("queueID", spec.QueueID))
+		slog.Int64("streamingMsgID", streamingMsgID))
 
 	// Broadcast stream_start so subscribed clients (including ones that opened
 	// the session mid-stream) learn the streaming message id and can create a
@@ -303,7 +297,7 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	// has a streaming=1 row or a stream_start event arrives.
 	ws.EmitToSession(spec.SessionID, ai.StreamEvent{
 		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, QueueID: spec.QueueID},
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
 	})
 
 	execCfg := RunConfig{

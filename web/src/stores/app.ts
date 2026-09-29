@@ -532,15 +532,15 @@ async function selectFile(path: string, isImageFile = false, isAudioFile = false
         let url: string
         if (isAbsPath) {
             url = forceText
-                ? `/api/file?path=${encodeURIComponent(path)}&forceText=1`
-                : `/api/file?path=${encodeURIComponent(path)}`
+                ? `/api/fs/file?target=${encodeURIComponent(path)}&forceText=1`
+                : `/api/fs/file?target=${encodeURIComponent(path)}`
         } else {
-            // Strip leading slash to prevent double-slash URLs (/api/file//path)
+            // Strip leading slash to prevent double-slash URLs (/api/fs/file//path)
             // which Go's ServeMux decodes from %2F, causing InvalidFilePath errors.
             const cleanPath = path.replace(/^\/+/, '')
             url = forceText
-                ? `/api/file/${encodeURIComponent(cleanPath)}?forceText=1`
-                : `/api/file/${encodeURIComponent(cleanPath)}`
+                ? `/api/fs/file/${encodeURIComponent(cleanPath)}?forceText=1`
+                : `/api/fs/file/${encodeURIComponent(cleanPath)}`
         }
         const resp = await fetch(url)
         if (!resp.ok) {

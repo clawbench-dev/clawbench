@@ -6,8 +6,6 @@ import {
   getErrorSourceLabel,
   statusClass,
   statusLabel,
-  statusLabelSimple,
-  formatTime,
   askQuestionSummary,
   extractAskQuestions,
   blockKey,
@@ -286,81 +284,18 @@ describe('statusLabel', () => {
   it('shows running when runningCount > 0', () => {
     expect(statusLabel({ status: 'active', runCount: 5, runningCount: 1 }, t)).toBe('Running (5 runs)')
   })
-  it('shows paused', () => {
-    expect(statusLabel({ status: 'paused', runCount: 0, runningCount: 0 }, t)).toBe('Paused')
+  // The count must survive the task stopping. Emitting it only while active made
+  // the number vanish exactly when the user asks "how many times did it run?".
+  it('keeps the execution count when paused', () => {
+    expect(statusLabel({ status: 'paused', runCount: 4, runningCount: 0 }, t)).toBe('Paused (4 runs)')
   })
-  it('shows completed', () => {
-    expect(statusLabel({ status: 'completed', runCount: 2, runningCount: 0 }, t)).toBe('Completed')
+  it('keeps the execution count when completed', () => {
+    expect(statusLabel({ status: 'completed', runCount: 2, runningCount: 0 }, t)).toBe('Completed (2 runs)')
   })
+  // An unknown status has no localized label, so there is nothing to qualify —
+  // the raw status is returned rather than an unexplained "(0 runs)".
   it('returns raw status for unknown', () => {
     expect(statusLabel({ status: 'error', runCount: 0, runningCount: 0 }, t)).toBe('error')
-  })
-})
-
-// ── statusLabelSimple ──
-describe('statusLabelSimple', () => {
-  const t = (key: string) => {
-    if (key === 'chat.contentBlocks.statusActive') return 'Active'
-    if (key === 'chat.contentBlocks.statusPaused') return 'Paused'
-    if (key === 'chat.contentBlocks.statusCompleted') return 'Completed'
-    return key
-  }
-
-  it('shows active', () => { expect(statusLabelSimple({ status: 'active' }, t)).toBe('Active') })
-  it('shows paused', () => { expect(statusLabelSimple({ status: 'paused' }, t)).toBe('Paused') })
-  it('shows completed', () => { expect(statusLabelSimple({ status: 'completed' }, t)).toBe('Completed') })
-  it('returns raw status for unknown', () => { expect(statusLabelSimple({ status: 'error' }, t)).toBe('error') })
-})
-
-// ── formatTime ──
-describe('formatTime', () => {
-  const t = (key: string, params?: Record<string, any>) => {
-    if (key === 'chat.contentBlocks.justNow') return 'Just now'
-    if (key === 'chat.contentBlocks.minutesFromNow') return `${params?.count} min from now`
-    if (key === 'chat.contentBlocks.minutesAgo') return `${params?.count} min ago`
-    if (key === 'chat.contentBlocks.hoursFromNow') return `${params?.count}h from now`
-    if (key === 'chat.contentBlocks.hoursAgo') return `${params?.count}h ago`
-    return key
-  }
-
-  it('returns empty string for null', () => {
-    expect(formatTime(null, 'en', t)).toBe('')
-  })
-  it('returns empty string for undefined', () => {
-    expect(formatTime(undefined, 'en', t)).toBe('')
-  })
-  it('returns empty string for empty string', () => {
-    expect(formatTime('', 'en', t)).toBe('')
-  })
-  it('returns "just now" for timestamp within 1 minute', () => {
-    const now = new Date().toISOString()
-    expect(formatTime(now, 'en', t)).toBe('Just now')
-  })
-  it('returns "X min ago" for past timestamp within 1 hour', () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
-    const result = formatTime(fiveMinAgo, 'en', t)
-    expect(result).toMatch(/min ago/)
-  })
-  it('returns "X min from now" for future timestamp within 1 hour', () => {
-    const fiveMinFromNow = new Date(Date.now() + 5 * 60 * 1000).toISOString()
-    const result = formatTime(fiveMinFromNow, 'en', t)
-    expect(result).toMatch(/min from now/)
-  })
-  it('returns "Xh ago" for past timestamp within 1 day', () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString()
-    const result = formatTime(twoHoursAgo, 'en', t)
-    expect(result).toMatch(/h ago/)
-  })
-  it('returns locale date string for timestamp beyond 1 day', () => {
-    const twoDaysAgo = new Date(Date.now() - 2 * 86400 * 1000).toISOString()
-    const result = formatTime(twoDaysAgo, 'en', t)
-    // Should be a date string, not a relative time
-    expect(result).toMatch(/\d{4}/)
-  })
-  it('uses zh-CN locale for Chinese', () => {
-    const twoDaysAgo = new Date(Date.now() - 2 * 86400 * 1000).toISOString()
-    const result = formatTime(twoDaysAgo, 'zh', t)
-    expect(result).toBeTruthy()
   })
 })
 

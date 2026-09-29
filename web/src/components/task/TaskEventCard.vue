@@ -61,26 +61,31 @@
        Hidden when the task subscribes to no event: there is no trigger, so no
        context is ever injected and the samples would document nothing. -->
   <div v-if="contextRows.length > 0" class="overview-card">
-    <h3 class="card-title">
+    <h3 class="card-title context-card-title" @click="contextCollapsed = !contextCollapsed">
       <Braces class="card-icon" :size="14" />
       <span class="prompt-title-text">{{ t('task.overview.eventContext') }}</span>
       <span class="sample-badge">{{ t('task.overview.eventContextSample') }}</span>
+      <button class="prompt-toggle-btn" :title="contextCollapsed ? t('task.overview.showEventContext') : t('task.overview.hideEventContext')">
+        <ChevronDown :size="14" :class="{ 'prompt-chevron-collapsed': contextCollapsed }" class="prompt-chevron" />
+      </button>
     </h3>
-    <div class="event-context-preview">
-      <div class="event-context-heading">{{ t('task.form.eventContextHeader') }}</div>
-      <div v-for="row in contextRows" :key="row.placeholder" class="event-context-row">
-        <span class="event-context-label">{{ row.label }}</span>
-        <span class="event-context-value">{{ row.value }}</span>
+    <div v-show="!contextCollapsed" class="event-context-body">
+      <div class="event-context-preview">
+        <div class="event-context-heading">{{ t('task.form.eventContextHeader') }}</div>
+        <div v-for="row in contextRows" :key="row.placeholder" class="event-context-row">
+          <span class="event-context-label">{{ row.label }}</span>
+          <span class="event-context-value">{{ row.value }}</span>
+        </div>
       </div>
+      <div class="form-hint">{{ t('task.overview.eventContextHint') }}</div>
     </div>
-    <div class="form-hint">{{ t('task.overview.eventContextHint') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, Braces, Zap } from 'lucide-vue-next'
+import { AlertTriangle, Braces, ChevronDown, Zap } from 'lucide-vue-next'
 import { eventChips, eventKindLabel, type EventChip } from '@/utils/forgeEventLabels'
 import { eventContextSampleRows, isRepoTargetedOnly } from '@/utils/forgeEventContextVars'
 import { useForgeBinding } from '@/composables/useForgeBinding'
@@ -135,6 +140,10 @@ const repoLabel = computed(() => {
 })
 
 // ── Event context preview ──
+// Collapsed by default, matching the prompt card below it: the block is a
+// reference for what gets injected, not something to read on every visit.
+const contextCollapsed = ref(true)
+
 // The variable set and its gating live in the shared registry, so this block,
 // the form's placeholder block and the backend render cannot drift apart. Here
 // each row is filled with a sample value so the user sees the shape of what
@@ -231,6 +240,50 @@ const contextRows = computed(() =>
 }
 .card-icon { color: var(--text-muted, #999); }
 .prompt-title-text { flex: 1; min-width: 0; }
+
+/* Collapsible context card title — mirrors the prompt card in TaskOverviewTab
+   so both cards in the detail page collapse the same way. */
+.context-card-title {
+  cursor: pointer;
+  user-select: none;
+}
+.prompt-toggle-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted, #999);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  transition: background var(--duration-slow), color var(--duration-slow);
+}
+@media (hover: hover) {
+  .prompt-toggle-btn:hover {
+    background: var(--bg-tertiary, #eef1f4);
+    color: var(--text-primary, #1a1a1a);
+  }
+}
+.prompt-toggle-btn:active {
+  transform: scale(0.92);
+}
+.prompt-chevron {
+  transition: transform var(--duration-slow) ease;
+}
+.prompt-chevron-collapsed {
+  transform: rotate(-90deg);
+}
+/* Collapsed body only carries the sample rows + hint; keep them grouped so
+   `v-show` hides the whole block rather than leaving a stray hint behind. */
+.event-context-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
 
 /* ── Paused warning ── */
 .event-paused-note {

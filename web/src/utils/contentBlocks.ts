@@ -106,65 +106,25 @@ export function statusClass(task: { status: string }): string {
 
 /**
  * Get detailed status label for a task.
+ *
+ * The execution count is appended for every status, not just the running ones:
+ * a task that has been disabled or has run out of repeats is exactly when the
+ * user asks "how many times did this actually run?", and the count is the only
+ * place that answer appears on the chat card. Emitting it only while active
+ * made the number vanish the moment the task stopped.
  */
 export function statusLabel(
   task: { status: string; runCount: number; runningCount: number },
   t: (key: string, params?: Record<string, unknown>) => string
 ): string {
+  const execLabel = t('chat.contentBlocks.statusExecutions', { count: task.runCount })
   if (task.status === 'active') {
-    const execLabel = t('chat.contentBlocks.statusExecutions', { count: task.runCount })
     if (task.runningCount > 0) return `${t('chat.contentBlocks.statusRunning')} (${execLabel})`
     return `${t('chat.contentBlocks.statusActive')} (${execLabel})`
   }
-  if (task.status === 'paused') return t('chat.contentBlocks.statusPaused')
-  if (task.status === 'completed') return t('chat.contentBlocks.statusCompleted')
+  if (task.status === 'paused') return `${t('chat.contentBlocks.statusPaused')} (${execLabel})`
+  if (task.status === 'completed') return `${t('chat.contentBlocks.statusCompleted')} (${execLabel})`
   return task.status
-}
-
-/**
- * Get simple (short) status label for a task badge.
- */
-export function statusLabelSimple(
-  task: { status: string },
-  t: (key: string) => string
-): string {
-  if (task.status === 'active') return t('chat.contentBlocks.statusActive')
-  if (task.status === 'paused') return t('chat.contentBlocks.statusPaused')
-  if (task.status === 'completed') return t('chat.contentBlocks.statusCompleted')
-  return task.status
-}
-
-/**
- * Format an ISO timestamp into a human-readable relative or absolute time string.
- * - < 1 min: "just now"
- * - < 1 hour: "X minutes ago/from now"
- * - < 1 day: "X hours ago/from now"
- * - else: locale date string
- */
-export function formatTime(
-  iso: string | null | undefined,
-  locale: string,
-  t: (key: string, params?: Record<string, unknown>) => string
-): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const now = new Date()
-  const diff = d.getTime() - now.getTime()
-  const absDiff = Math.abs(diff)
-  if (absDiff < 60000) return t('chat.contentBlocks.justNow')
-  if (absDiff < 3600000) {
-    const count = Math.round(absDiff / 60000)
-    return diff > 0
-      ? t('chat.contentBlocks.minutesFromNow', { count })
-      : t('chat.contentBlocks.minutesAgo', { count })
-  }
-  if (absDiff < 86400000) {
-    const count = Math.round(absDiff / 3600000)
-    return diff > 0
-      ? t('chat.contentBlocks.hoursFromNow', { count })
-      : t('chat.contentBlocks.hoursAgo', { count })
-  }
-  return d.toLocaleDateString(locale === 'zh' ? 'zh-CN' : 'en-US')
 }
 
 /**

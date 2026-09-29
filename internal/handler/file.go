@@ -65,6 +65,52 @@ var mimeTypes = map[string]string{
 	".ppt":  "application/vnd.ms-powerpoint",
 }
 
+// webAssetMimeTypes maps the additional extensions the HTML file preview needs,
+// on top of mimeTypes.
+//
+// Kept SEPARATE from mimeTypes on purpose. mimeTypes is shared with the public,
+// token-scoped share endpoint (serveShareRaw), which is unauthenticated. Serving
+// text/html there would turn any shared .html file into same-origin script
+// execution the moment a LOGGED-IN user opens the link: the document would run
+// with that user's session cookie. Verified — with text/html the shared page
+// could call authenticated APIs and exfiltrate the response; with the previous
+// application/octet-stream fallback the browser merely downloaded it.
+//
+// The authenticated /api/fs/raw/ endpoint has no such problem: the document it
+// serves already runs inside a sandboxed iframe that the user opened
+// deliberately (see FileViewer.vue), so active types are granted only here.
+//
+// Without these entries the fallback is application/octet-stream: stylesheets
+// are silently dropped, ES modules are refused, and the document itself is not
+// rendered at all (the browser downloads it instead).
+//
+//nolint:goconst // font extension literals repeat across the MIME / hashed-asset / custom-font maps; extracting a shared constant per extension is overkill
+var webAssetMimeTypes = map[string]string{
+	".html":  "text/html",
+	".htm":   "text/html",
+	".xhtml": "application/xhtml+xml",
+	".css":   "text/css",
+	".js":    "text/javascript",
+	".mjs":   "text/javascript",
+	".json":  "application/json",
+	".woff2": "font/woff2",
+	".woff":  "font/woff",
+	".ttf":   "font/ttf",
+	".otf":   "font/otf",
+}
+
+// mimeForLocalFile resolves the Content-Type for the authenticated raw-file
+// endpoint: the base table, then the web-asset additions, then octet-stream.
+func mimeForLocalFile(ext string) string {
+	if mime := mimeTypes[ext]; mime != "" {
+		return mime
+	}
+	if mime := webAssetMimeTypes[ext]; mime != "" {
+		return mime
+	}
+	return mimeOctetStream
+}
+
 // ListDir returns the contents of a directory within the current project.
 func ListDir(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
@@ -189,10 +235,10 @@ func ServeListTree(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveFilePath determines the absolute path and whether it's external to the
-// project. Supports absolute paths via ?path= query param and project-relative
+// project. Supports absolute paths via ?target= query param and project-relative
 // paths via URL path.
 func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string) (absPath string, isExternal bool, ok bool) {
-	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
+	if queryPath := r.URL.Query().Get("target"); queryPath != "" {
 		// Accept paths starting with / (POSIX-style absolute from frontend)
 		// or platform-native absolute paths (e.g. C:\ on Windows).
 		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
@@ -214,12 +260,12 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 
 	// Project-relative path from URL path
 	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/file/") {
+	if !strings.HasPrefix(filepathStr, "/api/fs/file/") {
 		http.NotFound(w, r)
 		return "", false, false
 	}
-	filepathStr = filepathStr[len("/api/file/"):]
-	// Strip leading slashes to handle double-slash URLs (/api/file//path)
+	filepathStr = filepathStr[len("/api/fs/file/"):]
+	// Strip leading slashes to handle double-slash URLs (/api/fs/file//path)
 	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
 	// Go's ServeMux decodes %2F back to /, producing double slashes.
 	filepathStr = strings.TrimLeft(filepathStr, "/")
@@ -241,27 +287,36 @@ func resolveFilePath(w http.ResponseWriter, r *http.Request, projectPath string)
 // for the quick-preview pane: only those lines are returned, along with the
 // file's total line count. Without the params the whole file is returned, so
 // existing callers are unaffected.
+//
+// The whole-file response is capped at maxGetFileBytes; a line-window request is
+// not, because it streams lines and never holds the file in memory. That is what
+// lets the preview pane open a file far larger than the whole-file ceiling.
 func GetFile(w http.ResponseWriter, r *http.Request) {
-	m, ok := resolveGetFileTarget(w, r)
-	if !ok {
-		return
-	}
-
-	// Line-window requests (quick-preview pane) are only meaningful for real
-	// text files: forceText/binary sanitization rewrites the byte stream, so the
-	// window is ignored there and the full sanitized content is returned.
+	// The optional line window (?lineStart/?lineEnd, quick-preview pane).
 	//
-	// Parsed (and rejected) BEFORE the binary early-return below so an invalid
-	// range is a 400 for every file, as the OpenAPI spec promises. Parsing it
-	// after meant a binary file answered 200 isBinary:true for `?lineStart=0`,
-	// which silently contradicts the documented contract.
-	isText := model.IsTextFile(m.info.Name())
-	forceText := r.URL.Query().Get("forceText") == "1"
+	// Parsed (and rejected) BEFORE the size/binary early-returns below so an
+	// invalid range is a 400 for every file, as the OpenAPI spec promises.
+	// Parsing it after meant a binary file answered 200 isBinary:true for
+	// `?lineStart=0`, which silently contradicts the documented contract.
 	winStart, winEnd, hasWindow, winErr := parseLineWindow(r)
 	if hasWindow && winErr != nil {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidLineRange")
 		return
 	}
+
+	// A line window is streamed line by line and never holds the file in
+	// memory, so the whole-file size ceiling must not apply to it — that was
+	// what made the preview pane refuse large files it could perfectly well
+	// read a window from. The window has its own byte/line ceilings
+	// (maxWindowBytes / maxWindowLines). The target is still resolved and
+	// validated (existence, not-a-directory, path scope) either way.
+	m, ok := resolveGetFileTarget(w, r, !hasWindow)
+	if !ok {
+		return
+	}
+
+	isText := model.IsTextFile(m.info.Name())
+	forceText := r.URL.Query().Get("forceText") == "1"
 
 	// For non-text files, check if the content is actually binary (via null-byte
 	// sniffing). If binary, return isBinary=true without the content — the
@@ -283,7 +338,14 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 	// Subtype detection (OpenAPI → ReDoc) needs the whole document, and so does
 	// sanitization. Both are skipped on the window path, which only ever serves
 	// the plain-text preview pane.
-	if hasWindow && isText {
+	//
+	// A non-text extension that sniffed as text (LICENSE, an extensionless
+	// script) is line-windowable too: the window path splits on line boundaries
+	// and does not need the whole-file sanitize to answer it, while reading the
+	// whole file just to ignore the window would defeat the pane's reason for
+	// existing on a large file. forceText still ignores the window (its whole
+	// point is the sanitized whole-document response).
+	if hasWindow && !forceText {
 		writeLineWindowResponse(w, m, winStart, winEnd)
 		return
 	}
@@ -294,7 +356,11 @@ func GetFile(w http.ResponseWriter, r *http.Request) {
 // resolveGetFileTarget resolves and validates the file a GetFile request refers
 // to. On failure it has already written the error response, so the caller only
 // checks ok.
-func resolveGetFileTarget(w http.ResponseWriter, r *http.Request) (fileResponseMeta, bool) {
+//
+// enforceSizeLimit is false for line-window requests: those are streamed line by
+// line, so the whole-file ceiling (maxGetFileBytes) does not bound what they
+// cost. Existence, not-a-directory and path-scope checks always run.
+func resolveGetFileTarget(w http.ResponseWriter, r *http.Request, enforceSizeLimit bool) (fileResponseMeta, bool) {
 	projectPath, ok := requireProject(w, r)
 	if !ok {
 		return fileResponseMeta{}, false
@@ -314,7 +380,7 @@ func resolveGetFileTarget(w http.ResponseWriter, r *http.Request) (fileResponseM
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NotAFile")
 		return fileResponseMeta{}, false
 	}
-	if info.Size() > maxGetFileBytes {
+	if enforceSizeLimit && info.Size() > maxGetFileBytes {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "FileTooLarge")
 		return fileResponseMeta{}, false
 	}
@@ -501,11 +567,57 @@ func responsePath(absPath, projectPath string, isExternal bool) string {
 	return filepath.ToSlash(relPath)
 }
 
+// rawFilePrefix is the URL-path prefix of the current raw-file endpoint.
+const rawFilePrefix = "/api/fs/raw/"
+
+// legacyLocalFilePrefix is the pre-rename raw-file endpoint, restored as a
+// backward-compatibility alias for installed clients that cannot be updated.
+//
+// Why the alias exists: the rename to /api/fs/raw/ (see file_routes_rename_test.go)
+// was a hard cutover — the old route was dropped and 404s. But the URL is built in
+// NATIVE client code, not in the web frontend:
+//
+//	android/.../MainActivity.java  downloadFile()      -> "/api/local-file/…"
+//	desktop/src/main/download.ts   resolveLocalFileUrl -> "/api/local-file/…"
+//
+// A frontend update cannot reach that code: the Android WebView loads the latest
+// JS from the server, so the UI looks current while the native download bridge
+// still emits the deleted URL. Those builds also cannot self-recover through the
+// in-app updater (their embedded APK predates the fix), so a file-manager
+// download simply 404s forever. The alias keeps them working until they are gone.
+//
+// Scope is deliberately minimal — one endpoint, matching what those clients
+// actually call. The alias accepts the legacy `?path=` parameter name ONLY under
+// this prefix (see resolveLocalFilePath), so the current /api/fs/raw/ endpoint
+// keeps the renamed `?target=` shape and does not regain the Crawlab LFI
+// fingerprint (`GET /api/file?path=…`) that motivated the rename.
+//
+// Deprecated: remove once no pre-rename Android/desktop client remains in use.
+const legacyLocalFilePrefix = "/api/local-file/"
+
 // resolveLocalFilePath determines the absolute path for ServeLocalFile.
-// Supports absolute paths via ?path= query param and project-relative paths via URL path.
+// Supports absolute paths via ?target= query param and project-relative paths via URL path.
+//
+// The deprecated /api/local-file/ alias (legacyLocalFilePrefix) is also served
+// here, with two compatibility accommodations — both gated on the request path so
+// the current endpoint is unaffected:
+//   - the absolute-path query param may be spelled `?path=` (the pre-rename name);
+//   - the URL-path form is matched against the legacy prefix instead.
 func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath string) (string, bool) {
-	if queryPath := r.URL.Query().Get("path"); queryPath != "" {
-		// Absolute path via ?path= — serves files outside the project directory
+	// A request is "legacy" purely by its URL prefix. Everything below — the
+	// param-name fallback and the prefix used for the URL-path form — keys off
+	// this one flag, so the two accommodations cannot drift apart.
+	legacy := strings.HasPrefix(r.URL.Path, legacyLocalFilePrefix)
+
+	// Absolute path via query param. `?target=` is the current name; `?path=` is
+	// the pre-rename name, honored only on the deprecated prefix. Accepting it on
+	// /api/fs/raw/ too would undo the rename's whole point.
+	queryPath := r.URL.Query().Get("target")
+	if queryPath == "" && legacy {
+		queryPath = r.URL.Query().Get("path")
+	}
+	if queryPath != "" {
+		// Absolute path — serves files outside the project directory
 		if !strings.HasPrefix(queryPath, "/") && !filepath.IsAbs(queryPath) {
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPath")
 			return "", false
@@ -523,13 +635,17 @@ func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath st
 	}
 
 	// Project-relative path from URL path
+	prefix := rawFilePrefix
+	if legacy {
+		prefix = legacyLocalFilePrefix
+	}
 	filepathStr := r.URL.Path
-	if !strings.HasPrefix(filepathStr, "/api/local-file/") {
+	if !strings.HasPrefix(filepathStr, prefix) {
 		http.NotFound(w, r)
 		return "", false
 	}
-	filepathStr = filepathStr[len("/api/local-file/"):]
-	// Strip leading slashes to handle double-slash URLs (/api/local-file//path)
+	filepathStr = filepathStr[len(prefix):]
+	// Strip leading slashes to handle double-slash URLs (/api/fs/raw//path)
 	// caused by encodeURIComponent("/path") which encodes as %2Fpath.
 	filepathStr = strings.TrimLeft(filepathStr, "/")
 	filepathStr = path.Clean(filepathStr)
@@ -544,7 +660,7 @@ func resolveLocalFilePath(w http.ResponseWriter, r *http.Request, projectPath st
 }
 
 // ServeLocalFile serves a file directly (for images, PDFs, etc.).
-// Supports project-relative paths via URL path and absolute paths via ?path=
+// Supports project-relative paths via URL path and absolute paths via ?target=
 // query param (for files outside the project directory).
 func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 	projectPath, ok := requireProject(w, r)
@@ -568,10 +684,10 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ext := strings.ToLower(filepath.Ext(absPath))
-	mime := mimeTypes[ext]
-	if mime == "" {
-		mime = mimeOctetStream
-	}
+	// This is the AUTHENTICATED endpoint, so the web-asset additions (text/html
+	// and friends) apply. The public share endpoint deliberately does not get
+	// them — see webAssetMimeTypes.
+	mime := mimeForLocalFile(ext)
 
 	// If ?download=1 is present, force download with Content-Disposition header.
 	// Use http.ServeContent instead of http.ServeFile to avoid a 301 redirect
@@ -582,8 +698,8 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 		fileName := filepath.Base(absPath)
 		w.Header().Set("Content-Disposition", contentDispositionAttachment(fileName))
 		w.Header().Set("Content-Type", mime)
-		f, err := os.Open(absPath)
-		if err != nil {
+		f, openErr := os.Open(absPath)
+		if openErr != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("cannot open file")))
 			return
 		}
@@ -592,8 +708,21 @@ func ServeLocalFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use http.ServeContent rather than http.ServeFile: ServeFile treats a file
+	// named "index.html" as a directory index and answers 301 to "./". That
+	// breaks the HTML file preview, whose iframe points straight at
+	// .../index.html — the redirect rewrites the URL to the parent directory and
+	// the preview ends up loading a directory listing error instead of the
+	// document. ServeContent has no such special case. (The ?download=1 branch
+	// below already worked around this for the same reason.)
 	w.Header().Set("Content-Type", mime)
-	http.ServeFile(w, r, absPath)
+	f, err := os.Open(absPath)
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("cannot open file")))
+		return
+	}
+	defer func() { _ = f.Close() }()
+	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 }
 
 // ServeProjects handles GET (list directory) and POST (create directory) for projects.

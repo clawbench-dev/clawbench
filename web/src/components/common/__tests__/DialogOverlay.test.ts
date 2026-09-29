@@ -51,6 +51,8 @@ function setDialogState(overrides: Partial<{
   confirmText: string
   cancelText: string
   dangerous: boolean
+  generateText: string
+  onGenerate: (() => Promise<string | null>) | null
   resolve: ((v: string | boolean | null) => void) | null
 }> = {}) {
   const { state } = useDialog()
@@ -64,6 +66,8 @@ function setDialogState(overrides: Partial<{
     confirmText: '',
     cancelText: '',
     dangerous: false,
+    generateText: '',
+    onGenerate: null,
     resolve: vi.fn(),
     ...overrides,
   }
@@ -118,6 +122,8 @@ describe('DialogOverlay', () => {
       confirmText: '',
       cancelText: '',
       dangerous: false,
+      generateText: '',
+      onGenerate: null,
       resolve: null,
     }
 
@@ -144,7 +150,7 @@ describe('DialogOverlay', () => {
     wrapper = mountDialog()
     await nextTick()
 
-    const buttons = document.body.querySelectorAll('.dlg-btn')
+    const buttons = document.body.querySelectorAll('.dlg-actions .fbtn')
     expect(buttons.length).toBe(2)
     expect(buttons[0].textContent).toBe('Cancel')
     expect(buttons[1].textContent).toBe('Confirm')
@@ -265,6 +271,86 @@ describe('DialogOverlay', () => {
     expect(resolveFn).toHaveBeenCalledWith(null)
   })
 
+  // ── Auto-generate button ──
+
+  it('prompt dialog: hides the generate button when no generator is provided', async () => {
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: '' })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    expect($('.dlg-generate')).toBeNull()
+  })
+
+  it('prompt dialog: does not render the generate button for confirm dialogs', async () => {
+    setDialogState({ type: 'confirm', message: 'Sure?', generateText: 'Auto-generate', onGenerate: vi.fn() })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    expect($('.dlg-generate')).toBeNull()
+  })
+
+  it('prompt dialog: clicking generate fills the input with the generated value', async () => {
+    const onGenerate = vi.fn().mockResolvedValue('Generated Title')
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: 'Auto-generate', onGenerate })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    const genBtn = $('.dlg-generate')!
+    expect(genBtn.textContent).toContain('Auto-generate')
+    genBtn.click()
+    await nextTick()
+    await nextTick()
+
+    expect(onGenerate).toHaveBeenCalledTimes(1)
+    expect((wrapper.vm as unknown as { inputVal: string }).inputVal).toBe('Generated Title')
+  })
+
+  it('prompt dialog: a null generated value leaves the input untouched', async () => {
+    const onGenerate = vi.fn().mockResolvedValue(null)
+    setDialogState({ type: 'prompt', message: 'Enter:', value: 'existing', generateText: 'Auto-generate', onGenerate })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    $('.dlg-generate')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect((wrapper.vm as unknown as { inputVal: string }).inputVal).toBe('existing')
+  })
+
+  it('prompt dialog: generate does not resolve the dialog (user still confirms)', async () => {
+    const resolveFn = vi.fn()
+    const onGenerate = vi.fn().mockResolvedValue('Generated Title')
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: 'Auto-generate', onGenerate, resolve: resolveFn })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    $('.dlg-generate')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect(resolveFn).not.toHaveBeenCalled()
+  })
+
+  it('prompt dialog: a throwing generator does not reject or crash the dialog', async () => {
+    const onGenerate = vi.fn().mockRejectedValue(new Error('boom'))
+    setDialogState({ type: 'prompt', message: 'Enter:', generateText: 'Auto-generate', onGenerate })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    $('.dlg-generate')!.click()
+    await nextTick()
+    await nextTick()
+
+    expect($('.dlg-overlay')).toBeTruthy()
+  })
+
   // ── Custom button text ──
 
   it('uses custom confirmText and cancelText when provided', async () => {
@@ -279,13 +365,24 @@ describe('DialogOverlay', () => {
 
   // ── Dangerous style ──
 
-  it('applies dlg-danger class when dangerous is true', async () => {
+  it('applies fbtn-danger when dangerous is true', async () => {
     setDialogState({ type: 'confirm', message: 'Delete?', dangerous: true })
 
     wrapper = mountDialog()
     await nextTick()
 
-    expect($('.dlg-ok')?.classList.contains('dlg-danger')).toBe(true)
+    expect($('.dlg-ok')?.classList.contains('fbtn-danger')).toBe(true)
+    expect($('.dlg-ok')?.classList.contains('fbtn-primary')).toBe(false)
+  })
+
+  it('uses the primary variant for a non-dangerous confirm', async () => {
+    setDialogState({ type: 'confirm', message: 'Proceed?', dangerous: false })
+
+    wrapper = mountDialog()
+    await nextTick()
+
+    expect($('.dlg-ok')?.classList.contains('fbtn-primary')).toBe(true)
+    expect($('.dlg-ok')?.classList.contains('fbtn-danger')).toBe(false)
   })
 
   // ── Keyboard events ──
@@ -380,6 +477,8 @@ describe('DialogOverlay', () => {
       confirmText: '',
       cancelText: '',
       dangerous: false,
+      generateText: '',
+      onGenerate: null,
       resolve: null,
     }
 
@@ -396,6 +495,8 @@ describe('DialogOverlay', () => {
       confirmText: '',
       cancelText: '',
       dangerous: false,
+      generateText: '',
+      onGenerate: null,
       resolve: vi.fn(),
     }
     await nextTick()

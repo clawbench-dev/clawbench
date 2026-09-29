@@ -7,6 +7,7 @@ describe('getBackendDisplayName', () => {
     expect(getBackendDisplayName('codebuddy')).toBe('Codebuddy')
     expect(getBackendDisplayName('opencode')).toBe('OpenCode')
     expect(getBackendDisplayName('deepseek')).toBe('CodeWhale')
+    expect(getBackendDisplayName('dsh')).toBe('DeepSeek Harness')
     expect(getBackendDisplayName('vecli')).toBe('VeCLI')
   })
 

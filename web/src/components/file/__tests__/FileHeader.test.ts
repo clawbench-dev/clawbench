@@ -686,8 +686,11 @@ describe('FileHeader', () => {
       await nextTick()
       expect(mockOpenLightbox).toHaveBeenCalledTimes(1)
       const url = mockOpenLightbox.mock.calls[0][0]
-      // Absolute path → served via ?path= query form.
-      expect(url).toContain('path=%2Ftmp%2Fphoto.png')
+      // Absolute path → served via the ?target= query form. The param was
+      // renamed from ?path= when the file-read endpoints moved to /api/fs/*
+      // (see internal/handler/file_routes_rename_test.go, which pins that
+      // ?path= must NOT come back); this assertion had not been updated.
+      expect(url).toContain('target=%2Ftmp%2Fphoto.png')
     })
 
     it('does nothing on view click when the file has no path', async () => {
@@ -919,7 +922,7 @@ describe('FileHeader', () => {
     })
   })
 
-  describe('wide-screen back navigation', () => {
+  describe('header back navigation', () => {
     beforeEach(() => {
       mockIsWideScreen.value = true
     })
@@ -960,11 +963,11 @@ describe('FileHeader', () => {
       expect(wrapper.find('.file-header-nav').exists()).toBe(false)
     })
 
-    it('hides the nav cluster on narrow (touch) layouts, which use the floating bar', () => {
+    it('shows the nav cluster on narrow (touch) layouts too — there is no mobile-only bar', () => {
       mockIsWideScreen.value = false
       const wrapper = mountHeader({ canNavigateBack: true })
-      expect(wrapper.find('.file-header-nav').exists()).toBe(false)
-      expect(wrapper.find('.file-header-back-btn').exists()).toBe(false)
+      expect(wrapper.find('.file-header-nav').exists()).toBe(true)
+      expect(wrapper.find('.file-header-back-btn').exists()).toBe(true)
     })
   })
 })

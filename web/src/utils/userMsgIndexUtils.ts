@@ -131,60 +131,116 @@ export function truncateIndexText(text: string, maxLen: number = INDEX_TEXT_MAX_
   return chars.length > maxLen ? chars.slice(0, maxLen).join('') + '…' : text
 }
 
+/** Visible labels the index rows may render; both are searchable. */
+export interface IndexRowLabels {
+  /** Generic label for an attachment-only user row, e.g. "附件" / "Attachment". */
+  attachment: string
+  /** Placeholder for an assistant reply that carries no text at all. */
+  noText: string
+}
+
+/** A conversation-index row: role + content + attachments (legacy string[] or FileEntry-like objects). */
+type IndexMsg = {
+  role?: string
+  summary?: string
+  content?: string
+  /** In-memory chat messages carry parsed blocks instead of raw JSON content. */
+  blocks?: Array<{ type?: string; text?: string }>
+  files?: Array<string | { path?: string }>
+}
+
+/** Text of a message's text blocks, joined with spaces. Empty when there are none. */
+function blocksText(blocks?: Array<{ type?: string; text?: string }>): string {
+  if (!Array.isArray(blocks)) return ''
+  const texts: string[] = []
+  for (const b of blocks) {
+    if (b && typeof b.text === 'string' && b.text && (b.type === 'text' || b.type === undefined)) {
+      texts.push(b.text)
+    }
+  }
+  return texts.join(' ')
+}
+
 /**
- * Formats a user message for display in the index list.
- * Returns the plain text truncated to INDEX_TEXT_MAX_LENGTH, or the
- * [Attachment] label for attachment-only messages. Search matching still runs
- * against the untruncated text (see matchUserMsg), so a query hitting text past
- * the cap still surfaces the row.
+ * Display text for an assistant index row.
+ *
+ * The index shows the stored reading summary when one exists. Summaries are
+ * generated asynchronously (and backfilled on read), so an older reply may not
+ * have one yet — in that case the reply's own text is used as a fallback so the
+ * row is never blank for a reply that does have content. Returns "" only when
+ * the reply carries no text at all (e.g. a tool-call-only turn).
+ *
+ * The fallback reads both `content` (raw JSON / plain text, as the API returns)
+ * and `blocks` (already-parsed in-memory messages used by the offline fallback).
  */
-export function formatUserMsg(
-  msg: { content?: string; files?: string[] },
-  attachmentLabel: string,
+export function assistantIndexText(msg: { summary?: string; content?: string; blocks?: Array<{ type?: string; text?: string }> }): string {
+  return extractPlainText(msg.summary || '')
+    || extractPlainText(msg.content || '')
+    || blocksText(msg.blocks)
+}
+
+/**
+ * Formats an index row for display.
+ *
+ * User rows show their own text truncated to INDEX_TEXT_MAX_LENGTH, or the
+ * `[Attachment]` label for attachment-only messages. Assistant rows show their
+ * summary (or fallback reply text), or the `noText` placeholder when the reply
+ * has no text. Search matching still runs against the untruncated text (see
+ * matchIndexMsg), so a query hitting text past the cap still surfaces the row.
+ */
+export function formatIndexMsg(
+  msg: IndexMsg,
+  labels: IndexRowLabels,
   maxLen: number = INDEX_TEXT_MAX_LENGTH,
 ): string {
+  if (msg.role === 'assistant') {
+    const text = assistantIndexText(msg)
+    return text ? truncateIndexText(text, maxLen) : labels.noText
+  }
   const text = extractPlainText(msg.content || '')
   if (!text && msg.files && msg.files.length > 0) {
-    return `[${attachmentLabel}]`
+    return `[${labels.attachment}]`
   }
   return truncateIndexText(text, maxLen)
 }
 
-/** A user-message index row: content + attachments (legacy string[] or FileEntry-like objects). */
-type UserMsgForMatch = {
-  content?: string
-  files?: Array<string | { path?: string }>
-}
-
 /**
- * Case-insensitive substring match against a user message's plain text and/or
+ * Case-insensitive substring match against an index row's plain text and/or
  * its attachment path/basename. Used by the conversation-index search box.
  *
  * Matching semantics:
- *   - The message haystack is the same extractPlainText output the index row
- *     displays, so any text visible in a row is searchable.
+ *   - The message haystack is the same extraction the index row displays (user
+ *     text, or an assistant reply's summary/fallback text), so any text visible
+ *     in a row is searchable.
  *   - Attachments match on the full normalized path (so a query like "src/foo"
  *     finds "src/foo/bar.ts") and on the basename; both case-insensitively.
  *   - Handles legacy string[] entries and current FileEntry objects ({path}).
- *   - Attachment-only rows display the generic "[{attachmentLabel}]" label;
- *     when attachmentLabel is provided it is also matched, so a user typing
- *     that visible label (e.g. "附件" / "Attachment") finds the row.
+ *   - Attachment-only rows display the generic "[{labels.attachment}]" label;
+ *     when provided it is also matched, so a user typing that visible label
+ *     (e.g. "附件" / "Attachment") finds the row.
  *   - Empty/whitespace query matches everything (no filtering).
  */
-export function matchUserMsg(msg: UserMsgForMatch, query: string, attachmentLabel?: string): boolean {
+export function matchIndexMsg(msg: IndexMsg, query: string, labels?: IndexRowLabels): boolean {
   const q = (query || '').trim().toLowerCase()
   if (!q) return true
   if (!msg) return false
 
-  // 1) Message plain text — same extraction the row displays.
-  if (extractPlainText(msg.content || '').toLowerCase().includes(q)) return true
+  // 1) Row text — same extraction the row displays.
+  if (msg.role === 'assistant') {
+    const text = assistantIndexText(msg)
+    if (text.toLowerCase().includes(q)) return true
+    // The placeholder is visible text too; let a query for it find the row.
+    if (!text && labels?.noText && labels.noText.toLowerCase().includes(q)) return true
+  } else if (extractPlainText(msg.content || '').toLowerCase().includes(q)) {
+    return true
+  }
 
   // 2) Attachment path / basename. Handles string[] (legacy) and {path, isDir}
   //    FileEntry objects (current backend), case-insensitively.
   const files = msg.files
   if (files && files.length) {
     // 2a) The visible "[Attachment]" label of attachment-only rows.
-    if (attachmentLabel && attachmentLabel.toLowerCase().includes(q)) return true
+    if (labels?.attachment && labels.attachment.toLowerCase().includes(q)) return true
     for (const f of files) {
       const path = typeof f === 'string'
         ? f

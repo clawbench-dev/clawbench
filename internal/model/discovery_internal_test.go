@@ -55,6 +55,20 @@ func TestBuildCommonPrompt_ReturnsContent(t *testing.T) {
 	assert.NotContains(t, result, "Media File Handling")
 }
 
+// The ask-question rules must tell the model where the description separator
+// goes relative to a bold option title. Without it the model bolds the whole
+// "label — gloss" phrase and then adds " — explanation", and the parser used to
+// split on the inner dash, truncating the label to "**A" (message 52484).
+func TestBuildCommonPrompt_AskOptionSeparatorRule(t *testing.T) {
+	result := BuildCommonPrompt()
+	assert.Contains(t, result, "never inside it, so the whole bold phrase stays the title")
+	assert.Contains(t, result, "inside the bold run is part of the title")
+	// The «» placeholders are an internal encoding; leaking one into the
+	// rendered prompt would reach the model verbatim.
+	assert.NotContains(t, result, "«")
+	assert.NotContains(t, result, "»")
+}
+
 func TestBuildMediaPrompt_ReturnsContent(t *testing.T) {
 	result := BuildMediaPrompt()
 	assert.NotEmpty(t, result)

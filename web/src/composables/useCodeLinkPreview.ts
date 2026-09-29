@@ -230,7 +230,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   }
 
   // ── Media targets (image / SVG / video / audio / PDF) ────────────────────
-  // These are served as raw bytes by /api/local-file/ (correct MIME, no size
+  // These are served as raw bytes by /api/fs/raw/ (correct MIME, no size
   // cap, inline), NOT by /api/file — which is JSON, 10 MiB-capped and reports
   // every raster image as binary. The preview short-circuits the fetch for
   // them and renders a media body straight from the URL.
@@ -570,7 +570,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       return
     }
 
-    // Media files are served as raw bytes by /api/local-file/ and rendered
+    // Media files are served as raw bytes by /api/fs/raw/ and rendered
     // straight from that URL — there is no JSON content to fetch, and /api/file
     // would reject every raster image as binary (10 MiB cap + null-byte sniff).
     // Go straight to 'ready' so the media body can mount.
@@ -609,13 +609,17 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
       const resp = await apiGet<FileContentResponse>(url, { signal, timeoutMs: 10_000 })
       if (reqId !== currentRequestId) return
 
+      // Record the response before the binary early-return: the unsupported
+      // placeholder shows the file's size, and a binary response is the only
+      // source of it (there is no content to slice).
+      fileContent.value = resp
+
       if (resp.isBinary) {
         status.value = 'error'
         errorCode.value = 'binary'
         return
       }
 
-      fileContent.value = resp
       isLargeFile.value = (resp.size ?? 0) > LARGE_FILE_THRESHOLD_BYTES
       seedHeldContent(resp)
       // Large files ARE cached now: only the window is held, not the whole file,

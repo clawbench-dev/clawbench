@@ -4,18 +4,19 @@ import { contrastRatio } from '@/utils/tagColor'
 import { readWebFile } from '@/testUtils/readWebFile'
 
 /**
- * The running-session indicator must be visible on every theme.
+ * The running-session indicator must be visible on every theme, and must be a
+ * SINGLE effect on the row's bottom edge.
  *
- * The signal is a light band along the bottom edge of a running row (and of
- * the chat input button). It has to work on all 36 themes, which a fixed
- * colour cannot do: the original was a hardcoded green that read fine on dark
- * backgrounds and all but vanished on light ones (1.10:1 against the row,
+ * The signal is a 3px track along the bottom edge of a running row, with a
+ * 38% comet travelling across it. It has to work on all 36 themes, which a
+ * fixed colour cannot do: the original was a hardcoded green that read fine on
+ * dark backgrounds and all but vanished on light ones (1.10:1 against the row,
  * 1.08:1 on the chat button). It is an animated *signal* — "this session is
  * running" — so being near-invisible is a functional failure, not a cosmetic
  * one.
  *
- * Three designs were tried, and the two rejected ones are pinned by tests
- * below because each looked reasonable until measured:
+ * Four designs were tried; the three rejected ones are pinned below because
+ * each looked reasonable until measured or until it shipped:
  *
  *   1. Fixed green — invisible on light themes (above).
  *   2. Accent tint across the whole row, plus a wide sweep band. This washed
@@ -23,12 +24,12 @@ import { readWebFile } from '@/testUtils/readWebFile'
  *      background (OKLab L +0.50, vs −0.40 on a light theme), so any alpha
  *      that showed the band also flooded the row. The band then read as a
  *      grey smudge on top of it.
- *   3. The current design: a 2px solid line with a short upward glow, no row
- *      tint at all. Confining the light to the bottom edge means it can be
- *      fully opaque without touching the row's colour.
- *
- * The "does not tint the row" test is what keeps design 2 from coming back,
- * and the contrast test keeps it visible.
+ *   3. A 14px masked glow spanning the edge, PLUS an 80% band swept through it.
+ *      Each layer was defensible; together they read as two effects stacked on
+ *      one edge, and the tall glow smeared the band into ambient lighting. The
+ *      tests below pin "exactly one layer" so it cannot come back.
+ *   4. The current design: a flat 3px track with a 38% comet, no mask, no
+ *      glow, no row tint. One layer, one effect.
  *
  * jsdom has no CSS engine and does not resolve `color-mix()`/`var()`, so this
  * parses variables.css directly and does the colour maths itself.
@@ -120,7 +121,7 @@ function varsFor(themeId: string): Record<string, string> {
 /**
  * Resolve a token expression to an opaque colour plus its alpha.
  *
- * Handles the shapes the token uses: a bare reference to another token, a
+ * Handles the shapes the tokens use: a bare reference to another token, a
  * plain colour, and `color-mix(in srgb, X N%, transparent)` — which does NOT
  * premultiply, so it yields X's exact colour at alpha N.
  */
@@ -147,36 +148,46 @@ function evalToken(
   throw new Error(`unrecognised token expression: ${raw}`)
 }
 
+const list = readWebFile('src/components/session/SessionList.vue')
+
+/** The base rule for a selector, anchored to the start of a line. */
+function baseRule(source: string, selector: string): string | undefined {
+  return source.match(
+    new RegExp('\\n' + selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{[^}]*\\}'),
+  )?.[0]
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 /**
  * Floors measured across all 36 themes. The original fixed green scored
- * 1.10 / 1.39. Both tokens are translucent by design (a softer signal), so
- * these floors are set just under the measured worst case — enough to catch a
- * regression that makes the indicator hard to see, without pinning the exact
- * alpha.
+ * 1.10 / 1.39. The comet head is opaque, so it clears a much higher bar than
+ * the old translucent band ever did.
  */
-const MIN_LINE = 1.40
+const MIN_HEAD = 1.40
 
 describe('running-session indicator is theme-derived and visible on every theme', () => {
-  it('draws the band from the theme accent, not a literal colour', () => {
-    expect(rootVars['--running-line'], '--running-line should be declared').toBeDefined()
-    expect(rootVars['--running-line']).toMatch(/var\(--accent-color\)/)
-    expect(rootVars['--running-line'], 'must not hardcode a colour').not.toMatch(/#[0-9a-f]{3,6}/i)
-    // Blending the accent away is what turned earlier versions grey.
-    expect(rootVars['--running-line']).not.toMatch(
-      /var\(--(text-primary|text-secondary|text-muted)\)/,
-    )
-    expect(rootVars['--running-line']).not.toMatch(/,\s*(black|white)\s*\)/)
+  it('draws the comet from the theme accent, not a literal colour', () => {
+    for (const token of ['--running-track', '--running-comet', '--running-head']) {
+      expect(rootVars[token], `${token} should be declared`).toBeDefined()
+      expect(rootVars[token], `${token} should derive from the theme`).toMatch(
+        /var\(--accent-color\)/,
+      )
+      expect(rootVars[token], `${token} must not hardcode a colour`).not.toMatch(
+        /#[0-9a-f]{3,6}/i,
+      )
+      // Blending the accent away is what turned earlier versions grey.
+      expect(rootVars[token]).not.toMatch(/var\(--(text-primary|text-secondary|text-muted)\)/)
+      expect(rootVars[token]).not.toMatch(/,\s*(black|white)\s*\)/)
+    }
   })
 
-  it('leaves the row background alone — the light is confined to the band', () => {
+  it('leaves the row background alone — the light is confined to the edge', () => {
     // Design 2 tinted the whole row and washed dark themes milky. Guard the
     // property that fixed it: a running row must not set a background, and no
     // `--running-fill` token should exist to tempt it back.
     expect(rootVars['--running-fill'], '--running-fill should be gone').toBeUndefined()
 
-    const list = readWebFile('src/components/session/SessionList.vue')
     // Only rules whose subject IS the running row — `.cross-session-row.running
     // .cross-session-item:hover` is a descendant rule and legitimately sets a
     // hover background, so a looser pattern would flag it.
@@ -195,35 +206,24 @@ describe('running-session indicator is theme-derived and visible on every theme'
     )
   })
 
-  it('draws every band surface from the token, with no hardcoded colour', () => {
+  it('draws every signal surface from a token, with no hardcoded colour', () => {
     // Scoped to the rules that paint the signal — not a whole-file scan, which
     // would trip over unrelated uses (the chat input bar's context-usage gauge
     // is legitimately green).
     //
     // The two surfaces use different motifs on purpose: the session rows get a
-    // bottom band (--running-line), the input bar's session button gets a
-    // travelling sweep (--running-sweep), because the button is a small chip
-    // rather than a full-width row.
-    const cases: { file: string; selector: RegExp; token: string }[] = [
-      {
-        file: 'src/components/session/SessionList.vue',
-        selector: /\.session-running-line::before\s*\{[^}]*\}/,
-        token: '--running-glow',
-      },
-      {
-        file: 'src/components/session/SessionList.vue',
-        selector: /\.session-running-band\s*\{[^}]*\}/,
-        token: '--running-line',
-      },
-      {
-        file: 'src/components/chat/ChatInputBar.vue',
-        selector: /\.chat-action-btn\.has-running::before\s*\{[^}]*\}/,
-        token: '--running-sweep',
-      },
+    // bottom-edge comet (--running-track / --running-comet / --running-head),
+    // the input bar's session button gets a travelling sweep (--running-sweep),
+    // because the button is a small chip rather than a full-width row.
+    const cases: { file: string; selector: string; token: string }[] = [
+      { file: 'src/components/session/SessionList.vue', selector: '.session-running-line::before', token: '--running-track' },
+      { file: 'src/components/session/SessionList.vue', selector: '.session-running-band', token: '--running-comet' },
+      { file: 'src/components/session/SessionList.vue', selector: '.session-running-line.is-blocked::before', token: '--pending-track' },
+      { file: 'src/components/chat/ChatInputBar.vue', selector: '.chat-action-btn.has-running::before', token: '--running-sweep' },
     ]
 
     for (const { file, selector, token } of cases) {
-      const rule = readWebFile(file).match(selector)?.[0]
+      const rule = baseRule(readWebFile(file), selector)
       expect(rule, `${file}: ${selector} should exist`).toBeTruthy()
       expect(rule, `${file}: ${selector} should use var(${token})`).toContain(`var(${token})`)
       expect(rule, `${file}: ${selector} still hardcodes the old green`)
@@ -231,62 +231,91 @@ describe('running-session indicator is theme-derived and visible on every theme'
     }
   })
 
-  it('keeps the band visible on every theme', () => {
+  it('keeps the comet head visible on every theme', () => {
+    // The head is the part of the comet that must never be lost — it is the
+    // opaque leading edge, and it is what makes the travel readable at a
+    // glance. It is measured against the row's own background, which may be
+    // either surface a row can sit on.
     const failures: string[] = []
     for (const theme of THEMES) {
       const vars = varsFor(theme.id)
-      const { color, alpha } = evalToken(vars['--running-line'], vars)
-      // The band sits on the row background, which may be either surface.
+      const { color, alpha } = evalToken(vars['--running-head'], vars)
       for (const bgToken of ['--bg-primary', '--bg-secondary']) {
         const raw = vars[bgToken]
         if (!raw) continue
         const bg = parseHex(raw)
         const ratio = contrastRatio(toHex(over(color, bg, alpha)), toHex(bg))
-        if (ratio < MIN_LINE) {
+        if (ratio < MIN_HEAD) {
           failures.push(`${theme.id} (${bgToken}): ${ratio.toFixed(2)}:1`)
         }
       }
     }
-    expect(failures, `band below ${MIN_LINE}:1:\n${failures.join('\n')}`).toEqual([])
+    expect(failures, `comet head below ${MIN_HEAD}:1:\n${failures.join('\n')}`).toEqual([])
   })
 
-  it('keeps the edge faintly lit between passes, without competing with the band', () => {
-    // The travelling band only covers 80% of the row at any instant, so
-    // whatever it is not covering must still show the static base glow —
-    // otherwise the edge blinks off and on between passes. Two properties:
-    // the glow is visible at all, and it stays clearly weaker than the band
-    // so the band still reads as the moving highlight on top of it.
+  it('keeps the comet readable against its own track', () => {
+    // The comet travels OVER the static track, so what matters is that the
+    // head stands out from the track rather than from the row. Without this the
+    // track could be darkened until the comet no longer reads as a highlight
+    // moving across it.
     const failures: string[] = []
     for (const theme of THEMES) {
       const vars = varsFor(theme.id)
-      const glow = evalToken(vars['--running-glow'], vars)
-      const band = evalToken(vars['--running-line'], vars)
-      for (const bgToken of ['--bg-primary', '--bg-secondary']) {
-        const raw = vars[bgToken]
-        if (!raw) continue
-        const bg = parseHex(raw)
-        const glowRatio = contrastRatio(toHex(over(glow.color, bg, glow.alpha)), toHex(bg))
-        const bandRatio = contrastRatio(toHex(over(band.color, bg, band.alpha)), toHex(bg))
-        // Visible at all — it is a deliberate signal, not a rounding artefact.
-        if (glowRatio < 1.03) {
-          failures.push(`${theme.id} (${bgToken}): glow ${glowRatio.toFixed(3)}:1 — invisible`)
-        }
-        // Strictly weaker than the band, so the band stays the highlight.
-        if (glowRatio >= bandRatio) {
-          failures.push(
-            `${theme.id} (${bgToken}): glow ${glowRatio.toFixed(2)} >= band ${bandRatio.toFixed(2)}`,
-          )
-        }
+      const head = evalToken(vars['--running-head'], vars)
+      const track = evalToken(vars['--running-track'], vars)
+      const bg = parseHex(vars['--bg-primary'])
+      const trackOverBg = over(track.color, bg, track.alpha)
+      const headRatio = contrastRatio(toHex(over(head.color, bg, head.alpha)), toHex(trackOverBg))
+      // Visible at all, and clearly the highlight rather than a faint shift.
+      if (headRatio < 1.25) {
+        failures.push(`${theme.id}: head only ${headRatio.toFixed(2)}:1 over its track`)
       }
     }
-    expect(failures, `base glow:\n${failures.join('\n')}`).toEqual([])
+    expect(failures, `comet vs track:\n${failures.join('\n')}`).toEqual([])
+  })
+
+  it('is exactly ONE effect on the edge — no glow, no mask, no second layer', () => {
+    // The design that shipped before this one stacked a 14px masked glow under
+    // an 80% band. Each layer was defensible alone; together they read as two
+    // effects fighting, and the glow smeared the band into ambient lighting.
+    // These assertions are the fence that keeps it from coming back.
+    expect(rootVars['--running-glow'], 'the old edge glow token must be gone').toBeUndefined()
+    expect(rootVars['--running-line'], 'the old symmetric band token must be gone').toBeUndefined()
+    expect(rootVars['--pending-glow'], 'the old pending glow token must be gone').toBeUndefined()
+
+    const line = baseRule(list, '.session-running-line')
+    expect(line, '.session-running-line should exist').toBeTruthy()
+    // Flat and short: the edge is a 3px bar, not a 14px glow field.
+    const height = Number(line!.match(/height:\s*(\d+)px/)?.[1])
+    expect(height, 'the track should be a thin bar').toBeGreaterThan(0)
+    expect(height, `track is ${height}px — too tall, that is a glow field again`).toBeLessThanOrEqual(4)
+
+    // The track itself must be a flat fill. A mask on the edge is how the old
+    // design bled light up the row.
+    const track = baseRule(list, '.session-running-line::before')
+    expect(track, 'the track rule should exist').toBeTruthy()
+    expect(track, 'the edge must not fade upward — that is the old glow').not.toMatch(
+      /mask-image/,
+    )
+
+    // The comet must not carry a vertical mask either.
+    const comet = baseRule(list, '.session-running-band')
+    expect(comet, '.session-running-band should exist').toBeTruthy()
+    expect(comet, 'the comet must not be vertically masked into a glow').not.toMatch(
+      /mask-image/,
+    )
+
+    // Exactly one pseudo-element on the edge (the track). The comet is a real
+    // element because WAAPI cannot target a pseudo-element.
+    const pseudo = [...list.matchAll(/\.session-running-line::(?:before|after)/g)]
+    expect(pseudo.length, 'the edge should have exactly one pseudo-element (the track)').toBe(1)
   })
 
   it('keeps the theme colour instead of washing it out to grey', () => {
     // Design 2's other failure mode: forcing contrast by blending the accent
     // toward black/white muted every theme (github-light #4a90d9 → #ccd7e1,
-    // saturation 0.66 → 0.09). Neither token may blend the accent away.
-    for (const token of ['--running-glow', '--running-line', '--running-sweep']) {
+    // saturation 0.66 → 0.09). No token may blend the accent away.
+    for (const token of ['--running-track', '--running-comet', '--running-head', '--running-sweep']) {
       for (const theme of THEMES) {
         const vars = varsFor(theme.id)
         const accent = parseHex(vars['--accent-color'])
@@ -296,22 +325,31 @@ describe('running-session indicator is theme-derived and visible on every theme'
         )
       }
     }
-    // Both tokens are translucent — the band is a soft signal, not a hard
-    // stripe. Resolve through a full theme's vars: both reference
-    // `--accent-color`, which is declared per-theme rather than in `:root`,
-    // so `rootVars` alone cannot resolve the chain.
+    // The track and comet body are translucent — the signal is soft, not a hard
+    // stripe — while the head is opaque so it stays the highlight. Resolve
+    // through a full theme's vars: these reference `--accent-color`, which is
+    // declared per-theme rather than in `:root`, so `rootVars` alone cannot
+    // resolve the chain.
     const vars = varsFor(THEMES[0].id)
-    const lineAlpha = evalToken(vars['--running-line'], vars).alpha
+    const trackAlpha = evalToken(vars['--running-track'], vars).alpha
+    const cometAlpha = evalToken(vars['--running-comet'], vars).alpha
+    const headAlpha = evalToken(vars['--running-head'], vars).alpha
     const sweepAlpha = evalToken(vars['--running-sweep'], vars).alpha
-    expect(lineAlpha).toBeGreaterThan(0)
-    expect(lineAlpha, 'the band should be translucent, not a solid stripe').toBeLessThan(1)
+    expect(trackAlpha).toBeGreaterThan(0)
+    expect(trackAlpha, 'the track should be a faint bar, not solid').toBeLessThan(1)
+    expect(cometAlpha).toBeGreaterThan(0)
+    expect(cometAlpha, 'the comet body should be translucent').toBeLessThan(1)
+    expect(headAlpha, 'the head must be opaque — it is the highlight').toBe(1)
     expect(sweepAlpha).toBeGreaterThan(0)
     expect(sweepAlpha, 'sweep should be translucent').toBeLessThan(1)
+    // And the head must be the brightest of the three.
+    expect(headAlpha).toBeGreaterThan(cometAlpha)
+    expect(cometAlpha).toBeGreaterThan(trackAlpha)
   })
 
   it('keeps the session button sweep visible on every theme', () => {
     // The button's sweep sits over its own background (--bg-tertiary). It is a
-    // small chip, so the bar is lower than the list band's — but it still has
+    // small chip, so the bar is lower than the row comet's — but it still has
     // to be visible, which the original fixed green was not (1.08:1 there).
     const failures: string[] = []
     for (const theme of THEMES) {
@@ -324,34 +362,15 @@ describe('running-session indicator is theme-derived and visible on every theme'
     expect(failures, `button sweep below 1.30:1:\n${failures.join('\n')}`).toEqual([])
   })
 
-  it('lifts nothing outside the band, so no theme can go milky', () => {
-    // The band's glow is masked to a few px at the row's bottom edge. Whatever
-    // the design, it must not lift the row as a whole — that was the milky
-    // wash. Assert the visible band is short, so the mask cannot silently
-    // become a full-row gradient.
-    const list = readWebFile('src/components/session/SessionList.vue')
-    const rule = list.match(/\.session-running-line\s*\{[^}]*\}/)?.[0]
-    expect(rule, '.session-running-line should exist').toBeTruthy()
-    const height = Number(rule!.match(/height:\s*(\d+)px/)?.[1])
-    expect(height, 'band height should be a small px value').toBeGreaterThan(0)
-    expect(height, `band is ${height}px — too tall to be a bottom-edge glow`).toBeLessThanOrEqual(20)
-
-    // The mask must actually fade out, or the glow would be a solid block.
-    const band = list.match(/\.session-running-band\s*\{[^}]*\}/)?.[0]
-    expect(band, '.session-running-band should exist').toBeTruthy()
-    expect(band, 'glow needs a mask to fade upward').toMatch(/mask-image:\s*linear-gradient/)
-    expect(band).toMatch(/transparent\s+\d+px/)
-  })
-
-  it('keeps the dark band no brighter than the light one relative to its row', () => {
+  it('keeps the dark comet no brighter than the light one relative to its row', () => {
     // A dark theme's accent sits ~+0.50 OKLab L above its background (light
-    // themes ~−0.40), so an opaque band steps the dark row much further. That
-    // is fine for a 2px band (it is the point — it must be visible), but it
+    // themes ~−0.40), so an opaque head steps the dark row much further. That
+    // is fine for a 3px edge (it is the point — it must be visible), but it
     // should not be wildly out of scale. Guard the ratio.
     const isDark = (id: string) => oklabLightness(parseHex(varsFor(id)['--bg-primary'])) < 0.5
     const step = (id: string): number => {
       const vars = varsFor(id)
-      const { color, alpha } = evalToken(vars['--running-line'], vars)
+      const { color, alpha } = evalToken(vars['--running-head'], vars)
       const bg = parseHex(vars['--bg-primary'])
       return oklabLightness(over(color, bg, alpha)) - oklabLightness(bg)
     }
@@ -363,8 +382,32 @@ describe('running-session indicator is theme-derived and visible on every theme'
 
     const avg = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
     const ratio = avg(dark) / avg(light)
-    // Measured ~2.2x, which is inherent to opaque accents on the two bases.
-    // Anything past 3x would mean a token change made dark themes glare.
-    expect(ratio, `dark/light band step ratio is ${ratio.toFixed(2)}`).toBeLessThan(3)
+    // Inherent to opaque accents on the two bases. Anything past 3x would mean
+    // a token change made dark themes glare.
+    expect(ratio, `dark/light comet step ratio is ${ratio.toFixed(2)}`).toBeLessThan(3)
+  })
+
+  it('uses a 38% comet whose travel is derived from that width', () => {
+    // The width and the two keyframes are one design: the directive's travel is
+    // expressed as a % of the comet's own width, so changing the width without
+    // recomputing the keyframes would leave the comet starting or ending inside
+    // the row (a visible jump at the wrap).
+    const comet = baseRule(list, '.session-running-band')
+    expect(comet, '.session-running-band should exist').toBeTruthy()
+    const width = Number(comet!.match(/width:\s*([\d.]+)%/)?.[1])
+    expect(width, 'the comet should be 38% of the track').toBe(38)
+
+    const directive = readWebFile('src/directives/runningSweep.ts')
+    const from = Number(directive.match(/SWEEP_FROM = 'translateX\((-?[\d.]+)%\)'/)?.[1])
+    const to = Number(directive.match(/SWEEP_TO = 'translateX\((-?[\d.]+)%\)'/)?.[1])
+    expect(Number.isFinite(from), 'SWEEP_FROM should be a translateX %').toBe(true)
+    expect(Number.isFinite(to), 'SWEEP_TO should be a translateX %').toBe(true)
+
+    // Recomputed from the design's track-space endpoints (-40% to +102%).
+    expect(from).toBeCloseTo((-40 / width) * 100, 1)
+    expect(to).toBeCloseTo((102 / width) * 100, 1)
+    // Both extremes must be fully clear of the track, or the wrap shows a jump.
+    expect(from, 'the comet must start fully off the left edge').toBeLessThanOrEqual(-100)
+    expect(to, 'the comet must finish fully off the right edge').toBeGreaterThanOrEqual(200)
   })
 })

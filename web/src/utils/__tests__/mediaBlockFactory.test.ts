@@ -18,7 +18,7 @@ describe('annotateMediaBlocks', () => {
   })
 
   it('lifts a solo <img> inside <p> into a bordered figure with a view button', () => {
-    const html = '<p><img src="/api/local-file/a.png" alt="a"></p>'
+    const html = '<p><img src="/api/fs/raw/a.png" alt="a"></p>'
     const out = annotateMediaBlocks(html)
     expect(out).toContain('<div class="image-block-wrapper">')
     expect(out).toContain('image-block-header')
@@ -106,7 +106,7 @@ describe('annotateMediaBlocks', () => {
   })
 
   it('adds attach/open buttons only for local images outside share mode', () => {
-    const html = '<img src="/api/local-file/a.png" data-attach-src="a.png">'
+    const html = '<img src="/api/fs/raw/a.png" data-attach-src="a.png">'
     const out = annotateMediaBlocks(html)
     expect(out).toContain('image-block-attach-btn')
     expect(out).toContain('image-block-open-btn')
@@ -114,7 +114,7 @@ describe('annotateMediaBlocks', () => {
 
   it('omits attach/open buttons in share mode', () => {
     setShareToken('tok-share')
-    const html = '<img src="/api/local-file/a.png" data-attach-src="a.png">'
+    const html = '<img src="/api/fs/raw/a.png" data-attach-src="a.png">'
     const out = annotateMediaBlocks(html)
     expect(out).toContain('image-block-view-btn')
     expect(out).not.toContain('image-block-attach-btn')

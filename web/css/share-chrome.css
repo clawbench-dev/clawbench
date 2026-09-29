@@ -52,6 +52,42 @@
   min-width: 0;
 }
 
+/* Two-row topbar variant: a title row (title + actions) above a byline row.
+   Used by the conversation share, whose title can be long and whose byline
+   (agent · message count · duration) does not fit beside it. The base
+   .share-topbar height is fixed at 44px for a single row; this variant grows. */
+.share-topbar--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+  padding: 10px var(--space-6);
+  gap: 3px;
+}
+
+.share-topbar-main {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  min-width: 0;
+}
+
+/* Title in a stacked topbar: wraps to at most two lines, then ellipsises.
+   min-width:0 is required for the clamp to engage inside the flex row. */
+.share-topbar-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--font-size-xl, 15px);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1f2328);
+  line-height: var(--line-height-snug, 1.3);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+
 .share-spacer { flex: 1; }
 
 .share-top-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
@@ -105,6 +141,57 @@
   padding: var(--space-4);
   box-sizing: border-box;
   background: var(--bg-primary, #fff);
+  /* Surface the row components sit on. MessageIndexRow paints its timeline
+     node with this colour to mask the rail behind it; a mismatch leaves a
+     visible halo. Hosts that embed rows in the rail set this to their own
+     background. */
+  --msg-row-bg: var(--bg-primary, #fff);
+}
+
+/* Conversation-share TOC: wider than a markdown heading list because each row
+   carries a node, a role chip, a one-line preview and a timestamp. */
+.share-toc--wide {
+  flex: 0 0 300px;
+  width: 300px;
+  padding: var(--space-4) 0;
+}
+
+/* Header row (title + close) above the scrollable list inside the rail. No
+   horizontal padding here: .share-toc-title carries its own, and the rail's
+   rows sit at a 12px inset — adding more would misalign the title. */
+.share-toc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-right: var(--space-2);
+}
+
+.share-toc-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary, #57606a);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .share-toc-close:hover {
+    background: var(--bg-tertiary, #eaeef2);
+    color: var(--accent-color, #0969da);
+  }
+}
+
+/* The list itself: MessageIndexRow rows are absolutely-rail'd per row, so they
+   live directly under this scroll container (no extra wrapper between). */
+.share-toc-list {
+  display: flex;
+  flex-direction: column;
 }
 
 .share-toc-title {
@@ -170,4 +257,47 @@
     animation: none !important;
     background: color-mix(in srgb, var(--accent-color, #0066cc) 30%, transparent);
   }
+}
+
+/* Narrow-screen TOC drawer (backdrop + slide-in panel). Shared by the file and
+   conversation share views; the SPA teleports it to <body>, so these rules are
+   global rather than scoped. The panel reuses .share-toc for its surface and
+   scroll behaviour. */
+.share-toc-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 300;
+  animation: share-toc-fade 0.18s ease-out;
+}
+
+.share-toc-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  height: 100%;
+  z-index: 301;
+  box-sizing: border-box;
+  border-left: 1px solid var(--border-color, rgba(128, 128, 128, .25));
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
+  animation: share-toc-slide 0.2s ease-out;
+}
+
+/* On narrow screens the panel owns the full width cap; a 300px rail would
+   overflow a small phone. */
+.share-toc-panel.share-toc--wide {
+  flex: 0 0 auto;
+  width: min(320px, 86vw);
+  padding: var(--space-4) 0;
+}
+
+@keyframes share-toc-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes share-toc-slide {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
 }

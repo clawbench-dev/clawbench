@@ -129,7 +129,7 @@ describe('useCodeLinkPreview', () => {
 
     expect(preview.isImageTarget.value).toBe(true)
     expect(preview.isMediaTarget.value).toBe(true)
-    // No /api/file call — media is served as raw bytes by /api/local-file/.
+    // No /api/file call — media is served as raw bytes by /api/fs/raw/.
     expect(mockApiGet).not.toHaveBeenCalled()
     expect(preview.status.value).toBe('ready')
     expect(preview.errorCode.value).toBeNull()
@@ -716,6 +716,10 @@ describe('useCodeLinkPreview', () => {
 
     expect(preview.status.value).toBe('error')
     expect(preview.errorCode.value).toBe('binary')
+    // The response is retained even on the binary early-return: the
+    // unsupported-file placeholder shows the file's size, and this is the only
+    // place it can come from (there is no content to slice).
+    expect(preview.fileContent.value?.size).toBe(500)
   })
 
   it('classifies HTTP errors by status instead of localized message text', async () => {
@@ -749,7 +753,7 @@ describe('useCodeLinkPreview', () => {
     expect(url).toContain('lineStart=270')
     expect(url).toContain('lineEnd=730')
     // A 50 MB file must not be fetched whole.
-    expect(url).not.toBe('/api/file/big.ts')
+    expect(url).not.toBe('/api/fs/file/big.ts')
   })
 
   it('reports total lines from the windowed response, not the window length', async () => {

@@ -46,6 +46,8 @@ const agentSvgMap: Record<string, AgentSvgData> = {
     qoder: { svg: extractSvgInner(qoderIcon), viewBox: extractViewBox(qoderIcon) },
     kimi: { svg: extractSvgInner(kimiIcon), viewBox: extractViewBox(kimiIcon) },
     deepseek: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },
+    // DeepSeek Harness is DeepSeek's official agent, so it shares the DeepSeek mark.
+    dsh: { svg: extractSvgInner(deepseekIcon), viewBox: extractViewBox(deepseekIcon) },
 
     // Monochrome icons (currentColor — CSS `color` controls theme adaptation)
     opencode: { svg: extractSvgInner(opencodeIcon), viewBox: extractViewBox(opencodeIcon), needsBg: true, monoCssClass: 'mono-opencode' },

@@ -2,10 +2,11 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
 import {
   FILE_MODIFYING_TOOLS,
   findLastBlockOfType,
+  findThinkingTarget,
+  appendThinkingDelta,
   forceCleanupStreamingState,
-  cancelPendingMessages,
   findStreamingMsg,
-  drainQueueMessage,
+  finalizeStreamingForDrain,
   generateDrainId,
   shouldRetryToolFetch,
   resolveEffectiveMsgId,
@@ -13,9 +14,10 @@ import {
   sortMessages,
   messageSortValue,
   nextClientSeq,
-  anchorRepliesToQuestions,
   rebuildFromDb,
   messageText,
+  mergeThinkingPrefix,
+  thinkingRenderSource,
   chatMessageReducer,
   trackInFlightSend,
   untrackInFlightSend,
@@ -179,6 +181,81 @@ describe('forceCleanupStreamingState', () => {
     expect(messages[0].streaming).toBeUndefined()
   })
 
+  it('closes a still-streaming thinking block when the turn ends', () => {
+    // `thinking_done` is not guaranteed per block (a turn ending on reasoning
+    // never gets one) and is never re-delivered to a client that was
+    // unsubscribed when it fired. A block that adopted an in_progress marker
+    // before a session switch therefore spun for the rest of the session:
+    // observed msgId=54774, th_03725d47 spinning at 11:06:30 with `inprog=true`
+    // while its DB row said done=true (a later db_load, 6 minutes on, finally
+    // converged it — but only because the user happened to switch again).
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_stuck', in_progress: true },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: false },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    const thinks = messages[0].blocks.filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'block kept').toHaveLength(1)
+    expect(thinks[0].done, 'marked finished so the spinner stops').toBe(true)
+    expect(thinks[0].in_progress, 'in_progress cleared').toBeUndefined()
+    // The tool_use path is untouched.
+    expect(messages[0].blocks.find((b: any) => b.type === 'tool_use').done).toBe(true)
+  })
+
+  it('leaves an already-finished thinking block alone', () => {
+    const messages: any[] = [
+      { role: 'assistant', content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', done: true, text: 'kept' },
+      ] },
+    ]
+    forceCleanupStreamingState(messages, { onRenderNeeded: vi.fn() })
+    expect(messages[0].blocks[0].done).toBe(true)
+    expect(messages[0].blocks[0].text).toBe('kept')
+  })
+
+  it('syncs the DB done flag onto the live block it owns', () => {
+    // The reported "spinner keeps turning on a thinking block that has clearly
+    // moved on to its tool calls". msgId=54674 / th_bb1f742720e: its DB row is
+    // done=true, yet the live block kept in_progress and spun. The auto-load log
+    // confirms the block fetched as `provisional=true` three times in a row
+    // (4499 → 7782 → 9127 chars) and never as a final fetch — the live block
+    // never learned it was finished.
+    //
+    // Cause: mergeOrderedBlocks drops every DB thinking block once live has any
+    // (`liveHasThinking`). Correct for CONTENT (they are the same blocks; keeping
+    // both duplicates the chip) but it also discarded the one fact only the DB
+    // has — whether the block FINISHED. The DB is authoritative for that flag;
+    // live is authoritative for content.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54674, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', in_progress: true },
+        { type: 'tool_use', name: 'Read', id: 'r1', done: true },
+        { type: 'thinking', think_id: 'th_live', in_progress: true },
+      ] },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54674, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_done', done: true },
+        { type: 'tool_use', name: 'Read', id: 'r1', done: true },
+        { type: 'thinking', think_id: 'th_live', in_progress: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.streaming)!
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(2, 'no duplicate chips')
+    const finished = thinks.find((b: any) => b.think_id === 'th_done')
+    expect(finished.done, 'the DB-finished block must stop spinning').toBe(true)
+    expect(finished.in_progress).toBeUndefined()
+    const running = thinks.find((b: any) => b.think_id === 'th_live')
+    expect(running.in_progress, 'a genuinely-streaming block is untouched').toBe(true)
+    expect(running.done, 'and must NOT be marked done').toBeFalsy()
+  })
+
   it('marks unfinished tool_use as done', () => {
     const messages = [
       {
@@ -329,110 +406,57 @@ describe('findStreamingMsg', () => {
   })
 })
 
-describe('drainQueueMessage', () => {
-  const callbacks = {
-    onRenderNeeded: vi.fn(),
-    onExtractScheduledTasks: vi.fn(),
-  }
-
-  beforeEach(() => {
-    vi.clearAllMocks()
-  })
-
-  it('finalizes streaming assistant and pushes new streaming placeholder', () => {
+describe('finalizeStreamingForDrain', () => {
+  it('finalizes the streaming assistant in place (flag removed, content kept)', () => {
     const messages: any[] = [
-      { role: 'assistant', content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
+      { role: 'user', id: 1, content: 'A' },
+      { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
     ]
-    const result = drainQueueMessage(messages, '', 'B msg', [], 'codebuddy', callbacks)
-    // Old streaming is finalized (flag removed)
-    expect(messages[0].streaming).toBeUndefined()
-    // Drained user message pushed
-    expect(messages[1].role).toBe('user')
-    expect(messages[1].content).toBe('B msg')
-    // New streaming placeholder pushed
-    expect(result!.streaming).toBe(true)
-    expect(result!.backend).toBe('codebuddy')
-    expect(result!.role).toBe('assistant')
-    expect(messages).toHaveLength(3)
-  })
-
-  it('pushes new streaming placeholder even when no existing streaming message', () => {
-    const messages: any[] = []
-    const result = drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
-    // User msg + streaming placeholder
+    finalizeStreamingForDrain(messages)
+    expect(messages[1].streaming).toBeUndefined()
+    expect(messages[1].blocks).toEqual([{ type: 'text', text: 'A reply' }])
     expect(messages).toHaveLength(2)
-    expect(messages[0].role).toBe('user')
-    expect(messages[0].content).toBe('hello')
-    expect(messages[1].role).toBe('assistant')
-    expect(messages[1].streaming).toBe(true)
-    expect(messages[1].backend).toBe('codebuddy')
-    expect(result).toBe(messages[1])
   })
 
-  it('deduplicates user message by drain ID (not content text)', () => {
-    const drainId = 'drain-1234567890-abc123'
+  it('never deletes the message, even when it is empty (avoids v-for key shifts)', () => {
     const messages: any[] = [
-      { role: 'user', id: drainId, _drain: true, content: 'existing user msg', blocks: [{ type: 'text', text: 'existing user msg' }] },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
+      { role: 'assistant', id: 'drain-1', content: '', blocks: [], streaming: true },
     ]
-    const result = drainQueueMessage(messages, '', 'existing user msg', [], 'codebuddy', callbacks, drainId)
-    // No duplicate user message — dedup by drain ID
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(1)
-    // Old assistant (finalized) + new streaming
-    expect(messages).toHaveLength(3)
-    expect(result!.streaming).toBe(true)
-  })
-
-  it('does NOT deduplicate by content text — same content with different drain IDs is allowed', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'drain-111-first', _drain: true, content: 'same text', blocks: [{ type: 'text', text: 'same text' }] },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    // drainQueueMessage generates a NEW drain ID, different from 'drain-111-first'
-    drainQueueMessage(messages, '', 'same text', [], 'codebuddy', callbacks)
-    const userMsgs = messages.filter(m => m.role === 'user')
-    // Both user messages kept — they have different drain IDs
-    expect(userMsgs).toHaveLength(2)
-  })
-
-  it('finalizes streaming message and preserves it (never deletes, avoids key shifts)', () => {
-    const messages: any[] = [
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
-    // Old empty streaming is kept (not deleted) to avoid v-for key shifts
-    // Messages: old assistant(finalized) + user msg + new streaming
-    expect(messages).toHaveLength(3)
+    finalizeStreamingForDrain(messages)
+    expect(messages).toHaveLength(1)
     expect(messages[0].streaming).toBeUndefined()
-    expect(messages[0].content).toBe('')
     expect(messages[0].blocks).toEqual([])
-    // User message
-    expect(messages[1].role).toBe('user')
-    expect(messages[1].content).toBe('hello')
-    // New streaming placeholder
-    expect(messages[2].streaming).toBe(true)
   })
 
-  it('finalizes unfinished tool_use blocks in streaming message', () => {
+  it('is a no-op when there is no streaming message', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'q' },
+      { role: 'assistant', id: 2, content: 'done reply' },
+    ]
+    finalizeStreamingForDrain(messages)
+    expect(messages).toHaveLength(2)
+    expect(messages[1].streaming).toBeUndefined()
+  })
+
+  it('marks unfinished tool_use blocks done so their spinners stop', () => {
     const messages: any[] = [
       {
         role: 'assistant',
         content: '',
         blocks: [
-          { type: 'tool_use', name: 'Read', id: '1', done: false, output: '' },
-          { type: 'tool_use', name: 'Write', id: '2', done: true, output: 'ok' },
+          { type: 'tool_use', name: 'Read', id: '1', done: false },
+          { type: 'tool_use', name: 'Write', id: '2', done: true },
         ],
         streaming: true,
       },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
+    finalizeStreamingForDrain(messages)
     expect(messages[0].blocks[0].done).toBe(true)
     expect(messages[0].blocks[1].done).toBe(true) // already was done
     expect(messages[0].streaming).toBeUndefined()
   })
 
-  it('does NOT mark PermissionApproval blocks as done in streaming cleanup', () => {
+  it('does NOT mark PermissionApproval blocks as done (requires user interaction)', () => {
     const messages: any[] = [
       {
         role: 'assistant',
@@ -444,7 +468,7 @@ describe('drainQueueMessage', () => {
         streaming: true,
       },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
+    finalizeStreamingForDrain(messages)
     expect(messages[0].blocks[0].done).toBe(true) // Normal tool finalized
     expect(messages[0].blocks[1].done).toBe(false) // PermissionApproval left alone
   })
@@ -461,545 +485,35 @@ describe('drainQueueMessage', () => {
         streaming: true,
       },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
+    finalizeStreamingForDrain(messages)
     expect(messages[0].blocks[0].output).toBe('') // garbage cleared
     expect(messages[0].blocks[1].output).toBe('real output') // meaningful output kept
   })
 
-  it('calls onExtractScheduledTasks when streaming message is found', () => {
+  it('calls onExtractScheduledTasks when a streaming message is found', () => {
     const onExtractScheduledTasks = vi.fn()
     const messages: any[] = [
       { role: 'assistant', content: 'has content', blocks: [], streaming: true },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks })
+    finalizeStreamingForDrain(messages, { onExtractScheduledTasks })
     expect(onExtractScheduledTasks).toHaveBeenCalledWith(messages)
   })
 
-  it('does not call onExtractScheduledTasks when no stale streaming message exists', () => {
+  it('does not call onExtractScheduledTasks when no streaming message exists', () => {
     const onExtractScheduledTasks = vi.fn()
-    const messages: any[] = []
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks })
+    const messages: any[] = [{ role: 'user', content: 'q' }]
+    finalizeStreamingForDrain(messages, { onExtractScheduledTasks })
     expect(onExtractScheduledTasks).not.toHaveBeenCalled()
   })
 
-  it('does not call onRenderNeeded from drainQueueMessage', () => {
-    const onRenderNeeded = vi.fn()
-    const onExtractScheduledTasks = vi.fn()
+  it('leaves non-streaming messages untouched', () => {
     const messages: any[] = [
-      { role: 'assistant', content: '', blocks: [{ type: 'text', text: 'stale' }], streaming: true },
+      { role: 'user', content: 'hello' },
+      { role: 'assistant', content: 'response', blocks: [{ type: 'text', text: 'response' }] },
     ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', { onRenderNeeded, onExtractScheduledTasks })
-    expect(onRenderNeeded).not.toHaveBeenCalled()
-    // But onExtractScheduledTasks should be called when a stale streaming msg was found
-    expect(onExtractScheduledTasks).toHaveBeenCalled()
-  })
-
-  it('full queue drain scenario: atomically finalizes A and starts B', () => {
-    const onRenderNeeded = vi.fn()
-    const onExtractScheduledTasks = vi.fn()
-    const callbacks = { onRenderNeeded, onExtractScheduledTasks }
-
-    // Initial state — A streaming
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A msg', blocks: [{ type: 'text', text: 'A msg' }] },
-      { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
-    ]
-
-    // queue_drain event with B's user content
-    const result = drainQueueMessage(messages, '', 'B msg', [], 'codebuddy', callbacks)
-
-    // A's assistant message is finalized but still present
-    // Messages: A user, A assistant(finalized), B user, B streaming
-    expect(messages).toHaveLength(4)
-    expect(messages[0].role).toBe('user')
-    expect(messages[0].content).toBe('A msg')
-    expect(messages[1].role).toBe('assistant')
-    expect(messages[1].blocks).toEqual([{ type: 'text', text: 'A reply' }])
-    expect(messages[1].streaming).toBeUndefined()
-    // B's user message pushed
-    expect(messages[2].role).toBe('user')
-    expect(messages[2].content).toBe('B msg')
-    // New streaming assistant for B
-    expect(messages[3].role).toBe('assistant')
-    expect(messages[3].streaming).toBe(true)
-    expect(result).toBe(messages[3])
-  })
-
-  it('preserves A reply with tool_use blocks during drain', () => {
-    const onRenderNeeded = vi.fn()
-    const onExtractScheduledTasks = vi.fn()
-
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A msg', blocks: [{ type: 'text', text: 'A msg' }] },
-      {
-        role: 'assistant',
-        id: 2,
-        content: '',
-        blocks: [
-          { type: 'tool_use', name: 'Read', id: '1', done: true, output: 'file content' },
-          { type: 'text', text: 'A summary' },
-        ],
-        streaming: true,
-      },
-    ]
-
-    drainQueueMessage(messages, '', 'B msg', [], 'codebuddy', { onRenderNeeded, onExtractScheduledTasks })
-
-    expect(messages).toHaveLength(4)
-    // A's reply preserved with tool_use + text blocks
-    expect(messages[1].role).toBe('assistant')
-    expect(messages[1].blocks).toHaveLength(2)
-    expect(messages[1].blocks[0].name).toBe('Read')
-    expect(messages[1].blocks[1].text).toBe('A summary')
-    expect(messages[1].streaming).toBeUndefined()
-    // B's user message
-    expect(messages[2].role).toBe('user')
-    expect(messages[2].content).toBe('B msg')
-    // New streaming for B
-    expect(messages[3].streaming).toBe(true)
-  })
-
-  it('handles multiple messages in array during queue drain', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'round 1', blocks: [{ type: 'text', text: 'round 1' }] },
-      { role: 'assistant', id: 2, content: 'r1 reply', blocks: [{ type: 'text', text: 'r1 reply' }] },
-      { role: 'user', id: 3, content: 'A msg', blocks: [{ type: 'text', text: 'A msg' }] },
-      { role: 'assistant', id: 4, content: '', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
-    ]
-
-    drainQueueMessage(messages, '', 'B msg', [], 'codebuddy', { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() })
-
-    expect(messages).toHaveLength(6)
-    // All earlier messages intact
-    expect(messages[0].content).toBe('round 1')
-    expect(messages[1].content).toBe('r1 reply')
-    expect(messages[2].content).toBe('A msg')
-    // A's reply still there
-    expect(messages[3].blocks).toEqual([{ type: 'text', text: 'A reply' }])
-    expect(messages[3].streaming).toBeUndefined()
-    // B's user message
-    expect(messages[4].role).toBe('user')
-    expect(messages[4].content).toBe('B msg')
-    // New streaming
-    expect(messages[5].streaming).toBe(true)
-  })
-
-  it('new streaming placeholder has correct createdAt and backend', () => {
-    const before = new Date().toISOString()
-    const messages: any[] = []
-    const result = drainQueueMessage(messages, '', 'hello', [], 'claude', callbacks)
-    const after = new Date().toISOString()
-    expect(result!.backend).toBe('claude')
-    expect(result!.createdAt >= before).toBe(true)
-    expect(result!.createdAt <= after).toBe(true)
-  })
-
-  it('assigns drain ID to the pushed user message', () => {
-    const messages: any[] = []
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks, 'drain-test-123')
-    expect(messages[0].id).toBe('drain-test-123')
-  })
-
-  it('auto-generates drain ID when not provided', () => {
-    const messages: any[] = []
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
-    expect(messages[0].id).toMatch(/^drain-\d+-[a-z0-9]+$/)
-  })
-
-  it('drain ID does not collide with DB numeric IDs', () => {
-    const messages: any[] = [
-      { role: 'user', id: 42, content: 'DB user msg', blocks: [{ type: 'text', text: 'DB user msg' }] },
-    ]
-    drainQueueMessage(messages, '', 'new msg', [], 'codebuddy', callbacks)
-    const drainMsg = messages.find((m: any) => m.role === 'user' && m.content === 'new msg')
-    expect(drainMsg).toBeDefined()
-    expect(typeof drainMsg.id).toBe('string')
-    expect(drainMsg.id.startsWith('drain-')).toBe(true)
-    // Numeric DB IDs (42) and string drain IDs can never collide
-    expect(drainMsg.id).not.toBe(42)
-  })
-
-  it('drain ID does not collide with optimistic push local- IDs', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'local-1700000000000', content: 'optimistic msg', blocks: [{ type: 'text', text: 'optimistic msg' }] },
-    ]
-    drainQueueMessage(messages, '', 'drained msg', [], 'codebuddy', callbacks)
-    const drainMsg = messages.find((m: any) => m.role === 'user' && m.content === 'drained msg')
-    expect(drainMsg.id.startsWith('drain-')).toBe(true)
-    expect(drainMsg.id.startsWith('local-')).toBe(false)
-  })
-
-  it('drain pushes a user message that loadHistory later replaces with DB rows', () => {
-    const messages: any[] = []
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks)
-    expect(messages[0].role).toBe('user')
+    finalizeStreamingForDrain(messages)
     expect(messages[0].content).toBe('hello')
-
-    // Simulate loadHistory: replace with DB messages (numeric IDs)
-    const dbMessages = [
-      { role: 'user', id: 1, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
-      { role: 'assistant', id: 2, content: 'response', blocks: [{ type: 'text', text: 'response' }] },
-    ]
-    messages.length = 0
-    messages.push(...dbMessages)
-
-    // DB rows carry numeric ids — authoritative order
-    expect(messages.every(m => typeof m.id === 'number')).toBe(true)
-  })
-
-  it('loadHistory race: DB message with different ID coexists with drained message', () => {
-    const drainId = 'drain-1700000000000-abc123'
-    const messages: any[] = [
-      { role: 'user', id: 42, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks, drainId)
-    // Both messages exist — the DB one and the drain one
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(2)
-    expect(userMsgs[0].id).toBe(42)           // DB
-    expect(userMsgs[1].id).toBe(drainId)      // drain
-  })
-
-  it('skips push when same drainId already exists (idempotent)', () => {
-    const drainId = 'drain-1700000000000-xyz789'
-    const messages: any[] = [
-      { role: 'user', id: drainId, _drain: true, content: 'hello', blocks: [{ type: 'text', text: 'hello' }] },
-    ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks, drainId)
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(1)
-  })
-
-  // ── dbMessageId parameter (queue_drain carries DB message ID) ──
-
-  it('adopts numeric DB id for a drained message when dbMessageId is provided', () => {
-    const messages: any[] = [
-      { role: 'assistant', content: 'reply', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, undefined, 42)
-    const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
-    expect(userMsg).toBeDefined()
-    // The numeric dbMessageId IS adopted — the message is now a normal
-    // chat_history row ordered by its DB id.
-    expect(userMsg.id).toBe(42)
-  })
-
-  it('uses drain id (string) only when dbMessageId is not provided', () => {
-    const messages: any[] = [
-      { role: 'assistant', content: 'reply', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, 'drain-custom', undefined)
-    const userMsg = messages.find(m => m.role === 'user' && m.content === 'B')
-    expect(userMsg.id).toBe('drain-custom')
-  })
-
-  it('assigns stable drain ID to streaming assistant placeholder (never undefined)', () => {
-    const messages: any[] = [
-      { role: 'assistant', content: 'reply', blocks: [], streaming: true },
-    ]
-    const result = drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, undefined, 42)
-    // Streaming assistant must have a non-undefined id — prevents 'local-{index}' v-for key
-    expect(result.id).toBeDefined()
-    expect(typeof result.id).toBe('string')
-    expect(result.id).toMatch(/^drain-/)
-  })
-
-  it('no message has undefined id after drain with dbMessageId', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A', blocks: [] },
-      { role: 'assistant', id: 2, content: 'reply', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks, undefined, 50)
-    for (const msg of messages) {
-      expect(msg.id).toBeDefined()
-    }
-  })
-
-  // ── pending message flag clearing (new architecture) ──
-
-  it('finds pending message and clears its flag instead of pushing duplicate', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'queue-1', 'hello', [], 'claude', callbacks)
-    // No duplicate user message — the existing pending one had its flag cleared
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(1)
-    expect(userMsgs[0].pending).toBeUndefined()
-    expect(userMsgs[0].content).toBe('hello')
-  })
-
-  it('adopts DB id into a drained pending message regardless of parent state', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'queue-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true, seq: 1 },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'queue-1', 'hello', [], 'claude', callbacks, undefined, 42)
-    const userMsg = messages.find(m => m.role === 'user')
-    // The drained message adopts its DB id and moves to the id domain (seq
-    // dropped) — like every other adopted message, so the sort space stays
-    // uniform and adopted messages never interleave by client seq.
-    expect(userMsg.id).toBe(42)
-    expect(userMsg.pending).toBeUndefined()
-    expect(userMsg.seq).toBeUndefined()
-  })
-
-  it('falls back to push when no matching pending message found', () => {
-    // Pending message content doesn't match drain content — push as fallback
-    const messages: any[] = [
-      { role: 'user', id: 'queue-1', content: 'other msg', blocks: [{ type: 'text', text: 'other msg' }], pending: true },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'hello', [], 'claude', callbacks)
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(2)
-    // First pending message still has its flag
-    expect(userMsgs[0].pending).toBe(true)
-    // New message was pushed as fallback
-    expect(userMsgs[1].content).toBe('hello')
-  })
-
-  it('FIFO: with two identical pending messages, first drain clears first pending', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'queue-1', content: 'yes', blocks: [{ type: 'text', text: 'yes' }], pending: true },
-      { role: 'user', id: 'queue-2', content: 'yes', blocks: [{ type: 'text', text: 'yes' }], pending: true },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'queue-1', 'yes', [], 'claude', callbacks)
-    // First pending message (queue-1) has flag cleared, second (queue-2) still pending
-    expect(messages.find((m: any) => m.id === 'queue-1').pending).toBeUndefined()
-    expect(messages.find((m: any) => m.id === 'queue-2').pending).toBe(true)
-  })
-
-  // ── queueId matching ──
-
-  it('matches pending message by queueId when provided (adopts DB id)', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true, seq: 1 },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'pending-1', 'hello', [], 'claude', callbacks, undefined, 42)
-    const userMsg = messages.find(m => m.role === 'user')
-    expect(userMsg.id).toBe(42)
-    expect(userMsg.pending).toBeUndefined()
-  })
-
-  it('prefers queueId match over content match', () => {
-    // Two pending messages with same content but different IDs
-    const messages: any[] = [
-      { role: 'user', id: 'pending-A', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
-      { role: 'user', id: 'pending-B', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'pending-B', 'hello', [], 'claude', callbacks)
-    // pending-B should have its flag cleared (queueId match), not pending-A
-    expect(messages.find((m: any) => m.id === 'pending-A').pending).toBe(true)
-    expect(messages.find((m: any) => m.id === 'pending-B').pending).toBeUndefined()
-  })
-
-  it('matches pending message by queueId (content match not needed)', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'pending-1', 'hello', [], 'claude', callbacks)
-    const userMsg = messages.find(m => m.role === 'user')
-    expect(userMsg.pending).toBeUndefined()
-  })
-
-  // ── _remote message matching (cross-device sync) ──
-
-  it('finds _remote message by _remoteQueueId and clears flag instead of pushing duplicate', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true, _remoteQueueId: 'remote-q-1' },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'remote-q-1', 'from phone', [], 'codebuddy', callbacks, undefined, 42)
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(1)
-    expect(userMsgs[0]._remote).toBeUndefined()
-  })
-
-  it('preserves a numeric id on a drained cross-device _remote message (no key churn)', () => {
-    // A _remote message that arrived already persisted in the DB carries a real
-    // numeric id. On drain it must be KEPT — replacing it would churn the v-for
-    // key and drop per-bubble render state.
-    const messages: any[] = [
-      { role: 'user', id: 42, content: 'from phone', blocks: [{ type: 'text', text: 'from phone' }], _remote: true, _remoteQueueId: 'remote-q-1' },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, 'remote-q-1', 'from phone', [], 'codebuddy', callbacks, undefined, 99)
-    const userMsgs = messages.filter(m => m.role === 'user')
-    expect(userMsgs).toHaveLength(1)
-    expect(userMsgs[0]._remote).toBeUndefined()
-    // Numeric DB id is authoritative — not replaced by a drain id.
-    expect(userMsgs[0].id).toBe(42)
-  })
-
-  it('prefers pending match over _remote match', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], pending: true },
-      { role: 'user', id: 'remote-1', content: 'hello', blocks: [{ type: 'text', text: 'hello' }], _remote: true },
-      { role: 'assistant', content: '', blocks: [], streaming: true },
-    ]
-    drainQueueMessage(messages, '', 'hello', [], 'codebuddy', callbacks, undefined, 99)
-    const userMsgs = messages.filter(m => m.role === 'user')
-    // Both get matched — pending flag cleared first (findIndex), _remote also matched on same content
-    expect(userMsgs[0].pending).toBeUndefined()
-  })
-
-  // ── streaming placeholder insertion position ──
-
-  it('inserts streaming assistant AFTER the drained user message, before pending messages', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, seq: 1 },
-      { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true, seq: 2 },
-    ]
-    drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks)
-    expect(messages[2].role).toBe('user')
-    expect(messages[2].content).toBe('B')
-    expect(messages[2].pending).toBeUndefined()
-    expect(messages[3].role).toBe('assistant')
-    expect(messages[3].streaming).toBe(true)
-    expect(messages[4].role).toBe('user')
-    expect(messages[4].content).toBe('C')
-    expect(messages[4].pending).toBe(true)
-  })
-
-  it('inserts streaming assistant after fallback push when pending not found', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 'queue-C', content: 'C', blocks: [{ type: 'text', text: 'C' }], pending: true },
-    ]
-    drainQueueMessage(messages, '', 'B', [], 'claude', callbacks)
-    // B user message was pushed as fallback, streaming goes right after it
-    const bIdx = messages.findIndex((m: any) => m.role === 'user' && m.content === 'B')
-    expect(bIdx).not.toBe(-1)
-    expect(messages[bIdx + 1].role).toBe('assistant')
-    expect(messages[bIdx + 1].streaming).toBe(true)
-  })
-
-  it('single queued message: updates the queued bubble in place and places the reply directly below it', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }], streaming: true },
-      { role: 'user', id: 'queue-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, seq: nextClientSeq() },
-    ]
-    sortMessages(messages)
-    const result = drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks, undefined, 3)
-
-    // The queued bubble was updated in place (no duplicate) and adopts the
-    // numeric DB id (parent A is DB-backed, so the DB-id domain is safe).
-    const bUsers = messages.filter(m => m.role === 'user' && m.content === 'B')
-    expect(bUsers).toHaveLength(1)
-    expect(bUsers[0].id).toBe(3)
-    expect(bUsers[0].pending).toBeUndefined()
-
-    // The previous assistant (A reply) was finalized.
-    const aReply = messages.find(m => m.content === 'A reply')
-    expect(aReply.streaming).toBeUndefined()
-
-    // The reply sorts immediately after its question.
-    sortMessages(messages)
-    const idxB = messages.findIndex(m => m.content === 'B')
-    const idxOut = messages.findIndex(m => m === result)
-    expect(idxOut).toBe(idxB + 1)
-  })
-
-  it('multiple queued messages: each reply stays between its own question and the next queued message', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A' },
-      { role: 'assistant', id: 2, content: 'A reply' },
-      { role: 'user', id: 'queue-B', content: 'B', pending: true, seq: nextClientSeq() },
-      { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: nextClientSeq() },
-    ]
-    sortMessages(messages)
-
-    const rB = drainQueueMessage(messages, 'queue-B', 'B', [], 'claude', callbacks, undefined, 3)
-    rB!.blocks!.push({ type: 'text', text: 'B reply' })
-    const rC = drainQueueMessage(messages, 'queue-C', 'C', [], 'claude', callbacks, undefined, 5)
-    rC!.blocks!.push({ type: 'text', text: 'C reply' })
-
-    sortMessages(messages)
-    const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
-    // Final order: A, A reply, B, B reply, C, C reply
-    expect(contents.indexOf('A')).toBeLessThan(contents.indexOf('B'))
-    expect(contents.indexOf('B')).toBeLessThan(contents.indexOf('B reply'))
-    expect(contents.indexOf('B reply')).toBeLessThan(contents.indexOf('C'))
-    expect(contents.indexOf('C')).toBeLessThan(contents.indexOf('C reply'))
-    // No duplicate user messages.
-    expect(messages.filter(m => m.role === 'user')).toHaveLength(3)
-  })
-
-  it('keeps conversational order when a drained queued message and a direct message are both adopted', () => {
-    // Real-flow: Q1 was sent while idle (plain optimistic push, string id),
-    // its reply S1 is streaming. Q2 was enqueued while S1 generated. In the
-    // live stream Q1's DB id arrives via self-echo BEFORE Q2 is drained (the
-    // user_message emit precedes the queue_drain). Both adopted messages move
-    // to the id domain → sorted by DB id → Q1(1) before Q2(3).
-    const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
-    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), parentQueueId: String(q1.id) }
-    const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: nextClientSeq() }
-    const messages: any[] = [q1, s1, q2]
-    sortMessages(messages)
-
-    // Q1 adopted via self-echo (id=1), Q2 drained (id=3) — both move to id domain.
-    // optimistic_adopt_id preserves old id as queueId so the reply anchor lives.
-    q1.id = 1
-    q1.queueId = 'pending-1'
-    delete q1.seq
-    const s2 = drainQueueMessage(messages, 'queue-B', 'Q2', [], 'claude', callbacks, undefined, 3)
-    s2!.blocks!.push({ type: 'text', text: 'S2 reply' })
-    sortMessages(messages)
-
-    const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
-    expect(contents).toEqual(['Q1', 'S1 reply', 'Q2', 'S2 reply'])
-    const q2After = messages.find((m: any) => m.content === 'Q2')
-    expect(q2After.id).toBe(3)
-    expect(q2After.pending).toBeUndefined()
-    expect(q2After.seq).toBeUndefined()
-  })
-
-  it('keeps the earlier question above an enqueued message that lacks a seq (regression)', () => {
-    // Real enqueue path (enqueueAndMaybeStart) pushes the pending message WITHOUT
-    // a `seq`. Q1's DB id arrives via self-echo before Q2 is drained (emit
-    // precedes drain), so both adopted messages end up in the id domain and
-    // sort by DB id. The drained message must inherit a proper position.
-    const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: nextClientSeq() }
-    const s1 = { role: 'assistant', id: 'drain-x', content: '', blocks: [{ type: 'text', text: 'S1 reply' }], streaming: true, seq: nextClientSeq(), parentQueueId: String(q1.id) }
-    // q2 has pending=true but NO seq — exactly what enqueueAndMaybeStart pushes.
-    const q2 = { role: 'user', id: 'queue-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true }
-    const messages: any[] = [q1, s1, q2]
-    sortMessages(messages)
-
-    // Q1 adopted via self-echo (id=1, old id kept as queueId).
-    q1.id = 1
-    q1.queueId = 'pending-1'
-    delete q1.seq
-    const s2 = drainQueueMessage(messages, 'queue-B', 'Q2', [], 'claude', callbacks, undefined, 3)
-    s2!.blocks!.push({ type: 'text', text: 'S2 reply' })
-    sortMessages(messages)
-
-    const contents = messages.map(m => m.content || (m.blocks || []).map((b: any) => b.text || '').join(''))
-    expect(contents).toEqual(['Q1', 'S1 reply', 'Q2', 'S2 reply'])
-  })
-
-  it('cancel while queued: removes the queued messages from the array', () => {
-    const messages: any[] = [
-      { role: 'user', id: 1, content: 'A' },
-      { role: 'user', id: 'queue-B', content: 'B', pending: true, seq: nextClientSeq() },
-      { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: nextClientSeq() },
-    ]
-    const removed = cancelPendingMessages(messages, ['queue-B'])
-    expect(removed).toBe(1)
-    expect(messages.some(m => m.content === 'B')).toBe(false)
-    // The other still-queued message is untouched.
-    expect(messages.some(m => m.content === 'C')).toBe(true)
+    expect(messages[1].content).toBe('response')
   })
 })
 
@@ -1016,7 +530,7 @@ describe('sortMessages', () => {
 
   it('places all transient messages after every DB-backed message', () => {
     const messages = [
-      { role: 'user', id: 'pending-x', content: 'u2', pending: true, seq: 1 },
+      { role: 'user', id: 'pending-x', content: 'u2', seq: 1 },
       { role: 'assistant', id: 2, content: 'r1' },
       { role: 'user', id: 1, content: 'u1' },
     ] as any[]
@@ -1024,27 +538,35 @@ describe('sortMessages', () => {
     expect(messages.map(m => m.id)).toEqual([1, 2, 'pending-x'])
   })
 
-  it('keeps a streaming reply anchored below its own question, above later pending messages', () => {
-    const parent = { role: 'user', id: 'queue-B', content: 'B', pending: true, seq: 1 }
+  it('orders transient messages among themselves by seq', () => {
     const messages = [
-      { role: 'user', id: 1, content: 'A' },
-      { role: 'assistant', id: 2, content: 'A reply' },
-      parent,
-      { role: 'user', id: 'queue-C', content: 'C', pending: true, seq: 2 },
-      { role: 'assistant', id: 'drain-1', content: '', streaming: true, seq: 3, parentQueueId: String(parent.id) },
+      { role: 'assistant', id: 'drain-2', content: 'r2', seq: 2 },
+      { role: 'user', id: 'pending-1', content: 'u1', seq: 1 },
     ] as any[]
     sortMessages(messages)
-    const roles = messages.map(m => `${m.role}:${m.content}`)
-    expect(roles).toEqual(['user:A', 'assistant:A reply', 'user:B', 'assistant:', 'user:C'])
+    expect(messages.map(m => m.id)).toEqual(['pending-1', 'drain-2'])
+  })
+
+  it('treats a streaming placeholder with a numeric id as transient (sorts after DB rows)', () => {
+    const streaming = { role: 'assistant', id: 7, content: '', streaming: true, seq: 1 }
+    const msgs: any[] = [streaming, { role: 'user', id: 3, content: 'B' }]
+    sortMessages(msgs)
+    // DB row first, then the streaming placeholder (its numeric id is NOT the
+    // ordering key while it is still streaming).
+    expect(msgs.map(m => String(m.id))).toEqual(['3', '7'])
+    // Once finalized, its numeric DB id becomes the ordering key.
+    delete streaming.streaming
+    const msgs2: any[] = [streaming, { role: 'user', id: 3, content: 'B' }]
+    sortMessages(msgs2)
+    expect(msgs2.map(m => String(m.id))).toEqual(['3', '7'])
   })
 
   it('never shows a new reply above an older reply even when physical order is scrambled', () => {
     // Simulate the reported bug interleaving: array physically scrambled, both
     // replies present. Sorting must restore DB order (older reply below older
     // user, newer reply below newer user).
-    const parentB = { role: 'user', id: 4, content: 'B' }
     const messages = [
-      { role: 'assistant', id: 5, content: 'B reply', streaming: true, seq: 4, parentQueueId: String(parentB.id) },
+      { role: 'assistant', id: 5, content: 'B reply', streaming: true, seq: 4 },
       { role: 'assistant', id: 2, content: 'A reply' },
       { role: 'user', id: 1, content: 'A' },
       { role: 'user', id: 4, content: 'B' },
@@ -1052,67 +574,17 @@ describe('sortMessages', () => {
     sortMessages(messages)
     const contents = messages.map(m => m.content)
     expect(contents).toEqual(['A', 'A reply', 'B', 'B reply'])
-    // The new reply (B reply) must be BELOW the older reply (A reply).
     const idxA = contents.indexOf('A reply')
     const idxB = contents.indexOf('B reply')
     expect(idxB).toBeGreaterThan(idxA)
   })
 
-  it('anchors a streaming reply to a DB-backed parent via parentQueueId (id + 0.5)', () => {
-    const parent = { role: 'user', id: 3, content: 'B' }
-    const messages = [
-      { role: 'assistant', id: 4, content: 'B reply', streaming: true, seq: 9, parentQueueId: String(parent.id) },
-      { role: 'assistant', id: 2, content: 'A reply' },
-      { role: 'user', id: 1, content: 'A' },
-      parent,
-    ] as any[]
-    sortMessages(messages)
-    expect(messages.map(m => m.content)).toEqual(['A', 'A reply', 'B', 'B reply'])
-  })
-
-  it('treats a streaming placeholder with a numeric id as transient (stays anchored) until finalized', () => {
-    const parent = { role: 'user', id: 3, content: 'B' }
-    const streaming = { role: 'assistant', id: 7, content: '', streaming: true, seq: 1, parentQueueId: String(parent.id) }
-    // While streaming, sortMessages anchors it after its parent via
-    // parentQueueId — never by its numeric id.
-    const msgs1: any[] = [streaming, parent]
-    sortMessages(msgs1)
-    expect(msgs1[0]).toBe(parent)
-    expect(msgs1[1]).toBe(streaming)
-    // Once finalized, it must STILL stay anchored: its parent may still be
-    // transient (string id), in which case falling back to the numeric id
-    // would sort the reply above its own question. Only loadHistory (which
-    // rebuilds authoritative DB order) drops the anchor.
-    delete streaming.streaming
-    const msgs2: any[] = [streaming, parent]
-    sortMessages(msgs2)
-    expect(msgs2[0]).toBe(parent)
-    expect(msgs2[1]).toBe(streaming)
-  })
-
-  it('keeps a finalized reply with a numeric id anchored after its still-transient question (regression)', () => {
-    // stream_start set the reply's id to a numeric DB id, then the reply was
-    // finalized (streaming removed). Because its question Q1 is still transient
-    // (string id → TRANSIENT_BASE+seq, huge), the reply must NOT fall back to its
-    // small numeric id — that would sort it ABOVE Q1 (the observed swap). It must
-    // stay anchored via parentQueueId until loadHistory rebuilds everything.
-    const q1 = { role: 'user', id: 'pending-1', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: 1 }
-    const a1 = { role: 'assistant', id: 5, content: 'A1 reply', blocks: [{ type: 'text', text: 'A1 reply' }], parentQueueId: String(q1.id) }
-    const q2 = { role: 'user', id: 'pending-2', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: 2 }
-    const a2 = { role: 'assistant', id: 6, content: 'A2 reply', blocks: [{ type: 'text', text: 'A2 reply' }], streaming: true, parentQueueId: String(q2.id) }
-    const messages: any[] = [a1, q1, q2, a2]
-    sortMessages(messages)
-    const contents = messages.map(m => m.content)
-    expect(contents).toEqual(['Q1', 'A1 reply', 'Q2', 'A2 reply'])
-  })
-
   it('is idempotent — sorting an already-ordered array does not flip-flop', () => {
-    const parent = { role: 'user', id: 'q1', content: 'Q', pending: true, seq: 1 }
     const messages = [
       { role: 'user', id: 1, content: 'u1' },
       { role: 'assistant', id: 2, content: 'r1' },
-      parent,
-      { role: 'assistant', id: 'drain', content: '', streaming: true, seq: 2, parentQueueId: String(parent.id) },
+      { role: 'user', id: 'pending-1', content: 'Q', seq: 1 },
+      { role: 'assistant', id: 'drain', content: '', streaming: true, seq: 2 },
     ] as any[]
     const first = messages.map(m => `${m.role}:${m.content}`)
     sortMessages(messages)
@@ -1351,289 +823,6 @@ describe('extractFileChanges', () => {
   })
 })
 
-describe('cancelPendingMessages', () => {
-  it('removes pending messages matching queueIds', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'A', pending: true },
-      { role: 'user', id: 'pending-2', content: 'B', pending: true },
-      { role: 'user', id: 'pending-3', content: 'C', pending: true },
-    ]
-    const removed = cancelPendingMessages(messages, ['pending-1', 'pending-3'])
-    expect(removed).toBe(2)
-    expect(messages).toHaveLength(1)
-    expect(messages[0].id).toBe('pending-2')
-  })
-
-  it('does not remove non-pending messages even if IDs match', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'A', pending: true },
-      { role: 'user', id: 'pending-2', content: 'B' }, // not pending
-    ]
-    const removed = cancelPendingMessages(messages, ['pending-1', 'pending-2'])
-    expect(removed).toBe(1)
-    expect(messages).toHaveLength(1)
-    expect(messages[0].id).toBe('pending-2')
-    expect(messages[0].pending).toBeUndefined()
-  })
-
-  it('returns 0 when no queueIds match', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'A', pending: true },
-    ]
-    const removed = cancelPendingMessages(messages, ['pending-999'])
-    expect(removed).toBe(0)
-    expect(messages).toHaveLength(1)
-  })
-
-  it('returns 0 for empty queueIds', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'A', pending: true },
-    ]
-    const removed = cancelPendingMessages(messages, [])
-    expect(removed).toBe(0)
-    expect(messages).toHaveLength(1)
-  })
-
-  it('handles numeric IDs by converting to string for matching', () => {
-    const messages: any[] = [
-      { role: 'user', id: 42, content: 'A', pending: true },
-    ]
-    const removed = cancelPendingMessages(messages, ['42'])
-    expect(removed).toBe(1)
-    expect(messages).toHaveLength(0)
-  })
-
-  it('removes any pending message regardless of role', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'pending-1', content: 'A', pending: true },
-      { role: 'assistant', id: 'pending-2', content: 'reply', pending: true },
-    ]
-    const removed = cancelPendingMessages(messages, ['pending-1', 'pending-2'])
-    expect(removed).toBe(2)
-    expect(messages).toHaveLength(0)
-  })
-
-  it('removes cross-device _remote bubbles by _remoteQueueId', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', _remote: true, _remoteQueueId: 'remote-q-1' },
-      { role: 'user', id: 'pending-1', content: 'A', pending: true },
-      { role: 'user', id: 9, content: 'normal' },
-    ]
-    const removed = cancelPendingMessages(messages, ['remote-q-1'])
-    expect(removed).toBe(1)
-    expect(messages.map((m) => m.id)).toEqual(['pending-1', 9])
-  })
-
-  it('does not remove _remote bubbles whose _remoteQueueId does not match', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'remote-1700000000000-abc', content: 'from phone', _remote: true, _remoteQueueId: 'remote-q-1' },
-    ]
-    const removed = cancelPendingMessages(messages, ['remote-q-999'])
-    expect(removed).toBe(0)
-    expect(messages).toHaveLength(1)
-  })
-
-  it('releases the in-flight guard for cancelled queueIds (backend DELETEs the row)', () => {
-    // A cancelled queued message is DELETEd from chat_history, so no future
-    // db_load snapshot will contain its queueId — the "row seen" cleanup in
-    // rebuildFromDb can never fire. The guard must be released here or the
-    // registry entry leaks for the process lifetime.
-    resetInFlightSendsForTest()
-    trackInFlightSend('pending-cancel')
-    trackInFlightSend('pending-keep')
-    const messages: any[] = [
-      { role: 'user', id: 'pending-cancel', content: 'A', pending: true },
-      { role: 'user', id: 'pending-keep', content: 'B', pending: true },
-    ]
-    cancelPendingMessages(messages, ['pending-cancel'])
-    expect(isInFlightSend('pending-cancel')).toBe(false)
-    expect(isInFlightSend('pending-keep')).toBe(true)
-    resetInFlightSendsForTest()
-  })
-})
-
-describe('remove_pending releases the in-flight guard', () => {
-  beforeEach(() => { resetInFlightSendsForTest() })
-  afterEach(() => { resetInFlightSendsForTest() })
-
-  it('releases the guard for the removed queueId', () => {
-    trackInFlightSend('pending-rm')
-    const state: any[] = [
-      { role: 'user', id: 'pending-rm', content: 'A', pending: true, queueId: 'pending-rm' },
-    ]
-    chatMessageReducer(state, { type: 'remove_pending', queueId: 'pending-rm' } as any)
-    expect(state).toHaveLength(0)
-    expect(isInFlightSend('pending-rm')).toBe(false)
-  })
-})
-
-describe('anchorRepliesToQuestions', () => {
-  it('anchors replies to their own queued question after loadHistory', () => {
-    const msgs = [
-      { role: 'user', id: 1, content: 'msg1' },
-      { role: 'assistant', id: 2, content: 'reply1' },
-      { role: 'user', id: 3, content: 'msg2', queueId: 'q2' },
-      { role: 'user', id: 4, content: 'msg3', queueId: 'q3' },
-      { role: 'assistant', id: 5, content: 'reply2', queueId: 'q2' },
-      { role: 'assistant', id: 6, content: 'reply3', queueId: 'q3' },
-    ]
-    const result = anchorRepliesToQuestions(msgs as any)
-    // reply2 anchored to msg2 (queueId q2), reply3 to msg3 (queueId q3)
-    const reply2 = result.find((m: any) => m.id === 5)
-    const reply3 = result.find((m: any) => m.id === 6)
-    expect(reply2.parentQueueId).toBe('q2')
-    expect(reply3.parentQueueId).toBe('q3')
-  })
-
-  it('restores conversational order after anchor + sort', () => {
-    const msgs = [
-      { role: 'user', id: 1, content: 'msg1' },
-      { role: 'assistant', id: 2, content: 'reply1' },
-      { role: 'user', id: 3, content: 'msg2', queueId: 'q2' },
-      { role: 'user', id: 4, content: 'msg3', queueId: 'q3' },
-      { role: 'assistant', id: 5, content: 'reply2', queueId: 'q2' },
-      { role: 'assistant', id: 6, content: 'reply3', queueId: 'q3' },
-    ]
-    anchorRepliesToQuestions(msgs as any)
-    sortMessages(msgs as any)
-    expect((msgs as any).map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4, 6])
-  })
-})
-
-describe('queued streaming order (integration)', () => {
-  const callbacks = { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() }
-  beforeEach(() => { vi.clearAllMocks() })
-
-  const ids = (msgs: any[]) => msgs.map(m => String(m.id).slice(0, 12) + ':' + m.role + ':' + (m.pending ? 'P' : '') + (m.streaming ? 'S' : ''))
-
-  it('keeps 1, reply1, 2, reply2, 3, reply3 order while draining (all transient)', () => {
-    const messages: any[] = []
-    // 发 1: 乐观气泡 (非 pending, string id)
-    messages.push({ role: 'user', id: 'pending-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' })
-    // connectStream 创建回复1, 锚定到消息1
-    const parentIdx1 = messages.findLastIndex((m: any) => m.role === 'user')
-    messages.push({ role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), parentQueueId: String(messages[parentIdx1].id), createdAt: '' })
-    // 发 2、3 排队
-    messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
-    messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
-    sortMessages(messages)
-    // 初始顺序: 1, 回复1, 2, 3
-    expect(messages.map(m => m.role + ':' + m.id).slice(0, 4)).toEqual(['user:pending-1', 'assistant:stream-1', 'user:pending-2', 'user:pending-3'])
-
-    // 消息1 被 self-echo 采纳 (id=1, 旧 id 保留为 queueId) — user_message emit
-    // 先于 queue_drain，所以 drain 前消息1 必已采纳。
-    messages[0].id = 1
-    messages[0].queueId = 'pending-1'
-    delete messages[0].seq
-
-    // drain 2 → 回复2
-    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
-    // drain 3 → 回复3
-    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-3', 5)
-
-    // 最终: 1, 回复1, 2, 回复2, 3, 回复3 (按 role + 内容)
-    const order = messages.map(m => m.role + ':' + String(m.content || '').slice(0, 8))
-    expect(order[0]).toBe('user:1')
-    expect(order[1]).toContain('assistant:')
-    expect(order[2]).toBe('user:2')
-    expect(order[3]).toContain('assistant:')
-    expect(order[4]).toBe('user:3')
-    expect(order[5]).toContain('assistant:')
-  })
-
-  it('keeps replies anchored when drained messages adopt DB ids', () => {
-    const messages: any[] = []
-    // 消息1 已是 DB id
-    messages.push({ role: 'user', id: 1, content: '1', blocks: [], createdAt: '' })
-    messages.push({ role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' })
-    messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
-    messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
-    sortMessages(messages)
-
-    // drain 采纳 DB id（4/5），但保留 seq → 仍在 seq 域，回复锚定不受影响
-    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-2', 4)
-    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-3', 5)
-
-    const order = messages.map(m => m.role + ':' + String(m.content || '').slice(0, 8))
-    expect(order[0]).toBe('user:1')
-    expect(order[1]).toBe('assistant:reply1')
-    expect(order[2]).toBe('user:2')
-    expect(order[3]).toContain('assistant:')
-    expect(order[4]).toBe('user:3')
-    expect(order[5]).toContain('assistant:')
-  })
-})
-
-describe('connectStream parent anchoring', () => {
-  it('anchors the streaming reply to the last NON-pending user message, not a queued one', () => {
-    // 用户快速连发 1、2、3。消息1 已发送（非 pending），2/3 排队（pending）。
-    // connectStream 创建回复1 时应锚定到消息1，而不是最后一个 user（消息3）。
-    const messages: any[] = [
-      { role: 'user', id: 'local-1', content: '1', blocks: [], seq: nextClientSeq(), createdAt: '' },
-      { role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
-      { role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
-    ]
-    // 模拟 connectStream 的 parent 选择：应锚到最后一个非 pending user（消息1）
-    const parentUserIdx = messages.findLastIndex((m: any) => m.role === 'user' && !m.pending)
-    const reply1 = { role: 'assistant', id: 'stream-1', content: '', blocks: [], streaming: true, seq: nextClientSeq(), parentQueueId: parentUserIdx !== -1 ? String(messages[parentUserIdx].id) : undefined, createdAt: '' }
-    messages.push(reply1)
-    sortMessages(messages)
-
-    // 回复1 锚定到消息1（TB+1.5），在消息2/3 之前
-    expect(messages[0].id).toBe('local-1')
-    expect(messages[1].id).toBe('stream-1')
-    expect(messages[2].id).toBe('pending-2')
-    expect(messages[3].id).toBe('pending-3')
-  })
-})
-
-describe('parentQueueId dynamic anchoring', () => {
-  const callbacks = { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() }
-  beforeEach(() => { vi.clearAllMocks() })
-
-  it('queued replies follow their parent when it adopts a DB id (no loadHistory)', () => {
-    // 消息2、3 排队（父消息1 已是 DB id）。drain 时消息2/3 无条件采纳 DB id
-    // 4/5（保留 seq → 仍在 seq 域），回复锚定 parentQueueId。排序无需 loadHistory。
-    const messages: any[] = [
-      { role: 'user', id: 1, content: '1', blocks: [], createdAt: '' },
-      { role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' },
-      { role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
-      { role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' },
-    ]
-    sortMessages(messages)
-
-    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-reply2', 4)
-    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-reply3', 5)
-
-    // 消息2/3 已采纳为 4/5（queueId 保留为 pending-2/pending-3），回复跟随。
-    const reply2 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-2')!
-    const reply3 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-3')!
-    expect(messages.map((m: any) => m.id)).toEqual([1, 2, 4, reply2.id, 5, reply3.id])
-  })
-
-  it('keeps conversational order for two queued messages end to end (no loadHistory)', () => {
-    const messages: any[] = []
-    // 消息1 已落库 (id=1) + 回复1 (id=2)
-    messages.push({ role: 'user', id: 1, content: '1', blocks: [], createdAt: '' })
-    messages.push({ role: 'assistant', id: 2, content: 'reply1', blocks: [], createdAt: '' })
-    // 消息2、3 排队
-    messages.push({ role: 'user', id: 'pending-2', content: '2', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
-    messages.push({ role: 'user', id: 'pending-3', content: '3', blocks: [], pending: true, seq: nextClientSeq(), createdAt: '' })
-    sortMessages(messages)
-
-    // drain 2 → 回复2（锚到 pending-2）
-    drainQueueMessage(messages, 'pending-2', '2', [], 'codebuddy', callbacks, 'drain-reply2', 4)
-    // drain 3 → 回复3（锚到 pending-3）
-    drainQueueMessage(messages, 'pending-3', '3', [], 'codebuddy', callbacks, 'drain-reply3', 5)
-
-    // 消息2/3 在 drain 时采纳 DB id 4/5（保留 seq → seq 域排序）。
-    // 回复必须锚定到各自问题之后，无需 loadHistory。
-    const reply2 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-2')!
-    const reply3 = messages.find((m: any) => m.role === 'assistant' && m.parentQueueId === 'pending-3')!
-    expect(messages.map((m: any) => m.id)).toEqual([1, 2, 4, reply2.id, 5, reply3.id])
-  })
-})
-
 // ── Root-cause reproductions for the duplicate-messages bug ──
 //
 // Reported: AA-reply, BB-reply renders as AAA-replyB-reply, refresh button
@@ -1648,38 +837,41 @@ describe('duplicate message root causes (regression)', () => {
   const callbacks = { onRenderNeeded: vi.fn(), onExtractScheduledTasks: vi.fn() }
   beforeEach(() => { vi.clearAllMocks() })
 
-  it('RC1: DB snapshot (queued=0) before queue_drain → drain matches by queueId, no duplicate', () => {
+  it('RC1: DB snapshot (queued=0) before queue_drain → the drained user_message lands once', () => {
     // Simulate the state right after a loadHistory rebuilt a snapshot in which
     // the backend already flipped queued=0 (the drain claimed the row but the
-    // queue_drain WS event arrived after the REST response). The bubble was
-    // dropped by the rebuild (queued=false, no pending) and its DB row (id=3)
-    // is present — a late queue_drain must not add a third copy.
+    // queue_drain WS event arrived after the REST response). The queue entry is
+    // gone from the panel and the DB row (id=3) is already present — a late
+    // user_message for the same row must not add a second copy.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
       { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B' },
-      { role: 'assistant', id: 'drain-streaming', content: '', blocks: [], streaming: true, parentQueueId: 'pending-B' },
+      { role: 'assistant', id: 4, content: '', blocks: [], streaming: true },
     ]
     sortMessages(messages)
 
-    drainQueueMessage(messages, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
+    const after = chatMessageReducer(messages, {
+      type: 'ws_user_message',
+      data: { messageId: 3, content: 'B' },
+    } as any)
 
-    const userBs = messages.filter((m: any) => m.role === 'user' && m.content === 'B')
+    const userBs = after.filter((m: any) => m.role === 'user' && m.content === 'B')
     expect(userBs).toHaveLength(1)
     expect(userBs[0].id).toBe(3)
   })
 
-  it('RC1b: a queued bubble that a rebuild DROPPED (queued=0) cannot be re-created by a late queue_drain', () => {
-    // The bubble existed as pending; a rebuild saw its DB row already drained
-    // (queued=false) and dropped the transient bubble (it is not in the DB as
-    // a pending row). The late queue_drain must not resurrect it.
+  it('RC1b: a queued bubble that a rebuild DROPPED (queued=0) is not re-created by a late queue event', () => {
+    // The bubble existed as an optimistic entry; a rebuild saw its DB row
+    // already drained (queued=false) and dropped it (it is not in chat_history
+    // as a pending row). The late user_message must land once as the DB row.
     let s: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 'pending-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true, queueId: 'pending-B', seq: 1 },
+      { role: 'user', id: 'pending-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', seq: 1 },
     ]
-    // Rebuild: B's DB row is queued=false → the pending bubble is dropped, the
-    // DB row is authoritative.
+    // Rebuild: B's DB row is queued=false → the optimistic bubble is dropped,
+    // the DB row is authoritative.
     s = chatMessageReducer(s, {
       type: 'db_load',
       dbMessages: [
@@ -1691,8 +883,8 @@ describe('duplicate message root causes (regression)', () => {
     expect(s.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
     expect(s.find((m: any) => m.content === 'B')!.id).toBe(3)
 
-    // Late queue_drain — no duplicate.
-    s = chatMessageReducer(s, { type: 'ws_queue_drain', queueId: 'pending-B', text: 'B', files: [], dbMessageId: 3 } as any)
+    // Late user_message for the same row — no duplicate.
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 3, content: 'B' } } as any)
     expect(s.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
   })
 
@@ -1823,6 +1015,257 @@ describe('duplicate message root causes (regression)', () => {
     merged = chatMessageReducer(merged, { type: 'ws_content', text: ' the answer' } as any)
     const reply = merged.find((m: any) => m.role === 'assistant')
     expect((reply.blocks || []).map((b: any) => b.text).join('')).toBe(' the answer')
+  })
+
+  it('a FINALIZED DB row supersedes a live placeholder holding only the pre-disconnect prefix', () => {
+    // The session finishes while the App is backgrounded / the WS is down, and
+    // on resume the reply renders as if it stopped early — only what had arrived
+    // before the disconnect is shown, and switching sessions (a fresh
+    // loadHistory) is what finally reveals the rest.
+    //
+    // The live placeholder holds the prefix that streamed before the drop; the
+    // DB row holds the complete reply. mergeStreamBlocks only understood "live
+    // is ahead" and "DB is a shorter prefix" — the reverse containment had no
+    // branch, so it fell through to "no evidence → keep live" and silently
+    // discarded the authoritative tail. (This is the non-summarized variant; the
+    // summary-stripped variant — the one that dominates in practice — has its
+    // own test below.)
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      // Finalized (streaming=0): the whole reply, including what was produced
+      // after this client stopped receiving increments.
+      { role: 'assistant', id: 42, content: '', blocks: [{ type: 'text', text: 'Hello world and the rest' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+
+    expect(text).toBe('Hello world and the rest')
+    // Finalized row must also stop the spinner.
+    expect(reply.streaming).toBeFalsy()
+  })
+
+  it('a FINALIZED DB row wins even when the live placeholder kept its text in content (no blocks)', () => {
+    // Same shape, second data variant: a placeholder that accumulated text into
+    // `content` rather than a text block. The liveIsEmpty check reads
+    // messageText(live), which does consult `content`, so this must reach the
+    // merge just like the blocks variant — if it did not, the stale prefix would
+    // survive unchanged.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 43, content: 'Hello world', blocks: [], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 43, content: '', blocks: [{ type: 'text', text: 'Hello world and the rest' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+
+    expect(text).toBe('Hello world and the rest')
+  })
+
+  it('keeps a live-only tool_use when the DB flush got further than the live stream', () => {
+    // The DB superset case must not lose a tool call that completed locally but
+    // had not been flushed to the DB yet — the DB text is the base, and the
+    // live-only tool block is appended rather than dropped.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 44, content: '', streaming: true, parentQueueId: '1',
+        blocks: [
+          { type: 'text', text: 'Hello world' },
+          { type: 'tool_use', id: 'tu-live', name: 'Read', done: true },
+        ],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 44, content: '', streaming: true, blocks: [{ type: 'text', text: 'Hello world and more' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world and more')
+    expect((reply.blocks || []).some((b: any) => b.type === 'tool_use' && b.id === 'tu-live')).toBe(true)
+  })
+
+  it('adopts DB text when the live placeholder has ONLY a tool block and no text yet', () => {
+    // The strongest form of the DB-superset shape: the placeholder holds a
+    // tool_use block but has not received any text, while the DB already has the
+    // text that followed the tool. `liveIsEmpty` is false (there IS a block), so
+    // the merge runs — but the DB-superset branch must not require a non-empty
+    // live text, or this falls through and the DB text is dropped.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 45, content: '', streaming: true, parentQueueId: '1',
+        blocks: [{ type: 'tool_use', id: 'tu-1', name: 'Read', done: true }],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 45, content: '', streaming: true,
+        blocks: [
+          { type: 'tool_use', id: 'tu-1', name: 'Read', done: true },
+          { type: 'text', text: 'text produced after the tool' },
+        ],
+      },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('text produced after the tool')
+    // The tool must not be duplicated by the merge.
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use' && b.id === 'tu-1')).toHaveLength(1)
+  })
+
+  it('clears the stale prefix when the finalized row is SUMMARY-STRIPPED (the real resume shape)', () => {
+    // The dominant shape on resume, and the one that kept this bug alive: the
+    // backend runs summarization synchronously inside Finalize, and
+    // summarizeContentForView replaces the content of a summarized
+    // non-streaming assistant row with {"blocks":[]} — the summary itself lives
+    // in a separate table. So the snapshot carries NO blocks.
+    //
+    // Both merge branches require db.blocks to be non-empty, so a stripped row
+    // skipped them and the stale pre-disconnect prefix survived. Worse, because
+    // blocks were then non-empty, shouldShowSummary AND needsLazyOriginal both
+    // concluded "content is present": the summary was not shown and the full
+    // content was never lazily fetched. Net effect = completed-looking bubble
+    // showing a truncated reply, fixed only by switching sessions (which
+    // rebuilds the array straight from the DB row).
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 46, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 46,
+        content: '{"blocks":[]}',   // stripped by the backend
+        blocks: [],                 // parsed result
+        summary: 'A summary of the whole reply',
+        // no `streaming` — parseMessages deleted it (session not running)
+      },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+
+    // Content must be cleared, NOT the stale prefix.
+    expect(reply.blocks ?? []).toEqual([])
+    expect(reply.content || '').toBe('')
+    // The summary must be present so the bubble renders something meaningful…
+    expect(reply.summary).toBe('A summary of the whole reply')
+    // …and the spinner must be gone (it is a finished turn).
+    expect(reply.streaming).toBeFalsy()
+  })
+
+  it('does NOT clear a live prefix when the DB row has real blocks (stripped-clear must not overreach)', () => {
+    // Guard for the branch above: clearing is only correct when the DB row is
+    // genuinely empty. If the row has content, the merge must still run and
+    // produce the full text — clearing here would blank a good reply.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 47, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 47, content: '', blocks: [{ type: 'text', text: 'Hello world and the rest' }], summary: 's' },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world and the rest')
+  })
+
+  it('keeps live in-progress thinking when the DB text is a superset (flush omits it)', () => {
+    // The DB rate-limited flush deliberately omits in-progress thinking (only
+    // DONE thinking gets a slim marker), so the DB-superset branch must take
+    // ONLY the text from the DB and leave the live thinking/warning blocks in
+    // place. Returning the DB array wholesale would silently drop the reasoning
+    // the user is currently watching.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 48, content: '', streaming: true, parentQueueId: '1',
+        blocks: [
+          { type: 'thinking', text: 'live reasoning the DB flush omits' },
+          { type: 'text', text: 'Hello world' },
+          { type: 'warning', text: 'live warning' },
+        ],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 48, content: '', streaming: true, blocks: [{ type: 'text', text: 'Hello world and more' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const blocks = reply.blocks || []
+    const text = blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+
+    expect(text).toBe('Hello world and more')
+    expect(blocks.some((b: any) => b.type === 'thinking' && b.text === 'live reasoning the DB flush omits')).toBe(true)
+    expect(blocks.some((b: any) => b.type === 'warning' && b.text === 'live warning')).toBe(true)
+  })
+
+  it('keeps live block order when swapping in the DB text', () => {
+    // The live tool block must not be moved to the end — the reply must keep its
+    // original tool→text order after the text is replaced.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      {
+        role: 'assistant', id: 49, content: '', streaming: true, parentQueueId: '1',
+        blocks: [
+          { type: 'tool_use', id: 'tu-live', name: 'Read', done: true },
+          { type: 'text', text: 'Hello world' },
+        ],
+      },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 49, content: '', streaming: true, blocks: [{ type: 'text', text: 'Hello world and more' }] },
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const types = (reply.blocks || []).map((b: any) => b.type)
+    expect(types).toEqual(['tool_use', 'text'])
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world and more')
+  })
+
+  it('does NOT clear the live prefix for a finalized row with no blocks AND no summary', () => {
+    // Guard for the stripped-clear branch: clearing is only correct when the DB
+    // row has a summary to render in place of the content. A finalized row with
+    // neither blocks nor summary has nothing to show — blanking the bubble would
+    // replace a readable (if partial) reply with an empty one.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 50, content: '', blocks: [{ type: 'text', text: 'Hello world' }], streaming: true, parentQueueId: '1' },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] },
+      { role: 'assistant', id: 50, content: '', blocks: [] },  // no summary
+    ]
+
+    const merged = rebuildFromDb(messages, dbMsgs as any, false)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    const text = (reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
+    expect(text).toBe('Hello world')
   })
 
   it('does NOT preserve an unmatched placeholder when the snapshot has its own streaming row (no duplicate)', () => {
@@ -2102,10 +1545,11 @@ describe('duplicate message root causes (regression)', () => {
     expect(thinkings[0].done).toBe(true)
   })
 
-  it('ws_user_message with queued flag creates pending remote bubble', () => {
-    // Client A enqueues a message while its session is running; the broadcast
-    // user_message carries queued:true. Client B must render the _remote bubble
-    // as a pending (排队中) message, not a normal committed one.
+  it('ws_user_message never marks a bubble pending/queued (queued messages are not in the list)', () => {
+    // A queued message is broadcast via `queue_added` and lives in the queue
+    // store — it never reaches the conversation list. A `user_message` event
+    // therefore always describes a committed row; the reducer must not carry
+    // any pending/queued chrome.
     let s: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
@@ -2115,20 +1559,19 @@ describe('duplicate message root causes (regression)', () => {
       type: 'ws_user_message',
       data: {
         messageId: 200,
-        content: 'enqueued from phone',
+        content: 'from phone',
         senderClientId: 'device-a',
         queueId: 'remote-q-queued',
-        queued: true,
         backend: 'claude',
       },
     } as any)
 
-    const userBubbles = s.filter((m: any) => m.role === 'user' && m.content === 'enqueued from phone')
-    expect(userBubbles).toHaveLength(1, 'B must render one remote bubble for the queued message')
+    const userBubbles = s.filter((m: any) => m.role === 'user' && m.content === 'from phone')
+    expect(userBubbles).toHaveLength(1)
     const bubble = userBubbles[0]
     expect(bubble._remote).toBe(true)
-    expect(bubble.pending).toBe(true, 'queued broadcast must render as a pending bubble on B')
-    expect(bubble.queued).toBe(true, 'queued broadcast must carry the queued marker on B')
+    expect(bubble.pending).toBeUndefined()
+    expect(bubble.queued).toBeUndefined()
     expect(bubble._remoteQueueId).toBe('remote-q-queued')
   })
 
@@ -2158,6 +1601,53 @@ describe('duplicate message root causes (regression)', () => {
     expect(continues.map((m: any) => m.id).sort()).toEqual([501, 503])
   })
 
+  it('renders a drained message whose text repeats an earlier message (identity, not text)', () => {
+    // Reported: with several queued messages, NONE of their user bubbles appeared
+    // until the WHOLE queue finished. The repro used the same prompt three times
+    // ("Sleep 5 秒钟。"), which is what exposed it: the dedup matched on CONTENT,
+    // so the 2nd and 3rd announcements were swallowed as "already exists". They
+    // reappeared only when a final loadHistory rebuilt from the DB — which had
+    // held them all along, proving the messages were never lost server-side.
+    //
+    // Text is not identity: three identical prompts are three messages.
+    let s: any[] = []
+    // The first message was sent directly and adopted its DB id.
+    s = chatMessageReducer(s, { type: 'optimistic_push', msg: { role: 'user', id: 'p-a', content: 'Sleep 5', blocks: [], seq: 1 } } as any)
+    s = chatMessageReducer(s, { type: 'optimistic_adopt_id', id: 'p-a', dbId: 100 } as any)
+
+    // The queued copy drains and is announced with a NEW id.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 101, content: 'Sleep 5', queueId: 'q-b' },
+    } as any)
+    expect(s.filter((m: any) => m.role === 'user'), 'the drained bubble must render').toHaveLength(2)
+
+    // A third identical one drains too.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 102, content: 'Sleep 5', queueId: 'q-c' },
+    } as any)
+    expect(s.filter((m: any) => m.role === 'user'), 'every identical message renders its own bubble').toHaveLength(3)
+  })
+
+  it('still dedups the same announcement replayed (idempotent, identity-based)', () => {
+    // Narrowing the content rule must NOT break real dedup: a replay of the SAME
+    // id is still one message.
+    let s: any[] = []
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 201, content: 'X', queueId: 'q1' } } as any)
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 201, content: 'X', queueId: 'q1' } } as any)
+    expect(s.filter((m: any) => m.role === 'user')).toHaveLength(1)
+  })
+
+  it('still dedups the sender own optimistic bubble by queueId (no double bubble)', () => {
+    // The device's own optimistic bubble carries the queueId it sent; the echo
+    // must adopt it rather than append a second bubble.
+    let s: any[] = []
+    s = chatMessageReducer(s, { type: 'optimistic_push', msg: { role: 'user', id: 'p-a', content: 'X', blocks: [], seq: 1 } } as any)
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 301, content: 'X', queueId: 'p-a' } } as any)
+    expect(s.filter((m: any) => m.role === 'user')).toHaveLength(1)
+  })
+
   it('ws_user_message without queued flag creates normal remote bubble', () => {
     // A non-queued (immediately started) message must keep the existing
     // behavior: a normal _remote bubble with no pending marker.
@@ -2184,13 +1674,9 @@ describe('duplicate message root causes (regression)', () => {
     expect(bubble.queued).toBeUndefined()
   })
 
-  it('A/B dual client: A sends → B gets _remote bubble → queue_drain upgrades it to the DB row', () => {
+  it('A/B dual client: A sends → B gets a _remote bubble → a duplicate user_message does not duplicate it', () => {
     // Client B's reducer receives the authoritative push event from client A's
-    // send. The full sequence:
-    //   1. ws_user_message (senderClientId=A, messageId=100, queueId='remote-q-1')
-    //      → B inserts a _remote bubble with the real numeric id + _remoteQueueId.
-    //   2. ws_queue_drain (queueId='remote-q-1', dbMessageId=100)
-    //      → the _remote bubble is upgraded: flags cleared, no duplicate pushed.
+    // send, then a stream_start opens the reply placeholder.
     let s: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
@@ -2216,27 +1702,24 @@ describe('duplicate message root causes (regression)', () => {
     expect(bubble._remoteQueueId).toBe('remote-q-1')
     expect(bubble.pending).toBeUndefined()
 
-    // Step 2 — the drain confirms the same row; the bubble is upgraded in place.
+    // Step 2 — the reply placeholder is opened by stream_start (id 101).
     s = chatMessageReducer(s, {
-      type: 'ws_queue_drain',
-      queueId: 'remote-q-1',
-      text: 'hi from phone',
-      files: [],
-      dbMessageId: 100,
-      backend: 'claude',
+      type: 'stream_placeholder',
+      msg: { role: 'assistant', id: 101, content: '', blocks: [], streaming: true, seq: nextClientSeq() },
     } as any)
 
-    const afterDrain = s.filter((m: any) => m.role === 'user' && m.content === 'hi from phone')
-    expect(afterDrain).toHaveLength(1, 'queue_drain must not duplicate the _remote bubble')
-    expect(afterDrain[0]._remote).toBeUndefined('flags cleared after upgrade')
-    expect(afterDrain[0]._remoteQueueId).toBeUndefined()
-    expect(afterDrain[0].id).toBe(100, 'numeric id preserved through the upgrade')
-    // A streaming assistant placeholder is anchored after the drained message.
     const streaming = s.find((m: any) => m.role === 'assistant' && m.streaming)
-    expect(streaming).toBeDefined('drain pushes a streaming placeholder for B')
-    // Anchored via the stable queue id (dynamic resolution in sortMessages
-    // follows the parent even as it adopts DB ids).
-    expect(streaming.parentQueueId).toBe('remote-q-1')
+    expect(streaming).toBeDefined()
+    expect(streaming.id).toBe(101)
+
+    // Step 3 — a replayed/duplicate user_message for the same row must not add
+    // a second copy.
+    s = chatMessageReducer(s, {
+      type: 'ws_user_message',
+      data: { messageId: 100, content: 'hi from phone', senderClientId: 'device-a', queueId: 'remote-q-1' },
+    } as any)
+    const afterDup = s.filter((m: any) => m.role === 'user' && m.content === 'hi from phone')
+    expect(afterDup).toHaveLength(1)
   })
 
   it('A/B dual client: rebuildFromDb adopts the _remote bubble without duplication after a refresh', () => {
@@ -2263,30 +1746,37 @@ describe('duplicate message root causes (regression)', () => {
     expect(users[0]._remoteQueueId).toBeUndefined()
   })
 
-  it('RC4: queue_drain double-delivery with an in-between DB snapshot must not duplicate the user message', () => {
+  it('RC4: queue_drain does not materialize the user message; the user_message event lands it once', () => {
+    // New contract: a queued message is NOT part of the messages array until
+    // the backend materializes it into chat_history. `ws_queue_drain` is a bare
+    // turn boundary (it finalizes the streaming reply and nothing else); the
+    // user message arrives as a separate `user_message` event carrying the
+    // queueId and the new DB id.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 'pending-B', content: 'B', blocks: [{ type: 'text', text: 'B' }], pending: true },
-      { role: 'assistant', id: 'drain-stream', content: '', blocks: [], streaming: true, parentQueueId: 'pending-B' },
+      { role: 'assistant', id: 'drain-stream', content: '', blocks: [], streaming: true, seq: 9 },
     ]
     sortMessages(messages)
-    // First drain — matches the pending bubble.
-    drainQueueMessage(messages, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
+
+    // queue_drain: finalizes the streaming reply, adds no user message.
+    chatMessageReducer(messages, { type: 'ws_queue_drain' })
+    expect(messages.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(0)
+    expect(messages.find((m: any) => m.id === 'drain-stream')!.streaming).toBeUndefined()
+
+    // Materialization: the user_message event carries the DB id + queueId.
+    chatMessageReducer(messages, {
+      type: 'ws_user_message',
+      data: { messageId: 3, content: 'B', queueId: 'pending-B' },
+    } as any)
     expect(messages.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
 
-    // A rebuild in between (bubble adopted id=3, pending cleared).
-    const dbMsgs: any[] = [
-      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
-      { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 3, content: 'B', blocks: [{ type: 'text', text: 'B' }], queueId: 'pending-B', queued: false },
-    ]
-    const rebuilt = rebuildFromDb(messages, dbMsgs as any)
-    expect(rebuilt.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
-
-    // Second (duplicate) queue_drain for the same message.
-    drainQueueMessage(rebuilt, 'pending-B', 'B', [], 'claude', callbacks, undefined, 3)
-    expect(rebuilt.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
+    // A duplicate delivery of the same event must not duplicate the bubble.
+    chatMessageReducer(messages, {
+      type: 'ws_user_message',
+      data: { messageId: 3, content: 'B', queueId: 'pending-B' },
+    } as any)
+    expect(messages.filter((m: any) => m.role === 'user' && m.content === 'B')).toHaveLength(1)
   })
 
   // ── The reported user scenario, end to end ──
@@ -2308,13 +1798,16 @@ describe('duplicate message root causes (regression)', () => {
     // A direct-send + stream
     let s: any[] = []
     s = chatMessageReducer(s, { type: 'optimistic_push', msg: uMsg('pending-A', 'A', { seq: 1 }) })
-    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg('drain-rA', '', { streaming: true, seq: 2, parentQueueId: 'pending-A', createdAt: '2026-01-01T00:00:00Z' }) })
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg('drain-rA', '', { streaming: true, seq: 2, createdAt: '2026-01-01T00:00:00Z' }) })
     s = chatMessageReducer(s, { type: 'ws_content', text: 'reply A' })
     // done(A) → finalize replyA placeholder
     s = chatMessageReducer(s, { type: 'stream_finalize' })
-    // B queued + drained → replyB streaming (session still running)
-    s = chatMessageReducer(s, { type: 'optimistic_push', msg: uMsg('pending-B', 'B', { pending: true, seq: 3 }) })
-    s = chatMessageReducer(s, { type: 'ws_queue_drain', queueId: 'pending-B', text: 'B', files: [], dbMessageId: 3 })
+    // B was queued (lives in the queue store, NOT the messages array) and is
+    // now materialized into chat_history: the user_message event renders it
+    // inline, then queue_drain marks the turn boundary and the reply B streams.
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 3, content: 'B', queueId: 'pending-B' } } as any)
+    s = chatMessageReducer(s, { type: 'ws_queue_drain' })
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg(4, '', { streaming: true, seq: 3, createdAt: '2026-01-01T00:00:02Z' }) })
     s = chatMessageReducer(s, { type: 'ws_content', text: 'reply B' })
 
     // Sanity: exactly two assistant messages before the refresh.
@@ -2368,43 +1861,42 @@ describe('duplicate message root causes (regression)', () => {
     let s: any[] = []
     // A direct-send + stream
     s = chatMessageReducer(s, { type: 'optimistic_push', msg: uMsg('pending-A', 'A', { seq: 1 }) })
-    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg('drain-rA', '', { streaming: true, seq: 2, parentQueueId: 'pending-A', createdAt: '2026-01-01T00:00:00Z' }) })
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg('drain-rA', '', { streaming: true, seq: 2, createdAt: '2026-01-01T00:00:00Z' }) })
     s = chatMessageReducer(s, { type: 'ws_content', text: 'reply A' })
     // done(A)
     s = chatMessageReducer(s, { type: 'stream_finalize' })
-    // B, C queued; drain(B) → replyB streaming (session still running)
-    s = chatMessageReducer(s, { type: 'optimistic_push', msg: uMsg('pending-B', 'B', { pending: true, seq: 3, createdAt: '2026-01-01T00:00:03Z' }) })
-    s = chatMessageReducer(s, { type: 'optimistic_push', msg: uMsg('pending-C', 'C', { pending: true, seq: 4, createdAt: '2026-01-01T00:00:04Z' }) })
-    s = chatMessageReducer(s, { type: 'ws_queue_drain', queueId: 'pending-B', text: 'B', files: [], dbMessageId: 3 })
+    // B and C are queued (in the queue store, not the array). B is materialized
+    // into chat_history and starts its own turn; C is still waiting.
+    s = chatMessageReducer(s, { type: 'ws_user_message', data: { messageId: 3, content: 'B', queueId: 'pending-B' } } as any)
+    s = chatMessageReducer(s, { type: 'ws_queue_drain' })
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: aMsg(4, '', { streaming: true, seq: 3, createdAt: '2026-01-01T00:00:02Z' }) })
     s = chatMessageReducer(s, { type: 'ws_content', text: 'reply B' })
 
-    // Refresh → db_load while replyB streams.
+    // Refresh → db_load while replyB streams. C is still queued, so it is NOT
+    // in the messages array — it lives in the queue store.
     s = chatMessageReducer(s, {
       type: 'db_load',
       dbMessages: [
         uMsg(1, 'A', { queueId: 'pending-A', createdAt: '2026-01-01T00:00:01Z' }),
         aMsg(2, 'reply A', { createdAt: '2026-01-01T00:00:01Z' }),
-        uMsg(3, 'B', { queueId: 'pending-B', queued: false, createdAt: '2026-01-01T00:00:03Z' }),
+        uMsg(3, 'B', { queueId: 'pending-B', createdAt: '2026-01-01T00:00:03Z' }),
         aMsg(4, 'reply B', { streaming: true, createdAt: '2026-01-01T00:00:02Z' }),
-        uMsg(5, 'C', { queueId: 'pending-C', queued: true, createdAt: '2026-01-01T00:00:04Z' }),
       ],
     } as any)
 
-    // Exactly 3 user messages (A id=1, B id=3, C stays pending) and exactly 2
-    // assistant messages (replyA id=2, replyB streaming) — no duplicates, no
-    // orphans. A's optimistic bubble is dropped (no pending flag, self-echo
-    // lost) and the DB row id=1 is authoritative — same as a restart.
+    // Exactly 2 user messages (A id=1, B id=3 — C is in the queue panel, not the
+    // conversation) and exactly 2 assistant messages (replyA id=2, replyB
+    // streaming) — no duplicates, no orphans. A's optimistic bubble is dropped
+    // (self-echo lost) and the DB row id=1 is authoritative — same as a restart.
     const users = s.filter((m) => m.role === 'user')
     const assistants = s.filter((m) => m.role === 'assistant')
-    expect(users).toHaveLength(3)
+    expect(users).toHaveLength(2)
     expect(assistants).toHaveLength(2)
     // A is the DB row.
     const userA = users.find((m: any) => m.content === 'A')
     expect(userA.id).toBe(1)
-    expect(userA.pending).toBeUndefined()
-    // C still queued/pending.
-    const userC = users.find((m: any) => m.content === 'C')
-    expect(userC.pending).toBe(true)
+    // C is not in the array at all.
+    expect(users.some((m: any) => m.content === 'C')).toBe(false)
     // replyA not duplicated; replyB keeps streaming.
     expect(s.some((m: any) => m.role === 'assistant' && m.id === 'drain-rA')).toBe(false)
     expect(s.filter((m: any) => m.role === 'assistant' && m.streaming)).toHaveLength(1)
@@ -2479,27 +1971,21 @@ describe('duplicate message root causes (regression)', () => {
     expect((reply.blocks || []).some((b: any) => b.text === 'reply A')).toBe(true)
   })
 
-  it('RC4: queue_drain during a session switch fetch creates a number-id user message that survives db_load as a duplicate', () => {
+  it('RC4: a late queue_drain during a session switch fetch does not inject a user message', () => {
     // Reported: switch to a session and back → the last (user, reply) pair
-    // renders twice; a second switch fixes it. Single device, multiple sessions
-    // running. Root cause reproduction:
+    // renders twice; a second switch fixes it.
     //
-    // switchSession clears the message array (dispatch clear) and starts the
-    // REST loadHistory fetch. While the fetch is in flight, a late queue_drain
-    // WS event for the target session arrives (the session is still running /
-    // draining in the background). drainQueueMessage's DEFENSIVE branch finds
-    // no bubble (array is empty) and pushes a user message carrying the DB
-    // number id — with NO pending/_remote markers, so it is NOT transient.
-    // When db_load's rebuildFromDb runs, that message cannot match any
-    // adoption branch (the DB row has queued=0, no _remote) AND it is not
-    // dropped (number id) — so it survives alongside the DB row copy → the
-    // user message (and with it the reply anchored below) renders TWICE.
-    // A second switch runs db_load against a clean/empty array (no late drain)
-    // → converges to the single DB row → "switching again makes it normal".
+    // The old root cause was that queue_drain itself materialized the user
+    // message (carrying the DB number id) into the array while the REST
+    // loadHistory fetch was in flight; the subsequent db_load could not match
+    // that copy and rendered it alongside the DB row. Under the new contract a
+    // queued message is materialized ONLY by its `user_message` event, and
+    // queue_drain is a bare turn boundary that never touches user messages —
+    // so the duplicate cannot be constructed.
     const dbMsgs: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      // The drained row — queued=0, plain formal message.
+      // The drained row — a plain formal message.
       { role: 'user', id: 3, content: '编译前端', blocks: [{ type: 'text', text: '编译前端' }] },
       { role: 'assistant', id: 4, content: 'build reply', blocks: [{ type: 'text', text: 'build reply' }] },
     ]
@@ -2507,27 +1993,14 @@ describe('duplicate message root causes (regression)', () => {
     // 1. switchSession: array cleared, loadHistory fetch in flight.
     let s: any[] = []
 
-    // 2. Late queue_drain arrives during the fetch window → defensive push with
-    //    the DB number id, no pending/_remote markers.
-    s = chatMessageReducer(s, {
-      type: 'ws_queue_drain',
-      queueId: 'pending-编译前端',
-      text: '编译前端',
-      files: [],
-      dbMessageId: 3,
-      backend: 'claude',
-    } as any)
-    // The drain also pushes a streaming assistant placeholder.
-    const userMsgsAfterDrain = s.filter((m: any) => m.role === 'user' && m.content === '编译前端')
-    expect(userMsgsAfterDrain).toHaveLength(1)
-    expect(userMsgsAfterDrain[0].id).toBe(3)
-    expect(userMsgsAfterDrain[0].pending).toBeUndefined()
-    expect(userMsgsAfterDrain[0]._remote).toBeUndefined()
+    // 2. Late queue_drain arrives during the fetch window — bare boundary.
+    s = chatMessageReducer(s, { type: 'ws_queue_drain' } as any)
+    expect(s.filter((m: any) => m.role === 'user' && m.content === '编译前端')).toHaveLength(0)
 
-    // 3. db_load rebuild arrives → must converge to the single DB row.
+    // 3. db_load rebuild arrives → the DB rows are the only messages.
     s = chatMessageReducer(s, { type: 'db_load', dbMessages: dbMsgs } as any)
     const userBuilds = s.filter((m: any) => m.role === 'user' && m.content === '编译前端')
-    expect(userBuilds).toHaveLength(1, 'the number-id drain message must NOT survive alongside the DB row copy')
+    expect(userBuilds).toHaveLength(1)
     const replies = s.filter((m: any) => m.role === 'assistant' && m.content === 'build reply')
     expect(replies).toHaveLength(1)
   })
@@ -2564,23 +2037,23 @@ describe('duplicate message root causes (regression)', () => {
     expect(s).toHaveLength(4)
   })
 
-  it('RC5b: db_load after a concurrent ws_queue_drain that adopted the DB id does not duplicate', () => {
-    // During the switchSession fetch window the same session's queue_drain
-    // arrives. drainQueueMessage FINALIZES the streaming placeholder and adopts
-    // the drained message's DB id into the array; the subsequent db_load must
-    // still converge to exactly the DB rows (the adopted message matches its
-    // DB row by id; the finalized reply matches its DB row by id).
+  it('RC5b: db_load after a concurrent user_message + ws_queue_drain does not duplicate', () => {
+    // During the switchSession fetch window the materialized user_message and
+    // the queue_drain boundary arrive. The user_message lands the drained row
+    // (id=3); the subsequent db_load must converge to exactly the DB rows — the
+    // landed row matches its DB row by id, and the streaming placeholder is
+    // matched to its DB streaming row by id.
     let s: any[] = []
 
-    // queue_drain on the empty (cleared) array → defensive push + streaming placeholder.
+    // Materialization of the drained message + bare turn boundary.
     s = chatMessageReducer(s, {
-      type: 'ws_queue_drain',
-      queueId: 'pending-编译前端',
-      text: '编译前端',
-      files: [],
-      dbMessageId: 3,
-      backend: 'codebuddy',
+      type: 'ws_user_message',
+      data: { messageId: 3, content: '编译前端', queueId: 'pending-编译前端' },
     } as any)
+    s = chatMessageReducer(s, { type: 'ws_queue_drain' } as any)
+    s = chatMessageReducer(s, { type: 'stream_placeholder', msg: {
+      role: 'assistant', id: 'drain-x', content: '', blocks: [], streaming: true, seq: 1,
+    } as any })
     expect(s.filter((m: any) => m.role === 'user' && m.content === '编译前端')).toHaveLength(1)
 
     // Simulate the stream producing content into the placeholder then done.
@@ -2589,14 +2062,13 @@ describe('duplicate message root causes (regression)', () => {
     placeholder.blocks = [{ type: 'text', text: 'build reply' }]
     delete placeholder.streaming
 
-    // db_load rebuild — the finalized reply (id is a drain-* string) must be
-    // matched to its DB row by queueId channel; the drained user message (id=3)
-    // must match by id.
+    // db_load rebuild — the drained user row (id=3) matches by id; the finalized
+    // reply (drain-* string id) is dropped and the DB row is authoritative.
     const dbMsgs: any[] = [
       { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
       { role: 'assistant', id: 2, content: 'A reply', blocks: [{ type: 'text', text: 'A reply' }] },
-      { role: 'user', id: 3, content: '编译前端', blocks: [{ type: 'text', text: '编译前端' }], queueId: 'pending-编译前端', queued: false },
-      { role: 'assistant', id: 4, content: '', blocks: [{ type: 'text', text: 'build reply' }], queueId: 'pending-编译前端' },
+      { role: 'user', id: 3, content: '编译前端', blocks: [{ type: 'text', text: '编译前端' }], queueId: 'pending-编译前端' },
+      { role: 'assistant', id: 4, content: '', blocks: [{ type: 'text', text: 'build reply' }] },
     ]
     s = chatMessageReducer(s, { type: 'db_load', dbMessages: dbMsgs } as any)
 
@@ -2789,6 +2261,155 @@ describe('duplicate message root causes (regression)', () => {
   })
 })
 
+describe('mergeStreamBlocks preserves text/tool interleaving', () => {
+  // Reported: while a turn is STILL STREAMING, the reply rendered as two
+  // stacked groups — all tool calls bunched at the top, all text bunched below
+  // — instead of the real speak → call → speak → call order. Re-opening the
+  // session mid-stream showed the same thing; only finishing/cancelling the
+  // turn restored the order. Root cause: mergeStreamBlocks (run by db_load
+  // while the placeholder is live) prepended every DB-only non-text block and
+  // moved all DB text blocks to the first live-text slot. The assertions below
+  // therefore check the BLOCK SEQUENCE, not just the concatenated text — the
+  // pre-existing tests only summed text and counted tools, which is exactly why
+  // the regression slipped through.
+  const u = (id: number) => ({ role: 'user', id, content: 'Q', blocks: [{ type: 'text', text: 'Q' }] })
+
+  it('case 0: keeps interleaved text/tool order when the live text is a short prefix', () => {
+    // The placeholder was recreated (stream_start) and has received only the
+    // first few characters; the DB flush holds the whole interleaved turn.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 42, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'text', text: 'Let me ch' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 42, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'Let me check' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+        { type: 'text', text: 'Found it' },
+        { type: 'tool_use', name: 'Read', id: 'tu2', done: true },
+        { type: 'text', text: 'Done' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    // The crux: tools must NOT be hoisted above the text.
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual([
+      'text', 'tool_use', 'text', 'tool_use', 'text',
+    ])
+    const ids = (reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id)
+    expect(ids).toEqual(['tu1', 'tu2'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('Let me checkFound itDone')
+  })
+
+  it('case 0: does not stack tools on top when the live placeholder has no text yet', () => {
+    // Strongest form of the shape: the live placeholder holds only a tool block
+    // (its tool event arrived, its text has not). The DB has the full turn.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 43, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 43, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'Let me look' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+        { type: 'text', text: 'Found root' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual(['text', 'tool_use', 'text'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('Let me lookFound root')
+  })
+
+  it('case 0: keeps a live-only tool before the text that follows it', () => {
+    // A tool whose event reached the live stream but not the DB's rate-limited
+    // flush must keep its live position — here it precedes the text, so a merge
+    // that reorders by type (text first) would visibly move it.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 44, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'tool_use', name: 'Grep', id: 'tu-live', done: false },
+        { type: 'text', text: 'pre' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 44, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'prefix' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual(['tool_use', 'text'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['tu-live'])
+  })
+
+  it('case 1: splices a DB-only tool at its DB position instead of prepending it', () => {
+    // Continuous streaming: live already covers the DB text. A tool the DB
+    // flushed before the placeholder was recreated belongs AFTER that text,
+    // where it happened — not at the top of the reply.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 45, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'text', text: 'Hello world' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 45, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'Hello' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual(['text', 'tool_use'])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('Hello world')
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use')).toHaveLength(1)
+  })
+
+  it('case 0: reproduces the reported multi-tool turn without duplicating or reordering', () => {
+    // The exact reported shape at scale: several tool calls interleaved with
+    // text, live holding only the opening text. Every DB block must appear once,
+    // in DB order.
+    const live: any[] = [
+      u(1),
+      { role: 'assistant', id: 46, content: '', streaming: true, parentQueueId: '1', blocks: [
+        { type: 'text', text: 'a' },
+      ] },
+    ]
+    const db: any[] = [
+      u(1),
+      { role: 'assistant', id: 46, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'a' },
+        { type: 'tool_use', name: 'Bash', id: 'tu1', done: true },
+        { type: 'text', text: 'b' },
+        { type: 'tool_use', name: 'Read', id: 'tu2', done: true },
+        { type: 'text', text: 'c' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db as any, true)
+    const reply = merged.find((m: any) => m.role === 'assistant')!
+    expect((reply.blocks || []).map((b: any) => b.type)).toEqual([
+      'text', 'tool_use', 'text', 'tool_use', 'text',
+    ])
+    expect((reply.blocks || []).filter((b: any) => b.type === 'text').map((b: any) => b.text).join(''))
+      .toBe('abc')
+    expect((reply.blocks || []).filter((b: any) => b.type === 'tool_use').map((b: any) => b.id))
+      .toEqual(['tu1', 'tu2'])
+  })
+})
+
 describe('messageText', () => {
   it('returns block text when blocks are present', () => {
     const m = { role: 'user', content: 'raw', blocks: [{ type: 'text', text: 'Hello' }] } as any
@@ -2922,55 +2543,40 @@ describe('ws_error / ws_warning structured error fields', () => {
   })
 })
 
-// ── Queued message ordering after refresh (queued message must render AFTER
-//    the in-flight streaming reply, not before it) ──
+// ── Conversation ordering after refresh ──
 //
-// Reported: user adds a queued message while a reply streams; after a refresh
-// the queued message renders between the latest user message and the streaming
-// reply. Expected: Q1 → reply1(streaming) → Q2(queued/pending).
-//
-// Root cause: the direct-sent user row did NOT persist its queue_id, so after a
-// refresh rebuildFromDb's anchorRepliesToQuestions could not associate the
-// streaming reply (queue_id='pending-A' on its DB row) with its question. The
-// reply fell into the TRANSIENT_BASE sort domain — after every DB message —
-// while the queued message (persisted later, larger DB id, or still a pending
-// bubble with a large seq) sorted before it. Fixes: backend persists queue_id
-// on direct-sent user rows; rebuildFromDb merges the DB streaming row's queueId
-// onto the live placeholder; anchorRepliesToQuestions rewrites stale string-id
-// anchors to the DB row's queueId.
-describe('queued message ordering after refresh (regression)', () => {
+// A queued message is NOT part of the conversation `messages` array: it lives
+// in the queue store until the backend materializes it into chat_history at
+// dequeue time. Its DB id therefore always precedes the reply it produced, so
+// ordering is a plain numeric-id sort — no reply anchor is needed (the whole
+// anchorRepliesToQuestions machinery was removed with the queue refactor).
+describe('conversation ordering after refresh (DB-id sort)', () => {
   const aMsg = (id: unknown, content: string, extra: Record<string, unknown> = {}): any =>
     ({ role: 'assistant', id, content: '', blocks: content ? [{ type: 'text', text: content }] : [], createdAt: '2026-01-01T00:00:01Z', ...extra })
   const uMsg = (id: unknown, content: string, extra: Record<string, unknown> = {}): any =>
     ({ role: 'user', id, content, blocks: content ? [{ type: 'text', text: content }] : [], files: [], createdAt: '2026-01-01T00:00:01Z', ...extra })
 
-  it('refresh while a queued message waits: queued bubble renders AFTER the streaming reply', () => {
-    // Live state: Q1 direct-sent (string id), reply1 streaming anchored to
-    // pending-A, Q2 queued (pending bubble). A refresh (full reload, empty
-    // in-memory state) fetches the DB snapshot.
+  it('a still-queued message is absent from the array; DB rows keep id order', () => {
+    // Q2 is still waiting in the queue, so it has no chat_history row and is
+    // not in the array at all. Only Q1 and reply1 are DB-backed.
     const dbMsgs: any[] = [
-      uMsg(1, 'Q1', { queueId: 'pending-A', createdAt: '2026-01-01T00:00:01Z' }),
-      // Reply1's DB streaming row records the answered queue_id.
-      aMsg(2, 'reply1', { streaming: true, queueId: 'pending-A', createdAt: '2026-01-01T00:00:02Z' }),
-      uMsg(3, 'Q2', { queueId: 'pending-B', queued: true, createdAt: '2026-01-01T00:00:03Z' }),
+      uMsg(1, 'Q1', { createdAt: '2026-01-01T00:00:01Z' }),
+      aMsg(2, 'reply1', { streaming: true, createdAt: '2026-01-01T00:00:02Z' }),
     ]
-    // Fresh reload → no live state; rebuild from the DB snapshot only.
     const merged = rebuildFromDb([], dbMsgs as any)
 
-    // Q2 stays a pending bubble; the streaming reply must stay anchored right
-    // after its question, so the visual order is Q1 → reply1 → Q2.
-    expect(merged.map((m: any) => `${m.role}:${String(m.id)}${m.pending ? ':P' : ''}${m.streaming ? ':S' : ''}`))
-      .toEqual(['user:1', 'assistant:2:S', 'user:3:P'])
+    expect(merged.map((m: any) => `${m.role}:${String(m.id)}${m.streaming ? ':S' : ''}`))
+      .toEqual(['user:1', 'assistant:2:S'])
   })
 
-  it('refresh while a queued message was just drained (queued=0): queued row still renders AFTER the streaming reply', () => {
-    // Q2 was claimed by the drain loop (queued=0) but reply1 is still streaming
-    // — the worst case: Q2 has a LARGER DB id than the reply. Without the
-    // anchor the reply sorts in the TRANSIENT_BASE domain after every DB row.
+  it('a drained message keeps its DB-id order (question before reply)', () => {
+    // Q2 was materialized into chat_history (id=3) and reply1 (id=2) is still
+    // streaming. The reply sorts by its own DB id, not by any transient
+    // domain, so the visual order is Q1 → reply1 → Q2 by id.
     const dbMsgs: any[] = [
-      uMsg(1, 'Q1', { queueId: 'pending-A', createdAt: '2026-01-01T00:00:01Z' }),
-      aMsg(2, 'reply1', { streaming: true, queueId: 'pending-A', createdAt: '2026-01-01T00:00:02Z' }),
-      uMsg(3, 'Q2', { queueId: 'pending-B', queued: false, createdAt: '2026-01-01T00:00:03Z' }),
+      uMsg(1, 'Q1', { createdAt: '2026-01-01T00:00:01Z' }),
+      aMsg(2, 'reply1', { streaming: true, createdAt: '2026-01-01T00:00:02Z' }),
+      uMsg(3, 'Q2', { createdAt: '2026-01-01T00:00:03Z' }),
     ]
     const merged = rebuildFromDb([], dbMsgs as any)
 
@@ -2978,43 +2584,39 @@ describe('queued message ordering after refresh (regression)', () => {
       .toEqual(['user:1', 'assistant:2:S', 'user:3'])
   })
 
-  it('refresh keeps a live placeholder whose anchor string id was dropped (SPA refresh mid-stream)', () => {
+  it('refresh keeps a live placeholder and adopts its DB row id (SPA refresh mid-stream)', () => {
     // SPA refresh (not a full reload): the live placeholder survives in memory
-    // anchored to the optimistic bubble's string id 'pending-A'. The rebuild
-    // drops the string-id bubble (DB row is authoritative) but must keep the
-    // reply anchored to its question — the DB row carries queueId 'pending-A'.
+    // with a transient drain-* id. The rebuild matches it to its DB streaming
+    // row (id=2) and adopts that id, so it sorts by DB id — after Q1, before
+    // the materialized Q2 (id=3). The optimistic Q1 bubble is dropped (the DB
+    // row is authoritative).
     const messages: any[] = [
       { role: 'user', id: 'pending-A', content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }], seq: 1, queueId: 'pending-A' },
-      { role: 'assistant', id: 'drain-r1', content: '', blocks: [{ type: 'text', text: 'reply1' }], streaming: true, seq: 2, parentQueueId: 'pending-A' },
-      { role: 'user', id: 'pending-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], pending: true, seq: 3, queueId: 'pending-B' },
+      { role: 'assistant', id: 'drain-r1', content: '', blocks: [{ type: 'text', text: 'reply1' }], streaming: true, seq: 2 },
+      { role: 'user', id: 'pending-B', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }], seq: 3, queueId: 'pending-B' },
     ]
     const dbMsgs: any[] = [
-      uMsg(1, 'Q1', { queueId: 'pending-A', createdAt: '2026-01-01T00:00:01Z' }),
-      aMsg(2, 'reply1', { streaming: true, queueId: 'pending-A', createdAt: '2026-01-01T00:00:02Z' }),
-      uMsg(3, 'Q2', { queueId: 'pending-B', queued: true, createdAt: '2026-01-01T00:00:03Z' }),
+      uMsg(1, 'Q1', { createdAt: '2026-01-01T00:00:01Z' }),
+      aMsg(2, 'reply1', { streaming: true, createdAt: '2026-01-01T00:00:02Z' }),
     ]
     const merged = rebuildFromDb(messages, dbMsgs as any)
 
-    // The live placeholder survives (id adopted from the DB row), anchored
-    // after Q1, before the still-queued Q2. Q2 keeps its optimistic string id
-    // (the drain loop later adopts the DB id) — the visual order is the point.
-    expect(merged.map((m: any) => `${m.role}:${String(m.id)}${m.pending ? ':P' : ''}${m.streaming ? ':S' : ''}`))
-      .toEqual(['user:1', 'assistant:2:S', 'user:pending-B:P'])
+    // Q2 has no DB row yet (still queued), so it is dropped from the array; the
+    // live placeholder adopts id=2 and stays streaming.
+    expect(merged.map((m: any) => `${m.role}:${String(m.id)}${m.streaming ? ':S' : ''}`))
+      .toEqual(['user:1', 'assistant:2:S'])
   })
 
-  it('anchorRepliesToQuestions rewrites a stale string-id anchor to the DB row queueId', () => {
-    // A finalized/finalized-in-flight reply whose parentQueueId still points at
-    // an optimistic string id that a rebuild dropped. The DB row for the
-    // question carries that string id as its queueId.
+  it('plain DB-id ordering reproduces the old anchor contract without any anchor field', () => {
+    // The old contract needed parentQueueId to keep a reply under its question
+    // when the queued bubble carried a large seq. Under the new contract the
+    // materialized question row (id=1) precedes its finalized reply (id=2) and
+    // the next materialized question (id=3) follows — a plain id sort suffices.
     const msgs = [
-      { role: 'user', id: 1, content: 'Q1', queueId: 'pending-A' },
-      { role: 'assistant', id: 2, content: 'reply1', parentQueueId: 'pending-A', streaming: true },
-      { role: 'user', id: 3, content: 'Q2', queueId: 'pending-B', queued: true },
+      { role: 'user', id: 1, content: 'Q1' },
+      { role: 'assistant', id: 2, content: 'reply1' },
+      { role: 'user', id: 3, content: 'Q2' },
     ] as any[]
-    anchorRepliesToQuestions(msgs)
-    // The reply's parentQueueId is rewritten to the DB row's queueId (same
-    // value here, but the chain resolution now works through the real row).
-    expect(msgs[1].parentQueueId).toBe('pending-A')
     sortMessages(msgs)
     expect(msgs.map((m: any) => `${m.role}:${String(m.id)}`)).toEqual(['user:1', 'assistant:2', 'user:3'])
   })
@@ -3093,13 +2695,18 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
 
   it('releases the guard once a db_load snapshot contains the row (send fully acked)', () => {
     trackInFlightSend('pending-msg2')
+    // The POST returned, so the bubble adopted its numeric DB id
+    // (optimistic_adopt_id) and kept the string queueId as the in-flight key.
     const state: any[] = [
       u(1, 'msg1'),
       a(2, 'reply1'),
-      u('pending-msg2', 'msg2', { seq: 99, queueId: 'pending-msg2' }),
+      u(3, 'msg2', { queueId: 'pending-msg2' }),
     ]
-    // Fresh snapshot now includes the committed row (id=3).
-    const freshDb: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2', { queueId: 'pending-msg2' })]
+    // Fresh snapshot now includes the committed row (id=3). The row carries NO
+    // queueId: chat_history has no such column (it was dropped when the queue
+    // moved to its own table), so the release must key off the bubble's adopted
+    // numeric id — not off a field the snapshot can never contain.
+    const freshDb: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')]
     const merged = rebuildFromDb(state, freshDb)
     // Bubble replaced by the authoritative DB row.
     expect(merged.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')).toHaveLength(1)
@@ -3108,6 +2715,36 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
     const merged2 = rebuildFromDb([u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2', { queueId: 'pending-msg2' })], staleDb)
     expect(merged2.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')).toHaveLength(0)
+  })
+
+  it('does NOT duplicate an adopted bubble when the snapshot carries its row (realistic rows)', () => {
+    // Reported: sending a message showed TWO identical user bubbles; switching
+    // away and back (a full db_load) fixed it.
+    //
+    // Root cause: the guard-release loop keyed off `db.queueId`, but a real
+    // chat_history row has NO queueId (the column was dropped in the queue
+    // refactor and ChatMessage has no such field). So the guard was NEVER
+    // released for a direct send. The bubble then hit the in-flight branch,
+    // which keeps it even though the authoritative snapshot already carries the
+    // same numeric id — and the DB row was appended as well → two bubbles.
+    trackInFlightSend('pending-msg2')
+    // Direct send to an idle session: the POST returned, so the optimistic
+    // bubble adopted its numeric DB id (optimistic_adopt_id) and kept the
+    // string queueId as the in-flight key.
+    const state: any[] = [
+      u(1, 'msg1'),
+      a(2, 'reply1'),
+      u(3, 'msg2', { queueId: 'pending-msg2' }),
+    ]
+    // Authoritative snapshot containing the very same row.
+    const db: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')]
+    const merged = rebuildFromDb(state, db, false)
+    const msg2 = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')
+    expect(msg2).toHaveLength(1)
+    // The single copy is the authoritative DB row (guard released), not the
+    // stale optimistic object.
+    expect(msg2[0].queueId).toBeUndefined()
+    expect(isInFlightSend('pending-msg2')).toBe(false)
   })
 
   it('untrackInFlightSend releases the guard on send failure', () => {
@@ -3122,53 +2759,69 @@ describe('in-flight direct-send guard in rebuildFromDb', () => {
     expect(merged.filter((m: any) => m.role === 'user' && m.content === 'msg2')).toHaveLength(0)
   })
 
-  it('keeps an ENQUEUED (pending) bubble when a stale db_load snapshot predates its row', () => {
-    // The enqueue path pushes a pending bubble while the AI is still
-    // generating, so a loadHistory GET in flight BEFORE the enqueue POST
-    // committed can return a snapshot without the row. The bubble must survive
-    // — its queued=1 DB row is absent from the snapshot, so rebuildFromDb's
-    // pending-row branch (case 2) cannot match it.
-    trackInFlightSend('pending-q2')
+  it('the in-flight guard is keyed by queueId even when the id is already numeric', () => {
+    // An ENQUEUED message never enters the messages array at all (it lives in
+    // the queue store), so rebuildFromDb has no queued-bubble branch any more.
+    // The remaining guard covers a DIRECT send whose bubble adopted its DB id
+    // from the POST response but whose row a stale snapshot still lacks: the
+    // queueId (not the numeric id) is the in-flight key.
+    trackInFlightSend('pending-msg2')
     const state: any[] = [
       u(1, 'msg1'),
       a(2, 'reply1'),
-      u('pending-q2', 'queued msg', { seq: 99, queueId: 'pending-q2', pending: true }),
+      u(3, 'msg2', { queueId: 'pending-msg2' }),
     ]
     const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
     const merged = rebuildFromDb(state, staleDb)
-    const queued = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'queued msg')
-    expect(queued).toHaveLength(1)
-    expect(queued[0].id).toBe('pending-q2')
-    expect(queued[0].pending).toBe(true)
+    const msg2 = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'msg2')
+    expect(msg2).toHaveLength(1)
+    expect(msg2[0].id).toBe(3)
+    // A STALE snapshot must NOT release the guard — that is the whole point of
+    // it (the row exists; this GET just predates it).
+    expect(isInFlightSend('pending-msg2')).toBe(true)
+
+    // A FRESH snapshot that carries the row does release it, so a later stale
+    // rebuild drops the bubble as usual instead of resurrecting it. The row has
+    // no queueId (real rows never do) — the release keys off the numeric id.
+    rebuildFromDb(state, [u(1, 'msg1'), a(2, 'reply1'), u(3, 'msg2')])
+    expect(isInFlightSend('pending-msg2')).toBe(false)
   })
 
-  it('releases the guard once the ENQUEUED bubble appears in a snapshot (queued=1)', () => {
-    // Fresh snapshot now carries the queued=1 row: the pending branch matches it,
-    // the bubble is kept (still waiting for its drain, which adopts the DB id),
-    // and the guard is released so a later stale rebuild cannot resurrect it.
-    trackInFlightSend('pending-q2')
-    const state: any[] = [
-      u(1, 'msg1'),
-      a(2, 'reply1'),
-      u('pending-q2', 'queued msg', { seq: 99, queueId: 'pending-q2', pending: true }),
-    ]
-    const freshDb: any[] = [
-      u(1, 'msg1'),
-      a(2, 'reply1'),
-      u(3, 'queued msg', { queueId: 'pending-q2', queued: true }),
-    ]
-    const merged = rebuildFromDb(state, freshDb)
-    const queued = merged.filter((m: any) => m.role === 'user' && messageText(m) === 'queued msg')
-    expect(queued).toHaveLength(1)
-    // The pending bubble object is preserved (not replaced by the DB row) until
-    // queue_drain carries the authoritative id.
-    expect(queued[0].id).toBe('pending-q2')
-    expect(queued[0].pending).toBe(true)
-    expect(isInFlightSend('pending-q2')).toBe(false)
+  // A queued message that was just DRAINED is announced with a user_message
+  // event AFTER its row commits, and the frontend renders it as a _remote
+  // bubble. removeQueued releases its in-flight guard at that moment, so
+  // nothing else protects it from a stale snapshot — which is exactly how the
+  // user's own queued message disappeared while the assistant reply stayed
+  // ("只出现助手消息" until the whole turn finished).
+  describe('announced (user_message) bubbles survive a stale snapshot', () => {
+    it('keeps a numeric-id _remote user bubble while the session is running', () => {
+      const state: any[] = [
+        u(1, 'msg1'),
+        a(2, 'reply1'),
+        u(3, 'drained', { _remote: true }),
+        a(4, 'reply2', { streaming: true }),
+      ]
+      // A GET issued before the drain committed rows 3/4.
+      const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
+      const merged = rebuildFromDb(state, staleDb, true)
+      expect(merged.filter((m: any) => m.role === 'user' && messageText(m) === 'drained')).toHaveLength(1)
+    })
 
-    const staleDb: any[] = [u(1, 'msg1'), a(2, 'reply1')]
-    const merged2 = rebuildFromDb(merged, staleDb)
-    expect(merged2.filter((m: any) => m.role === 'user' && messageText(m) === 'queued msg')).toHaveLength(0)
+    it('drops it once the run is over, so a rewind still converges', () => {
+      // Rewind cancels the run first, so sessionRunning is false by the time it
+      // reloads — the bubble must NOT survive the truncation.
+      const state: any[] = [u(1, 'msg1'), a(2, 'reply1'), u(3, 'drained', { _remote: true })]
+      const afterRewind: any[] = [u(1, 'msg1'), a(2, 'reply1')]
+      const merged = rebuildFromDb(state, afterRewind, false)
+      expect(merged.filter((m: any) => m.role === 'user' && messageText(m) === 'drained')).toHaveLength(0)
+    })
+
+    it('does not duplicate the bubble when the snapshot DOES carry the row', () => {
+      const state: any[] = [u(1, 'msg1'), u(3, 'drained', { _remote: true })]
+      const freshDb: any[] = [u(1, 'msg1'), u(3, 'drained')]
+      const merged = rebuildFromDb(state, freshDb, true)
+      expect(merged.filter((m: any) => m.role === 'user' && String(m.id) === '3')).toHaveLength(1)
+    })
   })
 })
 
@@ -3199,12 +2852,50 @@ describe('sub-agent parent grouping (reducer)', () => {
     s = chatMessageReducer(s, { type: 'ws_content', text: 'parent ' })
     s = chatMessageReducer(s, { type: 'ws_content', text: 'child', parentToolCallId: 'call_p' })
     s = chatMessageReducer(s, { type: 'ws_content', text: ' parent2' })
-    // parent text resumes must NOT merge into the child block: 3 text blocks
+    // The resumed parent text coalesces back into the PARENT's own block (the
+    // interleaved child block is another parent, so it is stepped over, not a
+    // boundary). Parent and child still never share a block.
     const texts = s[0].blocks!.filter((b: any) => b.type === 'text')
-    expect(texts.length).toBe(3)
-    expect(texts[0]).toMatchObject({ text: 'parent ' })
+    expect(texts.length).toBe(2)
+    expect(texts[0]).toMatchObject({ text: 'parent  parent2' })
+    expect(texts[0].parent_tool_call_id).toBeUndefined()
     expect(texts[1]).toMatchObject({ text: 'child', parent_tool_call_id: 'call_p' })
-    expect(texts[2]).toMatchObject({ text: ' parent2' })
+  })
+
+  it('interleaved sub-agent thinking coalesces per parent', () => {
+    let s = [streamingMsg()]
+    // Two sub-agents stream concurrently; each one's reasoning is continuous.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'Let', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'I will inspect the handler', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' me look at the key files', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' then the reducer', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '.ts, ContentBlocks.vue.', parentToolCallId: 'call_a' })
+
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(2)
+    expect(thinks[0]).toMatchObject({
+      text: 'Let me look at the key files.ts, ContentBlocks.vue.',
+      parent_tool_call_id: 'call_a',
+    })
+    expect(thinks[1]).toMatchObject({
+      text: 'I will inspect the handler then the reducer',
+      parent_tool_call_id: 'call_b',
+    })
+  })
+
+  it('own tool_use still separates that parent\'s thinking', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'before', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_tool_use', data: { id: 't1', name: 'Read', parent_tool_call_id: 'call_a' } as any })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'after', parentToolCallId: 'call_a' })
+    // A foreign agent's interleaved thinking must not resurrect the merge.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'other', parentToolCallId: 'call_b' })
+
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(3)
+    expect(thinks[0].text).toBe('before')
+    expect(thinks[1].text).toBe('after')
+    expect(thinks[2]).toMatchObject({ text: 'other', parent_tool_call_id: 'call_b' })
   })
 
   it('ws_thinking with parentToolCallId tags the block', () => {
@@ -3235,23 +2926,499 @@ describe('sub-agent thinking_done', () => {
     id: 1, role: 'assistant', content: '', blocks: [], streaming: true, createdAt: '2026-01-01T00:00:00Z',
   })
 
-  it('marks a sub-agent thinking block done (parent boundary must not block it)', () => {
+  it('marks a sub-agent thinking block done when done carries its parent', () => {
     let s = [streamingMsg()]
     s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
-    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_p' })
     const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
     expect(think.done).toBe(true)
     expect(think.parent_tool_call_id).toBe('call_p')
   })
 
-  it('marks the last thinking block done when child follows parent', () => {
+  it('thinking_done is parent-scoped (closes its own agent, not the last block)', () => {
     let s = [streamingMsg()]
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'parent thought' })
-    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child thought', parentToolCallId: 'call_p' })
-    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    // A starts, B interleaves, A emits one more delta, then A finishes. The
+    // LAST block belongs to B, so an unfiltered done would wrongly close B.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'A reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'B reasoning', parentToolCallId: 'call_b' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' more A', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_a' })
     const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
-    expect(thinks[1].done).toBe(true)
-    expect(thinks[0].done).toBeUndefined()
+    expect(thinks.length).toBe(2)
+    expect(thinks[0]).toMatchObject({ parent_tool_call_id: 'call_a', done: true })
+    expect(thinks[1]).toMatchObject({ parent_tool_call_id: 'call_b' })
+    expect(thinks[1].done).toBeFalsy()
+  })
+
+  it('top-level thinking_done does not close a sub-agent block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'child', parentToolCallId: 'call_p' })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done' })
+    const think = s[0].blocks!.find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBeFalsy()
+  })
+
+  it('empty ws_thinking does not open a block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '', parentToolCallId: 'call_a' })
+    expect(s[0].blocks!.filter((b: any) => b.type === 'thinking').length).toBe(0)
+    // A real delta afterwards still creates the block normally.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'real', parentToolCallId: 'call_a' })
+    const thinks = s[0].blocks!.filter((b: any) => b.type === 'thinking')
+    expect(thinks.length).toBe(1)
+    expect(thinks[0].text).toBe('real')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// In-progress thinking markers (A-plan): a still-streaming thinking block is
+// represented in the streaming row as {think_id, in_progress:true}. Without it
+// a session switch lost the already-emitted prefix and the next delta opened a
+// second, done-less block that spun forever.
+// ---------------------------------------------------------------------------
+describe('in-progress thinking marker (switch-back losslessness)', () => {
+  const streamingMsg = (blocks: any[]): any => ({
+    role: 'assistant', id: 42, content: '', blocks, streaming: true, parentQueueId: '1',
+  })
+
+  it('adopts the in_progress marker think_id onto the live streaming block', () => {
+    // The live block was built from deltas and has no think_id; the DB row has
+    // an in_progress marker for the same block. Adoption links the two so the
+    // render layer can lazy-load the prefix.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'deltas after switch' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_live', in_progress: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(1, 'marker must be adopted, not duplicated')
+    expect(thinks[0].think_id).toBe('th_live')
+    expect(thinks[0].in_progress).toBe(true)
+    expect(thinks[0].text).toBe('deltas after switch', 'live deltas must survive')
+  })
+
+  it('is idempotent: a second db_load does not re-target an earlier finished block', () => {
+    // The scan picks "the last think_id-less block of this parent". After the
+    // first adoption the streaming block HAS an id, so a second db_load (which
+    // happens routinely mid-stream: panel open, foreground resync, WS reconnect)
+    // would skip it and land on an earlier, already-finished block — giving two
+    // blocks the same think_id. That collides in the v-for key and makes the
+    // finished block lazy-load the streaming block's prefix.
+    const live = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([
+        { type: 'thinking', text: 'X reasoning', done: true },
+        { type: 'tool_use', name: 'Read', id: 'call_t', done: true },
+        { type: 'thinking', text: 'Z deltas' },
+      ]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [
+          { type: 'thinking', think_id: 'th_x', done: true },
+          { type: 'tool_use', name: 'Read', id: 'call_t', done: true },
+          { type: 'thinking', think_id: 'th_z', in_progress: true },
+        ],
+      },
+    ]
+
+    let merged = rebuildFromDb(live, dbMsgs as any)
+    merged = rebuildFromDb(merged, dbMsgs as any)
+
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    const ids = thinks.map((b: any) => b.think_id).filter(Boolean)
+    expect(new Set(ids).size, 'think_id must not repeat (v-for key collision)').toBe(ids.length)
+    expect(thinks[0].think_id, 'the finished block must not be mis-adopted').toBeUndefined()
+    expect(thinks[1].think_id).toBe('th_z')
+    expect(thinks[1].in_progress).toBe(true)
+  })
+
+  it('keys a thinking block with the think_id the backend sent', () => {
+    // The backend mints a block's identity when it opens and puts it on the WS
+    // event, so the client knows it from birth. Before this, the block had no
+    // id until a DB snapshot arrived and the client matched them up by
+    // POSITION — which mispaired blocks across a session switch (the reported
+    // "top block spins forever with its text frozen").
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first', thinkId: 'th_abc' } as any)
+
+    // Assert on the OPENING delta. A later delta would take the coalescing
+    // branch, whose backfill would supply the id even if the push had not —
+    // masking a regression in exactly the line under test.
+    expect(s[0].blocks![0].think_id, 'id set by the push that opened the block').toBe('th_abc')
+
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: ' second', thinkId: 'th_abc' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'one block, coalesced').toHaveLength(1)
+    expect(blocks[0].think_id, 'carries the backend identity').toBe('th_abc')
+    expect(blocks[0].text).toBe('first second')
+  })
+
+  it('still works when the server sends no think_id (older server)', () => {
+    // Version-skew guard: the payload may lack think_id. The block must still be
+    // created and still get a usable key from _key, so a new client against an
+    // old server behaves exactly as before.
+    const s = chatMessageReducer([streamingMsg([])], { type: 'ws_thinking', text: 'reasoning', key: 'thinking-0' })
+    const blocks = s[0].blocks!
+    expect(blocks).toHaveLength(1)
+    expect(blocks[0].think_id, 'no id invented').toBeUndefined()
+    expect(blocks[0]._key, 'the fallback key survives').toBe('thinking-0')
+    expect(blocks[0].text).toBe('reasoning')
+  })
+
+  it('backfills a missing think_id on a later delta', () => {
+    // VERSION-SKEW GUARD, not coverage of the live path. With a current server
+    // every block carries its id from the opening delta, so this branch never
+    // fires; with an old server the payload has no id, so it also never fires.
+    // It covers a block that got an id-less start and later receives an id.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a', key: 'thinking-0' })
+    expect(s[0].blocks![0].think_id, 'no id yet').toBeUndefined()
+
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b', thinkId: 'th_first' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'still one block').toHaveLength(1)
+    expect(blocks[0].think_id, 'backfilled from the delta').toBe('th_first')
+    expect(blocks[0].text).toBe('ab')
+  })
+
+  it('findThinkingTarget prefers the wire id over position (shared by both streams)', () => {
+    // Both the chat reducer and the task-execution stream call this, so the two
+    // cannot diverge again. The id lookup must win even when the positional scan
+    // would stop short at a tool_use boundary.
+    const blocks: any[] = [
+      { type: 'thinking', think_id: 'th_X', text: 'TOP' },
+      { type: 'tool_use', name: 'Bash', id: 'sub1', done: true },
+    ]
+    // A positional scan that stops at the tool_use boundary (the real
+    // findLastBlockOfType behaviour) finds nothing...
+    const positionalStopsAtToolUse = () => {
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === 'thinking') return blocks[i]
+        if (blocks[i].type === 'tool_use') return undefined
+      }
+      return undefined
+    }
+    expect(positionalStopsAtToolUse()).toBeUndefined()
+    // ...but the id lookup finds the block, so the caller extends it.
+    expect(findThinkingTarget(blocks, 'th_X', positionalStopsAtToolUse)).toBe(blocks[0])
+  })
+
+  it('findThinkingTarget refuses a DIFFERENT id but allows an id-less block', () => {
+    const other: any[] = [{ type: 'thinking', think_id: 'th_A', text: 'a' }]
+    // Different id → must not be extended (would merge two blocks under one key).
+    expect(findThinkingTarget(other, 'th_B', () => other[0])).toBeUndefined()
+
+    const idless: any[] = [{ type: 'thinking', text: 'a' }]
+    // No id on the block → positional match is all there is (old-server path).
+    expect(findThinkingTarget(idless, 'th_B', () => idless[0])).toBe(idless[0])
+  })
+
+  it('appends to its own block even when a tool_use sits after it', () => {
+    // The reported "top thinking block frozen forever". After a switch-back,
+    // mergeStreamBlocks splices the DB flush's blocks in, so a FINISHED tool_use
+    // can land right after the live thinking block. A later delta of that same
+    // block then hits the tool_use boundary in findBlockByTypeBackward, finds
+    // nothing, and used to open a SECOND block — while stamping it with the same
+    // think_id. Two blocks, one v-for key: the head one kept its stale text and
+    // spun while the new one took the stream.
+    //
+    // Observed live: block[0] and block[15] both th_2ddda639, textLen frozen at
+    // 100 vs growing 55→929→2028→3161.
+    const msg: any = {
+      role: 'assistant', id: 54910, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_2ddda639', in_progress: true, text: 'x'.repeat(100) },
+        { type: 'tool_use', name: 'Bash', id: 'call_00_Ldy5', done: true },
+        { type: 'text', text: 'db tail' },
+      ],
+    }
+    let s = [msg]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'y'.repeat(55), thinkId: 'th_2ddda639' } as any)
+
+    const blocks = s[0].blocks as any[]
+    const thinks = blocks.filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'the delta extends the existing block, it does not open another').toHaveLength(1)
+    expect(thinks[0].text, 'stale head text + new delta').toBe('x'.repeat(100) + 'y'.repeat(55))
+
+    const ids = thinks.map((b: any) => b.think_id)
+    expect(new Set(ids).size, 'think_id must not repeat (v-for key collision)').toBe(ids.length)
+
+    // The tool_use and text blocks keep their places.
+    expect(blocks.map((b: any) => b.type)).toEqual(['thinking', 'tool_use', 'text'])
+  })
+
+  it('starts a NEW block when the delta carries a different think_id', () => {
+    // A different think_id means the backend considers it a different block —
+    // appending would merge two blocks' text under one v-for key. The reducer
+    // must use the wire identity, not just position, to decide its target.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'first block', thinkId: 'th_one' } as any)
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'second block', thinkId: 'th_two' } as any)
+    const blocks = s[0].blocks!
+    expect(blocks, 'two distinct blocks').toHaveLength(2)
+    expect(blocks[0]).toMatchObject({ think_id: 'th_one', text: 'first block' })
+    expect(blocks[1]).toMatchObject({ think_id: 'th_two', text: 'second block' })
+    // Distinct keys — no v-for collision.
+    expect(new Set(blocks.map((b: any) => b.think_id)).size).toBe(2)
+
+    // A further delta of the NEWEST block still appends to it.
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: '+more', thinkId: 'th_two' } as any)
+    const after = s[0].blocks!
+    expect(after).toHaveLength(2)
+    expect(after[0]).toMatchObject({ think_id: 'th_one', text: 'first block' })
+    expect(after[1]).toMatchObject({ think_id: 'th_two', text: 'second block+more' })
+  })
+
+  it('keeps appending by position when ids are absent (old server)', () => {
+    // No ids on the wire: position is the only signal, and the old behaviour
+    // must be preserved exactly.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'a' })
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'b' })
+    const blocks = s[0].blocks!
+    expect(blocks, 'one coalesced block').toHaveLength(1)
+    expect(blocks[0].text).toBe('ab')
+  })
+
+  it('does NOT re-open a finished live block with an in_progress marker', () => {
+    // The reported "top of the assistant message, never finishes, text never
+    // grows" (msgId=54716). block[0] had already finished normally
+    // (done=true, 66 chars — it IS the DB's short block th_fe1c10f0). On the
+    // 09:56:05 switch-back, adoptThinkingMarkers handed it the in_progress
+    // marker of a DIFFERENT block (th_a14f9884, 174512 chars) and forced
+    // in_progress back on: `tid=th_a14f9884 inprog=true textLen=66`, spinning
+    // forever while the real streaming block opened separately.
+    //
+    // A block's `done` came from a real thinking_done for that very block, so it
+    // must not be undone by a marker belonging to another one.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54716, content: '', streaming: true, blocks: [
+        { type: 'thinking', text: 'finished thought', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'b1', done: true },
+      ] },
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54716, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_short', done: true },
+        { type: 'tool_use', name: 'Bash', id: 'b1', done: true },
+        { type: 'thinking', think_id: 'th_long', in_progress: true },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.streaming)!
+    const finished = (reply.blocks || []).find(
+      (b: any) => b.type === 'thinking' && b.text === 'finished thought',
+    )
+    expect(finished, 'the finished block survives').toBeDefined()
+    expect(finished.done, 'it stays finished').toBe(true)
+    expect(finished.in_progress, 'and is NOT re-opened as streaming').toBeUndefined()
+    expect(finished.think_id, 'nor given another block identity').toBeUndefined()
+  })
+
+  it('adopts a done marker onto an unfinished live block, keeping its text', () => {
+    // This test previously asserted the opposite (think_id stays undefined),
+    // on the premise that "a done marker is handled by the liveHasThinking
+    // dedup". That premise was the bug: the dedup DROPS the DB block but never
+    // gives the live block its identity or its `done` — so a block whose turn
+    // moved on while the client was away stayed an anonymous perpetual spinner.
+    //
+    // Reported shape: switch away mid-turn, switch back, and a block sits stuck
+    // at the TOP of the assistant message, its text never growing while the rest
+    // of the reply streams (observed three times as
+    // `stall block[0]: done=undefined in_progress=undefined think_id=-`).
+    //
+    // Adoption must NOT overwrite the live text with the DB marker's stale
+    // prefix — the marker has no text at all. Only identity + done are taken.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'reasoned' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks, 'no duplicate chip').toHaveLength(1)
+    expect(thinks[0].think_id, 'the live block adopts the DB identity').toBe('th_done')
+    expect(thinks[0].done, 'and is closed out, so the spinner stops').toBe(true)
+    expect(thinks[0].text, 'its own text is preserved').toBe('reasoned')
+  })
+
+  it('leaves a live block that is already done alone', () => {
+    // The guard that keeps the continuous-stream case working: a live block
+    // with done=true renders as a finished chip, so it must not be rewritten
+    // (adopting a marker would replace its full text with the DB's stale
+    // prefix).
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'reasoned', done: true }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [{ type: 'thinking', think_id: 'th_done', done: true }],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks).toHaveLength(1)
+    expect(thinks[0].think_id, 'an already-finished live block is not rewritten').toBeUndefined()
+    expect(thinks[0].text).toBe('reasoned')
+  })
+
+  it('skips adoption when a parent has two in_progress markers (ambiguous)', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', text: 'live' }]),
+    ]
+    const dbMsgs: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      {
+        role: 'assistant', id: 42, content: '', streaming: true,
+        blocks: [
+          { type: 'thinking', think_id: 'th_a', in_progress: true },
+          { type: 'thinking', think_id: 'th_b', in_progress: true },
+        ],
+      },
+    ]
+    const merged = rebuildFromDb(messages, dbMsgs as any)
+    const reply = merged.find((m: any) => m.role === 'assistant' && m.id === 42)
+    const thinks = (reply.blocks || []).filter((b: any) => b.type === 'thinking')
+    expect(thinks.some((b: any) => b.think_id), 'ambiguous parent must not be guessed').toBe(false)
+  })
+
+  it('ws_thinking appends to a marker block without writing the literal "undefined"', () => {
+    // A marker adopted from the DB has no text; a delta arriving afterwards must
+    // seed an empty string rather than concatenating onto undefined.
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', think_id: 'th_live', in_progress: true }]),
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_thinking', text: 'delta' })
+    const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.text).toBe('delta')
+    expect(think.text).not.toContain('undefined')
+  })
+
+  it('ws_thinking_done clears in_progress and marks the block done', () => {
+    const messages: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      streamingMsg([{ type: 'thinking', think_id: 'th_live', in_progress: true, text: 'partial' }]),
+    ]
+    const next = chatMessageReducer(messages, { type: 'ws_thinking_done' })
+    const think = (next.find((m: any) => m.id === 42)!.blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
+    expect(think.in_progress).toBeUndefined()
+  })
+
+  it('ws_thinking_done finds the block across a same-parent tool_use', () => {
+    // Mirrors the backend's AccumulateBlock, which has NO tool_use boundary.
+    // The ACP think-tool path emits thinking_done once when the ToolCall
+    // arrives and AGAIN when the think tool completes — by then its tool_use is
+    // already in the array. A boundary would stop the scan short and leave the
+    // block spinning for the rest of the turn.
+    let s = [streamingMsg([])]
+    s = chatMessageReducer(s, { type: 'ws_thinking', text: 'A reasoning', parentToolCallId: 'call_a' })
+    s = chatMessageReducer(s, {
+      type: 'ws_tool_use',
+      data: { id: 'call_think', name: 'DeepThink', input: {}, done: false, parent_tool_call_id: 'call_a' } as any,
+    })
+    s = chatMessageReducer(s, { type: 'ws_thinking_done', parentToolCallId: 'call_a' })
+    const think = (s[0].blocks || []).find((b: any) => b.type === 'thinking')!
+    expect(think.done).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// mergeThinkingPrefix: stitching a lazy-loaded prefix with live deltas.
+// ---------------------------------------------------------------------------
+describe('mergeThinkingPrefix', () => {
+  it('concatenates when the two halves are disjoint', () => {
+    expect(mergeThinkingPrefix('prefix ', 'live')).toBe('prefix live')
+  })
+
+  it('returns live when it already covers the prefix', () => {
+    expect(mergeThinkingPrefix('prefix', 'prefix and more')).toBe('prefix and more')
+  })
+
+  it('returns the prefix when live is a stale subset', () => {
+    expect(mergeThinkingPrefix('prefix and more', 'prefix')).toBe('prefix and more')
+  })
+
+  it('trims the overlap at the seam', () => {
+    // DB prefix ends with "world"; live restarts at "world" (a boundary both
+    // paths emitted).
+    expect(mergeThinkingPrefix('hello world', 'world and beyond')).toBe('hello world and beyond')
+  })
+
+  it('returns live when there is no prefix', () => {
+    expect(mergeThinkingPrefix(undefined, 'live')).toBe('live')
+    expect(mergeThinkingPrefix('', 'live')).toBe('live')
+  })
+
+  it('returns the prefix when live is empty', () => {
+    expect(mergeThinkingPrefix('prefix', '')).toBe('prefix')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// thinkingRenderSource: the ONE string both render paths must agree on.
+//
+// The template path (getThinkingHtml) and the throttled batch path
+// (flushBlockHtml) render the same block. When flushBlockHtml rendered
+// `block.text` alone, a block carrying a lazy-loaded prefix lost it for one
+// frame and got it back the next — alternating every ~300ms, which the user saw
+// as the block blanking and refilling ("flashes every few seconds, looks like it
+// clears and reloads").
+// ---------------------------------------------------------------------------
+describe('thinkingRenderSource', () => {
+  it('stitches the cached prefix onto live deltas', () => {
+    // The reported shape: prefix in chat_thinking, deltas arrived after.
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'deltas' }, 'PREFIX '))
+      .toBe('PREFIX deltas')
+  })
+
+  it('renders the prefix alone when no deltas arrived yet', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1' }, 'PREFIX ')).toBe('PREFIX ')
+  })
+
+  it('renders deltas alone while the prefix is still loading', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'deltas' }, undefined))
+      .toBe('deltas')
+  })
+
+  it('trims the overlap when both sides emitted the seam', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1', text: 'world end' }, 'hello world'))
+      .toBe('hello world end')
+  })
+
+  it('is text-only for a block without a think_id', () => {
+    expect(thinkingRenderSource({ type: 'thinking', text: 'plain' }, 'IGNORED')).toBe('plain')
+  })
+
+  it('is empty for a block with nothing to show', () => {
+    expect(thinkingRenderSource({ type: 'thinking', think_id: 'th_1' })).toBe('')
+    expect(thinkingRenderSource(undefined)).toBe('')
   })
 })
 
@@ -3259,64 +3426,52 @@ describe('sub-agent thinking_done', () => {
 // Mid-turn injection (steer) — the message joined the running turn instead of
 // being queued, so it must never wait for a drain event that will not arrive.
 // ---------------------------------------------------------------------------
-describe('mid-turn injection (steer) pending handling', () => {
-  it('optimistic_adopt_id clears pending when the caller opts in', () => {
-    // An injected message: the optimistic bubble was pushed pending (the enqueue
-    // path always does), but the backend reported it joined the running turn.
-    // No queue_drain will ever arrive for it, so it must shed pending now.
+describe('mid-turn injection (steer) — no pending chrome on chat messages', () => {
+  it('optimistic_adopt_id adopts the DB id for an injected message', () => {
+    // An injected message's user_message event lands it in the conversation with
+    // its committed DB id, and the optimistic bubble pushed for it adopts that
+    // id. There is no `pending` marker to clear any more: a queued message never
+    // enters this array (it lives in the queue store until dequeued or injected),
+    // and its queue entry is dropped by removeQueued (useMessageQueue) when the
+    // backend reports the injection succeeded — see handlePendingAction.
     const messages: any[] = [
-      { role: 'user', id: 'pending-1', queueId: 'pending-1', content: 'steered', blocks: [{ type: 'text', text: 'steered' }], pending: true, seq: nextClientSeq() },
+      { role: 'user', id: 'pending-1', queueId: 'pending-1', content: 'steered', blocks: [{ type: 'text', text: 'steered' }], seq: nextClientSeq() },
     ]
     const next = chatMessageReducer(messages, {
-      type: 'optimistic_adopt_id', id: 'pending-1', dbId: 7, clearPending: true,
+      type: 'optimistic_adopt_id', id: 'pending-1', dbId: 7,
     })
     const m = next.find((x: any) => x.content === 'steered')!
     expect(m.id).toBe(7)
     expect(m.queueId).toBe('pending-1')
-    expect(m.pending).toBeUndefined()
     expect(m.seq).toBeUndefined()
   })
 
-  it('optimistic_adopt_id keeps a queued bubble pending by default', () => {
-    // A genuinely queued message: the drain loop will carry its id, so the
-    // bubble must stay pending until then (pre-existing behavior, unchanged).
-    const messages: any[] = [
-      { role: 'user', id: 'queue-B', queueId: 'queue-B', content: 'queued', blocks: [{ type: 'text', text: 'queued' }], pending: true, seq: nextClientSeq() },
-    ]
-    const next = chatMessageReducer(messages, {
-      type: 'optimistic_adopt_id', id: 'queue-B', dbId: 9,
-    })
-    const m = next.find((x: any) => x.content === 'queued')!
-    expect(m.pending).toBe(true)
-    expect(m.id).toBe('queue-B')
-  })
+  // DELETED: 'optimistic_adopt_id keeps a queued bubble pending by default'.
+  // The premise is inverted by the queue-store refactor: a queued message is not
+  // in the conversation array at all, so there is no "queued bubble" here to keep
+  // pending — and optimistic_adopt_id adopts the DB id unconditionally instead of
+  // leaving a queued bubble's string id in place.
 
-  it('clear_queued_pending drops the pending marker for the injected message', () => {
-    // The /api/ai/queue path returns {injected:true} — no drain will follow.
-    const messages: any[] = [
-      { role: 'user', id: 'q-inj', queueId: 'q-inj', content: 'inj', blocks: [{ type: 'text', text: 'inj' }], pending: true, queued: true, seq: nextClientSeq() },
-      { role: 'user', id: 'q-keep', queueId: 'q-keep', content: 'kept', blocks: [{ type: 'text', text: 'kept' }], pending: true, queued: true, seq: nextClientSeq() },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-inj' })
+  // DELETED: 'clear_queued_pending drops the pending marker for the injected
+  // message'. The `clear_queued_pending` action no longer exists: removing a
+  // queue entry is removeQueued(sessionId, queueId) in useMessageQueue.ts
+  // (covered by useMessageQueue.test.ts and useSessionManager's
+  // handlePendingAction), and a chat message carries no pending marker.
 
-    const injected = next.find((x: any) => x.content === 'inj')!
-    expect(injected.pending).toBeUndefined()
-    expect(injected.queued).toBeUndefined()
-
-    // Other queued messages are untouched.
-    const kept = next.find((x: any) => x.content === 'kept')!
-    expect(kept.pending).toBe(true)
-  })
-
-  it('ws_user_message keeps an injected remote bubble non-pending', () => {
-    // Cross-device: the backend emits queued=false for an injected message, so
-    // the receiving device must not render it as waiting in the queue.
+  it('ws_user_message lands an injected message as a normal committed bubble', () => {
+    // Cross-device: an injected message is a committed chat_history row, so the
+    // receiving device renders it as an ordinary remote bubble with no queue
+    // chrome (the reducer has no pending/queued state to set).
     const next = chatMessageReducer([], {
       type: 'ws_user_message',
-      data: { messageId: 11, content: 'remote injected', queueId: 'r-1', senderClientId: 'other-device', queued: false },
+      data: { messageId: 11, content: 'remote injected', queueId: 'r-1', senderClientId: 'other-device' },
     } as any)
-    const m = next[0]
+    const m = next[0] as any
+    expect(m.id).toBe(11)
+    expect(m._remote).toBe(true)
+    expect(m._remoteQueueId).toBe('r-1')
     expect(m.pending).toBeUndefined()
+    expect(m.queued).toBeUndefined()
   })
 })
 
@@ -3326,16 +3481,19 @@ describe('mid-turn injection (steer) pending handling', () => {
 // that is still streaming.
 // ---------------------------------------------------------------------------
 describe('ws_stream_split (mid-turn assistant split)', () => {
-  it('finalizes the current bubble and opens a new anchored one', () => {
-    // Live state: Q1, the streaming reply, and the just-injected Q2.
+  it('finalizes the current bubble and opens a new streaming one at its DB id', () => {
+    // Live state: Q1, the streaming reply, and the just-injected Q2. The
+    // injected question was materialized into chat_history before the "after"
+    // row, so the DB ids already encode the conversational order — no anchor
+    // field (the removed parentQueueId) is needed.
     const messages: any[] = [
       { role: 'user', id: 1, content: 'Q1', blocks: [{ type: 'text', text: 'Q1' }] },
       { role: 'assistant', id: 2, content: '', blocks: [{ type: 'text', text: 'before half' }], streaming: true },
-      { role: 'user', id: 3, queueId: 'pending-inject-1', content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }] },
+      { role: 'user', id: 3, content: 'Q2', blocks: [{ type: 'text', text: 'Q2' }] },
     ]
 
     const next = chatMessageReducer(messages, {
-      type: 'ws_stream_split', messageId: 4, queueId: 'pending-inject-1',
+      type: 'ws_stream_split', messageId: 4,
     })
 
     const before = next.find((m: any) => m.id === 2)!
@@ -3345,13 +3503,13 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
     const after = next.find((m: any) => m.id === 4)!
     expect(after.role).toBe('assistant')
     expect(after.streaming).toBe(true)
-    expect(after.parentQueueId).toBe('pending-inject-1')
+    // No anchor field on the new half — ordering is the DB id alone.
+    expect(after.parentQueueId).toBeUndefined()
     expect(after.blocks).toEqual([])
 
-    // The injected question must sort BETWEEN the halves.
-    const contents = next.map((m: any) => m.content)
-    expect(contents.indexOf('before half') < contents.indexOf('Q2')).toBe(true)
-    expect(contents.indexOf('Q2') < next.indexOf(after)).toBe(true)
+    // The injected question sorts BETWEEN the halves by DB id.
+    const ids = next.map((m: any) => m.id)
+    expect(ids).toEqual([1, 2, 3, 4])
   })
 
   it('marks unfinished tool blocks done on the before-half', () => {
@@ -3372,8 +3530,8 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
     const messages: any[] = [
       { role: 'assistant', id: 2, content: '', streaming: true, blocks: [] },
     ]
-    const once = chatMessageReducer(messages, { type: 'ws_stream_split', messageId: 6, queueId: 'q' })
-    const twice = chatMessageReducer(once, { type: 'ws_stream_split', messageId: 6, queueId: 'q' })
+    const once = chatMessageReducer(messages, { type: 'ws_stream_split', messageId: 6 })
+    const twice = chatMessageReducer(once, { type: 'ws_stream_split', messageId: 6 })
     expect(twice.filter((m: any) => m.role === 'assistant')).toHaveLength(2)
   })
 
@@ -3399,63 +3557,43 @@ describe('ws_stream_split (mid-turn assistant split)', () => {
 
 // ---------------------------------------------------------------------------
 // Queued-message action: "insert into the current reply" / "interrupt and send"
+//
+// Both actions now live OUTSIDE this reducer. The queue entry is removed by
+// removeQueued(sessionId, queueId) in useMessageQueue.ts, driven by
+// useSessionManager.handlePendingAction (insert) and the queue_inject /
+// queue_drain / queue_cancel WS handlers in useChatStream.ts. A chat message
+// carries no pending/queued state, so the old clear_queued_pending action — and
+// the pending-marker assertions built on it — have no reducer-level equivalent.
+// removeQueued is covered by useMessageQueue.test.ts.
 // ---------------------------------------------------------------------------
-describe('queued message action (insert / interrupt)', () => {
-  it('clear_queued_pending clears pending without removing the bubble', () => {
-    // Insert: the message becomes part of the conversation, so its bubble must
-    // STAY (only the pending spinner goes) — unlike cancel, which removes it.
-    const messages: any[] = [
-      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'queued', blocks: [{ type: 'text', text: 'queued' }], pending: true, queued: true, seq: 1 },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-1' })
-    expect(next).toHaveLength(1)
-    expect(next[0].pending).toBeUndefined()
-    expect(next[0].queued).toBeUndefined()
-  })
+describe('queued message action (insert / interrupt) — reducer boundary', () => {
+  // DELETED: 'clear_queued_pending clears pending without removing the bubble'.
+  // The action no longer exists; the equivalent behavior is the queue entry
+  // being dropped by removeQueued, asserted in useMessageQueue.test.ts.
 
-  it('clear_queued_pending leaves other queued bubbles alone', () => {
-    const messages: any[] = [
-      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'a', blocks: [], pending: true, queued: true, seq: 1 },
-      { role: 'user', id: 'q-2', queueId: 'q-2', content: 'b', blocks: [], pending: true, queued: true, seq: 2 },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-1' })
-    expect(next.find((m: any) => m.queueId === 'q-1')!.pending).toBeUndefined()
-    expect(next.find((m: any) => m.queueId === 'q-2')!.pending).toBe(true)
-  })
+  // DELETED: 'clear_queued_pending leaves other queued bubbles alone'.
+  // Same reason: removeQueued only drops the named queueId, covered in
+  // useMessageQueue.test.ts ('removeQueued' describe).
 
-  it('clear_queued_pending clears a cross-device bubble via _remoteQueueId', () => {
-    // A bubble created from another device's queued user_message has a numeric
-    // id and NO queueId — only _remoteQueueId carries the queue identity. If the
-    // reducer only matched id/queueId, this bubble would spin forever after an
-    // insert (until some later loadHistory happened to drop it).
-    const messages: any[] = [
-      { role: 'user', id: 12345, content: 'from device B', blocks: [], pending: true, queued: true, _remote: true, _remoteQueueId: 'q-remote-1' },
-    ]
-    const next = chatMessageReducer(messages, { type: 'clear_queued_pending', queueId: 'q-remote-1' })
-    expect(next).toHaveLength(1)
-    expect(next[0].pending).toBeUndefined()
-    expect(next[0].queued).toBeUndefined()
-  })
+  // DELETED: 'clear_queued_pending clears a cross-device bubble via
+  // _remoteQueueId'. There is no pending marker on a cross-device bubble any
+  // more — its user_message event lands it as a committed row, and the queue
+  // entry is keyed by queueId in the store.
 
-  it('ws_queue_drain opens a new reply; clear_queued_pending does not', () => {
-    // The distinction that matters: a drained message starts its OWN turn (new
-    // assistant placeholder), an inserted one joins the running turn (none).
+  it('ws_queue_drain finalizes the streaming reply in place without pushing a new assistant', () => {
+    // A drained message starts its OWN turn, but the reducer only owns the turn
+    // BOUNDARY: it finalizes the reply that was streaming (the backend emits
+    // `done` only when the whole drain loop exits). The next turn's placeholder
+    // is created by the following stream_start event — or by
+    // ensureStreamingPlaceholder in useChatStream when that event is lost.
     const base: any[] = [
       { role: 'assistant', id: 2, content: '', blocks: [], streaming: true },
-      { role: 'user', id: 'q-1', queueId: 'q-1', content: 'queued', blocks: [], pending: true, queued: true, seq: 1 },
     ]
+    const afterDrain = chatMessageReducer(base.map((m) => ({ ...m })), { type: 'ws_queue_drain' })
 
-    const afterInsert = chatMessageReducer(
-      base.map((m) => ({ ...m })),
-      { type: 'clear_queued_pending', queueId: 'q-1' },
-    )
-    expect(afterInsert.filter((m: any) => m.role === 'assistant')).toHaveLength(1)
-
-    const afterDrain = chatMessageReducer(
-      base.map((m) => ({ ...m })),
-      { type: 'ws_queue_drain', queueId: 'q-1', text: 'queued', files: [], dbMessageId: 5 },
-    )
-    expect(afterDrain.filter((m: any) => m.role === 'assistant').length).toBeGreaterThan(1)
+    expect(afterDrain.filter((m: any) => m.role === 'assistant')).toHaveLength(1)
+    expect(afterDrain[0].id).toBe(2)
+    expect(afterDrain[0].streaming).toBeUndefined()
   })
 })
 
@@ -3485,3 +3623,157 @@ describe('queued message action (insert / interrupt)', () => {
     expect(userBubbles).toHaveLength(2, 'the remote file must render as its own bubble')
     expect(userBubbles.map((m: any) => m.files[0].path)).toContain('.clawbench/uploads/remote.pdf')
   })
+
+// ── Live placeholder ↔ streaming DB row matching ──
+//
+// Regression: a running sub-agent's Agent pill showed its green check while the
+// sub-agent was still producing output, and it recovered only on a later
+// refresh. The DB row of a streaming turn carries the CURRENT tool status, so
+// when the live placeholder failed to adopt the DB id — ws_stream_start is
+// dropped routinely — the parsed DB row replaced the live blocks and its
+// `done: true` (forced by parseAssistantContent on historical rows) won.
+//
+// The placeholder must instead be recognised as THIS turn's row even without an
+// id match, so the live block flags survive.
+describe('rebuildFromDb: a live thinking block keeps its DB position', () => {
+  it('anchors by think_id instead of being pinned to index 0', () => {
+    // The reported "a thinking block still streaming at the TOP while the rest
+    // of the reply below it is already finished". Observed msgId=54774: the
+    // live placeholder held ONE block (already adopted to th_03725d47), and the
+    // merge rendered it at index 0 while its DB position was 46 of 114 — every
+    // DB-only block was spliced AFTER it.
+    //
+    // Cause: dbAnchorOfLiveBlock returned -1 for thinking (it only knew
+    // tool_use), so all extras were inserted after the live block. Anchoring on
+    // the exact think_id places it where the DB says it belongs.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54774, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_mid', in_progress: true, text: 'deltas' },
+      ] },
+    ]
+    const db: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 54774, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_a', done: true },
+        { type: 'text', text: 'earlier text' },
+        { type: 'thinking', think_id: 'th_mid', in_progress: true },
+        { type: 'tool_use', name: 'Bash', id: 't1', done: true },
+        { type: 'text', text: 'later text' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db)
+    const blocks = merged.find((m) => m.role === 'assistant' && m.streaming)!.blocks as any[]
+
+    // Assert the FULL sequence, not just one index: the bug was an ordering
+    // inversion, and a single-index check can pass for the wrong reason.
+    expect(blocks.map((b: any) => b.type)).toEqual(['text', 'thinking', 'tool_use', 'text'])
+    const iThink = blocks.findIndex((b: any) => b.think_id === 'th_mid')
+    const iTool = blocks.findIndex((b: any) => b.type === 'tool_use' && b.id === 't1')
+    const iEarlier = blocks.findIndex((b: any) => b.type === 'text' && b.text === 'earlier text')
+    // The streaming block sits where the DB puts it: after the earlier text,
+    // before the tool that follows it. Before the fix it was at index 0, i.e.
+    // BEFORE the earlier text.
+    expect(iEarlier).toBeLessThan(iThink)
+    expect(iThink).toBeLessThan(iTool)
+
+    // Still exactly one block per think_id (no v-for key collision).
+    const ids = blocks.filter((b: any) => b.type === 'thinking' && b.think_id).map((b: any) => b.think_id)
+    expect(new Set(ids).size).toBe(ids.length)
+  })
+
+  it('leaves a thinking block with no DB counterpart at the end', () => {
+    // A genuinely new block the flush has not written yet has no anchor (-1);
+    // it must keep the previous behaviour and not be forced into the middle.
+    const live: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 9, content: '', streaming: true, blocks: [
+        { type: 'thinking', think_id: 'th_brand_new', in_progress: true, text: 'x' },
+      ] },
+    ]
+    const db: any[] = [
+      { role: 'user', id: 1, content: 'A', blocks: [{ type: 'text', text: 'A' }] },
+      { role: 'assistant', id: 9, content: '', streaming: true, blocks: [
+        { type: 'text', text: 'db text' },
+      ] },
+    ]
+    const merged = rebuildFromDb(live, db)
+    const blocks = merged.find((m) => m.role === 'assistant' && m.streaming)!.blocks as any[]
+    expect(blocks.some((b: any) => b.think_id === 'th_brand_new')).toBe(true)
+  })
+})
+
+describe('rebuildFromDb: live placeholder matching without an adopted id', () => {
+  const streamingRow = (id: number) => ({
+    role: 'assistant',
+    id,
+    content: '',
+    blocks: [
+      { type: 'text', text: 'text so far' },
+      // Still running: the backend writes done only when the tool completes.
+      { type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false },
+    ],
+    streaming: true,
+    createdAt: '2026-09-25T10:17:36Z',
+  })
+
+  const livePlaceholder = () => ({
+    role: 'assistant',
+    id: 'drain-1758000000000-abc', // never adopted the DB id (stream_start dropped)
+    content: '',
+    blocks: [
+      { type: 'text', text: 'text so far' },
+      { type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false },
+    ],
+    streaming: true,
+    createdAt: '2026-09-25T10:17:36Z',
+    seq: 1,
+  })
+
+  it('keeps the live object and its running Agent block when the snapshot has one streaming row', () => {
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240)] as any, true)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toBe(live)
+    const agent = (merged[0].blocks || []).find((b: any) => b.id === 'call_agent') as any
+    expect(agent.done).toBe(false)
+  })
+
+  it('adopts the DB id onto the live object (stable v-for key, clickable tool)', () => {
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240)] as any, true)
+    expect(merged[0].id).toBe(53240)
+    expect((merged[0] as any).seq).toBeUndefined()
+  })
+
+  it('declines when TWO streaming rows exist (cannot tell which is ours)', () => {
+    // Two streaming rows cannot happen for one session (the backend allows a
+    // single turn), but if a snapshot ever carried two, guessing would render
+    // our placeholder beside an unrelated row — so we must not guess.
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240), streamingRow(53241)] as any, true)
+    expect(merged.some((m: any) => m === live)).toBe(false)
+  })
+
+  it('does not adopt a FINALIZED row via the streaming-row channel', () => {
+    // A finalized row is not evidence of a running turn, so the fallback must
+    // not claim it: the placeholder keeps its own id instead of silently taking
+    // the id of a finished reply.
+    const live = livePlaceholder()
+    const finalized = { ...streamingRow(53240), streaming: false }
+    const merged = rebuildFromDb([live] as any, [finalized] as any, true)
+    const kept = merged.find((m: any) => m === live) as any
+    expect(kept?.id).toBe('drain-1758000000000-abc')
+  })
+
+  it('does not adopt the streaming row when the session is not running', () => {
+    // Not running → the DB is final, so the stale streaming flag must not be
+    // honoured: the placeholder is not matched to the row (it is dropped, and
+    // the DB row is rendered as the authoritative record).
+    const live = livePlaceholder()
+    const merged = rebuildFromDb([live] as any, [streamingRow(53240)] as any, false)
+    expect(merged.some((m: any) => m === live)).toBe(false)
+    expect(merged).toHaveLength(1)
+    expect(merged[0].id).toBe(53240)
+  })
+})

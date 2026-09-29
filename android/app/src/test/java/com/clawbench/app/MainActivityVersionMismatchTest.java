@@ -131,15 +131,17 @@ public class MainActivityVersionMismatchTest {
     }
 
     @Test
-    public void gate_apkNewerThanServer_skipsDialogAndProceeds() throws Exception {
+    public void gate_apkNewerThanServer_showsDialogAndDoesNotProceed() throws Exception {
+        // Bidirectional gate: a newer APK is flagged too (it may rely on features
+        // the server lacks). Previously it proceeded silently.
         doReturn("v2.0.0").when(activity).getAppVersionName();
         doNothing().when(activity).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
 
         AtomicBoolean proceeded = new AtomicBoolean(false);
         invokeGate(TEST_URL, "v1.0.0", () -> proceeded.set(true));
 
-        verify(activity, never()).showVersionMismatchDialog(anyString(), anyString(), anyString(), any(Runnable.class));
-        assertTrue(proceeded.get());
+        verify(activity).showVersionMismatchDialog(eq(TEST_URL), eq("v2.0.0"), eq("v1.0.0"), any(Runnable.class));
+        assertFalse("navigation must not run while the dialog is up", proceeded.get());
     }
 
     // =====================================================

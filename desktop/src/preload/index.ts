@@ -22,6 +22,21 @@ for (const channel of NAV_CHANNELS) {
   })
 }
 
+// Download progress is streamed from the main process (which owns the HTTP
+// transfer) and forwarded as a CustomEvent, matching what the Android shell
+// dispatches via `evaluateJavascript`. The renderer therefore has one progress
+// event shape to handle regardless of host.
+ipcRenderer.on('clawbench-download-progress', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-download-progress', { detail }))
+})
+
+// Maximize/restore state, pushed whenever the window's changes. Forwarded as a
+// CustomEvent for the same reason as the channels above: the renderer listens
+// to the window, not to IPC, so the two hosts stay interchangeable.
+ipcRenderer.on('clawbench-window-state', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-window-state', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,
@@ -50,7 +65,19 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   updateLastSeenEventId: (id: string) => { ipcRenderer.send('native:update-last-seen', id) },
   setKeepScreenOn: (on: boolean) => { ipcRenderer.send('native:keep-screen-on', on) },
   log: (level: string, tag: string, msg: string) => { ipcRenderer.send('native:log', level, tag, msg) },
-  dismissSplash: () => { /* desktop has no native splash overlay */ },
+  // The desktop shell DOES have a splash overlay (a native WebContentsView
+  // floating above the app while it connects and boots — see main/splash.ts).
+  // App.vue already calls this on every initialization exit path, so wiring it
+  // to a real IPC is all the renderer side needs.
+  dismissSplash: () => { ipcRenderer.send('native:dismiss-splash') },
+  // Backs the overlay's cancel button, which the overlay page wires to
+  // ClawBenchNative.cancelSplash() in splash mode.
+  cancelSplash: () => { ipcRenderer.send('native:splash-cancel') },
+  // Version-mismatch gate actions. The gate overlay (shown by the main process
+  // when the desktop and server versions differ) calls these: "continue"
+  // proceeds on the current version, "download" installs the server's version.
+  versionContinue: () => { ipcRenderer.send('native:version-continue') },
+  versionDownload: () => { ipcRenderer.send('native:version-download') },
   stopBackgroundService: () => { /* desktop has no Android foreground service */ },
   setVolumeKeyMode: () => { /* desktop has no hardware volume keys */ },
   setTerminalSessionCount: () => { /* desktop has no status-bar terminal badge */ },
@@ -92,6 +119,7 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
 
   // async writes
   saveServer: (u: string, p: string) => invoke('native:save-server', u, p),
+  saveServerNamed: (u: string, p: string, n: string) => invoke('native:save-server-named', u, p, n),
   removeServer: (u: string) => invoke('native:remove-server', u),
   setSSHPassword: (p: string) => invoke('native:set-ssh-password', p),
   connectToServer: (u: string, p: string) => invoke('native:connect-to-server', u, p),
@@ -102,6 +130,9 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   reconnectTunnel: () => invoke('native:reconnect-tunnel'),
   reconnectTunnelAsync: () => invoke('native:reconnect-tunnel'),
   downloadFile: (path: string) => invoke('native:download-file', path),
+  downloadFileWithProgress: (path: string, fileName: string, downloadId: number) =>
+    invoke('native:download-file-with-progress', path, fileName, downloadId),
+  cancelDownload: (id: number) => invoke('native:cancel-download', id),
   downloadUrl: (url: string, fileName: string) => invoke('native:download-url', url, fileName),
   downloadBlob: (b64: string, fileName: string) => invoke('native:download-blob', b64, fileName),
   openInBrowser: (port: number, protocol: string, host: string, path: string) => invoke('native:open-in-browser', port, protocol, host, path),
@@ -122,4 +153,17 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   // Native page zoom (appearance "auto scale"). Fire-and-forget: the main
   // process validates the factor and applies it to the window.
   setZoomFactor: (factor: number) => { ipcRenderer.send('native:set-zoom-factor', factor) },
+
+  // ── Frameless window controls (Windows/Linux) ──
+  // The window has no native frame there, so these are the only way to
+  // minimize/maximize/close it. Answered by the main process rather than
+  // derived here: the preload is sandboxed and cannot import windowChrome.ts,
+  // and duplicating the platform table would let the two drift.
+  hasCustomWindowControls: () => {
+    try { return ipcRenderer.sendSync('native:window-has-custom-controls') === true } catch { return false }
+  },
+  windowMinimize: () => { ipcRenderer.send('native:window-minimize') },
+  windowToggleMaximize: () => { ipcRenderer.send('native:window-toggle-maximize') },
+  windowClose: () => { ipcRenderer.send('native:window-close') },
+  isWindowMaximized: () => invoke('native:window-is-maximized'),
 })

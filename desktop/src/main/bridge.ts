@@ -6,14 +6,19 @@ import fs from 'node:fs'
 import { getStore, initStore } from './store'
 import {
   getPassword, savePassword, savePasswordFor, getPasswordFor, removePasswordFor,
-  migratePasswords, getServersForRenderer,
+  migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
   setTransportPreference, getTransportPreference, getActiveTransport } from './tunnel'
 import type { TransportPreference } from './transport'
-import { getMainWindow, createMainWindow, openSandboxWindow, showLoginPage } from './window'
-import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob } from './download'
+import {
+  getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
+  showSplashFor, dismissSplash, cancelSplash,
+  checkVersionGateFor, continueVersionGate, downloadVersionFromGate,
+  minimizeMainWindow, toggleMaximizeMainWindow, closeMainWindow, isMainWindowMaximized,
+} from './window'
+import { downloadFileByPath, downloadFileByPathTo, downloadByUrl, downloadBlob, cancelDownload } from './download'
 import { setKeepScreenOnImpl } from './powersave'
 import { dispatchOpenSession, getPendingNavigationJson, showTerminalNotification } from './notification'
 import { markRendererReady } from './navReady'
@@ -21,6 +26,7 @@ import { clearCacheAndReload } from './session'
 import { record, recordError, startClientLog, stopClientLog } from './clientLog'
 import { applyZoomFactor } from './zoom'
 import { classifyUrl } from './urlPolicy'
+import { shouldUseFramelessWindow } from './windowChrome'
 
 export function registerBridge(): void {
   initStore()
@@ -54,6 +60,14 @@ export function registerBridge(): void {
     // Writes the credential onto this server's entry (creating it if absent).
     savePasswordFor(url, password)
   })
+  // Save with the optional display name. A separate channel rather than an
+  // optional third argument to native:save-server, so a newer renderer and an
+  // older main process (or vice versa) fail loudly at the call site instead of
+  // silently dropping the name.
+  ipcMain.handle('native:save-server-named', (_e, url: string, password: string, name: string) => {
+    savePasswordFor(url, password)
+    saveServerName(url, name)
+  })
   ipcMain.handle('native:remove-server', (_e, url: string) => {
     getStore().set('servers', getStore().get('servers').filter(s => s.url !== url))
     // Drop the credential with the entry, or re-adding the same URL would
@@ -79,9 +93,30 @@ export function registerBridge(): void {
       getStore().set('servers', [{ url }, ...servers])
     }
     const w = getMainWindow()
-    if (w) { w.loadURL(url) }
-    else { createMainWindow() }
+    if (w) {
+      // Raise the native loading overlay BEFORE navigating: the login page is
+      // torn down by loadURL, and the server page renders nothing until its own
+      // initialization resolves, so without this the window is blank for the
+      // whole connect + boot period. Mirrors Android's connectToServer().
+      showSplashFor(url)
+      w.loadURL(url)
+      // Check the desktop/server version consistency for this connection. On a
+      // mismatch the gate replaces the loading overlay; every connect is checked
+      // (the skip is not remembered), matching Android.
+      checkVersionGateFor(url)
+    } else { createMainWindow() }
   })
+
+  // The app calls this on every initialization exit path (see App.vue's
+  // guardStartupWithSplash), so it is the single signal that the overlay is no
+  // longer needed.
+  ipcMain.on('native:dismiss-splash', () => dismissSplash())
+  // The overlay page's cancel button. Navigates back to the login page.
+  ipcMain.on('native:splash-cancel', () => cancelSplash())
+  // Version-gate actions. "continue" proceeds on the current version;
+  // "download" installs the server's version (the gate stays up on failure).
+  ipcMain.on('native:version-continue', () => continueVersionGate())
+  ipcMain.on('native:version-download', () => { void downloadVersionFromGate() })
 
   ipcMain.handle('native:get-forwarded-ports', () => JSON.stringify(getForwardedPorts()))
   ipcMain.handle('native:test-port-reachable', (_e, p: number) => testPortReachable(p))
@@ -110,7 +145,11 @@ export function registerBridge(): void {
   ipcMain.handle('native:reconnect-tunnel', () => reconnectTunnel())
   ipcMain.handle('native:get-pending-navigation', () => getPendingNavigationJson())
 
+  // Legacy: plain download, no progress events.
   ipcMain.handle('native:download-file', (_e, filePath: string) => downloadFileByPath(filePath))
+  ipcMain.handle('native:download-file-with-progress', (_e, filePath: string, fileName: string, downloadId: number) =>
+    downloadFileByPath(filePath, fileName, downloadId))
+  ipcMain.handle('native:cancel-download', (_e, downloadId: number) => { cancelDownload(downloadId) })
   ipcMain.handle('native:download-url', (_e, url: string, fileName: string) => downloadByUrl(url, fileName))
   ipcMain.handle('native:download-blob', (_e, b64: string, fileName: string) => downloadBlob(b64, fileName))
   ipcMain.handle('native:open-in-browser', (_e, port: number, protocol: string, host: string, p: string) => {
@@ -175,6 +214,22 @@ export function registerBridge(): void {
     applyZoomFactor(getMainWindow(), Number(factor))
   })
   ipcMain.on('native:show-server-dialog', () => showLoginPage())
+  // Whether the header should draw the window controls. Answered from the main
+  // process so `windowChrome.ts` stays the single source of truth — the
+  // renderer must not re-derive the platform table, and the preload (sandboxed,
+  // so it cannot import our modules) must not either. Synchronous because the
+  // cluster's presence is decided during render; an async answer would flash a
+  // header that is missing its controls.
+  ipcMain.on('native:window-has-custom-controls', (e) => {
+    e.returnValue = shouldUseFramelessWindow(process.platform)
+  })
+  // Window controls for the frameless Windows/Linux header cluster. The window
+  // is the authority on its own state, so maximize is a toggle and the resulting
+  // state is pushed back over WINDOW_STATE_CHANNEL rather than assumed here.
+  ipcMain.on('native:window-minimize', () => minimizeMainWindow())
+  ipcMain.on('native:window-toggle-maximize', () => toggleMaximizeMainWindow())
+  ipcMain.on('native:window-close', () => closeMainWindow())
+  ipcMain.handle('native:window-is-maximized', () => isMainWindowMaximized())
   ipcMain.on('native:open-session', (_e, id: string) => dispatchOpenSession(id))
   // The renderer signals that its notification-click listeners are registered.
   // Until then a clicked notification is stashed rather than sent into a page

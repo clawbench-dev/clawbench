@@ -15,15 +15,16 @@
       <div class="tch-label">{{ t('task.createHint.exampleLabel') }}</div>
       <div class="tch-cmd-row">
         <code class="tch-cmd">{{ exampleCommand }}</code>
-        <button
+        <!-- `:key` forces a fresh button per open. The dialog element itself is
+             not destroyed on close (ModalDialog keeps it mounted), so without
+             this a check mark left over from the previous visit would still be
+             showing when the dialog is reopened. -->
+        <CopyButton
+          :key="open ? 'open' : 'closed'"
+          :text="exampleCommand"
           class="tch-copy"
-          type="button"
-          :title="copied ? t('common.copied') : t('common.copy')"
-          @click="copyExample"
-        >
-          <Check v-if="copied" :size="14" />
-          <Copy v-else :size="14" />
-        </button>
+          :duration="2000"
+        />
       </div>
     </div>
 
@@ -42,13 +43,13 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch, onBeforeUnmount } from 'vue'
+import { computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Sparkles, Copy, Check } from 'lucide-vue-next'
+import { Sparkles } from 'lucide-vue-next'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { dismissTaskCreateHint } from '@/composables/useTaskCreateHint'
-import { copyText } from '@/utils/clipboard'
 
 const props = defineProps<{ open: boolean }>()
 
@@ -61,23 +62,14 @@ const emit = defineEmits<{
 const { t } = useI18n()
 
 const exampleCommand = computed(() => t('task.createHint.exampleCommand'))
-const copied = ref(false)
-let copyResetTimer: ReturnType<typeof setTimeout> | null = null
 let unregisterBack: (() => void) | null = null
 
-function clearCopyTimer() {
-  if (copyResetTimer) {
-    clearTimeout(copyResetTimer)
-    copyResetTimer = null
-  }
-}
-
 // Reset the "copied" affordance whenever the dialog reopens, so a stale check
-// mark from a previous visit cannot be mistaken for a fresh copy.
+// mark from a previous visit cannot be mistaken for a fresh copy. Handled by
+// the `:key` on the copy button (the dialog element is not destroyed on close);
+// nothing to clear here beyond the back handler.
 watch(() => props.open, (open) => {
   if (open) {
-    copied.value = false
-    clearCopyTimer()
     // Android back / edge swipe must close this dialog rather than fall through
     // to the task tab's drill-down handler (which would let back exit the app
     // while the dialog is still up).
@@ -94,20 +86,11 @@ watch(() => props.open, (open) => {
 }, { immediate: true })
 
 onBeforeUnmount(() => {
-  clearCopyTimer()
   if (unregisterBack) {
     unregisterBack()
     unregisterBack = null
   }
 })
-
-function copyExample() {
-  copyText(exampleCommand.value, () => {
-    copied.value = true
-    clearCopyTimer()
-    copyResetTimer = setTimeout(() => { copied.value = false }, 2000)
-  })
-}
 
 function close() {
   emit('close')

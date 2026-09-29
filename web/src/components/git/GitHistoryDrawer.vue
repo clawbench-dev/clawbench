@@ -153,6 +153,7 @@
           :html="diffState.html"
           :no-wrap="mode === 'project'"
           :file-path="mode === 'project' ? selectedFilePath : file?.path"
+          :commit-sha="selectedSHA || ''"
         />
       </div>
     </div>
@@ -325,71 +326,13 @@ watch(() => props.open, async (val) => {
   font-size: var(--font-size-lg);
 }
 
-/* ─── Drill-down shared ────────────────────────────────────────────────── */
-
-.drilldown-page {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.drilldown-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 14px;
-  height: var(--header-height);
-  border-bottom: 1px solid var(--border-color, #dee2e6);
-  background: var(--bg-secondary, #f8f9fa);
-  flex-shrink: 0;
-  gap: var(--space-4);
-}
-
-.drilldown-count {
-  font-weight: var(--font-weight-bold);
-  background: var(--bg-tertiary, #e9ecef);
-  color: var(--text-muted, #999);
-}
-
-/* Matches GitCommitList's refresh button so both headers look identical.
-   Kept local because that component's styles are scoped to itself. */
-.drilldown-refresh-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border: none;
-  background: var(--bg-tertiary, #e9ecef);
-  border-radius: 50%;
-  cursor: pointer;
-  color: var(--text-muted, #999);
-  flex-shrink: 0;
-  padding: 0;
-  transition: background var(--duration-base), color var(--duration-base), transform 0.3s;
-}
-
-@media (hover: hover) {
-  .drilldown-refresh-btn:hover:not(:disabled) {
-    background: var(--accent-color, #4a90d9);
-    color: #fff;
-  }
-}
-
-.drilldown-refresh-btn:active:not(:disabled) {
-  transform: scale(0.92);
-}
-
-.drilldown-refresh-btn:disabled {
-  opacity: var(--opacity-muted);
-  cursor: not-allowed;
-}
-
-.drilldown-body {
-  flex: 1;
-  overflow-y: auto;
-}
+/* ─── Drill-down shared ──────────────────────────────────────────────────
+   The shell (.drilldown-page), header bar (.drilldown-header), count badge
+   colour (.drilldown-count) and header icon buttons (.drilldown-refresh-btn)
+   are declared GLOBALLY in web/css/components.css ("Git history panel chrome")
+   because GitCommitList, GitHistoryContent and this component all render them.
+   The header there is transparent, so this sheet's own panel material shows
+   through it instead of a second, contrasting bar under the sheet header. */
 
 .drilldown-list {
   padding: var(--space-3) 0;

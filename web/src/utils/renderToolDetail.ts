@@ -16,15 +16,16 @@ import { store } from '@/stores/app.ts'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
+import { isShareMode } from '@/share/shareMode'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
-import { copyText } from '@/utils/clipboard.ts'
+import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 
 // ────────────────────────────────────────────────────────────
 // Shared SVG icons for tool content headers
 // ────────────────────────────────────────────────────────────
-
-const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+// COPY_ICON_SVG comes from utils/copyButton.ts — the single source shared with
+// components/common/CopyButton.vue and the code/table block headers.
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
@@ -1409,25 +1410,12 @@ export function handleToolContentHeaderClick(event: MouseEvent): boolean {
   const action = btn.getAttribute('data-action')
 
   if (action === 'copy') {
-    if (btn.classList.contains('is-copied')) return true // already showing feedback
     // Find the content element to extract text from
     const contentSelector = btn.getAttribute('data-content-selector') || ''
     const contentEl = contentSelector ? wrapper.querySelector(contentSelector) : wrapper
     const text = contentEl?.textContent || ''
-    copyText(text)
-    // Show "Copied!" on the button briefly
-    const originalTitle = btn.getAttribute('title') || ''
-    const originalAriaLabel = btn.getAttribute('aria-label') || ''
-    btn.innerHTML = `<span class="tool-content-copied-text">${gt('common.copied')}</span>`
-    btn.classList.add('is-copied')
-    btn.setAttribute('title', gt('common.copied'))
-    btn.setAttribute('aria-label', gt('common.copied'))
-    setTimeout(() => {
-      btn.innerHTML = COPY_ICON_SVG
-      btn.classList.remove('is-copied')
-      btn.setAttribute('title', originalTitle)
-      btn.setAttribute('aria-label', originalAriaLabel)
-    }, 1500)
+    // Shared path: guards re-entry, copies, and swaps the glyph for a check.
+    copyWithFlash(btn, text)
   } else if (action === 'wrap') {
     wrapper.classList.toggle('word-wrap')
     btn.classList.toggle('is-wrapped')
@@ -1753,6 +1741,11 @@ function getCurrentSessionId(): string {
 
 // Helper: call the permission respond API
 async function respondPermission(sessionId: string, toolCallId: string, optionId: string, cancelled: boolean): Promise<boolean> {
+  // Anonymous share page: there is no session to respond to and the endpoint is
+  // auth-protected. Guarding the single POST choke point covers every caller
+  // (chat list, tool drawer, diff drawer) instead of three separate call sites.
+  if (isShareMode()) return false
+
   try {
     const resp = await fetch('/api/ai/permission/respond', {
       method: 'POST',

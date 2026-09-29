@@ -7,12 +7,17 @@
 
     <div v-if="quote" class="qd-content">
       <!-- Source line: what this quote came from, plus the jump action.
-           A chat-message quote has nothing to open, so the button is hidden
-           rather than rendered as a no-op. -->
+           A chat-message or free-form selection quote has nothing to open, so
+           the button is hidden rather than rendered as a no-op.
+           The type badge (icon + label) states WHAT KIND of thing was quoted —
+           a file reads very differently from a CI run or a scheduled task, and
+           the source label alone does not say which it is. -->
       <div class="qd-source-row">
+        <span class="qd-type" :title="typeLabel">
+          <component :is="typeIcon" :size="13" class="qd-type-icon" />
+          <span class="qd-type-label">{{ typeLabel }}</span>
+        </span>
         <span class="qd-source" :title="quote.filePath || quote.text">
-          <MessageSquareQuote v-if="quote.sourceKind !== 'message'" :size="13" class="qd-source-icon" />
-          <MessageSquareText v-else :size="13" class="qd-source-icon" />
           {{ sourceLabel }}
         </span>
         <button
@@ -20,21 +25,32 @@
           class="qd-jump"
           :title="t('quoteBar.jumpToSource')"
           :aria-label="t('quoteBar.jumpToSource')"
-          @click="$emit('jump', quote)"
+          @click="handleJump"
         >
           <ExternalLink :size="14" />
         </button>
       </div>
 
-      <!-- Quoted content, verbatim and read-only. -->
-      <div class="qd-section-title">{{ t('quoteBar.quotedContent') }}</div>
-      <pre class="qd-quoted-text">{{ quote.text }}</pre>
+      <!-- Quoted content, verbatim and read-only.
+           Hidden entirely when there is no text: a whole-object quote (a file or
+           an issue/PR reference) carries only a label, and an empty <pre> read as
+           a rendering bug rather than as "this quote references the object". -->
+      <template v-if="quote.text">
+        <div class="qd-section-title">{{ t('quoteBar.quotedContent') }}</div>
+        <pre class="qd-quoted-text">{{ quote.text }}</pre>
+      </template>
 
-      <!-- Annotation, editable. Saved explicitly: the sent case writes to the
-           DB, so an implicit save on every keystroke would be wasteful and an
-           implicit save on close would be invisible. -->
+      <!-- Annotation.
+           Editable only for a STAGED quote (one still in the chat input). Once
+           the message has been sent the quote is part of the conversation
+           record, so the annotation is shown read-only — it stays visible
+           because it is context the user wrote, but it is no longer theirs to
+           change.
+           The editable case saves explicitly: the staged copy lives in memory,
+           so an implicit save on close would be invisible. -->
       <div class="qd-section-title">{{ t('quoteBar.annotation') }}</div>
       <textarea
+        v-if="editable"
         ref="noteRef"
         v-model="note"
         class="qd-note-input"
@@ -44,14 +60,22 @@
         @keydown.ctrl.enter.prevent="handleSave"
         @keydown.meta.enter.prevent="handleSave"
       />
+      <p v-else-if="quote.note" class="qd-note-readonly">{{ quote.note }}</p>
+      <p v-else class="qd-note-empty">{{ t('quoteBar.noAnnotation') }}</p>
     </div>
 
     <template #footer>
-      <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
-      <button class="fbtn fbtn-primary" :disabled="!dirty || saving" @click="handleSave">
-        <LoadingIndicator v-if="saving" size="sm" inline />
-        <span v-else>{{ t('common.save') }}</span>
+      <!-- A sent quote has nothing to save, so only Close is offered. -->
+      <button v-if="!editable" class="fbtn fbtn-primary" @click="$emit('close')">
+        {{ t('common.close') }}
       </button>
+      <template v-else>
+        <button class="fbtn" @click="$emit('close')">{{ t('common.cancel') }}</button>
+        <button class="fbtn fbtn-primary" :disabled="!dirty || saving" @click="handleSave">
+          <LoadingIndicator v-if="saving" size="sm" inline />
+          <span v-else>{{ t('common.save') }}</span>
+        </button>
+      </template>
     </template>
   </BottomSheet>
 </template>
@@ -59,17 +83,27 @@
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquareQuote, MessageSquareText, ExternalLink } from 'lucide-vue-next'
+import { MessageSquareQuote, ExternalLink } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { quoteLabel, quoteLineRange, canJumpToSource, type QuoteItem } from '@/utils/quoteItem'
+import { quoteLabel, quoteLineRange, canJumpToSource, resolveQuoteType, type QuoteItem } from '@/utils/quoteItem'
+import { QUOTE_TYPE_ICON, QUOTE_TYPE_LABEL_KEY } from '@/utils/quoteSourceMeta'
 
 const props = withDefaults(defineProps<{
   open: boolean
   quote: QuoteItem | null
+  /**
+   * Whether the quote is still staged (in the chat input) or already sent.
+   *
+   * A staged quote's annotation is the user's own draft and stays editable. A
+   * sent one is part of the conversation record and is shown read-only — the
+   * drawer must not offer an edit affordance for it.
+   */
+  mode?: 'staged' | 'sent'
   /** True while the save request is in flight. */
   saving?: boolean
 }>(), {
+  mode: 'staged',
   saving: false,
 })
 
@@ -88,12 +122,25 @@ const noteRef = ref<HTMLTextAreaElement | null>(null)
 const note = ref('')
 let focusTimer: ReturnType<typeof setTimeout> | null = null
 
+/**
+ * Whether the annotation can be edited.
+ *
+ * Only a staged quote is editable. A sent quote's annotation is part of the
+ * conversation record: the user asked for it to be read-only, and offering an
+ * edit that silently writes to the DB is the worse failure.
+ *
+ * Declared BEFORE the watcher below, which reads it and runs immediately.
+ */
+const editable = computed(() => props.mode === 'staged')
+
 watch(
-  () => [props.open, props.quote?.id] as const,
+  () => [props.open, props.quote?.id, props.mode] as const,
   ([open]) => {
     if (focusTimer) { clearTimeout(focusTimer); focusTimer = null }
     if (!open) return
     note.value = props.quote?.note || ''
+    // Nothing to focus in read-only mode (there is no textarea).
+    if (!editable.value) return
     // Focus only AFTER the slide-up animation finishes (BottomSheet: 250ms).
     // Focusing during it makes the browser scroll the still-animating,
     // overflow-hidden panel to reveal the focused textarea, which fights the
@@ -116,15 +163,44 @@ const dirty = computed(() => note.value !== (props.quote?.note || ''))
 
 const canJump = computed(() => (props.quote ? canJumpToSource(props.quote) : false))
 
+/** The kind of source this quote came from, for the icon + label badge. */
+const quoteType = computed(() => (props.quote ? resolveQuoteType(props.quote) : 'selection'))
+
+const typeIcon = computed(() => QUOTE_TYPE_ICON[quoteType.value])
+
+const typeLabel = computed(() => t(QUOTE_TYPE_LABEL_KEY[quoteType.value]))
+
 /**
- * Label for the source line. A chat quote has no path, so it is identified by
- * its kind instead of rendering an empty row.
+ * Jump to the source, closing the drawer first.
+ *
+ * The drawer must not stay open over the surface it navigated to: the jump
+ * switches tabs / opens a file / scrolls to a message, and leaving a modal over
+ * the destination hides the very thing the user asked to see.
+ *
+ * `close` is emitted before `jump` so the drawer starts sliding out while the
+ * (possibly async) navigation runs, rather than waiting on it.
+ */
+function handleJump() {
+  if (!props.quote) return
+  emit('close')
+  emit('jump', props.quote)
+}
+
+/**
+ * Label for the source line.
+ *
+ * A real label (a file path, "owner/repo#7", a session name) always wins — it
+ * is what tells the user which source this came from. Only a quote with no
+ * label at all falls back to a generic kind label, so the row is never blank.
  */
 const sourceLabel = computed(() => {
   const q = props.quote
   if (!q) return ''
+  const labelled = `${quoteLabel(q)}${quoteLineRange(q)}`
+  if (labelled) return labelled
   if (q.sourceKind === 'message') return t('quoteBar.messageQuote')
-  return `${quoteLabel(q)}${quoteLineRange(q)}`
+  if (q.sourceKind === 'selection') return t('quoteBar.selectionQuote')
+  return ''
 })
 
 function handleSave() {
@@ -148,6 +224,28 @@ function handleSave() {
   min-width: 0;
 }
 
+/* Type badge: states WHAT KIND of source this is (file / CI run / task / …).
+   Fixed to its content and never shrinks, so a long source label truncates
+   instead of squeezing the badge. */
+.qd-type {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.qd-type-icon {
+  flex-shrink: 0;
+}
+
 .qd-source {
   display: inline-flex;
   align-items: center;
@@ -156,14 +254,10 @@ function handleSave() {
   flex: 1;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
-  color: var(--accent-color, #0066cc);
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.qd-source-icon {
-  flex-shrink: 0;
 }
 
 .qd-jump {
@@ -232,5 +326,30 @@ function handleSave() {
 
 .qd-note-input:focus {
   border-color: var(--accent-color, #0066cc);
+}
+
+/* Read-only annotation (a sent quote).
+   Deliberately styled like the quoted-content block rather than as a disabled
+   input: it is information to read, not a control that happens to be off.
+   `white-space: pre-wrap` keeps the user's own line breaks. */
+.qd-note-readonly {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-tertiary);
+  border-left: 2px solid var(--border-color);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-normal);
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* No annotation on a sent quote: say so rather than leaving the section
+   header dangling over nothing. */
+.qd-note-empty {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-muted, #999);
+  font-style: italic;
 }
 </style>

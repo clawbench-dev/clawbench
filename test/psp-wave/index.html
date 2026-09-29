@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>ClawBench · XMB 波浪壁纸 Demo</title>
+<style>
+:root {
+  --bg-primary: #282828;
+  --bg-secondary: #3c3836;
+  --bg-tertiary: #504945;
+  --text-primary: #ebdbb2;
+  --text-secondary: #d5c4a1;
+  --text-muted: #928374;
+  --border-color: #504945;
+  --accent-color: #fe8019;
+  --panel-alpha: 85%;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0; height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.stage { position: absolute; inset: 0; overflow: hidden; background-color: var(--bg-primary); }
+
+canvas.wave {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  display: block; z-index: 0; pointer-events: none;
+}
+
+/* 与真实 App 一致：主面板只靠 color-mix 半透明，不加 backdrop-filter。
+   实测 backdrop-filter 叠在动画 canvas 上会吃掉约 40% 帧率。 */
+.app {
+  position: absolute; inset: 0; z-index: 1;
+  display: flex; flex-direction: column; gap: 10px; padding: 10px;
+}
+.panel {
+  background: color-mix(in srgb, var(--bg-secondary) var(--panel-alpha), transparent);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.header { flex: 0 0 auto; height: 52px; display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+.header .logo { font-weight: 700; letter-spacing: 0.02em; color: var(--accent-color); }
+.header .crumb { color: var(--text-muted); font-size: 13px; }
+.header .spacer { flex: 1; }
+.header .pill { font-size: 12px; color: var(--text-secondary); border: 1px solid var(--border-color); border-radius: 999px; padding: 4px 10px; }
+
+.body { flex: 1; display: flex; gap: 10px; min-height: 0; }
+
+.sidebar { flex: 0 0 210px; padding: 10px; overflow: hidden; }
+.sidebar .row { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: var(--radius-sm); font-size: 13px; color: var(--text-secondary); }
+.sidebar .row.active { background: color-mix(in srgb, var(--accent-color) 18%, transparent); color: var(--text-primary); }
+.sidebar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted); flex: 0 0 auto; }
+.sidebar .row.active .dot { background: var(--accent-color); }
+.sidebar .sec { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-muted); margin: 14px 10px 6px; }
+
+.main { flex: 1; min-width: 0; padding: 16px; overflow: hidden; }
+.main h2 { margin: 0 0 4px; font-size: 16px; }
+.main .sub { color: var(--text-muted); font-size: 12px; margin-bottom: 16px; }
+
+.msg { display: flex; gap: 10px; margin-bottom: 14px; }
+.avatar { flex: 0 0 28px; height: 28px; border-radius: 50%; background: var(--bg-tertiary); display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-secondary); }
+.bubble {
+  background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent);
+  border: 1px solid var(--border-color); border-radius: var(--radius-md);
+  padding: 10px 12px; font-size: 13px; line-height: 1.6; color: var(--text-primary); max-width: 620px;
+}
+.msg.user .bubble {
+  background: color-mix(in srgb, var(--accent-color) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent-color) 40%, transparent);
+}
+.code {
+  margin-top: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, #000 45%, transparent);
+  border: 1px solid var(--border-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.55; color: var(--text-secondary); white-space: pre; overflow: hidden;
+}
+.code .k { color: var(--accent-color); }
+
+.rightbar { flex: 0 0 190px; padding: 12px; font-size: 12px; color: var(--text-muted); }
+.rightbar .card { border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 10px; margin-bottom: 10px; background: color-mix(in srgb, var(--bg-tertiary) var(--panel-alpha), transparent); }
+.rightbar .card b { color: var(--text-secondary); display: block; margin-bottom: 6px; font-weight: 600; }
+
+.dock { flex: 0 0 auto; height: 54px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; }
+.dock button { background: transparent; border: none; color: var(--text-muted); font-size: 12px; padding: 8px 14px; border-radius: var(--radius-sm); cursor: default; font-family: inherit; }
+.dock button.on { color: var(--accent-color); background: color-mix(in srgb, var(--accent-color) 14%, transparent); }
+
+.controls {
+  position: fixed; top: 12px; right: 12px; z-index: 50; width: 286px; padding: 14px;
+  background: rgba(20,20,20,0.92); border: 1px solid rgba(255,255,255,0.12);
+  border-radius: var(--radius-md); backdrop-filter: blur(12px);
+  font-size: 12px; color: #e8e8e8;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  max-height: calc(100vh - 24px); overflow-y: auto;
+}
+.controls h3 { margin: 0 0 10px; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; color: #9a9a9a; font-weight: 600; }
+.controls .grp { margin-bottom: 13px; }
+.controls label { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: #b8b8b8; }
+.controls label .val { color: var(--accent-color); font-family: ui-monospace, Menlo, monospace; font-size: 11px; }
+.controls input[type=range] { width: 100%; accent-color: var(--accent-color); cursor: pointer; }
+.controls .swatches { display: flex; gap: 6px; flex-wrap: wrap; }
+.controls .sw { width: 30px; height: 30px; border-radius: var(--radius-sm); border: 2px solid transparent; cursor: pointer; }
+.controls .sw.on { border-color: #fff; }
+.controls .chk { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: #b8b8b8; cursor: pointer; }
+.controls .chk input { accent-color: var(--accent-color); cursor: pointer; }
+.stats { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; color: #8a8a8a; line-height: 1.7; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 10px; }
+.stats b { color: var(--accent-color); font-weight: 600; }
+.hint { color: #7a7a7a; font-size: 11px; line-height: 1.5; margin-top: 8px; }
+.preset { display: flex; gap: 6px; margin-bottom: 12px; }
+.preset button { flex: 1; padding: 7px 0; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.05); color: #b8b8b8; font-size: 11px; cursor: pointer; border-radius: var(--radius-sm); font-family: inherit; }
+.preset button:hover { background: rgba(255,255,255,0.12); color: #fff; }
+</style>
+</head>
+<body>
+
+<div class="stage">
+  <canvas class="wave" id="wave"></canvas>
+
+  <div class="app">
+    <div class="panel header">
+      <span class="logo">ClawBench</span>
+      <span class="crumb">~/projects/clawbench</span>
+      <span class="spacer"></span>
+      <span class="pill">CodeBuddy · Deepseek-V4</span>
+    </div>
+
+    <div class="body">
+      <div class="panel sidebar">
+        <div class="sec">会话</div>
+        <div class="row active"><span class="dot"></span>XMB 波浪壁纸</div>
+        <div class="row"><span class="dot"></span>排队消息重构</div>
+        <div class="row"><span class="dot"></span>思考块生命周期</div>
+        <div class="row"><span class="dot"></span>文件下载进度条</div>
+        <div class="sec">文件</div>
+        <div class="row"><span class="dot"></span>App.vue</div>
+        <div class="row"><span class="dot"></span>base.css</div>
+        <div class="row"><span class="dot"></span>wallpaper.go</div>
+      </div>
+
+      <div class="panel main">
+        <h2>XMB 波浪壁纸</h2>
+        <div class="sub">清晰波形 · 波内渐变 · 仅 3 条 · 整页约半个周期</div>
+
+        <div class="msg user">
+          <div class="avatar">你</div>
+          <div class="bubble">波浪应该是很清晰的一个波浪，背景色有点渐变色，波浪里面也有点渐变色，但是波浪是一条很清晰的波浪。同时出现的波浪大概就两三条。</div>
+        </div>
+
+        <div class="msg">
+          <div class="avatar">AI</div>
+          <div class="bubble">
+            上一版用 5 层厚度递减叠出"柔光"，把边缘糊掉了 —— 方向错了。现在改成
+            <b>实心填充 + 明确波峰边缘</b>：波形是清晰的，边缘靠"渐变在波峰处突亮"做出来，
+            而不是靠模糊。
+            <div class="code"><span class="k">底</span>  竖直渐变（上暗 → 下亮），很淡
+<span class="k">波</span>  从曲线向下填充，内部竖直渐变：
+     波峰处最亮 → 向下渐隐
+<span class="k">边</span>  波峰 1.5px 高亮描边  <span class="k">// 清晰度的关键</span>
+<span class="k">层</span>  3 条，base = 0.34 / 0.55 / 0.76
+<span class="k">λ</span>   ≈ 2.4 页宽 → 整页约 0.42 个周期</div>
+          </div>
+        </div>
+
+        <div class="msg">
+          <div class="avatar">AI</div>
+          <div class="bubble">右上角可切主题。「PSP XMB」就是参考图那套紫色。</div>
+        </div>
+      </div>
+
+      <div class="panel rightbar">
+        <div class="card"><b>波形</b>3 条，清晰边缘<br>每条约半个周期</div>
+        <div class="card"><b>渐变</b>背景一层<br>波内各一层</div>
+        <div class="card"><b>生命周期</b>页面隐藏即暂停<br>reduced-motion 只画一帧</div>
+      </div>
+    </div>
+
+    <div class="panel dock">
+      <button class="on">对话</button>
+      <button>文件</button>
+      <button>终端</button>
+      <button>Git</button>
+      <button>任务</button>
+      <button>设置</button>
+    </div>
+  </div>
+</div>
+
+<div class="controls">
+  <h3>波浪参数</h3>
+
+  <div class="preset">
+    <button data-p="xmb">PSP XMB</button>
+    <button data-p="swell">大涌浪</button>
+    <button data-p="calm">更平缓</button>
+  </div>
+
+  <div class="grp">
+    <label>波长（每周期页宽数） <span class="val" id="vLam">1.00×</span></label>
+    <input type="range" id="lam" min="50" max="200" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>振幅 <span class="val" id="vAmp">1.00×</span></label>
+    <input type="range" id="amp" min="0" max="250" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>波内渐隐距离 <span class="val" id="vBand">1.00×</span></label>
+    <input type="range" id="band" min="20" max="260" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>边缘清晰度 <span class="val" id="vEdge">1.00×</span></label>
+    <input type="range" id="edge" min="0" max="250" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>倾斜 <span class="val" id="vTilt">1.00×</span></label>
+    <input type="range" id="tilt" min="-250" max="250" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>不规整度 <span class="val" id="vIrr">1.00×</span></label>
+    <input type="range" id="irr" min="0" max="250" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>速度 <span class="val" id="vSpeed">1.00×</span></label>
+    <input type="range" id="speed" min="10" max="100" step="1" value="50" />
+  </div>
+
+  <div class="grp">
+    <label>背景渐变强度 <span class="val" id="vContrast">1.00×</span></label>
+    <input type="range" id="contrast" min="0" max="250" step="5" value="100" />
+  </div>
+
+  <div class="grp">
+    <label>面板不透明度 <span class="val" id="vAlpha">85%</span></label>
+    <input type="range" id="alpha" min="50" max="100" step="1" value="85" />
+  </div>
+
+  <div class="grp">
+    <h3 style="margin-bottom:8px">主题</h3>
+    <div class="swatches" id="swatches"></div>
+  </div>
+
+  <div class="grp">
+    <label class="chk"><input type="checkbox" id="edgeFade" checked /> 边缘淡出</label>
+    <label class="chk"><input type="checkbox" id="hiDpi" checked /> 高清渲染（按设备像素比）</label>
+    <label class="chk"><input type="checkbox" id="throttle" checked /> 30fps 上限</label>
+    <label class="chk"><input type="checkbox" id="reduced" /> 模拟 prefers-reduced-motion</label>
+  </div>
+
+  <div class="stats">
+    <div>帧率 <b id="sFps">–</b> fps</div>
+    <div>帧耗时 <b id="sMs">–</b> ms</div>
+    <div>可见周期 <b id="sCycle">–</b></div>
+    <div>backing store <b id="sRes">–</b></div>
+    <div>采样点/帧 <b id="sSamples">–</b></div>
+  </div>
+
+  <div class="hint">
+    取消「高清渲染」可对比锯齿差异：关掉后 backing store 降为 CSS 尺寸，
+    硬边会出现明显阶梯。
+  </div>
+</div>
+
+<script>
+'use strict'
+
+/* ══════════════════════════════════════════════════════════════════════════
+   噪声 —— 只用来给正弦加"不那么正"的轻微扰动，不承担波形主体
+   ══════════════════════════════════════════════════════════════════════════ */
+
+const PERM = new Uint8Array(512)
+{
+  const p = new Uint8Array(256)
+  for (let i = 0; i < 256; i++) p[i] = i
+  let s = 1337
+  for (let i = 255; i > 0; i--) {
+    s = (s * 1664525 + 1013904223) >>> 0
+    const j = s % (i + 1)
+    const t = p[i]; p[i] = p[j]; p[j] = t
+  }
+  for (let i = 0; i < 512; i++) PERM[i] = p[i & 255]
+}
+const INV255 = 1 / 255
+function hash2(ix, iy) { return PERM[(PERM[ix & 255] + (iy & 255)) & 255] * INV255 }
+function smoother(t) { return t * t * t * (t * (t * 6 - 15) + 10) }
+function noise2(x, y) {
+  const x0 = Math.floor(x), y0 = Math.floor(y)
+  const fx = smoother(x - x0), fy = smoother(y - y0)
+  const n00 = hash2(x0, y0), n10 = hash2(x0 + 1, y0)
+  const n01 = hash2(x0, y0 + 1), n11 = hash2(x0 + 1, y0 + 1)
+  const a = n00 + (n10 - n00) * fx
+  const b = n01 + (n11 - n01) * fx
+  return a + (b - a) * fy
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   层定义 —— 只有 3 条波，每条都是清晰可辨的波形
+     中心线 y(x) = base·H + amp·H·h(x) + tilt·H·(x/W − 0.5)
+     base   中心线基准高度（相对画布高度）。**必填** —— 缺失会让
+            centerline 返回 NaN，而 NaN 坐标会让 canvas 静默丢弃整条路径
+            （不报错），表现就是"什么都看不见"。
+     lam    一个完整周期跨多少页宽（2.4 → 整页仅见 1/2.4 ≈ 0.42 周期）
+     amp    振幅（相对画布高度）
+     band   波内渐隐距离（相对画布高度）：从波峰往下多远淡到透明
+     tilt   斜度：负值 = 向右上扬（参考图就是向右上斜）
+     alpha  该条波的整体不透明度（越靠前越实）
+     edge   波峰描边强度：**清晰度的关键**，没有它波形会糊掉
+     warp   相位扭曲（rad）：曲线斜率沿 x 缓慢变化 → 不再完美正弦
+     harm   二次谐波：波峰略尖、波谷略平（真实水面不对称）
+     env    振幅包络：局部肥厚 / 瘦削
+   ══════════════════════════════════════════════════════════════════════════ */
+const LAYERS = [
+  { base: 0.34, lam: 2.70, amp: 0.090, band: 0.42, tilt: -0.10, alpha: 0.34, edge: 0.55, phase0: 0.0, warp: 0.50, harm: 0.10, env: 0.20, travel: 0.024, evolve: 0.026 },
+  { base: 0.55, lam: 2.40, amp: 0.110, band: 0.50, tilt: -0.14, alpha: 0.52, edge: 0.80, phase0: 1.1, warp: 0.66, harm: 0.14, env: 0.24, travel: 0.032, evolve: 0.034 },
+  { base: 0.76, lam: 2.10, amp: 0.130, band: 0.58, tilt: -0.18, alpha: 0.72, edge: 1.00, phase0: 2.2, warp: 0.82, harm: 0.18, env: 0.28, travel: 0.042, evolve: 0.044 },
+]
+
+const TAU = Math.PI * 2
+const SPEED_MIN = 0.25
+const SPEED_MAX = 2.5
+/* 采样步长，单位是 **backing store 像素**（不是 CSS px）。
+   固定为 backing 单位才能让高分辨率真正增加顶点密度；若固定 CSS px，
+   提高 DPR 只是把同样的顶点画在更多像素上，锯齿依旧。 */
+const STEP_BACKING = 1.5
+const MAX_DT = 0.25
+
+const canvas = document.getElementById('wave')
+const ctx = canvas.getContext('2d')
+
+const ui = {
+  lam: 100, amp: 100, band: 100, edge: 100, tilt: 100, irr: 100,
+  speed: 50, contrast: 100, alpha: 85,
+  edgeFade: true, hiDpi: true, throttle: true, reduced: false,
+}
+
+let cssW = 0
+let cssH = 0
+let scale = 1
+let rafId = 0
+let lastTs = 0
+let acc = 0
+let t = 0
+let frames = 0
+let fpsFrames = 0
+let msAcc = 0
+let msCount = 0
+let running = false
+/** 只警告一次，避免每帧刷屏。 */
+let warnedNaN = false
+
+/* ── 颜色工具 ─────────────────────────────────────────────────────────── */
+
+function parseHex(hex) {
+  const h = String(hex).trim().replace('#', '')
+  const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+  const n = parseInt(full, 16)
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 }
+}
+function mix(a, b, k) {
+  return {
+    r: Math.round(a.r + (b.r - a.r) * k),
+    g: Math.round(a.g + (b.g - a.g) * k),
+    b: Math.round(a.b + (b.b - a.b) * k),
+  }
+}
+const WHITE = { r: 255, g: 255, b: 255 }
+const BLACK = { r: 0, g: 0, b: 0 }
+function rgba(c, a) { return `rgba(${c.r}, ${c.g}, ${c.b}, ${a})` }
+
+/**
+ * 由主题令牌推出四色。真实实现同样在这里读 CSS 变量，故换主题自动跟随。
+ *   bgTop    背景渐变顶（暗）
+ *   bgBottom 背景渐变底（亮）
+ *   waveRim  波峰高亮色（最亮，负责"清晰"）
+ *   waveBody 波身渐隐色（比波峰暗，负责"波内渐变"）
+ * PSP 那套紫色由主题显式给出，其余主题从 accent/bg 推导。
+ */
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement)
+  const bg = parseHex(cs.getPropertyValue('--bg-primary'))
+  const accent = parseHex(cs.getPropertyValue('--accent-color'))
+
+  const explicitTop = cs.getPropertyValue('--wave-top').trim()
+  if (explicitTop) {
+    return {
+      bgTop: parseHex(explicitTop),
+      bgBottom: parseHex(cs.getPropertyValue('--wave-bottom')),
+      waveRim: parseHex(cs.getPropertyValue('--wave-band')),
+      waveBody: parseHex(cs.getPropertyValue('--wave-body') || cs.getPropertyValue('--wave-bottom')),
+    }
+  }
+  const bgBottom = mix(mix(bg, accent, 0.38), WHITE, 0.16)
+  return {
+    bgTop: mix(bg, BLACK, 0.28),
+    bgBottom,
+    waveRim: mix(bgBottom, WHITE, 0.45),
+    waveBody: mix(bgBottom, accent, 0.20),
+  }
+}
+
+/* ── 尺寸 ─────────────────────────────────────────────────────────────── */
+
+function resize() {
+  const rect = canvas.getBoundingClientRect()
+  cssW = Math.max(1, rect.width)
+  cssH = Math.max(1, rect.height)
+
+  // backing store 分辨率策略：固定 1.5 倍超采样。
+  //
+  // 波峰是**硬边**，锯齿直接来自采样密度不足：backing 等于 CSS 尺寸时，
+  // 1.5px 的波峰描边落在整像素格上，斜边出现阶梯。早期版本刻意用 0.5 倍
+  // "半分辨率"是为了配合当时的柔光带（模糊掩盖低采样），换成清晰波形后
+  // 这个前提就不成立了。
+  //
+  // 为什么是固定的 1.5 而不是 min(1.5, dpr)：
+  //   - 超采样的本质是"按高于显示的分辨率绘制，再由浏览器双线性缩小"，
+  //     缩小过程本身就是抗锯齿。所以 **DPR1 屏也受益** —— 若写成
+  //     min(1.5, dpr)，DPR1 下得到 1，等于完全没改善，而锯齿抱怨正是
+  //     发生在低 DPR 屏上。
+  //   - DPR2/3 屏上 1.5 倍相对原生 2 倍是略降采样，填充量从 4.0 倍像素
+  //     降到 2.25 倍（省 44%），而锯齿在 1.5 倍下已基本不可见。
+  //   - 不取更高：DPR3 手机上 3 倍填充面积是 9 倍，换不来可见收益。
+  scale = ui.hiDpi ? 1.5 : 1
+  canvas.width = Math.max(1, Math.round(cssW * scale))
+  canvas.height = Math.max(1, Math.round(cssH * scale))
+  document.getElementById('sRes').textContent = `${canvas.width}×${canvas.height}`
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   波峰中心线
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * 超低频正弦 + 轻微不规整。u = x/cssW ∈ 0..1。
+ *
+ * 主体仍是 sin（你要的就是"正弦波的基础上"），三处扰动只负责去掉机械感：
+ *   ① warp 相位扭曲 → 斜率沿 x 缓慢变化，不再是恒定曲率
+ *   ② harm 二次谐波 → 峰略尖谷略平，真实水面是不对称的
+ *   ③ env  振幅包络 → 局部肥厚、局部瘦削
+ * 扰动场走 evolve 维度推进 → 形状缓慢改变，而非整体刚性平移。
+ * tilt 是独立线性斜度，叠在正弦之上（参考图那条波明显向右上扬）。
+ */
+function centerline(u, L, drift, irr) {
+  const y = t * L.evolve
+  const lam = L.lam / (ui.lam / 100)
+
+  let phase = TAU * (u / lam) + drift + L.phase0
+  phase += L.warp * irr * (noise2(u * 1.1 + drift * 0.05, y) * 2 - 1)
+
+  const h = L.harm * irr
+  let n = (Math.sin(phase) + h * Math.sin(2 * phase + 1.1)) / (1 + h)
+  n *= 1 + L.env * irr * (noise2(u * 0.8 + 4.7 + drift * 0.04, y * 0.6) * 2 - 1)
+
+  const tilt = L.tilt * (ui.tilt / 100) * (u - 0.5)
+  return L.base + L.amp * (ui.amp / 100) * n + tilt
+}
+
+/* ── 绘制 ─────────────────────────────────────────────────────────────── */
+
+function draw() {
+  if (!ctx) return
+  // 尺寸未就绪时必须直接跳过：cssW=0 会让 u=x/cssW 变 NaN，
+  // createLinearGradient 会抛错并中断后续初始化。
+  if (cssW <= 0 || cssH <= 0) return
+
+  ctx.setTransform(scale, 0, 0, scale, 0, 0)
+
+  const th = readTheme()
+  const irr = ui.irr / 100
+  const spd = speedScale()
+  const stepCss = STEP_BACKING / scale
+  const contrast = ui.contrast / 100
+
+  // ① 背景：很淡的竖直渐变（上暗 → 下亮）
+  const g = ctx.createLinearGradient(0, 0, 0, cssH)
+  g.addColorStop(0, rgba(mix(th.bgBottom, BLACK, 0.34 * contrast), 1))
+  g.addColorStop(1, rgba(th.bgBottom, 1))
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, cssW, cssH)
+
+  // ② 三条波：每条都是「实心填充 + 波峰高亮边」
+  //    画序从后到前，前面的盖住后面的下半部分 → 看到 3 条清晰波峰线。
+  let samples = 0
+  for (let i = 0; i < LAYERS.length; i++) {
+    const L = LAYERS[i]
+    const drift = TAU * t * L.travel * spd
+
+    const ys = []
+    for (let x = 0; x <= cssW; x += stepCss) {
+      ys.push([x, centerline(x / cssW, L, drift, irr) * cssH])
+    }
+    if (ys.length === 0 || ys[ys.length - 1][0] < cssW) {
+      ys.push([cssW, centerline(1, L, drift, irr) * cssH])
+    }
+    samples += ys.length
+
+    // 守卫：canvas 对 NaN 坐标**静默丢弃整条路径**（不报错），所以层定义缺字段
+    // 时表现是"波整个不见了"且控制台干净 —— 极难排查。显式检出并警告。
+    let bad = false
+    for (const p of ys) if (!Number.isFinite(p[1])) { bad = true; break }
+    if (bad) {
+      if (!warnedNaN) {
+        warnedNaN = true
+        console.warn('[wave] 层参数不完整，centerline 返回 NaN，该层被跳过。检查 LAYERS[].base/amp/tilt', L)
+      }
+      continue
+    }
+
+    const a = Math.min(0.95, L.alpha * contrast)
+
+    // 波内渐变：从波峰往下 band·H 距离内淡到透明。
+    // 渐变锚点用「该层最高波峰」而非逐列，这样整条波的色调一致，
+    // 不会随波形起伏出现色带跳变。
+    let yPeak = Infinity
+    for (const p of ys) if (p[1] < yPeak) yPeak = p[1]
+    const fadeEnd = yPeak + L.band * cssH * (ui.band / 100)
+
+    const grad = ctx.createLinearGradient(0, yPeak, 0, fadeEnd)
+    // 前两个 stop 靠得很近 → 波峰处"突亮"，形成清晰边缘；
+    // 之后长距离渐隐 → 波内有渐变感。
+    // 0.05 而非更大值：超过 ~2% 波高的过渡带会让边缘读起来发虚。
+    grad.addColorStop(0, rgba(th.waveRim, a))
+    grad.addColorStop(0.02, rgba(th.waveRim, a * 0.88))
+    grad.addColorStop(0.28, rgba(th.waveBody, a * 0.50))
+    grad.addColorStop(1, rgba(th.waveBody, 0))
+
+    ctx.beginPath()
+    ctx.moveTo(ys[0][0], ys[0][1])
+    for (let j = 1; j < ys.length; j++) ctx.lineTo(ys[j][0], ys[j][1])
+    // 向下闭合到足够深处，让渐变在到达底边前就已透明。
+    ctx.lineTo(cssW, fadeEnd)
+    ctx.lineTo(0, fadeEnd)
+    ctx.closePath()
+    ctx.fillStyle = grad
+    ctx.fill()
+
+    // ③ 波峰高亮描边 —— 清晰度的关键。没有它，纯填充会糊成一片。
+    const edgeA = Math.min(1, a * 1.25) * (L.edge * ui.edge / 100)
+    if (edgeA > 0.01) {
+      ctx.beginPath()
+      for (let j = 0; j < ys.length; j++) {
+        if (j === 0) ctx.moveTo(ys[j][0], ys[j][1])
+        else ctx.lineTo(ys[j][0], ys[j][1])
+      }
+      ctx.strokeStyle = rgba(th.waveRim, Math.min(1, edgeA))
+      ctx.lineWidth = 1.5
+      ctx.lineJoin = 'round'
+      ctx.lineCap = 'round'
+      ctx.stroke()
+    }
+  }
+
+  // ④ 左右边缘淡出（可选）
+  if (ui.edgeFade) {
+    ctx.globalCompositeOperation = 'destination-in'
+    const m = ctx.createLinearGradient(0, 0, cssW, 0)
+    m.addColorStop(0, 'rgba(0,0,0,0)')
+    m.addColorStop(0.06, 'rgba(0,0,0,1)')
+    m.addColorStop(0.94, 'rgba(0,0,0,1)')
+    m.addColorStop(1, 'rgba(0,0,0,0)')
+    ctx.fillStyle = m
+    ctx.fillRect(0, 0, cssW, cssH)
+    ctx.globalCompositeOperation = 'source-over'
+  }
+
+  frames++
+  fpsFrames++
+  document.getElementById('sSamples').textContent = String(samples)
+}
+
+function speedScale() {
+  return Math.min(SPEED_MAX, Math.max(SPEED_MIN, ui.speed / 50))
+}
+function visibleCycles() {
+  const L = LAYERS[LAYERS.length - 1]
+  return 1 / (L.lam / (ui.lam / 100))
+}
+
+/* ── 循环 ─────────────────────────────────────────────────────────────── */
+
+function tick(ts) {
+  rafId = requestAnimationFrame(tick)
+  if (!lastTs) lastTs = ts
+  let dt = (ts - lastTs) / 1000
+  lastTs = ts
+  if (dt > MAX_DT) dt = MAX_DT
+  acc += dt
+  if (acc < (ui.throttle ? 1 / 30 : 0)) return
+  const step = acc
+  acc = 0
+  t += step
+
+  const t0 = performance.now()
+  draw()
+  const cost = performance.now() - t0
+
+  msAcc += cost; msCount++
+  if (msCount >= 15) {
+    document.getElementById('sMs').textContent = (msAcc / msCount).toFixed(2)
+    msAcc = 0; msCount = 0
+  }
+}
+
+function drawStatic() { resize(); draw() }
+function start() {
+  if (running || !ctx) return
+  running = true; lastTs = 0; acc = 0
+  rafId = requestAnimationFrame(tick)
+}
+function stop() {
+  if (!running) return
+  running = false; cancelAnimationFrame(rafId); rafId = 0
+}
+function onVisibility() {
+  if (document.hidden) stop()
+  else if (!ui.reduced) start()
+}
+
+/* ── 控件 ─────────────────────────────────────────────────────────────── */
+
+const sliders = {}
+function bindRange(id, key, fmt, after) {
+  const el = document.getElementById(id)
+  const out = document.getElementById('v' + id[0].toUpperCase() + id.slice(1))
+  sliders[key] = el
+  const apply = () => {
+    ui[key] = Number(el.value)
+    if (out) out.textContent = fmt(ui[key])
+    updateCycleLabel()
+    if (after) after()
+  }
+  el.addEventListener('input', apply)
+  apply()
+}
+function updateCycleLabel() {
+  const c = visibleCycles()
+  document.getElementById('sCycle').textContent = `${(c * 100).toFixed(0)}%（≈${c.toFixed(2)} 个）`
+}
+
+bindRange('lam', 'lam', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('amp', 'amp', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('band', 'band', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('edge', 'edge', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('tilt', 'tilt', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('irr', 'irr', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('speed', 'speed', (v) => (v / 50).toFixed(2) + '×')
+bindRange('contrast', 'contrast', (v) => (v / 100).toFixed(2) + '×', () => { if (!running) draw() })
+bindRange('alpha', 'alpha', (v) => v + '%', () => {
+  document.documentElement.style.setProperty('--panel-alpha', ui.alpha + '%')
+  if (!running) draw()
+})
+
+document.getElementById('edgeFade').addEventListener('change', (e) => {
+  ui.edgeFade = e.target.checked; if (!running) draw()
+})
+document.getElementById('hiDpi').addEventListener('change', (e) => {
+  ui.hiDpi = e.target.checked; resize(); if (!running) draw()
+})
+document.getElementById('throttle').addEventListener('change', (e) => {
+  ui.throttle = e.target.checked; acc = 0
+})
+document.getElementById('reduced').addEventListener('change', (e) => {
+  ui.reduced = e.target.checked
+  if (ui.reduced) { stop(); drawStatic() } else start()
+})
+
+function setSlider(key, val) {
+  const el = sliders[key]
+  el.value = String(val)
+  el.dispatchEvent(new Event('input'))
+}
+const PRESETS = {
+  xmb:   { lam: 100, amp: 100, band: 100, edge: 100, tilt: 100, irr: 100, speed: 50, contrast: 100 },
+  swell: { lam: 140, amp: 160, band: 140, edge: 120, tilt: 70,  irr: 130, speed: 40, contrast: 110 },
+  calm:  { lam: 180, amp: 60,  band: 80,  edge: 80,  tilt: 50,  irr: 60,  speed: 30, contrast: 90 },
+}
+document.querySelectorAll('.preset button').forEach((b) => {
+  b.addEventListener('click', () => {
+    const p = PRESETS[b.dataset.p]
+    for (const k of Object.keys(p)) setSlider(k, p[k])
+  })
+})
+
+/* 主题预设。wave* 显式给出时覆盖推导值。 */
+const THEMES = [
+  { name: 'PSP XMB（参考图）', accent: '#8b7bd8', bg: '#3b2f66', bg2: '#4a3d7a', bg3: '#5b4a8a', fg: '#e8e4f5',
+    waveTop: '#3a2f63', waveBottom: '#8f83c4', waveBand: '#e2dbf7', waveBody: '#9b8fd0' },
+  { name: 'Gruvbox Dark', accent: '#fe8019', bg: '#282828', bg2: '#3c3836', bg3: '#504945', fg: '#ebdbb2' },
+  { name: 'Dracula', accent: '#bd93f9', bg: '#282a36', bg2: '#343746', bg3: '#44475a', fg: '#f8f8f2' },
+  { name: 'Nord', accent: '#88c0d0', bg: '#2e3440', bg2: '#3b4252', bg3: '#434c5e', fg: '#eceff4' },
+  { name: 'Tokyo Night', accent: '#7aa2f7', bg: '#1a1b26', bg2: '#24283b', bg3: '#2f3549', fg: '#c0caf5' },
+  { name: 'Catppuccin', accent: '#89b4fa', bg: '#1e1e2e', bg2: '#313244', bg3: '#45475a', fg: '#cdd6f4' },
+  { name: 'Solarized Light', accent: '#268bd2', bg: '#fdf6e3', bg2: '#eee8d5', bg3: '#e4ddc8', fg: '#657b83' },
+  { name: 'GitHub Light', accent: '#0969da', bg: '#ffffff', bg2: '#f6f8fa', bg3: '#eaeef2', fg: '#1f2328' },
+]
+
+const swatchWrap = document.getElementById('swatches')
+THEMES.forEach((thm, i) => {
+  const b = document.createElement('button')
+  b.className = 'sw' + (i === 0 ? ' on' : '')
+  b.title = thm.name
+  b.style.background = `linear-gradient(135deg, ${thm.accent} 0 50%, ${thm.bg} 50% 100%)`
+  b.addEventListener('click', () => {
+    const r = document.documentElement.style
+    r.setProperty('--accent-color', thm.accent)
+    r.setProperty('--bg-primary', thm.bg)
+    r.setProperty('--bg-secondary', thm.bg2)
+    r.setProperty('--bg-tertiary', thm.bg3)
+    r.setProperty('--text-primary', thm.fg)
+    // 清掉上一套的显式波色，避免串味
+    for (const k of ['--wave-top', '--wave-bottom', '--wave-band', '--wave-body']) r.removeProperty(k)
+    if (thm.waveTop) {
+      r.setProperty('--wave-top', thm.waveTop)
+      r.setProperty('--wave-bottom', thm.waveBottom)
+      r.setProperty('--wave-band', thm.waveBand)
+      r.setProperty('--wave-body', thm.waveBody)
+    }
+    for (const el of swatchWrap.children) el.classList.remove('on')
+    b.classList.add('on')
+    if (!running) draw()
+  })
+  swatchWrap.appendChild(b)
+})
+// 默认就用 PSP XMB 那套，直接对上参考图
+swatchWrap.children[0].click()
+
+/* 帧率统计 */
+let fpsLast = performance.now()
+setInterval(() => {
+  const now = performance.now()
+  const dt = (now - fpsLast) / 1000
+  fpsLast = now
+  document.getElementById('sFps').textContent = dt > 0 ? (fpsFrames / dt).toFixed(0) : '–'
+  fpsFrames = 0
+}, 1000)
+
+/* ── 启动 ─────────────────────────────────────────────────────────────── */
+
+window.addEventListener('resize', () => { resize(); if (!running) draw() })
+document.addEventListener('visibilitychange', onVisibility)
+
+if (!ctx) {
+  document.getElementById('sRes').textContent = 'canvas 不可用'
+} else {
+  resize()
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    ui.reduced = true
+    document.getElementById('reduced').checked = true
+    drawStatic()
+  } else {
+    start()
+  }
+}
+</script>
+</body>
+</html>

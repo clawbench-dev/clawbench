@@ -1,9 +1,32 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { reactive } from 'vue'
+import { reactive, ref, nextTick } from 'vue'
 import AppHeader from '@/components/common/AppHeader.vue'
 import { pendingSettingsCategory } from '@/composables/useSettingsNavigation'
+import { copyText } from '@/utils/clipboard'
+import { switchLeftTab, resetWideScreenState, _setWideScreenForTest } from '@/composables/useWideScreenLayout'
+
+const mockedCopyText = vi.mocked(copyText)
+
+// jsdom lacks window.matchMedia. The theme-picker tests are the first in this
+// file to actually render the theme menu, whose rows call
+// getThemePreviewStyle → resolveThemeId('auto') → window.matchMedia. Without a
+// stub that throws inside render (and the test's rethrowing errorHandler turns
+// it into a hang). Stub a light scheme; other suites do the same.
+function stubMatchMedia() {
+  vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  })))
+}
+stubMatchMedia()
 
 // ── Mock setup ──
 const {
@@ -15,6 +38,7 @@ const {
   mockStateHolder,
   wsConfig,
   isAppModeConfig,
+  isDesktopAppConfig,
 } = vi.hoisted(() => {
   const holder: { state: Record<string, unknown> | null } = { state: null }
   return {
@@ -26,6 +50,7 @@ const {
     mockStateHolder: holder,
     wsConfig: { value: 'connected' as string },
     isAppModeConfig: { value: false as boolean },
+    isDesktopAppConfig: { value: false as boolean },
   }
 })
 
@@ -59,12 +84,15 @@ vi.mock('@/composables/useAppMode', () => {
   return {
     useAppMode: () => ({
       isAppMode: vue.ref(isAppModeConfig.value),
-      isDesktopApp: vue.ref(false),
+      isDesktopApp: vue.ref(isDesktopAppConfig.value),
     }),
   }
 })
 vi.mock('@/composables/useCommitNavigation.ts', () => ({
   setPendingManageNavigation: setPendingManageNavigationFn,
+}))
+vi.mock('@/utils/clipboard', () => ({
+  copyText: vi.fn((_text: string, onSuccess?: () => void) => { onSuccess?.() }),
 }))
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: dialogConfirmFn }),
@@ -110,7 +138,7 @@ const i18n = createI18n({
     switchProjectNetworkError: 'Switch project failed: network error',
     recentFiles: 'Recent files', noFileOpen: 'Recent files', noRecentFiles: 'No recently opened files',
     openFileManager: 'Open file manager',
-    branches: 'Branches', moreBranches: 'Manage branches',
+    branches: 'Branches', moreBranches: 'Manage branches', copyBranchName: 'Copy branch name',
     switchBranchConfirm: 'Switch to branch "{branch}"?',
     switchBranchFailed: 'Failed: {error}', switchBranchNetworkError: 'network',
     removeProject: 'Remove project',
@@ -128,6 +156,11 @@ function $(selector: string) {
   return document.body.querySelector(selector) as HTMLElement | null
 }
 
+/** Shared injectable activeTab ref (narrow-mode tab). Tests mutate it to
+ *  simulate a dock tab switch, which cannot be done via click because the dock
+ *  lives in App.vue, not AppHeader. */
+const injectedActiveTab = ref('chat')
+
 function mountHeader(props: Record<string, unknown> = {}) {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -137,7 +170,7 @@ function mountHeader(props: Record<string, unknown> = {}) {
     global: {
       plugins: [i18n],
       stubs: { PopupMenu: PopupMenuStub, 'lucide-vue-next': LucideStub },
-      provide: { switchTab: vi.fn(), toast: { show: vi.fn() }, hotSwitchProject: vi.fn() },
+      provide: { switchTab: vi.fn(), toast: { show: vi.fn() }, hotSwitchProject: vi.fn(), activeTab: injectedActiveTab },
       config: {
         errorHandler: (err: unknown) => {
           if (err instanceof Error && err.message.includes('Maximum recursive updates')) return
@@ -159,7 +192,7 @@ describe('AppHeader', () => {
       activeWrapper.unmount()
       activeWrapper = null
     }
-    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title').forEach(el => el.remove())
+    document.body.querySelectorAll('.header,.server-toggle,.branch-badge,.current-file-badge,.app-menu,.app-menu-message,.app-menu-item,.app-menu-title,.window-controls,.window-control').forEach(el => el.remove())
     if (activeContainer?.parentNode) {
       document.body.removeChild(activeContainer)
       activeContainer = null
@@ -176,6 +209,7 @@ describe('AppHeader', () => {
   beforeEach(() => {
     wsConfig.value = 'connected'
     isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
     mockState.gitBranch = ''
     mockState.gitDirty = false
     mockState.gitWorkingTreeChangeCount = 0
@@ -183,6 +217,13 @@ describe('AppHeader', () => {
     setPendingManageNavigationFn.mockReset()
     dialogConfirmFn.mockReset()
     dialogConfirmFn.mockResolvedValue(true)
+    mockedCopyText.mockReset()
+    mockedCopyText.mockImplementation((_text: string, onSuccess?: () => void) => { onSuccess?.() })
+    injectedActiveTab.value = 'chat'
+    resetWideScreenState()
+    // Re-stub: earlier tests call vi.unstubAllGlobals(), which also clears the
+    // module-level matchMedia stub the theme picker needs to render.
+    stubMatchMedia()
   })
 
   // ── projectName computed (5) ──
@@ -708,6 +749,71 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  // ── current project is not removable ──
+
+  it('removeRecent refuses a programmatic call for the currently open project', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    const item = { path: '/home/user/project-a', name: 'project-a', displayPath: 'project-a', kind: 'plain' as const, groupKey: '', groupName: '' }
+    wrapper.vm.recentItems = [item]
+
+    // The row renders no button at all, so this handler guard is the only thing
+    // between a programmatic call and a DELETE.
+    await (wrapper.vm as any).removeRecent(item)
+
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(wrapper.vm.recentItems).toEqual([item])
+    vi.unstubAllGlobals()
+  })
+
+  it('isCurrentProject normalizes separators and trailing slashes', () => {
+    const wrapper = mountAndTrack({ projectRoot: 'C:\\Users\\x\\proj' })
+    const vm = wrapper.vm as any
+    const base = { name: 'proj', displayPath: 'proj', kind: 'plain' as const, groupKey: '', groupName: '' }
+
+    expect(vm.isCurrentProject({ ...base, path: 'C:\\Users\\x\\proj' })).toBe(true)
+    // Forward-slash form of the same path (backend may return either).
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/proj' })).toBe(true)
+    // Trailing slash tolerated.
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/proj/' })).toBe(true)
+    // A different project stays removable.
+    expect(vm.isCurrentProject({ ...base, path: 'C:/Users/x/other' })).toBe(false)
+    // No project root known → nothing is "current".
+    const noRoot = mountAndTrack({ projectRoot: '' })
+    expect((noRoot.vm as any).isCurrentProject({ ...base, path: 'C:/Users/x/proj' })).toBe(false)
+  })
+
+  it('renders no remove button on the current project row but keeps it on the others', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: () => Promise.resolve([
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/project-a', kind: 'plain' }] },
+        { repoRoot: '', groupName: '', items: [{ path: '/home/user/project-b', kind: 'plain' }] },
+      ]),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountAndTrack({ projectRoot: '/home/user/project-a' })
+    await (wrapper.vm as any).loadRecentProjects()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const rows = Array.from(document.body.querySelectorAll('.app-menu-item--stacked')) as HTMLElement[]
+    expect(rows.length).toBe(2)
+    // Current project: no button at all.
+    expect(rows[0].querySelector('.item-remove-btn')).toBeNull()
+    // Other projects: button present, enabled, and actually usable.
+    const otherBtn = rows[1].querySelector('.item-remove-btn') as HTMLButtonElement
+    expect(otherBtn).not.toBeNull()
+    expect(otherBtn.disabled).toBe(false)
+    expect(otherBtn.getAttribute('title')).toBe('Remove project')
+
+    wrapper.vm.dropdownOpen = false
+    vi.unstubAllGlobals()
+  })
+
   it('recent-file remove button removes the entry without confirmation', async () => {
     const wrapper = mountAndTrack()
     wrapper.vm.recentFileEntries = [{ path: '/home/user/a.ts', accessedAt: 1 }]
@@ -1030,6 +1136,91 @@ describe('AppHeader', () => {
     vi.unstubAllGlobals()
   })
 
+  it('renders a copy button on every branch row', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    // Two branch rows → two copy buttons (the "manage branches" footer has none).
+    expect(document.body.querySelectorAll('.item-copy-btn').length).toBe(2)
+
+    // The icon must actually render inside each button. Asserting only on the
+    // button class is not enough: if <Copy>/<Check> are not imported the button
+    // still mounts as an empty 18x18 box, which is invisible to the user.
+    const btns = [...document.body.querySelectorAll('.item-copy-btn')]
+    for (const b of btns) expect(b.querySelector('svg')).not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('copies the branch name without switching branches', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    // Click the copy button on the *non-current* row; it must not trigger the
+    // row's selectBranch handler (which would open the switch confirmation).
+    const copyBtns = document.body.querySelectorAll('.item-copy-btn')
+    ;(copyBtns[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    expect(mockedCopyText).toHaveBeenCalledWith('dev', expect.any(Function))
+    expect(dialogConfirmFn).not.toHaveBeenCalled()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('flashes the copied state on the clicked row only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const copyBtns = document.body.querySelectorAll('.item-copy-btn')
+    ;(copyBtns[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    const after = document.body.querySelectorAll('.item-copy-btn')
+    expect(after[1].classList.contains('is-copied')).toBe(true)
+    expect(after[0].classList.contains('is-copied')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not mark a row as copied when the clipboard write fails', async () => {
+    mockedCopyText.mockImplementation(() => {})
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ isGit: true, branches: [{ name: 'main' }, { name: 'dev' }] }) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    mockState.gitBranch = 'main'
+    const wrapper = mountAndTrack()
+    await (wrapper.vm as any).toggleBranchDropdown()
+    await (wrapper.vm as any).loadBranches()
+    try { await wrapper.vm.$nextTick() } catch {}
+
+    const copyBtns = document.body.querySelectorAll('.item-copy-btn')
+    ;(copyBtns[1] as HTMLElement).click()
+    await wrapper.vm.$nextTick()
+
+    expect(document.body.querySelectorAll('.item-copy-btn.is-copied').length).toBe(0)
+
+    vi.unstubAllGlobals()
+  })
+
   it('openHistory emits pending navigation and switches tab', () => {
     const wrapper = mountAndTrack()
     ;(wrapper.vm as any).openHistory()
@@ -1206,6 +1397,163 @@ describe('AppHeader', () => {
     wrapper.vm.dirtyModalOpen = false
   })
 
+  // ── Navigation dismisses header popups ──
+  // Regression: theme + system-resources menus are PopupMenu (teleported to
+  // <body>, position:fixed, z-index 9999). The dock buttons use @click.stop, so
+  // the document-level outside-click handlers never fire on a tab switch and
+  // the menu stayed open over the newly shown tab (visible on narrow screens,
+  // where the tab replaces the whole area below the header).
+
+  it('closes theme menu when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(false)
+  })
+
+  it('closes resources menu when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleResourcesMenu()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.resourcesMenuOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+  })
+
+  it('closes both menus when the wide-mode leftTab changes', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    ;(wrapper.vm as any).toggleResourcesMenu()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(true)
+    expect(wrapper.vm.resourcesMenuOpen).toBe(true)
+
+    switchLeftTab('settings')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(false)
+    expect(wrapper.vm.resourcesMenuOpen).toBe(false)
+  })
+
+  it('leaves the menus alone when unrelated state changes', async () => {
+    // Guard against an over-eager watcher: git branch updates must not dismiss.
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+    mockState.gitBranch = 'feature/x'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.themeMenuOpen).toBe(true)
+  })
+
+  // The project / recent-files / branch dropdowns are AppMenuPanel (also
+  // teleported to <body> with position:fixed) and share the same root cause as
+  // the two PopupMenu above. Fixing only the PopupMenus left the identical bug
+  // reachable from these three entries, so they are pinned here too.
+  it('closes the project dropdown when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+  })
+
+  it('closes the recent-files dropdown when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.fileDropdownOpen = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.fileDropdownOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+  })
+
+  it('closes the branch dropdown when the narrow-mode activeTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.branchDropdownOpen = true
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.branchDropdownOpen).toBe(true)
+
+    injectedActiveTab.value = 'settings'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
+  })
+
+  it('closes all three dropdowns when the wide-mode leftTab changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+    wrapper.vm.fileDropdownOpen = true
+    wrapper.vm.branchDropdownOpen = true
+    await wrapper.vm.$nextTick()
+
+    switchLeftTab('settings')
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(false)
+    expect(wrapper.vm.fileDropdownOpen).toBe(false)
+    expect(wrapper.vm.branchDropdownOpen).toBe(false)
+  })
+
+  it('leaves the dropdowns alone when unrelated state changes', async () => {
+    const wrapper = mountAndTrack()
+    wrapper.vm.dropdownOpen = true
+    await wrapper.vm.$nextTick()
+    mockState.gitBranch = 'feature/x'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.dropdownOpen).toBe(true)
+  })
+
+  // ── shortcut tips ticker visibility (keyboard-bearing surfaces) ──
+
+  it('shows the shortcut tips ticker on the Electron desktop shell', async () => {
+    // The Electron shell is a native host (isAppMode === true) but a desktop
+    // window with a physical keyboard, so the tips apply there. Gating only on
+    // `!isAppMode` hid them in the desktop app while showing them in a browser
+    // on the same machine.
+    isAppModeConfig.value = true
+    isDesktopAppConfig.value = true
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeTruthy()
+  })
+
+  it('hides the shortcut tips ticker on the Android WebView', async () => {
+    // Android reports isAppMode without isDesktopApp — a touch surface with no
+    // physical keyboard, where the marquee would only be noise.
+    isAppModeConfig.value = true
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeFalsy()
+  })
+
+  it('shows the shortcut tips ticker in the web browser', async () => {
+    isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(true)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeTruthy()
+  })
+
+  it('hides the shortcut tips ticker on narrow screens', async () => {
+    isAppModeConfig.value = false
+    isDesktopAppConfig.value = false
+    _setWideScreenForTest(false)
+    mountAndTrack()
+    await nextTick()
+    expect($('.header-tips')).toBeFalsy()
+  })
+
   // ── handleLogout ──
 
   it('handleLogout calls ClawBenchNative.showServerDialog in APP mode', async () => {
@@ -1245,5 +1593,187 @@ describe('AppHeader', () => {
     expect((wrapper.vm as any).highlightBadge).toBe('file')
     expect(fileBtn).toBeTruthy()
     expect(fileBtn?.classList.contains('badge-highlight')).toBe(true)
+  })
+
+  // ── app-drawn window controls (frameless desktop shell) ──
+
+  /** Stub the bridge the cluster reads. `hasCustomWindowControls` is the gate. */
+  function stubWindowControls(hasControls: boolean) {
+    const native = {
+      hasCustomWindowControls: vi.fn(() => hasControls),
+      isWindowMaximized: vi.fn(async () => false),
+      windowMinimize: vi.fn(),
+      windowToggleMaximize: vi.fn(),
+      windowClose: vi.fn(),
+    }
+    vi.stubGlobal('ClawBenchNative', native)
+    return native
+  }
+
+  it('shows the three window controls when the window is frameless', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const buttons = document.body.querySelectorAll('.window-control')
+    expect(buttons).toHaveLength(3)
+    // The cluster is the only close affordance on a frameless window, so its
+    // presence is asserted on the buttons themselves, not just the container.
+    expect(document.body.querySelector('.window-controls')).toBeTruthy()
+  })
+
+  it('hides the window controls on a framed window (macOS / Android / web)', async () => {
+    stubWindowControls(false)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    // Two sets of controls (native + app-drawn) would be worse than none.
+    expect(document.body.querySelector('.window-controls')).toBeFalsy()
+    expect(document.body.querySelectorAll('.window-control').length).toBe(0)
+  })
+
+  it('wires the three buttons to minimize / maximize / close', async () => {
+    const native = stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const buttons = [...document.body.querySelectorAll<HTMLElement>('.window-control')]
+    buttons[0].click()
+    buttons[1].click()
+    buttons[2].click()
+
+    expect(native.windowMinimize).toHaveBeenCalledTimes(1)
+    expect(native.windowToggleMaximize).toHaveBeenCalledTimes(1)
+    expect(native.windowClose).toHaveBeenCalledTimes(1)
+  })
+
+  it('swaps the middle button between maximize and restore', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const middle = () => document.body.querySelectorAll<HTMLElement>('.window-control')[1]
+    const initialTitle = middle().getAttribute('title')
+
+    window.dispatchEvent(new CustomEvent('clawbench-window-state', { detail: { maximized: true } }))
+    await wrapper.vm.$nextTick()
+
+    // The label must change with the state, or the button lies about what it
+    // will do next.
+    expect(middle().getAttribute('title')).not.toBe(initialTitle)
+    expect(middle().getAttribute('title')).toContain('Restore')
+  })
+
+  it('renders the controls after the native icon buttons, at the right edge', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const header = document.body.querySelector('.header')
+    expect(header).toBeTruthy()
+    // Last element child = the right edge. The cluster deliberately comes after
+    // the theme/server buttons rather than being inserted among them.
+    const last = header!.lastElementChild
+    expect(last?.classList.contains('window-controls')).toBe(true)
+  })
+
+  it('gives the close button its own class so it can be styled apart', async () => {
+    stubWindowControls(true)
+    const wrapper = mountAndTrack()
+    await wrapper.vm.$nextTick()
+
+    const buttons = [...document.body.querySelectorAll<HTMLElement>('.window-control')]
+    expect(buttons[2].classList.contains('window-control--close')).toBe(true)
+    // Only the close button carries the modifier; a stray one on minimize
+    // would turn it red on hover too.
+    expect(buttons[0].classList.contains('window-control--close')).toBe(false)
+    expect(buttons[1].classList.contains('window-control--close')).toBe(false)
+  })
+
+  it('marks the header frameless only when the window has no frame', async () => {
+    // `user-select: none` is scoped to this class so that a drag on the header
+    // does not highlight its labels — but it is NOT applied in a browser, where
+    // the property is honoured and would break selecting the project/branch
+    // names for every web user.
+    stubWindowControls(true)
+    const frameless = mountAndTrack()
+    await frameless.vm.$nextTick()
+    expect(document.body.querySelector('.header')?.classList.contains('header--frameless')).toBe(true)
+    // Unmount before the second mount: the wrappers attach to document.body and
+    // are only cleaned up in afterEach, so a global query would otherwise find
+    // this (frameless) header and assert against the wrong element.
+    frameless.unmount()
+
+    stubWindowControls(false)
+    const framed = mountAndTrack()
+    await framed.vm.$nextTick()
+    expect(document.body.querySelector('.header')?.classList.contains('header--frameless')).toBe(false)
+  })
+
+  // ── Theme picker row structure ──
+  // Regression: rows used to paint themselves with the previewed theme's own
+  // background/foreground, so the menu became a stack of unrelated colour
+  // blocks. The preview is now carried by a swatch + the accent-tinted
+  // sun/moon. The CSS itself is guarded in
+  // src/assets/__tests__/themePicker.css.test.ts; here we pin the DOM that the
+  // stylesheet relies on.
+
+  it('renders a colour swatch on every theme row, before the name', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    const rows = [...document.body.querySelectorAll<HTMLElement>('.theme-item')]
+    // 'auto' + the full theme list.
+    expect(rows.length).toBeGreaterThan(1)
+
+    for (const row of rows) {
+      const swatch = row.querySelector('.theme-swatch')
+      const name = row.querySelector('.theme-item-name')
+      expect(swatch, `row: ${row.textContent}`).toBeTruthy()
+      expect(name).toBeTruthy()
+      // Swatch must precede the name so the row reads "preview, then label".
+      expect(
+        swatch!.compareDocumentPosition(name!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    }
+  })
+
+  it('marks only the auto row with the split light/dark swatch', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    const autoSwatches = [...document.body.querySelectorAll('.theme-swatch--auto')]
+    // Exactly one: the "follow system" row.
+    expect(autoSwatches.length).toBe(1)
+    expect(autoSwatches[0].closest('.theme-item')?.textContent).toContain('Auto')
+  })
+
+  it('sets preview custom properties on the row without the removed foreground one', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    const row = document.body.querySelector<HTMLElement>('.theme-item:not(:first-child)')
+    expect(row).toBeTruthy()
+    const style = row!.getAttribute('style') || ''
+    expect(style).toContain('--tterm-preview-bg')
+    expect(style).toContain('--tterm-preview-accent')
+    // The row surface is neutral now, so the previewed foreground is unused.
+    expect(style).not.toContain('--tterm-preview-fg')
+  })
+
+  it('marks the active row and renders no check mark', async () => {
+    const wrapper = mountAndTrack()
+    ;(wrapper.vm as any).toggleThemeMenu()
+    await wrapper.vm.$nextTick()
+
+    // Exactly one row is selected, and it is identified by the class the rail /
+    // tint / weight rules key off — no trailing check glyph any more.
+    const active = document.body.querySelectorAll('.theme-item.active')
+    expect(active.length).toBe(1)
+    expect(document.body.querySelector('.theme-item-check')).toBeNull()
+    expect(document.body.textContent).not.toContain('✓')
   })
 })

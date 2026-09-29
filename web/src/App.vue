@@ -13,16 +13,28 @@
            re-decodes in Android WebView — CSS-var-driven background-image swaps
            sometimes need an app restart to repaint. -->
       <div v-show="wallpaperActive" class="wallpaper-layer" aria-hidden="true">
+        <!-- Bound to wallpaperUrl, not wallpaperActive: in wave mode the layer
+             is active but there is no image, and an <img src=""> makes some
+             browsers request the current page URL. -->
         <img
-          v-if="wallpaperActive"
+          v-if="wallpaperUrl"
           :src="wallpaperUrl"
           class="wallpaper-image"
           :class="{
             'wallpaper-image--edge-fade': wallpaperEdgeFade,
+            'local-media-hidden': wallpaperFailed,
           }"
           :style="wallpaperImageStyle"
           alt=""
           draggable="false"
+          @error="onWallpaperError"
+          @load="wallpaperFailed = false"
+        />
+        <AnimatedWallpaper
+          v-else-if="waveActive"
+          :style-id="wallpaperAnimatedStyle"
+          :speed="wallpaperWaveSpeed"
+          :params="wallpaperStyleParams"
         />
         <div class="wallpaper-scrim"></div>
       </div>
@@ -39,6 +51,16 @@
         @select-recent-file="handleAppHeaderRecentFileSelect"
       />
       <ConnectionOverlay />
+
+      <!-- Download progress. Floats just under the app header and is taken out
+           of flow, so a download never pushes the layout around. -->
+      <DownloadProgressBar
+        :visible="downloadVisible"
+        :file-name="downloadFileName"
+        :received="downloadReceived"
+        :total="downloadTotal"
+        @cancel="cancelDownload"
+      />
 
       <main class="main-content" :class="{ 'wide-screen': isWideScreen }">
         <!-- Wide-screen vertical dock (non-chat tabs only) -->
@@ -240,18 +262,37 @@
             </template>
 
             <template #right>
-              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" :class="{ 'chat-drop-active': chatDropActive }" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
+              <div class="col-right" v-show="isWideScreen || activeTab === 'chat'" @pointerdown="setActivePane('right')" @focusin="setActivePane('right')" @dragenter="onChatColDragEnter" @dragover="onChatColDragOver" @dragleave="onChatColDragLeave" @drop="onChatColDrop">
                 <div class="col-right-chat">
                   <div class="chat-panel-row">
                   <!-- Chat column: title bar + chat panel. Keeping the title
                        bar inside this column (rather than spanning the whole
                        right pane) leaves the session sidebar full-height. -->
-                  <div class="chat-col">
+                  <!-- The drop highlight lives on THIS column, not on .col-right:
+                       .col-right also contains the session sidebar, so binding
+                       it there lit up the sidebar too and the user read that as
+                       "the whole pane is the target". The drag handlers stay on
+                       .col-right so the drop still works anywhere on the pane —
+                       the highlight previews the DESTINATION (the chat), not the
+                       cursor's location. -->
+                  <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
                   <div class="chat-title-bar">
                     <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :size="18" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
+                    <!-- Explicit rename affordance. The title text above is also
+                         clickable, but that is undiscoverable on touch; this icon
+                         surfaces the same action on the right of the header. -->
+                    <button
+                      v-if="sessionIdentity.currentSessionId.value"
+                      class="chat-title-edit-btn"
+                      data-action="rename-session"
+                      :title="t('chat.sessionRename.tooltip')"
+                      @click.stop="handleRenameSession"
+                    >
+                      <PencilLine :size="16" />
+                    </button>
                   </div>
                   <!-- Chat Tab (title bar is now the shared one above) -->
                   <TabPanel class="chat-tab-panel" noHeader tabId="chat" :activeTab="chatActive">
@@ -265,10 +306,13 @@
                       @open-session-search="sessionSearchDrawer.open()"
                     />
                   </TabPanel>
-                  </div>
+                  <!-- The hint is centered on the CHAT column, not on
+                       .chat-panel-row: that row also spans the session sidebar,
+                       so centering there would push the pill off the chat. -->
                   <div v-if="chatDropActive" class="chat-drop-hint">
                     <Paperclip :size="16" />
                     {{ t('file.dropToAttach') }}
+                  </div>
                   </div>
                   <SessionSidebar
                     ref="sessionSidebarRef"
@@ -324,6 +368,17 @@
         @close="quoteQuestion.closeSheet()"
         @pin="quoteQuestion.pinBar()"
         @unpin="quoteQuestion.unpinBar()"
+      />
+
+      <!-- Conversation picker: shown only when the chat panel is off screen, so
+           the destination of a quote/attachment is ambiguous. -->
+      <SessionPickerDialog
+        :open="sessionPickerOpen"
+        @select="confirmTarget({ kind: 'session', id: $event })"
+        @select-and-open="confirmTarget({ kind: 'session', id: $event }, { openAfter: true })"
+        @create="confirmTarget({ kind: 'create' })"
+        @create-and-open="confirmTarget({ kind: 'create' }, { openAfter: true })"
+        @close="cancelTarget()"
       />
 
       <!-- Session drawer — bound to chat tab, auto-closes when leaving chat -->
@@ -451,6 +506,7 @@
     <ToastNotification :toast="toast" />
     <CompletionPopover />
     <DialogOverlay />
+    <InertPathPicker />
   </div>
 </template>
 
@@ -461,16 +517,18 @@ import { setAuthRedirectEnabled } from '@/utils/authExpiry'
 import { getNative } from '@/utils/clawbenchNative'
 import { attemptSavedPasswordLogin } from '@/utils/savedPasswordLogin'
 import { resolveThemeId, applyThemeAttributes, buildThemePalette, isDarkTheme } from '@/utils/themeMeta'
-import { applyWallpaper, applyWallpaperScrim, resolveWallpaperState, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath } from '@/utils/themeBackground'
+import { applyWallpaper, applyWallpaperScrim, resolvePanelOpacity, currentThemeIsDark, resolveWallpaperUrl, resolveActiveFile, isBingFirstImagePending, setWallpaperFromPath, isWaveActive, resolveWallpaperMode, resolveAnimatedStyleId, resolveBingStatus, type WallpaperMode } from '@/utils/themeBackground'
 import { useDockOverflow } from '@/composables/useDockOverflow'
 import { closeAllTableBlockMenus } from '@/composables/useCodeBlockHeader'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig, applyEffectiveUIScale, getZoomedViewport, toFixedCSS, startSystemThemeWatcher, applyStoredTheme } from '@/composables/useSettingsConfig'
+import { useAnimatedWallpaperParams } from '@/composables/useAnimatedWallpaperParams'
 import { applyFontConfig, ensureSelectedBundledFontsLoaded } from '@/utils/fontConfig'
-import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab } from 'lucide-vue-next'
+import { MessageSquare, MessageSquareOff, FolderOpen, GitBranch, Clock, MoreHorizontal, Paperclip, FileText, X, Github, Gitlab, PencilLine } from 'lucide-vue-next'
 import AppHeader from './components/common/AppHeader.vue'
 import TabPanel from './components/common/TabPanel.vue'
 import FileOverlay from './components/file/FileOverlay.vue'
+import InertPathPicker from './components/file/InertPathPicker.vue'
 import Lightbox from './components/media/Lightbox.vue'
 import ChatPanelContent from './components/chat/ChatPanelContent.vue'
 import FileManagerContent from './components/file/FileManagerContent.vue'
@@ -480,6 +538,7 @@ import GitHistoryContent from './components/git/GitHistoryContent.vue'
 import ProxyPanelContent from './components/proxy/ProxyPanelContent.vue'
 import ForgePanelContent from './components/forge/ForgePanelContent.vue'
 import AsyncComponentLoader from './components/common/AsyncComponentLoader.vue'
+import AnimatedWallpaper from './components/AnimatedWallpaper.vue'
 const TerminalPanelContent = defineAsyncComponent({
   loader: () => import('./components/terminal/TerminalPanelContent.vue'),
   loadingComponent: AsyncComponentLoader,
@@ -492,6 +551,8 @@ import UpgradeDialog from './components/settings/UpgradeDialog.vue'
 import FileDetailsDrawer from './components/file/FileDetailsDrawer.vue'
 import ShareLinkDialog from './components/file/ShareLinkDialog.vue'
 import ToastNotification from './components/common/ToastNotification.vue'
+import DownloadProgressBar from './components/common/DownloadProgressBar.vue'
+import { useDownloadProgress } from '@/composables/useDownloadProgress'
 import CompletionPopover from './components/common/CompletionPopover.vue'
 import DialogOverlay from './components/common/DialogOverlay.vue'
 import SessionDrawer from './components/session/SessionDrawer.vue'
@@ -505,6 +566,8 @@ import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
 import { useQuoteQuestion } from './composables/useQuoteQuestion.ts'
+import { setActiveTabGetter, setOpenSessionHandler, usePendingTarget, confirmTarget, cancelTarget } from './composables/useConversationTarget.ts'
+import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
@@ -518,6 +581,7 @@ import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
 import { useToast } from './composables/useToast.ts'
+import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
 import { gt } from './composables/useLocale'
 import { useAppMode } from './composables/useAppMode.ts'
@@ -532,6 +596,9 @@ import { useFileEditor } from './composables/useFileEditor'
 import { useTocDockPreference } from './composables/useTocDockPreference'
 import { removeRecentFile, useRecentFiles } from './composables/useRecentFiles'
 import { initLocalLinkGuard } from './composables/useLocalLinkGuard'
+import { installDragClickGuard } from './utils/dragClickGuard'
+import { installInertPathClick } from './utils/inertPathClick'
+import { closeInertPathPicker } from './composables/useInertPathPicker'
 import { openFilePath } from './composables/useFilePathAnnotation'
 import { parseLineRanges, flattenLineNumbers } from './utils/lineRanges.ts'
 import { refreshCurrentFile } from './composables/useFileRefresh.ts'
@@ -575,6 +642,7 @@ import type { ForgeTarget } from './composables/useForgeNavigation.ts'
 import { forgeTargetItemKey } from './composables/useForge.ts'
 import { useFileUpload } from './composables/useFileUpload.ts'
 import { readAttachDragData, hasAttachDragData, attachDragTargets } from './utils/attachDrag'
+import { readQuoteDragData, hasQuoteDragData } from './utils/quoteDrag'
 import SplitView from './components/common/SplitView.vue'
 import {
   useWideScreenLayout,
@@ -585,6 +653,7 @@ import {
   setSplitRatio,
   setLeftCollapsed,
   setChatCollapsed,
+  isChatPanelVisible,
   registerWideScreenCallbacks,
   WIDE_SCREEN_PRIMARY_TABS,
   wideDockTabOrder,
@@ -926,6 +995,12 @@ function switchTab(tab: string, force = false) {
   activeTab.value = tab
   // Auto-close all drawers not belonging to the new tab
   onTabSwitch(tab)
+  // The inert-path picker is deliberately NOT tab-scoped (an inert chip can be
+  // clicked in any tab, so gating it on one tab id would hide the panel
+  // elsewhere). Closing it on every tab switch is the replacement for that
+  // scoping: a picker left open would otherwise float over the new panel, since
+  // BottomSheet teleports to <body>.
+  closeInertPathPicker()
   if (tab === 'browse') {
     store.loadFiles(store.state.currentDir, false, 0, true)
   }
@@ -959,6 +1034,21 @@ function switchTab(tab: string, force = false) {
  */
 interface OpenSessionDetail { sessionId?: string; projectPath?: string }
 interface OpenTaskDetail { taskId?: string; executionId?: string; projectPath?: string }
+
+/**
+ * Handle clawbench-session-title-update: a session's title changed outside the
+ * rename flow (the automatic AI rename). If it is the session currently open,
+ * adopt the new title and refresh the session list so its row matches. Other
+ * sessions need no local update — the list reload covers them.
+ */
+function handleSessionTitleUpdate(e: Event) {
+  const detail = (e as CustomEvent<{ session_id?: string; title?: string }>).detail
+  if (!detail?.session_id || !detail.title) return
+  if (detail.session_id === sessionIdentity.currentSessionId.value) {
+    sessionIdentity.currentSessionTitle.value = detail.title
+  }
+  store.state.sessionListVersion++
+}
 
 /** Handle clawbench-open-session event from Android push notification tap */
 function handleOpenSession(e: Event) {
@@ -1137,6 +1227,8 @@ const markdownViewMode = ref('rendered')
 const toast = useToast()
 provide('toast', toast)
 
+const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, cancelDownload } = useDownloadProgress()
+
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName } = useAgents()
 
@@ -1161,10 +1253,81 @@ const sortDir = ref(localConfig.sortDir || 'asc')
 // image URL bound to the <img> (rebuilt only when the file changes — see
 // resolveWallpaperUrl); wallpaperBlurPx / wallpaperEdgeFade are local display
 // preferences that take effect immediately (no server round-trip needed).
+// waveActive covers the animated wave, which is a background with no image
+// file — so "layer visible" is no longer the same as "an image is set".
 const wallpaperActive = ref(false)
 const wallpaperUrl = ref('')
 const wallpaperBlurPx = ref(0)
 const wallpaperEdgeFade = ref(false)
+const waveActive = ref(false)
+const wallpaperWaveSpeed = ref(50)
+/**
+ * This device's wallpaper choice, read straight from localStorage. Kept as
+ * computed (not copies) so the watcher below sees every change and the layer
+ * repaints without a server round-trip.
+ */
+const wallpaperEnabled = computed(() => localConfig.wallpaperEnabled !== false)
+const wallpaperMode = computed<WallpaperMode>(() => resolveWallpaperMode(localConfig.wallpaperMode))
+const wallpaperLocalSelected = computed(() => String(localConfig.wallpaperLocalSelected ?? ''))
+// Which animated style the 'wave' mode renders. Reactive so switching it in the
+// settings panel repaints the layer without a server round-trip.
+const wallpaperAnimatedStyle = computed(() => resolveAnimatedStyleId(localConfig.wallpaperAnimatedStyle))
+// Resolved params for the active style (stored overrides + spec defaults). Read
+// fresh each frame by the renderer, so a slider drag needs no watcher; it is also
+// in the watcher array below for the reduced-motion static path.
+const wallpaperStyleParams = useAnimatedWallpaperParams(() => wallpaperAnimatedStyle.value)
+/**
+ * The wallpaper file is missing / unreadable. The wallpaper is decoration, so
+ * the correct degradation is to hide it and let .wallpaper-layer's
+ * --bg-primary show through — NOT to show the content MediaLoadError card,
+ * which would put a "failed to load" message behind the whole application.
+ * The element is hidden rather than removed so a later successful load (the
+ * file re-appears, or a new wallpaper is applied) revives it.
+ */
+const wallpaperFailed = ref(false)
+
+/**
+ * Guards the self-heal probe below. An <img> that keeps failing would otherwise
+ * re-enter onWallpaperError on every re-render and hammer the endpoint.
+ */
+let healingDanglingSelection = false
+
+/**
+ * The wallpaper image failed to load. Two very different causes look identical
+ * to an <img> (its error event carries no status), so probe once with HEAD to
+ * tell them apart:
+ *
+ *   - 404 → the file is really gone. This device may be pointing at an image
+ *     another device deleted, so clear the local selection and let the next
+ *     config load offer the gallery again.
+ *   - anything else (network error, 5xx) → transient. Keep the selection: it
+ *     is still valid, and clearing it would silently lose the user's choice.
+ *
+ * Only the local source is healed this way. A missing Bing file is a
+ * server-side cache problem, not a stale pointer on this device — clearing the
+ * local selection there would discard an unrelated choice.
+ */
+async function onWallpaperError() {
+  wallpaperFailed.value = true
+  appLog.w(TAG, 'wallpaper image failed to load; falling back to solid background')
+
+  const url = wallpaperUrl.value
+  if (!url || healingDanglingSelection) return
+  if (wallpaperMode.value !== 'local') return
+  healingDanglingSelection = true
+  try {
+    const resp = await fetch(url, { method: 'HEAD' })
+    if (resp.status !== 404) return
+    appLog.w(TAG, 'wallpaper file is gone; clearing the stale local selection')
+    setSetting('wallpaperLocalSelected', '')
+    wallpaperFailed.value = false
+    await loadConfig()
+  } catch {
+    // Transport failure: the file may well still exist. Keep the selection.
+  } finally {
+    healingDanglingSelection = false
+  }
+}
 
 /** Inline style for the wallpaper <img>: Gaussian blur + overscan scale. */
 const wallpaperImageStyle = computed(() =>
@@ -1173,29 +1336,41 @@ const wallpaperImageStyle = computed(() =>
     : undefined
 )
 
-/** Apply the wallpaper effect from the latest server config + theme state. */
+/**
+ * Apply the wallpaper effect from this device's own choice + the theme state.
+ *
+ * Unlike before, the decision is local: the server no longer knows which
+ * wallpaper this device wants, so mode/enabled/selection are read from
+ * localStorage and only the Bing file comes from the server cache.
+ */
 function refreshWallpaper() {
   const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
-  const state = resolveWallpaperState(appearance)
-  // The server resolves which image is active (mode + enabled + selection);
-  // an empty value means no wallpaper, including the globally-disabled case.
-  const file = resolveActiveFile(appearance)
+  const mode = wallpaperMode.value
+  const enabled = wallpaperEnabled.value
+  const file = resolveActiveFile(mode, enabled, wallpaperLocalSelected.value, resolveBingStatus(appearance).file)
+  const wave = isWaveActive(mode, enabled)
   const dark = currentThemeIsDark(String(localConfig.theme ?? 'auto'))
 
-  wallpaperActive.value = state === 'set'
+  waveActive.value = wave
+  wallpaperActive.value = enabled && (wave || !!file)
   wallpaperBlurPx.value = Number(localConfig.wallpaperBlur || 0)
   wallpaperEdgeFade.value = !!localConfig.wallpaperEdgeFade
+  wallpaperWaveSpeed.value = Number(localConfig.wallpaperWaveSpeed ?? 50)
   // URL first (keeps resolveWallpaperUrl's cache in sync), then the scrim /
   // panel-alpha CSS variables + wallpaper-active class.
-  wallpaperUrl.value = resolveWallpaperUrl(file, false)
-  applyWallpaper(file ?? '', resolvePanelOpacity(appearance), dark, false)
+  // A changed URL is a fresh attempt: clear the previous failure, or a new
+  // wallpaper would stay hidden behind the old one's failure state.
+  const nextUrl = resolveWallpaperUrl(file, false)
+  if (nextUrl !== wallpaperUrl.value) wallpaperFailed.value = false
+  wallpaperUrl.value = nextUrl
+  applyWallpaper(file ?? '', resolvePanelOpacity(localConfig.panelOpacity), dark, false, wave)
 
   scheduleBingFirstImagePoll()
 }
 
-// On a fresh install the Bing wallpaper is enabled but its first fetch runs in
-// the background, so the initial config has no image yet. Poll briefly so the
-// factory wallpaper appears on its own instead of requiring a manual refresh.
+// The Bing image is fetched in the background, so the first config response can
+// have no file yet. Poll briefly so the image appears on its own instead of
+// requiring a manual refresh.
 let bingPollTimer: ReturnType<typeof setTimeout> | null = null
 let bingPollAttempts = 0
 const BING_POLL_MAX_ATTEMPTS = 20
@@ -1203,7 +1378,15 @@ const BING_POLL_INTERVAL_MS = 5000
 
 function scheduleBingFirstImagePoll() {
   if (bingPollTimer) return
-  if (!isBingFirstImagePending((serverConfig.value?.appearance ?? {}) as Record<string, unknown>)) return
+  const appearance = (serverConfig.value?.appearance ?? {}) as Record<string, unknown>
+  const configLoaded = serverConfig.value?.appearance !== undefined
+  const pending = isBingFirstImagePending(
+    wallpaperMode.value,
+    wallpaperEnabled.value,
+    resolveBingStatus(appearance).file,
+    configLoaded,
+  )
+  if (!pending) return
   if (bingPollAttempts >= BING_POLL_MAX_ATTEMPTS) return
 
   bingPollAttempts += 1
@@ -1218,10 +1401,28 @@ onUnmounted(() => {
 })
 
 // Apply whenever the server config (re)loads — covers cold start (after
-// loadConfig resolves), PATCH round-trips and project switches.
+// loadConfig resolves) and project switches. The Bing file lives there.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
-// Local display prefs (blur / edge fade) change instantly without a round-trip.
-watch(() => [localConfig.wallpaperBlur, localConfig.wallpaperEdgeFade], refreshWallpaper)
+// Everything else that decides the wallpaper is local, so it repaints without a
+// server round-trip. `immediate` matters here: the factory default is an animated
+// style, which needs no server data, so it must paint on the first render rather
+// than waiting for /api/config. Speed and the style params only feed props; the
+// renderer reads them per frame, so changing either never rebuilds the canvas or
+// resets the phase (the params also matter for the reduced-motion static frame).
+watch(
+  () => [
+    wallpaperEnabled.value,
+    wallpaperMode.value,
+    wallpaperAnimatedStyle.value,
+    wallpaperLocalSelected.value,
+    localConfig.panelOpacity,
+    localConfig.wallpaperBlur,
+    localConfig.wallpaperEdgeFade,
+    localConfig.wallpaperWaveSpeed,
+  ],
+  refreshWallpaper,
+  { immediate: true },
+)
 
 useFileWatch({
   fileManagerOpen: computed(() => leftPanelActive.value === 'browse' || leftPanelActive.value === 'view'),
@@ -1430,12 +1631,19 @@ function handleCompletionEvent(event: string, data: ServerEventData, skipReplay 
 
     const sessionId = data.session_id
     if (!sessionId) return
-    // 聊天界面在前台激活且正是当前会话时，用户正看着结果，不弹；
-    // 否则（看别的 Tab、或事件属于其他会话）都弹。
-    // 注意：PC 宽屏下聊天面板常驻右侧（ChatPanelContent :active 恒为 true），
-    // 此时 activeTab 可能是 browse/terminal 但聊天仍在前台——必须用同一判断。
-    const chatPanelActive = isWideScreen || activeTab.value === 'chat'
-    if (chatPanelActive && sessionId === sessionIdentity.currentSessionId.value) return
+    // 聊天面板真正可见且正是当前会话时，用户正看着结果，不弹；
+    // 否则（看别的 Tab、聊天面板被折叠、或事件属于其他会话）都弹。
+    //
+    // 判定必须走 isChatPanelVisible，而不是内联 `isWideScreen || ...`：
+    // isWideScreen 是 ref，<script setup> 里不会自动解包，内联写法恒为真，
+    // 会让「当前会话」的完成/审批通知在任何 tab 下都被吞掉。
+    // 该 helper 还覆盖宽屏下聊天面板被折叠（display:none）的情况。
+    const chatPanelVisible = isChatPanelVisible({
+        isWideScreen: isWideScreen.value,
+        chatCollapsed: chatCollapsed.value,
+        activeTab: activeTab.value,
+    })
+    if (chatPanelVisible && sessionId === sessionIdentity.currentSessionId.value) return
 
     // 正文与系统通知用同一份纯文本：同一事件不该因为页面是否聚焦而读起来不同。
     // permission_pending 的 response_preview 为空，用工具名代替（同系统通知）。
@@ -1496,7 +1704,15 @@ const handleReconnect = () => {
     // Re-establish project cookie — server restart invalidates the session
     // cookie, and without it all /api/dir, /api/file, /api/ai/chat calls
     // return 403 (requireProject: "project cookie is empty").
-    store.loadProject().catch(() => {})
+    //
+    // The forge badge is re-derived in the same chain: it is project-scoped, so
+    // it needs the cookie this call writes. Unlike the other refreshes below,
+    // it has NO other reconnect trigger — forge events are neither persisted for
+    // offline replay (IsNotifiableEvent) nor re-applied from the WS replay
+    // buffer (useGlobalEvents skips `replayed` forge events), and Android
+    // disconnects the WS while backgrounded. So an event missed while away
+    // leaves the header's "mark all read" button disabled next to unread rows.
+    store.loadProject().then(() => refreshForgeUnread()).catch(() => {})
     store.loadFiles(store.state.currentDir, false, 0, true)
     store.loadGitBranch()
     loadSessionsOnce()
@@ -1553,6 +1769,22 @@ const { chatKeyboardHeight } = useChatKeyboard()
 const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
 
 const quoteQuestion = useQuoteQuestion()
+// The conversation picker decides whether to pop by asking "can the user see
+// the chat panel?". `activeTab` lives here (not in the layout module), so
+// inject a getter once rather than coupling the dispatcher to App state.
+setActiveTabGetter(() => activeTab.value)
+// "Add and open" needs to reveal the chat panel, which is a tab switch only
+// App owns — switchSession alone would change the session behind another tab.
+setOpenSessionHandler((sessionId) => {
+  // Wide screen: `switchTab('chat')` RETURNS EARLY (chat is not a left-column
+  // tab), so it does NOT reveal a chat column the user has hidden. Without this
+  // the session would switch behind the still-hidden panel and "add and open"
+  // would look identical to a plain add — the two actions must not converge.
+  if (isWideScreen.value && chatCollapsed.value) setChatCollapsed(false)
+  switchTab('chat')
+  handleSessionSelect(sessionId)
+})
+const { pickerOpen: sessionPickerOpen } = usePendingTarget()
 const sessionDrawerRef = ref<InstanceType<typeof SessionDrawer> | null>(null)
 const sessionSidebarRef = ref<InstanceType<typeof SessionSidebar> | null>(null)
 
@@ -1662,6 +1894,7 @@ async function handleRenameSession() {
       placeholder: gt('chat.sessionRename.placeholder'),
       confirmText: gt('common.confirm'),
       cancelText: gt('common.cancel'),
+      ...buildRenameGenerateOptions(sid),
     }
   )
   if (newTitle === null || newTitle.trim() === '' || newTitle === current) return
@@ -1743,6 +1976,7 @@ function registerAppEventListeners() {
   window.addEventListener('clawbench-open-session', handleOpenSession)
   window.addEventListener('clawbench-open-task', handleOpenTask)
   window.addEventListener('clawbench-open-forge', handleOpenForge)
+  window.addEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
   document.addEventListener('click', handleOverflowOutsideClick)
   window.addEventListener('clawbench-theme-change', async (e: Event) => {
       const resolved = (e as CustomEvent<string>).detail
@@ -2173,11 +2407,14 @@ const {
   surfaceLabel,
 } = navCoordinator
 
-/** FileHeader「设置为主题背景」：把当前图片拷贝为服务器全局背景。 */
+/** FileHeader「设置为主题背景」：把当前图片拷进本机图库并设为背景。 */
 async function handleSetAsBackground(path: string) {
     try {
-        await setWallpaperFromPath(path)
-        await loadConfig()
+        // The selection is written to this device's local config, which the
+        // wallpaper watcher above picks up and repaints from — no loadConfig()
+        // round-trip needed (the gallery list itself is refreshed by the
+        // settings panel when it opens).
+        await setWallpaperFromPath(path, setSetting)
         toast.show(t('settings.items.wallpaperSetOk'), { icon: '🖼️', type: 'success', duration: 2500 })
     } catch {
         toast.show(t('settings.items.wallpaperUploadFailed'), { icon: '⚠️', type: 'error', duration: 4000 })
@@ -2302,10 +2539,10 @@ watch(() => inlineOverflowTabs.value.length, () => {
 // ResizeObserver may not fire when CSS zoom on <html> changes, so we
 // must explicitly re-measure to recalculate overflow layout.
 // Use requestAnimationFrame to ensure browser has reflowed after the zoom change.
-// uiScaleAuto is watched too: toggling it changes the applied factor without
-// touching uiScale (and on Electron the zoom is applied natively, where no
+// Both the slider and the "auto fit" button write uiScale, so watching it alone
+// covers every writer (on Electron the zoom is applied natively, where no
 // ResizeObserver fires at all).
-watch([() => localConfig.uiScale, () => localConfig.uiScaleAuto], () => {
+watch([() => localConfig.uiScale], () => {
   requestAnimationFrame(() => {
     startDockResize()
     // Also update --dock-height CSS variable for fixed-position elements
@@ -2425,7 +2662,7 @@ function handleWideDockTabClick(tab: string) {
 }
 
 // ── Drag file/dir onto the chat panel → show the panel-wide overlay and attach/upload ──
-const { addAttachedFile } = useChatContext()
+const { addAttachedFile, addStagedQuote } = useChatContext()
 const { forgeUnreadCount, refresh: refreshForgeUnread } = useForgeUnread()
 // The forge dock icon reflects the bound platform (GitHub vs GitLab).
 const { platform: forgePlatform, refresh: refreshForgePlatform } = useForgeBinding()
@@ -2473,19 +2710,24 @@ function isOSFileDrop(e: DragEvent) {
 
 function onChatColDragEnter(e: DragEvent) {
   const internal = hasAttachDragData(e.dataTransfer)
+  const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (!internal && !osFiles) return
+  if (!internal && !quote && !osFiles) return
   chatDropCounter++
   chatDropActive.value = true
 }
 
 function onChatColDragOver(e: DragEvent) {
-  // Allow the drop for internal attach drags (wide-screen) and OS file drops.
+  // Allow the drop for internal attach drags (wide-screen), quote drags, and OS
+  // file drops. A quote drag is allowed on narrow screens too: it stages a card
+  // rather than referencing a file path, so there is no wide-screen-only
+  // affordance behind it (the narrow layout IS the chat).
   const internal = hasAttachDragData(e.dataTransfer)
+  const quote = hasQuoteDragData(e.dataTransfer)
   const osFiles = isOSFileDrop(e)
   if (internal && !isWideScreen.value) return
-  if (internal || osFiles) e.preventDefault()
+  if (internal || quote || osFiles) e.preventDefault()
 }
 
 function onChatColDragLeave() {
@@ -2518,6 +2760,18 @@ function onChatColDrop(e: DragEvent) {
     } else {
       toast.show(t('chat.attach.addedToChat'), { icon: '📎', type: 'success', duration: 1500 })
     }
+    return
+  }
+  // Quote drag (a commit / task / issue / PR / CI run row) → stage a quote card
+  // with NO annotation. The user is already saying "put this in the chat", so a
+  // composer detour asking for a note would be friction; they can still open the
+  // card to annotate it afterwards, while it is staged.
+  const quote = readQuoteDragData(e.dataTransfer)
+  if (quote) {
+    e.preventDefault()
+    addStagedQuote(quote)
+    switchTab('chat')
+    toast.show(t('chat.attach.quotedToChat', { label: quote.filePath }), { icon: '💬', type: 'success', duration: 1800 })
     return
   }
   // OS file drop → upload & auto-attach each file.
@@ -3208,6 +3462,11 @@ function openChatSearchDrawer() {
 function openBrowseSearchDrawer() {
   fileManagerRef.value?.openSearch()
 }
+/** Ctrl+Shift+F — VSCode's "search in files". Only meaningful while the file
+ *  manager panel is the one being worked in. */
+function openBrowseContentSearch() {
+  fileManagerRef.value?.openContentSearch()
+}
 function openFileViewSearchDrawer() {
   if (searchDrawer.isOpen.value) {
     fileOverlayRef.value?.focusSearchInput()
@@ -3288,8 +3547,46 @@ function handleCtrlF(e: KeyboardEvent) {
     // Other tabs: don't preventDefault — let browser handle Ctrl+F natively
 }
 
+/**
+ * Ctrl+Shift+F — "search in files" (VSCode's content search).
+ *
+ * Handled separately from Ctrl+F because the Shift modifier makes `e.key`
+ * uppercase ('F'), so the Ctrl+F handler above deliberately ignores it. Only
+ * opens when the file manager is the active surface; elsewhere the shortcut is
+ * left to the browser.
+ */
+function handleCtrlShiftF(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.key.toLowerCase() !== 'f') return
+    const target = e.target as HTMLElement | null
+    const tag = target?.tagName
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return
+    if (target?.isContentEditable) return
+    if (target?.closest?.('.terminal-panel')) return
+    if (_dlg.state.value.visible || projectDialogOpen.value) return
+
+    const browseActive = isWideScreen.value
+        ? activePane.value === PANE_LEFT && panelIsActive('browse')
+        : activeTab.value === 'browse'
+    if (!browseActive) return
+
+    e.preventDefault()
+    openBrowseContentSearch()
+}
+
  onMounted(() => {
      document.addEventListener('keydown', handleCtrlF)
+     document.addEventListener('keydown', handleCtrlShiftF)
+     // Swallow clicks that were really a drag-select (see dragClickGuard). One
+     // document-level guard replaces a per-row check that only ever reached four
+     // of the ~50 clickable rows containing selectable text.
+     stopDragClickGuard = installDragClickGuard()
+     // Turns a verified-missing path chip into a filename-search entry point.
+     // MUST come after installDragClickGuard: this layer reads
+     // `e.defaultPrevented` to tell a drag-select from a real click, and the
+     // drag guard is what sets it (it uses stopPropagation, not
+     // stopImmediatePropagation, so a same-node listener still runs). Ordering
+     // is asserted by inertPathClickWiring.test.ts.
+     stopInertPathClick = installInertPathClick()
      stopLocalLinkGuard = initLocalLinkGuard((href, anchor) => {
          const fromChat = !!anchor?.closest('.chat-panel, .chat-panel-content, .chat-message, .chat-messages')
            || (isWideScreen.value ? activePane.value === PANE_RIGHT : activeTab.value === 'chat')
@@ -3304,10 +3601,16 @@ function handleCtrlF(e: KeyboardEvent) {
  })
 
 let stopLocalLinkGuard: (() => void) | null = null
+let stopDragClickGuard: (() => void) | null = null
+let stopInertPathClick: (() => void) | null = null
 
 onUnmounted(() => {
     stopLocalLinkGuard?.()
     stopLocalLinkGuard = null
+    stopDragClickGuard?.()
+    stopDragClickGuard = null
+    stopInertPathClick?.()
+    stopInertPathClick = null
     activeLineScrollCancel?.()
     stopDockResize()
     removeTaskHandler()
@@ -3326,6 +3629,7 @@ onUnmounted(() => {
     window.removeEventListener('clawbench-open-session', handleOpenSession)
     window.removeEventListener('clawbench-open-task', handleOpenTask)
     window.removeEventListener('clawbench-open-forge', handleOpenForge)
+    window.removeEventListener('clawbench-session-title-update', handleSessionTitleUpdate)
     document.removeEventListener('click', handleOverflowOutsideClick)
     document.removeEventListener('keydown', handleCtrlF)
     stopFlushTimer()
@@ -3557,6 +3861,40 @@ onUnmounted(() => {
     overflow: hidden;
     white-space: nowrap;
 }
+/* Rename-session icon at the right end of the chat title bar. Pushed to the
+   edge with margin-left:auto so it stays put when the title is short.
+   Deliberately muted at rest (the title text next to it is the primary
+   affordance) and only takes the accent colour on hover/focus. */
+.chat-title-edit-btn {
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text-muted, #999);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-xs);
+    transition: background var(--duration-base), color var(--duration-base);
+}
+@media (hover: hover) {
+    .chat-title-edit-btn:hover {
+        color: var(--accent-color, #0066cc);
+        background: rgba(0, 102, 204, 0.1);
+    }
+}
+/* Keyboard users get the same reveal as hover — otherwise the button is
+   permanently low-contrast while tabbing through it. */
+.chat-title-edit-btn:focus-visible {
+    color: var(--accent-color, #0066cc);
+    background: rgba(0, 102, 204, 0.1);
+    outline: 2px solid var(--accent-color, #0066cc);
+    outline-offset: 1px;
+}
 /* Chat column + session sidebar live in this row below the right pane top. */
 .chat-panel-row {
     position: relative;
@@ -3716,6 +4054,15 @@ onUnmounted(() => {
 }
 .wide-dock .dock-btn.active:hover {
     color: var(--accent-color);
+}
+
+/* Larger glyphs on the vertical dock. The rail stays 48px and the buttons stay
+   34px (the active indicator and DOCK_STEP are pinned to that geometry), so the
+   extra icon size comes out of the button's own padding rather than the dock
+   footprint. Scoped under .wide-dock to outrank the base .dock-btn svg rule. */
+.wide-dock .dock-btn svg {
+    width: 20px;
+    height: 20px;
 }
 
 .bottom-dock {

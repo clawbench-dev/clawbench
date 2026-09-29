@@ -92,7 +92,12 @@ final class VersionCompare {
     }
 
     /**
-     * Whether the installed APK should be flagged as older than the server.
+     * Whether the installed APK should be flagged as inconsistent with the server.
+     *
+     * <p>Any difference in EITHER direction is flagged, matching the desktop
+     * client: an APK that is older than the server may not render the server's
+     * frontend, and one that is newer may rely on features the server does not
+     * have. Use {@link #isClientNewer} to word the prompt by direction.
      *
      * <p>Fail-open: returns false when either side is missing or is not a versioned
      * build, so servers/APKs without a comparable version never block login.
@@ -106,7 +111,27 @@ final class VersionCompare {
 
         if (!isVersionedBuild(normalizedApp) || !isVersionedBuild(normalizedServer)) return false;
 
-        return compareVersions(normalizedApp, normalizedServer) < 0;
+        return compareVersions(normalizedApp, normalizedServer) != 0;
+    }
+
+    /**
+     * Whether the installed APK is NEWER than the server.
+     *
+     * <p>Only meaningful when {@link #shouldShowMismatch} is true; used to pick
+     * the prompt wording, because downloading a server-side build would be a
+     * downgrade rather than an update. Fails open (returns false) on unparseable
+     * versions.
+     */
+    static boolean isClientNewer(String appVersion, String serverVersion) {
+        if (appVersion == null || appVersion.isEmpty()) return false;
+        if (serverVersion == null || serverVersion.isEmpty()) return false;
+
+        String normalizedApp = normalizeVersion(appVersion);
+        String normalizedServer = normalizeVersion(serverVersion);
+
+        if (!isVersionedBuild(normalizedApp) || !isVersionedBuild(normalizedServer)) return false;
+
+        return compareVersions(normalizedApp, normalizedServer) > 0;
     }
 
     private static String stripLeadingV(String v) {

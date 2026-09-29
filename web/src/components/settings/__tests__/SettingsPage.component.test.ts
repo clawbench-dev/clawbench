@@ -10,7 +10,7 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { pushNav, popNav, handleRestartNeeded, handleRestart, checkAllGuards, mockNavStack, mockCurrentCategory, mockRestartDialogVisible, mockChangedColdFields, mockNeedsRestart, mockRestarting, mockServerConfig } = vi.hoisted(() => {
+const { pushNav, popNav, truncateNav, handleRestartNeeded, handleRestart, checkAllGuards, mockNavStack, mockCurrentCategory, mockRestartDialogVisible, mockChangedColdFields, mockNeedsRestart, mockRestarting, mockServerConfig } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { ref } = require('vue')
   const ns = ref<string[]>([])
@@ -23,6 +23,7 @@ const { pushNav, popNav, handleRestartNeeded, handleRestart, checkAllGuards, moc
   return {
     pushNav: vi.fn((id: string) => { ns.value.push(id) }),
     popNav: vi.fn(() => { ns.value.pop() }),
+    truncateNav: vi.fn((depth: number) => { ns.value.splice(depth) }),
     handleRestartNeeded: vi.fn(),
     handleRestart: vi.fn(),
     checkAllGuards: vi.fn(() => true),
@@ -52,6 +53,7 @@ vi.mock('@/composables/useSettingsNavigation', async (importOriginal) => {
       currentCategory: mockCurrentCategory,
       pushNav,
       popNav,
+      truncateNav,
       restartDialogVisible: mockRestartDialogVisible,
       changedColdFields: mockChangedColdFields,
       needsRestart: mockNeedsRestart,
@@ -198,25 +200,29 @@ describe('SettingsPage — header', () => {
     expect(wrapper.text()).toContain('1.2.3')
   })
 
-  it('shows back button when navStack non-empty', () => {
+  it('shows the breadcrumb (and no back button) when navStack non-empty', () => {
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(wrapper.find('.settings-breadcrumb').exists()).toBe(true)
+    // The header has no back button any more — the root crumb is the way back,
+    // matching the task panel's header.
+    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
   })
 
-  it('back button triggers handleBack (no guard violations)', async () => {
+  it('clicking the root crumb goes back (no guard violations)', async () => {
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    await wrapper.find('.settings-page__back').trigger('click')
+    await wrapper.findAll('.crumb')[0].trigger('click')
+    await flushPromises()
     expect(checkAllGuards).toHaveBeenCalled()
-    expect(popNav).toHaveBeenCalled()
+    expect(truncateNav).toHaveBeenCalledWith(0)
   })
 
-  it('back button cancels if confirm returns false', async () => {
+  it('root crumb cancels if confirm returns false', async () => {
     checkAllGuards.mockReturnValueOnce(false)
     mockDialogConfirm.mockResolvedValueOnce(false)
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    await wrapper.find('.settings-page__back').trigger('click')
+    await wrapper.findAll('.crumb')[0].trigger('click')
     await flushPromises()
-    expect(popNav).not.toHaveBeenCalled()
+    expect(truncateNav).not.toHaveBeenCalled()
   })
 })
 
@@ -310,36 +316,89 @@ describe('SettingsPage — restart dialog', () => {
   })
 })
 
-describe('SettingsPage — currentCategoryTitle', () => {
-  it('returns empty string when no category', () => {
+describe('SettingsPage — breadcrumbs', () => {
+  it('renders a single root crumb when no category is open', () => {
     const wrapper = mountPage()
-    const vm = wrapper.vm as any
-    expect(vm.currentCategoryTitle).toBe('')
+    // The index view shows the plain title, not the breadcrumb.
+    expect(wrapper.find('.settings-breadcrumb').exists()).toBe(false)
+    expect(wrapper.find('.settings-page__title').text()).toBe('nav.settings')
   })
 
-  it('uses sub-page route title key', () => {
-    const wrapper = mountPage({}, { navStack: ['page:detail'], currentCategory: 'page:detail' })
-    const vm = wrapper.vm as any
-    expect(vm.currentCategoryTitle).toBe('settings.sub.page:detail')
-  })
-
-  it('uses settings.categories.X for normal categories', () => {
+  it('renders root + category crumbs for a normal category', () => {
     const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
-    const vm = wrapper.vm as any
-    expect(vm.currentCategoryTitle).toBe('settings.categories.general')
+    const crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.map(c => c.text())).toEqual(['nav.settings', 'settings.categories.general'])
   })
 
-  it('uses agent name for agents:{id} routes', () => {
+  it('renders a three-level trail for a sub-page route', () => {
+    const wrapper = mountPage({}, { navStack: ['tts', 'tts:tts_engine'], currentCategory: 'tts:tts_engine' })
+    const crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.map(c => c.text())).toEqual([
+      'nav.settings',
+      'settings.categories.tts',
+      'settings.sub.tts:tts_engine',
+    ])
+  })
+
+  it('uses the agent name for agents:{id} routes', () => {
     const wrapper = mountPage({}, { navStack: ['agents:abc'], currentCategory: 'agents:abc' })
-    const vm = wrapper.vm as any
-    expect(vm.currentCategoryTitle).toBe('Agent One')
+    const crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.map(c => c.text())).toEqual(['nav.settings', 'Agent One'])
   })
 
-  it('falls back to categories.agents when agent not found', () => {
+  it('falls back to categories.agents when the agent is not found', () => {
     mockGetAgent.mockReturnValueOnce(null)
     const wrapper = mountPage({}, { navStack: ['agents:unknown'], currentCategory: 'agents:unknown' })
-    const vm = wrapper.vm as any
-    expect(vm.currentCategoryTitle).toBe('settings.categories.agents')
+    const crumbs = wrapper.findAll('.crumb')
+    expect(crumbs.map(c => c.text())).toEqual(['nav.settings', 'settings.categories.agents'])
+  })
+
+  it('marks only the last crumb as current', () => {
+    const wrapper = mountPage({}, { navStack: ['tts', 'tts:tts_engine'], currentCategory: 'tts:tts_engine' })
+    const crumbs = wrapper.findAll('.crumb')
+    expect(crumbs[0].classes()).not.toContain('current')
+    expect(crumbs[1].classes()).not.toContain('current')
+    expect(crumbs[2].classes()).toContain('current')
+  })
+
+  it('clicking the root crumb truncates the stack to depth 0', async () => {
+    const wrapper = mountPage({}, { navStack: ['tts', 'tts:tts_engine'], currentCategory: 'tts:tts_engine' })
+    await wrapper.findAll('.crumb')[0].trigger('click')
+    await flushPromises()
+    expect(truncateNav).toHaveBeenCalledWith(0)
+  })
+
+  it('clicking an intermediate crumb truncates to that depth', async () => {
+    const wrapper = mountPage({}, { navStack: ['tts', 'tts:tts_engine'], currentCategory: 'tts:tts_engine' })
+    await wrapper.findAll('.crumb')[1].trigger('click')
+    await flushPromises()
+    expect(truncateNav).toHaveBeenCalledWith(1)
+  })
+
+  it('clicking the current crumb does nothing', async () => {
+    const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
+    await wrapper.findAll('.crumb')[1].trigger('click')
+    await flushPromises()
+    expect(truncateNav).not.toHaveBeenCalled()
+  })
+
+  it('confirms before leaving when a panel has unsaved changes', async () => {
+    checkAllGuards.mockReturnValueOnce(false)
+    mockDialogConfirm.mockResolvedValueOnce(false) // keep editing
+    const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
+    await wrapper.findAll('.crumb')[0].trigger('click')
+    await flushPromises()
+    expect(mockDialogConfirm).toHaveBeenCalled()
+    expect(truncateNav).not.toHaveBeenCalled()
+  })
+
+  it('jumps when the user confirms discarding unsaved changes', async () => {
+    checkAllGuards.mockReturnValueOnce(false)
+    mockDialogConfirm.mockResolvedValueOnce(true) // discard
+    const wrapper = mountPage({}, { navStack: ['general'], currentCategory: 'general' })
+    await wrapper.findAll('.crumb')[0].trigger('click')
+    await flushPromises()
+    expect(truncateNav).toHaveBeenCalledWith(0)
   })
 })
 

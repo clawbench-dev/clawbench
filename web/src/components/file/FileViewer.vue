@@ -94,46 +94,40 @@
 
       <!-- Too large -->
       <div v-else-if="file.tooLarge" class="raw-content-viewer">
-        <div class="unsupported-file">
-          <FileIcon :path="file.name" :size="48" />
-          <div class="unsupported-title">{{ file.name }}</div>
-          <div class="unsupported-desc">{{ t('file.viewer.fileTooLarge') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
-          <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
-            <Download :size="14" color="#fff" />
-            {{ t('common.download') }}
-          </a>
-          <button v-else class="download-btn" @click="handleDownload(file.path)">
+        <UnsupportedFileBody
+          :name="file.name"
+          :path="file.path"
+          :size="file.size"
+          :description="t('file.viewer.fileTooLarge')"
+        >
+          <button class="download-btn" @click="handleDownload(file.path)">
             <Download :size="14" color="#fff" />
             {{ t('common.download') }}
           </button>
-        </div>
+        </UnsupportedFileBody>
       </div>
 
       <!-- Binary file -->
       <div v-else-if="file.isBinary" class="raw-content-viewer">
-        <div class="unsupported-file">
-          <FileIcon :path="file.name" :size="48" />
-          <div class="unsupported-title">{{ file.name }}</div>
-          <div class="unsupported-desc">{{ t('file.viewer.binaryFile') }} {{ file.size ? '(' + formatSize(file.size) + ')' : '' }}</div>
-          <div class="unsupported-actions">
-            <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="download-btn" :download="file.name">
-              <Download :size="14" color="#fff" />
-              {{ t('common.download') }}
-            </a>
-            <button v-else class="download-btn" @click="handleDownload(file.path)">
-              <Download :size="14" color="#fff" />
-              {{ t('common.download') }}
-            </button>
-            <button class="open-as-text-btn" @click="handleOpenAsText">
-              <Code2 :size="14" />
-              {{ t('file.header.openAsText') }}
-            </button>
-            <button v-if="isAppMode" class="open-as-text-btn" @click="handleShareExternal">
-              <Share2 :size="14" />
-              {{ t('file.header.shareExternal') }}
-            </button>
-          </div>
-        </div>
+        <UnsupportedFileBody
+          :name="file.name"
+          :path="file.path"
+          :size="file.size"
+          :description="t('file.viewer.binaryFile')"
+        >
+          <button class="download-btn" @click="handleDownload(file.path)">
+            <Download :size="14" color="#fff" />
+            {{ t('common.download') }}
+          </button>
+          <button class="open-as-text-btn" @click="handleOpenAsText">
+            <Code2 :size="14" />
+            {{ t('file.header.openAsText') }}
+          </button>
+          <button v-if="isAppMode" class="open-as-text-btn" @click="handleShareExternal">
+            <Share2 :size="14" />
+            {{ t('file.header.shareExternal') }}
+          </button>
+        </UnsupportedFileBody>
       </div>
 
       <!-- Markdown file -->
@@ -180,8 +174,9 @@
           v-if="markdownViewMode === 'rendered'"
           ref="htmlPreviewRef"
           class="html-preview-iframe"
-          :srcdoc="file.content"
-          sandbox="allow-scripts"
+          :src="htmlPreviewSrc || undefined"
+          :srcdoc="htmlPreviewSrc ? undefined : file.content"
+          sandbox="allow-scripts allow-same-origin"
         />
         <CodeMirrorViewer
           v-else
@@ -259,35 +254,6 @@
       />
     </div>
 
-    <!-- Touch-layout nav: floating bar at the bottom-center of the content area.
-         Semi-transparent at rest; fully opaque on hover/focus. Wide screens get
-         the same actions in the header instead, so this stays mobile-only. -->
-    <div
-      v-if="floatingNavVisible"
-      class="file-nav-float"
-    >
-      <button
-        v-if="canNavigateBack || fileNav.canGoBack.value"
-        class="file-nav-btn"
-        type="button"
-        :title="backLabel || t('file.overlay.back')"
-        :aria-label="backLabel || t('file.overlay.back')"
-        @click.stop="handleNavBack"
-      >
-        <ArrowLeft :size="18" />
-      </button>
-      <button
-        v-if="fileNav.canGoForward.value"
-        class="file-nav-btn"
-        type="button"
-        :title="t('file.overlay.forward')"
-        :aria-label="t('file.overlay.forward')"
-        @click.stop="handleNavForward"
-      >
-        <ArrowRight :size="18" />
-      </button>
-    </div>
-
     <!-- Shared diff drawer for all file types -->
     <DiffDrawer
       :visible="diffDrawer.effectiveOpen.value"
@@ -303,8 +269,8 @@
 import { ref, computed, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { Download, Code2, AlertTriangle, Share2, ArrowLeft, ArrowRight } from 'lucide-vue-next'
-import FileIcon from '@/components/common/FileIcon.vue'
+import { Download, Code2, AlertTriangle, Share2 } from 'lucide-vue-next'
+import UnsupportedFileBody from './UnsupportedFileBody.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import PdfPreview from '@/components/media/PdfPreview.vue'
@@ -322,23 +288,21 @@ import { diffDrawer } from '@/composables/useMarkdownDiff.ts'
 import { useFileScrollRestore } from '@/composables/useFileScrollRestore'
 import FileHeader from './FileHeader.vue'
 import TocDock from './TocDock.vue'
-import { getFileType, formatFileSize } from '@/utils/fileType.ts'
+import { getFileType } from '@/utils/fileType.ts'
 import { store } from '@/stores/app.ts'
 import { useAppMode } from '@/composables/useAppMode.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
-import { useTextSelectionActive } from '@/composables/useTextSelection.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useTocDockPreference } from '@/composables/useTocDockPreference.ts'
-import { getWideScreenState } from '@/composables/useWideScreenLayout'
 import { exportMarkdownToHtml, imageIssueReasonKey } from '@/utils/exportMarkdownHtml.ts'
 import { downloadBlob, buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
+import { isAbsolutePath } from '@/utils/path.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { useCodeEditorSave } from '@/composables/useCodeEditorSave.ts'
 import { getNative } from '@/utils/clawbenchNative'
 
 const { t, locale } = useI18n()
 const { isAppMode } = useAppMode()
-const { isWideScreen } = getWideScreenState()
 const toast = useToast()
 const { drawerMarkerType, drawerCharDiff, drawerDiffLines, closeDrawer } = useDiffDrawer()
 // diffDrawer is imported from useMarkdownDiff (encapsulated TabDrawer)
@@ -360,14 +324,6 @@ const props = defineProps({
 const emit = defineEmits(['delete', 'showDetails', 'openGitHistory', 'toggleToc', 'closeToc', 'toggleSearch', 'closeSearch', 'searchChange', 'toggleView', 'refresh', 'openFile', 'overlayClose', 'closeUntitled', 'navigateBack', 'navigateForward', 'shareExternal', 'shareLink', 'jump', 'jumpPage', 'setAsBackground', 'captureScroll', 'quoteInChat'])
 
 const fileNav = useFileNavStack()
-const { active: textSelecting } = useTextSelectionActive()
-// Navigation lives in the header on wide screens; the floating bar is for touch.
-const floatingNavVisible = computed(() =>
-  !isWideScreen.value
-  && fileNav.overlayOpen.value
-  && !textSelecting.value
-  && (props.canNavigateBack || fileNav.canGoBack.value || fileNav.canGoForward.value)
-)
 const fileType = computed(() => props.file ? getFileType(props.file.name) : null)
 const rawFileLanguage = computed(() => getFileType(props.file?.name)?.lang || 'plaintext')
 const isMarkdown = computed(() => fileType.value?.isMarkdown || false)
@@ -391,6 +347,42 @@ const contentRef = ref(null)
 const pdfPreviewRef = ref(null)
 const officePreviewRef = ref(null)
 const htmlPreviewRef = ref(null)
+/** Cache-buster for the HTML preview iframe (see htmlPreviewSrc). */
+const htmlPreviewTimestamp = ref(Date.now())
+
+// HTML preview loads the document through /api/fs/raw/ rather than inlining it
+// via srcdoc, so the browser resolves the document's own relative references
+// (stylesheets, scripts, images, fonts) against its real URL instead of the
+// app's root. A srcdoc document has no URL of its own and inherits the parent's
+// base, which sent every relative reference to /<name> and 404'd.
+//
+// This REQUIRES `allow-same-origin` on the iframe sandbox: without it the frame
+// is an opaque origin, its subresource requests are cross-site, and the
+// SameSite=Lax session cookie is withheld — the document itself still loads
+// (a top-level navigation counts as same-site) but none of its assets do.
+//
+// Cost, accepted deliberately: with same-origin the previewed HTML runs with
+// the user's session. It can call any authenticated API and read/write the
+// parent document. Previewed HTML is untrusted (AI-written or downloaded), so
+// this is a real trade — see fileViewerSandbox.test.ts, which records it.
+//
+// The `?t=` cache-buster is bumped on file change so a rewritten HTML file
+// re-renders; without it the iframe would keep serving the cached document.
+//
+// Returns '' for an EXTERNAL (absolute-path) file, which falls back to srcdoc.
+// An external file is served as `/api/fs/raw/?target=/abs/dir/index.html`, and
+// the browser strips the query when deriving the base URL — so the document's
+// base becomes `/api/fs/raw/`, and `src="pic.png"` resolves to
+// `/api/fs/raw/pic.png`, i.e. `<project>/pic.png`. That is silently the WRONG
+// file whenever the project root happens to contain one of the same name, so
+// the URL form is worse than useless here. srcdoc keeps the old (also
+// unresolved, but never-wrong) behaviour for this case.
+const htmlPreviewSrc = computed(() => {
+    if (!props.file?.path) return ''
+    if (isAbsolutePath(props.file.path)) return ''
+    const base = buildLocalFileUrl(props.file.path)
+    return base + (base.includes('?') ? '&' : '?') + `t=${htmlPreviewTimestamp.value}`
+})
 
 // Edit mode (source text editing via CodeEditor).
 // Shared at module level so the global back gesture (App.vue) can exit edit
@@ -719,6 +711,10 @@ watch(() => props.file?.content, (content) => {
     if (content != null) {
         scrollRestore.onContentReady()
     }
+    // The HTML preview iframe loads the document by URL, so a content change
+    // (fsnotify-driven refresh, or an AI edit) does NOT re-render it the way the
+    // old srcdoc binding did. Bump the cache-buster to force a re-fetch.
+    if (isHtml.value) htmlPreviewTimestamp.value = Date.now()
 })
 
 // Sync scroll position when toggling rendered <-> raw view for a markdown file.
@@ -730,10 +726,6 @@ watch(() => props.markdownViewMode, (newMode, oldMode) => {
     const saved = scrollRestore.captureScroll(oldEl)
     if (saved) scrollRestore.restoreAfterContainerSwitch(saved)
 })
-
-function formatSize(bytes) {
-    return formatFileSize(bytes)
-}
 
 function handleOpenAsText() {
     if (!props.file?.path) return
@@ -840,93 +832,9 @@ defineExpose({
     order: 0;
 }
 
-/* Floating history nav (back/forward) overlaid on the content area.
-   Semi-transparent at rest; fully opaque on hover/focus so it never obscures
-   the code while remaining easy to reach. */
-.file-nav-float {
-    position: absolute;
-    bottom: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    display: flex;
-    gap: var(--space-5);
-    z-index: 5;
-    opacity: var(--opacity-muted);
-    transition: opacity var(--duration-base);
-    pointer-events: none;
-}
-
-@media (hover: hover) {
-  .file-nav-float:hover,
-  .file-nav-float:focus-within {
-      opacity: 1;
-  }
-}
-
-.file-nav-float .file-nav-btn {
-    pointer-events: auto;
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
-    background: var(--bg-primary, #fff);
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
-    transition: background var(--duration-base), color var(--duration-base), transform var(--duration-fast);
-}
-
-.file-nav-float .file-nav-btn:not(:disabled):active {
-    background: var(--bg-tertiary);
-    transform: scale(0.94);
-}
-
-.file-nav-float .file-nav-btn:disabled {
-    opacity: var(--opacity-disabled);
-    cursor: default;
-}
-
-.unsupported-file {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 48px 24px;
-    text-align: center;
-    height: 100%;
-}
-
-.unsupported-file > svg {
-    width: 48px;
-    height: 48px;
-    color: var(--text-muted);
-    margin-bottom: var(--space-6);
-}
-
-.unsupported-title {
-    font-size: var(--font-size-2xl);
-    font-weight: var(--font-weight-medium);
-    color: var(--text-primary);
-    margin-bottom: var(--space-4);
-    word-break: break-all;
-}
-
-.unsupported-desc {
-    font-size: var(--font-size-lg);
-    color: var(--text-muted);
-    margin-bottom: var(--space-8);
-}
-
-.unsupported-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: var(--space-5);
-}
-
+/* The placeholder layout (icon / title / desc / actions) lives in
+   UnsupportedFileBody.vue, shared with the quick-preview pane. Only the action
+   buttons below are viewer-specific. */
 .open-as-text-btn {
     display: inline-flex;
     align-items: center;

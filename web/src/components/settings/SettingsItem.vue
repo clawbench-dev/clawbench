@@ -1,10 +1,22 @@
 <template>
   <div v-if="type === 'header'" class="settings-item__header">{{ label }}</div>
-  <div v-else class="settings-item" :class="{ 'settings-item--disabled': disabled, 'settings-item--no-divider': noDivider }" @click="handleClick">
+  <div v-else class="settings-item" :class="{ 'settings-item--disabled': disabled, 'settings-item--no-divider': noDivider, 'settings-item--warn': summaryModelStatus === 'unconfigured' }" @click="handleClick">
     <div class="settings-item__left">
       <div class="settings-item__text">
         <span class="settings-item__label">{{ label }}</span>
         <span v-if="needsRestart" class="settings-item__badge">{{ t('settings.needsRestart') }}</span>
+        <!-- Shared AI-summary-model config status. Only the rows that jump to
+             that panel pass this, so the user can see whether the model those
+             features call is configured (the backend skips silently if not). -->
+        <span
+          v-if="summaryModelStatus"
+          class="settings-item__status-pill"
+          :class="`settings-item__status-pill--${summaryModelStatus}`"
+        >
+          <Check v-if="summaryModelStatus === 'configured'" :size="12" />
+          <AlertTriangle v-else :size="12" />
+          {{ t(summaryModelStatus === 'configured' ? 'settings.items.summaryModelConfigured' : 'settings.items.summaryModelNotConfigured') }}
+        </span>
       </div>
     </div>
     <div class="settings-item__right">
@@ -40,7 +52,17 @@
           @input="onSliderInput"
           @click.stop
         />
-        <button v-if="defaultValue !== undefined && modelValue !== defaultValue" class="settings-item__slider-reset" :disabled="disabled" @click.stop="resetSlider" :title="t('settings.items.resetToDefault')">↺</button>
+        <!-- Always rendered (when the row has a default) so the control cluster
+             keeps a constant width: a button that appeared only once the value
+             changed shifted the slider and its value label on every reset.
+             At the default it stays visible but inert. -->
+        <button
+          v-if="defaultValue !== undefined"
+          class="settings-item__slider-reset"
+          :disabled="disabled || modelValue === defaultValue"
+          @click.stop="resetSlider"
+          :title="t('settings.resetToDefault')"
+        >↺</button>
       </template>
       <template v-else-if="type === 'password'">
         <span class="settings-item__value">{{ displayValue }}</span>
@@ -250,7 +272,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette } from 'lucide-vue-next'
+import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette, Check, AlertTriangle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
@@ -300,6 +322,12 @@ interface Props {
   terminalThemeLoadError?: boolean
   /** Retry handler for a failed terminal theme lazy-load. */
   onRetryTerminalThemes?: () => void
+  /**
+   * Shared AI-summary-model config status to show as a pill on this row.
+   * Absent means "no pill" — only the rows that jump to the AI summary panel
+   * set it. The parent resolves the status; this component owns its display.
+   */
+  summaryModelStatus?: 'configured' | 'unconfigured'
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -317,6 +345,7 @@ const props = withDefaults(defineProps<Props>(), {
   warning: '',
   noDivider: false,
   defaultValue: undefined,
+  summaryModelStatus: undefined,
 })
 
 const emit = defineEmits<{
@@ -626,7 +655,7 @@ function confirmEdit() {
 }
 
 .settings-item__label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -641,6 +670,39 @@ function confirmEdit() {
   color: var(--text-muted);
   white-space: nowrap;
   flex-shrink: 0;
+}
+
+/* Shared AI-summary-model config status pill. Tinted via color-mix on the
+   theme-aware success/warning tokens, matching the forge "configured" pill. */
+.settings-item__status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  padding: 1px var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+.settings-item__status-pill--configured {
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+
+.settings-item__status-pill--unconfigured {
+  color: var(--color-yellow);
+  background: color-mix(in srgb, var(--color-yellow) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-yellow) 35%, transparent);
+}
+
+/* Warning tint on the row label when the shared model is unconfigured, so the
+   row reads as "needs attention" rather than just carrying a small pill. */
+.settings-item--warn .settings-item__label {
+  color: var(--color-yellow);
 }
 
 /* Inline description (always visible below label row) */
@@ -828,6 +890,15 @@ function confirmEdit() {
   line-height: 1;
 }
 
+/* Inert at the default value. Reserved (not hidden) so the control cluster
+   width is constant — the button disappearing on reset was the layout shift.
+   Dimmed via the "unusable" token and given the not-allowed cursor, matching
+   the other disabled controls in the settings panel. */
+.settings-item__slider-reset:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
 .settings-item__slider-reset:active {
   color: var(--accent-color);
 }
@@ -989,7 +1060,7 @@ function confirmEdit() {
 }
 
 .settings-item__option-label {
-  font-size: var(--font-size-xl);
+  font-size: var(--font-size-lg);
   color: var(--text-primary);
   min-width: 0;
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -782,20 +783,60 @@ func TestOnChatBotMessage_SessionCommand_SendToNotRunningSession_Success(t *test
 
 // --- Sticky session routing ---
 
+// stickyRecorder records SetLastSessionID calls.
+//
+// It is mutex-guarded and read via snapshot/waitFor because a message carrying
+// media updates the sticky target from a goroutine (onChatBotMessage dispatches
+// handleIncomingWithMedia asynchronously so the DingTalk ack is not blocked by
+// the download). Asserting on the raw slice right after the synchronous call
+// therefore raced the goroutine — the sticky write happens AFTER the attachment
+// send, so it had not landed yet, and the slice header was read concurrently
+// with the append. The failure was load-dependent, so it surfaced only on CI.
+type stickyRecorder struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *stickyRecorder) add(sessionID string) {
+	r.mu.Lock()
+	r.calls = append(r.calls, sessionID)
+	r.mu.Unlock()
+}
+
+func (r *stickyRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
+// waitFor blocks until the recorder holds at least want entries or the timeout
+// elapses, returning the snapshot either way. Use it on any path that may
+// update the sticky target from a goroutine.
+func (r *stickyRecorder) waitFor(want int, timeout time.Duration) []string {
+	deadline := time.Now().Add(timeout)
+	for {
+		got := r.snapshot()
+		if len(got) >= want || time.Now().After(deadline) {
+			return got
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // stickyTestEnv wires a mock DB + messenger + reply-capturing webhook for the
 // sticky-session tests. It returns the manager, the captured reply body, and
 // the recorded last-session-id writes.
-func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (*Manager, *[]byte, *[]string) {
+func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (*Manager, *[]byte, *stickyRecorder) {
 	t.Helper()
 
-	var setCalls []string
+	rec := &stickyRecorder{}
 	origDB := db
 	t.Cleanup(func() { db = origDB })
 	db = &mockDBWithCallback{
 		upsertFn:  func(_, _, _, _ string) error { return nil },
 		getLastFn: func(string) (string, error) { return sticky, nil },
 		setLastFn: func(_, sessionID string) error {
-			setCalls = append(setCalls, sessionID)
+			rec.add(sessionID)
 			return nil
 		},
 	}
@@ -811,7 +852,7 @@ func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (
 	}))
 	t.Cleanup(server.Close)
 
-	return &Manager{}, reply, &setCalls
+	return &Manager{}, reply, rec
 }
 
 func stickyData(webhook, text string) *chatbot.BotCallbackDataModel {
@@ -911,8 +952,8 @@ func TestOnChatBotMessage_ExplicitTargetOverridesAndUpdatesSticky(t *testing.T) 
 	if sentID != "deadbeef-2222-2222-2222-222222222222" {
 		t.Errorf("sent to %q, want the explicitly named session", sentID)
 	}
-	if len(*setCalls) != 1 || (*setCalls)[0] != "deadbeef-2222-2222-2222-222222222222" {
-		t.Errorf("sticky target updates = %v, want one write of the explicit session", *setCalls)
+	if got := setCalls.snapshot(); len(got) != 1 || got[0] != "deadbeef-2222-2222-2222-222222222222" {
+		t.Errorf("sticky target updates = %v, want one write of the explicit session", got)
 	}
 }
 
@@ -934,8 +975,8 @@ func TestOnChatBotMessage_FailedSendDoesNotUpdateSticky(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(*setCalls) != 0 {
-		t.Errorf("sticky target must not move on a failed send, got %v", *setCalls)
+	if got := setCalls.snapshot(); len(got) != 0 {
+		t.Errorf("sticky target must not move on a failed send, got %v", got)
 	}
 }
 
@@ -1206,8 +1247,8 @@ func TestOnChatBotMessage_FileSendFailureReplies(t *testing.T) {
 	if !strings.Contains(string(*reply), "发送文件失败") {
 		t.Errorf("reply should report the send failure, got %s", string(*reply))
 	}
-	if len(*setCalls) != 0 {
-		t.Errorf("a failed send must not update the sticky target, got %v", *setCalls)
+	if got := setCalls.snapshot(); len(got) != 0 {
+		t.Errorf("a failed send must not update the sticky target, got %v", got)
 	}
 }
 
@@ -1265,7 +1306,7 @@ type sentMessage struct {
 // media server, two sessions sharing a real temp project dir, and a channel
 // capturing what reaches the session. The sticky target is the first session,
 // so only a correctly parsed "@{shortID}" reaches the second.
-func richTextEnv(t *testing.T) (*Manager, *[]byte, chan sentMessage, *[]string) {
+func richTextEnv(t *testing.T) (*Manager, *[]byte, chan sentMessage, *stickyRecorder) {
 	t.Helper()
 
 	srv, _ := mediaTestServer(t, "image-bytes", http.StatusOK)
@@ -1326,8 +1367,11 @@ func TestOnChatBotMessage_RichTextRoutesExplicitTargetWithImage(t *testing.T) {
 		t.Fatal("timed out: the richText message was never delivered")
 	}
 
-	if len(*setCalls) != 1 || (*setCalls)[0] != named {
-		t.Errorf("sticky target updates = %v, want one write of the named session", *setCalls)
+	// The sticky write happens on the media goroutine AFTER the attachment send
+	// (which we already awaited above), so wait for it rather than reading the
+	// recorder concurrently with the goroutine's append.
+	if got := setCalls.waitFor(1, 5*time.Second); len(got) != 1 || got[0] != named {
+		t.Errorf("sticky target updates = %v, want one write of the named session", got)
 	}
 }
 

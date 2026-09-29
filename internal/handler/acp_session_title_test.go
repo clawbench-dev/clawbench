@@ -361,14 +361,22 @@ func TestMachinePrefixesMatchStrip(t *testing.T) {
 		},
 		{
 			rule:   stripRule{model.QuotePromptPrefix, stripToNewline, ""},
-			input:  "[Quoted from /src/a.go]",
+			input:  "[Quote 1/1] /src/a.go",
 			wantOK: false, // no newline → no user text
 		},
 		{
 			rule:    stripRule{model.QuotePromptPrefix, stripToNewline, ""},
-			input:   "[Quoted from /src/a.go]\n为什么这样写？",
+			input:   "[Quote 1/1] /src/a.go\n为什么这样写？",
 			wantOK:  true,
 			wantRem: "为什么这样写？",
+		},
+		{
+			// The annotation sits on its OWN line, so it needs its own rule:
+			// stripToNewline consumes exactly one line and cannot reach it.
+			rule:    stripRule{model.QuoteNotePrefix, stripToNewline, ""},
+			input:   "[Note] 看看日志\n下一行",
+			wantOK:  true,
+			wantRem: "下一行",
 		},
 	}
 

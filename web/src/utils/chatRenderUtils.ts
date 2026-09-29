@@ -12,13 +12,13 @@ const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac', '.wma
 const VIDEO_EXTENSIONS = ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.flv', '.wmv', '.m4v', '.3gp', '.m3u8']
 
 /**
- * Image extensions that the /api/file/thumb endpoint can rasterize to a JPEG
+ * Image extensions that the /api/fs/thumb endpoint can rasterize to a JPEG
  * thumbnail (standard-library decoders). SVG/WebP/AVIF/TIFF are excluded and
  * keep serving the original file. GIF is excluded to preserve animation.
  */
 export const THUMB_EXTENSIONS = ['.png', '.jpg', '.jpeg']
 
-/** Desktop (PC) inline thumbnail width passed to /api/file/thumb (clamped 50–1600 by backend). */
+/** Desktop (PC) inline thumbnail width passed to /api/fs/thumb (clamped 50–1600 by backend). */
 export const THUMB_DEFAULT_WIDTH = 1200
 /** Mobile inline thumbnail width — smaller viewport needs a smaller, cheaper thumbnail. */
 export const THUMB_MOBILE_WIDTH = 640
@@ -37,14 +37,14 @@ export function getThumbWidth(isPC: boolean): number {
  * remote URLs, protocol-relative URLs, inline data URIs, and URLs already
  * served by one of our own file endpoints (a re-render can see these).
  */
-const NON_LOCAL_MEDIA_SRC_RE = /^(https?:|\/\/|data:|\/api\/local-file\/|\/api\/file\/)/i
+const NON_LOCAL_MEDIA_SRC_RE = /^(https?:|\/\/|data:|\/api\/fs\/)/i
 
 /** A media src resolved to the URL that serves its bytes. */
 interface ResolvedMediaSrc {
   /** URL the browser fetches. */
   url: string
   /**
-   * Path argument to hand to /api/file/thumb, or null when the src cannot be
+   * Path argument to hand to /api/fs/thumb, or null when the src cannot be
    * thumbnailed (remote/embedded, or no project root to resolve against).
    * For the project-relative form this is already segment-encoded, which is
    * what buildThumbUrl expects; for the external form it is the raw absolute
@@ -58,9 +58,9 @@ interface ResolvedMediaSrc {
  *
  * - Remote / embedded / already-served srcs pass through untouched.
  * - A project-relative path, or an absolute path INSIDE the project, is served
- *   as `/api/local-file/<project-relative>` (segment-encoded per part).
+ *   as `/api/fs/raw/<project-relative>` (segment-encoded per part).
  * - An absolute path OUTSIDE the project is served as
- *   `/api/local-file/?path=<absolute>`: the same endpoint accepts absolute
+ *   `/api/fs/raw/?target=<absolute>`: the same endpoint accepts absolute
  *   paths directly. Previously EVERY "/"-prefixed src was classified as an
  *   "external URL" and left alone, so the browser requested it from the site
  *   root and got a 404 — an AI-written `![](/tmp/chart.png)` never rendered.
@@ -80,7 +80,7 @@ function resolveMediaSrc(src: string, projectRoot?: string): ResolvedMediaSrc | 
         return { url: localFileUrlForRelative(rel), thumbPath: encodeSegments(rel) }
       }
     }
-    return { url: `/api/local-file/?path=${encodeURIComponent(src)}`, thumbPath: encodeSegments(src) }
+    return { url: `/api/fs/raw/?target=${encodeURIComponent(src)}`, thumbPath: encodeSegments(src) }
   }
 
   if (!projectRoot) return null
@@ -94,9 +94,9 @@ function encodeSegments(rel: string): string {
   return decoded.split('/').map((s: string) => encodeURIComponent(s)).join('/')
 }
 
-/** Build the `/api/local-file/<rel>` URL for an already segment-encoded rel. */
+/** Build the `/api/fs/raw/<rel>` URL for an already segment-encoded rel. */
 function localFileUrlForRelative(rel: string): string {
-  return `/api/local-file/${encodeSegments(rel)}`
+  return `/api/fs/raw/${encodeSegments(rel)}`
 }
 
 /**
@@ -109,9 +109,9 @@ function resolveLocalMediaSrc(src: string, projectRoot?: string): string {
 }
 
 /**
- * Rewrite image URLs in HTML: convert local file paths to /api/local-file/ URLs.
+ * Rewrite image URLs in HTML: convert local file paths to /api/fs/raw/ URLs.
  * For raster formats the thumb endpoint can decode, the inline src is rewritten to a
- * lightweight JPEG thumbnail (/api/file/thumb?path=...) and the original full-size
+ * lightweight JPEG thumbnail (/api/fs/thumb?target=...) and the original full-size
  * URL is stored in data-full-src (used by the lightbox to show the full image).
  * Skips remote/embedded URLs. Applies thumbnail styling.
  *
@@ -307,7 +307,7 @@ function countSvgDepth(html: string, from: number): number {
  * revalidation returns fresh content as soon as the source file changes.
  */
 export function buildThumbUrl(relPath: string, width: number = THUMB_DEFAULT_WIDTH): string {
-  return `/api/file/thumb?path=${relPath}&w=${width}`
+  return `/api/fs/thumb?target=${relPath}&w=${width}`
 }
 
 /** Escape HTML special characters in attribute values to prevent XSS (ISS-247) */
@@ -335,8 +335,8 @@ const MARKDOWN_LINK_RE = /<a\s+[^>]*href="([^"]+)"[^>]*>([^<]*)<\/a>/g
 /**
  * Convert audio file links to inline audio players.
  * Replaces <a href="...mp3"> links with <audio> elements.
- * Project-relative paths (not /api/local-file/ or external URLs) are rewritten
- * to /api/local-file/ URLs so the browser can load them, mirroring image handling.
+ * Project-relative paths (not /api/fs/raw/ or external URLs) are rewritten
+ * to /api/fs/raw/ URLs so the browser can load them, mirroring image handling.
  */
 export function convertAudioLinks(html: string, projectRoot?: string): string {
   return html.replace(MARKDOWN_LINK_RE, (match, href) => {
@@ -353,7 +353,7 @@ export function convertAudioLinks(html: string, projectRoot?: string): string {
 /**
  * Convert video file links to inline video players.
  * Replaces <a href="...mp4"> links with <video> elements, rewriting
- * project-relative paths to /api/local-file/ URLs like audio/images.
+ * project-relative paths to /api/fs/raw/ URLs like audio/images.
  */
 export function convertVideoLinks(html: string, projectRoot?: string): string {
   return html.replace(MARKDOWN_LINK_RE, (match, href) => {

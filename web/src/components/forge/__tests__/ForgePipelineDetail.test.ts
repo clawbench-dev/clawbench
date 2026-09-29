@@ -127,7 +127,7 @@ describe('ForgePipelineDetail', () => {
     detailState.run.value = run({ durationSeconds: 245 })
     const wrapper = mount(ForgePipelineDetail, { props: { runId: 42 }, global: globalOpts })
     await wrapper.vm.$nextTick()
-    expect(wrapper.find('.forge-pipeline-duration').text()).toContain('4m 5s')
+    expect(wrapper.find('.forge-pipeline-duration').text()).toContain('4.1m')
 
     // GitHub's list endpoint reports no duration; the line must be absent
     // rather than showing "0s".

@@ -42,7 +42,7 @@ function fixLocalImagePaths(html: string, currentDir: string, imageTimestamp: nu
             normalized.push(encodeURIComponent(part))
         }
         const rel = normalized.join('/')
-        const fullSrc = `/api/local-file/${rel}?t=${imageTimestamp}`
+        const fullSrc = `/api/fs/raw/${rel}?t=${imageTimestamp}`
         // Raster formats the thumb endpoint can decode → inline thumbnail + full for lightbox.
         const thumbSrc = isThumbExtension(src) ? buildThumbUrl(rel, thumbWidth) : null
         const replacement = thumbSrc
@@ -58,20 +58,20 @@ describe('fixLocalImagePaths — Chinese path encoding', () => {
     it('encodes Chinese characters in image path segments', () => {
         const html = '<img src="中文/图片.png">'
         const result = fixLocalImagePaths(html, 'docs', timestamp)
-        expect(result).toContain('/api/local-file/docs/%E4%B8%AD%E6%96%87/%E5%9B%BE%E7%89%87.png')
+        expect(result).toContain('/api/fs/raw/docs/%E4%B8%AD%E6%96%87/%E5%9B%BE%E7%89%87.png')
         expect(result).toContain(`t=${timestamp}`)
     })
 
     it('encodes Chinese filename but keeps extension readable', () => {
         const html = '<img src="截图.jpg">'
         const result = fixLocalImagePaths(html, '', timestamp)
-        expect(result).toContain('/api/local-file/%E6%88%AA%E5%9B%BE.jpg')
+        expect(result).toContain('/api/fs/raw/%E6%88%AA%E5%9B%BE.jpg')
     })
 
     it('handles mixed ASCII and Chinese path segments', () => {
         const html = '<img src="assets/图片/logo.png">'
         const result = fixLocalImagePaths(html, '', timestamp)
-        expect(result).toContain('/api/local-file/assets/%E5%9B%BE%E7%89%87/logo.png')
+        expect(result).toContain('/api/fs/raw/assets/%E5%9B%BE%E7%89%87/logo.png')
     })
 
     it('does not modify absolute URLs (http://)', () => {
@@ -102,32 +102,32 @@ describe('fixLocalImagePaths — Chinese path encoding', () => {
         const html = '<img src="../images/图片.png">'
         const result = fixLocalImagePaths(html, 'docs/sub', timestamp)
         // docs/sub + ../images/图片.png → docs/images/图片.png
-        expect(result).toContain('/api/local-file/docs/images/%E5%9B%BE%E7%89%87.png')
+        expect(result).toContain('/api/fs/raw/docs/images/%E5%9B%BE%E7%89%87.png')
     })
 
     it('handles relative path with ./ segments', () => {
         const html = '<img src="./图片.png">'
         const result = fixLocalImagePaths(html, 'docs', timestamp)
-        expect(result).toContain('/api/local-file/docs/%E5%9B%BE%E7%89%87.png')
+        expect(result).toContain('/api/fs/raw/docs/%E5%9B%BE%E7%89%87.png')
     })
 
     it('encodes special characters in path segments', () => {
         const html = '<img src="path with spaces/image.png">'
         const result = fixLocalImagePaths(html, '', timestamp)
-        expect(result).toContain('/api/local-file/path%20with%20spaces/image.png')
+        expect(result).toContain('/api/fs/raw/path%20with%20spaces/image.png')
     })
 
     it('preserves ASCII paths without modification', () => {
         const html = '<img src="assets/logo.png">'
         const result = fixLocalImagePaths(html, 'docs', timestamp)
-        expect(result).toContain('/api/local-file/docs/assets/logo.png')
+        expect(result).toContain('/api/fs/raw/docs/assets/logo.png')
     })
 
     it('handles multiple images in one HTML string', () => {
         const html = '<img src="中文/a.png"><img src="english/b.png">'
         const result = fixLocalImagePaths(html, 'docs', timestamp)
-        expect(result).toContain('/api/local-file/docs/%E4%B8%AD%E6%96%87/a.png')
-        expect(result).toContain('/api/local-file/docs/english/b.png')
+        expect(result).toContain('/api/fs/raw/docs/%E4%B8%AD%E6%96%87/a.png')
+        expect(result).toContain('/api/fs/raw/docs/english/b.png')
     })
 
     it('does not double-encode when src is already percent-encoded (marked output)', () => {
@@ -135,7 +135,7 @@ describe('fixLocalImagePaths — Chinese path encoding', () => {
         // We must decode first, then re-encode to avoid %25 double-encoding
         const html = '<img src="%E4%B8%AD%E6%96%87/%E5%9B%BE%E7%89%87.png">'
         const result = fixLocalImagePaths(html, 'docs', timestamp)
-        expect(result).toContain('/api/local-file/docs/%E4%B8%AD%E6%96%87/%E5%9B%BE%E7%89%87.png')
+        expect(result).toContain('/api/fs/raw/docs/%E4%B8%AD%E6%96%87/%E5%9B%BE%E7%89%87.png')
         // Must NOT contain double-encoded %25
         expect(result).not.toContain('%25')
     })
@@ -143,7 +143,7 @@ describe('fixLocalImagePaths — Chinese path encoding', () => {
     it('handles already-percent-encoded src with mixed segments', () => {
         const html = '<img src="assets/%E5%B7%A5%E5%85%B7/logo.png">'
         const result = fixLocalImagePaths(html, '', timestamp)
-        expect(result).toContain('/api/local-file/assets/%E5%B7%A5%E5%85%B7/logo.png')
+        expect(result).toContain('/api/fs/raw/assets/%E5%B7%A5%E5%85%B7/logo.png')
         expect(result).not.toContain('%25')
     })
 })
@@ -151,56 +151,58 @@ describe('fixLocalImagePaths — Chinese path encoding', () => {
 describe('fixLocalImagePaths — thumbnail compression for raster images', () => {
     const timestamp = 1234567890
 
-    it('uses /api/file/thumb for .png and keeps full src as data-full-src', () => {
+    it('uses /api/fs/thumb for .png and keeps full src as data-full-src', () => {
         const result = fixLocalImagePaths('<img src="assets/logo.png">', 'docs', timestamp)
         // Inline src is the compressed thumbnail (stable URL, no ?t= so ETag revalidation works)
-        expect(result).toContain('src="/api/file/thumb?path=docs/assets/logo.png&w=800"')
+        expect(result).toContain('src="/api/fs/thumb?target=docs/assets/logo.png&w=800"')
         // Original full-size kept for the lightbox, with the cache-buster timestamp
-        expect(result).toContain(`data-full-src="/api/local-file/docs/assets/logo.png?t=${timestamp}"`)
+        expect(result).toContain(`data-full-src="/api/fs/raw/docs/assets/logo.png?t=${timestamp}"`)
     })
 
-    it('uses /api/file/thumb for .jpg', () => {
+    it('uses /api/fs/thumb for .jpg', () => {
         const result = fixLocalImagePaths('<img src="photo.jpg">', '', timestamp)
-        expect(result).toContain('src="/api/file/thumb?path=photo.jpg&w=800"')
-        expect(result).toContain(`data-full-src="/api/local-file/photo.jpg?t=${timestamp}"`)
+        expect(result).toContain('src="/api/fs/thumb?target=photo.jpg&w=800"')
+        expect(result).toContain(`data-full-src="/api/fs/raw/photo.jpg?t=${timestamp}"`)
     })
 
     it('does not add a ?t= cache-buster to the thumbnail src (stays revalidatable)', () => {
         const result = fixLocalImagePaths('<img src="photo.png">', 'docs', timestamp)
-        const thumbSrc = result.match(/src="\/api\/file\/thumb[^"]*"/)?.[0] || ''
+        const thumbSrc = result.match(/src="\/api\/fs\/thumb[^"]*"/)?.[0] || ''
         expect(thumbSrc).toContain('w=800')
-        expect(thumbSrc).not.toContain('t=')
+        // `target=` contains the substring `t=`; assert on the cache-buster form.
+        expect(thumbSrc).not.toContain('&t=')
+        expect(thumbSrc).not.toContain('?t=')
     })
 
-    it('keeps full-size /api/local-file/ src for SVG (no thumb support)', () => {
+    it('keeps full-size /api/fs/raw/ src for SVG (no thumb support)', () => {
         const result = fixLocalImagePaths('<img src="logo.svg">', 'docs', timestamp)
-        expect(result).toContain(`src="/api/local-file/docs/logo.svg?t=${timestamp}"`)
-        expect(result).not.toContain('/api/file/thumb')
+        expect(result).toContain(`src="/api/fs/raw/docs/logo.svg?t=${timestamp}"`)
+        expect(result).not.toContain('/api/fs/thumb')
         expect(result).not.toContain('data-full-src')
     })
 
-    it('keeps full-size /api/local-file/ src for GIF (preserve animation)', () => {
+    it('keeps full-size /api/fs/raw/ src for GIF (preserve animation)', () => {
         const result = fixLocalImagePaths('<img src="anim.gif">', 'docs', timestamp)
-        expect(result).toContain(`src="/api/local-file/docs/anim.gif?t=${timestamp}"`)
-        expect(result).not.toContain('/api/file/thumb')
+        expect(result).toContain(`src="/api/fs/raw/docs/anim.gif?t=${timestamp}"`)
+        expect(result).not.toContain('/api/fs/thumb')
     })
 
-    it('keeps full-size /api/local-file/ src for webp (no thumb support)', () => {
+    it('keeps full-size /api/fs/raw/ src for webp (no thumb support)', () => {
         const result = fixLocalImagePaths('<img src="photo.webp">', 'docs', timestamp)
-        expect(result).toContain(`src="/api/local-file/docs/photo.webp?t=${timestamp}"`)
-        expect(result).not.toContain('/api/file/thumb')
+        expect(result).toContain(`src="/api/fs/raw/docs/photo.webp?t=${timestamp}"`)
+        expect(result).not.toContain('/api/fs/thumb')
     })
 
     it('handles uppercase .PNG extension for thumbnail', () => {
         const result = fixLocalImagePaths('<img src="logo.PNG">', '', timestamp)
-        expect(result).toContain('src="/api/file/thumb?path=logo.PNG&w=800"')
+        expect(result).toContain('src="/api/fs/thumb?target=logo.PNG&w=800"')
         expect(result).toContain('data-full-src')
     })
 
     it('uses mobile thumbnail width when device is not PC', () => {
         const result = fixLocalImagePaths('<img src="assets/logo.png">', 'docs', timestamp, 480)
-        expect(result).toContain('src="/api/file/thumb?path=docs/assets/logo.png&w=480"')
-        expect(result).toContain(`data-full-src="/api/local-file/docs/assets/logo.png?t=${timestamp}"`)
+        expect(result).toContain('src="/api/fs/thumb?target=docs/assets/logo.png&w=480"')
+        expect(result).toContain(`data-full-src="/api/fs/raw/docs/assets/logo.png?t=${timestamp}"`)
     })
 })
 
@@ -261,8 +263,8 @@ describe('MarkdownPreview — Chinese image path encoding (component level)', ()
 
         // The rendered markdown should contain the encoded image URL
         const html = wrapper.html()
-        // Chinese chars should be percent-encoded in the /api/local-file/ URL
-        expect(html).toContain('/api/local-file/')
+        // Chinese chars should be percent-encoded in the /api/fs/raw/ URL
+        expect(html).toContain('/api/fs/raw/')
         expect(html).toContain('%E4%B8%AD%E6%96%87')
     })
 
@@ -285,7 +287,7 @@ describe('MarkdownPreview — Chinese image path encoding (component level)', ()
         await nextTick()
 
         const html = wrapper.html()
-        expect(html).toContain('/api/local-file/')
+        expect(html).toContain('/api/fs/raw/')
         // "图片" should be encoded, "assets" and "logo.png" kept as-is
         expect(html).toContain('assets/%E5%9B%BE%E7%89%87/logo.png')
     })
@@ -309,8 +311,8 @@ describe('MarkdownPreview — Chinese image path encoding (component level)', ()
         await nextTick()
 
         const html = wrapper.html()
-        // External URLs should not be rewritten to /api/local-file/
-        expect(html).not.toContain('/api/local-file/')
+        // External URLs should not be rewritten to /api/fs/raw/
+        expect(html).not.toContain('/api/fs/raw/')
         expect(html).toContain('https://example.com')
     })
 })

@@ -83,16 +83,14 @@ func setupTestBinDir(t *testing.T) string {
 	origBinDir := BinDir
 	origDataDir := DataDir
 	origFirstRun := FirstRun
-	origHealed := HealedBingFetch
 	BinDir = tmpDir
 	DataDir = filepath.Join(tmpDir, ".clawbench")
-	// ApplyDefaults writes process-global flags; restore them so one test's
-	// fresh-install / heal state cannot leak into another.
+	// ApplyDefaults writes the process-global FirstRun flag; restore it so one
+	// test's fresh-install state cannot leak into another.
 	t.Cleanup(func() {
 		BinDir = origBinDir
 		DataDir = origDataDir
 		FirstRun = origFirstRun
-		HealedBingFetch = origHealed
 	})
 	return tmpDir
 }
@@ -178,22 +176,12 @@ func TestApplyDefaultsEmptyConfig(t *testing.T) {
 	if cfg.Fonts.Dir != filepath.Join(tmpDir, ".clawbench", "fonts") {
 		t.Errorf("Fonts.Dir = %q, want %q", cfg.Fonts.Dir, filepath.Join(tmpDir, ".clawbench", "fonts"))
 	}
-	if cfg.Appearance.PanelOpacity != 0.85 {
-		t.Errorf("Appearance.PanelOpacity = %v, want 0.85", cfg.Appearance.PanelOpacity)
-	}
-	// A nil presence map with no database present is a fresh install, which
-	// pre-selects the Bing source but leaves the wallpaper switch off.
-	if cfg.Appearance.WallpaperMode != "bing" {
-		t.Errorf("Appearance.WallpaperMode = %q, want bing (fresh install)", cfg.Appearance.WallpaperMode)
-	}
-	if cfg.Appearance.WallpaperEnabled {
-		t.Error("Appearance.WallpaperEnabled = true, want false (wallpaper is off by default)")
-	}
-	if !cfg.Appearance.Bing.Enabled {
-		t.Error("Appearance.Bing.Enabled = false, want true (fresh install)")
-	}
-	if cfg.Appearance.Bing.Mkt != "zh-CN" {
-		t.Errorf("Appearance.Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
+	// A nil presence map with no database present is a fresh install. The
+	// wallpaper choice is per-device browser state now, so nothing about the
+	// wallpaper is set here — but FirstRun must still be true, since the
+	// frontend reads it to pick the out-of-box theme.
+	if !FirstRun {
+		t.Error("FirstRun = false, want true for a fresh install (drives the default theme)")
 	}
 }
 
@@ -209,93 +197,23 @@ func seedExistingInstall(t *testing.T) {
 	}
 }
 
-// TestApplyDefaultsHealsBingModeWithFetchDisabled covers configs written before
-// the mode endpoint kept the two in step: mode says Bing while the fetch switch
-// is off. The settings UI cannot reach or repair this state, so loading the
-// config must turn the switch back on.
-func TestApplyDefaultsHealsBingModeWithFetchDisabled(t *testing.T) {
+// TestApplyDefaultsLeavesWallpaperAlone pins that ApplyDefaults no longer
+// derives any wallpaper state: the source, the on/off switch and the selected
+// image are per-device browser choices now, so loading a config must not invent
+// or repair them.
+func TestApplyDefaultsLeavesWallpaperAlone(t *testing.T) {
 	setupTestBinDir(t)
-	seedExistingInstall(t)
-
-	cfg := Config{}
-	cfg.Appearance.WallpaperMode = "bing"
-	cfg.Appearance.Bing.Enabled = false
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_mode": true})
-
-	if !cfg.Appearance.Bing.Enabled {
-		t.Error("Bing.Enabled = false, want true when the mode is Bing")
-	}
-	// The flag is what tells startup to write the repaired value to disk.
-	if !HealedBingFetch {
-		t.Error("HealedBingFetch = false, want true so the repair is persisted")
-	}
-}
-
-// TestApplyDefaultsLocalModeLeavesBingFetchAlone is the counterpart: a local
-// install must not have Bing fetching switched on by loading its config.
-func TestApplyDefaultsLocalModeLeavesBingFetchAlone(t *testing.T) {
-	setupTestBinDir(t)
-	seedExistingInstall(t)
-
-	cfg := Config{}
-	cfg.Appearance.WallpaperMode = "local"
-	cfg.Appearance.Bing.Enabled = false
-	ApplyDefaults(&cfg, map[string]bool{"appearance.wallpaper_mode": true})
-
-	if cfg.Appearance.Bing.Enabled {
-		t.Error("Bing.Enabled = true, want it untouched for a local-mode install")
-	}
-	if HealedBingFetch {
-		t.Error("HealedBingFetch = true, want no heal for a local-mode install")
-	}
-}
-
-// TestApplyDefaultsFreshInstallBingPreselected pins the out-of-box appearance: a
-// brand new install has no config.yaml and no database. The wallpaper switch is
-// off, but the Bing source is pre-selected so turning the switch on shows the
-// Bing daily image without a further choice.
-func TestApplyDefaultsFreshInstallBingPreselected(t *testing.T) {
-	setupTestBinDir(t)
-
-	cfg := Config{}
-	ApplyDefaults(&cfg, nil)
-
-	if cfg.Appearance.WallpaperMode != "bing" {
-		t.Errorf("WallpaperMode = %q, want bing", cfg.Appearance.WallpaperMode)
-	}
-	if cfg.Appearance.WallpaperEnabled {
-		t.Error("WallpaperEnabled = true, want false (wallpaper must be off by default)")
-	}
-	if !cfg.Appearance.Bing.Enabled {
-		t.Error("Bing.Enabled = false, want true")
-	}
-	if cfg.Appearance.Bing.Mkt != "zh-CN" {
-		t.Errorf("Bing.Mkt = %q, want zh-CN", cfg.Appearance.Bing.Mkt)
-	}
-}
-
-// TestApplyDefaultsExistingInstallBingOff is the regression guard for upgrades:
-// an existing install that never set a wallpaper must not suddenly get one.
-func TestApplyDefaultsExistingInstallBingOff(t *testing.T) {
-	tmpDir := setupTestBinDir(t)
-
-	// A database file marks this install as pre-existing, and an empty presence
-	// map models a config.yaml that exists but has no appearance section.
 	seedExistingInstall(t)
 
 	cfg := Config{}
 	ApplyDefaults(&cfg, map[string]bool{"port": true})
 
-	if cfg.Appearance.WallpaperMode != "" {
-		t.Errorf("WallpaperMode = %q, want empty (existing install must not enable Bing)", cfg.Appearance.WallpaperMode)
+	if cfg.Appearance.Local.Items != nil {
+		t.Errorf("Appearance.Local.Items = %v, want nil (no wallpaper state is derived)", cfg.Appearance.Local.Items)
 	}
-	if cfg.Appearance.WallpaperEnabled {
-		t.Error("WallpaperEnabled = true, want false (existing install must not enable a wallpaper)")
+	if cfg.Appearance.Bing.File != "" {
+		t.Errorf("Appearance.Bing.File = %q, want empty", cfg.Appearance.Bing.File)
 	}
-	if cfg.Appearance.Bing.Enabled {
-		t.Error("Bing.Enabled = true, want false (existing install must not enable Bing)")
-	}
-	_ = tmpDir
 }
 
 // TestApplyDefaultsExistingInstallWithoutConfigFile covers the case that a
@@ -308,8 +226,8 @@ func TestApplyDefaultsExistingInstallWithoutConfigFile(t *testing.T) {
 	cfg := Config{}
 	ApplyDefaults(&cfg, nil)
 
-	if cfg.Appearance.Bing.Enabled {
-		t.Error("Bing.Enabled = true, want false: a database without config.yaml is an existing install")
+	if FirstRun {
+		t.Error("FirstRun = true, want false: a database without config.yaml is an existing install")
 	}
 }
 
@@ -362,22 +280,6 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	// Unset values should get defaults
 	if cfg.Upload.MaxFiles != 20 {
 		t.Errorf("Upload.MaxFiles = %d, want 20 (default)", cfg.Upload.MaxFiles)
-	}
-}
-
-func TestApplyDefaultsPanelOpacityExplicitPreserved(t *testing.T) {
-	setupTestBinDir(t)
-
-	cfg := Config{}
-	cfg.Appearance.PanelOpacity = 0.7
-
-	ApplyDefaults(&cfg, map[string]bool{
-		"appearance":               true,
-		"appearance.panel_opacity": true,
-	})
-
-	if cfg.Appearance.PanelOpacity != 0.7 {
-		t.Errorf("Appearance.PanelOpacity = %v, want 0.7 (explicitly set)", cfg.Appearance.PanelOpacity)
 	}
 }
 
@@ -861,6 +763,35 @@ func TestApplyDefaults_ChatAutoContinueEnabledPresenceTrue(t *testing.T) {
 	ApplyDefaults(&cfg, map[string]bool{"chat.auto_continue_enabled": true})
 	if !cfg.Chat.AutoContinueEnabled {
 		t.Error("Chat.AutoContinueEnabled should stay true when explicitly set")
+	}
+}
+
+// AutoRenameEnabled spends an LLM call, so it is opt-in: an omitted field must
+// resolve to false, and an explicit false must not be flipped back on.
+func TestApplyDefaults_ChatAutoRenameEnabledDefaultFalse(t *testing.T) {
+	setupTestBinDir(t)
+
+	for _, presence := range []map[string]bool{
+		nil,
+		{"chat.auto_rename_enabled": false},
+	} {
+		cfg := Config{}
+		cfg.Chat.AutoRenameEnabled = true // a stray true must be cleared by the default
+		ApplyDefaults(&cfg, presence)
+		if cfg.Chat.AutoRenameEnabled {
+			t.Errorf("Chat.AutoRenameEnabled = true, want false for presence %#v", presence)
+		}
+	}
+}
+
+func TestApplyDefaults_ChatAutoRenameEnabledPresenceTrue(t *testing.T) {
+	setupTestBinDir(t)
+
+	cfg := Config{}
+	cfg.Chat.AutoRenameEnabled = true
+	ApplyDefaults(&cfg, map[string]bool{"chat.auto_rename_enabled": true})
+	if !cfg.Chat.AutoRenameEnabled {
+		t.Error("Chat.AutoRenameEnabled should stay true when explicitly set")
 	}
 }
 

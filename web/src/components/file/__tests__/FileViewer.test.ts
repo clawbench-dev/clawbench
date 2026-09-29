@@ -89,14 +89,6 @@ vi.mock('@/composables/useFileNavStack.ts', () => ({
   useFileNavStack: () => fileNavState,
 }))
 
-// Wide-screen layout: touch layouts (false) use the bottom floating nav bar,
-// wide screens (true) render the same actions in the file header instead.
-const wideScreenState = vi.hoisted(() => ({ isWideScreen: { value: false } }))
-vi.mock('@/composables/useWideScreenLayout', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/composables/useWideScreenLayout')>()
-  return { ...actual, getWideScreenState: () => wideScreenState }
-})
-
 const tocDockPrefState = vi.hoisted(() => {
   // `ref` isn't importable inside hoisted callbacks, so hold the ref in a
   // lazily-created slot: the mock factory assigns it on first use, and the
@@ -168,7 +160,7 @@ vi.mock('@/utils/exportMarkdownHtml.ts', () => ({
 }))
 
 vi.mock('@/utils/download.ts', () => ({
-  buildLocalFileUrl: (path: string, opts?: any) => `/api/local-file/${path}?download=1`,
+  buildLocalFileUrl: (path: string, opts?: any) => `/api/fs/raw/${path}?download=1`,
   downloadFileByPath: vi.fn(),
   downloadBlob: vi.fn(),
 }))
@@ -194,7 +186,6 @@ afterEach(() => {
   fileNavState.overlayOpen.value = false
   fileNavState.canGoBack.value = false
   fileNavState.canGoForward.value = false
-  wideScreenState.isWideScreen.value = false
   tocDockPrefState.tocDockSide.value = 'right'
   mockOpenSearch.mockClear()
   for (const id of pendingTimers) { clearTimeout(id) }
@@ -325,45 +316,49 @@ describe('FileViewer', () => {
     }
   })
 
-  it('renders floating history nav and emits back/forward when available', async () => {
+  it('forwards navigation state to FileHeader and propagates its back/forward emits', async () => {
     fileNavState.overlayOpen.value = true
     fileNavState.canGoBack.value = true
     fileNavState.canGoForward.value = true
-    const wrapper = mountViewer()
+    const wrapper = mountViewer({ canNavigateBack: true, backLabel: 'Back to Chat' })
     await nextTick()
 
-    const buttons = wrapper.findAll('.file-nav-btn')
-    expect(buttons).toHaveLength(2)
-    expect(buttons[0].attributes('disabled')).toBeUndefined()
-    expect(buttons[1].attributes('disabled')).toBeUndefined()
+    const header = wrapper.findComponent({ name: 'FileHeader' })
+    expect(header.props('canNavigateBack')).toBe(true)
+    expect(header.props('canGoBackFile')).toBe(true)
+    expect(header.props('canGoForwardFile')).toBe(true)
+    expect(header.props('backLabel')).toBe('Back to Chat')
 
-    await buttons[0].trigger('click')
+    header.vm.$emit('navigateBack')
+    header.vm.$emit('navigateForward')
+    await nextTick()
     expect(wrapper.emitted('navigateBack')).toBeTruthy()
-
-    await buttons[1].trigger('click')
     expect(wrapper.emitted('navigateForward')).toBeTruthy()
   })
 
-  it('hides back/forward floating buttons when history is empty', async () => {
+  it('reports no navigation to FileHeader when history is empty', async () => {
     fileNavState.overlayOpen.value = true
     fileNavState.canGoBack.value = false
     fileNavState.canGoForward.value = false
-    const wrapper = mountViewer()
+    const wrapper = mountViewer({ canNavigateBack: false })
     await nextTick()
 
-    expect(wrapper.findAll('.file-nav-btn')).toHaveLength(0)
+    const header = wrapper.findComponent({ name: 'FileHeader' })
+    expect(header.props('canNavigateBack')).toBe(false)
+    expect(header.props('canGoBackFile')).toBe(false)
+    expect(header.props('canGoForwardFile')).toBe(false)
   })
 
-  it('hides the unavailable direction button individually', async () => {
+  it('reports the available direction to FileHeader individually', async () => {
     fileNavState.overlayOpen.value = true
     fileNavState.canGoBack.value = true
     fileNavState.canGoForward.value = false
-    const wrapper = mountViewer()
+    const wrapper = mountViewer({ canNavigateBack: false })
     await nextTick()
 
-    const buttons = wrapper.findAll('.file-nav-btn')
-    expect(buttons).toHaveLength(1)
-    expect(wrapper.find('.file-nav-float').exists()).toBe(true)
+    const header = wrapper.findComponent({ name: 'FileHeader' })
+    expect(header.props('canGoBackFile')).toBe(true)
+    expect(header.props('canGoForwardFile')).toBe(false)
   })
 
   it('calls store.selectFile when openAsText is emitted', async () => {
@@ -834,68 +829,16 @@ describe('FileViewer', () => {
       expect(ss.editing).toBe(true)
     })
 
-    it('shows the floating back button when canNavigateBack is true', async () => {
-      fileNavState.overlayOpen.value = true
-      const wrapper = mountViewer({ canNavigateBack: true, backLabel: 'Back to Chat' })
-      await nextTick()
-      const btn = wrapper.find('.file-nav-float .file-nav-btn')
-      expect(btn.exists()).toBe(true)
-      expect(btn.attributes('title')).toBe('Back to Chat')
-    })
-
-    it('emits navigateBack when the floating back button is clicked', async () => {
-      fileNavState.overlayOpen.value = true
-      const wrapper = mountViewer({ canNavigateBack: true })
-      await nextTick()
-      await wrapper.get('.file-nav-float .file-nav-btn').trigger('click')
-      expect(wrapper.emitted('navigateBack')).toBeTruthy()
-    })
-
-    it('hides the floating back button when canNavigateBack is false and history is empty', async () => {
-      fileNavState.overlayOpen.value = true
-      const wrapper = mountViewer({ canNavigateBack: false })
-      await nextTick()
-      expect(wrapper.find('.file-nav-float').exists()).toBe(false)
-    })
-
-    it('renders paired ArrowLeft and ArrowRight icons in the floating nav bar', async () => {
+    it('never renders a floating nav bar — the header is the only nav surface', async () => {
+      // Regression guard: back/forward used to live in a bottom floating bar on
+      // touch layouts. The viewer must not render one at any width.
       fileNavState.overlayOpen.value = true
       fileNavState.canGoBack.value = true
       fileNavState.canGoForward.value = true
-      const wrapper = mountViewer()
-      await nextTick()
-      const buttons = wrapper.findAll('.file-nav-float .file-nav-btn')
-      expect(buttons).toHaveLength(2)
-      expect(buttons[0].find('svg.lucide-arrow-left').exists()).toBe(true)
-      expect(buttons[1].find('svg.lucide-arrow-right').exists()).toBe(true)
-    })
-
-    it('hides the floating bar on wide screens — the header carries navigation', async () => {
-      fileNavState.overlayOpen.value = true
-      wideScreenState.isWideScreen.value = true
       const wrapper = mountViewer({ canNavigateBack: true })
       await nextTick()
       expect(wrapper.find('.file-nav-float').exists()).toBe(false)
-    })
-
-    it('forwards navigation state to FileHeader for the wide-screen button', async () => {
-      wideScreenState.isWideScreen.value = true
-      fileNavState.canGoBack.value = true
-      fileNavState.canGoForward.value = true
-      const wrapper = mountViewer({ canNavigateBack: true, backLabel: 'Back to Chat' })
-      const header = wrapper.findComponent({ name: 'FileHeader' })
-      expect(header.props('canNavigateBack')).toBe(true)
-      expect(header.props('canGoBackFile')).toBe(true)
-      expect(header.props('canGoForwardFile')).toBe(true)
-      expect(header.props('backLabel')).toBe('Back to Chat')
-    })
-
-    it('emits navigateBack when FileHeader emits navigateBack (wide-screen path)', async () => {
-      const wrapper = mountViewer({ canNavigateBack: true })
-      const header = wrapper.findComponent({ name: 'FileHeader' })
-      header.vm.$emit('navigateBack')
-      await nextTick()
-      expect(wrapper.emitted('navigateBack')).toBeTruthy()
+      expect(wrapper.findAll('.file-nav-btn')).toHaveLength(0)
     })
   })
 

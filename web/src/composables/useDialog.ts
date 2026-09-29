@@ -18,6 +18,11 @@ interface DialogState {
   extraText: string
   extraPrimedText: string
   onExtraAction: (() => void) | null
+  // Auto-generate affordance for prompt dialogs: the button label, and the
+  // async producer that fills the input. Absent when the caller has nothing to
+  // generate (e.g. the summary model is not configured).
+  generateText: string
+  onGenerate: (() => Promise<string | null>) | null
   resolve: ((v: string | boolean | null) => void) | null
 }
 
@@ -34,6 +39,8 @@ const state = ref<DialogState>({
   extraText: '',
   extraPrimedText: '',
   onExtraAction: null,
+  generateText: '',
+  onGenerate: null,
   resolve: null,
 })
 
@@ -47,6 +54,8 @@ function open(type: DialogState['type'], message: string, opts: {
   extraText?: string
   extraPrimedText?: string
   onExtraAction?: () => void
+  generateText?: string
+  onGenerate?: () => Promise<string | null>
 } = {}): Promise<string | boolean | null> {
   return new Promise(resolve => {
     // Resolve the previous dialog as cancelled before replacing it,
@@ -74,6 +83,8 @@ function open(type: DialogState['type'], message: string, opts: {
       extraText: opts.extraText || '',
       extraPrimedText: opts.extraPrimedText || '',
       onExtraAction: opts.onExtraAction ?? null,
+      generateText: opts.generateText || '',
+      onGenerate: opts.onGenerate ?? null,
       resolve,
     }
   })
@@ -83,7 +94,7 @@ function confirm(message: string, opts?: Parameters<typeof open>[2]): Promise<bo
   return open('confirm', message, opts) as Promise<boolean>
 }
 
-function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string }): Promise<string | null> {
+function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; generateText?: string; onGenerate?: () => Promise<string | null> }): Promise<string | null> {
   return open('prompt', message, opts) as Promise<string | null>
 }
 

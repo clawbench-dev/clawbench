@@ -22,7 +22,7 @@ RAG：同一数据库文件，独立连接池
 | last_read_at | DATETIME | | — | 最后阅读时间 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
-| source_session_id | TEXT | | `NULL` | 续接的源会话 |
+| source_session_id | TEXT | | `NULL` | 派生来源。三种写入方共用：分叉/任务续接写源会话 ID，ACP 载入写标记串 `acp:{acpSessionId}`（非会话 ID，消费时须跳过该前缀） |
 | transport | TEXT | | `''` | 传输方式：cli / acp |
 | auto_approve | INTEGER | NOT NULL | `0` | 自动批准模式 |
 

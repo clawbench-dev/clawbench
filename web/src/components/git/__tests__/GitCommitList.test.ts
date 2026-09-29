@@ -34,6 +34,7 @@ vi.mock('lucide-vue-next', () => ({
   RotateCw: { template: '<svg />' },
   RotateCcw: { template: '<svg />' },
   GitBranch: { template: '<svg />' },
+  GitFork: { template: '<svg />' },
   LoaderCircle: { template: '<svg />' },
 }))
 
@@ -436,6 +437,48 @@ describe('GitCommitList', () => {
       vi.advanceTimersByTime(200)
       // Timer cleared on unmount, so no search emit fires
       expect(wrapper.emitted('search')).toBeFalsy()
+    })
+  })
+
+  describe('drag into chat', () => {
+    /**
+     * A dragged commit must carry the sha as its locator: that is what lets the
+     * staged card jump back to the commit, and it is also what stops the card
+     * being resolved as a "pipeline" (commitSha + url).
+     */
+    it('writes a quote payload carrying the commit sha on dragstart', () => {
+      const wrapper = mountList()
+      const row = wrapper.find('.drilldown-item')
+      const setData = vi.fn()
+      const event = new Event('dragstart', { bubbles: true, cancelable: true })
+      Object.assign(event, {
+        dataTransfer: { setData, setDragImage: vi.fn(), effectAllowed: '' },
+      })
+
+      row.element.dispatchEvent(event)
+
+      const quoteCall = setData.mock.calls.find(c => c[0] === 'application/x-clawbench-quote')
+      expect(quoteCall, 'dragstart must write the quote MIME').toBeTruthy()
+      const payload = JSON.parse(quoteCall![1])
+      expect(payload.commitSha).toBe(createCommits(5)[0].sha)
+      expect(payload.language).toBe('diff')
+      // No annotation: a dragged quote is staged without one.
+      expect(payload.note).toBeUndefined()
+    })
+
+    // The working-tree row ("uncommitted changes") has no commit to reference, so
+    // dragging it would stage a card that cannot be jumped to.
+    it('does not make the working-tree row draggable', () => {
+      const wrapper = mountList({
+        commits: [{ sha: 'WT', msg: 'Uncommitted changes', date: '', author: '', refs: [], isWT: true }],
+      })
+
+      expect(wrapper.find('.drilldown-item').attributes('draggable')).toBe('false')
+    })
+
+    it('makes a real commit row draggable', () => {
+      const wrapper = mountList()
+      expect(wrapper.find('.drilldown-item').attributes('draggable')).toBe('true')
     })
   })
 })

@@ -182,7 +182,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 	}{
 		{
 			name:  "GetSessions",
-			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC",
+			query: sessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC",
 		},
 		{
 			name:  "GetOverviewSessions",
@@ -190,7 +190,7 @@ func TestUnreadCountSubquery_UsesSessionLeadingIndex(t *testing.T) {
 		},
 		{
 			name:  "GetSessionsPaged",
-			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.created_at DESC, s.id DESC LIMIT 11",
+			query: pagedSessionsQueryBase + " ORDER BY s.pinned DESC, s.sort_order ASC, s.created_at DESC, s.id DESC LIMIT 11",
 		},
 	}
 
@@ -436,6 +436,81 @@ func TestSchema_TitleSourceBackfill(t *testing.T) {
 	assert.Equal(t, "custom", got["s-custom"])
 	assert.Equal(t, "auto", got["s-auto"])
 	assert.Equal(t, "placeholder", got["s-ph"])
+}
+
+// TestSchema_SortOrderMigration verifies chat_sessions.sort_order is added to a
+// database created before the column existed (#492), that the migration is
+// idempotent, and that it leaves pre-existing rows at the default 0 — so the
+// list falls back to the newest-first tiebreak rather than pinned-first.
+func TestSchema_SortOrderMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	origBinDir := model.BinDir
+	origDataDir := model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
+
+	origDB := UnsafeDBForTest()
+	origDBRead := dbRead
+	defer func() { db = origDB; dbRead = origDBRead }()
+
+	// Phase 1: build the current schema, then drop sort_order (and the index
+	// that references it — SQLite refuses to DROP an indexed column) to
+	// simulate a pre-#492 database.
+	require.NoError(t, InitDB())
+	CloseDB()
+
+	raw, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
+	require.NoError(t, err)
+	// Three sessions: 'old' is oldest, 'pinned' is the oldest of all but pinned,
+	// 'new' is newest.
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('old', '/p', 'claude', 'Old', 0, '2024-01-01 00:00:00')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('pinned', '/p', 'claude', 'Pinned', 1, '2023-01-01 00:00:00')")
+	require.NoError(t, err)
+	_, err = raw.Exec("INSERT INTO chat_sessions (id, project_path, backend, title, pinned, created_at) VALUES ('new', '/p', 'claude', 'New', 0, '2025-01-01 00:00:00')")
+	require.NoError(t, err)
+	_, err = raw.Exec("DROP INDEX IF EXISTS idx_sessions_order")
+	require.NoError(t, err)
+	_, err = raw.Exec("ALTER TABLE chat_sessions DROP COLUMN sort_order")
+	require.NoError(t, err)
+	raw.Close()
+
+	// Phase 2: InitDB re-adds the column and rebuilds the index.
+	require.NoError(t, InitDB())
+	defer CloseDB()
+
+	assert.Contains(t, getTableColumns(t, UnsafeDBForTest(), "chat_sessions"), "sort_order")
+
+	// Every migrated row is left at the default 0, so the unpinned rows fall
+	// back to newest-first while the pinned row leads the pinned block.
+	sessions, err := GetSessions("/p", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, "pinned", sessions[0].ID, "the pinned row must lead after the migration")
+	assert.True(t, sessions[0].Pinned, "the pin marker must be preserved")
+	assert.Equal(t, "new", sessions[1].ID, "unpinned rows stay newest-first")
+	assert.Equal(t, "old", sessions[2].ID)
+	for _, s := range sessions {
+		assert.Equal(t, 0, s.SortOrder, "migrated rows must keep the default sort_order")
+	}
+
+	// The covering index must lead with pinned, so the new ORDER BY is served
+	// by it rather than a filesort.
+	var idxSQL string
+	require.NoError(t, db.QueryRow(
+		"SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='index' AND name='idx_sessions_order'",
+	).Scan(&idxSQL))
+	assert.Contains(t, idxSQL, "pinned DESC", "idx_sessions_order must lead with pinned")
+	assert.Contains(t, idxSQL, "sort_order ASC")
+
+	// Idempotent: a second InitDB must not fail or renumber.
+	require.NoError(t, InitDB())
+	sessions, err = GetSessions("/p", "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, "pinned", sessions[0].ID)
+	assert.Equal(t, "new", sessions[1].ID)
 }
 
 // TestSchema_TitleSourceMigration_Idempotent verifies running InitDB twice does
@@ -761,13 +836,14 @@ func TestMigrateAddsExternalMessageID(t *testing.T) {
 	assert.Contains(t, columns, "external_message_id", "chat_history should have external_message_id column")
 }
 
-// TestMigrateAddsQueueColumns verifies that InitDB's schema migration adds the
-// queue_id and queued columns to chat_history for queued-message persistence
-// (queued-message-persistence plan). Old databases (without the columns) must
-// be upgraded; new databases must include them in CREATE TABLE.
-func TestMigrateAddsQueueColumns(t *testing.T) {
-	// ── Old database: pre-create chat_history without queue columns ──
-	t.Run("existing database gets queue columns via ALTER", func(t *testing.T) {
+// TestMigrateQueuedMessagesToOwnTable verifies the queue-refactor migration:
+// a legacy database that still stores queued messages as chat_history rows
+// (queued=1, with a queue_id anchor column) must be upgraded by moving those
+// rows into the dedicated queued_messages table and dropping the now-dead
+// columns. Fresh databases must come out of InitDB with the same shape.
+func TestMigrateQueuedMessagesToOwnTable(t *testing.T) {
+	// ── Old database: chat_history still carries the queue columns ──
+	t.Run("existing database moves queued rows and drops the columns", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		origBinDir := model.BinDir
 		origDataDir := model.DataDir
@@ -782,28 +858,65 @@ func TestMigrateAddsQueueColumns(t *testing.T) {
 		require.NoError(t, os.MkdirAll(model.DataDir, 0o755))
 		oldDB, err := sql.Open("sqlite", filepath.Join(model.DataDir, "ClawBench.db"))
 		require.NoError(t, err)
+		// The pre-refactor shape: queue_id + queued live on chat_history.
 		_, err = oldDB.Exec(`CREATE TABLE chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_path TEXT NOT NULL, role TEXT NOT NULL,
 			content TEXT NOT NULL, session_id TEXT,
+			files TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
+			queue_id TEXT DEFAULT '',
+			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`)
+		require.NoError(t, err)
+		// One finalized message and two queued ones (one with a queue_id, one
+		// without — the latter must get a deterministic q-migrated-<id> id).
+		_, err = oldDB.Exec(`INSERT INTO chat_history (project_path, role, content, session_id, queue_id, queued)
+			VALUES ('/p', 'user', 'answered', 's1', '', 0),
+			       ('/p', 'user', 'pending-a', 's1', 'q-a', 1),
+			       ('/p', 'user', 'pending-b', 's1', '', 1)`)
 		require.NoError(t, err)
 		require.NoError(t, oldDB.Close())
 
 		require.NoError(t, InitDB())
 		defer CloseDB()
 
+		// The columns are gone from chat_history...
 		columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
-		assert.Contains(t, columns, "queue_id", "chat_history should have queue_id column")
-		assert.Contains(t, columns, "queued", "chat_history should have queued column")
+		assert.NotContains(t, columns, "queue_id", "chat_history.queue_id must be dropped")
+		assert.NotContains(t, columns, "queued", "chat_history.queued must be dropped")
+
+		// ...the queued rows were moved (and NOT left behind as history)...
+		var historyCount int
+		require.NoError(t, UnsafeDBForTest().
+			QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = 's1'").Scan(&historyCount))
+		assert.Equal(t, 1, historyCount, "only the finalized message stays in chat_history")
+
+		// ...and the moved rows carry the expected queue ids.
+		rows, err := UnsafeDBForTest().
+			Query("SELECT content, queue_id FROM queued_messages WHERE session_id = 's1' ORDER BY id")
+		require.NoError(t, err)
+		defer func() { _ = rows.Close() }()
+		type qrow struct{ content, queueID string }
+		var moved []qrow
+		for rows.Next() {
+			var r qrow
+			require.NoError(t, rows.Scan(&r.content, &r.queueID))
+			moved = append(moved, r)
+		}
+		require.NoError(t, rows.Err())
+		require.Len(t, moved, 2, "both queued rows must be moved into queued_messages")
+		assert.Equal(t, "pending-a", moved[0].content)
+		assert.Equal(t, "q-a", moved[0].queueID, "an explicit queue_id is preserved")
+		assert.Equal(t, "pending-b", moved[1].content)
+		assert.NotEmpty(t, moved[1].queueID, "an empty queue_id gets a generated one")
 	})
 
-	// ── New database: CREATE TABLE includes queue columns ──
-	t.Run("new database includes queue columns in CREATE TABLE", func(t *testing.T) {
+	// ── New database: chat_history has no queue columns at all ──
+	t.Run("new database has no queue columns in chat_history", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		origBinDir := model.BinDir
 		origDataDir := model.DataDir
@@ -819,18 +932,17 @@ func TestMigrateAddsQueueColumns(t *testing.T) {
 		defer CloseDB()
 
 		columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
-		assert.Contains(t, columns, "queue_id", "new chat_history should have queue_id column")
-		assert.Contains(t, columns, "queued", "new chat_history should have queued column")
+		assert.NotContains(t, columns, "queue_id", "new chat_history must not have queue_id")
+		assert.NotContains(t, columns, "queued", "new chat_history must not have queued")
 
-		// Defaults: queue_id defaults to empty string, queued defaults to 0.
-		var queueIDDefault, queuedDefault string
-		row := UnsafeDBForTest().QueryRow(`SELECT dflt_value FROM pragma_table_info('chat_history') WHERE name='queued'`)
-		require.NoError(t, row.Scan(&queuedDefault))
-		assert.Equal(t, "0", queuedDefault, "queued column should default to 0")
-		_ = queueIDDefault
+		// The dedicated table exists and enforces the (session_id, queue_id)
+		// identity key the queue API addresses rows by.
+		qColumns := getTableColumns(t, UnsafeDBForTest(), "queued_messages")
+		assert.Contains(t, qColumns, "queue_id")
+		assert.Contains(t, qColumns, "session_id")
 	})
 
-	// ── Idempotent: re-running InitDB must not error on existing columns ──
+	// ── Idempotent: re-running InitDB must not error or duplicate rows ──
 	t.Run("migration is idempotent across InitDB reruns", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		origBinDir := model.BinDir
@@ -848,8 +960,8 @@ func TestMigrateAddsQueueColumns(t *testing.T) {
 		defer CloseDB()
 
 		columns := getTableColumns(t, UnsafeDBForTest(), "chat_history")
-		assert.Contains(t, columns, "queue_id")
-		assert.Contains(t, columns, "queued")
+		assert.NotContains(t, columns, "queue_id")
+		assert.NotContains(t, columns, "queued")
 	})
 }
 

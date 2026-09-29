@@ -2,6 +2,7 @@
   "name": "@xulongzhe/clawbench-desktop",
   "version": "0.1.0",
   "description": "ClawBench desktop client (Electron)",
+  "desktopName": "clawbench-desktop.desktop",
   "main": "dist/main/index.js",
   "private": true,
   "scripts": {

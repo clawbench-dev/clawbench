@@ -16,10 +16,16 @@ vi.mock('@/utils/forgeApi', async () => {
 
 // Clearing re-derives the dock badge from the same server response; the badge
 // itself is covered by useForgeUnread.test.ts, so forward the write here.
+//
+// `refresh` is hoisted so the tests can assert the list re-derives the badge
+// after loading — the two must not be able to disagree about whether anything
+// is unread (the button is disabled from the badge while the rows come from
+// this list).
+const mockUnreadRefresh = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useForgeUnread', () => ({
   useForgeUnread: () => ({
     forgeUnreadCount: { value: 0 },
-    refresh: vi.fn(),
+    refresh: mockUnreadRefresh,
     onForgeEvent: vi.fn(),
     markAllRead: () => mockMarkForgeRead(),
   }),
@@ -213,6 +219,32 @@ describe('useForgeUnreadItems', () => {
     await new Promise(r => setTimeout(r, 0))
 
     expect(mockFetchForgeUnreadItems).not.toHaveBeenCalled()
+  })
+
+  it('re-derives the dock badge after a successful load', async () => {
+    // The reported bug: the "mark all read" button is disabled from the badge
+    // (forgeUnreadCount === 0), while the rows come from THIS list. A badge
+    // left stale after the list refreshed — e.g. the tab was opened after the
+    // event arrived, or a WS reconnect skipped the live event — leaves unread
+    // rows on screen with an inert button. Loading the rows is exactly the
+    // moment both must agree, so the count is re-derived here.
+    mockFetchForgeUnreadItems.mockResolvedValue({ count: 1, items: [row('pr/1')] })
+    const u = useForgeUnreadItems(() => '/proj')
+
+    await u.load()
+
+    expect(mockUnreadRefresh).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not touch the badge when the load failed', async () => {
+    // A failed load renders an error card, not rows; re-deriving the badge
+    // from it would be a request with nothing to reconcile.
+    mockFetchForgeUnreadItems.mockRejectedValue(new ForgeApiError('boom', 'ForgeNetworkError'))
+    const u = useForgeUnreadItems(() => '/proj')
+
+    await u.load()
+
+    expect(mockUnreadRefresh).not.toHaveBeenCalled()
   })
 
   it('keeps the server read flag distinct from the local one', async () => {

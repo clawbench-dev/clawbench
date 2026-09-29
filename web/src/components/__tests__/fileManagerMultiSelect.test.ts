@@ -338,7 +338,7 @@ vi.mock('@/utils/fileManager', async (importOriginal) => {
   return {
     ...actual,
     // Only mock browser-specific functions that don't work in jsdom
-    buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
+    buildThumbUrl: (dir: string, name: string) => `/api/fs/thumb?target=${dir}/${name}`,
     isImage: () => false,
     isAudio: () => false,
     isVideo: () => false,
@@ -595,7 +595,7 @@ describe('FileManagerContent — more menu and upload', () => {
 
   it('upload progress bar is not visible when not uploading', () => {
     const wrapper = mountComponent()
-    expect(wrapper.find('.dir-upload-progress').exists()).toBe(false)
+    expect(wrapper.find('.transfer-progress').exists()).toBe(false)
   })
 
   it('hidden file input exists with multiple attribute', () => {

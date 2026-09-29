@@ -171,26 +171,6 @@ func FilePath(name string) (string, bool) {
 	return abs, true
 }
 
-// ResolveActive returns the bare name of the wallpaper that should currently be
-// displayed, and whether one is active. A globally disabled wallpaper resolves
-// to none even though the gallery and its selection are retained.
-func ResolveActive(cfg *model.Config) (string, bool) {
-	if !cfg.Appearance.WallpaperEnabled {
-		return "", false
-	}
-	switch cfg.Appearance.WallpaperMode {
-	case "bing":
-		if cfg.Appearance.Bing.File != "" {
-			return cfg.Appearance.Bing.File, true
-		}
-	case "local":
-		if cfg.Appearance.Local.Selected != "" {
-			return cfg.Appearance.Local.Selected, true
-		}
-	}
-	return "", false
-}
-
 // BingMktForLocale maps a UI locale to the Bing market parameter. Chinese maps
 // to mainland China; every other locale (including empty/unknown) maps to the
 // US market, which always has a daily image.

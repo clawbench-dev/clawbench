@@ -477,7 +477,7 @@ func WaitSessionStreamDrained(sessionID string, timeout time.Duration) {
 
 // handleNonTerminalEvent processes a single non-terminal stream event.
 //
-//nolint:gocyclo // multiple event-type branches (content_reset, tool, metadata, context-state, flush gate) are inherently branchy
+//nolint:gocyclo,gocognit // one branch per event type (content_reset, tool, metadata, context-state, flush gate); the dispatch is inherently a flat switch and splitting it would scatter the ordering invariants documented inline
 func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 	// No flush-before-dispatch here on purpose. Every client-visible emission in
 	// this executor goes through forwardEvent → coalescer.add, and the coalescer
@@ -570,13 +570,18 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		e.trackToolDuration(&event)
 	}
 
-	// Forward event to WS clients via StreamHub
-	e.forwardEvent(event)
-
-	// Accumulate block. Guarded so FlushStreamingNow (shutdown goroutine) can
-	// read e.blocks concurrently without a data race.
+	// Accumulate block BEFORE forwarding, so a thinking block's freshly minted
+	// think_id can ride the very event that opens it. Guarded so
+	// FlushStreamingNow (shutdown goroutine) can read e.blocks concurrently
+	// without a data race.
+	//
+	// Reordering is safe for event ordering: what guarantees a client sees
+	// events in order is the coalescer (a non-delta flushes buffered text
+	// before emitting), not the order of these two calls. The lock is released
+	// before forwarding because forwardEvent fans out to WS clients and must
+	// not run under e.mu.
 	e.mu.Lock()
-	ai.AccumulateBlock(&e.blocks, event)
+	thinkID := ai.AccumulateBlock(&e.blocks, event)
 	// Queue tool-call upserts for the next flush window instead of writing per
 	// event — a burst of incremental tool_use updates would otherwise issue one
 	// SQLite write per event and stall the consumer.
@@ -586,6 +591,36 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		}
 	}
 	e.mu.Unlock()
+
+	// Stamp the block's identity onto the event: the one that opens the block
+	// and every delta of it, so the coalescer can tell blocks apart. Empty for
+	// all other event types.
+	if thinkID != "" {
+		event.ThinkID = thinkID
+	}
+
+	// Commit this block's thinking text BEFORE telling clients it is done.
+	//
+	// thinking_done is a client's cue to fetch the full reasoning from
+	// chat_thinking. The periodic flush is rate-limited to 500ms, so without
+	// this the event routinely arrives first and the client caches a PREFIX of
+	// the block — the reported truncated reasoning (observed: 760 of 844 chars
+	// cached; another case 17124 of 18887), which then never refetched because
+	// the cache looked populated.
+	//
+	// Safe here: AccumulateBlock (above) has already seen every delta — the
+	// coalescer only merges the OUTBOUND frames and never writes e.blocks — so
+	// flushing now writes the block's complete text. A separate lock scope is
+	// required because forwardEvent must not run under e.mu; flushPendingThinking
+	// takes no lock of its own (its callers hold e.mu), so this cannot deadlock.
+	if event.Type == "thinking_done" {
+		e.mu.Lock()
+		e.flushPendingThinking()
+		e.mu.Unlock()
+	}
+
+	// Forward event to WS clients via StreamHub
+	e.forwardEvent(event)
 
 	// metadata capture
 	if event.Type == contentKeyMetadata && event.Meta != nil {
@@ -713,10 +748,17 @@ func (e *SessionExecutor) RunWithChannel(eventCh <-chan ai.StreamEvent) RunResul
 }
 
 // postProcessBlocks applies finalize post-processing on blocks:
-// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging.
+// clawbench-ask-question conversion, rejected-tool removal, thinking-block merging,
+// and terminal thinking completion.
 // Shared by buildResult and Finalize to prevent divergence.
 // NOTE: persistAskToolCalls must be called separately after Finalize
 // uses postProcessBlocks, to avoid double-persisting from buildResult.
+//
+// Every caller is a TERMINAL path (buildResult on done/error/ctx.Done, Finalize,
+// and the steer split's "before" half), which is what makes MarkAllThinkingDone
+// correct here: no thinking block can still be running once the turn is over.
+// It is deliberately not applied on the streaming flush path, where done=false
+// is a real, current fact.
 func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model.ContentBlock {
 	// Ask-question detection (interactive mode only)
 	if e.cfg.Mode == ModeInteractive {
@@ -728,6 +770,10 @@ func (e *SessionExecutor) postProcessBlocks(blocks []model.ContentBlock) []model
 	// Common block post-processing (idempotent, cheap)
 	blocks = ai.RemoveRejectedToolBlocks(blocks)
 	blocks = ai.MergeConsecutiveThinkingBlocks(blocks)
+	// Merge first (it drops empty-text blocks), then close everything that
+	// survives: a turn ending on reasoning never receives thinking_done, so its
+	// last block would otherwise persist as done=false and render as a spinner.
+	blocks = ai.MarkAllThinkingDone(blocks)
 
 	return blocks
 }
@@ -961,6 +1007,13 @@ func (e *SessionExecutor) flushPendingContextState() {
 // slimThinkingInContent (blocks that already carry think_id are not
 // regenerated), so no orphan rows and no duplicates.
 func (e *SessionExecutor) flushPendingThinking() {
+	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
+	// is nothing to persist to. Existing callers are all behind the same guard
+	// in flushStreamingLocked, but the thinking_done path calls this directly, so
+	// the check must live here too or that path panics on a DB-less executor.
+	if db == nil {
+		return
+	}
 	if e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" {
 		return
 	}
@@ -1121,20 +1174,22 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 		return false
 	}
 
-	// Open the "after" half: a fresh streaming assistant row anchored to the
-	// injected question, so the frontend places it directly below that question.
-	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, queueID)
+	// Open the "after" half: a fresh streaming assistant row. Its id is higher
+	// than the injected question's (the question was materialized into
+	// chat_history at injection time), so it lands directly below that question
+	// with no anchor.
+	afterID, err := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID)
 	if err != nil {
 		// The "before" half is already durable; the rest of the turn simply keeps
 		// appending to it via UpdateStreamingMessage's "latest streaming row"
 		// lookup... except there is now no streaming row, so the remaining content
-		// would be lost. Re-open one without the anchor to stay safe.
+		// would be lost. Re-open one to stay safe.
 		slog.Error("session executor: failed to create assistant half at steer boundary; "+
-			"reopening an unanchored row so remaining content is not lost",
+			"reopening a row so remaining content is not lost",
 			slog.String("session", e.cfg.SessionID),
 			slog.String("err", err.Error()))
-		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID, ""); ferr == nil {
-			e.resetForSplitLocked(fallbackID, "")
+		if fallbackID, ferr := CreateStreamingMessage(e.cfg.ProjectPath, e.cfg.BackendName, e.cfg.SessionID); ferr == nil {
+			e.resetForSplitLocked(fallbackID)
 		}
 		// The "before" half IS finalized (its completed_at was stamped) even
 		// though the split degraded — the unread flip must still be corrected.
@@ -1145,24 +1200,24 @@ func (e *SessionExecutor) splitAtSteerBoundaryLocked(queueID string) bool {
 		slog.String("session", e.cfg.SessionID),
 		slog.Int64("before_msg_id", beforeID),
 		slog.Int64("after_msg_id", afterID),
-		slog.String("queue_id", queueID))
+		slog.String("client_user_message_id", queueID))
 
 	// Announce the split so every subscribed client (including one that opened
 	// the session mid-turn) creates the second bubble immediately instead of
 	// waiting for a reload.
 	e.forwardEvent(ai.StreamEvent{
 		Type:        "stream_split",
-		StreamSplit: &ai.StreamSplitData{MessageID: afterID, QueueID: queueID},
+		StreamSplit: &ai.StreamSplitData{MessageID: afterID},
 	})
 
-	e.resetForSplitLocked(afterID, queueID)
+	e.resetForSplitLocked(afterID)
 	return true
 }
 
 // resetForSplitLocked re-points the executor at a newly created streaming row
 // and clears all per-message accumulation, so the "after" half starts empty.
 // Caller holds e.mu.
-func (e *SessionExecutor) resetForSplitLocked(newMessageID int64, queueID string) {
+func (e *SessionExecutor) resetForSplitLocked(newMessageID int64) {
 	e.cfg.StreamingMessageID = newMessageID
 	e.blocks = nil
 	e.responseMetadata = nil
@@ -1175,7 +1230,6 @@ func (e *SessionExecutor) resetForSplitLocked(newMessageID int64, queueID string
 	// "before" half's thinking was already flushed above, so the "after" half
 	// starts its own cursors.
 	e.thinkingFlushed = make(map[string]*thinkingFlushState)
-	_ = queueID
 }
 
 // buildSplitContentLocked renders the accumulated blocks as the content JSON for
@@ -1208,10 +1262,11 @@ func (e *SessionExecutor) flushStreamingMessage() {
 // includeThinking controls how thinking blocks are persisted in the content
 // row:
 //   - false (rate-limited flushes): thinking full text is excluded from content;
-//     the text is upserted to chat_thinking by flushPendingThinking. DONE blocks
-//     get a slim {think_id, done:true} marker at their natural position so a
-//     refresh mid-stream can lazy-load the completed reasoning; in-progress
-//     blocks are left out entirely (a done=false marker is the spinner regression).
+//     the text is upserted to chat_thinking by flushPendingThinking. Every block
+//     that reached chat_thinking gets a slim {think_id} marker at its natural
+//     position: {done:true} once it finished, {in_progress:true} while it is
+//     still streaming. The in_progress marker is what makes a session switch
+//     lossless — see ContentBlock.InProgress.
 //   - true (graceful-shutdown forced flush): the full thinking text is embedded
 //     in content, then slimThinkingInContent extracts it into chat_thinking —
 //     the one-shot durability point where the text may not have been flushed yet.
@@ -1257,36 +1312,49 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 	for _, b := range e.blocks {
 		if b.Type == blockTypeThinking {
 			// The full thinking text NEVER goes into the rate-limited content row
-			// (it lives in chat_thinking via flushPendingThinking; embedding even a
-			// slim think_id marker for an IN-PROGRESS block would leak an "empty
-			// thinking block" into the frontend's live placeholder — the
-			// mergeStreamBlocks path (db_load after stream_start) adopts the DB's
-			// non-text blocks into the live stream, and a done=false slim block
-			// there renders as a perpetual loading spinner until the message
-			// finalizes).
+			// (it lives in chat_thinking via flushPendingThinking). What goes in
+			// is a slim {think_id} marker, in one of two shapes:
 			//
-			// EXCEPTION: a DONE thinking block (thinking_done received, text fully
-			// persisted to chat_thinking) gets a slim {think_id, done:true} marker at
-			// its natural position. A done marker renders as a collapsed chip (never
-			// a spinner), and it is what lets a page refresh mid-stream recover the
-			// already-completed reasoning via the /thinking lazy-load — the streaming
-			// row would otherwise carry no trace of the block and the thinking would
-			// be lost on reload. Finalize's persistThinkingToDB overwrites these
-			// markers with the final slim content (idempotent, same think_ids), so no
-			// orphan/duplicate rows are left behind.
+			//   done:true            — the block finished. Renders as a collapsed
+			//                          chip; the /thinking lazy-load recovers the text.
+			//   in_progress:true     — the block is STILL streaming. Renders as a
+			//                          chip that lazy-loads the prefix so far and
+			//                          keeps appending live deltas into the SAME
+			//                          block.
+			//
+			// The in_progress marker is what makes a session switch lossless. An
+			// in-progress block used to be omitted entirely, which cost two
+			// user-visible symptoms from one cause: (1) the streaming row carried
+			// no trace of the block, so rebuildFromDb on switch-back dropped the
+			// already-streamed prefix; (2) the next delta, finding no block to
+			// merge into, opened a second one — and a frontend-created block has
+			// no `done`, so it rendered as a spinner forever. The earlier fix
+			// (done-gating the marker) only addressed the opposite hazard — a
+			// done:false marker rendering as an empty spinner — and left this
+			// one, because the block was absent rather than mislabeled.
+			//
+			// Both shapes require a chat_thinking row to lazy-load; a marker with
+			// nothing behind it would 404 on expand.
 			if e.forceIncludeThinking {
 				serializedBlocks = append(serializedBlocks, b)
-			} else if b.Done && b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
-				// Only blocks that actually reached chat_thinking get markers — an
-				// empty done block has no row to lazy-load and would 404.
-				// ParentToolCallID must ride along so a reload keeps a sub-agent's
-				// thinking grouped under its parent Agent card.
-				serializedBlocks = append(serializedBlocks, model.ContentBlock{
-					Type:             blockTypeThinking,
-					ThinkID:          b.ThinkID,
-					Done:             true,
-					ParentToolCallID: b.ParentToolCallID,
-				})
+			} else if b.ThinkID != "" && e.thinkingPersisted(b.ThinkID) {
+				if b.Done {
+					// ParentToolCallID must ride along so a reload keeps a
+					// sub-agent's thinking grouped under its parent Agent card.
+					serializedBlocks = append(serializedBlocks, model.ContentBlock{
+						Type:             blockTypeThinking,
+						ThinkID:          b.ThinkID,
+						Done:             true,
+						ParentToolCallID: b.ParentToolCallID,
+					})
+				} else {
+					serializedBlocks = append(serializedBlocks, model.ContentBlock{
+						Type:             blockTypeThinking,
+						ThinkID:          b.ThinkID,
+						InProgress:       true,
+						ParentToolCallID: b.ParentToolCallID,
+					})
+				}
 			}
 			continue
 		}

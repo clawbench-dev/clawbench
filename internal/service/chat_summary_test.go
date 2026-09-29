@@ -34,6 +34,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			project_path TEXT NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
+			title_source TEXT NOT NULL DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0
 		);
 	`)
@@ -48,10 +49,20 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 			backend TEXT NOT NULL DEFAULT 'claude',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
-			queue_id TEXT DEFAULT '',
-			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
+		);
+	`)
+	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS queued_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			project_path TEXT NOT NULL DEFAULT '',
+			backend TEXT NOT NULL DEFAULT '',
+			queue_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			files TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		);
 	`)
 	_, _ = db.Exec(`

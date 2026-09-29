@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from 'vitest'
 import { extractImageName } from '@/utils/lightbox'
 
 describe('extractImageName', () => {
-  it('extracts basename from /api/local-file/ URL', () => {
-    const result = extractImageName('/api/local-file/path/to/image.png')
+  it('extracts basename from /api/fs/raw/ URL', () => {
+    const result = extractImageName('/api/fs/raw/path/to/image.png')
     expect(result).toBe('image.png')
   })
 
-  it('extracts basename from /api/local-file/ with encoded path', () => {
-    const result = extractImageName('/api/local-file/path%2Fto%2Fphoto.jpg')
+  it('extracts basename from /api/fs/raw/ with encoded path', () => {
+    const result = extractImageName('/api/fs/raw/path%2Fto%2Fphoto.jpg')
     expect(result).toBe('photo.jpg')
   })
 
@@ -23,29 +23,29 @@ describe('extractImageName', () => {
     expect(typeof result).toBe('string')
   })
 
-  it('handles full URL with /api/local-file/ prefix', () => {
-    const result = extractImageName('http://localhost:20000/api/local-file/home/user/project/img.png')
+  it('handles full URL with /api/fs/raw/ prefix', () => {
+    const result = extractImageName('http://localhost:20000/api/fs/raw/home/user/project/img.png')
     expect(result).toBe('img.png')
   })
 
   it('handles path with multiple segments after local-file prefix', () => {
-    const result = extractImageName('/api/local-file/deep/nested/dir/screenshot.jpeg')
+    const result = extractImageName('/api/fs/raw/deep/nested/dir/screenshot.jpeg')
     expect(result).toBe('screenshot.jpeg')
   })
 
   it('returns basename for simple filename after local-file prefix', () => {
-    const result = extractImageName('/api/local-file/photo.png')
+    const result = extractImageName('/api/fs/raw/photo.png')
     expect(result).toBe('photo.png')
   })
 
   it('handles URL with query parameters', () => {
-    const result = extractImageName('/api/local-file/image.png?w=80&h=80')
+    const result = extractImageName('/api/fs/raw/image.png?w=80&h=80')
     // The URL constructor will put query params in search, not pathname
     expect(result).toBe('image.png')
   })
 
   it('handles path with trailing slash', () => {
-    const result = extractImageName('/api/local-file/some/dir/')
+    const result = extractImageName('/api/fs/raw/some/dir/')
     // baseName of "some/dir/" is "dir"
     expect(result).toBe('dir')
   })
@@ -56,12 +56,12 @@ describe('extractImageName', () => {
   })
 
   it('handles URL with hash fragment', () => {
-    const result = extractImageName('/api/local-file/docs/readme.md#section')
+    const result = extractImageName('/api/fs/raw/docs/readme.md#section')
     expect(result).toBe('readme.md')
   })
 
   it('handles URL-encoded spaces in path', () => {
-    const result = extractImageName('/api/local-file/my%20image.png')
+    const result = extractImageName('/api/fs/raw/my%20image.png')
     expect(result).toBe('my image.png')
   })
 })

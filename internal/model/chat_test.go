@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -412,12 +413,45 @@ func TestChatMessageSummaryCardsMarshal(t *testing.T) {
 	}
 }
 
-// TestChatMessageQueueFieldsMarshal verifies that a queued message carries its
-// queueId and queued flags in the JSON payload so the frontend can match the
-// optimistic pending bubble to the DB row (queued-message-persistence plan).
-func TestChatMessageQueueFieldsMarshal(t *testing.T) {
-	m := ChatMessage{ID: 42, Role: "user", Content: "hello", QueueID: "pending-abc", Queued: true}
+// TestChatMessageHasNoQueueFields verifies that ChatMessage no longer carries
+// queueId/queued: queued messages live in their own table and are materialized
+// into chat_history only at dequeue time, so a chat_history row is by
+// definition a real conversation message with no queue state.
+//
+// This is a structural guard, not a style preference. If either field comes
+// back, the frontend's separate queue store and the "DB id order ==
+// conversational order" invariant both silently lose their premise.
+func TestChatMessageHasNoQueueFields(t *testing.T) {
+	m := ChatMessage{ID: 42, Role: "user", Content: "hello"}
 	raw, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := obj["queueId"]; ok {
+		t.Fatalf("queueId must not be part of a chat_history message: %v", obj["queueId"])
+	}
+	if _, ok := obj["queued"]; ok {
+		t.Fatalf("queued must not be part of a chat_history message: %v", obj["queued"])
+	}
+}
+
+// TestQueuedMessageMarshal verifies the wire shape the queue API and the
+// frontend queue panel both depend on: queueId/text/files/createdAt, with the
+// numeric table id omitted when zero (the frontend never addresses a queued
+// message by table id).
+func TestQueuedMessageMarshal(t *testing.T) {
+	q := QueuedMessage{
+		QueueID:   "pending-abc",
+		Text:      "hello",
+		FilePaths: []string{"/a.go"},
+		Files:     []FileEntry{{Path: "/a.go"}},
+		CreatedAt: "2026-01-01T00:00:00Z",
+	}
+	raw, err := json.Marshal(q)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -428,25 +462,14 @@ func TestChatMessageQueueFieldsMarshal(t *testing.T) {
 	if obj["queueId"] != "pending-abc" {
 		t.Fatalf("queueId missing or wrong: %v", obj["queueId"])
 	}
-	if obj["queued"] != true {
-		t.Fatalf("queued missing or wrong: %v", obj["queued"])
+	if obj["text"] != "hello" {
+		t.Fatalf("text missing or wrong: %v", obj["text"])
 	}
-
-	// A non-queued message must omit both fields (omitempty).
-	m2 := ChatMessage{ID: 43, Role: "assistant", Content: "reply"}
-	raw2, err := json.Marshal(m2)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
+	if obj["createdAt"] != "2026-01-01T00:00:00Z" {
+		t.Fatalf("createdAt missing or wrong: %v", obj["createdAt"])
 	}
-	var obj2 map[string]any
-	if err := json.Unmarshal(raw2, &obj2); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	if _, ok := obj2["queueId"]; ok {
-		t.Fatalf("queueId should be omitted for non-queued message: %v", obj2["queueId"])
-	}
-	if _, ok := obj2["queued"]; ok {
-		t.Fatalf("queued should be omitted for non-queued message: %v", obj2["queued"])
+	if _, ok := obj["id"]; ok {
+		t.Fatalf("zero table id must be omitted: %v", obj["id"])
 	}
 }
 
@@ -489,4 +512,58 @@ func TestContentBlockParentToolCallIDOmittedWhenEmpty(t *testing.T) {
 	if strings.Contains(string(data), "parent_tool_call_id") {
 		t.Errorf("empty parent link should be omitted, got %s", data)
 	}
+}
+
+// TestGenerateThinkingID covers the happy path here in the owning package; the
+// service-level test only exercises its thin wrapper. Both call sites
+// (internal/ai assigns the ID when a block opens, internal/service persists by
+// it) rely on the format being "th_" + 32 lowercase hex chars — the frontend
+// and the slim-marker reader both key off the prefix.
+func TestGenerateThinkingID(t *testing.T) {
+	id := GenerateThinkingID()
+	if len(id) != 3+32 {
+		t.Fatalf("id length = %d (%q), want 35", len(id), id)
+	}
+	if id[:3] != "th_" {
+		t.Errorf("id = %q, want the th_ prefix", id)
+	}
+	for _, c := range id[3:] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Errorf("id = %q: non-hex character %q after the prefix", id, c)
+			break
+		}
+	}
+
+	// Two calls must not collide; the ID is the DB key for a thinking block.
+	seen := map[string]bool{id: true}
+	for range 100 {
+		other := GenerateThinkingID()
+		if seen[other] {
+			t.Fatalf("duplicate id generated: %q", other)
+		}
+		seen[other] = true
+	}
+}
+
+// TestGenerateThinkingID_EntropyFailureFallsBack covers the rand.Read error
+// branch. crypto/rand.Read cannot be made to fail from outside the process, so
+// the package-level seam is the only way to reach it — and the branch matters:
+// an empty return would leave a thinking block with no DB key, so the ID must
+// degrade to a usable timestamp form rather than vanish.
+func TestGenerateThinkingID_EntropyFailureFallsBack(t *testing.T) {
+	orig := randRead
+	randRead = func([]byte) (int, error) { return 0, errors.New("entropy unavailable") }
+	defer func() { randRead = orig }()
+
+	id := GenerateThinkingID()
+	if id == "" {
+		t.Fatal("a failed entropy read must still produce an ID, not an empty string")
+	}
+	if !strings.HasPrefix(id, "th_") {
+		t.Errorf("fallback id = %q, want the th_ prefix", id)
+	}
+	// Deliberately NOT asserting that two consecutive fallback ids differ: the
+	// fallback is the wall clock, and UnixNano's resolution is coarse enough on
+	// macOS that back-to-back calls legitimately return the same value. The
+	// branch's contract is "non-empty and prefixed", not "unique".
 }

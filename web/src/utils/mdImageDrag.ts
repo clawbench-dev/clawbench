@@ -17,16 +17,16 @@ import { setAttachDragData, buildAttachDragImage, cleanupDragGhost } from '@/uti
 /** Whether the image src is served by one of our local file endpoints. */
 export function isApiServedSrc(img: HTMLImageElement): boolean {
   const src = img.getAttribute('src') || ''
-  return /^\/api\/local-file\//.test(src) || /^\/api\/file\//.test(src)
+  return /^\/api\/fs\//.test(src)
 }
 
 /**
  * Resolve the drag target to a local image and its attachable file path.
  *
  * Priority: the pipeline's decoded `data-attach-src`. Fallback: reverse-derive
- * the path from a `/api/local-file/<rel>` src (covers HTML produced before the
+ * the path from a `/api/fs/raw/<rel>` src (covers HTML produced before the
  * attribute existed, e.g. cached renders / static exports; thumbnail srcs
- * `/api/file/…` are query-param based and cannot be reverse-derived). Returns
+ * `/api/fs/thumb?target=…` are query-param based and cannot be reverse-derived). Returns
  * null for anything that has no local-file semantics (external URLs, data:
  * URIs, plain DOM nodes).
  */
@@ -40,7 +40,7 @@ export function resolveMdImageDragTarget(e: DragEvent): { img: HTMLImageElement;
   // Fallback: only served local-file srcs are safe to reverse-derive.
   if (!isApiServedSrc(target)) return null
   const src = target.getAttribute('src') || ''
-  const m = src.match(/^\/api\/local-file\/(.+?)(?:\?.*)?$/)
+  const m = src.match(/^\/api\/fs\/raw\/(.+?)(?:\?.*)?$/)
   if (!m) return null
   let path = m[1]
   try {

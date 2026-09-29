@@ -25,14 +25,21 @@ import '../../css/diff-rows.css'
 import '../../css/share-chrome.css'
 
 import { createApp } from 'vue'
-import ShareView from './ShareView.vue'
+import ShareRoot from './ShareRoot.vue'
 import i18n from '../i18n'
 import { LongPressDirective } from '../directives/longPress'
 import { configureMarkedRenderer } from '../utils/markedConfig'
+import { installLocalMediaFallback } from '../utils/localMediaFallback'
 
 configureMarkedRenderer()
 
-const app = createApp(ShareView)
+// A shared document's local images are served through the token-scoped
+// /api/share/{token}/local/ endpoint; a deleted or out-of-scope file answers
+// 404. Show the same labelled placeholder the main app uses instead of a
+// silent broken image (issue #501).
+installLocalMediaFallback()
+
+const app = createApp(ShareRoot)
 app.use(i18n)
 app.directive('long-press', LongPressDirective)
 app.mount('#app')

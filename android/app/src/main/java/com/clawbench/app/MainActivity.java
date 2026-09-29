@@ -1366,8 +1366,8 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Navigate to {@code url}, unless the installed APK is older than the server — in
-     * which case show the blocking upgrade dialog first and only navigate if the user
+     * Navigate to {@code url}, unless the installed APK and the server versions differ —
+     * in which case show the blocking upgrade dialog first and only navigate if the user
      * force-skips.
      *
      * <p>Must be called on the UI thread (it may construct an AlertDialog). Fails open:
@@ -1387,18 +1387,25 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
-     * Blocking dialog shown before the WebView loads when the APK is older than the
-     * server. Uses the web-style card ({@link WebStyleDialog}) so the prompt reads as
-     * the same UI as the in-app dialogs, with locale-aware strings; not cancelable so
-     * BACK/tap-outside cannot bypass it.
+     * Blocking dialog shown before the WebView loads when the APK and server versions
+     * differ (either direction). Uses the web-style card ({@link WebStyleDialog}) so the
+     * prompt reads as the same UI as the in-app dialogs, with locale-aware strings; not
+     * cancelable so BACK/tap-outside cannot bypass it.
+     *
+     * <p>The direction picks the wording: an APK NEWER than the server is told that
+     * downloading installs the server's version (a downgrade), since calling that an
+     * update would be misleading.
      *
      * @param onSkip navigation to run when the user chooses to continue on the old APK
      */
     void showVersionMismatchDialog(String url, String appVersion, String serverVersion, Runnable onSkip) {
         if (isFinishing() || isDestroyed()) return;
+        String direction = VersionCompare.isClientNewer(appVersion, serverVersion)
+                ? userLangString(R.string.version_mismatch_newer)
+                : userLangString(R.string.version_mismatch_older);
         WebStyleDialog.show(this,
                 userLangString(R.string.version_mismatch_title),
-                userLangString(R.string.version_mismatch_message, appVersion, serverVersion),
+                userLangString(R.string.version_mismatch_message, appVersion, serverVersion, direction),
                 userLangString(R.string.version_mismatch_download),
                 userLangString(R.string.version_mismatch_skip),
                 () -> onVersionMismatchDownload(url),
@@ -1467,6 +1474,200 @@ public class MainActivity extends AppCompatActivity {
                         Toast.makeText(this, R.string.download_failed, Toast.LENGTH_SHORT).show());
             }
         }).start();
+    }
+
+    /**
+     * In-flight streaming downloads, keyed by the renderer's download id.
+     * Lets {@code ClawBenchNative.cancelDownload(id)} abort the matching call.
+     */
+    private final java.util.concurrent.ConcurrentHashMap<Integer, okhttp3.Call> activeDownloads =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Download a project file while streaming byte progress back to the WebView.
+     *
+     * <p>Unlike {@link #downloadFileViaManager}, which hands the URL to
+     * DownloadManager and reports progress only in the system notification, this
+     * streams the response with OkHttp and dispatches
+     * {@code clawbench-download-progress} CustomEvents so the in-product progress
+     * bar can follow it. The finished file is registered with DownloadManager so
+     * it still appears in the Downloads app.
+     *
+     * <p>Runs off the UI thread; all JS dispatch is marshalled back to the UI
+     * thread because {@code evaluateJavascript} must be called there.
+     *
+     * @param path      project-relative or absolute file path
+     * @param fileName  display/save name
+     * @param downloadId renderer-allocated id, echoed in every progress event
+     */
+    void streamDownloadWithProgress(String path, String fileName, int downloadId) {
+        new Thread(() -> {
+            String serverUrl = prefs.getString(KEY_SERVER_URL, "");
+            if (serverUrl.isEmpty()) {
+                dispatchDownloadEvent(downloadId, 0, 0, true, true);
+                return;
+            }
+            String url;
+            if (path.startsWith("/")) {
+                url = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
+            } else {
+                url = serverUrl + "/api/fs/raw/" + Uri.encode(path, "/") + "?download=1";
+            }
+            String safeName = (fileName == null || fileName.isEmpty())
+                    ? path.substring(path.lastIndexOf('/') + 1) : fileName;
+            safeName = safeName.replaceAll("[\\\\/:*?\"<>|]", "_");
+            if (safeName.isEmpty()) safeName = "download";
+            if (safeName.length() > 200) safeName = safeName.substring(0, 200);
+            final String finalName = safeName;
+
+            String cookie = CookieManager.getInstance().getCookie(serverUrl);
+            Request request = new Request.Builder().url(url)
+                    .addHeader("Cookie", cookie == null ? "" : cookie)
+                    .build();
+            okhttp3.Call call = buildTrustingOkHttpClient().newCall(request);
+            activeDownloads.put(downloadId, call);
+
+            java.io.File outDir = new java.io.File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ClawBench");
+            if (!outDir.exists() && !outDir.mkdirs()) {
+                AppLog.w(TAG, "streamDownloadWithProgress: cannot create " + outDir);
+            }
+            java.io.File outFile = new java.io.File(outDir, finalName);
+            boolean ok = false;
+            long total = 0;
+            try (Response response = call.execute()) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    AppLog.w(TAG, "streamDownloadWithProgress: HTTP " + response.code());
+                    dispatchDownloadEvent(downloadId, 0, 0, true, true);
+                    return;
+                }
+                total = response.body().contentLength();
+                long received = 0;
+                long lastReported = 0;
+                byte[] buffer = new byte[16384];
+                try (InputStream is = response.body().byteStream();
+                     FileOutputStream fos = new FileOutputStream(outFile)) {
+                    int len;
+                    while ((len = is.read(buffer)) != -1) {
+                        fos.write(buffer, 0, len);
+                        received += len;
+                        // Throttle to ~1% granularity to avoid flooding the JS bridge.
+                        if (total <= 0 || received - lastReported >= Math.max(1, total / 100)) {
+                            lastReported = received;
+                            dispatchDownloadEvent(downloadId, received, total, false, false);
+                        }
+                    }
+                }
+                ok = true;
+                dispatchDownloadEvent(downloadId, received, total, false, false);
+            } catch (Exception e) {
+                if (!call.isCanceled()) AppLog.e(TAG, "streamDownloadWithProgress failed", e);
+                // A user cancel is not a failure: report it separately so the
+                // renderer shows no error toast for a deliberate action.
+                dispatchDownloadEvent(downloadId, 0, total, true, !call.isCanceled(), call.isCanceled());
+                return;
+            } finally {
+                activeDownloads.remove(downloadId);
+            }
+
+            if (!ok) return;
+
+            // Register with DownloadManager so the system notification and the
+            // Downloads app both see the completed file.
+            long dmId = -1;
+            try {
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                String mimeType = android.webkit.MimeTypeMap.getSingleton()
+                        .getMimeTypeFromExtension(extensionOf(finalName));
+                if (mimeType == null) mimeType = "application/octet-stream";
+                dmId = dm.addCompletedDownload(finalName, getString(R.string.download_description),
+                        true, mimeType, outFile.getAbsolutePath(), outFile.length(), true);
+            } catch (Exception e) {
+                // addCompletedDownload can fail on some scopes; the file is saved.
+                AppLog.w(TAG, "streamDownloadWithProgress: addCompletedDownload failed", e);
+            }
+            Intent scanIntent = new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE);
+            scanIntent.setData(Uri.fromFile(outFile));
+            sendBroadcast(scanIntent);
+
+            // APK files keep the old auto-install behaviour. The URI must come
+            // from DownloadManager: on Android 10+ the app cannot read the
+            // public Downloads file it just wrote, so a file:// URI (or one
+            // derived from the path) is not usable by the installer.
+            if (finalName.toLowerCase().endsWith(".apk") && dmId != -1) {
+                DownloadManager dm = (DownloadManager) getSystemService(Context.DOWNLOAD_SERVICE);
+                Uri apkUri = dm.getUriForDownloadedFile(dmId);
+                if (apkUri != null) launchApkInstaller(apkUri);
+            }
+            dispatchDownloadEvent(downloadId, outFile.length(), outFile.length(), true, false);
+        }).start();
+    }
+
+    /** Lowercase extension of a file name, or "" when there is none. */
+    private static String extensionOf(String fileName) {
+        int dot = fileName.lastIndexOf('.');
+        return (dot >= 0 && dot < fileName.length() - 1)
+                ? fileName.substring(dot + 1).toLowerCase() : "";
+    }
+
+    /** Abort an in-flight {@link #streamDownloadWithProgress} call. */
+    void cancelStreamDownload(int downloadId) {
+        okhttp3.Call call = activeDownloads.remove(downloadId);
+        if (call != null) call.cancel();
+    }
+
+    /**
+     * Dispatch a download progress event into the WebView.
+     *
+     * @param downloadId renderer id
+     * @param received   bytes received
+     * @param total      total bytes, or 0 when unknown
+     * @param done       terminal event (success, failure, or cancellation)
+     * @param error      set with done to mark failure
+     */
+    private void dispatchDownloadEvent(int downloadId, long received, long total,
+                                       boolean done, boolean error) {
+        dispatchDownloadEvent(downloadId, received, total, done, error, false);
+    }
+
+    /**
+     * Dispatch a download progress event into the WebView.
+     *
+     * @param cancelled set with done when the user cancelled; the renderer then
+     *                  shows no failure toast (it is a deliberate action)
+     */
+    private void dispatchDownloadEvent(int downloadId, long received, long total,
+                                       boolean done, boolean error, boolean cancelled) {
+        runOnUiThread(() -> {
+            WebView wv = webView;
+            if (wv == null || isFinishing() || isDestroyed()) return;
+            try {
+                wv.evaluateJavascript(buildDownloadEventScript(
+                        downloadId, received, total, done, error, cancelled), null);
+            } catch (Exception e) {
+                AppLog.d(TAG, "dispatchDownloadEvent failed", e);
+            }
+        });
+    }
+
+    /**
+     * Build the JS that dispatches one download progress event.
+     *
+     * <p>Extracted (and package-private) so the wire format can be unit-tested:
+     * the renderer keys its progress bar on these exact field names, and a
+     * rename here would silently freeze the bar with no compile error on
+     * either side.
+     */
+    static String buildDownloadEventScript(int downloadId, long received, long total,
+                                           boolean done, boolean error, boolean cancelled) {
+        String detail = "{\"id\":" + downloadId
+                + ",\"received\":" + received
+                + ",\"total\":" + total
+                + ",\"done\":" + done
+                + ",\"error\":" + error
+                + ",\"cancelled\":" + cancelled + "}";
+        return "window.dispatchEvent(new CustomEvent('clawbench-download-progress', { detail: "
+                + detail + " }))";
     }
 
     /**
@@ -2001,6 +2202,13 @@ public class MainActivity extends AppCompatActivity {
         isForeground = true;
         resumeWebView();
         notifyFrontendAppForeground(true);
+        // Unconditional resume signal. notifyFrontendAppForeground(true) above
+        // is a STATE report and is a no-op in the frontend when it still
+        // believes it is in the foreground — which is the normal case on
+        // Android, because onPause's JS call is dropped while the WebView is
+        // frozen. The frontend's resume listeners (current-session re-sync) must
+        // run on every resume, so they hang off this hook instead.
+        notifyFrontendAppResume();
         // App returning to foreground — always stop native WS (WebView WS handles events)
         BackgroundService.stopNativeEventWs(this);
         // Handle notification tap intent + re-dispatch pending navigation
@@ -2047,6 +2255,31 @@ public class MainActivity extends AppCompatActivity {
                     null);
         } catch (Exception e) {
             AppLog.w(TAG, "MainActivity: notifyFrontendAppForeground failed", e);
+        }
+    }
+
+    /**
+     * Tell the frontend the app just resumed, unconditionally.
+     *
+     * Distinct from notifyFrontendAppForeground(true), which only reports a
+     * foreground STATE and is therefore swallowed by the frontend when the
+     * matching background notification never landed (the WebView was frozen
+     * while paused, so onPause's JS call was dropped and the state is still
+     * `true`). The frontend's resume listeners re-sync the current session, and
+     * they must run on every real resume regardless of the state it observes.
+     *
+     * Best-effort: no-op when the WebView isn't ready or JS is unavailable.
+     */
+    void notifyFrontendAppResume() {
+        if (webView == null || !webViewConnected) {
+            return;
+        }
+        try {
+            webView.evaluateJavascript(
+                    "if (typeof window.__clawbenchAppResume === 'function') window.__clawbenchAppResume()",
+                    null);
+        } catch (Exception e) {
+            AppLog.w(TAG, "MainActivity: notifyFrontendAppResume failed", e);
         }
     }
 
@@ -3163,8 +3396,26 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
-         * Download a file from the ClawBench server to the Downloads directory.
+         * Download a file from the ClawBench server to the Downloads directory,
+         * streaming byte progress to the in-product progress bar.
+         *
+         * <p>Deliberately a distinct method name rather than an overload of
+         * {@link #downloadFile(String)}: the WebView JavaScript bridge resolves
+         * @JavascriptInterface methods by name, and overloads collide there
+         * (one wins unpredictably), which would break the legacy one-arg call.
+         *
          * @param path File path — relative (project-internal) or absolute (external, starts with /)
+         * @param fileName Display/save name; derived from the path when empty
+         * @param downloadId Renderer-allocated id, echoed in every progress event
+         */
+        @JavascriptInterface
+        public void downloadFileWithProgress(String path, String fileName, int downloadId) {
+            activity.streamDownloadWithProgress(path, fileName, downloadId);
+        }
+
+        /**
+         * Legacy single-argument form, kept for older WebView bundles that
+         * predate the progress bar. Routes through DownloadManager as before.
          */
         @JavascriptInterface
         public void downloadFile(String path) {
@@ -3173,11 +3424,9 @@ public class MainActivity extends AppCompatActivity {
                 if (serverUrl.isEmpty()) return;
                 String url;
                 if (path.startsWith("/")) {
-                    // External file: use ?path= query param
-                    url = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                    url = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                 } else {
-                    // Project-relative: use URL path
-                    url = serverUrl + "/api/local-file/" + Uri.encode(path, "/") + "?download=1";
+                    url = serverUrl + "/api/fs/raw/" + Uri.encode(path, "/") + "?download=1";
                 }
                 // Trigger the DownloadListener by asking WebView to load the URL
                 // The ?download=1 param makes the server return Content-Disposition: attachment
@@ -3187,8 +3436,17 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Cancel an in-flight {@link #downloadFile} streaming download.
+         * @param downloadId id passed to downloadFile
+         */
+        @JavascriptInterface
+        public void cancelDownload(int downloadId) {
+            activity.cancelStreamDownload(downloadId);
+        }
+
+        /**
          * Download a file by its full URL (e.g. /api/apk) using DownloadManager.
-         * Unlike downloadFile(), this does not hardcode the /api/local-file/ prefix
+         * Unlike downloadFile(), this does not hardcode the /api/fs/raw/ prefix
          * and uses DownloadManager directly for reliable progress notifications.
          * For APK files, automatically triggers the system installer when download completes.
          * @param url Full URL or server-relative path (e.g. "/api/apk")
@@ -3354,6 +3612,24 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Save (add or update) a server entry together with its optional
+         * display name. An empty {@code name} clears any stored name.
+         *
+         * <p>A distinct method name rather than an overload of saveServer():
+         * the WebView JavaScript bridge resolves @JavascriptInterface methods
+         * by name, and overloads collide there. The 2-arg saveServer() stays
+         * for older pages that never send a name.
+         *
+         * @param url      The server URL (e.g. "https://192.168.1.100:20000")
+         * @param password The password for this server
+         * @param name     Optional display name; "" or null means none
+         */
+        @JavascriptInterface
+        public void saveServerNamed(String url, String password, String name) {
+            activity.saveServerInternal(url, password, name);
+        }
+
+        /**
          * Remove a server entry from the server list by URL.
          *
          * <p>Also retires the active pointer when the deleted server was the
@@ -3450,11 +3726,11 @@ public class MainActivity extends AppCompatActivity {
                     String downloadUrl;
                     if (path.startsWith("/")) {
                         // External file: use ?path= query param
-                        downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                        downloadUrl = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                     } else {
                         // Project-relative: use URL path
                         String encodedPath = Uri.encode(path, "/");
-                        downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                        downloadUrl = serverUrl + "/api/fs/raw/" + encodedPath + "?download=1";
                     }
 
                     OkHttpClient client = activity.buildTrustingOkHttpClient();
@@ -3586,10 +3862,10 @@ public class MainActivity extends AppCompatActivity {
                         // Build download URL
                         String downloadUrl;
                         if (path.startsWith("/")) {
-                            downloadUrl = serverUrl + "/api/local-file/?download=1&path=" + Uri.encode(path);
+                            downloadUrl = serverUrl + "/api/fs/raw/?download=1&target=" + Uri.encode(path);
                         } else {
                             String encodedPath = Uri.encode(path, "/");
-                            downloadUrl = serverUrl + "/api/local-file/" + encodedPath + "?download=1";
+                            downloadUrl = serverUrl + "/api/fs/raw/" + encodedPath + "?download=1";
                         }
 
                         Request request = new Request.Builder()
@@ -3966,6 +4242,27 @@ public class MainActivity extends AppCompatActivity {
      * Thread-safe: only called on the UI thread.
      */
     private void saveServerInternal(String url, String password) {
+        saveServerInternal(url, password, null);
+    }
+
+    /**
+     * Save (add or update) a server entry, including its optional display name.
+     *
+     * <p>{@code name} has three distinct meanings and they must not be
+     * conflated:
+     * <ul>
+     *   <li>{@code null} — the caller has no opinion (the legacy 2-arg
+     *       saveServer, used by the Connect button). The stored name is left
+     *       ALONE. Coercing null to "" here would erase a user's name every
+     *       time they connected.</li>
+     *   <li>a non-empty string — set the name (trimmed).</li>
+     *   <li>an empty/whitespace string — CLEAR the name, removing the field
+     *       entirely so the entry falls back to showing its address and cannot
+     *       collide with other unnamed servers.</li>
+     * </ul>
+     * Thread-safe: only called on the UI thread.
+     */
+    private void saveServerInternal(String url, String password, String name) {
         try {
             org.json.JSONArray list = new org.json.JSONArray(
                     prefs.getString(KEY_SERVER_LIST, "[]"));
@@ -3977,6 +4274,7 @@ public class MainActivity extends AppCompatActivity {
                 org.json.JSONObject entry = list.getJSONObject(i);
                 if (url.equals(entry.optString("url", ""))) {
                     entry.put("password", password);
+                    if (name != null) applyServerName(entry, name.trim());
                     updated = entry;
                 } else {
                     reordered.put(entry);
@@ -3988,6 +4286,7 @@ public class MainActivity extends AppCompatActivity {
                 updated = new org.json.JSONObject();
                 updated.put("url", url);
                 updated.put("password", password);
+                if (name != null) applyServerName(updated, name.trim());
             }
 
             // Insert at head (most recently used)
@@ -4000,6 +4299,25 @@ public class MainActivity extends AppCompatActivity {
             prefs.edit().putString(KEY_SERVER_LIST, result.toString()).apply();
         } catch (Exception e) {
             AppLog.e(TAG, "saveServerInternal failed", e);
+        }
+    }
+
+    /**
+     * Write the display name onto a server entry, removing the field entirely
+     * when the name is empty.
+     *
+     * <p>{@code JSONObject.remove} is not enough on its own: an entry read from
+     * prefs may carry an empty string written by an older build, and the login
+     * page treats a present-but-empty name the same as absent only if we
+     * normalise here. Keeping the key absent also means the on-disk shape is
+     * identical to a pre-name build's, so a downgrade loses nothing.
+     */
+    private static void applyServerName(org.json.JSONObject entry, String trimmedName)
+            throws org.json.JSONException {
+        if (trimmedName.isEmpty()) {
+            entry.remove("name");
+        } else {
+            entry.put("name", trimmedName);
         }
     }
 

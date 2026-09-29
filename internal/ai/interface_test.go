@@ -112,17 +112,45 @@ func TestShouldInjectSystemPrompt(t *testing.T) {
 	}
 }
 
+// TestQueueEventDataMessageIDJSON guards the queue_drain / queue_inject payload
+// shape: camelCase keys, and no content fields. The message's text and files
+// travel in its own user_message event (it is a real chat_history row by then),
+// so re-adding them here would let a client render a second bubble for the
+// same message.
 func TestQueueEventDataMessageIDJSON(t *testing.T) {
-	data := QueueEventData{MessageID: 42, Text: "hello"}
+	data := QueueEventData{SessionID: "s1", QueueID: "pending-abc", MessageID: 42}
 	b, err := json.Marshal(data)
 	assert.NoError(t, err)
 	assert.Contains(t, string(b), `"messageId":42`)
+	assert.Contains(t, string(b), `"queueId":"pending-abc"`)
 	assert.NotContains(t, string(b), `"MessageID"`)
 
 	var decoded QueueEventData
 	assert.NoError(t, json.Unmarshal(b, &decoded))
 	assert.Equal(t, int64(42), decoded.MessageID)
-	assert.Equal(t, "hello", decoded.Text)
+	assert.Equal(t, "pending-abc", decoded.QueueID)
+
+	// Structural guard: content must NOT be carried by these events.
+	obj := map[string]any{}
+	assert.NoError(t, json.Unmarshal(b, &obj))
+	for _, banned := range []string{"text", "files", "filePaths", "queue"} {
+		if _, ok := obj[banned]; ok {
+			t.Fatalf("queue event must not carry %q — the message's own user_message event owns it", banned)
+		}
+	}
+}
+
+// TestQueueAddedDataJSON guards the queue_added payload: a queued message has no
+// chat_history row yet, so it has no messageId — only the identity/content the
+// queue panel needs.
+func TestQueueAddedDataJSON(t *testing.T) {
+	data := QueueAddedData{QueueID: "pending-abc", Text: "hello", SenderClientID: "c1"}
+	b, err := json.Marshal(data)
+	assert.NoError(t, err)
+	assert.Contains(t, string(b), `"queueId":"pending-abc"`)
+	assert.Contains(t, string(b), `"text":"hello"`)
+	assert.Contains(t, string(b), `"senderClientId":"c1"`)
+	assert.NotContains(t, string(b), "messageId")
 }
 
 func TestTruncateToolOutput(t *testing.T) {

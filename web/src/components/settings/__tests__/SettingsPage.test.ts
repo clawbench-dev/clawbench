@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { shallowMount } from '@vue/test-utils'
+import { shallowMount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, computed, reactive } from 'vue'
 import SettingsPage from '@/components/settings/SettingsPage.vue'
@@ -13,6 +13,10 @@ const navStack = ref<string[]>([])
 const mockCheckAllGuards = vi.fn(() => true)
 const mockDialogConfirm = vi.fn().mockResolvedValue(false)
 const mockPopNav = vi.fn()
+const mockTruncateNav = vi.fn()
+
+/** The back handler SettingsPage registers via useFeatureBackHandler. */
+let capturedBackHandler: (() => void) | null = null
 
 function createMockNavigation() {
   return {
@@ -22,6 +26,7 @@ function createMockNavigation() {
     currentCategory: computed(() => navStack.value.length > 0 ? navStack.value[navStack.value.length - 1] ?? null : null),
     pushNav: (id: string) => { navStack.value.push(id) },
     popNav: mockPopNav,
+    truncateNav: mockTruncateNav,
     resetState: () => { navStack.value = []; needsRestart.value = false; restarting.value = false },
     restartDialogVisible: ref(false),
     changedColdFields: ref<string[]>([]),
@@ -64,7 +69,12 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 }))
 
 vi.mock('@/composables/useEdgeSwipeBack', () => ({
-  useFeatureBackHandler: vi.fn(),
+  // Capture the registered handler so tests can drive the back gesture. With
+  // the header's back button gone, this is the only remaining caller of
+  // handleBack — and it still has to honour the unsaved-changes guard.
+  useFeatureBackHandler: vi.fn((_id: string, _enabled: () => boolean, handler: () => void) => {
+    capturedBackHandler = handler
+  }),
   PRIORITY_PAGE: 100,
 }))
 
@@ -115,7 +125,6 @@ function mountPage(props = {}) {
     global: {
       stubs: {
         'lucide-refresh-cw': true,
-        'lucide-chevron-left': true,
         'lucide-settings': true,
       },
       plugins: [i18n],
@@ -123,14 +132,28 @@ function mountPage(props = {}) {
   })
 }
 
+/**
+ * Whether the breadcrumb is rendered.
+ *
+ * This suite uses shallowMount, which stubs every child — so the breadcrumb's
+ * own `.settings-breadcrumb` class never reaches the DOM. Assert on the stub
+ * component instead; the real element/class is covered by
+ * SettingsPage.component.test.ts (full mount) and SettingsBreadcrumb.test.ts.
+ */
+function hasBreadcrumb(wrapper: ReturnType<typeof mountPage>): boolean {
+  return wrapper.findComponent({ name: 'SettingsBreadcrumb' }).exists()
+}
+
 describe('SettingsPage', () => {
   beforeEach(() => {
     navStack.value = []
+    capturedBackHandler = null
     needsRestart.value = false
     restarting.value = false
     mockCheckAllGuards.mockReturnValue(true)
     mockDialogConfirm.mockResolvedValue(false)
     mockPopNav.mockReset()
+    mockTruncateNav.mockReset()
     mockConsumePendingSettingsCategory.mockReset()
     mockConsumePendingSettingsCategory.mockReturnValue(null)
     mockPendingSettingsCategory.value = null
@@ -139,7 +162,7 @@ describe('SettingsPage', () => {
   it('shows index view when nav stack is empty', () => {
     const wrapper = mountPage()
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
-    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
+    expect(hasBreadcrumb(wrapper)).toBe(false)
   })
 
   it('shows category view when nav stack has items', async () => {
@@ -147,7 +170,7 @@ describe('SettingsPage', () => {
     const wrapper = mountPage()
     await nextTick()
 
-    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(hasBreadcrumb(wrapper)).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
@@ -161,7 +184,7 @@ describe('SettingsPage', () => {
     const wrapper = mountPage()
     await nextTick()
 
-    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(hasBreadcrumb(wrapper)).toBe(true)
 
     await wrapper.setProps({ active: false })
     await nextTick()
@@ -169,7 +192,7 @@ describe('SettingsPage', () => {
     await nextTick()
 
     expect(navStack.value).toEqual(['appearance'])
-    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(hasBreadcrumb(wrapper)).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
   })
 
@@ -212,15 +235,15 @@ describe('SettingsPage', () => {
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(true)
     expect(wrapper.find('.settings-page__version').exists()).toBe(true)
     expect(wrapper.find('.settings-page__version').text()).toBe('1.2.3')
-    expect(wrapper.find('.settings-page__back').exists()).toBe(false)
+    expect(hasBreadcrumb(wrapper)).toBe(false)
   })
 
-  it('shows back button when navigating into a category', async () => {
+  it('swaps the title for the breadcrumb when navigating into a category', async () => {
     navStack.value = ['appearance']
     const wrapper = mountPage()
     await nextTick()
 
-    expect(wrapper.find('.settings-page__back').exists()).toBe(true)
+    expect(hasBreadcrumb(wrapper)).toBe(true)
     expect(wrapper.find('.settings-page__header-icon').exists()).toBe(false)
     expect(wrapper.find('.settings-page__version').exists()).toBe(false)
   })
@@ -271,18 +294,22 @@ describe('SettingsPage', () => {
   })
 
   // ─── Back navigation with unsaved changes guard ──
-  describe('handleBack', () => {
+  // Driven through the registered back handler (the edge-swipe / system back
+  // gesture): the header no longer has a back button — the breadcrumb's root
+  // crumb is the pointer route, covered in SettingsPage.component.test.ts.
+  describe('handleBack (back gesture)', () => {
     it('pops nav immediately when all guards pass', async () => {
       navStack.value = ['appearance']
       mockCheckAllGuards.mockReturnValue(true)
       const wrapper = mountPage()
       await nextTick()
 
-      await wrapper.find('.settings-page__back').trigger('click')
+      capturedBackHandler!()
       await nextTick()
 
       expect(mockPopNav).toHaveBeenCalled()
       expect(mockDialogConfirm).not.toHaveBeenCalled()
+      wrapper.unmount()
     })
 
     it('shows confirm dialog when guards fail and user cancels', async () => {
@@ -292,11 +319,12 @@ describe('SettingsPage', () => {
       const wrapper = mountPage()
       await nextTick()
 
-      await wrapper.find('.settings-page__back').trigger('click')
+      capturedBackHandler!()
       await nextTick()
 
       expect(mockDialogConfirm).toHaveBeenCalled()
       expect(mockPopNav).not.toHaveBeenCalled()
+      wrapper.unmount()
     })
 
     it('pops nav when guards fail and user confirms discard', async () => {
@@ -306,11 +334,14 @@ describe('SettingsPage', () => {
       const wrapper = mountPage()
       await nextTick()
 
-      await wrapper.find('.settings-page__back').trigger('click')
-      await nextTick()
+      capturedBackHandler!()
+      // Two awaits deep (confirmDiscardIfDirty → dialog.confirm), so a single
+      // nextTick is not enough to reach popNav.
+      await flushPromises()
 
       expect(mockDialogConfirm).toHaveBeenCalled()
       expect(mockPopNav).toHaveBeenCalled()
+      wrapper.unmount()
     })
   })
 })

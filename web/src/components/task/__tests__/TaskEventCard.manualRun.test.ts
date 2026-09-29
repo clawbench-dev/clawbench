@@ -29,6 +29,7 @@ vi.mock('lucide-vue-next', () => {
     Zap: stub('Zap'),
     Braces: stub('Braces'),
     AlertTriangle: stub('AlertTriangle'),
+    ChevronDown: stub('ChevronDown'),
   }
 })
 
@@ -176,5 +177,54 @@ describe('TaskEventCard event-context sample rows', () => {
     const text = mountCard({ eventTypes: 'pr.opened,pipeline_done' }).text()
     expect(text).toContain('pr #123')
     expect(text).toContain('task.form.varPipelineStatus')
+  })
+})
+
+// The event-context card sits next to the prompt card on the detail page; both
+// are reference material and start collapsed so the page opens compact.
+describe('TaskEventCard event-context collapse', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resetForgeBindingState()
+    mockFetchBinding.mockResolvedValue({ binding: null })
+  })
+
+  // jsdom does not implement layout, so isVisible() is unreliable — assert the
+  // v-show inline style directly (same approach as the prompt-card test).
+  const bodyStyle = (wrapper: ReturnType<typeof mountCard>) =>
+    wrapper.find('.event-context-body').attributes('style') || ''
+
+  it('renders the context body collapsed by default', () => {
+    const wrapper = mountCard()
+    expect(wrapper.find('.event-context-body').exists()).toBe(true)
+    expect(bodyStyle(wrapper)).toContain('display: none')
+    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(true)
+  })
+
+  it('expands the context body when the title is clicked', async () => {
+    const wrapper = mountCard()
+    await wrapper.find('.context-card-title').trigger('click')
+    expect(bodyStyle(wrapper)).not.toContain('display: none')
+    expect(wrapper.find('.prompt-chevron-collapsed').exists()).toBe(false)
+  })
+
+  it('toggles the context body on subsequent clicks', async () => {
+    const wrapper = mountCard()
+    const title = wrapper.find('.context-card-title')
+    await title.trigger('click') // expand
+    expect(bodyStyle(wrapper)).not.toContain('display: none')
+    await title.trigger('click') // collapse
+    expect(bodyStyle(wrapper)).toContain('display: none')
+  })
+
+  // Collapsing must hide the sample rows AND the hint together: a `v-show` on
+  // only the preview would leave the hint floating under a collapsed header.
+  // Asserting the hint lives *inside* the hidden container is what pins this —
+  // the trigger card has a `.form-hint` of its own, so a bare find() would pass
+  // even if the context hint had drifted out of the collapsible block.
+  it('keeps the hint inside the collapsible container', () => {
+    const wrapper = mountCard()
+    expect(wrapper.findAll('.event-context-body .form-hint')).toHaveLength(1)
+    expect(bodyStyle(wrapper)).toContain('display: none')
   })
 })

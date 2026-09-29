@@ -1,57 +1,61 @@
 <template>
   <div class="chat-input-wrapper" ref="rootRef">
     <!-- Top action bar (above input box) -->
-    <div class="chat-top-actions" ref="actionBarRef" :class="{ 'show-labels': showActionLabels }">
-      <div class="chat-action-group">
-        <span class="chat-group-label" :title="t('chat.actions.session')">
-          {{ t('chat.actions.session') }}
-        </span>
-        <button class="chat-action-btn" data-action="session"
-          :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
-          @click="$emit('open-session-tab', 'sessions')"
-          :title="t('chat.actions.session')">
-          <List :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.session') }}</span>
-        </button>
-        <button class="chat-action-btn"
-          @click="handleCreateClick"
-          @contextmenu.prevent="emit('create-session')"
-          :title="t('chat.create.selectAgentOrLongPress')">
-          <Plus :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.create') }}</span>
-        </button>
-        <button class="chat-action-btn"
-          @click="$emit('open-session-search')"
-          :title="t('chat.actions.sessionSearch')">
-          <Search :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.search') }}</span>
-        </button>
-        <button class="chat-action-btn"
-          @click="$emit('open-user-msg-index')"
-          :title="t('chat.actions.userMsgIndex')">
-          <MessagesSquare :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
-        </button>
-        <button
-          v-if="isACPTransport"
-          class="chat-action-btn acp-sync-btn"
-          :class="{ disabled: acpSyncDisabled }"
-          :disabled="acpSyncDisabled"
-          @click="!acpSyncDisabled && $emit('sync-acp-session')"
-          :title="acpSyncTitle"
-          :aria-label="t('chat.actions.acpSync')"
-        >
-          <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
-          <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
-        </button>
-        <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
-          @click="handleArchive"
-          :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
-          <Archive :size="14" />
-          <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
-        </button>
-      </div>
+    <div class="chat-top-actions" ref="actionBarRef"
+      :class="{ 'show-labels': showActionLabels, 'is-overflowing': actionBarOverflow }">
+      <button class="chat-action-btn" data-action="session"
+        :class="{ 'has-unread': chatUnreadCount > 0, 'has-running': chatRunning }"
+        @click="$emit('open-session-tab', 'sessions')"
+        :title="t('chat.actions.session')">
+        <List :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.session') }}</span>
+      </button>
+      <button class="chat-action-btn"
+        @click="handleCreateClick"
+        @contextmenu.prevent="emit('create-session')"
+        :title="t('chat.create.selectAgentOrLongPress')">
+        <Plus :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.create') }}</span>
+      </button>
+      <button class="chat-action-btn"
+        @click="$emit('open-session-search')"
+        :title="t('chat.actions.sessionSearch')">
+        <Search :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.search') }}</span>
+      </button>
+      <button class="chat-action-btn"
+        @click="$emit('open-user-msg-index')"
+        :title="t('chat.actions.userMsgIndex')">
+        <MessagesSquare :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
+      </button>
+      <button
+        v-if="isACPTransport"
+        class="chat-action-btn acp-sync-btn"
+        :class="{ disabled: acpSyncDisabled }"
+        :disabled="acpSyncDisabled"
+        @click="!acpSyncDisabled && $emit('sync-acp-session')"
+        :title="acpSyncTitle"
+        :aria-label="t('chat.actions.acpSync')"
+      >
+        <LoadingIndicator v-if="props.acpSyncing" size="sm" inline />
+        <ArrowRightLeft v-else :size="14" :stroke-width="1.5" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.sync') }}</span>
+      </button>
+      <button class="chat-action-btn" :class="{ disabled: !currentSessionId }"
+        @click="handleShare"
+        :title="currentSessionId ? t('chat.actions.shareSession') : t('chat.actions.noSessionToShare')">
+        <MessageSquareShare :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.share') }}</span>
+      </button>
+      <!-- Archive sits LAST: it is the destructive/terminal action on the
+           session, so it is separated from the navigation buttons. -->
+      <button class="chat-action-btn chat-action-btn-archive" :class="{ disabled: !currentSessionId }"
+        @click="handleArchive"
+        :title="currentSessionId ? t('chat.actions.archiveCurrentSession') : t('chat.actions.noSessionToArchive')">
+        <Archive :size="14" />
+        <span class="chat-action-label">{{ t('chat.actions.wideLabels.archive') }}</span>
+      </button>
       <button class="chat-action-btn auto-speech-btn" :class="{ active: autoSpeechEnabled }"
         @click="$emit('toggle-auto-speech')"
         :title="t('chat.actions.autoSpeech')">
@@ -62,16 +66,24 @@
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.refresh') }}</span>
       </RefreshButton>
     </div>
-    <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space -->
+    <!-- Conversation recommendation banner (推荐回复) — sits above the input box so it never steals input space.
+         Two elements, two motions: the outer slot owns the height collapse (so retiring the banner doesn't
+         jolt the message area) while the inner chip owns the accept flight into the input box. Putting both
+         on one element would make the collapse pull up while the flight pushes down. -->
     <Transition name="recommend-slide">
-      <div v-if="showRecommendationChip && recommendation" class="recommendation-chip">
-        <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
-        <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('chat.recommendationCollapse') : t('chat.recommendationExpand')">{{ recommendation }}</span>
-        <button class="recommendation-accept" @click.stop="acceptRecommendation" :title="t('tool.askUser.recommendationFill')">{{ t('tool.askUser.recommendationFill') }}</button>
+      <div v-if="showRecommendationBanner" class="recommendation-slot">
+        <div class="recommendation-chip" :class="{ accepted: recommendationAccepting }">
+          <Sparkles :size="13" :stroke-width="1.5" class="recommendation-icon" />
+          <span class="recommendation-text" :class="{ expanded: recommendationExpanded }" @click="toggleRecommendationExpand" :title="recommendationExpanded ? t('tool.askUser.recommendationCollapse') : t('tool.askUser.recommendationExpand')">{{ displayedRecommendation }}</span>
+          <button class="recommendation-accept" :class="{ accepted: recommendationAccepting }" :disabled="recommendationAccepting" @click.stop="acceptRecommendation" :title="recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill')">
+            <Check v-if="recommendationAccepting" :size="12" :stroke-width="3" class="recommendation-accept-check" />
+            {{ recommendationAccepting ? t('tool.askUser.recommendationFilled') : t('tool.askUser.recommendationFill') }}
+          </button>
+        </div>
       </div>
     </Transition>
     <!-- Input container -->
-    <div class="chat-input-container">
+    <div class="chat-input-container" :class="{ 'accept-pulse': recommendationAccepting }">
       <!-- Paste overlay (dynamic feedback while uploading pasted files from clipboard) -->
       <Transition name="paste-fade">
         <div v-if="isPasteOver" class="paste-overlay">
@@ -79,8 +91,10 @@
           <span>{{ t('chat.attach.uploading') }}</span>
         </div>
       </Transition>
-      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs) -->
-      <div v-if="hasAttachmentTags" class="chat-attachment-tags">
+      <!-- Attachment tags (horizontal scrollable cards — quote + pending uploads + attached file refs).
+           Wheel scrolls it sideways on PC: the scrollbar is hidden, so without this a plain
+           mouse wheel over the strip scrolls the page instead. -->
+      <div v-if="hasAttachmentTags" class="chat-attachment-tags" @wheel="onHorizontalWheel">
         <!-- Staged quote cards (shared component — same card as a sent message) -->
         <QuoteCard
           v-for="quote in quoteItems"
@@ -201,7 +215,7 @@
         @update:show="onFileMenuShowChange"
       />
       <!-- Context usage detail popup -->
-      <PopupMenu v-if="showUsageInfo" v-model:show="showUsagePopup" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
+      <PopupMenu v-if="showUsageInfo" :show="usageDrawer.effectiveOpen.value" @update:show="onUsagePopupUpdate" :target-element="usageElRef" :max-width="220" :max-height="320" :menu-items-count="10">
         <div class="usage-popup">
           <div class="usage-popup-header">
             <Activity :size="14" />
@@ -287,7 +301,7 @@
             </div>
           </template>
           <div class="usage-popup-compact">
-            <button class="usage-popup-compact-btn" @click.stop="handleCompact(); showUsagePopup = false" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
+            <button class="usage-popup-compact-btn" @click.stop="handleCompact(); usageDrawer.close()" :title="t('chat.sessionInfo.compact')" :aria-label="t('chat.sessionInfo.compact')">
               <Minimize2 :size="13" />
               {{ t('chat.sessionInfo.compact') }}
             </button>
@@ -305,7 +319,7 @@
       </template>
       <template v-if="showUsageInfo">
         <span class="session-info-divider"></span>
-        <span ref="usageElRef" class="session-info-usage" @click.stop="showUsagePopup = !showUsagePopup">
+        <span ref="usageElRef" class="session-info-usage" @click.stop="usageDrawer.toggle()">
           <Activity :size="11" />
           <span class="usage-bar">
             <span class="usage-bar-fill" :style="{ width: Math.min(usagePct, 100) + '%', background: usageColor }"></span>
@@ -321,8 +335,9 @@
 import { ref, computed, nextTick, watch, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import { pendingChatInput as pendingChatInputRef, consumePendingChatInput } from '@/utils/chatInputInjection'
 import { useI18n } from 'vue-i18n'
-import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput } from 'lucide-vue-next'
+import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Zap, Compass, Activity, MessagesSquare, Minimize2, Sparkles, ArrowRightLeft, Settings, TextCursorInput, MessageSquareShare, Check } from 'lucide-vue-next'
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
+import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
@@ -336,6 +351,8 @@ import AttachDrawer from '@/components/chat/AttachDrawer.vue'
 import AttachmentTags from '@/components/chat/AttachmentTags.vue'
 import QuoteCard from '@/components/chat/QuoteCard.vue'
 import { fromStagedQuote } from '@/utils/quoteItem'
+import { onHorizontalWheel } from '@/utils/horizontalWheelScroll'
+import { attachDragScroll, canDragScroll } from '@/utils/dragScroll'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import AsyncComponentLoader from '@/components/common/AsyncComponentLoader.vue'
 const QuickSendDrawer = defineAsyncComponent({ loader: () => import('@/components/chat/QuickSendDrawer.vue'), loadingComponent: AsyncComponentLoader })
@@ -597,6 +614,7 @@ const emit = defineEmits([
   'show-agent-selector',
   'archive-session',
   'destroy-session',
+  'share-session',
   'open-user-msg-index',
   'refresh-session',
   'switch-model',
@@ -653,9 +671,57 @@ const { current: recommendation, show: showRecommendationChip } = rec
 // collapsed to a single line). Reset whenever a new recommendation arrives.
 const recommendationExpanded = ref(false)
 
+// ── Accept feedback (采纳确认动效) ─────────────────────────
+// Accepting a recommendation is otherwise only observable as "the chip
+// vanished" — the text appearing in the input box is easy to miss, especially
+// on a narrow screen. `rec.accept()` also *immediately* marks the entry
+// dismissed (so `recommendation` goes empty), which is exactly what makes the
+// banner disappear before the user can register the click.
+//
+// So the banner is held for the length of a handoff flight: it turns green
+// (confirming the click landed) and flies down into the input box while fading
+// out, so the click reads as "the text moved into the box". The text itself is
+// filled *immediately* (see acceptRecommendation), not on arrival — deferring
+// the fill would leave a pending write that has to be dropped on session
+// switch / streaming start, with no way to put the text back.
+//
+// `recommendationAcceptedText` is the snapshot that keeps the chip's text
+// rendered while the underlying slot is already dismissed; without it the
+// banner would blank out its own label mid-animation.
+//
+// Must stay in sync with the `.recommendation-chip.accepted` animation duration
+// in the stylesheet (0.3s) — this timer is what retires the banner.
+const ACCEPT_FLIGHT_MS = 300
+const recommendationAccepting = ref(false)
+const recommendationAcceptedText = ref('')
+let recommendationAcceptTimer = null
+
+/** Whether the banner is on screen — the live recommendation, or the held
+ *  confirmation window after one was accepted. */
+const showRecommendationBanner = computed(() =>
+  recommendationAccepting.value || (showRecommendationChip.value && !!recommendation.value))
+
+/** Banner text: the accepted snapshot while confirming, else the live value. */
+const displayedRecommendation = computed(() =>
+  recommendationAccepting.value ? recommendationAcceptedText.value : recommendation.value)
+
+/** Leave the confirmation window (called by the timer, and by every path that
+ *  supersedes the banner: a new recommendation, a session switch, streaming
+ *  starting, unmount). */
+function endAcceptFeedback() {
+  if (recommendationAcceptTimer) {
+    clearTimeout(recommendationAcceptTimer)
+    recommendationAcceptTimer = null
+  }
+  recommendationAccepting.value = false
+  recommendationAcceptedText.value = ''
+}
+
 function onRecommendationEvent(evt) {
   const detail = evt.detail || {}
   if (detail.session_id == null || detail.message_id == null) return
+  // A fresh recommendation supersedes any in-flight confirmation.
+  endAcceptFeedback()
   rec.upsert(detail.session_id, detail.recommendation, detail.message_id)
   recommendationExpanded.value = false
 }
@@ -665,12 +731,33 @@ function toggleRecommendationExpand() {
 }
 
 function acceptRecommendation() {
+  if (recommendationAccepting.value) return
   const text = rec.accept()
-  if (text) inputText.value = text
+  if (!text) return
+  inputText.value = text
+  // Hold the banner through its handoff flight (green + flying into the input
+  // box), then let the existing slide-out transition retire it.
+  recommendationAcceptedText.value = text
+  recommendationAccepting.value = true
+  recommendationExpanded.value = false
+  recommendationAcceptTimer = setTimeout(endAcceptFeedback, ACCEPT_FLIGHT_MS)
+  // Land the caret at the end of the filled text so the user can keep typing
+  // (or hit send) without repositioning. Focusing is also what makes the
+  // handoff clean: the pulse ring animates box-shadow for its 0.6s, and when it
+  // ends the container's own :focus-within ring (raised by this focus) takes
+  // over seamlessly — so the input does not go dark the moment the pulse stops.
+  nextTick(() => {
+    const el = textareaRef.value
+    if (!el) return
+    el.focus()
+    const end = el.value.length
+    el.setSelectionRange(end, end)
+  })
 }
 
 // Clear any currently surfaced recommendation (chip + stored text).
 function clearRecommendation() {
+  endAcceptFeedback()
   const id = props.currentSessionId
   if (id) rec.invalidate(id)
 }
@@ -691,6 +778,22 @@ watch(lastAssistantMsgId, (mid) => {
   const sid = props.currentSessionId
   if (!sid || mid === undefined) return
   void rec.ensureFetched(sid, mid)
+})
+
+// ── Restore the recommendation when the accepted text is cleared ──
+// Accepting moves the suggestion into the input box and dismisses the banner.
+// If the user then empties the box the suggestion is no longer applied, so
+// hiding it would silently lose it — bring it back.
+//
+// This only reacts to the input *becoming* empty, and the other clear paths are
+// already safe: sending sets `loading` in the same tick (the loading watcher
+// calls rec.invalidate, deleting the slot outright, so nothing can resurface),
+// and a session switch re-derives the banner from the new session's slot.
+// A cleared-but-empty slot no-ops in undismiss(), so this can't resurrect a
+// stale recommendation.
+watch(inputText, (text) => {
+  if (text.trim()) return
+  rec.undismiss()
 })
 
 // ── Voice input (ASR) ───────────────────────────────
@@ -772,19 +875,49 @@ const actionBarRef = ref(null)
  * chat panes regardless of wide-screen mode.
  */
 const showActionLabels = ref(false)
+/**
+ * Whether the action bar actually overflows its pane — i.e. some buttons are
+ * off-screen. The strip's scrollbar is hidden, so in that state a plain mouse
+ * wheel cannot reach them; the grab cursor and the drag-to-scroll gesture are
+ * both gated on this flag so a strip that fits behaves like a normal row.
+ */
+const actionBarOverflow = ref(false)
 let actionBarObserver = null
 let actionBarMeasureTimer = null
+/** Disposer for the action bar's drag-to-scroll, or null when not attached. */
+let stopDragScroll = null
+
+/**
+ * Attach or detach drag-to-scroll to match `actionBarOverflow`.
+ *
+ * Attached only while the strip overflows: a strip that fits must not intercept
+ * a press-and-drag (there is nothing to scroll), and must not show a grab
+ * cursor. Idempotent, so it can be called after every re-measure.
+ */
+function syncActionBarDragScroll() {
+  const el = actionBarRef.value
+  if (!el) return
+  const shouldAttach = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  if (shouldAttach && !stopDragScroll) {
+    stopDragScroll = attachDragScroll(el)
+  } else if (!shouldAttach && stopDragScroll) {
+    stopDragScroll()
+    stopDragScroll = null
+  }
+}
 
 function measureActionLabels() {
   const el = actionBarRef.value
   if (!el) return
   // Force the labels-on layout synchronously via .measure-labels (shows the
-  // label spans) so scrollWidth reflects the intended final width — the group
-  // label is always present — then compare against the available clientWidth.
+  // label spans) so scrollWidth reflects the intended final width, then compare
+  // against the available clientWidth.
   el.classList.add('measure-labels')
   const overflow = el.scrollWidth > el.clientWidth + 2
   el.classList.remove('measure-labels')
   showActionLabels.value = !overflow
+  actionBarOverflow.value = canDragScroll('mouse', 0, el.scrollWidth, el.clientWidth)
+  syncActionBarDragScroll()
 }
 function scheduleMeasureActionLabels() {
   if (actionBarMeasureTimer) clearTimeout(actionBarMeasureTimer)
@@ -807,8 +940,19 @@ function openSettingsDrawer(tab) {
 }
 
 // ── Context usage popup ──
-const showUsagePopup = ref(false)
+// Registered as a tab-scoped drawer (autoRestore: false) so that switching
+// away from the chat tab closes it. PopupMenu teleports to <body> with a fixed
+// z-index, so it would otherwise stay visible over the settings page.
+const usageDrawer = useTabDrawer('chat', { autoRestore: false })
 const usageElRef = ref(null)
+
+// PopupMenu closes itself (outside click / Escape / inner click) by emitting
+// update:show=false; effectiveOpen is read-only so route the intent to the
+// drawer. Only the closing direction is ever emitted (same contract as the
+// completion menus' onXxxMenuShowChange), so there is no reopen branch.
+function onUsagePopupUpdate(v) {
+  if (!v) usageDrawer.close()
+}
 // ── Unified completion menus (slash commands + @ file references) ──
 // Both menus share useCompletionMenu (state/keyboard/select) and
 // CompletionMenu.vue (rendering); they differ only in trigger parsing, data
@@ -1081,15 +1225,15 @@ function handleFileSelect(item) {
 
 // ── Input history navigation (ArrowUp/ArrowDown) ──────────
 // Per-session, in-memory only. Derived from the session's persisted user
-// messages (excludes pending optimistic bubbles and queued messages, matching
-// the server-side user-message index source), newest first. Each entry carries
-// both the text and the attached files so a history restore can rebuild both.
+// messages (queued messages are not in this array at all), newest first. Each
+// entry carries both the text and the attached files so a history restore can
+// rebuild both.
 const historyInputs = computed(() => {
   const msgs = props.messages || []
   const list = []
   for (let i = msgs.length - 1; i >= 0; i--) {
     const m = msgs[i]
-    if (m.role !== 'user' || m.pending || m.queued) continue
+    if (m.role !== 'user') continue
     const text = typeof m.content === 'string' ? m.content.trim() : ''
     const files = Array.isArray(m.files) ? m.files : []
     if (text) list.push({ text, files })
@@ -1113,7 +1257,11 @@ function resetInputHistory() {
   historyDraft.value = { text: '', files: [] }
 }
 
-function textareaCursorRow(el) {
+// Logical row of the caret: the count of explicit newlines before it. Only a
+// fallback — a soft-wrapped line has one logical row but several visual ones,
+// and the caret guard below is about visual rows. Used when the layout cannot
+// be measured (see measureCaretVisualRows).
+function textareaLogicalCursorRow(el) {
   const text = el.value
   const pos = el.selectionStart ?? text.length
   let row = 0
@@ -1132,14 +1280,22 @@ function stepHistory(isUp, isGesture = false) {
   const el = textareaRef.value
   if (!el) return false
   const text = inputText.value
-  const rows = (text.match(/\n/g) || []).length + 1
   // In a multiline input, ArrowUp navigates history only from the first row and
   // ArrowDown only from the last row; elsewhere the arrows move the caret. A
   // swipe gesture has no caret conflict, so this guard applies to keyboard only.
-  if (!isGesture && rows > 1) {
-    const row = textareaCursorRow(el)
-    if (isUp && row > 0) return false
-    if (!isUp && row < rows - 1) return false
+  //
+  // "Row" must mean VISUAL row, not logical: a long line with no `\n` wraps and
+  // still has rows above the caret, so counting newlines would let ArrowUp jump
+  // to history mid-draft. Measure the real wrapping, and only fall back to the
+  // logical count when the layout is unmeasurable (jsdom, hidden textarea).
+  if (!isGesture) {
+    const measured = measureCaretVisualRows(el)
+    const caretRow = measured ? measured.caretRow : textareaLogicalCursorRow(el)
+    const lastRow = measured
+      ? measured.totalRows - 1
+      : (inputText.value.match(/\n/g) || []).length
+    if (isUp && caretRow > 0) return false
+    if (!isUp && caretRow < lastRow) return false
   }
   if (historyInputs.value.length === 0) return false
 
@@ -1362,8 +1518,10 @@ watch(() => props.currentSessionId, (newId, oldId) => {
 // its own slot (immediate if already cached, otherwise fetched) — the displayed
 // value is derived from the active session's slot, so no cross-session leakage.
 watch(() => props.currentSessionId, () => {
-  // A new conversation starts with a collapsed banner.
+  // A new conversation starts with a collapsed banner, and never inherits the
+  // previous session's accept confirmation.
   recommendationExpanded.value = false
+  endAcceptFeedback()
   // The recommendation for the new session is fetched once its last assistant
   // message is loaded (see the lastAssistantMsgId watcher), so we don't need to
   // fetch here with a possibly-unloaded message id.
@@ -1378,6 +1536,8 @@ const quoteItems = computed(() => props.quotes.length > 0
 // the active session's slot so the in-flight value can't be reused.
 watch(() => props.loading, (val) => {
   if (val && props.currentSessionId) {
+    // A new turn supersedes both the recommendation and its accept confirmation.
+    endAcceptFeedback()
     rec.invalidate(props.currentSessionId)
   }
 })
@@ -1419,6 +1579,13 @@ async function handleArchive() {
   if (confirmed) {
     emit('archive-session')
   }
+}
+
+/** Share the current conversation. The parent owns the dialog and snapshots the
+ *  session id, so switching sessions while it is open cannot retarget it. */
+function handleShare() {
+  if (!props.currentSessionId) return
+  emit('share-session')
 }
 
 function autoResizeTextarea() {
@@ -1754,12 +1921,22 @@ function handleSwitchTransport(transport) {
 }
 
 // Menu mutual exclusion: opening one closes the others
-watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
-watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); showUsagePopup.value = false } })
-watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); showUsagePopup.value = false } })
-watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; fileMenu.close() } })
-watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); showUsagePopup.value = false; commandMenu.close() } })
-watch(showUsagePopup, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
+watch(() => attachDrawer.isOpen.value, (v) => { if (v) { showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
+watch(showQuickMenu, (v) => { if (v) { attachDrawer.close(); settingsDrawer.close(); closeCompletionMenus(); usageDrawer.close() } })
+watch(() => settingsDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; closeCompletionMenus(); usageDrawer.close() } })
+watch(showCommandMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); fileMenu.close() } })
+watch(showFileMenu, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); usageDrawer.close(); commandMenu.close() } })
+watch(() => usageDrawer.isOpen.value, (v) => { if (v) { attachDrawer.close(); showQuickMenu.value = false; settingsDrawer.close(); closeCompletionMenus() } })
+
+// Leaving the chat tab dismisses the quick-send menu. It is a PopupMenu
+// (teleported to <body>, fixed z-index) opened by the send button, and the dock
+// buttons use @click.stop, so the document-level outside-click handler never
+// fires on a tab switch — the menu would stay open over the newly shown tab.
+// `active` is false only when the chat pane is actually hidden (narrow layout
+// on another tab), so on a wide screen the menu correctly stays put.
+watch(() => props.active, (active) => {
+  if (!active) showQuickMenu.value = false
+})
 
 onMounted(() => {
   fetchItems()
@@ -1804,11 +1981,14 @@ onBeforeUnmount(() => {
     voicePressTimer = null
   }
   voiceInput.cancel()
+  endAcceptFeedback()
   clearTimeout(pasteOverlayTimer)
   if (actionBarObserver) {
     actionBarObserver.disconnect()
     actionBarObserver = null
   }
+  stopDragScroll?.()
+  stopDragScroll = null
   if (actionBarMeasureTimer) {
     clearTimeout(actionBarMeasureTimer)
     actionBarMeasureTimer = null
@@ -1959,6 +2139,19 @@ defineExpose({
 .chat-top-actions::-webkit-scrollbar {
   display: none;
 }
+/* Drag-to-scroll affordance, only while buttons are actually off-screen.
+   Deliberately NO touch-action here: it applies to touch/pen pointers, and the
+   drag module skips touch precisely so a finger keeps panning the strip
+   natively. Setting `pan-y` would disable that pan and leave touch users unable
+   to reach the off-screen buttons at all. Mouse dragging needs no touch-action. */
+.chat-top-actions.is-overflowing {
+  cursor: grab;
+}
+.chat-top-actions.is-dragging {
+  cursor: grabbing;
+  /* The pointer is captured, so the drag must not start a text selection. */
+  user-select: none;
+}
 
 /* Wide-screen short label next to the action icon. Always in the DOM so the
    action bar can be measured with labels forced on (see .measure-labels);
@@ -1975,47 +2168,9 @@ defineExpose({
   display: inline-block;
 }
 
-/* Session button group */
-.chat-action-group {
-  display: inline-flex;
-  align-items: stretch;
-  border-radius: 20px;
-  overflow: hidden;
-  border: 1px solid var(--border-color, #e5e5e5);
-  flex-shrink: 0;
-}
-
 /* Auto-speech toggle button */
 .auto-speech-btn {
   flex-shrink: 0;
-}
-
-.chat-action-group .chat-action-btn {
-    border-radius: 0;
-    height: auto;
-}
-
-.chat-action-group .chat-action-btn:first-child {
-    border-radius: 0;
-}
-
-/* Group label: subtle text identifying the button group */
-.chat-group-label {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding:5px var(--space-3);
-    color: var(--text-muted, #999);
-    background: var(--bg-tertiary, #f0f0f0);
-    pointer-events: none;
-    user-select: none;
-    border-right: 1px solid var(--border-color, #e5e5e5);
-    font-size: var(--font-size-xs);
-    line-height: 1.3;
-}
-
-.chat-action-group .chat-action-btn:last-child {
-    border-radius: 0 var(--radius-full) var(--radius-full) 0;
 }
 
 .chat-action-btn {
@@ -2111,7 +2266,17 @@ defineExpose({
     z-index: 1;
 }
 
-/* Running session indicator — a sweep of light travelling across the button.
+/* Running session indicator — a sweep of light travelling across the button,
+ * over a faint accent tint.
+ *
+ * The tint is what makes the rounded box work. At rest the button paints no
+ * fill, so a radius only ever showed on hover/active; the sweep, however, is a
+ * straight-edged band clipped by `overflow: hidden`, and in a rounded box its
+ * leading and trailing corners get cut — it read as a truncated stripe. Giving
+ * the running state a 10% accent fill (the same recipe .active already uses)
+ * supplies a surface for the band to travel across, so the clipped corners now
+ * read as "the light is entering/leaving the chip" instead of as damage.
+ *
  * Deliberately not the session list's bottom band: this is a chip on the input
  * bar rather than a full-width list row, so a sweep reads well here without
  * the flooding problem that ruled it out for the rows (see --running-sweep in
@@ -2121,11 +2286,22 @@ defineExpose({
     position: relative;
     overflow: hidden;
     color: var(--accent-color, #0066cc);
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 10%, transparent);
 }
 
 .chat-action-btn.has-running:active {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 25%, transparent);
     transform: scale(0.92);
+}
+
+/* The running tint above outranks the generic `.chat-action-btn:hover` rule
+   (same specificity, later in the sheet), so without this the button would
+   stop responding to the pointer while a session is running — the one state
+   where the user is most likely to reach for it. Deepen the tint on hover. */
+@media (hover: hover) {
+  .chat-action-btn.has-running:hover {
+    background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
+  }
 }
 
 .chat-action-btn.has-running::before {
@@ -2293,14 +2469,29 @@ defineExpose({
 }
 
 /* Conversation recommendation banner (推荐回复) — rendered above the input box.
-   Shorter than the original (tight line box instead of the inherited 1.6 body
+   Height-collapse wrapper: it owns the bottom margin so the chip can fly out of
+   its layout box on accept without dragging the margin with it, and it is the
+   element the `recommend-slide` Transition animates (see above).
+
+   `position`/`z-index` are load-bearing, not decoration: `.chat-input-container`
+   is `position: relative` (for `.paste-overlay`), and a positioned element paints
+   after an in-flow non-positioned sibling — so without this the chip flies
+   *behind* the input box instead of over it. Raising the wrapper lifts the whole
+   banner, which is what the flight needs. */
+.recommendation-slot {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 var(--space-3);
+}
+
+/* Shorter than the original (tight line box instead of the inherited 1.6 body
    leading) but still airy: the padding keeps a full 6px above and below, so the
    single line of text does not touch the border. */
 .recommendation-chip {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  margin: 0 0 var(--space-3);
+  margin: 0;
   padding: var(--space-3) var(--space-5);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
@@ -2331,6 +2522,9 @@ defineExpose({
 
 .recommendation-accept {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   border: none;
   background: var(--accent-color, #0066cc);
   color: #fff;
@@ -2339,6 +2533,104 @@ defineExpose({
   font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
   cursor: pointer;
+  transition: background var(--duration-fast) ease, color var(--duration-fast) ease;
+}
+
+/* Accept confirmation (采纳确认): the button turns green and pops once, so the
+   click is acknowledged before the banner slides away. `animation` rather than
+   `transition` — this is a one-shot acknowledgement, not a state change. */
+.recommendation-accept.accepted {
+  background: var(--color-success, #16a34a);
+  cursor: default;
+  /* Matches the chip flight below — a longer pop would be cut off when the
+     banner is retired. */
+  animation: recommendation-accept-pop 0.3s ease-out;
+}
+
+/* A disabled button must not inherit a global reduced-opacity rule — the
+   confirmation state is deliberately full-strength. */
+.recommendation-accept.accepted:disabled {
+  opacity: 1;
+}
+
+.recommendation-accept-check {
+  flex-shrink: 0;
+}
+
+@keyframes recommendation-accept-pop {
+  0% { transform: scale(1); }
+  45% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+/* Accept handoff (采纳): the chip flies down into the input box while fading
+   out, so the click reads as "the text moved into the box" rather than "the
+   chip blinked". The downward offset is a fixed value, not a measured distance
+   to the input box — the chip already sits directly above the input container,
+   so clearing its own height plus the 6px gap lands it on the box's top edge,
+   and a fixed value keeps this animation free of layout reads.
+   `animation` (not `transition`) because this is a one-shot acknowledgement,
+   and `forwards` holds the faded-out end state until the timer retires the
+   element — without it the chip would snap back to full opacity for a frame. */
+.recommendation-chip.accepted {
+  /* The chip tints green alongside its button so the whole banner reads as
+     "accepted" rather than just the button. */
+  background: color-mix(in srgb, var(--color-success, #16a34a) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success, #16a34a) 35%, transparent);
+  animation: recommendation-chip-fly 0.3s ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes recommendation-chip-fly {
+  0% { transform: translateY(0) scale(1); opacity: 1; }
+  100% { transform: translateY(34px) scale(0.94); opacity: 0; }
+}
+
+/* Retiring the banner drops the `.accepted` class, which would snap the chip
+   back to full opacity for the whole collapse. Keep it invisible for the
+   duration of the leave so the flight can never flash back into view. This also
+   means a non-accept dismissal (sending a message, switching session) collapses
+   the empty slot rather than fading the chip's text out with it. */
+.recommend-slide-leave-active .recommendation-chip {
+  opacity: 0;
+}
+
+.recommendation-chip.accepted .recommendation-icon {
+  color: var(--color-success, #16a34a);
+}
+
+/* Input-box pulse: a short ring that draws the eye from the chip to where the
+   text actually landed. Runs on the container (not the textarea) so it does not
+   fight the :focus-within ring that focus() raises at the same moment.
+   The ring starts already visible (1px at 70%) rather than at 0 spread — a
+   shadow with no spread paints nothing, so starting at 0 would waste the first
+   ~150ms on an invisible ramp instead of reading as an immediate ping. */
+.chat-input-container.accept-pulse {
+  animation: accept-pulse 0.6s ease-out;
+}
+
+@keyframes accept-pulse {
+  0% { box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-color, #0066cc) 70%, transparent); }
+  100% { box-shadow: 0 0 0 9px transparent; }
+}
+
+/* Reduced motion: the button pop and the ring pulse are decorative, so they go.
+   The chip's flight is deliberately NOT opted out (same precedent as the session
+   row status slot): the flight IS the message. Its whole job is to say "the text
+   moved into the box", and there is no other channel carrying that — the green
+   button alone reads as "the chip was clicked", which is the ambiguity this
+   animation was added to remove. Suppressing it also made the feature invisible
+   to anyone with OS-level animations disabled, which is exactly how it was
+   reported. Add a `.recommendation-chip.accepted { animation: none }` here only
+   if the flight stops carrying information. */
+@media (prefers-reduced-motion: reduce) {
+  .recommendation-accept.accepted {
+    animation: none;
+  }
+  .chat-input-container.accept-pulse {
+    animation: none;
+    box-shadow: 0 0 0 1px var(--accent-color, #0066cc);
+  }
 }
 
 /* Base attachment card styles */
@@ -2444,23 +2736,17 @@ defineExpose({
   .chat-attachment-tags .attachment-ref:hover {
     background: color-mix(in srgb, var(--accent-color, #0066cc) 18%, transparent);
   }
-
-  .chat-attachment-tags .attachment-quote:hover {
-    background: color-mix(in srgb, var(--accent-color, #4f9cf7) 15%, transparent);
-  }
 }
 
-/* Quote card — accent-colored, same size as file cards.
-   Only the ROOT is styled from here: QuoteCard is a child component, so a
-   descendant selector like `.attachment-quote .attachment-filename` would not
-   match its internals (the scope attribute lives on QuoteCard's own elements).
-   The filename picks up the accent by INHERITING this `color`. */
-.chat-attachment-tags .attachment-quote {
-  background: color-mix(in srgb, var(--accent-color, #4f9cf7) 8%, transparent);
-  border: 1px dashed var(--accent-color, #4f9cf7);
-  color: var(--accent-color, #4f9cf7);
-  cursor: pointer;
-}
+/* The quote card's own appearance (accent border, left spine, gradient) lives in
+   the GLOBAL stylesheet (css/components.css), because the same card also renders
+   in a sent bubble, which this component's scoped styles cannot reach. Styling it
+   here too would leave the two surfaces free to drift apart — which is exactly
+   what had happened (the sent bubble had no rule at all).
+
+   Note the scoped attribute a <style scoped> rule carries would also OUT-SPECIFY
+   the global rule and silently win, so the quote card must not be restyled here.
+   Only the pieces unique to the input side (the close button) stay. */
 
 /* Input row.
    The vertical padding is symmetric on purpose: the row is `align-items:

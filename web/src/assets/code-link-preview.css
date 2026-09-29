@@ -171,6 +171,36 @@ body.code-preview-dragging * {
   flex-shrink: 0;
 }
 
+/* Download button in the unsupported-file placeholder (binary / too large).
+   Deliberately its own class rather than the file viewer's `.download-btn`:
+   that one is scoped to FileViewer.vue and would not apply here, and the two
+   surfaces must stay visually identical by intent, not by accident. */
+.code-preview-download-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding:5px var(--space-6);
+  background: var(--accent-color, #1a73e8);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-lg);
+  font-family: var(--font-ui);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  cursor: pointer;
+  transition: filter var(--duration-base);
+}
+
+.code-preview-download-btn svg {
+  flex-shrink: 0;
+}
+
+.code-preview-download-btn:hover {
+  filter: brightness(1.15);
+}
+
 .code-preview-notice {
   padding: var(--space-2) var(--space-5);
   font-size: var(--font-size-xs);
@@ -576,106 +606,28 @@ body.code-preview-dragging * {
   color: var(--text-muted, #80868b);
 }
 
-.code-preview-sheet-row2 {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  width: 100%;
-  min-height: 32px;
-  padding: var(--space-1) var(--space-5);
-  box-sizing: border-box;
-  border-bottom: 1px solid var(--border-color, #e5e5e5);
-  flex-shrink: 0;
+/* The touch sheet renders the SAME `.code-preview-meta` tool row as the
+   floating card and the file manager's docked pane (CodePreviewToolbar). It
+   used to have its own `.code-preview-sheet-row2` here plus a pill-button
+   footer, which made the same preview wear two different toolbars. Those
+   rules are gone on purpose — do NOT reintroduce a sheet-specific tool row. */
+
+/* Inside the drawer the tool row is NOT a drag handle: the drawer has its own
+   grab affordance and the row is inside a scrollable sheet. Reset both the
+   grab cursor and `touch-action: none` — the latter exists on the floating row
+   so a touch drag pans the card instead of scrolling the page, but here it
+   would swallow the vertical swipe that scrolls the drawer body. */
+.code-preview-sheet .code-preview-meta {
+  cursor: default;
+  touch-action: auto;
 }
 
-.code-preview-sheet-meta-info {
-  font-size: var(--font-size-xs);
-  color: var(--text-hint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-
-.code-preview-sheet-tools {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-
-/* The BottomSheet <footer> (flex row) becomes the horizontal scroll container:
-   its width is bounded by the panel, so overflowing buttons scroll here. The
-   default footer padding/gap are dropped so the scrollable content hugs the
-   scrollport (padding lives on the inner row instead). */
-.code-preview-sheet-panel > .bs-footer {
-  overflow-x: auto;
-  scrollbar-width: thin;
-  min-width: 0;
-  justify-content: flex-start;
-  padding: 0;
-  gap: 0;
-}
-
-.code-preview-sheet-footer {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-5);
-  /* Natural content width; when wider than the footer row it overflows and
-     the .bs-footer above scrolls horizontally. */
-  width: 100%;
-  min-width: 100%;
-  box-sizing: border-box;
-}
-
-/* Footer buttons now use the shared `.fbtn` pill styles (modal-footer-btn.css,
-   loaded by BottomSheet). These rules keep only the CodeLinkPreview-specific
-   states/variants that the shared classes don't cover. */
-
-/* Action buttons (open full / quote) flex to fill the remaining width for
-   a balanced layout, no middle void, and larger touch targets on mobile. */
-.code-preview-footer-btn.action-btn {
-  flex: 1;
-  min-width: max-content;
-}
-
-.code-preview-footer-btn.primary-btn {
-  flex: 1.15;
-}
-
-/* Active state (e.g. search bar open) — tint the neutral pill. */
-.code-preview-footer-btn.is-active {
-  background: color-mix(in srgb, var(--accent-color, #1a73e8) 12%, var(--bg-tertiary, #f1f3f5));
-  color: var(--accent-color);
-}
-
-/* Icon-only footer buttons: collapse the shared pill padding to a 30px round
-   button (refresh / search / reveal). */
-.code-preview-footer-btn.icon-btn {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  flex-shrink: 0;
-}
-
-/* Refresh spinner for the footer refresh button (.refresh-btn.is-loading). */
-.refresh-btn.is-loading svg {
-  animation: code-preview-spin 0.8s linear infinite;
-}
-
+/* Square icon button used by the in-preview search bars (prev / next / close). */
 .code-preview-btn.icon-only {
   width: 28px;
   height: 28px;
   padding: 0;
   border-radius: var(--radius-sm);
-}
-
-.code-preview-btn.icon-only.close {
-  font-size: var(--font-size-2xl);
-  line-height: 1;
 }
 
 /* Reduced motion preference */
@@ -807,20 +759,10 @@ body.code-preview-dragging * {
   min-height: 0;
 }
 
-/* Load failure: message centered over the pane. */
-.code-preview-media-error {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-5);
-  padding: 24px;
-  text-align: center;
-  color: var(--text-secondary, #666);
-  background: var(--bg-primary, #fff);
-}
+/* Load failure is rendered by the shared MediaLoadError component, whose
+   styling lives in the global media-block.css (`.media-load-error`). It is not
+   scoped here because the same element is also mounted imperatively for v-html
+   content, outside any component tree. */
 
 .code-preview-media {
   position: relative;

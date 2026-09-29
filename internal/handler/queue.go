@@ -96,27 +96,16 @@ func QueueInjectHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Announce the message as a normal user message so every subscribed device
-	// (including the sender) drops its pending bubble and shows it inline. The
-	// DB id is preserved from the original enqueue, so ordering is already
-	// correct — no re-sort needed.
-	//
-	// No SenderClientID: the message was queued earlier, possibly by another
-	// device, so the acting device must also update. A duplicate user_message
-	// for an id it already holds is idempotent on the client.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type: "user_message",
-		UserMessage: &ai.UserMessageData{
-			MessageID: msgID,
-			QueueID:   queueID,
-			Queued:    false,
-		},
-	})
-	// Tell clients the bubble is no longer waiting in the queue. This is NOT
+	// Tell clients the entry is no longer waiting in the queue. This is NOT
 	// queue_drain: a drain means "this message starts its OWN turn" and makes
 	// clients open a new assistant placeholder. An inserted message joins the
-	// turn already running, so clients must only clear its pending state and
-	// leave the current reply alone (the steer boundary handles the split).
+	// turn already running, so clients must only drop it from the queue panel
+	// and leave the current reply alone (the steer boundary handles the split).
+	//
+	// No content/files: the message's own user_message event is emitted by
+	// InjectQueuedMessage (it is a real chat_history row now), so emitting them
+	// here too would duplicate the bubble. No SenderClientID: the message may
+	// have been queued by another device, so the acting device must update too.
 	ws.EmitToSession(sessionID, ai.StreamEvent{
 		Type: "queue_inject",
 		QueueEvent: &ai.QueueEventData{
@@ -281,41 +270,26 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist the message + start execution or signal the running drain loop.
-	// msgID is the persisted DB id of the message, used to broadcast a
-	// user_message event so other devices see it before it drains
-	// (cross-device sync).
-	started, _, msgID, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
-		SessionID:   sessionID,
-		ProjectPath: info.ProjectPath,
-		BackendName: info.Backend,
-		AgentID:     req.AgentID,
-		Message:     req.Message,
-		Files:       validatedFiles,
-		QueueID:     req.QueueID,
-		ModelID:     req.ModelID,
-		Transport:   req.Transport,
+	// EnqueueAndMaybeStart emits the announcement itself: user_message when the
+	// session was idle (the message is a real chat_history row now) or
+	// queue_added when a runner is live. Centralizing it there keeps this
+	// handler and the /api/ai/chat busy path from drifting.
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+		SessionID:      sessionID,
+		ProjectPath:    info.ProjectPath,
+		BackendName:    info.Backend,
+		AgentID:        req.AgentID,
+		Message:        req.Message,
+		Files:          validatedFiles,
+		QueueID:        req.QueueID,
+		ModelID:        req.ModelID,
+		Transport:      req.Transport,
+		SenderClientID: req.ClientID,
 	})
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
 		return
 	}
-
-	// Emit user_message to other session subscribers for cross-device sync.
-	// SenderClientID lets the sending device skip its own echo. MessageID is
-	// the real persisted DB id (> 0), matching the POST /api/ai/chat path.
-	ws.EmitToSession(sessionID, ai.StreamEvent{
-		Type: "user_message",
-		UserMessage: &ai.UserMessageData{
-			MessageID:      msgID,
-			Content:        req.Message,
-			Files:          validatedFiles,
-			SenderClientID: req.ClientID,
-			QueueID:        req.QueueID,
-			// Always queued: sending never joins the running turn, that is an
-			// explicit action on the queued bubble (see QueueInjectHandler).
-			Queued: true,
-		},
-	})
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
@@ -408,7 +382,7 @@ func handleQueueGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msgs == nil {
-		msgs = []model.ChatMessage{}
+		msgs = []model.QueuedMessage{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"queue": msgs,

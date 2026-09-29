@@ -28,13 +28,13 @@ import { annotateShareLinks } from '@/share/shareLinks.ts'
 
 /**
  * Build the served URL for a project-relative (already normalized, unencoded)
- * media path. Normal mode: /api/local-file/<rel>. Share mode: the token-scoped
+ * media path. Normal mode: /api/fs/raw/<rel>. Share mode: the token-scoped
  * /api/share/{token}/local/<rel> endpoint (relative refs resolve against the
  * shared file's directory). Share mode skips the thumbnail optimization — the
  * thumb endpoint is project-cookie based and would 401 anonymously.
  */
 export function buildLocalMediaUrl(rel: string, imageTimestamp: number): string {
-    const url = isShareMode() ? shareApiUrl('local/' + rel) : `/api/local-file/${rel}`
+    const url = isShareMode() ? shareApiUrl('local/' + rel) : `/api/fs/raw/${rel}`
     return url + `?t=${imageTimestamp}`
 }
 
@@ -54,7 +54,7 @@ export interface MarkdownSource {
 export interface FixLocalImagePathsOptions {
     /** Directory of the markdown file; relative image srcs resolve against it. */
     baseDir: string
-    /** Cache-buster appended to /api/local-file/ URLs (?t=…). */
+    /** Cache-buster appended to /api/fs/raw/ URLs (?t=…). */
     imageTimestamp: number
     /** Desktop (true) uses a wider inline thumbnail. */
     isPC: boolean
@@ -66,9 +66,9 @@ export interface FixLocalImagePathsOptions {
  * Resolves relative `<img src>` paths against the markdown file's directory:
  * - http(s)://, protocol-relative //, leading-/ and data: URIs are untouched;
  * - other relative paths are resolved against `baseDir`, normalized, and served
- *   as `/api/local-file/<rel>?t=<ts>` (cache-busted);
+ *   as `/api/fs/raw/<rel>?t=<ts>` (cache-busted);
  * - raster formats the thumb endpoint can decode (png/jpg/jpeg) get a lightweight
- *   JPEG thumbnail inline src (`/api/file/thumb?path=…&w=…`) plus the original
+ *   JPEG thumbnail inline src (`/api/fs/thumb?target=…&w=…`) plus the original
  *   URL kept in `data-full-src` for the lightbox;
  * - every <img> is lifted into a block-level `.image-block-wrapper` figure with a
  *   header bar (view / attach / open buttons) — uniform across mobile and PC.
@@ -82,10 +82,10 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             if (!srcMatch) return match
             const src = srcMatch[1]
             // Remote, embedded, or already-served srcs pass through untouched.
-            // `/api/local-file/…` matters here: re-rendering markup that already
+            // `/api/fs/raw/…` matters here: re-rendering markup that already
             // went through this step (or markup authored with a served URL) must
-            // not be wrapped a second time into `?path=/api/local-file/…`.
-            if (/^(https?:|\/\/|data:|\/api\/local-file\/|\/api\/file\/)/i.test(src)) return match
+            // not be wrapped a second time into `?target=/api/fs/raw/…`.
+            if (/^(https?:|\/\/|data:|\/api\/fs\/)/i.test(src)) return match
             // An absolute src is a real filesystem path (the AI writing
             // `![](/tmp/chart.png)`), NOT a site-root URL: resolve it through
             // the absolute form so it renders instead of 404-ing at the site
@@ -133,7 +133,7 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             // (the relative form would resolve against the project root and
             // silently point at a different — usually nonexistent — file).
             const fullSrc = isAbsoluteSrc
-                ? `/api/local-file/?path=${encodeURIComponent(src)}&t=${imageTimestamp}`
+                ? `/api/fs/raw/?target=${encodeURIComponent(src)}&t=${imageTimestamp}`
                 : buildLocalMediaUrl(rel, imageTimestamp)
             // Raster formats the thumb endpoint can decode → use a lightweight JPEG
             // thumbnail for the inline src (kept stable so ETag revalidation refreshes

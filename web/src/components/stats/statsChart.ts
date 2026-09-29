@@ -22,11 +22,69 @@ export function resolveStatsPalette() {
     text: read('--text-primary', '#1f2328'),
     textSecondary: read('--text-secondary', '#656d76'),
     axisLine: read('--border-color', '#d0d7de'),
+    // Surfaces the charts are painted over. The bar charts now carry a
+    // full-width track, so the value label needs to mask it — otherwise the
+    // track's line runs straight through the digits. The two panels sit on
+    // different surfaces (usage chart cards are --bg-primary, the cloc card
+    // and the donut summary are --bg-secondary), so both are read here rather
+    // than assuming one.
+    surface: read('--bg-primary', '#ffffff'),
+    surfaceAlt: read('--bg-secondary', '#f8f9fa'),
   }
 }
 
 /** Palette for chart series (distinct enough in both light and dark). */
 const SERIES_COLORS = ['#4f8cff', '#34d399', '#fbbf24', '#f472b6', '#a78bfa', '#22d3ee', '#fb7185', '#4ade80']
+
+/**
+ * Thin-bar geometry shared by every horizontal bar chart in the stats tab.
+ * The bars are deliberately hairline (4px) with a faint full-width track
+ * behind them — the value reads from the track's length, so a thick block
+ * would only add visual weight without adding information.
+ */
+export const BAR_MAX_WIDTH = 4
+
+/**
+ * Donut geometry shared by every pie in the stats tab. A hairline ring (8% of
+ * the radius) with a generous hole keeps the chart light and leaves room for
+ * the centered total; the previous 28%-thick ring read as a solid disc.
+ */
+export const DONUT_RADIUS: [string, string] = ['64%', '72%']
+
+/**
+ * Two stacked `graphic` text nodes drawn inside a donut hole: the metric total
+ * on top, a quiet label beneath it. Returns `[]` when there is no total so
+ * callers can spread it unconditionally. Requires GraphicComponent to be
+ * registered (see UsageChart.vue).
+ */
+function centerTotalGraphic(p: StatsPalette, text: string, label: string) {
+  if (!text) return []
+  return [
+    { type: 'text', left: 'center', top: '36%', style: { text, fill: p.text, fontSize: 18, fontWeight: 600, textAlign: 'center' } },
+    { type: 'text', left: 'center', top: '47%', style: { text: label, fill: p.textSecondary, fontSize: 10, textAlign: 'center' } },
+  ]
+}
+
+type StatsPalette = ReturnType<typeof resolveStatsPalette>
+
+/**
+ * Style for the value printed at the end of a horizontal bar. The bar charts
+ * draw a full-width track behind the bar, so the label has to be painted over
+ * it with the card's own surface colour — otherwise the track line runs
+ * straight through the digits. `surface` is the colour of whatever the chart
+ * is mounted on (see `surface` / `surfaceAlt` in the palette).
+ */
+export function barValueLabelStyle(p: StatsPalette, surface: string, formatter: (v: number) => string) {
+  return {
+    show: true,
+    position: 'right' as const,
+    color: p.textSecondary,
+    fontSize: 10,
+    backgroundColor: surface,
+    padding: [1, 3],
+    formatter: (pp: unknown) => formatter((pp as { value: number }).value),
+  }
+}
 
 /**
  * Whether we are on a narrow (mobile) viewport. Mirrors the app's wide-screen
@@ -69,17 +127,15 @@ export function buildBarOption(categories: string[], values: number[], metric: U
     series: [{
       type: 'bar',
       data: values,
-      itemStyle: { color: p.accent, borderRadius: [0, 3, 3, 0] },
-      barMaxWidth: 22,
-      label: {
-        show: true,
-        position: 'right',
-        color: p.textSecondary,
-        fontSize: 10,
-        // Raw token counts (input/output/…) rendered in the same K/M tiers as
-        // the table so the chart never disagrees with the detail numbers.
-        formatter: (pp: unknown) => formatMetricValue(metric, (pp as { value: number }).value),
-      },
+      // Hairline bar over a faint track: the track spans the full plot width
+      // so the bar's length (not its bulk) carries the value.
+      itemStyle: { color: p.accent, borderRadius: 2 },
+      barMaxWidth: BAR_MAX_WIDTH,
+      showBackground: true,
+      backgroundStyle: { color: p.axisLine, opacity: 0.35, borderRadius: 2 },
+      // Raw token counts (input/output/…) rendered in the same K/M tiers as
+      // the table so the chart never disagrees with the detail numbers.
+      label: barValueLabelStyle(p, p.surface, v => formatMetricValue(metric, v)),
     }],
   }
   if (many) {
@@ -94,14 +150,24 @@ export function buildBarOption(categories: string[], values: number[], metric: U
   return opt as EChartsCoreOption
 }
 
-/** Build a pie/donut option (one per selected metric column). */
-export function buildPieOption(categories: string[], values: number[], metric: UsageMetricId): EChartsCoreOption {
+/**
+ * Build a pie/donut option (one per selected metric column). The center
+ * carries the metric's total — this pie has no adjacent totals card, so the
+ * hole is the natural place to put the number.
+ */
+export function buildPieOption(
+  categories: string[],
+  values: number[],
+  metric: UsageMetricId,
+  centerLabel?: string,
+): EChartsCoreOption {
   const p = resolveStatsPalette()
   const total = values.reduce((a, b) => a + b, 0)
   const data = categories
     .map((name, i) => ({ name, value: values[i] }))
     .filter(d => d.value > 0)
   const showLegend = data.length <= 8
+  const noData = total <= 0
   return {
     tooltip: {
       trigger: 'item',
@@ -112,13 +178,15 @@ export function buildPieOption(categories: string[], values: number[], metric: U
     },
     legend: showLegend ? { bottom: 0, textStyle: { color: p.textSecondary }, type: 'scroll' } : { show: false },
     color: SERIES_COLORS,
-    title: total <= 0 ? { text: gt('stats.noData'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 12 } } : undefined,
+    title: noData ? { text: gt('stats.noData'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 12 } } : undefined,
+    graphic: noData || !centerLabel ? [] : centerTotalGraphic(p, formatMetricValue(metric, total), centerLabel),
     series: [{
       type: 'pie',
-      radius: ['40%', '68%'],
-      center: ['50%', '46%'],
+      radius: DONUT_RADIUS,
+      center: ['50%', '44%'],
       data,
-      label: { show: showLegend, color: p.textSecondary, fontSize: 10, formatter: '{b}' },
+      label: { show: false },
+      emphasis: { scale: false, itemStyle: { opacity: 0.85 } },
     }],
   }
 }
@@ -213,13 +281,14 @@ export function buildOverviewDonut(input: number, output: number, inputLabel: st
       ? { text: gt('stats.onlyOneSide'), left: 'center', top: 4, textStyle: { color: p.textSecondary, fontSize: 11 } }
       : undefined,
     legend: { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    graphic: total > 0 ? centerTotalGraphic(p, formatTokenCount(total), gt('stats.colTotal')) : [],
     series: [{
       type: 'pie',
-      radius: ['45%', '72%'],
+      radius: DONUT_RADIUS,
       center: ['50%', '44%'],
       data,
       label: { show: false },
-      emphasis: { scaleSize: 6 },
+      emphasis: { scale: false, itemStyle: { opacity: 0.85 } },
     }],
   }
 }
@@ -227,13 +296,27 @@ export function buildOverviewDonut(input: number, output: number, inputLabel: st
 /**
  * Cache composition donut for the input slice: cache hit vs miss. The parent
  * shows this when the user clicks the input slice of the overview donut.
+ *
+ * `inputTotal` is the range's authoritative input-token total and is what the
+ * hole displays — the slices are a *breakdown* of input, so the center must
+ * agree with the "输入 Tokens" card in the overview. Computing it as
+ * `hit + miss` would drift from that card whenever a row recorded input
+ * without a cache split (older backends, rows written before the cache
+ * columns existed). Falls back to `hit + miss` when not supplied.
  */
-export function buildCacheDonut(hit: number, miss: number, hitLabel: string, missLabel: string): EChartsCoreOption {
+export function buildCacheDonut(
+  hit: number,
+  miss: number,
+  hitLabel: string,
+  missLabel: string,
+  inputTotal?: number,
+): EChartsCoreOption {
   const p = resolveStatsPalette()
   const data = [
     { name: hitLabel, value: hit },
     { name: missLabel, value: miss },
   ].filter(d => d.value > 0)
+  const total = inputTotal ?? (hit + miss)
   const noData = data.length === 0
   return {
     tooltip: {
@@ -246,13 +329,14 @@ export function buildCacheDonut(hit: number, miss: number, hitLabel: string, mis
     color: [SERIES_COLORS[2], SERIES_COLORS[5]],
     title: noData ? { text: gt('stats.noData'), left: 'center', top: 'middle', textStyle: { color: p.textSecondary, fontSize: 12 } } : undefined,
     legend: noData ? undefined : { bottom: 0, textStyle: { color: p.textSecondary }, icon: 'circle', itemWidth: 8, itemHeight: 8 },
+    graphic: noData ? [] : centerTotalGraphic(p, formatTokenCount(total), gt('stats.colInput')),
     series: [{
       type: 'pie',
-      radius: ['45%', '72%'],
+      radius: DONUT_RADIUS,
       center: ['50%', '44%'],
       data,
       label: { show: false },
-      emphasis: { scaleSize: 6 },
+      emphasis: { scale: false, itemStyle: { opacity: 0.85 } },
     }],
   }
 }

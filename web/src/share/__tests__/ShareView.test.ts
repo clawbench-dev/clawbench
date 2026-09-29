@@ -38,6 +38,19 @@ vi.mock('@/stores/app.ts', () => ({
   store: { state: { projectRoot: '', homeDir: '' } },
 }))
 
+// The download button routes through this helper (which streams via XHR and
+// drives the progress bar). Mocking it keeps the test on ShareView's own
+// URL-selection logic and off the network.
+// Spread the real module: ShareView also imports buildLocalFileUrl from it,
+// and a partial mock would drop that export (breaking image-block rendering).
+const { mockDownloadUrlWithProgress } = vi.hoisted(() => ({
+  mockDownloadUrlWithProgress: vi.fn(),
+}))
+vi.mock('@/utils/download.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/utils/download.ts')>()),
+  downloadUrlWithProgress: mockDownloadUrlWithProgress,
+}))
+
 // OfficePreview / OpenApiPreview / CodeMirrorViewer are loaded through
 // defineAsyncComponent (a delay timer would leak in the test env), so instead
 // of module-mocking them they are stubbed per-mount via VTU's `stubs` option —
@@ -392,9 +405,13 @@ describe('ShareView — in-place navigation to referenced files', () => {
     await flushPromises()
     await flushPromises()
 
-    const href = wrapper.find('a.share-btn[download]').attributes('href') || ''
-    expect(href).toContain('/download?path=')
-    expect(decodeURIComponent(href)).toContain(LINKED.path)
+    mockDownloadUrlWithProgress.mockClear()
+    await wrapper.find('button.share-btn--download').trigger('click')
+
+    expect(mockDownloadUrlWithProgress).toHaveBeenCalledTimes(1)
+    const [url] = mockDownloadUrlWithProgress.mock.calls[0]
+    expect(url).toContain('/download?path=')
+    expect(decodeURIComponent(url)).toContain(LINKED.path)
   })
 
   it('ignores a share-open-file event for the file already on screen', async () => {
@@ -521,9 +538,11 @@ describe('ShareView — over-cap files fall back to download', () => {
     const unsupported = wrapper.find('.share-unsupported')
     expect(unsupported.exists()).toBe(true)
     expect(unsupported.text()).toContain('Too large to preview')
-    const link = unsupported.find('a.share-download-btn')
-    expect(link.exists()).toBe(true)
-    expect(link.attributes('href')).toContain('/api/share/tokShareTest/download')
+    // A button, not an anchor: the download must route through the progress
+    // helper rather than the browser's native download mechanism.
+    const btn = unsupported.find('button.share-download-btn')
+    expect(btn.exists()).toBe(true)
+    expect(unsupported.find('a.share-download-btn').exists()).toBe(false)
   })
 
   it('does not render an empty markdown preview for an over-cap markdown file', async () => {

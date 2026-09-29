@@ -74,8 +74,6 @@
       :active="active"
       :isLastAssistant="isLastAssistant(msg, i)"
       :isLastMessage="i === messages.length - 1"
-      :midTurnSupported="midTurnSupported"
-      :pendingActionBusy="pendingActionBusy === msg.queueId || pendingActionBusy === String(msg.id)"
       @toggle-tool="$emit('toggle-tool', $event)"
       @show-tool-detail="$emit('show-tool-detail', $event)"
       @show-metadata="$emit('show-metadata', $event)"
@@ -88,9 +86,6 @@
       @ensure-content="$emit('ensure-content', $event)"
       @resume-session="$emit('resume-session', $event)"
       @reset-session="$emit('reset-session', $event)"
-
-      @remove-pending="$emit('remove-pending', $event)"
-      @pending-action="$emit('pending-action', $event)"
       @fork-from-message="$emit('fork-from-message', $event)"
       @rewind-from-message="$emit('rewind-from-message', $event)"
     />
@@ -121,16 +116,15 @@
     </div>
   </Transition>
 
-  <!-- User message index drawer -->
+  <!-- Conversation index drawer -->
   <UserMsgIndexDrawer
     :open="userMsgIndexDrawer.effectiveOpen.value"
     :messages="userMsgIndexList"
-    :active-id="nearestUserMsgId"
+    :active-id="nearestIndexMsgId"
     :loading="loadingIndex"
     :jumping="loadingTarget"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
-    @fork="$emit('fork-from-message', $event)"
   />
 
   <!-- Table row expand modal -->
@@ -199,14 +193,9 @@ const props = defineProps({
   totalMessages: { type: Number, default: 0 },
   staticBlockCache: Object,
   active: { type: Boolean, default: true },
-  /** Whether the active backend can inject into the running turn (drives the
-   *  queued bubble's single action label: insert vs interrupt). */
-  midTurnSupported: { type: Boolean, default: false },
-  /** queueId (or id) of the queued bubble whose action request is in flight. */
-  pendingActionBusy: { type: String, default: '' },
 })
 
-const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'remove-pending', 'pending-action', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
+const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session'])
 
 const messagesRef = ref(null)
 const { handleDblClick } = useDoubleClickCopy()
@@ -493,7 +482,7 @@ let wheelActive = false
 let mouseDownActive = false
 let wheelDecayTimer = null
 
-// Throttle scrollTick for nearestUserMsgId recomputation
+// Throttle scrollTick for nearestIndexMsgId recomputation
 const scrollFrameScheduler = new StreamFrameScheduler()
 
 function handleScroll() {
@@ -1106,14 +1095,16 @@ function nearestMessageIndex(role) {
   return bestIdx
 }
 
-const nearestUserMsgId = computed(() => {
+const nearestIndexMsgId = computed(() => {
   // Gate on the drawer being open. This computed's only consumer is the index
   // drawer's `active-id`, but it depends on scrollTick, which bumps on every
   // scroll frame — including the continuous auto-scroll during streaming. With
   // a long session that meant a full message walk (getBoundingClientRect per
   // message) on every frame while the drawer was closed and nobody was looking.
   if (!userMsgIndexDrawer.effectiveOpen.value) return null
-  const idx = nearestMessageIndex('user')
+  // The index lists both roles now, so the highlight tracks the nearest message
+  // of any role rather than only the nearest user message.
+  const idx = nearestMessageIndex()
   return idx === null ? null : (props.messages[idx]?.id ?? null)
 })
 

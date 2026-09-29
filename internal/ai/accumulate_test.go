@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -23,6 +24,57 @@ func TestAccumulateBlock_Thinking(t *testing.T) {
 	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " more"})
 	assert.Len(t, blocks, 1)
 	assert.Equal(t, "Think more", blocks[0].Text)
+}
+
+func TestAccumulateBlock_ThinkingMintsStableID(t *testing.T) {
+	// The block's identity is minted when it OPENS and reported to the caller, so
+	// the executor can put it on the very event that opens the block. Every later
+	// delta of the same block reports the same id, which is what
+	// lets the WS coalescer tell two consecutive blocks apart.
+	blocks := []model.ContentBlock{}
+
+	id1 := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "first"})
+	require.NotEmpty(t, id1, "a thinking block must get an identity when it opens")
+	require.Len(t, blocks, 1, "the opening delta appends a block")
+	assert.Equal(t, id1, blocks[0].ThinkID, "the id must be stored on the block")
+	assert.True(t, strings.HasPrefix(id1, "th_"), "id format, got %q", id1)
+
+	id2 := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: " second"})
+	assert.Equal(t, id1, id2, "every delta of one block reports the same id")
+	assert.Len(t, blocks, 1)
+	assert.Equal(t, "first second", blocks[0].Text)
+
+	// A tool_use separates blocks: the next thinking delta opens a NEW block and
+	// must get a DIFFERENT id, or the two would merge under one key.
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Read", ID: "t1"}})
+	id3 := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "third"})
+	assert.NotEqual(t, id1, id3, "a new block must not reuse the previous block's id")
+	assert.Len(t, blocks, 3)
+}
+
+func TestAccumulateBlock_NonThinkingEventsReportNoID(t *testing.T) {
+	// Only thinking carries an identity; everything else must leave the event's
+	// ThinkID empty so it is not stamped onto unrelated frames.
+	blocks := []model.ContentBlock{}
+
+	id := AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "text"})
+	assert.Empty(t, id)
+
+	id = AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done"})
+	assert.Empty(t, id)
+
+	id = AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{Name: "Read", ID: "t1"}})
+	assert.Empty(t, id)
+}
+
+func TestAccumulateBlock_EmptyThinkingDeltaDoesNotMintID(t *testing.T) {
+	// An empty delta must not open a block (it would render as an empty spinner),
+	// so it must not mint an identity either — a stray id would key a block that
+	// has no content behind it.
+	blocks := []model.ContentBlock{}
+	id := AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: ""})
+	assert.Empty(t, id)
+	assert.Empty(t, blocks)
 }
 
 func TestAccumulateBlock_ToolUseStart(t *testing.T) {
@@ -343,6 +395,85 @@ func TestAccumulateBlock_ThinkingDoneNoThinkingBlock(t *testing.T) {
 	blocks := []model.ContentBlock{}
 	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done"})
 	assert.Len(t, blocks, 0)
+}
+
+// TestAccumulateBlock_ThinkingDoneIsParentScoped pins the fix for the reported
+// "headless thinking block stuck on 输出中": an unfiltered thinking_done marked
+// whichever thinking block happened to be last, so with concurrent sub-agents
+// agent A's completion closed agent B's block (B interleaved a delta after A's
+// last one) while A's own stayed done=false.
+func TestAccumulateBlock_ThinkingDoneIsParentScoped(t *testing.T) {
+	var blocks []model.ContentBlock
+	think := func(parent, txt string) {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: txt, ParentToolCallID: parent})
+	}
+	// A starts, B interleaves, A emits one more delta, then A finishes. The
+	// LAST thinking block belongs to B, so an unfiltered done would close B.
+	think("A", "A reasoning")
+	think("B", "B reasoning")
+	think("A", " more A reasoning")
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done", ParentToolCallID: "A"})
+
+	require.Len(t, blocks, 2)
+	assert.Equal(t, "A", blocks[0].ParentToolCallID)
+	assert.True(t, blocks[0].Done, "A emitted thinking_done — its own block must close")
+	assert.Equal(t, "B", blocks[1].ParentToolCallID)
+	assert.False(t, blocks[1].Done, "B never finished — its block must stay open")
+}
+
+// TestAccumulateBlock_ThinkingDoneMarksOwnMostRecent pins the two behaviors that
+// together fix the reported "headless thinking block stuck on 输出中": a parent's
+// deltas coalesce into ONE block, and thinking_done closes THAT block rather than
+// whichever block happens to be last (a foreign agent's interleaved one).
+func TestAccumulateBlock_ThinkingDoneMarksOwnMostRecent(t *testing.T) {
+	var blocks []model.ContentBlock
+	think := func(parent, txt string) {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: txt, ParentToolCallID: parent})
+	}
+	think("A", "A first")
+	think("B", "B interleaved")
+	think("A", "A second")
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking_done", ParentToolCallID: "A"})
+
+	require.Len(t, blocks, 2, "each agent's deltas coalesce into one block")
+	assert.Equal(t, "A firstA second", blocks[0].Text, "A's deltas must coalesce into one block")
+	assert.True(t, blocks[0].Done, "A emitted thinking_done — its block must close")
+	assert.Equal(t, "B interleaved", blocks[1].Text)
+	assert.False(t, blocks[1].Done, "B never finished — the unfiltered scan would have closed this one")
+}
+
+// TestAccumulateBlock_EmptyThinkingDeltaIgnored covers the other empty-spinner
+// source: an empty thinking delta must not create a text-less block.
+func TestAccumulateBlock_EmptyThinkingDeltaIgnored(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "", ParentToolCallID: "A"})
+	assert.Empty(t, blocks, "an empty thinking delta must not open a block")
+
+	// A real delta afterwards still creates the block normally.
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "real", ParentToolCallID: "A"})
+	require.Len(t, blocks, 1)
+	assert.Equal(t, "real", blocks[0].Text)
+}
+
+// TestMarkAllThinkingDone covers the terminal-path sweep: a turn ending on
+// reasoning never receives thinking_done, so its last block would persist as
+// done=false and render as a spinner.
+func TestMarkAllThinkingDone(t *testing.T) {
+	blocks := []model.ContentBlock{
+		{Type: "thinking", Text: "open", Done: false},
+		{Type: "tool_use", ID: "t1", Done: true},
+		{Type: "thinking", Text: "also open", Done: false},
+		{Type: "text", Text: "reply"},
+	}
+	got := MarkAllThinkingDone(blocks)
+	for _, b := range got {
+		if b.Type == "thinking" {
+			assert.True(t, b.Done, "every thinking block must be closed on a terminal path")
+		}
+	}
+	// Non-thinking blocks are untouched.
+	assert.Equal(t, "tool_use", got[1].Type)
+	assert.Equal(t, "reply", got[3].Text)
 }
 
 func TestAccumulateBlock_ToolCallUpdateMergeInput(t *testing.T) {
@@ -800,12 +931,70 @@ func TestAccumulateBlock_TwoSubAgentsStaySeparate(t *testing.T) {
 	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "A", ParentToolCallID: "call_a"})
 	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "B", ParentToolCallID: "call_b"})
 	AccumulateBlock(&blocks, StreamEvent{Type: "content", Content: "A2", ParentToolCallID: "call_a"})
-	// call_a's second chunk must NOT merge back into its first block (blocked by
-	// the interleaved call_b block + parent boundary), so a third block is made.
-	require.Len(t, blocks, 3)
+	// call_a's second chunk merges back into ITS OWN block: the interleaved
+	// call_b block belongs to another parent, so it is stepped over rather than
+	// acting as a boundary. Only a same-parent tool_use separates.
+	require.Len(t, blocks, 2)
 	assert.Equal(t, "call_a", blocks[0].ParentToolCallID)
+	assert.Equal(t, "AA2", blocks[0].Text)
 	assert.Equal(t, "call_b", blocks[1].ParentToolCallID)
-	assert.Equal(t, "call_a", blocks[2].ParentToolCallID)
+	assert.Equal(t, "B", blocks[1].Text)
+}
+
+// TestAccumulateBlock_InterleavedSubAgentThinkingCoalesces reproduces the
+// reported symptom: one continuous thought (of a single sub-agent) appearing as
+// several fragments, each separated by another sub-agent's interleaved events.
+func TestAccumulateBlock_InterleavedSubAgentThinkingCoalesces(t *testing.T) {
+	var blocks []model.ContentBlock
+	think := func(parent, txt string) {
+		AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: txt, ParentToolCallID: parent})
+	}
+	// A and B stream concurrently; each one's reasoning is continuous.
+	think("A", "Let")
+	think("B", "I will inspect the handler first")
+	think("A", " me look at the key files: useChatSession")
+	think("B", " then check the reducer")
+	think("A", ".ts, chatBlocks.ts, ContentBlocks.vue.")
+
+	// Exactly one thinking block per agent, each holding its full text.
+	var aText, bText string
+	aCount, bCount := 0, 0
+	for _, b := range blocks {
+		if b.Type != "thinking" {
+			continue
+		}
+		switch b.ParentToolCallID {
+		case "A":
+			aCount++
+			aText += b.Text
+		case "B":
+			bCount++
+			bText += b.Text
+		}
+	}
+	assert.Equal(t, 1, aCount, "agent A's continuous thought must not be fragmented")
+	assert.Equal(t, 1, bCount, "agent B's continuous thought must not be fragmented")
+	assert.Equal(t, "Let me look at the key files: useChatSession.ts, chatBlocks.ts, ContentBlocks.vue.", aText)
+	assert.Equal(t, "I will inspect the handler first then check the reducer", bText)
+}
+
+// TestAccumulateBlock_OwnToolUseStillSeparatesThinking pins the boundary that
+// must survive: a tool_use of the SAME parent separates that parent's thinking.
+func TestAccumulateBlock_OwnToolUseStillSeparatesThinking(t *testing.T) {
+	var blocks []model.ContentBlock
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "before", ParentToolCallID: "call_a"})
+	AccumulateBlock(&blocks, StreamEvent{Type: "tool_use", Tool: &ToolCall{
+		Name: "Read", ID: "t1", Input: `{}`, Done: true, ParentToolCallID: "call_a",
+	}})
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "after", ParentToolCallID: "call_a"})
+	// A foreign agent's interleaved block must not resurrect the merge either.
+	AccumulateBlock(&blocks, StreamEvent{Type: "thinking", Content: "other", ParentToolCallID: "call_b"})
+
+	require.Len(t, blocks, 4)
+	assert.Equal(t, "before", blocks[0].Text)
+	assert.Equal(t, "tool_use", blocks[1].Type)
+	assert.Equal(t, "after", blocks[2].Text)
+	assert.Equal(t, "other", blocks[3].Text)
 }
 
 func TestAccumulateBlock_ToolCallCarriesParent(t *testing.T) {

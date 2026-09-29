@@ -41,8 +41,11 @@
           <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
 
-        <!-- App mode: background service tip -->
-        <div v-if="tunnelStatus === 'ok'" class="tunnel-banner tip">
+        <!-- Android WebView: background service tip. Deliberately NOT shown in
+             the Electron shell, which also reports isAppMode: a desktop window
+             keeps running while minimized, so "grant background permission or
+             the tunnel gets killed" does not apply to it. -->
+        <div v-if="isAndroidApp && tunnelStatus === 'ok'" class="tunnel-banner tip">
           <Info :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-detail">{{ t('proxy.backgroundTip', { transport: transportSuffix }) }}</span>
@@ -90,18 +93,24 @@
               <template v-else-if="installContext.kind === 'linux'">
                 <span class="tunnel-guide-install-note">{{ t('proxy.tunnelInstallLinux') }}</span>
                 <span class="tunnel-guide-install-code">{{ installContext.command }}</span>
-                <button class="tunnel-guide-copy" @click="copyInstallCommand" :title="t('proxy.copyCommand')">
-                  <Copy :size="12" />
-                  {{ installCopied ? t('common.copied') : t('proxy.copyCommand') }}
-                </button>
+                <CopyButton
+                  :text="installContext.command"
+                  :size="12"
+                  :label="t('proxy.copyCommand')"
+                  title-key="proxy.copyCommand"
+                  class="tunnel-guide-copy"
+                />
               </template>
             </div>
             <div class="tunnel-guide-command">
               <code>{{ sshInfo.command }}</code>
-              <button class="tunnel-guide-copy" @click="copySSHCommand" :title="t('proxy.copyCommand')">
-                <Copy :size="12" />
-                {{ sshCopied ? t('common.copied') : t('proxy.copyCommand') }}
-              </button>
+              <CopyButton
+                :text="sshInfo.command"
+                :size="12"
+                :label="t('proxy.copyCommand')"
+                title-key="proxy.copyCommand"
+                class="tunnel-guide-copy"
+              />
             </div>
             <div v-if="sshInfo.fingerprint" class="tunnel-guide-fingerprint">
               <span class="fingerprint-label">{{ t('proxy.fingerprintLabel') }}</span>
@@ -112,11 +121,16 @@
         </div>
       </div>
 
-      <!-- Web mode: port forwarding unavailable. Keyed off availability, not
-           the SSH listener alone: an h2-only install (port_forward.enabled
-           false, forwards carried over the stream tunnel) has no SSH listener
-           yet still forwards ports, so accusing it of being disabled is wrong. -->
-      <div v-if="!isAppMode && sshInfo && !sshInfo.enabled && !transportAllowsH2" class="tunnel-banner warning">
+      <!-- SSH listener not enabled. Shown to the browser AND the Electron shell
+           (both depend on the server's SSH config, and when it is off
+           checkTunnelHealth() bails out early with status 'unknown', so this is
+           the only thing that explains why nothing works). Hidden on Android,
+           whose own native tunnel banners cover the same ground.
+           Keyed off availability, not the SSH listener alone: an h2-only
+           install (port_forward.enabled false, forwards carried over the stream
+           tunnel) has no SSH listener yet still forwards ports, so accusing it
+           of being disabled is wrong. -->
+      <div v-if="!isAndroidApp && sshInfo && !sshInfo.enabled && !transportAllowsH2" class="tunnel-banner warning">
         <AlertTriangle :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.tunnelNoSsh') }}</span>
@@ -149,7 +163,6 @@
               :toggling="togglingPorts.has(p.localPort)"
               @open="openPortWithCheck"
               @open-external="openInExternalBrowser"
-              @copy-address="handleCopyAddress"
               @reconnect="handleReconnect"
               @edit="handleEdit"
               @remove="handleRemove"
@@ -288,15 +301,17 @@
 </template>
 
 <script setup>
-import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Copy, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
+import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
+import { useAppMode } from '@/composables/useAppMode'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect.ts'
@@ -342,7 +357,12 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, transportAllowsH2, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, copyServerAddress, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, transportAllowsH2, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+// `isAppMode` is true for BOTH native hosts (it is just isNativeApp()), so any
+// banner whose copy is Android-specific must additionally exclude the Electron
+// desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.
+const { isDesktopApp } = useAppMode()
+const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 const toast = useToast()
 
 // Human label for the transport currently carrying the tunnel. '' when the
@@ -375,9 +395,6 @@ function handleOpenScan() {
   }
 }
 
-const sshCopied = ref(false)
-const installCopied = ref(false)
-
 // Tunnel guide: per-OS hint for getting a local ssh client when the manual
 // tunnel command is meant to run on this machine (web mode only).
 const installContext = computed(() => sshInstallHint({
@@ -385,15 +402,6 @@ const installContext = computed(() => sshInstallHint({
   macDesktop: isMacDesktopUA,
   linuxDesktop: isLinuxDesktopUA,
 }))
-
-async function copyInstallCommand() {
-  if (!installContext.value?.command) return
-  try {
-    await navigator.clipboard.writeText(installContext.value.command)
-    installCopied.value = true
-    setTimeout(() => { installCopied.value = false }, 2000)
-  } catch {}
-}
 
 // Track which ports are currently reconnecting (for spinning button state)
 const reconnectingPorts = ref(new Set())
@@ -466,10 +474,6 @@ async function handleSave() {
 }
 
 /** Copy a reverse mapping's server-side address (there is no browser to open). */
-async function handleCopyAddress(serverPort, protocol) {
-  await copyServerAddress(serverPort, protocol)
-}
-
 async function handleQuickAdd(port, protocol, processName) {
   try {
     await registerPort(port, processName || t('proxy.autoDetect'), protocol || 'http')
@@ -507,15 +511,6 @@ async function handleReconnect(localPort) {
     reconnectingPorts.value.delete(localPort)
     reconnectingPorts.value = new Set(reconnectingPorts.value)
   }
-}
-
-async function copySSHCommand() {
-  if (!sshInfo.value?.command) return
-  try {
-    await navigator.clipboard.writeText(sshInfo.value.command)
-    sshCopied.value = true
-    setTimeout(() => { sshCopied.value = false }, 2000)
-  } catch {}
 }
 
 async function handleRetryTunnel() {

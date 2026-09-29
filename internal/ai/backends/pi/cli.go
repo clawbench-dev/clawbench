@@ -14,6 +14,23 @@ var PiInputRemaps = map[string]string{
 	"path": "file_path",
 }
 
+// PiACPInputRemaps is the ACP remap table for Pi.
+//
+// It is intentionally minimal and mirrors PiInputRemaps: pi-acp forwards Pi's
+// native tool arguments, and the tool-aware normalization (including the nested
+// edits[] array) lives in internal/ai's Pi-specific ACP parser
+// (parsePiACPToolCall → normalizePiACPInput), which reuses the same
+// normalizePiToolInput the CLI path uses. Registering the table here keeps the
+// backend's declared remaps inspectable, and LookupACPRemaps falls back to the
+// generic table when a backend has no ACP plugin.
+//
+// Do NOT add oldText/newText here: the generic ACP normalizer is a flat
+// single-pass remap that never recurses into edits[], so those entries would be
+// dead. They are handled by the Pi-specific parser instead.
+var PiACPInputRemaps = map[string]string{
+	"path": "file_path",
+}
+
 func init() {
 	ai.RegisterBackend("pi", newPiBackend)
 	backends.Register(&backends.BackendPlugin{
@@ -21,8 +38,25 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "pi", Backend: "pi", DefaultCmd: "pi", Name: "Pi", Specialty: "极简编程智能体",
 			ThinkingEffortLevels: []string{"off", "minimal", "low", "medium", "high", "xhigh"},
-			InstallCmd:           "npm install -g @earendil-works/pi-coding-agent",
-			SortOrder:            8,
+			// ACP via the upstream pi-acp bridge. Pi was previously CLI-only
+			// because the adapter originally used (@touchtechclub/pi-acp) stopped
+			// being maintained; upstream svkozak/pi-acp is active and passes the
+			// full ACP integration suite (see internal/ai/acp_integration_test.go,
+			// backend "pi").
+			//
+			// ACPLoadSession is TRUE: pi-acp advertises loadSession and implements
+			// session/load, so the explicit acp-load / acp-sync endpoints work.
+			// This flag is about session/load only — pi-acp does NOT implement the
+			// non-standard session/resume RPC (it answers -32601), which is a
+			// separate capability that affects automatic crash recovery. That path
+			// falls back to session/load on -32601, so no flag is needed for it.
+			AcpCommand:     "npx -y pi-acp@latest",
+			ACPLoadSession: true,
+			InstallCmd:     "npm install -g @earendil-works/pi-coding-agent",
+			SortOrder:      8,
+		},
+		ACP: &backends.ACPPlugin{
+			InputRemaps: PiACPInputRemaps,
 		},
 	})
 }

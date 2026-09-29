@@ -616,12 +616,9 @@ onUpdated(restoreAskStates)
   background: var(--border-color, #dee2e6);
 }
 
-.tool-detail-body .tool-content-copy-btn.is-copied {
-  opacity: var(--opacity-hover);
-  color: #16a34a;
-  width: auto;
-  padding:0 var(--space-2);
-}
+/* Copied state: the glyph swap and tint are shared (css/copy-button.css).
+   Nothing to restate here — the old rule forced `width: auto` for a text label
+   that no longer exists. */
 
 .tool-detail-body .tool-content-wrap-btn.is-wrapped {
   opacity: var(--opacity-hover);
@@ -632,17 +629,6 @@ onUpdated(restoreAskStates)
   .tool-detail-body .tool-content-wrap-btn.is-wrapped:hover {
     opacity: 1;
   }
-}
-
-.tool-detail-body .tool-content-copied-text {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
-  color: #16a34a;
-  white-space: nowrap;
-}
-
-:root[data-theme-base="dark"] .tool-detail-body .tool-content-copied-text {
-  color: #4ade80;
 }
 
 /* ─── Wrap toggle: word-wrap on (default) ─── */

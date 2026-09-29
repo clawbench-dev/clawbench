@@ -48,6 +48,7 @@ var hotReloadFields = map[string]bool{
 	"chat.fork_context_budget":          true,
 	"chat.auto_continue_enabled":        true,
 	"chat.auto_continue_max_retries":    true,
+	"chat.auto_rename_enabled":          true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -136,16 +137,6 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
-	// Appearance — panel opacity multiplier
-	"appearance.panel_opacity": true,
-	// Wallpaper source selection — plain scalars, no path component. File names
-	// (local.selected / local.items / bing.file) are deliberately absent: they
-	// are written only by the dedicated theme endpoints, which validate and
-	// persist the file alongside the name.
-	"appearance.wallpaper_mode":    true,
-	"appearance.wallpaper_enabled": true,
-	"appearance.bing.enabled":      true,
-	"appearance.bing.mkt":          true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -248,6 +239,7 @@ type configChat struct {
 	ForkContextBudget        int  `json:"fork_context_budget"`
 	AutoContinueEnabled      bool `json:"auto_continue_enabled"`
 	AutoContinueMaxRetries   int  `json:"auto_continue_max_retries"`
+	AutoRenameEnabled        bool `json:"auto_rename_enabled"`
 }
 
 type configSession struct {
@@ -416,22 +408,21 @@ type configFonts struct {
 	Dir string `json:"dir"` // Resolved custom font directory (defaults to <DataDir>/fonts)
 }
 
-// configAppearance exposes custom wallpaper settings to the settings panel.
+// configAppearance exposes the shared wallpaper resources to the settings panel.
+//
+// Which wallpaper a device displays is NOT here: the source, the on/off switch
+// and the selected gallery image are per-device choices in the browser's
+// localStorage, alongside panel translucency / blur / edge-fade / wave speed.
+// The server only reports what it owns — the gallery contents and the Bing
+// cache — so two devices on one server can show different wallpapers.
 type configAppearance struct {
-	PanelOpacity float64 `json:"panel_opacity"` // Main work-panel opacity multiplier (0.5–1.0; default 0.85)
-
-	WallpaperMode    string `json:"wallpaper_mode"`    // Active source: "local" or "bing"
-	WallpaperEnabled bool   `json:"wallpaper_enabled"` // Global wallpaper on/off switch
-	ActiveFile       string `json:"active_file"`       // Bare name of the wallpaper currently displayed ("" = none)
-
 	Local configLocalWallpaper `json:"local"`
 	Bing  configBingWallpaper  `json:"bing"`
 }
 
 // configLocalWallpaper exposes the uploaded wallpaper gallery.
 type configLocalWallpaper struct {
-	Selected string                     `json:"selected"` // Bare name of the selected gallery image ("" = none)
-	Items    []configLocalWallpaperItem `json:"items"`
+	Items []configLocalWallpaperItem `json:"items"`
 }
 
 // configLocalWallpaperItem is one gallery entry as sent to the client.
@@ -441,34 +432,30 @@ type configLocalWallpaperItem struct {
 	UploadedAt int64  `json:"uploaded_at"`
 	Size       int64  `json:"size"`
 	// AbsPath is the file's absolute path, for callers that need to address the
-	// file directly — notably GET /api/file/thumb, which takes a path rather
+	// file directly — notably GET /api/fs/thumb, which takes a path rather
 	// than a bare name and returns a small JPEG instead of the full-size image.
 	// Resolved server-side via wallpaper.FilePath so the client never assembles
 	// a path from the theme directory layout itself. Empty when unresolvable.
 	AbsPath string `json:"abs_path"`
 }
 
-// configBingWallpaper exposes the Bing daily wallpaper state, including the
+// configBingWallpaper exposes the cached Bing daily image, including the
 // photographer credit shown in the settings panel.
 type configBingWallpaper struct {
-	Enabled         bool   `json:"enabled"`
 	File            string `json:"file"`
 	LastSuccessDate string `json:"last_success_date"`
 	Copyright       string `json:"copyright"`
 	Title           string `json:"title"`
-	Mkt             string `json:"mkt"`
 	LastError       string `json:"last_error"`
 	LastAttemptAt   int64  `json:"last_attempt_at"`
 	// AbsPath mirrors configLocalWallpaperItem.AbsPath for the cached Bing image.
 	AbsPath string `json:"abs_path"`
 }
 
-// buildConfigAppearance renders the appearance section for GET /api/config.
-// active_file is resolved server-side so the client never has to reimplement
-// the mode/enabled precedence.
+// buildConfigAppearance renders the appearance section for GET /api/config —
+// the shared wallpaper resources only. The client combines these with its own
+// per-device mode/enabled/selection to decide what to display.
 func buildConfigAppearance(cfg model.Config) configAppearance {
-	active, _ := wallpaper.ResolveActive(&cfg)
-
 	items := make([]configLocalWallpaperItem, 0, len(cfg.Appearance.Local.Items))
 	for _, it := range cfg.Appearance.Local.Items {
 		items = append(items, configLocalWallpaperItem{
@@ -481,21 +468,14 @@ func buildConfigAppearance(cfg model.Config) configAppearance {
 	}
 
 	return configAppearance{
-		PanelOpacity:     cfg.Appearance.PanelOpacity,
-		WallpaperMode:    cfg.Appearance.WallpaperMode,
-		WallpaperEnabled: cfg.Appearance.WallpaperEnabled,
-		ActiveFile:       active,
 		Local: configLocalWallpaper{
-			Selected: cfg.Appearance.Local.Selected,
-			Items:    items,
+			Items: items,
 		},
 		Bing: configBingWallpaper{
-			Enabled:         cfg.Appearance.Bing.Enabled,
 			File:            cfg.Appearance.Bing.File,
 			LastSuccessDate: cfg.Appearance.Bing.LastSuccessDate,
 			Copyright:       cfg.Appearance.Bing.Copyright,
 			Title:           cfg.Appearance.Bing.Title,
-			Mkt:             cfg.Appearance.Bing.Mkt,
 			LastError:       cfg.Appearance.Bing.LastError,
 			LastAttemptAt:   cfg.Appearance.Bing.LastAttemptAt,
 			AbsPath:         absWallpaperPath(cfg.Appearance.Bing.File),
@@ -547,7 +527,7 @@ func buildConfigForge(cfg model.Config) configForge {
 
 // absWallpaperPath resolves a bare wallpaper file name to its absolute path,
 // returning "" when the name is empty or cannot be resolved. Callers use it to
-// hand a path to GET /api/file/thumb (which returns a small JPEG rather than
+// hand a path to GET /api/fs/thumb (which returns a small JPEG rather than
 // the full-size image).
 //
 // The resolution goes through wallpaper.FilePath so the containment and
@@ -576,6 +556,7 @@ var PatchableConfigPaths = map[string]bool{
 	"chat.fork_context_budget":          true,
 	"chat.auto_continue_enabled":        true,
 	"chat.auto_continue_max_retries":    true,
+	"chat.auto_rename_enabled":          true,
 	"language":                          true,
 	"session.max_count":                 true,
 	"session.archive_retention_enabled": true,
@@ -656,11 +637,6 @@ var PatchableConfigPaths = map[string]bool{
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
-	"appearance.panel_opacity":          true,
-	"appearance.wallpaper_mode":         true,
-	"appearance.wallpaper_enabled":      true,
-	"appearance.bing.enabled":           true,
-	"appearance.bing.mkt":               true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -728,6 +704,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			ForkContextBudget:        cfg.Chat.ForkContextBudget,
 			AutoContinueEnabled:      cfg.Chat.AutoContinueEnabled,
 			AutoContinueMaxRetries:   cfg.Chat.AutoContinueMaxRetries,
+			AutoRenameEnabled:        cfg.Chat.AutoRenameEnabled,
 		},
 		Session: configSession{
 			MaxCount:                cfg.Session.MaxCount,
@@ -950,6 +927,14 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 			if PatchableConfigPaths[path] {
 				return nil, fmt.Errorf("field '%s' must be a scalar value, not an object", path)
 			}
+			// An object is only allowed when it can contain something
+			// configurable. Without this, an object with no whitelisted
+			// descendant — an empty one, or one whose keys were all removed
+			// from the whitelist — would recurse into nothing and be accepted,
+			// writing an unvalidated subtree into config.yaml.
+			if !hasPatchableDescendant(path) {
+				return nil, fmt.Errorf("field '%s' is not allowed", path)
+			}
 			nestedFields, err := validatePatchFields(nested, path)
 			if err != nil {
 				return nil, err
@@ -963,6 +948,19 @@ func validatePatchFields(patch map[string]any, prefix string) ([]string, error) 
 		}
 	}
 	return fields, nil
+}
+
+// hasPatchableDescendant reports whether any whitelisted path lives under the
+// given object path, i.e. whether the object is a legitimate container rather
+// than an unknown or fully-removed subtree.
+func hasPatchableDescendant(path string) bool {
+	prefix := path + "."
+	for p := range PatchableConfigPaths {
+		if strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo // exhaustive config validation
@@ -1297,55 +1295,11 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
-	// appearance — custom wallpaper. panel_opacity must be in the valid range.
-	// File names (local.selected / local.items / bing.file) are deliberately
-	// absent: they are written only by the dedicated theme endpoints, which
-	// validate and persist the file alongside the name.
-	if appearance, ok := patch["appearance"].(map[string]any); ok {
-		// Strict type checks: a wrong-typed value would be silently ignored by
-		// applyConfigPatch's assertions yet still written to config.yaml by
-		// mergePatchIntoRaw, producing a file the typed config cannot parse
-		// (which makes the next startup fail).
-		if raw, present := appearance["panel_opacity"]; present {
-			v, ok := raw.(float64)
-			if !ok {
-				return fmt.Errorf("appearance.panel_opacity must be a number")
-			}
-			if v < 0.5 || v > 1.0 {
-				return fmt.Errorf("appearance.panel_opacity must be between 0.5 and 1.0")
-			}
-		}
-		if raw, present := appearance["wallpaper_mode"]; present {
-			v, ok := raw.(string)
-			if !ok {
-				return fmt.Errorf("appearance.wallpaper_mode must be a string")
-			}
-			if v != "local" && v != "bing" {
-				return fmt.Errorf("appearance.wallpaper_mode must be \"local\" or \"bing\"")
-			}
-		}
-		if raw, present := appearance["wallpaper_enabled"]; present {
-			if _, ok := raw.(bool); !ok {
-				return fmt.Errorf("appearance.wallpaper_enabled must be a boolean")
-			}
-		}
-		if bing, ok := appearance["bing"].(map[string]any); ok {
-			if raw, present := bing["enabled"]; present {
-				if _, ok := raw.(bool); !ok {
-					return fmt.Errorf("appearance.bing.enabled must be a boolean")
-				}
-			}
-			if raw, present := bing["mkt"]; present {
-				v, ok := raw.(string)
-				if !ok {
-					return fmt.Errorf("appearance.bing.mkt must be a string")
-				}
-				if v != "zh-CN" && v != "en-US" {
-					return fmt.Errorf("appearance.bing.mkt must be \"zh-CN\" or \"en-US\"")
-				}
-			}
-		}
-	}
+	// appearance — the wallpaper *resources* (gallery items, Bing cache) are
+	// written only by the dedicated theme endpoints, never by a config PATCH.
+	// The per-device choices (source / on-off / selected image / panel opacity)
+	// are browser localStorage, so a PATCH carrying them is rejected by the
+	// whitelist rather than silently written.
 
 	return nil
 }
@@ -1381,26 +1335,6 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 	}
 
-	if appearance, ok := patch["appearance"].(map[string]any); ok {
-		if v, ok := appearance["panel_opacity"].(float64); ok {
-			cfg.Appearance.PanelOpacity = v
-		}
-		if v, ok := appearance["wallpaper_mode"].(string); ok {
-			cfg.Appearance.WallpaperMode = v
-		}
-		if v, ok := appearance["wallpaper_enabled"].(bool); ok {
-			cfg.Appearance.WallpaperEnabled = v
-		}
-		if bing, ok := appearance["bing"].(map[string]any); ok {
-			if v, ok := bing["enabled"].(bool); ok {
-				cfg.Appearance.Bing.Enabled = v
-			}
-			if v, ok := bing["mkt"].(string); ok {
-				cfg.Appearance.Bing.Mkt = v
-			}
-		}
-	}
-
 	if chat, ok := patch["chat"].(map[string]any); ok {
 		if v, ok := chat["initial_messages"].(float64); ok {
 			cfg.Chat.InitialMessages = int(v)
@@ -1425,6 +1359,9 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		}
 		if v, ok := chat["auto_continue_max_retries"].(float64); ok {
 			cfg.Chat.AutoContinueMaxRetries = int(v)
+		}
+		if v, ok := chat["auto_rename_enabled"].(bool); ok {
+			cfg.Chat.AutoRenameEnabled = v
 		}
 	}
 
@@ -1734,6 +1671,7 @@ func applyHotReloadGlobals() {
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount

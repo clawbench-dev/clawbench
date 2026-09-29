@@ -1,11 +1,13 @@
 import { copyText } from '@/utils/clipboard.ts'
+import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { gt } from '@/composables/useLocale'
 import { ATTACH_BADGE_SVG } from '@/utils/attachSvg'
 import { isShareMode } from '@/share/shareMode'
 
 // ── SVG icons (inline, same pattern as FILE_OPEN_ICON_SVG) ──────────────────
-
-const COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
+// The copy/check glyphs are shared with every other hand-built copy button and
+// with components/common/CopyButton.vue — see utils/copyButton.ts. Do not
+// re-declare them here; a second copy is how they drift apart.
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
@@ -133,7 +135,7 @@ export function annotateCodeBlockHeadersIn(doc: Document): void {
  */
 export function handleCodeBlockClick(event: MouseEvent): boolean {
     const target = event.target as HTMLElement
-    const btn = target.closest('.code-block-copy-btn, .code-block-wrap-btn')
+    const btn = target.closest<HTMLElement>('.code-block-copy-btn, .code-block-wrap-btn')
     if (!btn) return false
 
     event.preventDefault()
@@ -151,23 +153,11 @@ export function handleCodeBlockClick(event: MouseEvent): boolean {
     const action = btn.getAttribute('data-action')
 
     if (action === 'copy') {
-        if (btn.classList.contains('is-copied')) return true // already showing feedback
         const code = pre.querySelector('code')
         const text = (code || pre).textContent || ''
-        copyText(text)
-        // Show "Copied!" on the button briefly
-        const originalTitle = btn.getAttribute('title') || ''
-        const originalAriaLabel = btn.getAttribute('aria-label') || ''
-        btn.innerHTML = `<span class="code-block-copied-text">${gt('common.copied')}</span>`
-        btn.classList.add('is-copied')
-        btn.setAttribute('title', gt('common.copied'))
-        btn.setAttribute('aria-label', gt('common.copied'))
-        setTimeout(() => {
-            btn.innerHTML = COPY_ICON_SVG // restore from constant to avoid race condition
-            btn.classList.remove('is-copied')
-            btn.setAttribute('title', originalTitle)
-            btn.setAttribute('aria-label', originalAriaLabel)
-        }, 1500)
+        // Shared path: guards re-entry, copies, and swaps the glyph for a check
+        // (see utils/copyButton.ts).
+        copyWithFlash(btn, text)
     } else if (action === 'wrap') {
         wrapper.classList.toggle('word-wrap')
         btn.classList.toggle('is-wrapped')
@@ -180,8 +170,6 @@ export function handleCodeBlockClick(event: MouseEvent): boolean {
 }
 
 // ── Table block header (same pattern as code block header) ──────────────────
-
-const TABLE_COPY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>'
 
 const TABLE_CHEVRON_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="10" height="10"><path d="M6 9l6 6 6-6"/></svg>'
 
@@ -244,7 +232,7 @@ export function annotateTableBlockHeadersIn(doc: Document): void {
         copyBtn.setAttribute('aria-haspopup', 'true')
         copyBtn.setAttribute('aria-expanded', 'false')
         copyBtn.setAttribute('type', 'button')
-        copyBtn.innerHTML = TABLE_COPY_ICON_SVG + TABLE_CHEVRON_ICON_SVG
+        copyBtn.innerHTML = COPY_ICON_SVG + TABLE_CHEVRON_ICON_SVG
         copyDropdown.appendChild(copyBtn)
 
         // Copy menu (popup with three formats)
@@ -526,12 +514,12 @@ export function handleTableBlockClick(event: MouseEvent): boolean {
         if (!table) return true
         const format = action === 'copy-md' ? 'markdown' : action === 'copy-html' ? 'html' : 'tsv'
         copyTableContent(table as HTMLTableElement, format)
-        // Show "Copied!" on the menu item briefly
-        const originalText = btn.textContent || ''
-        btn.innerHTML = `<span class="table-block-copied-text">${gt('tableBlock.copied')}</span>`
+        // Menu items keep their text — the label IS the format identity
+        // (Markdown / HTML / TSV), so replacing it with a check would hide
+        // which format was copied. The tint alone carries the feedback, and
+        // the menu closes immediately anyway.
         btn.classList.add('is-copied')
         setTimeout(() => {
-            btn.textContent = originalText
             btn.classList.remove('is-copied')
         }, 1500)
         // Close the menu after copying

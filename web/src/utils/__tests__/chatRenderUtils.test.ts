@@ -25,44 +25,44 @@ describe('rewriteImageUrls', () => {
     const result = rewriteImageUrls(html, projectRoot)
     expect(result).toContain('class="chat-img lightbox-img"')
     expect(result).toContain('src="https://example.com/img.png"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   it('applies thumbnail styling to http:// URLs without rewriting', () => {
     const html = '<img src="http://example.com/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
     expect(result).toContain('src="http://example.com/img.png"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   it('applies thumbnail styling to protocol-relative // URLs without rewriting', () => {
     const html = '<img src="//cdn.example.com/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
     expect(result).toContain('src="//cdn.example.com/img.png"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   // ── Local relative paths ──
 
-  it('rewrites relative path to /api/local-file/ when projectRoot is set', () => {
+  it('rewrites relative path to /api/fs/raw/ when projectRoot is set', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=images/foo.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/images/foo.png"')
   })
 
-  it('rewrites relative path without directory to /api/local-file/', () => {
+  it('rewrites relative path without directory to /api/fs/raw/', () => {
     const html = '<img src="photo.jpg">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=photo.jpg&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/photo.jpg"')
+    expect(result).toContain('src="/api/fs/thumb?target=photo.jpg&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/photo.jpg"')
   })
 
   it('rewrites nested relative path', () => {
     const html = '<img src="assets/img/logo.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=assets/img/logo.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/assets/img/logo.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=assets/img/logo.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/assets/img/logo.png"')
   })
 
   // ── Absolute paths within projectRoot ──
@@ -73,15 +73,15 @@ describe('rewriteImageUrls', () => {
   it('rewrites an absolute path inside projectRoot to the project-relative URL', () => {
     const html = `<img src="${projectRoot}/images/foo.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=images/foo.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/images/foo.png"')
   })
 
   it('rewrites a deeply nested absolute path inside projectRoot', () => {
     const html = `<img src="${projectRoot}/a/b/c/d.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=a/b/c/d.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/a/b/c/d.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=a/b/c/d.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/a/b/c/d.png"')
   })
 
   // ── Paths outside projectRoot ──
@@ -93,7 +93,7 @@ describe('rewriteImageUrls', () => {
     // rendered. It must instead be served by the local-file endpoint.
     const html = '<img src="/other/project/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/local-file/?path=%2Fother%2Fproject%2Fimg.png"')
+    expect(result).toContain('src="/api/fs/raw/?target=%2Fother%2Fproject%2Fimg.png"')
     expect(result).not.toContain('src="/other/project/img.png"')
   })
 
@@ -102,8 +102,8 @@ describe('rewriteImageUrls', () => {
     // No path normalization, so string startsWith(projectRoot + '/') is true → rewritten
     const html = '<img src="../other/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=../other/img.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/../other/img.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=../other/img.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/../other/img.png"')
   })
 
   // ── Paths starting with / ──
@@ -111,14 +111,14 @@ describe('rewriteImageUrls', () => {
   it('rewrites a /-prefixed path inside projectRoot to the project-relative URL', () => {
     const html = `<img src="${projectRoot}/sub/file.png">`
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=sub/file.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/sub/file.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=sub/file.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/sub/file.png"')
   })
 
   it('rewrites a /-prefixed path outside projectRoot through the ?path= form', () => {
     const html = '<img src="/usr/share/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/local-file/?path=%2Fusr%2Fshare%2Fimg.png"')
+    expect(result).toContain('src="/api/fs/raw/?target=%2Fusr%2Fshare%2Fimg.png"')
     expect(result).not.toContain('src="/usr/share/img.png"')
   })
 
@@ -126,8 +126,8 @@ describe('rewriteImageUrls', () => {
     // SVG has no thumbnail endpoint support; it must still be served full-size.
     const html = '<img src="/tmp/diagram.svg">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/local-file/?path=%2Ftmp%2Fdiagram.svg"')
-    expect(result).not.toContain('/api/file/thumb')
+    expect(result).toContain('src="/api/fs/raw/?target=%2Ftmp%2Fdiagram.svg"')
+    expect(result).not.toContain('/api/fs/thumb')
   })
 
   // ── Empty projectRoot ──
@@ -136,7 +136,7 @@ describe('rewriteImageUrls', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, '')
     expect(result).toContain('src="images/foo.png"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   it('applies styling even with empty projectRoot', () => {
@@ -175,51 +175,51 @@ describe('rewriteImageUrls', () => {
   it('processes all images in a string with multiple <img> tags', () => {
     const html = '<img src="a.png"><p>text</p><img src="b.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=a.png&w=1200"')
-    expect(result).toContain('src="/api/file/thumb?path=b.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/a.png"')
-    expect(result).toContain('data-full-src="/api/local-file/b.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=a.png&w=1200"')
+    expect(result).toContain('src="/api/fs/thumb?target=b.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/a.png"')
+    expect(result).toContain('data-full-src="/api/fs/raw/b.png"')
   })
 
   it('processes mixed local and external images', () => {
     const html = '<img src="local.png"><img src="https://ext.com/img.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('data-full-src="/api/local-file/local.png"')
+    expect(result).toContain('data-full-src="/api/fs/raw/local.png"')
     expect(result).toContain('src="https://ext.com/img.png"')
     expect(result).not.toContain('data-full-src="https://ext.com/img.png"')
   })
 
   // ── Formats without thumbnail support ──
 
-  it('keeps /api/local-file/ src for SVG (no thumb endpoint support)', () => {
+  it('keeps /api/fs/raw/ src for SVG (no thumb endpoint support)', () => {
     const html = '<img src="logo.svg">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/local-file/logo.svg"')
-    expect(result).not.toContain('/api/file/thumb')
+    expect(result).toContain('src="/api/fs/raw/logo.svg"')
+    expect(result).not.toContain('/api/fs/thumb')
     expect(result).not.toContain('data-full-src')
   })
 
-  it('keeps /api/local-file/ src for GIF (preserve animation)', () => {
+  it('keeps /api/fs/raw/ src for GIF (preserve animation)', () => {
     const html = '<img src="anim.gif">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/local-file/anim.gif"')
-    expect(result).not.toContain('/api/file/thumb')
+    expect(result).toContain('src="/api/fs/raw/anim.gif"')
+    expect(result).not.toContain('/api/fs/thumb')
     expect(result).not.toContain('data-full-src')
   })
 
-  it('keeps /api/local-file/ src for webp (no thumb endpoint support)', () => {
+  it('keeps /api/fs/raw/ src for webp (no thumb endpoint support)', () => {
     const html = '<img src="photo.webp">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/local-file/photo.webp"')
-    expect(result).not.toContain('/api/file/thumb')
+    expect(result).toContain('src="/api/fs/raw/photo.webp"')
+    expect(result).not.toContain('/api/fs/thumb')
     expect(result).not.toContain('data-full-src')
   })
 
   it('encodes CJK/special characters in thumbnail path and keeps encoded full src', () => {
     const html = '<img src="图片 文件.png">'
     const result = rewriteImageUrls(html, projectRoot)
-    expect(result).toContain('src="/api/file/thumb?path=%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png&w=1200"')
-    expect(result).toContain('data-full-src="/api/local-file/%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png&w=1200"')
+    expect(result).toContain('data-full-src="/api/fs/raw/%E5%9B%BE%E7%89%87%20%E6%96%87%E4%BB%B6.png"')
   })
 
   // ── Images without src ──
@@ -243,13 +243,13 @@ describe('rewriteImageUrls', () => {
 
   it('leaves a src equal to projectRoot itself untouched (a directory, not a file)', () => {
     // The project root is a directory: there is nothing to serve, so it must
-    // not be turned into a bogus /api/local-file/ URL (which would be a bare
+    // not be turned into a bogus /api/fs/raw/ URL (which would be a bare
     // directory path with an empty segment).
     const html = `<img src="${projectRoot}">`
     const result = rewriteImageUrls(html, projectRoot)
     expect(result).toContain('chat-img')
     expect(result).toContain(`src="${projectRoot}"`)
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   // ── Style content assertions ──
@@ -269,8 +269,8 @@ describe('rewriteImageUrls', () => {
   it('uses the supplied mobile thumbnail width when provided', () => {
     const html = '<img src="images/foo.png">'
     const result = rewriteImageUrls(html, projectRoot, getThumbWidth(false))
-    expect(result).toContain('src="/api/file/thumb?path=images/foo.png&w=640"')
-    expect(result).toContain('data-full-src="/api/local-file/images/foo.png"')
+    expect(result).toContain('src="/api/fs/thumb?target=images/foo.png&w=640"')
+    expect(result).toContain('data-full-src="/api/fs/raw/images/foo.png"')
   })
 })
 
@@ -475,37 +475,37 @@ describe('convertAudioLinks', () => {
 
   const audioProjectRoot = '/home/user/project'
 
-  it('rewrites project-relative path to /api/local-file/ when projectRoot is set', () => {
+  it('rewrites project-relative path to /api/fs/raw/ when projectRoot is set', () => {
     const html = '<a href=".clawbench/generated/audio.mp3">play</a>'
     const result = convertAudioLinks(html, audioProjectRoot)
-    expect(result).toContain('src="/api/local-file/.clawbench/generated/audio.mp3"')
+    expect(result).toContain('src="/api/fs/raw/.clawbench/generated/audio.mp3"')
     expect(result).not.toContain('href=".clawbench/')
   })
 
   it('encodes CJK/special characters in rewritten audio path', () => {
     const html = '<a href=".clawbench/generated/audio 01.mp3">play</a>'
     const result = convertAudioLinks(html, audioProjectRoot)
-    expect(result).toContain('src="/api/local-file/.clawbench/generated/audio%2001.mp3"')
+    expect(result).toContain('src="/api/fs/raw/.clawbench/generated/audio%2001.mp3"')
   })
 
   it('leaves external http(s) audio URLs unchanged', () => {
     const html = '<a href="https://example.com/sound.mp3">play</a>'
     const result = convertAudioLinks(html, audioProjectRoot)
     expect(result).toContain('src="https://example.com/sound.mp3"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
-  it('leaves /api/local-file/ audio URLs unchanged', () => {
-    const html = '<a href="/api/local-file/sound.mp3">play</a>'
+  it('leaves /api/fs/raw/ audio URLs unchanged', () => {
+    const html = '<a href="/api/fs/raw/sound.mp3">play</a>'
     const result = convertAudioLinks(html, audioProjectRoot)
-    expect(result).toContain('src="/api/local-file/sound.mp3"')
+    expect(result).toContain('src="/api/fs/raw/sound.mp3"')
   })
 
   it('keeps relative path unchanged when projectRoot is not provided', () => {
     const html = '<a href=".clawbench/generated/audio.mp3">play</a>'
     const result = convertAudioLinks(html)
     expect(result).toContain('src=".clawbench/generated/audio.mp3"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   it('serves a project-external absolute path through the ?path= form', () => {
@@ -514,7 +514,7 @@ describe('convertAudioLinks', () => {
     // endpoint rather than requested from the site root (which 404s).
     const html = '<a href="/tmp/elsewhere/audio.mp3">play</a>'
     const result = convertAudioLinks(html, audioProjectRoot)
-    expect(result).toContain('src="/api/local-file/?path=%2Ftmp%2Felsewhere%2Faudio.mp3"')
+    expect(result).toContain('src="/api/fs/raw/?target=%2Ftmp%2Felsewhere%2Faudio.mp3"')
     expect(result).not.toContain('src="/tmp/elsewhere/audio.mp3"')
   })
 })
@@ -527,7 +527,7 @@ describe('convertVideoLinks', () => {
   it('converts .mp4 links to video player', () => {
     const html = '<a href="movie.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('<video src="/api/local-file/movie.mp4" controls')
+    expect(result).toContain('<video src="/api/fs/raw/movie.mp4" controls')
     expect(result).toContain('class="chat-video-player"')
     expect(result).not.toContain('<a href=')
   })
@@ -543,48 +543,48 @@ describe('convertVideoLinks', () => {
 
   it('converts .webm and .mov links to video player', () => {
     const webm = convertVideoLinks('<a href="clip.webm">c</a>', videoProjectRoot)
-    expect(webm).toContain('<video src="/api/local-file/clip.webm"')
+    expect(webm).toContain('<video src="/api/fs/raw/clip.webm"')
     const mov = convertVideoLinks('<a href="clip.mov">c</a>', videoProjectRoot)
-    expect(mov).toContain('<video src="/api/local-file/clip.mov"')
+    expect(mov).toContain('<video src="/api/fs/raw/clip.mov"')
   })
 
-  it('rewrites project-relative path to /api/local-file/ when projectRoot is set', () => {
+  it('rewrites project-relative path to /api/fs/raw/ when projectRoot is set', () => {
     const html = '<a href=".clawbench/generated/video.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('src="/api/local-file/.clawbench/generated/video.mp4"')
+    expect(result).toContain('src="/api/fs/raw/.clawbench/generated/video.mp4"')
     expect(result).not.toContain('href=".clawbench/')
   })
 
   it('encodes CJK/special characters in rewritten video path', () => {
     const html = '<a href=".clawbench/generated/video 01.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('src="/api/local-file/.clawbench/generated/video%2001.mp4"')
+    expect(result).toContain('src="/api/fs/raw/.clawbench/generated/video%2001.mp4"')
   })
 
   it('leaves external http(s) video URLs unchanged', () => {
     const html = '<a href="https://example.com/movie.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
     expect(result).toContain('src="https://example.com/movie.mp4"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
-  it('leaves /api/local-file/ video URLs unchanged', () => {
-    const html = '<a href="/api/local-file/movie.mp4">play</a>'
+  it('leaves /api/fs/raw/ video URLs unchanged', () => {
+    const html = '<a href="/api/fs/raw/movie.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('src="/api/local-file/movie.mp4"')
+    expect(result).toContain('src="/api/fs/raw/movie.mp4"')
   })
 
   it('keeps relative path unchanged when projectRoot is not provided', () => {
     const html = '<a href=".clawbench/generated/video.mp4">play</a>'
     const result = convertVideoLinks(html)
     expect(result).toContain('src=".clawbench/generated/video.mp4"')
-    expect(result).not.toContain('/api/local-file/')
+    expect(result).not.toContain('/api/fs/raw/')
   })
 
   it('serves a project-external absolute path through the ?path= form', () => {
     const html = '<a href="/tmp/elsewhere/movie.mp4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('src="/api/local-file/?path=%2Ftmp%2Felsewhere%2Fmovie.mp4"')
+    expect(result).toContain('src="/api/fs/raw/?target=%2Ftmp%2Felsewhere%2Fmovie.mp4"')
     expect(result).not.toContain('src="/tmp/elsewhere/movie.mp4"')
   })
 
@@ -603,7 +603,7 @@ describe('convertVideoLinks', () => {
   it('handles case-insensitive extension matching (.MP4)', () => {
     const html = '<a href="movie.MP4">play</a>'
     const result = convertVideoLinks(html, videoProjectRoot)
-    expect(result).toContain('<video src="/api/local-file/movie.MP4"')
+    expect(result).toContain('<video src="/api/fs/raw/movie.MP4"')
   })
 
   it('returns empty string for empty input', () => {

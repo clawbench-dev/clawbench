@@ -130,10 +130,16 @@ func ServeSessionRewind(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if res.DeletedCount == 0 {
+	if res.DeletedCount == 0 && res.QueuedCount == 0 {
 		// Nothing followed the anchor — a no-op rewind must not touch the AI-side
 		// session mapping (clearing it would force a fresh session + full history
 		// re-injection on the next message even though nothing was removed).
+		//
+		// QueuedCount is part of the guard because a queued message has no
+		// chat_history row: a session whose only trailing work is queued is a
+		// REAL rewind (the service already discarded it), and reporting
+		// NothingToRewind there would tell the user nothing happened while their
+		// message had just been deleted.
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "NothingToRewind")
 		return
 	}

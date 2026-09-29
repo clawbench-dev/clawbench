@@ -8,6 +8,7 @@ import (
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------- ContinueFromExecution: dedup check ----------
@@ -400,13 +401,12 @@ func TestContinueFromExecution_NoMessages(t *testing.T) {
 	assert.Empty(t, msgs)
 }
 
-// TestContinueFromExecution_TitleSurvivesFirstMessage is a regression test: a
-// continued session's "⏰ [time] task" title is deliberately chosen and must not
-// be overwritten by the first user message. This is reachable because
-// ContinueFromExecution creates a session_type='chat' session, and when the
-// source execution had no copyable messages the new session has 0 history rows,
-// so the first message triggers the auto-title path.
-func TestContinueFromExecution_TitleSurvivesFirstMessage(t *testing.T) {
+// TestContinueFromExecution_FirstMessageRenamesSession: a continued session's
+// "⏰ [time] task" title identifies which run it came from, but not what the user
+// wants to do with it — so the first message after the continuation names the
+// session, exactly like a fork. The time prefix is replaced wholesale rather
+// than kept, so both derived-session kinds behave identically.
+func TestContinueFromExecution_FirstMessageRenamesSession(t *testing.T) {
 	setupDB(t)
 
 	taskID := helperCreateScheduledTask(t, "/project", "Daily Review", "claude")
@@ -417,17 +417,83 @@ func TestContinueFromExecution_TitleSurvivesFirstMessage(t *testing.T) {
 	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
 	assert.NoError(t, err)
 
+	// Until the branch says what it is for, it carries the run identifier.
 	titleBefore, err := service.GetSessionTitle(newSessID)
 	assert.NoError(t, err)
 	assert.Regexp(t, `^⏰ \[\d{2}-\d{2} \d{2}:\d{2}\] Daily Review$`, titleBefore)
 
-	// The first user message must not replace the deliberate title.
 	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "follow up question", nil, false, "Daily Review")
 	assert.NoError(t, err)
 
 	titleAfter, err := service.GetSessionTitle(newSessID)
 	assert.NoError(t, err)
-	assert.Equal(t, titleBefore, titleAfter, "continued session title must survive the first message")
+	assert.Equal(t, "follow up question", titleAfter,
+		"the first message after the continuation should name the session")
+}
+
+// Only the FIRST message after the continuation re-titles: once the title is
+// 'auto' its rank blocks later messages.
+func TestContinueFromExecution_OnlyFirstMessageRenames(t *testing.T) {
+	setupDB(t)
+
+	taskID := helperCreateScheduledTask(t, "/project", "Daily Review", "claude")
+	sessID := helperCreateScheduledSession(t, "/project", "claude", "Daily Review")
+	execID := helperCreateTaskExecution(t, taskID, sessID, "completed")
+
+	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
+	assert.NoError(t, err)
+
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "first question", nil, false, "Daily Review")
+	assert.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "later question", nil, false, "Daily Review")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, "first question", title, "a later message must not re-title the session")
+}
+
+// A manual rename still wins — it writes title_source='custom' (rank 2), which
+// outranks the auto title (rank 1).
+func TestContinueFromExecution_ManualRenameSurvivesFirstMessage(t *testing.T) {
+	setupDB(t)
+
+	taskID := helperCreateScheduledTask(t, "/project", "Daily Review", "claude")
+	sessID := helperCreateScheduledSession(t, "/project", "claude", "Daily Review")
+	execID := helperCreateTaskExecution(t, taskID, sessID, "completed")
+
+	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
+	assert.NoError(t, err)
+
+	require.NoError(t, service.SetSessionTitleLocked(newSessID, "我的跟进"))
+
+	_, err = service.AddChatMessage("/project", "claude", newSessID, "user", "this must not become the title", nil, false, "Daily Review")
+	assert.NoError(t, err)
+
+	title, err := service.GetSessionTitle(newSessID)
+	assert.NoError(t, err)
+	assert.Equal(t, "我的跟进", title, "a manual rename must survive the first message")
+}
+
+// A continued session records title_source='placeholder': that is what makes the
+// first message able to replace the run-identifier title.
+func TestContinueFromExecution_TitleSourceIsPlaceholder(t *testing.T) {
+	setupDB(t)
+
+	taskID := helperCreateScheduledTask(t, "/project", "Daily Review", "claude")
+	sessID := helperCreateScheduledSession(t, "/project", "claude", "Daily Review")
+	execID := helperCreateTaskExecution(t, taskID, sessID, "completed")
+
+	newSessID, _, err := service.ContinueFromExecution(execID, "/project")
+	assert.NoError(t, err)
+
+	var source string
+	err = service.UnsafeDBForTest().QueryRow(
+		"SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", newSessID,
+	).Scan(&source)
+	assert.NoError(t, err)
+	assert.Equal(t, "placeholder", source,
+		"a continued session's run-identifier title is inherited, not chosen")
 }
 
 // ========== Test Helpers ==========

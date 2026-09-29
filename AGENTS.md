@@ -66,7 +66,7 @@ npm test                                              # Vitest 前端测试
 | `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
 | `internal/gitignore/` | 判定「git 是否会跟踪该路径」：go-git 模式引擎 + 来自 index 的三条规则（已跟踪文件/含已跟踪文件的目录永不忽略、祖先被排除则整体忽略、自身最后一条匹配）。文件管理器灰显与 cloc 排除共用；按真实 `git check-ignore` 差分验证 |
 | `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`，队列兜底回收 `queue_reaper.go`；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；14 个后端子包；CLI/ACP 均支持无进度看门狗 |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗 |
 | `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
@@ -114,14 +114,17 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 **自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；`npm/desktop-main/bin/clawbench-desktop.js` 启动时读该指针决定运行哪个版本（指针缺失/目录不存在则回退到 npm 包自带版本），因此失败可回滚、旧版本保留。
 
-**分发以 GitHub Release 为准，npm 只是可选渠道**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + Release 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。这消除了对 npm 的依赖——Electron 44 的运行时让 tarball 达到 ~120MiB，逼近 npm 的体积上限。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
+**全量包以 GitHub Release 为准，载荷包只走 npm**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
+
+增量升级用的**载荷包**（应用自身，约 3MB）**只在 npm 发布**（`publish-npm-desktop`），不再作为 Release 资产——在 Release 资产里放一个 3MB 的 zip 会让人误以为它可直接安装（它缺 Electron 运行时，只能增量套用）。`payloads` 因此每平台只有 npm tarball 一个候选；macOS 无载荷（替换会破坏签名），该键缺席即走全量下载。
 
 `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、客户端隐藏下载入口——不要把它当错误处理。
 
-构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 仍发 `@xulongzhe/clawbench-desktop` 与 linux/win 平台包，但**带体积门控**（超 100MiB 跳过并 warning，不再让整个 release 失败）；darwin 从不发 npm。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
 
 ## 开发规则
 
+- **改 UI 前先读视觉设计指导手册**：动样式、加组件、加主题、加动效之前必读 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)——样式三层归属、设计 token（字号/间距/圆角/层级/时长）、36 主题机制与新增步骤、布局骨架，以及六条红线（`v-html` 匹配不到 scoped 规则、共享类基规则也必须全局、`app-region` 豁免只能是控件、对比度不能靠固定跳一档背景、`content-visibility` 滚动跳变、Android WebView 像素怪癖）。改动检查清单与守卫测试索引也在文末。
 - **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
 - **改动 HTTP 接口必须同步 OpenAPI 文档**：任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、参数、请求 / 响应字段、状态码）都必须同步更新 `internal/api/openapi.yaml`（已从 `docs/spec/api/` 迁入以支持 `go:embed`）。

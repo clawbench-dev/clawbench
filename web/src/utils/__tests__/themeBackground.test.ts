@@ -11,17 +11,13 @@ import {
   THUMB_WIDTH,
   invalidateGalleryImageUrls,
   resolveWallpaperMode,
-  resolveWallpaperEnabled,
+  isWaveActive,
   resolveActiveFile,
   resolveGalleryItems,
-  resolveGallerySelected,
   resolveBingStatus,
   isBingFirstImagePending,
-  bingMktForLocale,
   uploadGalleryImages,
   deleteGalleryItem,
-  selectGalleryItem,
-  setWallpaperMode,
   setWallpaperFromPath,
   syncBingNow,
   fetchBingStatus,
@@ -43,60 +39,95 @@ describe('themeBackground', () => {
   })
 
   describe('resolveWallpaperState', () => {
-    it('is unknown before the server config loads', () => {
-      expect(resolveWallpaperState(undefined)).toBe('unknown')
-      expect(resolveWallpaperState({})).toBe('unknown')
+    it('is unset when the device turned the wallpaper off', () => {
+      expect(resolveWallpaperState('local', false, 'local-1-a.png', true)).toBe('unset')
+      expect(resolveWallpaperState('wave', false, '', true)).toBe('unset')
     })
 
-    it('is set when active_file is non-empty', () => {
-      expect(resolveWallpaperState({ active_file: 'local-1-a.png' })).toBe('set')
+    it('is unset for the wave, which is a background but not an image', () => {
+      expect(resolveWallpaperState('wave', true, '', true)).toBe('unset')
     })
 
-    it('is unset when active_file is empty', () => {
-      expect(resolveWallpaperState({ active_file: '' })).toBe('unset')
+    it('is set for a local image once one is selected', () => {
+      expect(resolveWallpaperState('local', true, 'local-1-a.png', true)).toBe('set')
     })
 
-    it('is unset when the wallpaper is globally disabled', () => {
-      // The server clears active_file while disabled, so the gallery can be
-      // retained without the wallpaper being shown.
-      expect(resolveWallpaperState({ active_file: '', wallpaper_enabled: false })).toBe('unset')
+    it('is unset for the local source with nothing selected', () => {
+      expect(resolveWallpaperState('local', true, '', true)).toBe('unset')
+    })
+
+    it('is unknown for Bing only until the server config loads', () => {
+      // The Bing file is the one asynchronous input: before /api/config
+      // resolves we cannot know whether an image is cached.
+      expect(resolveWallpaperState('bing', true, '', false)).toBe('unknown')
+      expect(resolveWallpaperState('bing', true, '', true)).toBe('unset')
+      expect(resolveWallpaperState('bing', true, 'bing-1.jpg', true)).toBe('set')
+    })
+
+    it('is unset for the none mode', () => {
+      expect(resolveWallpaperState('none', true, '', true)).toBe('unset')
     })
   })
 
   describe('resolveWallpaperMode', () => {
-    it('maps the server mode', () => {
-      expect(resolveWallpaperMode({ wallpaper_mode: 'local' })).toBe('local')
-      expect(resolveWallpaperMode({ wallpaper_mode: 'bing' })).toBe('bing')
+    it('maps a stored local value', () => {
+      expect(resolveWallpaperMode('local')).toBe('local')
+      expect(resolveWallpaperMode('bing')).toBe('bing')
+      expect(resolveWallpaperMode('wave')).toBe('wave')
     })
 
     it('is none when unset or unknown', () => {
       expect(resolveWallpaperMode(undefined)).toBe('none')
-      expect(resolveWallpaperMode({})).toBe('none')
-      expect(resolveWallpaperMode({ wallpaper_mode: 'nonsense' })).toBe('none')
+      expect(resolveWallpaperMode(null)).toBe('none')
+      expect(resolveWallpaperMode('')).toBe('none')
+      expect(resolveWallpaperMode('nonsense')).toBe('none')
     })
   })
 
-  describe('resolveWallpaperEnabled', () => {
-    it('defaults to enabled before the config loads', () => {
-      expect(resolveWallpaperEnabled(undefined)).toBe(true)
-      expect(resolveWallpaperEnabled({})).toBe(true)
+  describe('isWaveActive', () => {
+    it('is true only for the wave while enabled', () => {
+      expect(isWaveActive('wave', true)).toBe(true)
+      expect(isWaveActive('wave', false)).toBe(false)
     })
 
-    it('reflects an explicit disable', () => {
-      expect(resolveWallpaperEnabled({ wallpaper_enabled: false })).toBe(false)
-      expect(resolveWallpaperEnabled({ wallpaper_enabled: true })).toBe(true)
+    it('is false for the image modes and for none', () => {
+      expect(isWaveActive('local', true)).toBe(false)
+      expect(isWaveActive('bing', true)).toBe(false)
+      expect(isWaveActive('none', true)).toBe(false)
+    })
+
+    it('does not depend on a file, which the wave does not have', () => {
+      // The wave has no file, so resolveWallpaperState reports 'unset' for it.
+      // Detecting the wave therefore cannot go through the active file.
+      expect(resolveWallpaperState('wave', true, '', true)).toBe('unset')
+      expect(isWaveActive('wave', true)).toBe(true)
     })
   })
 
   describe('resolveActiveFile', () => {
-    it('returns the server-resolved active_file', () => {
-      expect(resolveActiveFile({ active_file: 'local-1-a.png' })).toBe('local-1-a.png')
+    it('resolves the local source from this device\'s own selection', () => {
+      expect(resolveActiveFile('local', true, 'local-1-a.png', 'bing-1.jpg')).toBe('local-1-a.png')
     })
 
-    it('is empty when nothing is active', () => {
-      expect(resolveActiveFile(undefined)).toBe('')
-      expect(resolveActiveFile({})).toBe('')
-      expect(resolveActiveFile({ active_file: '' })).toBe('')
+    it('resolves the Bing source from the server cache', () => {
+      expect(resolveActiveFile('bing', true, 'local-1-a.png', 'bing-1.jpg')).toBe('bing-1.jpg')
+    })
+
+    it('is empty for wave / none, which have no file', () => {
+      expect(resolveActiveFile('wave', true, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('none', true, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+    })
+
+    it('is empty for every source while the wallpaper is switched off', () => {
+      // The returned name is what activates the translucent-panel rules, so a
+      // disabled wallpaper must resolve to no file: otherwise turning the
+      // wallpaper off hid the image but left the panels see-through over an
+      // empty background. The server-side ResolveActive this replaced checked
+      // the switch before resolving any source.
+      expect(resolveActiveFile('local', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('bing', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('wave', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
+      expect(resolveActiveFile('none', false, 'local-1-a.png', 'bing-1.jpg')).toBe('')
     })
   })
 
@@ -114,78 +145,64 @@ describe('themeBackground', () => {
     })
   })
 
-  describe('resolveGallerySelected', () => {
-    it('returns the selection', () => {
-      expect(resolveGallerySelected({ local: { selected: 'local-1-a.png' } })).toBe('local-1-a.png')
-    })
-
-    it('is empty when absent', () => {
-      expect(resolveGallerySelected(undefined)).toBe('')
-      expect(resolveGallerySelected({})).toBe('')
-    })
-  })
-
   describe('resolveBingStatus', () => {
     it('returns the bing section', () => {
-      const bing = resolveBingStatus({ bing: { enabled: true, file: 'bing-20260910.jpg', copyright: '© x' } })
-      expect(bing.enabled).toBe(true)
+      const bing = resolveBingStatus({ bing: { file: 'bing-20260910.jpg', copyright: '© x' } })
       expect(bing.file).toBe('bing-20260910.jpg')
       expect(bing.copyright).toBe('© x')
     })
 
     it('fills in defaults for missing fields', () => {
       const bing = resolveBingStatus(undefined)
-      expect(bing.enabled).toBe(false)
       expect(bing.file).toBe('')
       expect(bing.last_error).toBe('')
     })
   })
 
-  describe('bingMktForLocale', () => {
-    it('maps Chinese locales to zh-CN', () => {
-      expect(bingMktForLocale('zh')).toBe('zh-CN')
-      expect(bingMktForLocale('zh-CN')).toBe('zh-CN')
-    })
-
-    it('maps everything else to en-US', () => {
-      expect(bingMktForLocale('en')).toBe('en-US')
-      expect(bingMktForLocale('fr')).toBe('en-US')
-      expect(bingMktForLocale('')).toBe('en-US')
-    })
-  })
-
   describe('isBingFirstImagePending', () => {
-    it('is true when Bing is active but no image is cached yet', () => {
-      expect(isBingFirstImagePending({ wallpaper_mode: 'bing', wallpaper_enabled: true, active_file: '' })).toBe(true)
+    it('is true when this device wants Bing and the cache is still empty', () => {
+      expect(isBingFirstImagePending('bing', true, '', true)).toBe(true)
     })
 
-    it('is false once an image is available', () => {
-      expect(isBingFirstImagePending({ wallpaper_mode: 'bing', wallpaper_enabled: true, active_file: 'bing-20260910.jpg' })).toBe(false)
+    it('is false once an image is cached', () => {
+      expect(isBingFirstImagePending('bing', true, 'bing-20260910.jpg', true)).toBe(false)
     })
 
     it('is false when the wallpaper is disabled', () => {
-      expect(isBingFirstImagePending({ wallpaper_mode: 'bing', wallpaper_enabled: false, active_file: '' })).toBe(false)
+      expect(isBingFirstImagePending('bing', false, '', true)).toBe(false)
     })
 
-    it('is false for the local source', () => {
-      expect(isBingFirstImagePending({ wallpaper_mode: 'local', wallpaper_enabled: true, active_file: '' })).toBe(false)
+    it('is false for the other sources', () => {
+      expect(isBingFirstImagePending('local', true, '', true)).toBe(false)
+      expect(isBingFirstImagePending('wave', true, '', true)).toBe(false)
     })
 
-    it('is false before the config loads', () => {
-      expect(isBingFirstImagePending(undefined)).toBe(false)
-      expect(isBingFirstImagePending({})).toBe(false)
+    it('is false before the config loads, so it does not poll blind', () => {
+      // Without the server's answer we cannot tell "no image yet" from "not
+      // loaded yet"; polling on the latter would spin for a result already there.
+      expect(isBingFirstImagePending('bing', true, '', false)).toBe(false)
     })
   })
 
   describe('resolvePanelOpacity', () => {
-    it('defaults to 0.85', () => {
-      expect(resolvePanelOpacity(undefined)).toBe(0.85)
-      expect(resolvePanelOpacity({})).toBe(0.85)
+    it('defaults to 0.7 for missing / non-numeric values', () => {
+      expect(resolvePanelOpacity(undefined)).toBe(0.7)
+      expect(resolvePanelOpacity(null)).toBe(0.7)
+      expect(resolvePanelOpacity('')).toBe(0.7)
+      expect(resolvePanelOpacity('abc')).toBe(0.7)
     })
 
-    it('returns the configured value', () => {
-      expect(resolvePanelOpacity({ panel_opacity: 0.7 })).toBe(0.7)
-      expect(resolvePanelOpacity({ panel_opacity: 1 })).toBe(1)
+    it('accepts any value across the whole 0-1 range', () => {
+      expect(resolvePanelOpacity(0)).toBe(0)
+      expect(resolvePanelOpacity(0.35)).toBe(0.35)
+      expect(resolvePanelOpacity(1)).toBe(1)
+      // A stringified value (hand-edited localStorage) is coerced.
+      expect(resolvePanelOpacity('0.6')).toBe(0.6)
+    })
+
+    it('rejects out-of-range values', () => {
+      expect(resolvePanelOpacity(-0.2)).toBe(0.7)
+      expect(resolvePanelOpacity(1.5)).toBe(0.7)
     })
   })
 
@@ -225,8 +242,8 @@ describe('themeBackground', () => {
     it('clamps the alpha to the valid range', () => {
       applyWallpaper('background.png', 5, false)
       expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('100%')
-      applyWallpaper('background.png', 0.1, false)
-      expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('50%')
+      applyWallpaper('background.png', -1, false)
+      expect(document.documentElement.style.getPropertyValue('--panel-alpha')).toBe('0%')
     })
 
     it('clears the effect when the wallpaper file is empty', () => {
@@ -236,6 +253,45 @@ describe('themeBackground', () => {
       expect(html.classList.contains('wallpaper-active')).toBe(false)
       expect(html.style.getPropertyValue('--wallpaper-url')).toBe('none')
       expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('transparent')
+    })
+
+    it('activates the translucent panels for the wave, which has no file', () => {
+      // The wave is a background with no image, so the 5th argument is the only
+      // signal that the surfaces must go translucent.
+      applyWallpaper('', 0.7, false, false, true)
+      const html = document.documentElement
+      expect(html.classList.contains('wallpaper-active')).toBe(true)
+      expect(html.style.getPropertyValue('--wallpaper-url')).toBe('none')
+      expect(html.style.getPropertyValue('--panel-alpha')).toBe('70%')
+    })
+
+    it('does not write a scrim for the wave', () => {
+      // The scrim darkens an image for contrast; over the wave it would just
+      // dim the background for no reason.
+      applyWallpaper('', 0.85, true, false, true)
+      expect(document.documentElement.style.getPropertyValue('--wallpaper-scrim')).toBe('transparent')
+    })
+
+    it('clears the wave effect when waveActive goes false', () => {
+      applyWallpaper('', 0.85, false, false, true)
+      expect(document.documentElement.classList.contains('wallpaper-active')).toBe(true)
+      applyWallpaper('', 0.85, false, false, false)
+      expect(document.documentElement.classList.contains('wallpaper-active')).toBe(false)
+    })
+
+    it('keeps 4-argument calls behaving exactly as before', () => {
+      // The wave flag is optional precisely so existing callers and tests are
+      // unaffected; an image still activates and still gets its scrim.
+      applyWallpaper('background.png', 0.85, true)
+      const html = document.documentElement
+      expect(html.classList.contains('wallpaper-active')).toBe(true)
+      expect(html.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.35)')
+    })
+
+    it('still writes a scrim when both a file and the wave flag are given', () => {
+      // Defensive: a file is authoritative, so the scrim follows the image.
+      applyWallpaper('background.png', 0.85, false, false, true)
+      expect(document.documentElement.style.getPropertyValue('--wallpaper-scrim')).toBe('rgba(0, 0, 0, 0.12)')
     })
 
     it('does not regenerate the image URL on alpha-only updates (slider drag)', () => {
@@ -320,7 +376,7 @@ describe('themeBackground', () => {
       invalidateGalleryImageUrls()
       const url = galleryImageUrl('local-1-a.png', '/data/theme/local/local-1-a.png')
 
-      expect(url).toContain('/api/file/thumb?path=')
+      expect(url).toContain('/api/fs/thumb?target=')
       expect(url).toContain(encodeURIComponent('/data/theme/local/local-1-a.png'))
       expect(url).toContain(`w=${THUMB_WIDTH}`)
       expect(url).not.toContain('theme-wallpaper')
@@ -332,17 +388,17 @@ describe('themeBackground', () => {
       const url = galleryImageUrl('local-1-a.png')
 
       expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.png')
-      expect(url).not.toContain('/api/file/thumb')
+      expect(url).not.toContain('/api/fs/thumb')
     })
 
     it('falls back to the full-size endpoint for SVG', () => {
-      // /api/file/thumb only rasterizes png/jpg/gif; SVG would 404, so it must
+      // /api/fs/thumb only rasterizes png/jpg/gif; SVG would 404, so it must
       // keep using the wallpaper endpoint (which serves it under a sandbox CSP).
       invalidateGalleryImageUrls()
       const url = galleryImageUrl('local-1-a.svg', '/data/theme/local/local-1-a.svg')
 
       expect(url).toContain('/api/file/theme-wallpaper?name=local-1-a.svg')
-      expect(url).not.toContain('/api/file/thumb')
+      expect(url).not.toContain('/api/fs/thumb')
     })
 
     it('caches the thumbnail URL per file', () => {
@@ -386,7 +442,7 @@ describe('themeBackground', () => {
     })
 
     it('deletes by name in the query string', async () => {
-      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ active_file: '' }) })
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ items: [] }) })
       vi.stubGlobal('fetch', fetchMock)
       try {
         await deleteGalleryItem('local-1-a.png')
@@ -398,39 +454,25 @@ describe('themeBackground', () => {
       }
     })
 
-    it('selects by JSON body', async () => {
-      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ active_file: 'local-1-a.png' }) })
-      vi.stubGlobal('fetch', fetchMock)
-      try {
-        await selectGalleryItem('local-1-a.png')
-        const [url, init] = fetchMock.mock.calls[0]
-        expect(url).toBe('/api/theme/local/select')
-        expect(JSON.parse(init.body as string)).toEqual({ name: 'local-1-a.png' })
-      } finally {
-        vi.unstubAllGlobals()
-      }
-    })
-
-    it('sets a wallpaper from a server file by reading bytes then uploading+selecting', async () => {
+    it('sets a wallpaper from a server file by reading bytes, uploading, then selecting locally', async () => {
       const blob = new Blob(['png-bytes'], { type: 'image/png' })
       const fetchMock = vi.fn()
         .mockResolvedValueOnce({ ok: true, blob: async () => blob })
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [{ file: 'local-9-z.png' }], errors: [] }) })
-        .mockResolvedValueOnce({ ok: true, json: async () => ({ active_file: 'local-9-z.png' }) })
       vi.stubGlobal('fetch', fetchMock)
+      const writes: Record<string, string> = {}
       try {
-        const out = await setWallpaperFromPath('assets/wall.png')
+        await setWallpaperFromPath('assets/wall.png', (k, v) => { writes[k] = v })
 
         // 1. Read the source file bytes through the local-file endpoint.
-        expect(fetchMock.mock.calls[0][0]).toContain('/api/local-file/assets/wall.png')
+        expect(fetchMock.mock.calls[0][0]).toContain('/api/fs/raw/assets/wall.png')
         // 2. Upload the bytes into the gallery.
         expect(fetchMock.mock.calls[1][0]).toBe('/api/theme/local/upload')
         const form = fetchMock.mock.calls[1][1].body as FormData
         expect((form.getAll('files')[0] as File).name).toBe('wall.png')
-        // 3. Select the new gallery entry as the active wallpaper.
-        expect(fetchMock.mock.calls[2][0]).toBe('/api/theme/local/select')
-        expect(JSON.parse(fetchMock.mock.calls[2][1].body as string)).toEqual({ name: 'local-9-z.png' })
-        expect(out.active_file).toBe('local-9-z.png')
+        // 3. Adopt it locally — the server no longer selects on upload, so this
+        //    device is the only place the new image can become the wallpaper.
+        expect(writes).toEqual({ wallpaperLocalSelected: 'local-9-z.png', wallpaperMode: 'local' })
       } finally {
         vi.unstubAllGlobals()
       }
@@ -443,20 +485,7 @@ describe('themeBackground', () => {
         .mockResolvedValueOnce({ ok: true, json: async () => ({ items: [], errors: [{ name: 'wall.png', error: 'unsupported image' }] }) })
       vi.stubGlobal('fetch', fetchMock)
       try {
-        await expect(setWallpaperFromPath('assets/wall.png')).rejects.toThrow('unsupported image')
-      } finally {
-        vi.unstubAllGlobals()
-      }
-    })
-
-    it('sets the mode via the wallpaper endpoint', async () => {
-      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ mode: 'bing' }) })
-      vi.stubGlobal('fetch', fetchMock)
-      try {
-        await setWallpaperMode({ mode: 'bing', enabled: true })
-        const [url, init] = fetchMock.mock.calls[0]
-        expect(url).toBe('/api/theme/wallpaper')
-        expect(JSON.parse(init.body as string)).toEqual({ mode: 'bing', enabled: true })
+        await expect(setWallpaperFromPath('assets/wall.png', () => {})).rejects.toThrow('unsupported image')
       } finally {
         vi.unstubAllGlobals()
       }

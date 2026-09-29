@@ -126,6 +126,9 @@ describe('useUsageStats', () => {
       expect(ids).not.toContain('output')
       expect(ids).not.toContain('credit')
       expect(ids).not.toContain('cacheMiss')
+      // The overall token total leads — it is the headline number, so it must
+      // not be buried after the input/output split.
+      expect(ids[0]).toBe('total')
     })
   })
 

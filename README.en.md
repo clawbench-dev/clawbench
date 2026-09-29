@@ -17,7 +17,7 @@ Brings the full power of AI coding agents to every screen — phone, tablet, and
 Core Advantage: Native passthrough of AI capabilities (tool calls, extended thinking, Skills, MCP) with zero adaptation cost, fully preserving the power of coding agents. ClawBench is a complete workbench on every platform — files, code, Git, AI, tasks, TTS — with mobile interactions carefully crafted for one-handed use and full desktop support for serious work.
 
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
-- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
+- **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
 
 📖 **User Guides** (Chinese): [Desktop](docs/user-guid/user-guid.md) · [Mobile](docs/user-guid/user-guid-mobile.md)
 
@@ -110,7 +110,7 @@ clawbench
 | 🎨 **Code Preview & Editing** | CodeMirror browse/edit dual mode, syntax highlighting, autocompletion (11 languages), **Sticky Scroll**, VS Code-style search bar, diff flash highlighting, **Excalidraw canvas**, path jumps with line ranges |
 | 📝 **Markdown** | Render/source toggle, TOC drawer, LaTeX, Mermaid, image lightbox, **code-link preview overlay**, **self-contained HTML export** (KaTeX fonts inlined) |
 | 📄 **Documents & Media** | Native Word / Excel / PowerPoint rendering, paged PDF with zoom, inline image/audio/video players, lightbox |
-| 🤖 **AI Agents** | **14 backends** (CodeBuddy, Claude Code, OpenCode, Codex, Qoder, VeCLI, CodeWhale, MiMo, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode), streaming responses, visible reasoning, **sub-agent content grouping**, thinking-depth levels, persisted model choice, persisted ACP context state, local skill scanning |
+| 🤖 **AI Agents** | **15 backends** (CodeBuddy, Claude Code, OpenCode, Codex, Qoder, VeCLI, CodeWhale, DeepSeek Harness, MiMo, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode), streaming responses, visible reasoning, **sub-agent content grouping**, thinking-depth levels, persisted model choice, persisted ACP context state, local skill scanning |
 | 💬 **AI Conversation** | Tool-call visualization, **interactive question cards**, suggested replies, slash commands (ACP + built-in merged), quote-to-ask, message queue, disconnect protection, rewind & fork, auto-summary, RAG result cards, draft restore, completion popup |
 | 📂 **Session Management** | Create / switch / archive sessions, **session tags** (project-scoped, hash-colored), unread counted **per item**, per-project session restore, swipe-to-switch toggle |
 | ⏰ **Task Scheduling** | Cron schedules (presets + custom) and **event triggers** (`issue.opened` / `pr.merged` / `pipeline_done`), 3-level breadcrumb navigation, continue-chat from run details, completion push |

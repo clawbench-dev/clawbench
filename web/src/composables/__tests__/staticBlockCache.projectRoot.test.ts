@@ -83,7 +83,6 @@ vi.mock('@/utils/chatBlocks.ts', () => ({
   parseAssistantContent: vi.fn(),
   toolCallSummary: vi.fn(),
   hasImagesInContent: vi.fn(() => false),
-  formatMessageTime: vi.fn(),
   formatDetailTime: vi.fn(),
   truncate: (s: string) => s,
 }))

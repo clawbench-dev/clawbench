@@ -150,7 +150,18 @@
               <span class="forge-comment-author">{{ c.author }}</span>
               <span class="forge-comment-time">{{ formatTime(c.createdAt) }}</span>
             </div>
-            <div class="forge-comment-body markdown-body" v-html="renderComment(c.body)"></div>
+            <!-- The comment body carries its OWN quote source so a selection
+                 here points at this exact comment, not just the issue. The
+                 anchor differs per platform (GitHub `#issuecomment-<id>`,
+                 GitLab `#note_<id>`), which is why it is built here rather
+                 than hard-coded. -->
+            <div
+              class="forge-comment-body markdown-body"
+              :data-quote-source="commentQuoteLabel(c)"
+              :data-quote-language="detail.item.value.type"
+              :data-quote-url="commentUrl(c)"
+              v-html="renderComment(c.body)"
+            ></div>
           </div>
         </div>
       </div>
@@ -372,6 +383,34 @@ const quoteSourceLabel = computed(() => {
   if (!it) return ''
   return `${it.slug}#${it.number}`
 })
+
+/**
+ * Build the deep link to one comment.
+ *
+ * The anchor fragment differs per platform, so this cannot be hard-coded:
+ * GitHub uses `#issuecomment-<id>` (and the comment id is a global one, not the
+ * per-issue index), GitLab uses `#note_<id>`. Without the fragment the link
+ * opens the issue, which is what the item-level url already does — so the
+ * fragment is the whole point.
+ *
+ * Falls back to the item url when there is nothing to anchor to, rather than
+ * emitting a link that goes nowhere.
+ */
+function commentUrl(c: { id: number }): string {
+  const it = detail.item.value
+  if (!it) return ''
+  const base = it.url
+  if (!base || !c?.id) return base
+  const fragment = it.platform === 'gitlab' ? `#note_${c.id}` : `#issuecomment-${c.id}`
+  return `${base}${fragment}`
+}
+
+/** Label a quoted comment with its item AND author, e.g. "acme/w#3 · alice". */
+function commentQuoteLabel(c: { author: string }): string {
+  const base = quoteSourceLabel.value
+  if (!base) return ''
+  return c?.author ? `${base} · ${c.author}` : base
+}
 
 function onQuote() {
   const it = detail.item.value

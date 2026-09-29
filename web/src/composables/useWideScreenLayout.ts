@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { normalizeRatio } from '@/utils/splitRatio'
+import { DEFAULT_RATIO, normalizeRatio } from '@/utils/splitRatio'
 import { appLog } from '@/utils/appLog'
 import { DOCK_TAB_IDS, WIDE_SCREEN_PRIMARY_TABS, isDockTabId, type DockTabId } from '@/composables/dockTabs'
 
@@ -55,7 +55,7 @@ export function computeIsWideScreen(cssWidth: number, screenWidth: number, scree
 
 const isWideScreen = ref(false)
 const leftTab = ref<DockTabId>('browse')
-const splitRatio = ref(0.5)
+const splitRatio = ref(DEFAULT_RATIO)
 export const PANE_LEFT = 'left' as const
 export const PANE_RIGHT = 'right' as const
 export type ActivePane = typeof PANE_LEFT | typeof PANE_RIGHT
@@ -185,6 +185,31 @@ export function resolveActivePaneOnEnter(currentActiveTab: string): 'left' | 'ri
   return currentActiveTab === 'chat' ? 'right' : 'left'
 }
 
+/**
+ * Whether the chat panel is actually on screen right now — i.e. the user can
+ * see its content. Used to decide "the user is already looking at this session,
+ * so don't notify".
+ *
+ * Takes plain values rather than reading the refs itself. That is deliberate:
+ * the caller is `<script setup>`, where a ref is NOT auto-unwrapped, so
+ * `isWideScreen || ...` is always truthy and silently makes every session look
+ * "on screen". Requiring explicit fields makes that mistake a type error.
+ *
+ * Two independent ways the panel can be hidden:
+ *  - narrow layout: only the active tab is rendered, so any non-chat tab hides it
+ *  - wide layout: the chat column is docked, but collapsing it (SplitView
+ *    `rightCollapsed`) gives it display:none — including while activeTab still
+ *    reads "chat"
+ */
+export function isChatPanelVisible(state: {
+  isWideScreen: boolean
+  chatCollapsed: boolean
+  activeTab: string
+}): boolean {
+  if (!state.isWideScreen) return state.activeTab === 'chat'
+  return !state.chatCollapsed
+}
+
 export function registerWideScreenCallbacks(opts: { sideEffects?: (tab: DockTabId) => void; setActiveTab?: (tab: DockTabId) => void }) {
   sideEffects = opts.sideEffects ?? null
   setActiveTab = opts.setActiveTab ?? null
@@ -238,7 +263,7 @@ export function setSplitRatio(ratio: number) {
 
 export function resetWideScreenState() {
   leftTab.value = 'browse'
-  splitRatio.value = 0.5
+  splitRatio.value = DEFAULT_RATIO
   isWideScreen.value = false
   activePane.value = 'right'
   leftCollapsed.value = false

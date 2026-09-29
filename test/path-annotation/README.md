@@ -216,7 +216,7 @@ Windows 的 `C:\` 一直正常（`splitPath` 会保留 `C:` 段），只有 POSI
 预期网络请求（可在浏览器 Network 面板核对）：列目录打到
 `/api/projects?path=<绝对路径>`，**不是** `/api/dir`（后者对项目外路径返回 400）。
 
-### 项目外媒体渲染（`/api/local-file/?path=` 绝对路径形式）
+### 项目外媒体渲染（`/api/fs/raw/?target=` 绝对路径形式）
 
 Markdown 里的图片/音频/视频若指向项目外真实文件，必须能渲染出来。
 历史缺陷：所有以 `/` 开头的 `src` 都被当成「站点根 URL」原样放行，
@@ -226,6 +226,6 @@ Markdown 里的图片/音频/视频若指向项目外真实文件，必须能渲
 - `/tmp/diagram.svg` — 项目外 SVG（存在时），应正常显示
 - `/etc/hosts` — 非媒体文件，不应被当图片渲染（对照）
 
-预期：项目外媒体被改写为 `src="/api/local-file/?path=%2Fusr%2F…"`
-（项目内则仍是稳定的 `/api/local-file/<项目相对路径>`）。
+预期：项目外媒体被改写为 `src="/api/fs/raw/?target=%2Fusr%2F…"`
+（项目内则仍是稳定的 `/api/fs/raw/<项目相对路径>`）。
 项目外图片**不带** `data-attach-src`——附加流程只认项目相对路径。

@@ -92,7 +92,7 @@ vi.mock('@/utils/fileType', () => ({
 vi.mock('@/utils/fileIcon', () => ({
   getFileIcon: () => 'FileText',
   getFileIconColor: () => '#8b8b8b',
-  buildPathThumbUrl: (path: string) => `/api/file/thumb?path=${encodeURIComponent(path)}&w=80`,
+  buildPathThumbUrl: (path: string) => `/api/fs/thumb?target=${encodeURIComponent(path)}&w=80`,
   Folder: { name: 'Folder', render: () => h('span', { class: 'icon-folder' }) },
 }))
 

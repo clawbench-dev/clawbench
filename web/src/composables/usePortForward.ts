@@ -3,7 +3,7 @@ import { apiGet, apiPost, apiPut, apiDelete } from '@/utils/api'
 import { useAppMode } from './useAppMode.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
-import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl, buildServerAddress, isReversePort } from '@/utils/portForwardUtils.ts'
+import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl, isReversePort } from '@/utils/portForwardUtils.ts'
 import type { PortDirection } from '@/utils/portForwardUtils.ts'
 import { transportLabelKey } from '@/utils/tunnelTransport.ts'
 import { store } from '@/stores/app'
@@ -915,19 +915,6 @@ export function usePortForward() {
    * on this device — the useful action is handing the user the address to use in
    * a shell on the server host.
    */
-  async function copyServerAddress(serverPort: number, protocol?: string) {
-    const address = buildServerAddress(serverPort, protocol)
-    const toast = useToast()
-    try {
-      await navigator.clipboard.writeText(address)
-      toast.show(gt('proxy.serverAddressCopied'), { icon: '📋', type: 'success' })
-    } catch {
-      // Clipboard API needs a secure context / permission; fall back to showing
-      // the address so the user can still copy it by hand.
-      toast.show(address, { icon: '📋' })
-    }
-  }
-
   /** Open a forwarded port in external/system browser */
   function openInExternalBrowser(localPort: number, protocol?: string, host?: string) {
     if (isAppMode.value) {
@@ -997,7 +984,6 @@ export function usePortForward() {
     openPort,
     openPortWithCheck,
     openInExternalBrowser,
-    copyServerAddress,
     reconnectPort,
     ensurePortRegistered,
   }

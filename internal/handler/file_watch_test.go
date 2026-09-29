@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -320,9 +321,29 @@ func TestFileWatchWS_WatchMessageUpdatesPaths(t *testing.T) {
 
 	sendWatchMessage(t, conn, fileWatchMessage{Type: watchMsgWatch, Dir: ".", File: "retarget.txt"})
 
-	// Give the server a moment to apply the update before touching the file.
-	time.Sleep(200 * time.Millisecond)
-	require.NoError(t, os.WriteFile(testFile, []byte("v2"), 0o644))
+	// The server applies the retarget asynchronously: it processes the watch
+	// frame on its own goroutine, and fsnotify only reports a write once the new
+	// watch is installed. A single write after a fixed sleep races that handoff —
+	// on a loaded runner the retarget lands AFTER the write, so the event matches
+	// the OLD (unset) target and no file_change is ever emitted (the 5s read then
+	// times out). That made this test fail only on the Windows runner,
+	// load-dependently. Keep touching the file until the frame arrives, so the
+	// test does not depend on how long the handoff takes.
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; ; i++ {
+			_ = os.WriteFile(testFile, []byte(fmt.Sprintf("v%d", i+2)), 0o644)
+			select {
+			case <-stop:
+				return
+			case <-time.After(250 * time.Millisecond):
+			}
+		}
+	}()
+	defer func() { close(stop); wg.Wait() }()
 
 	data := waitForWatchEventType(t, conn, "file_change")
 	var payload struct {

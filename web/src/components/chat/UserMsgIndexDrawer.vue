@@ -33,32 +33,18 @@
       </div>
       <template v-else>
         <div class="panel-list" ref="listRef">
-          <div
+          <!-- Row rendering + styles live in MessageIndexRow so the share TOC
+               and this drawer can never drift apart. -->
+          <MessageIndexRow
             v-for="(msg, idx) in filteredMessages"
             :key="msg.id || idx"
-            class="msg-item"
-            :class="{ active: msg.id === activeId, 'msg-item-active': listNav.activeIndex.value === idx }"
-            :aria-current="msg.id === activeId || undefined"
-            tabindex="0"
-            role="button"
-            @click="$emit('select', msg)"
-            @keydown.enter="$emit('select', msg)"
-          >
-            <span class="msg-node">
-              <span class="msg-index">{{ msgIndex(msg) }}</span>
-            </span>
-            <div class="msg-body">
-              <span class="msg-text" v-html="rowHighlight(msg)"></span>
-              <span v-if="msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
-            </div>
-            <button class="msg-fork-btn" @click.stop="$emit('fork', msg)" :title="t('chat.actions.forkSession')">
-              <Split :size="14" />
-            </button>
-          </div>
-        </div>
-        <div class="panel-hint">
-          <MousePointerClick :size="13" />
-          <span>{{ t('chat.messageList.conversationIndexDesc') }}</span>
+            :msg="msg"
+            :index="msgIndex(msg)"
+            :active="msg.id === activeId"
+            :nav-active="listNav.activeIndex.value === idx"
+            :search-query="searchQuery"
+            @select="$emit('select', $event)"
+          />
         </div>
       </template>
     </div>
@@ -67,15 +53,14 @@
 
 <script setup>
 import { useI18n } from 'vue-i18n'
-import { MessagesSquare, Split, MousePointerClick } from 'lucide-vue-next'
-import { formatUserMsg, matchUserMsg } from '@/utils/userMsgIndexUtils.ts'
-import { highlightText } from '@/utils/searchUtils'
+import { MessagesSquare } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SearchInput from '@/components/common/SearchInput.vue'
+import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
+import { matchIndexMsg } from '@/utils/userMsgIndexUtils.ts'
 import { useListNav } from '@/composables/useListNav'
 import { useListKeys } from '@/composables/useListKeys'
-import { formatRelativeTime } from '@/utils/format.ts'
 import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
 
 const { t } = useI18n()
@@ -88,7 +73,7 @@ const props = defineProps({
   jumping: Boolean,
 })
 
-const emit = defineEmits(['close', 'select', 'fork'])
+const emit = defineEmits(['close', 'select'])
 
 const listRef = ref(null)
 const searchInputRef = ref(null)
@@ -97,11 +82,16 @@ let focusTimer = null
 const searchQuery = ref('')
 const isSearching = computed(() => searchQuery.value.trim().length > 0)
 
+/** Visible row labels (attachment-only rows, and assistant rows with no text). */
+const rowLabels = computed(() => ({
+  attachment: t('chat.messageList.userMsgIndexAttachment'),
+  noText: t('chat.messageList.conversationIndexNoText'),
+}))
+
 const filteredMessages = computed(() => {
   const q = searchQuery.value.trim()
   if (!q) return props.messages
-  const attachmentLabel = t('chat.messageList.userMsgIndexAttachment')
-  return props.messages.filter(m => matchUserMsg(m, q, attachmentLabel))
+  return props.messages.filter(m => matchIndexMsg(m, q, rowLabels.value))
 })
 
 // Full-list ordinal per message object, so the index badge keeps the message's
@@ -114,15 +104,6 @@ const msgOrdinal = computed(() => {
 
 function msgIndex(msg) {
   return (msgOrdinal.value.get(msg) ?? 0) + 1
-}
-
-function truncateText(msg) {
-  return formatUserMsg(msg, t('chat.messageList.userMsgIndexAttachment'))
-}
-
-/** Row display text with the active query's matches wrapped in <mark>. */
-function rowHighlight(msg) {
-  return highlightText(truncateText(msg), searchQuery.value)
 }
 
 // ── Keyboard ↑/↓ + Enter navigation over the message index ──
@@ -274,216 +255,5 @@ onUnmounted(() => {
   color: var(--text-muted);
   line-height: var(--line-height-normal);
   max-width: 260px;
-}
-
-/* ── Message items ── */
-.msg-item {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-5);
-  padding:9px var(--space-4) 9px 14px;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  transition: background var(--duration-base) ease;
-  -webkit-tap-highlight-color: transparent;
-}
-
-/* Timeline connector line — accent-tinted, fades at top & bottom */
-.msg-item::before {
-  content: '';
-  position: absolute;
-  left: 26px;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    color-mix(in srgb, var(--accent-color) 22%, transparent) 12%,
-    color-mix(in srgb, var(--accent-color) 22%, transparent) 88%,
-    transparent
-  );
-  border-radius: 1px;
-  opacity: var(--opacity-muted);
-}
-
-.msg-item:first-child::before {
-  top: 18px;
-}
-
-.msg-item:last-child::before {
-  display: none;
-}
-
-@media (hover: hover) {
-  .msg-item:hover {
-    border-radius: 0;
-    background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  }
-  .msg-item:hover .msg-node {
-    background: color-mix(in srgb, var(--accent-color) 16%, transparent);
-    border-color: color-mix(in srgb, var(--accent-color) 34%, transparent);
-  }
-}
-
-.msg-item:active {
-  opacity: var(--opacity-soft);
-}
-
-.msg-item.active {
-  border-radius: 0;
-  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-  box-shadow: inset 3px 0 0 var(--accent-color);
-}
-
-.msg-item-active {
-  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
-}
-
-/* ── Timeline node (number badge) ── */
-.msg-node {
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  margin-top: 1px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--bg-secondary);
-  border: 1.5px solid var(--border-color);
-  box-shadow: 0 0 0 3px var(--bg-secondary);
-  transition: background var(--duration-base), border-color var(--duration-base), color var(--duration-base);
-}
-
-.msg-item.active .msg-node {
-  background: var(--accent-color);
-  border-color: var(--accent-color);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-color) 16%, transparent);
-}
-
-.msg-index {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  color: var(--text-secondary);
-  line-height: 1;
-  transition: color var(--duration-base);
-}
-
-.msg-item.active .msg-index {
-  color: #fff;
-}
-
-.msg-item.active .msg-text {
-  color: var(--accent-color, #0066cc);
-}
-
-/* ── Message body ── */
-.msg-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  flex: 1;
-  min-width: 0;
-}
-
-.msg-text {
-  font-size: var(--font-size-md);
-  color: var(--text-primary);
-  line-height: var(--line-height-normal);
-  word-break: break-word;
-  white-space: pre-wrap;
-}
-
-.msg-text :deep(mark) {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 40%, transparent);
-  color: inherit;
-  border-radius: var(--radius-xs);
-  padding: 0 1px;
-}
-
-.msg-time {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 10.5px;
-  color: var(--text-muted, #999);
-  line-height: 1;
-  letter-spacing: 0.2px;
-}
-
-.msg-time::before {
-  content: '';
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--border-color);
-}
-
-/* ── Fork button ── */
-.msg-fork-btn {
-  flex-shrink: 0;
-  min-width: 24px;
-  height: 24px;
-  margin-top: 1px;
-  padding:0 var(--space-2);
-  border: none;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  border-radius: var(--radius-sm);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: var(--opacity-disabled);
-  transition: opacity var(--duration-slow), background var(--duration-slow), color var(--duration-slow);
-  -webkit-tap-highlight-color: transparent;
-}
-
-@media (hover: hover) {
-  .msg-item:hover .msg-fork-btn {
-    opacity: var(--opacity-hover);
-  }
-  .msg-fork-btn:hover {
-    opacity: 1 !important;
-    background: color-mix(in srgb, var(--accent-color) 12%, transparent);
-    color: var(--accent-color);
-  }
-}
-
-.msg-fork-btn:active {
-  opacity: 1;
-  color: var(--accent-color);
-  background: color-mix(in srgb, var(--accent-color) 15%, transparent);
-}
-
-/* ── Footer hint ── */
-.panel-hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-6);
-  font-size: var(--font-size-xs);
-  color: var(--text-muted);
-  border-top: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--bg-tertiary) 40%, transparent);
-  flex-shrink: 0;
-}
-
-.panel-hint svg {
-  opacity: var(--opacity-soft);
-}
-</style>
-
-<style>
-/* Dark theme override — non-scoped for the [data-theme] selector. Softer mark
-   fill keeps highlighted query text readable on dark backgrounds. */
-[data-theme-base="dark"] .msg-text mark {
-  background: color-mix(in srgb, var(--accent-color, #0066cc) 28%, transparent);
-  color: inherit;
 }
 </style>

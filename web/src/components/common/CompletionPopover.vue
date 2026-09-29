@@ -251,7 +251,7 @@ function markRead(item: NonNullable<typeof active.value>): void {
 }
 
 /* 主类别徽章（会话 / 任务 / 议题与合并）：中性灰的细描边小标签，与 SessionList
-   的 session-item-badge 同一套语言。刻意中性——它回答"哪个子系统"属于分类，
+   的 session-status 同一套语言。刻意中性——它回答"哪个子系统"属于分类，
    不该和事件标题的语义色抢注意力。 */
 .completion-notify-category {
     flex-shrink: 0;

@@ -7,7 +7,7 @@ import { syncServerLanguage } from '@/utils/serverLanguage'
 import { resolveThemeId, applyThemeAttributes, onSystemColorSchemeChange } from '@/utils/themeMeta'
 import { applyFontConfig } from '@/utils/fontConfig'
 import { normalizeDisplayMode } from '@/utils/chatSessionUtils'
-import { resolveUIScale, currentScreenHeight } from '@/utils/uiScale'
+import { resolveUIScale, computeAutoUIScale, currentScreenHeight } from '@/utils/uiScale'
 import { applyServerLimits } from '@/stores/app.ts'
 
 const LOCAL_PREFIX = 'clawbench-settings-'
@@ -198,20 +198,13 @@ const legacyKeys: Record<string, {
       window.dispatchEvent(new CustomEvent('clawbench-sort-change', { detail: { dir: value } }))
     },
   },
-  uiScaleAuto: {
-    key: '',
-    format: 'raw',
-    sideEffect() {
-      applyEffectiveUIScale()
-    },
-  },
   uiScale: {
     key: '',
     format: 'raw',
     sideEffect() {
-      // The stored manual value only takes effect when auto is off; the
-      // resolver decides. Reading localConfig (not the argument) keeps the
-      // auto and manual paths going through one code path.
+      // The stored value IS the applied factor. Reading localConfig (not the
+      // argument) keeps every writer — the slider and the auto-fit button —
+      // going through one code path.
       applyEffectiveUIScale()
     },
   },
@@ -293,37 +286,31 @@ export function applyUIScale(scale: number) {
 }
 
 /**
- * True inside the Android WebView shell. Both native hosts report
- * isNativeApp() === true; only Electron also reports isDesktopApp().
+ * The UI scale factor actually in effect: the stored value, clamped.
+ *
+ * The scale is a plain stored setting now. It used to be derived from the
+ * screen height on every call (with an "auto scale" switch), which made the UI
+ * jump whenever the applier ran; that computation lives in `autoFitUIScale`
+ * and only runs when the user asks for it.
  */
-function isAndroidAppMode(): boolean {
-  try {
-    const native = getNative()
-    if (!native?.isNativeApp?.()) return false
-    return native.isDesktopApp?.() !== true
-  } catch {
-    return false
-  }
+export function getEffectiveUIScale(): number {
+  return resolveUIScale(Number(localConfig.uiScale ?? 1))
 }
 
 /**
- * The UI scale factor actually in effect, combining the auto/manual choice.
+ * Compute the screen-appropriate factor ONCE and store it as the scale.
  *
- * Auto ON (default) derives the factor from the screen height (1080p
- * reference, only scaling up) so high-resolution displays get proportionally
- * larger UI. Auto OFF uses the manual slider value.
+ * This is the "auto fit" button. It runs on demand rather than at startup so
+ * the result is a stable value the user can then tweak with the slider —
+ * nothing recomputes behind their back. Goes through `setLocalConfig` so the
+ * value is persisted and applied by the same side effect as the slider.
  *
- * Android is deliberately excluded from auto: mobile layouts are already
- * density-adapted by the WebView, so the desktop 1080p reference does not
- * apply. The auto switch is hidden there too, keeping UI and behaviour in step.
+ * Returns the factor so the caller can report it back to the user.
  */
-export function getEffectiveUIScale(): number {
-  const autoEnabled = localConfig.uiScaleAuto !== false && !isAndroidAppMode()
-  return resolveUIScale(
-    autoEnabled,
-    Number(localConfig.uiScale ?? 1),
-    currentScreenHeight(),
-  )
+export function autoFitUIScale(): number {
+  const factor = computeAutoUIScale(currentScreenHeight())
+  setLocalConfig('uiScale', factor)
+  return factor
 }
 
 /**
@@ -421,11 +408,10 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   preventScreenLock: true,
   sortField: null,
   sortDir: 'asc',
+  // The applied UI scale. A plain stored value: the settings "auto fit" button
+  // computes one from the screen on demand and writes it here (autoFitUIScale),
+  // so nothing re-derives it at startup.
   uiScale: 1,
-  // Auto-scale the UI on screens taller than the 1080p reference. Default ON
-  // so a high-resolution display gets a usable size out of the box; turning it
-  // off hands control back to the uiScale slider.
-  uiScaleAuto: true,
   recentFilesCount: 10,
   headerShortcutTips: true,
   // Default ON so existing users keep seeing the completion card. Only gates the
@@ -450,11 +436,40 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   fontMonoFallback: 'default',
   fontUiFallback: 'default',
   markdownCodeLinkPreview: true,
+  // Panel opacity over a wallpaper / wave (0–1). A per-device display tweak
+  // like blur/edgeFade/waveSpeed, so it lives here rather than in the server
+  // config — each device can tune its own translucency.
+  panelOpacity: 0.7,
   wallpaperBlur: 0,
   // Edge fade is ON by default: users who never touched the toggle (or never
   // migrated a legacy value) get the soft blended border out of the box.
   // Previously persisted `false` values are left untouched (no forced override).
   wallpaperEdgeFade: true,
+  // Animated-wallpaper speed: 10–100 where 50 is 1x. Shared by every animated
+  // style; each maps it into its own time-scale bounds (see
+  // animatedWallpapers/types.ts speedRange). Local preference, like
+  // blur/edgeFade — a per-device display tweak, not a shared visual decision.
+  wallpaperWaveSpeed: 50,
+  // ── Which wallpaper this device shows ──────────────────────────────────
+  // The whole wallpaper *choice* lives here, per device: whether it is on,
+  // which source, and (for the local source) which gallery image. The server
+  // owns only what it cannot give up — the gallery files on disk and the Bing
+  // daily fetch/cache — and never decides what this device displays. Two
+  // devices on the same server can therefore show different wallpapers.
+  //
+  // The wave is the factory default: a fresh device (or one whose storage was
+  // cleared) shows an animated background immediately, with no image needed.
+  wallpaperEnabled: true,
+  wallpaperMode: 'wave',
+  // Which animated style the 'wave' mode renders. Kept as a separate preference
+  // so the mode value stays a stable 4-way union and switching styles never
+  // touches the source selection. Must name a registered style; an unknown value
+  // resolves to the registry default (see resolveAnimatedStyleId).
+  wallpaperAnimatedStyle: 'xmb',
+  // Bare name of the selected gallery image, '' when nothing is selected. The
+  // name may point at a file another device deleted; the app self-heals on a
+  // 404 (see App.vue onWallpaperError) rather than trusting it forever.
+  wallpaperLocalSelected: '',
 }
 
 // Build reactive local config from legacy localStorage + defaults
@@ -526,6 +541,7 @@ const serverDefaults: Record<string, unknown> = {
   'chat.fork_context_budget': 100000,
   'chat.auto_continue_enabled': false,
   'chat.auto_continue_max_retries': 3,
+  'chat.auto_rename_enabled': false,
   'session.max_count': 15,
   'session.archive_retention_enabled': false,
   'session.archive_retention_days': 30,
@@ -573,11 +589,6 @@ const serverDefaults: Record<string, unknown> = {
   'push_mode': 'native',
   'file_search.display_limit': 100,
   'tls.cert_dir': '',
-  'appearance.panel_opacity': 0.85,
-  'appearance.wallpaper_mode': '',
-  'appearance.wallpaper_enabled': false,
-  'appearance.bing.enabled': false,
-  'appearance.bing.mkt': 'zh-CN',
 }
 
 // ── Agent preference helpers ──────────────────────────────

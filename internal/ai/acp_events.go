@@ -92,7 +92,13 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.AgentMessageChunk != nil:
 		// When the agent transitions from thinking to content output, emit
 		// thinking_done so the frontend can stop the thinking spinner immediately.
-		forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+		// Carry the chunk's parent so a sub-agent's completion marks ITS OWN
+		// thinking block — with concurrent sub-agents an unfiltered done lands on
+		// whichever block happens to be last.
+		forwardACPEvent(ch, StreamEvent{
+			Type:             "thinking_done",
+			ParentToolCallID: extractParentToolCallID(backendID, update.AgentMessageChunk.Meta),
+		})
 		content := update.AgentMessageChunk.Content
 		// Defensive filter against a codebuddy CLI resume defect: when an ACP
 		// session is reused across prompts, codebuddy occasionally re-emits the
@@ -157,16 +163,21 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 
 	case update.ToolCall != nil:
+		tc := update.ToolCall
 		// When the agent transitions from thinking to tool use, emit
-		// thinking_done so the frontend can stop the thinking spinner.
-		forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+		// thinking_done so the frontend can stop the thinking spinner. Scoped to
+		// the tool's own parent so a sub-agent's tool call closes that
+		// sub-agent's thinking block, not another agent's.
+		forwardACPEvent(ch, StreamEvent{
+			Type:             "thinking_done",
+			ParentToolCallID: extractParentToolCallID(backendID, tc.Meta),
+		})
 		// A tool call is starting — mark it in-flight so the stall watchdog
 		// treats the agent as active while it runs the tool.
 		if conn != nil {
 			conn.SetToolInFlight(true)
 			conn.RecordTurnOutput()
 		}
-		tc := update.ToolCall
 		// Flush any pending debounce batch for this tool ID before the new call.
 		if deb != nil {
 			deb.handleToolCall(*tc)
@@ -213,7 +224,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 				if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
 					switch *tcu.Status {
 					case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
-						forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+						forwardACPEvent(ch, StreamEvent{
+							Type:             "thinking_done",
+							ParentToolCallID: extractParentToolCallID(backendID, tcu.Meta),
+						})
 					}
 				}
 				break
@@ -223,7 +237,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
 				switch *tcu.Status {
 				case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
-					forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+					forwardACPEvent(ch, StreamEvent{
+						Type:             "thinking_done",
+						ParentToolCallID: extractParentToolCallID(backendID, tcu.Meta),
+					})
 				}
 			}
 			break
@@ -240,7 +257,10 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if tcu.Kind != nil && *tcu.Kind == acp.ToolKindThink && tcu.Status != nil {
 			switch *tcu.Status {
 			case acp.ToolCallStatusCompleted, acp.ToolCallStatusFailed:
-				forwardACPEvent(ch, StreamEvent{Type: "thinking_done"})
+				forwardACPEvent(ch, StreamEvent{
+					Type:             "thinking_done",
+					ParentToolCallID: extractParentToolCallID(backendID, tcu.Meta),
+				})
 			}
 		}
 	case update.Plan != nil:

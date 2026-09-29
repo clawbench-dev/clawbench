@@ -6,7 +6,7 @@
     </template>
     <div class="agent-list">
       <LoadingIndicator v-if="agentsLoading" size="md" />
-      <div v-else-if="agents.length === 0" class="agent-list-empty">{{ t('session.noAgentsTitle') }}</div>
+      <div v-else-if="agents.length === 0" class="agent-list-empty">{{ t('chat.messageList.noAgentsTitle') }}</div>
       <div
         v-for="(agent, idx) in agents"
         :key="agent.id"

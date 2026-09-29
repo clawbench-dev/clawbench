@@ -11,6 +11,8 @@ import (
 )
 
 // fontMimeTypes maps font file extensions to their MIME type for font serving.
+//
+//nolint:goconst // font extension literals repeat across the MIME / hashed-asset / custom-font maps; extracting a shared constant per extension is overkill
 var fontMimeTypes = map[string]string{
 	".woff2": "font/woff2",
 	".woff":  "font/woff",

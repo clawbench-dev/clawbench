@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -555,12 +556,13 @@ func TestExecutor_ForceFlush_ThenGrowth_FullRewrite(t *testing.T) {
 	assert.Equal(t, []int{0}, seqs, "force mode must keep a single seq=0 full rewrite, no incremental chunks")
 }
 
-// --- DONE thinking slim markers in the streaming content row ---
+// --- Thinking slim markers in the streaming content row ---
 //
-// A completed thinking block (thinking_done received) must leave a slim
-// {think_id, done:true} marker in the streaming content row so a page refresh
-// mid-stream can lazy-load the already-finished reasoning. In-progress blocks
-// stay excluded (a done=false slim marker is the empty-spinner regression).
+// A thinking block leaves a slim {think_id} marker in the streaming content row
+// in two shapes: {done:true} once thinking_done arrives, and {in_progress:true}
+// while it is still streaming. The in-progress marker is what makes a session
+// switch lossless — see ContentBlock.InProgress. A block with no text (nothing
+// persisted to chat_thinking) gets no marker at all: it would lazy-load to a 404.
 
 // TestExecutor_DoneThinking_WritesSlimMarkerInContent verifies that a thinking
 // block marked done mid-stream gets a slim marker in the streaming content row
@@ -592,13 +594,19 @@ func TestExecutor_DoneThinking_WritesSlimMarkerInContent(t *testing.T) {
 	firstID := executor.blocks[0].ThinkID
 	require.NotEmpty(t, firstID)
 
-	// In-progress: content row must NOT carry any thinking marker yet.
+	// In-progress: the content row carries an in_progress marker (not a done one),
+	// so a session switch keeps the block's identity and can lazy-load the prefix.
 	content := readStreamingContent(t, msgID)
 	blocksRaw, ok := content["blocks"].([]any)
 	require.True(t, ok)
-	require.Empty(t, blocksRaw, "in-progress thinking must stay excluded from content")
+	require.Len(t, blocksRaw, 1, "an in-progress block must be represented in the streaming row")
+	inProg, ok := blocksRaw[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, firstID, inProg["think_id"])
+	assert.Equal(t, true, inProg["in_progress"], "still-streaming block must be marked in_progress")
+	assert.NotEqual(t, true, inProg["done"], "an in-progress block must not claim to be done")
 
-	// thinking_done arrives → next flush writes the slim marker.
+	// thinking_done arrives → next flush rewrites the marker as done.
 	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "thinking_done"})
 	executor.flushStreamingMessage()
 
@@ -611,6 +619,7 @@ func TestExecutor_DoneThinking_WritesSlimMarkerInContent(t *testing.T) {
 	assert.Equal(t, "thinking", thinkingBlock["type"])
 	assert.Equal(t, firstID, thinkingBlock["think_id"], "done marker must carry the stable think_id")
 	assert.Equal(t, true, thinkingBlock["done"], "done marker must carry done=true")
+	assert.NotContains(t, thinkingBlock, "in_progress", "a done block must not still be flagged in_progress")
 	assert.NotContains(t, thinkingBlock, "text", "content must not carry the thinking text")
 
 	// Refresh-simulation: the marker resolves to the full text via GetThinking.
@@ -620,11 +629,12 @@ func TestExecutor_DoneThinking_WritesSlimMarkerInContent(t *testing.T) {
 	assert.Equal(t, "reasoned", rec.Text)
 }
 
-// TestExecutor_InProgressThinking_StillExcludedFromContent is the regression
-// guard for 6c6a4a48: a slim marker for an IN-PROGRESS thinking block must
-// never appear in the streaming content (it would leak an empty spinner into
-// the live placeholder via mergeStreamBlocks).
-func TestExecutor_InProgressThinking_StillExcludedFromContent(t *testing.T) {
+// TestExecutor_InProgressThinking_WritesInProgressMarker pins the A-plan
+// contract: a still-streaming block IS represented in the streaming row, as an
+// in_progress marker. Omitting it entirely (the old behavior) cost the
+// already-streamed prefix on a session switch and made the next delta open a
+// second, done-less block that spun forever.
+func TestExecutor_InProgressThinking_WritesInProgressMarker(t *testing.T) {
 	setupExecutorDB(t)
 	model.Agents = map[string]*model.Agent{
 		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
@@ -648,15 +658,23 @@ func TestExecutor_InProgressThinking_StillExcludedFromContent(t *testing.T) {
 	ai.AccumulateBlock(&executor.blocks, ai.StreamEvent{Type: "thinking", Content: "part2"})
 	executor.flushStreamingMessage()
 
-	// Never marked done — no marker in content across multiple flushes.
 	content := readStreamingContent(t, msgID)
 	blocksRaw, ok := content["blocks"].([]any)
 	require.True(t, ok)
-	require.Empty(t, blocksRaw, "in-progress thinking must never leak into streaming content")
-	for _, b := range blocksRaw {
-		blk, _ := b.(map[string]any)
-		assert.NotEqual(t, "thinking", blk["type"], "no thinking block may appear in streaming content")
-	}
+	require.Len(t, blocksRaw, 1, "in-progress thinking must be represented in the streaming row")
+	blk, ok := blocksRaw[0].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "thinking", blk["type"])
+	assert.Equal(t, true, blk["in_progress"], "must be flagged in_progress, not done")
+	assert.NotEqual(t, true, blk["done"], "an unfinished block must not be marked done")
+	// The marker must not carry the text — that lives in chat_thinking.
+	assert.NotContains(t, blk, "text")
+
+	// The prefix so far is retrievable, which is what the frontend lazy-loads.
+	rec, err := GetThinking(blk["think_id"].(string), msgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	assert.Equal(t, "part1part2", rec.Text)
 }
 
 // TestExecutor_EmptyDoneThinking_NoMarker verifies that a thinking block with
@@ -799,9 +817,201 @@ func TestExecutor_DoneAndInProgressThinking_SameFlush(t *testing.T) {
 	content := readStreamingContent(t, msgID)
 	blocksRaw, ok := content["blocks"].([]any)
 	require.True(t, ok)
-	require.Len(t, blocksRaw, 1, "only the done block leaves a marker")
-	thinkingBlock, ok := blocksRaw[0].(map[string]any)
+	require.Len(t, blocksRaw, 2, "both the done and the in-progress block leave a marker")
+	doneBlock, ok := blocksRaw[0].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, doneID, thinkingBlock["think_id"], "done block's marker must be in content")
+	assert.Equal(t, doneID, doneBlock["think_id"], "done block's marker must be in content")
+	assert.Equal(t, true, doneBlock["done"], "the finished block must be marked done")
+	inProgBlock, ok := blocksRaw[1].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, true, inProgBlock["in_progress"], "the unfinished block must be marked in_progress")
+	assert.NotEqual(t, true, inProgBlock["done"])
 	assert.NotContains(t, content, "second ongoing", "in-progress block's text must not be in content")
+}
+
+// TestExecutor_ForwardedThinkingCarriesThinkID pins the ORDER of the two calls
+// in handleNonTerminalEvent: the block must be accumulated (which mints its
+// think_id) BEFORE the event is forwarded, and the id must be stamped onto the
+// forwarded event.
+//
+// Without this test the reorder is unguarded: every other test either stops at
+// AccumulateBlock (id on the block) or hand-builds the WS payload. Moving
+// AccumulateBlock back after forwardEvent would leave all of them passing while
+// the event that OPENS a thinking block silently lost its id — re-introducing
+// the position-matching the field exists to remove.
+func TestExecutor_ForwardedThinkingCarriesThinkID(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID := getStreamingMsgIDForTest(t, sid)
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: msgID,
+	})
+	defer executor.unregisterActiveStream()
+
+	// Capture what the executor actually hands to the WS fan-out, without
+	// standing up a real hub connection. emitStreamEvent is the coalescer's
+	// emit target, so this observes the exact event that would reach a client.
+	var forwarded []ai.StreamEvent
+	executor.coalescer = &streamCoalescer{emit: func(ev ai.StreamEvent) {
+		forwarded = append(forwarded, ev)
+	}}
+
+	// Drive a thinking event through the executor, then flush the coalescer so
+	// the buffered delta is actually emitted.
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "reasoning"})
+	executor.flushCoalesced()
+
+	require.Len(t, forwarded, 1, "one thinking delta must reach the fan-out")
+	got := forwarded[0]
+	assert.Equal(t, "thinking", got.Type)
+	assert.Equal(t, "reasoning", got.Content)
+	require.NotEmpty(t, got.ThinkID, "the forwarded event must carry the block id")
+	assert.True(t, strings.HasPrefix(got.ThinkID, "th_"), "id format, got %q", got.ThinkID)
+
+	// The wire id must equal the id on the accumulated block, or the client
+	// would key a different block than the one that is streaming.
+	executor.mu.Lock()
+	require.Len(t, executor.blocks, 1)
+	stored := executor.blocks[0].ThinkID
+	executor.mu.Unlock()
+	assert.Equal(t, stored, got.ThinkID, "wire id must equal the accumulated block's id")
+
+	// A coalescing delta of the SAME block must report the same id (that is what
+	// lets the coalescer tell two consecutive blocks apart).
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: " more"})
+	executor.flushCoalesced()
+	require.Len(t, forwarded, 2)
+	assert.Equal(t, got.ThinkID, forwarded[1].ThinkID)
+}
+
+// TestExecutor_ThinkingDoneFlushesTextBeforeForwarding pins the ORDER that makes
+// the client's lazy-load correct: the block's full reasoning must be committed
+// to chat_thinking BEFORE thinking_done reaches the wire.
+//
+// thinking_done is the client's cue to fetch the reasoning text. The periodic
+// flush is rate-limited to 500ms, so without an explicit flush here the event
+// routinely arrives first and the client caches a PREFIX — the reported
+// truncated reasoning (observed: 760 of 844 chars cached; another case 17124 of
+// 18887), which never refetched because the cache looked populated.
+//
+// The capture harness observes the fan-out: whatever the DB holds when the emit
+// fires is exactly what a real client would read.
+func TestExecutor_ThinkingDoneFlushesTextBeforeForwarding(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	sid := setupExecutorSession(t, "test-agent")
+	msgID := getStreamingMsgIDForTest(t, sid)
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          sid,
+		AgentID:            "test-agent",
+		StreamingMessageID: msgID,
+	})
+	defer executor.unregisterActiveStream()
+
+	// Accumulate two deltas of one block, with NO flush in between (mirroring a
+	// real turn, where the periodic flush has not fired yet).
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "part1"})
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "part2"})
+
+	executor.mu.Lock()
+	require.Len(t, executor.blocks, 1)
+	thinkID := executor.blocks[0].ThinkID
+	executor.mu.Unlock()
+	require.NotEmpty(t, thinkID)
+
+	// Precondition: the DB holds only a PREFIX. The first event trips the
+	// rate-limited flush (lastFlush starts at zero), so "part1" is persisted;
+	// the second event must land INSIDE the 500ms window and not be persisted.
+	// Pin lastFlush to now so a scheduler stall between the two events cannot
+	// trip a second periodic flush and make this assertion flake.
+	executor.mu.Lock()
+	executor.lastFlush = time.Now()
+	executor.mu.Unlock()
+	rec, err := GetThinking(thinkID, msgID)
+	require.NoError(t, err)
+	require.NotNil(t, rec)
+	require.Equal(t, "part1", rec.Text,
+		"precondition: only a prefix is persisted before thinking_done")
+
+	// Capture the DB contents AT THE MOMENT the event is forwarded. This is the
+	// whole point: a client reading on thinking_done must see the full text.
+	var textAtForward string
+	var sawDone bool
+	executor.coalescer = &streamCoalescer{emit: func(ev ai.StreamEvent) {
+		if ev.Type != "thinking_done" {
+			return
+		}
+		sawDone = true
+		r, e := GetThinking(thinkID, msgID)
+		if e == nil && r != nil {
+			textAtForward = r.Text
+		}
+	}}
+
+	executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking_done"})
+
+	require.True(t, sawDone, "thinking_done must reach the fan-out")
+	assert.Equal(t, "part1part2", textAtForward,
+		"the block's FULL text must be committed before thinking_done is forwarded")
+}
+
+// TestExecutor_ThinkingDoneWithoutDBDoesNotPanic guards the flush added to the
+// thinking_done path: flushPendingThinking's callers are otherwise all behind a
+// db==nil guard, so the check must live inside it too. An isolated executor
+// must not crash.
+//
+// `db` is a package global, so a test that merely skips setupExecutorDB would
+// still see whatever DB an earlier test left behind — the guard would never be
+// reached and the test would pass vacuously. Nil it explicitly.
+func TestExecutor_ThinkingDoneWithoutDBDoesNotPanic(t *testing.T) {
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	restoreDB := SetDBForTest(nil, nil)
+	defer restoreDB()
+
+	// The message id is set so that, without the guard, the flush would proceed
+	// past the config check and dereference the nil DB.
+	executor := NewSessionExecutor(context.Background(), RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        "/test",
+		BackendName:        "test",
+		SessionID:          "sid-no-db",
+		AgentID:            "test-agent",
+		StreamingMessageID: 42,
+	})
+	defer executor.unregisterActiveStream()
+	executor.coalescer = &streamCoalescer{emit: func(ai.StreamEvent) {}}
+
+	assert.NotPanics(t, func() {
+		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking", Content: "x"})
+		executor.handleNonTerminalEvent(ai.StreamEvent{Type: "thinking_done"})
+	})
+
+	// Direct call: the thinking_done path calls this without the surrounding
+	// flushStreamingLocked guard, so pin it in isolation too.
+	assert.NotPanics(t, func() {
+		executor.mu.Lock()
+		executor.flushPendingThinking()
+		executor.mu.Unlock()
+	})
 }

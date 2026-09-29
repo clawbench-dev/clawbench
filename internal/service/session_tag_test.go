@@ -587,7 +587,7 @@ func TestGetSessionsPaged_FiltersByTag(t *testing.T) {
 		helperCreateSession(t, tagProjectA, "codebuddy", "u")
 	}
 
-	got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "bug")
+	got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, nil, "bug")
 	require.NoError(t, err)
 	assert.False(t, hasMore, "hasMore must describe the filtered set")
 	require.Len(t, got, 3)
@@ -609,9 +609,10 @@ func TestGetSessionsPaged_TagFilterPaginatesWithoutDuplicates(t *testing.T) {
 
 	seen := map[string]int{}
 	var cursor, cursorID string
+	var cursorSortOrder *int
 	var cursorPinned *bool
 	for range 10 {
-		got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 2, cursor, cursorID, cursorPinned, "bug")
+		got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 2, cursor, cursorID, cursorSortOrder, cursorPinned, "bug")
 		require.NoError(t, err)
 		for _, s := range got {
 			seen[s.ID]++
@@ -622,6 +623,8 @@ func TestGetSessionsPaged_TagFilterPaginatesWithoutDuplicates(t *testing.T) {
 		last := got[len(got)-1]
 		cursor = last.CreatedAt.Format("2006-01-02 15:04:05")
 		cursorID = last.ID
+		o := last.SortOrder
+		cursorSortOrder = &o
 		p := last.Pinned
 		cursorPinned = &p
 	}
@@ -639,7 +642,7 @@ func TestGetSessionsPaged_TagFilterMatchesCaseInsensitively(t *testing.T) {
 	require.NoError(t, service.SetSessionTags(sid, tagProjectA, []service.SessionTagRef{{Name: "bug"}}))
 	helperCreateSession(t, tagProjectA, "codebuddy", "u")
 
-	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "BUG")
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, nil, "BUG")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, sid, got[0].ID)
@@ -676,7 +679,7 @@ func TestGetSessionsPaged_TagFilterRequiresVisibleDefinition(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "shared")
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, nil, "shared")
 	require.NoError(t, err)
 	require.Len(t, got, 1, "only the session linked to a project-A-visible definition matches")
 	assert.Equal(t, visible, got[0].ID)
@@ -733,7 +736,7 @@ func TestListProjectTagsInUse_CountMatchesFilterForShadowedName(t *testing.T) {
 	require.Len(t, tags, 1, "one chip per name")
 
 	// The invariant that matters: count == what the filter yields.
-	got, _, err := service.GetSessionsPaged(tagProjectA, "", 50, "", "", nil, "bug")
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 50, "", "", nil, nil, "bug")
 	require.NoError(t, err)
 	assert.Equal(t, len(got), tags[0].Count,
 		"chip count must equal the number of sessions the filter returns")
@@ -756,7 +759,7 @@ func TestGetSessionsPaged_TagFilterMatchesGlobalTag(t *testing.T) {
 		{Name: "shared", Scope: service.SessionTagScopeGlobal},
 	}))
 
-	got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "shared")
+	got, hasMore, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, nil, "shared")
 	require.NoError(t, err)
 	require.Len(t, got, 1, "a global tag must be filterable in any project")
 	assert.Equal(t, tagged, got[0].ID)
@@ -778,7 +781,7 @@ func TestGetSessionsPaged_TagFilterGlobalTagFromAnotherProject(t *testing.T) {
 	mine := helperCreateSession(t, tagProjectA, "codebuddy", "mine")
 	require.NoError(t, service.SetSessionTags(mine, tagProjectA, []service.SessionTagRef{{Name: "shared"}}))
 
-	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, "shared")
+	got, _, err := service.GetSessionsPaged(tagProjectA, "", 10, "", "", nil, nil, "shared")
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, mine, got[0].ID)

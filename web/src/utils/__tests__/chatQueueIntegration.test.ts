@@ -10,6 +10,12 @@ import { chatMessageReducer, sortMessages, messageSortValue, type ChatMessage, t
  * merges (done → db_load). Asserts the conversational order matches what a
  * page reload (authoritative DB order) would show — at every stage, not just
  * at the end.
+ *
+ * Queued messages are NOT in the conversation array any more: msg2/msg3 live
+ * in the queue store until the backend materializes them into chat_history on
+ * drain. So the message list only ever contains DB-backed rows and the live
+ * streaming placeholder (whose id is the DB reply row id, assigned by
+ * stream_start).
  */
 
 function run(state: ChatMessage[], actions: ChatMessageAction[]): ChatMessage[] {
@@ -23,87 +29,77 @@ const a = (p: Partial<ChatMessage> & { id: unknown }): ChatMessage =>
   ({ role: 'assistant', content: '', blocks: [], createdAt: '', ...p }) as ChatMessage
 
 const display = (s: ChatMessage[]) =>
-  s.map((m) => `${m.role}:${String(m.id)}${m.streaming ? '(s)' : ''}${m.pending ? '(p)' : ''}`).join(' | ')
+  s.map((m) => `${m.role}:${String(m.id)}${m.streaming ? '(s)' : ''}`).join(' | ')
 
 describe('chat queue full-flow integration', () => {
   it('msg1 direct, msg2/msg3 queued: order matches reload at every stage', () => {
     let s: ChatMessage[] = []
 
-    // 1. sendMessageNow('1') → optimistic bubble, POST returns, stream_start
+    // 1. sendMessageNow('1') → optimistic bubble, POST returns msgId, stream_start
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1 }) }])
-    s = run(s, [{ type: 'ws_stream_start', messageId: 1 }])
-    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: 'pending-1', createdAt: '2026-01-01T00:00:00Z' }) }])
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 1 }])
+    // stream_start for reply1: no streaming msg yet → placeholder created with
+    // the DB reply row id, then ws_stream_start (idempotent).
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 2, streaming: true, seq: 2, createdAt: '2026-01-01T00:00:00Z' }) }])
+    s = run(s, [{ type: 'ws_stream_start', messageId: 2 }])
     s = run(s, [{ type: 'ws_content', text: 'reply1' }])
 
-    // 2. msg2/msg3 queue while reply1 streams
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 3 }) }])
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', pending: true, seq: 4 }) }])
+    // 2. msg2/msg3 queue while reply1 streams. They go to the queue store, NOT
+    //    the message list — so the list is unchanged.
+    expect(display(s)).toBe('user:1 | assistant:2(s)')
 
-    // Streaming reply1 anchored after msg1, queued bubbles after it.
-    // msg1's optimistic bubble keeps its string id until db_load adopts it
-    // (sendMessageNow never mutates the id in place).
-    expect(display(s)).toBe('user:pending-1 | assistant:drain-r1(s) | user:pending-2(p) | user:pending-3(p)')
-
-    // 3. done(reply1) → background loadHistory: DB rows arrive. msg1 bubble
-    //    adopts id=1 (content match), reply1 placeholder adopts id=2 (createdAt
-    //    match), msg2/msg3 matched by queueId → pending stays.
+    // 3. done(reply1) → background loadHistory: DB rows arrive. Reply1
+    //    placeholder keeps its object (matched by id=2). The queued rows are
+    //    NOT in the conversation list (they are returned in the `queue` field).
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
       type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1', createdAt: '2026-01-01T00:00:05Z' }),
         a({ id: 2, content: 'reply1', createdAt: '2026-01-01T00:00:01Z' }),
-        u({ id: 3, content: '2', queueId: 'pending-2', queued: true, createdAt: '2026-01-01T00:00:06Z' }),
-        u({ id: 4, content: '3', queueId: 'pending-3', queued: true, createdAt: '2026-01-01T00:00:07Z' }),
       ],
     }])
-    // No duplicates: msg1 is id=1, reply1 is id=2 (not drain-r1).
-    expect(display(s)).toBe('user:1 | assistant:2 | user:pending-2(p) | user:pending-3(p)')
+    expect(display(s)).toBe('user:1 | assistant:2')
 
-    // 4. drain('2') → msg2 adopts id=3, reply2 placeholder anchors to msg2
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 3 }])
+    // 4. drain('2'): the backend materializes msg2 into chat_history and starts
+    //    its own turn. user_message adds the row; stream_start opens the
+    //    placeholder with reply2's DB id.
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 3, content: '2' } }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 4, streaming: true, seq: 3, createdAt: '2026-01-01T00:00:08Z' }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply2' }])
-    const reply2 = s.find((m) => m.role === 'assistant' && m.streaming)!
-    // Simulate a LONG AI reply: placeholder created at drain time, DB row only
-    // finalized 60s later. The ±5s createdAt fallback would fail — the queueId
-    // match (parentQueueId === DB row queueId) must carry the adoption.
-    reply2.createdAt = '2026-01-01T00:00:08Z'
-    expect(display(s)).toBe(`user:1 | assistant:2 | user:3 | assistant:${String(reply2.id)}(s) | user:pending-3(p)`)
+    expect(display(s)).toBe('user:1 | assistant:2 | user:3 | assistant:4(s)')
 
-    // 5. drain('3') → msg3 adopts id=4, reply3 placeholder anchors to msg3
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-3', text: '3', files: [], dbMessageId: 4 }])
+    // 5. drain('3') → msg3 materialized (id=5), reply3 placeholder id=6.
+    //    The turn boundary finalizes reply2 first (finalizeStreamingForDrain).
+    s = run(s, [{ type: 'stream_finalize' }])
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 5, content: '3' } }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 6, streaming: true, seq: 4, createdAt: '2026-01-01T00:00:09Z' }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply3' }])
-    const reply3 = s.find((m) => m.role === 'assistant' && m.streaming)!
-    reply3.createdAt = '2026-01-01T00:00:09Z'
-    expect(display(s)).toBe(
-      `user:1 | assistant:2 | user:3 | assistant:${String(reply2.id)} | user:4 | assistant:${String(reply3.id)}(s)`
-    )
+    expect(display(s)).toBe('user:1 | assistant:2 | user:3 | assistant:4 | user:5 | assistant:6(s)')
 
-    // 6. Final db_load after all done — reply placeholders adopt DB ids via
-    //    queueId match (DB reply rows carry queueId = the drained queue).
+    // 6. Final db_load after all done — everything converges to DB order.
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
       type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1' }),
         a({ id: 2, content: 'reply1', createdAt: '2026-01-01T00:00:01Z' }),
-        u({ id: 3, content: '2', queueId: 'pending-2', queued: false, createdAt: '2026-01-01T00:00:06Z' }),
-        a({ id: 5, content: 'reply2', queueId: 'pending-2', createdAt: '2026-01-01T00:01:08Z' }),
-        u({ id: 4, content: '3', queueId: 'pending-3', queued: false, createdAt: '2026-01-01T00:00:07Z' }),
-        a({ id: 6, content: 'reply3', queueId: 'pending-3', createdAt: '2026-01-01T00:01:09Z' }),
+        u({ id: 3, content: '2', createdAt: '2026-01-01T00:00:06Z' }),
+        a({ id: 4, content: 'reply2', createdAt: '2026-01-01T00:01:08Z' }),
+        u({ id: 5, content: '3', createdAt: '2026-01-01T00:00:07Z' }),
+        a({ id: 6, content: 'reply3', createdAt: '2026-01-01T00:01:09Z' }),
       ],
     }])
     // Exactly the reload order: msg1, reply1, msg2, reply2, msg3, reply3.
     const finalIds = s.map((m) => (m.role === 'assistant' ? `a${String(m.id)}` : `u${String(m.id)}`))
-    expect(finalIds).toEqual(['u1', 'a2', 'u3', 'a5', 'u4', 'a6'])
-    expect(s.some((m) => m.pending)).toBe(false)
+    expect(finalIds).toEqual(['u1', 'a2', 'u3', 'a4', 'u5', 'a6'])
   })
 
   it('msg1 direct only: bubble adopts id on db_load, reply adopts on final reload', () => {
     let s: ChatMessage[] = []
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: 'hello', seq: 1 }) }])
-    s = run(s, [{ type: 'ws_stream_start', messageId: 1 }])
-    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: '1', createdAt: '2026-01-01T00:00:00Z' }) }])
+    s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 1 }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 2, streaming: true, seq: 2, createdAt: '2026-01-01T00:00:00Z' }) }])
     s = run(s, [{ type: 'ws_content', text: 'world' }])
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
@@ -118,23 +114,19 @@ describe('chat queue full-flow integration', () => {
 
   // ── User-reported bug: "reply1 done, msg2/msg3 and their replies appear
   //    ABOVE msg1/reply1 until everything finishes; reload fixes it."
-  //    Root cause: msg1's optimistic bubble and reply1's drain-* placeholder
-  //    stay transient (huge sort values) when the background loadHistory lags,
-  //    while msg2/msg3 adopt DB ids → they sort above msg1/reply1. Also the
-  //    old createdAt±5s adoption failed under backend persist lag (>5s),
-  //    appending duplicate DB rows.
+  //    With queued messages out of the array, the remaining risk is the live
+  //    streaming placeholder staying transient (huge sort value) while the
+  //    drained user rows adopt DB ids. The id-based placeholder match on
+  //    db_load must pull it back into DB order.
   it('db_load with persist lag keeps every message in conversational order', () => {
     const t0 = '2026-01-01T00:00:00Z'
     const tLate = '2026-01-01T00:01:00Z' // backend persisted 60s after the bubble
     let s: ChatMessage[] = []
 
-    // msg1 direct send (id=pending-1, NOT pending), reply1 placeholder
+    // msg1 direct send (id=pending-1), reply1 placeholder
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1, createdAt: t0 }) }])
-    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: 'pending-1', createdAt: t0 }) }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, createdAt: t0 }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply1' }])
-    // msg2/msg3 queue
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 3, createdAt: t0 }) }])
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', pending: true, seq: 4, createdAt: t0 }) }])
 
     // reply1 done, background loadHistory arrives LATE (createdAt 60s later)
     s = run(s, [{ type: 'stream_finalize' }])
@@ -143,63 +135,55 @@ describe('chat queue full-flow integration', () => {
       dbMessages: [
         u({ id: 1, content: '1', createdAt: tLate }),
         a({ id: 2, content: 'reply1', createdAt: tLate }),
-        u({ id: 3, content: '2', queueId: 'pending-2', queued: true, createdAt: tLate }),
-        u({ id: 4, content: '3', queueId: 'pending-3', queued: true, createdAt: tLate }),
       ],
     }])
-    // msg1 adopted (content match, persist lag immune), reply1 adopted, msg2/3
-    // still queued bubbles AFTER reply1.
-    expect(display(s)).toBe('user:1 | assistant:2 | user:pending-2(p) | user:pending-3(p)')
+    // msg1 adopted (content match, persist lag immune), reply1 adopted.
+    expect(display(s)).toBe('user:1 | assistant:2')
 
-    // drain msg2 → adopts id=3 (parent msg1 is DB-backed now)
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 3 }])
+    // drain msg2 → materialized as id=3, reply2 placeholder id=4
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 3, content: '2' } }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 4, streaming: true, seq: 3, createdAt: tLate }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply2' }])
-    const r2 = s.find((m) => m.role === 'assistant' && m.streaming)!
-    r2.createdAt = tLate
-    expect(display(s)).toBe(`user:1 | assistant:2 | user:3 | assistant:${String(r2.id)}(s) | user:pending-3(p)`)
+    expect(display(s)).toBe('user:1 | assistant:2 | user:3 | assistant:4(s)')
 
     // drain msg3
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-3', text: '3', files: [], dbMessageId: 4 }])
+    s = run(s, [{ type: 'stream_finalize' }])
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 5, content: '3' } }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 6, streaming: true, seq: 4, createdAt: tLate }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply3' }])
-    const r3 = s.find((m) => m.role === 'assistant' && m.streaming)!
-    r3.createdAt = tLate
-    expect(display(s)).toBe(
-      `user:1 | assistant:2 | user:3 | assistant:${String(r2.id)} | user:4 | assistant:${String(r3.id)}(s)`
-    )
+    expect(display(s)).toBe('user:1 | assistant:2 | user:3 | assistant:4 | user:5 | assistant:6(s)')
 
-    // final db_load — reply2/3 adopted via queueId match
+    // final db_load
     s = run(s, [{ type: 'stream_finalize' }])
     s = run(s, [{
       type: 'db_load',
       dbMessages: [
         u({ id: 1, content: '1' }),
         a({ id: 2, content: 'reply1', createdAt: tLate }),
-        u({ id: 3, content: '2', queueId: 'pending-2', queued: false, createdAt: tLate }),
-        a({ id: 5, content: 'reply2', queueId: 'pending-2', createdAt: tLate }),
-        u({ id: 4, content: '3', queueId: 'pending-3', queued: false, createdAt: tLate }),
-        a({ id: 6, content: 'reply3', queueId: 'pending-3', createdAt: tLate }),
+        u({ id: 3, content: '2', createdAt: tLate }),
+        a({ id: 4, content: 'reply2', createdAt: tLate }),
+        u({ id: 5, content: '3', createdAt: tLate }),
+        a({ id: 6, content: 'reply3', createdAt: tLate }),
       ],
     }])
     const finalIds = s.map((m) => (m.role === 'assistant' ? `a${String(m.id)}` : `u${String(m.id)}`))
-    expect(finalIds).toEqual(['u1', 'a2', 'u3', 'a5', 'u4', 'a6'])
-    expect(s.some((m) => m.pending)).toBe(false)
+    expect(finalIds).toEqual(['u1', 'a2', 'u3', 'a4', 'u5', 'a6'])
   })
 
-  // ── Regression: msg1 bubble not yet adopted, msg2/msg3 already drained
-  //    (adopted DB ids but still carry queueId → seq-space sort). All live
-  //    messages sort in seq space, so msg1 (earliest seq) comes first.
-  it('unadopted msg1 bubble sorts before drained msg2/msg3 (all in seq space)', () => {
+  // ── Regression: msg1 bubble not yet adopted, later messages already have DB
+  //    ids. All transient messages sort in seq space; DB-backed rows sort by id
+  //    and therefore always come first.
+  it('unadopted msg1 bubble sorts after DB-backed rows (transient seq space)', () => {
     const state: ChatMessage[] = [
+      u({ id: 38308, content: '2' }),
+      a({ id: 38309, content: 'reply2' }),
       u({ id: 'pending-abc', content: '1', seq: 1 }),
-      a({ id: 'drain-r1', content: 'reply1', seq: 2, parentQueueId: 'pending-abc' }),
-      u({ id: 38308, content: '2', queueId: 'pending-2', seq: 3 }),
-      a({ id: 'drain-r2', content: 'reply2', seq: 4, parentQueueId: 'pending-2' }),
-      u({ id: 38309, content: '3', queueId: 'pending-3', seq: 5 }),
-      a({ id: 'drain-r3', content: 'reply3', seq: 6, parentQueueId: 'pending-3' }),
+      a({ id: 'drain-r1', content: 'reply1', seq: 2 }),
     ]
     sortMessages(state)
     const order = state.map((m) => (m.role === 'user' ? `u:${String(m.id)}` : `a:${String(m.id)}`))
-    expect(order).toEqual(['u:pending-abc', 'a:drain-r1', 'u:38308', 'a:drain-r2', 'u:38309', 'a:drain-r3'])
+    // DB rows (numeric ids) first, then transients by seq.
+    expect(order).toEqual(['u:38308', 'a:38309', 'u:pending-abc', 'a:drain-r1'])
   })
 
   // ── Realistic session-with-history scenario (user-reported):
@@ -208,7 +192,7 @@ describe('chat queue full-flow integration', () => {
   //    history, msg1, reply1, msg2, reply2, msg3, reply3 — at every stage.
   it('with history: msg1 adopted, msg2/3 drained — conversational order at every stage', () => {
     let s: ChatMessage[] = []
-    // history from loadHistory (DB ids, no seq, no queueId)
+    // history from loadHistory (DB ids, no seq)
     s = run(s, [{
       type: 'db_load',
       dbMessages: [
@@ -221,43 +205,37 @@ describe('chat queue full-flow integration', () => {
     // sendMessageNow('1') — bubble, then user_message self-echo adopts id 38350
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 10 }) }])
     s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 38350 }])
-    // reply1 placeholder anchored to msg1
-    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 11, parentQueueId: 'pending-1' }) }])
-    // msg2/msg3 queue
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 12 }) }])
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', pending: true, seq: 13 }) }])
-    // order: history, msg1, reply1, msg2(pending), msg3(pending)
-    const mid = display(s)
-    expect(mid.startsWith('user:38348 | assistant:38349 | user:38350 | assistant:drain-r1')).toBe(true)
+    // reply1 placeholder (id 38351) + finalize when reply1 done
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 38351, streaming: true, seq: 11 }) }])
+    s = run(s, [{ type: 'ws_content', text: 'reply1' }])
+    s = run(s, [{ type: 'stream_finalize' }])
+    expect(display(s)).toBe('user:38348 | assistant:38349 | user:38350 | assistant:38351')
 
-    // drain msg2 → adopts id 38351 (keeps seq space)
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 38351 }])
+    // drain msg2 → materialized as 38352, reply2 placeholder 38353
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 38352, content: '2' } }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 38353, streaming: true, seq: 12 }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply2' }])
-    const r2 = s.find((m) => m.role === 'assistant' && m.streaming)!
-    // order: history, msg1, reply1, msg2, reply2, msg3(pending)
     expect(display(s)).toBe(
-      `user:38348 | assistant:38349 | user:38350 | assistant:drain-r1 | user:38351 | assistant:${String(r2.id)}(s) | user:pending-3(p)`
+      'user:38348 | assistant:38349 | user:38350 | assistant:38351 | user:38352 | assistant:38353(s)'
     )
 
     // drain msg3
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-3', text: '3', files: [], dbMessageId: 38352 }])
+    s = run(s, [{ type: 'stream_finalize' }])
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 38354, content: '3' } }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 38355, streaming: true, seq: 13 }) }])
     s = run(s, [{ type: 'ws_content', text: 'reply3' }])
-    const r3 = s.find((m) => m.role === 'assistant' && m.streaming)!
     expect(display(s)).toBe(
-      `user:38348 | assistant:38349 | user:38350 | assistant:drain-r1 | user:38351 | assistant:${String(r2.id)} | user:38352 | assistant:${String(r3.id)}(s)`
+      'user:38348 | assistant:38349 | user:38350 | assistant:38351 | user:38352 | assistant:38353 | user:38354 | assistant:38355(s)'
     )
   })
 
   // ── Regression: db_load adopts msg1 BEFORE the user_message self-echo
-  //    arrives. The bubble is adopted via content match (db_load path), the
-  //    reply's parentQueueId must be rewritten to the new DB id so the anchor
-  //    keeps resolving. The late self-echo adopt is then a no-op (id already
-  //    numeric → findIndex by pending-1 misses).
-  it('db_load adopts msg1 first; reply anchor rewritten; late self-echo is no-op', () => {
+  //    arrives. The bubble is adopted via content match (db_load path).
+  it('db_load adopts msg1 first; late self-echo is a no-op', () => {
     let s: ChatMessage[] = []
     // msg1 bubble + reply placeholder
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1, createdAt: '2026-01-01T00:00:01Z' }) }])
-    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, parentQueueId: 'pending-1', createdAt: '2026-01-01T00:00:01Z' }) }])
+    s = run(s, [{ type: 'stream_placeholder', msg: a({ id: 'drain-r1', streaming: true, seq: 2, createdAt: '2026-01-01T00:00:01Z' }) }])
     // db_load arrives with msg1 row (persist lag: createdAt a few seconds later)
     s = run(s, [{
       type: 'db_load',
@@ -273,8 +251,6 @@ describe('chat queue full-flow integration', () => {
     const replies = s.filter((m) => m.role === 'assistant')
     expect(replies).toHaveLength(1)
     expect(replies[0].id).toBe(38351)
-    // reply's parentQueueId rewritten from pending-1 → 38350
-    expect(String(replies[0].parentQueueId)).toBe('38350')
     // order: msg1, reply1 (still streaming — live placeholder merged with id)
     expect(display(s)).toBe('user:38350 | assistant:38351(s)')
 
@@ -297,7 +273,7 @@ describe('chat queue full-flow integration', () => {
       u({ id: 3, content: 'q2' }), a({ id: 4, content: 'r2' }),
     ] }])
     // phone sends (DB id 7) → remote user_message with numeric id
-    s = run(s, [{ type: 'ws_user_message', data: { messageId: 7, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 7, content: 'from phone', senderClientId: 'phone', backend: 'codebuddy' } }])
     const phone = s.find((m) => m.content === 'from phone')
     expect(phone?.id).toBe(7)
     expect(phone?._remote).toBe(true)
@@ -314,7 +290,7 @@ describe('chat queue full-flow integration', () => {
   //    transient _remote markers so it stays a plain DB row.
   it('db_load clears _remote markers on an adopted remote message', () => {
     let s: ChatMessage[] = []
-    s = run(s, [{ type: 'ws_user_message', data: { messageId: 9, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 9, content: 'from phone', senderClientId: 'phone', backend: 'codebuddy' } }])
     s = run(s, [{ type: 'db_load', dbMessages: [
       u({ id: 1, content: 'q1' }), a({ id: 2, content: 'r1' }),
       u({ id: 9, content: 'from phone' }),
@@ -332,34 +308,13 @@ describe('chat queue full-flow integration', () => {
     let s: ChatMessage[] = []
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-1', content: '1', seq: 1 }) }])
     s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-1', dbId: 10 }]) // direct, adopted
-    s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-2', content: '2', pending: true, seq: 2 }) }]) // queued
     s = run(s, [{ type: 'optimistic_push', msg: u({ id: 'pending-3', content: '3', seq: 3 }) }])
     s = run(s, [{ type: 'optimistic_adopt_id', id: 'pending-3', dbId: 12 }]) // direct, adopted
-    // drain queued msg2 → id 11, must sort between 10 and 12
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-2', text: '2', files: [], dbMessageId: 11 }])
+    // drain queued msg2 → arrives as its own user_message with id 11
+    s = run(s, [{ type: 'ws_user_message', data: { messageId: 11, content: '2' } }])
     const msg2 = s.find((m) => m.content === '2')
     expect(msg2?.id).toBe(11)
-    expect(msg2?.seq).toBeUndefined() // drained → id domain
     const userIds = s.filter((m) => m.role === 'user').map((m) => String(m.id))
     expect(userIds).toEqual(['10', '11', '12'])
-  })
-
-  // ── Regression: a remote queued message gets a db_load BEFORE its drain.
-  //    db_load must clear _remote markers but keep queueId so the later
-  //    queue_drain still matches (otherwise it stays pending forever and the
-  //    drain creates a duplicate reply).
-  it('remote queued message survives db_load and still matches the later drain', () => {
-    let s: ChatMessage[] = []
-    s = run(s, [{ type: 'ws_user_message', data: { messageId: 3, content: 'from phone', senderClientId: 'phone', queueId: 'pending-phone', backend: 'codebuddy' } }])
-    s = run(s, [{ type: 'db_load', dbMessages: [
-      u({ id: 3, content: 'from phone', queueId: 'pending-phone', queued: true }),
-    ] }])
-    const after = s.find((m) => m.content === 'from phone')
-    expect((after as any)?._remoteQueueId).toBeUndefined()
-    expect(after?.queueId).toBe('pending-phone') // drain anchor preserved
-    // drain arrives — must match by queueId
-    s = run(s, [{ type: 'ws_queue_drain', queueId: 'pending-phone', text: 'from phone', files: [], dbMessageId: 3 }])
-    const drained = s.find((m) => m.content === 'from phone')
-    expect(drained?.pending).toBeUndefined()
   })
 })

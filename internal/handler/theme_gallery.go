@@ -42,35 +42,20 @@ type galleryUploadResponse struct {
 	Errors []galleryUploadError `json:"errors"`
 }
 
-// gallerySelectRequest is the JSON body of POST /api/theme/local/select.
-type gallerySelectRequest struct {
-	Name string `json:"name"`
-}
-
-// wallpaperModeRequest is the JSON body of POST /api/theme/wallpaper. Both
-// fields are optional; only the ones present are applied.
-type wallpaperModeRequest struct {
-	Mode    *string `json:"mode"`
-	Enabled *bool   `json:"enabled"`
-}
-
-// wallpaperStateResponse is the common state body returned by the wallpaper
-// mutation endpoints, so the client can refresh in one round-trip.
-type wallpaperStateResponse struct {
-	Mode       string `json:"mode"`
-	Enabled    bool   `json:"enabled"`
-	ActiveFile string `json:"active_file"`
-	Selected   string `json:"selected"`
+// galleryDeleteResponse is the body of DELETE /api/theme/local/item. It carries
+// the remaining gallery so the caller can refresh its list in one round-trip;
+// which image each device displays is that device's own local state and is
+// deliberately not reported here.
+type galleryDeleteResponse struct {
+	Items []galleryItemView `json:"items"`
 }
 
 // bingStatusResponse is the body of GET /api/theme/bing/status.
 type bingStatusResponse struct {
-	Enabled         bool   `json:"enabled"`
 	File            string `json:"file"`
 	LastSuccessDate string `json:"last_success_date"`
 	Copyright       string `json:"copyright"`
 	Title           string `json:"title"`
-	Mkt             string `json:"mkt"`
 	LastError       string `json:"last_error"`
 	LastAttemptAt   int64  `json:"last_attempt_at"`
 }
@@ -269,11 +254,9 @@ func appendGalleryItems(items []galleryItemView) ([]galleryItemView, error) {
 			Size:       it.Size,
 		})
 	}
-	if app.Local.Selected == "" && len(accepted) > 0 {
-		app.Local.Selected = accepted[0].File
-		app.WallpaperMode = "local"
-		app.WallpaperEnabled = true
-	}
+	// No auto-selection: which image a device displays is that device's own
+	// local choice, so the uploader adopts the new file itself. The server
+	// cannot know, or decide for, anyone else's screen.
 	if err := persistAppearanceLocked(snapshot); err != nil {
 		return nil, err
 	}
@@ -281,8 +264,11 @@ func appendGalleryItems(items []galleryItemView) ([]galleryItemView, error) {
 }
 
 // serveThemeLocalDelete handles DELETE /api/theme/local/item?name= — removes one
-// gallery image. Deleting the selected image reselects a neighbor (preferring
-// the previous one) so the wallpaper does not silently disappear.
+// gallery image from the shared gallery.
+//
+// It does not touch any device's selection: a device still pointing at the
+// deleted file finds out when its image 404s and clears its own pointer. The
+// uploader that deletes its own current image clears it client-side directly.
 func serveThemeLocalDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
 	if name == "" || !model.IsThemeAllowedExt(name) {
@@ -316,18 +302,6 @@ func serveThemeLocalDelete(w http.ResponseWriter, r *http.Request) {
 	// keeps pointing at the original contents.
 	app.Local.Items = append(append([]model.LocalWallpaperItem(nil), app.Local.Items[:idx]...),
 		app.Local.Items[idx+1:]...)
-	if app.Local.Selected == name {
-		app.Local.Selected = ""
-		if len(app.Local.Items) > 0 {
-			// Prefer the previous item so repeated deletes walk backwards
-			// predictably rather than jumping to the end.
-			next := idx - 1
-			if next < 0 {
-				next = 0
-			}
-			app.Local.Selected = app.Local.Items[next].File
-		}
-	}
 	err := persistAppearanceLocked(snapshot)
 	configMutex.Unlock()
 
@@ -337,97 +311,6 @@ func serveThemeLocalDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	// Config no longer references the file — safe to unlink.
 	wallpaper.RemoveFile(name)
-	writeJSON(w, http.StatusOK, currentWallpaperState())
-}
-
-// ServeThemeLocalSelect handles POST /api/theme/local/select — makes a gallery
-// image the active wallpaper, switching the mode to local and enabling it.
-func ServeThemeLocalSelect(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-	var req gallerySelectRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-	if req.Name == "" || !model.IsThemeAllowedExt(req.Name) {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-		return
-	}
-
-	configMutex.Lock()
-	snapshot := model.ConfigInstance
-	app := &model.ConfigInstance.Appearance
-
-	found := false
-	for _, it := range app.Local.Items {
-		if it.File == req.Name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		configMutex.Unlock()
-		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
-		return
-	}
-	app.Local.Selected = req.Name
-	app.WallpaperMode = "local"
-	app.WallpaperEnabled = true
-	err := persistAppearanceLocked(snapshot)
-	configMutex.Unlock()
-
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, currentWallpaperState())
-}
-
-// ServeThemeWallpaperMode handles POST /api/theme/wallpaper — switches the
-// active wallpaper source and/or toggles the global wallpaper switch.
-func ServeThemeWallpaperMode(w http.ResponseWriter, r *http.Request) {
-	if !requireMethod(w, r, http.MethodPost) {
-		return
-	}
-	var req wallpaperModeRequest
-	if !decodeJSON(w, r, &req) {
-		return
-	}
-
-	configMutex.Lock()
-	snapshot := model.ConfigInstance
-	app := &model.ConfigInstance.Appearance
-
-	if req.Mode != nil {
-		if *req.Mode != "local" && *req.Mode != "bing" {
-			configMutex.Unlock()
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
-		app.WallpaperMode = *req.Mode
-		// Selecting the Bing source means "fetch and show the Bing image", so the
-		// fetch switch must follow. It has no UI of its own — leaving it false
-		// here produced a dead state where the mode said Bing while the worker
-		// silently returned without fetching, so the sync button did nothing and
-		// no error was ever reported.
-		app.Bing.Enabled = *req.Mode == "bing"
-	}
-	if req.Enabled != nil {
-		app.WallpaperEnabled = *req.Enabled
-	}
-	err := persistAppearanceLocked(snapshot)
-	configMutex.Unlock()
-
-	if err != nil {
-		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
-		return
-	}
-	// Switching to Bing starts a fetch immediately rather than waiting for the
-	// worker's next tick, so the preview appears without a manual sync.
-	if req.Mode != nil && *req.Mode == "bing" {
-		triggerBingSync()
-	}
 	writeJSON(w, http.StatusOK, currentWallpaperState())
 }
 
@@ -510,34 +393,12 @@ func serveWallpaperByName(w http.ResponseWriter, r *http.Request, name string) {
 // Bing fetch and returns 202. The fetch runs in the background worker; the
 // client polls GET /api/theme/bing/status for the outcome.
 //
-// The request's locale is persisted as the Bing market so that a later
-// scheduled fetch keeps following the UI language.
+// The market is derived from the server's UI language by the worker itself, so
+// there is nothing to persist here.
 func ServeThemeBingSync(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	// Persist the request locale as the Bing market. It must be written to disk
-	// rather than only held in memory: when the feature is disabled the worker
-	// returns early and never persists anything, so an in-memory-only change
-	// would be silently lost on restart.
-	if mkt := wallpaper.BingMktForLocale(localeFromRequest(r)); mkt != "" {
-		configMutex.Lock()
-		if model.ConfigInstance.Appearance.Bing.Mkt != mkt {
-			snapshot := model.ConfigInstance
-			model.ConfigInstance.Appearance.Bing.Mkt = mkt
-			patch := map[string]any{
-				"appearance": map[string]any{"bing": map[string]any{"mkt": mkt}},
-			}
-			if err := writeConfigYAML(patch); err != nil {
-				model.ConfigInstance = snapshot
-				configMutex.Unlock()
-				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
-				return
-			}
-		}
-		configMutex.Unlock()
-	}
-
 	triggerBingSync()
 	writeJSON(w, http.StatusAccepted, currentBingStatus())
 }
@@ -581,9 +442,6 @@ func PersistBingWallpaperState(s wallpaper.BingState) error {
 		bing.Copyright = s.Copyright
 		bing.Title = s.Title
 	}
-	if s.Mkt != "" {
-		bing.Mkt = s.Mkt
-	}
 	bing.LastError = s.LastError
 	bing.LastAttemptAt = s.LastAttemptAt
 
@@ -594,7 +452,6 @@ func PersistBingWallpaperState(s wallpaper.BingState) error {
 				"last_success_date": bing.LastSuccessDate,
 				"copyright":         bing.Copyright,
 				"title":             bing.Title,
-				"mkt":               bing.Mkt,
 				"last_error":        bing.LastError,
 				"last_attempt_at":   bing.LastAttemptAt,
 			},
@@ -609,70 +466,6 @@ func PersistBingWallpaperState(s wallpaper.BingState) error {
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-// PersistStartupAppearance writes the appearance values that ApplyDefaults
-// derived or normalized in memory and that must survive a restart.
-//
-// Two cases need this:
-//
-//   - A fresh install derives the factory defaults (Bing wallpaper enabled)
-//     that exist only in memory at this point. The fresh-install marker is the
-//     absence of the database file, which InitDB creates moments from now, so a
-//     restart before the first config write would classify the install as
-//     pre-existing and silently drop the factory wallpaper.
-//   - An install whose mode is Bing while the fetch switch is off (configs
-//     written before the two were coupled) is normalized back to enabled.
-//
-// Nothing is written for an ordinary existing install, so this does not create
-// a config.yaml for users who have never changed a setting.
-//
-// Called once from main.go. A write failure is reported but not fatal: the
-// in-memory values still apply for this process.
-func PersistStartupAppearance() error {
-	configMutex.Lock()
-	defer configMutex.Unlock()
-
-	app := model.ConfigInstance.Appearance
-	freshInstall := model.FirstRun
-
-	var bingPatch map[string]any
-	switch {
-	case freshInstall:
-		bingPatch = map[string]any{
-			"enabled": app.Bing.Enabled,
-			"mkt":     app.Bing.Mkt,
-		}
-	case model.HealedBingFetch:
-		// Heal the unrepresentable state on disk: mode says Bing, switch says off.
-		bingPatch = map[string]any{"enabled": true}
-	default:
-		return nil // nothing to persist
-	}
-
-	snapshot := model.ConfigInstance
-
-	// writeConfigYAML seeds the file from the whole ConfigInstance when no
-	// config.yaml exists yet, which would write the auto-generated password in
-	// plaintext into a 0644 file. The password already lives in the 0600
-	// auto-password file and is re-read from there on startup, so blank it for
-	// the duration of this write rather than widening its exposure.
-	savedPassword := model.ConfigInstance.Password
-	model.ConfigInstance.Password = ""
-	defer func() { model.ConfigInstance.Password = savedPassword }()
-
-	patch := map[string]any{
-		"appearance": map[string]any{
-			"wallpaper_mode":    app.WallpaperMode,
-			"wallpaper_enabled": app.WallpaperEnabled,
-			"bing":              bingPatch,
-		},
-	}
-	if err := writeConfigYAML(patch); err != nil {
-		model.ConfigInstance = snapshot
-		return err
-	}
-	return nil
-}
-
 // persistAppearanceLocked writes the appearance section to config.yaml after
 // the caller has already mutated model.ConfigInstance under configMutex. On a
 // disk-write failure the supplied snapshot is restored so config never diverges
@@ -681,11 +474,8 @@ func persistAppearanceLocked(snapshot model.Config) error {
 	app := model.ConfigInstance.Appearance
 	patch := map[string]any{
 		"appearance": map[string]any{
-			"wallpaper_mode":    app.WallpaperMode,
-			"wallpaper_enabled": app.WallpaperEnabled,
 			"local": map[string]any{
-				"selected": app.Local.Selected,
-				"items":    galleryItemsToMaps(app.Local.Items),
+				"items": galleryItemsToMaps(app.Local.Items),
 			},
 		},
 	}
@@ -711,19 +501,30 @@ func galleryItemsToMaps(items []model.LocalWallpaperItem) []map[string]any {
 	return out
 }
 
-// currentWallpaperState snapshots the wallpaper state for a mutation response.
-func currentWallpaperState() wallpaperStateResponse {
+// galleryItemsToViews renders gallery items for a JSON response. Always a
+// non-nil slice so an empty gallery serializes as [] rather than null.
+func galleryItemsToViews(items []model.LocalWallpaperItem) []galleryItemView {
+	out := make([]galleryItemView, 0, len(items))
+	for _, it := range items {
+		out = append(out, galleryItemView{
+			File:       it.File,
+			Name:       it.Name,
+			UploadedAt: it.UploadedAt,
+			Size:       it.Size,
+		})
+	}
+	return out
+}
+
+// currentWallpaperState snapshots the shared wallpaper resources for a mutation
+// response. Which image any given device displays is its own local state and is
+// deliberately absent.
+func currentWallpaperState() galleryDeleteResponse {
 	configMutex.RLock()
-	cfg := model.ConfigInstance
+	items := model.ConfigInstance.Appearance.Local.Items
 	configMutex.RUnlock()
 
-	active, _ := wallpaper.ResolveActive(&cfg)
-	return wallpaperStateResponse{
-		Mode:       cfg.Appearance.WallpaperMode,
-		Enabled:    cfg.Appearance.WallpaperEnabled,
-		ActiveFile: active,
-		Selected:   cfg.Appearance.Local.Selected,
-	}
+	return galleryDeleteResponse{Items: galleryItemsToViews(items)}
 }
 
 // currentBingStatus snapshots the Bing fetch state for a response.
@@ -733,25 +534,11 @@ func currentBingStatus() bingStatusResponse {
 	configMutex.RUnlock()
 
 	return bingStatusResponse{
-		Enabled:         b.Enabled,
 		File:            b.File,
 		LastSuccessDate: b.LastSuccessDate,
 		Copyright:       b.Copyright,
 		Title:           b.Title,
-		Mkt:             b.Mkt,
 		LastError:       b.LastError,
 		LastAttemptAt:   b.LastAttemptAt,
 	}
-}
-
-// localeFromRequest extracts the request locale using the same priority chain
-// as the i18n localizer (X-Locale header, then the locale cookie).
-func localeFromRequest(r *http.Request) string {
-	if v := r.Header.Get("X-Locale"); v != "" {
-		return v
-	}
-	if c, err := r.Cookie(model.ScopedCookieName("clawbench-locale")); err == nil && c.Value != "" {
-		return c.Value
-	}
-	return ""
 }

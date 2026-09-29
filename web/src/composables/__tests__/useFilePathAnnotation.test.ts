@@ -9,10 +9,12 @@ import {
   annotateFilePaths,
   verifyFilePaths,
   clearVerifiedCache,
+  invalidateNegativePathCache,
   openFilePath,
   navToFileInManager,
   revealInFileManager,
 } from '@/composables/useFilePathAnnotation'
+import { setShareToken } from '@/share/shareMode'
 
 // Mock escapeHtml from html utils
 vi.mock('@/utils/html', () => ({
@@ -1051,6 +1053,39 @@ describe('annotateFilePaths', () => {
     expect(result.detectedPaths).toHaveLength(0)
   })
 
+  it('marks a glob-pattern <a> link as non-navigable instead of leaving a dead link', () => {
+    // Issue #501: `[files](src/*.go)` rendered as an ordinary link, but the
+    // backend short-circuits glob patterns to 'none', so clicking it could
+    // never open anything and gave no hint why. Mark it inert (no href).
+    const input = '<a href="src/*.go">source files</a>'
+    const result = annotateFilePaths(input, { projectRoot })
+
+    // A pattern is not an openable path, so it is never reported as detected.
+    expect(result.detectedPaths).toHaveLength(0)
+    // No open button is produced for it.
+    expect(result.html).not.toContain('chat-file-open-btn')
+    // But the link is marked inert and keeps its text.
+    expect(result.html).toContain('chat-file-path-inert')
+    expect(result.html).not.toMatch(/<a[^>]*\shref="src\/\*\.go"/)
+    expect(result.html).toContain('source files')
+  })
+
+  it('marks a double-star glob link as non-navigable', () => {
+    const input = '<a href="src/**/*.ts">all TS</a>'
+    const result = annotateFilePaths(input, { projectRoot })
+    expect(result.html).toContain('chat-file-path-inert')
+    expect(result.html).not.toMatch(/<a[^>]*\shref="src\/\*\*\/\*\.ts"/)
+  })
+
+  it('leaves non-glob local links navigable (guard is not over-broad)', () => {
+    // The glob marking must not touch an ordinary relative link.
+    const input = '<a href="src/main.go">main</a>'
+    const result = annotateFilePaths(input, { projectRoot })
+    expect(result.detectedPaths).toContain('src/main.go')
+    expect(result.html).not.toContain('chat-file-path-inert')
+    expect(result.html).toMatch(/<a[^>]*\shref="src\/main\.go"/)
+  })
+
   // ── Tilde (~/) path tests ──
 
   it('does not annotate ~/ paths outside project when homeDir is provided', () => {
@@ -1359,6 +1394,99 @@ describe('clearVerifiedCache', () => {
   })
 })
 
+// --- invalidateNegativePathCache ---
+
+describe('invalidateNegativePathCache', () => {
+  beforeEach(() => {
+    clearVerifiedCache()
+    if (typeof (globalThis as any).CSS === 'undefined') (globalThis as any).CSS = {}
+    if (typeof (globalThis as any).CSS.escape === 'undefined') {
+      ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
+    }
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it('re-verifies a path that was cached as none, but keeps verified ones cached', async () => {
+    // The annotated markup as the pipeline emits it. It is the SOURCE for every
+    // rebuild below: `data-path-type` (and the stripping of a 'none' result)
+    // are live-DOM mutations only — the HTML string keeps the span, which is
+    // what lets a re-render restore an annotation that verification stripped.
+    const sourceHtml =
+      '<span class="chat-file-path" data-file-path="src/new.go">src/new.go</span>'
+      + '<span class="chat-file-path" data-file-path="src/old.go">src/old.go</span>'
+
+    // First pass: the file does not exist yet (the turn names it before writing
+    // it), so the path is cached as 'none' and its span is marked missing.
+    const missingFirst = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/new.go': 'none', 'src/old.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', missingFirst)
+
+    const container = document.createElement('div')
+    container.innerHTML = sourceHtml
+
+    await verifyFilePaths(['src/new.go', 'src/old.go'], container)
+    expect(missingFirst).toHaveBeenCalledTimes(1)
+    // A missing path is MARKED (visible chip, non-interactive), not deleted.
+    const missingEl = container.querySelector('[data-file-path="src/new.go"]')!
+    expect(missingEl).not.toBeNull()
+    expect(missingEl.getAttribute('data-path-type')).toBe('none')
+    expect(missingEl.classList.contains('chat-file-path-inert')).toBe(true)
+
+    // The turn ends: only the negative entry is dropped. 'src/old.go' stays
+    // cached as a real file.
+    invalidateNegativePathCache()
+
+    // Post-turn re-render rebuilds the DOM from the cached HTML, so the span is
+    // back (still unverified) and gets re-verified on the new pass.
+    container.innerHTML = sourceHtml
+
+    // The file now exists (it was created during the turn).
+    const existsNow = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/new.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', existsNow)
+
+    await verifyFilePaths(['src/new.go', 'src/old.go'], container)
+
+    // Exactly the invalidated path is re-requested; the verified 'file' entry
+    // is still served from the cache (so it does not appear in the body).
+    expect(existsNow).toHaveBeenCalledTimes(1)
+    const body = JSON.parse(String(existsNow.mock.calls[0][1].body)) as { paths: string[] }
+    expect(body.paths).toEqual(['src/new.go'])
+
+    // The newly created file's annotation is restored, not stripped again.
+    const el = container.querySelector('[data-file-path="src/new.go"]')!
+    expect(el.getAttribute('data-path-type')).toBe('file')
+  })
+
+  it('is a no-op when nothing negative is cached', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/real.go': 'file' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/real.go">src/real.go</span>'
+
+    await verifyFilePaths(['src/real.go'], container)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+
+    invalidateNegativePathCache()
+
+    // A verified entry survives, so no re-request happens.
+    await verifyFilePaths(['src/real.go'], container)
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+  })
+})
+
 // --- verifyFilePaths ---
 
 describe('verifyFilePaths', () => {
@@ -1378,7 +1506,43 @@ describe('verifyFilePaths', () => {
     ;(globalThis as any).CSS.escape = (s: string) => s.replace(/[!"#$%&'()*+,./:;<=>?@[\\\]^`{|}~]/g, '\\$&')
   }
 
-  it('removes buttons for non-existent paths (batch API returns none)', async () => {
+  // The share page is anonymous: /api/file/batch-exists answers 401, and a
+  // non-OK response makes fetchPathTypes return null, so the chips are left
+  // unverified. The guard must stop the request entirely rather than let it
+  // fire and fail — the share page renders through the CHAT pipeline, which
+  // has no share branch of its own (unlike buildMarkdownPreviewDom).
+  it('share mode must not probe the auth-protected batch-exists endpoint', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      json: () => Promise.resolve({ error: "unauthorized" }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML =
+      '<span class="chat-file-path" data-file-path="src/app.ts">src/app.ts</span>'
+
+    setShareToken('tokguard')
+    try {
+      await verifyFilePaths(['src/app.ts'], container)
+    } finally {
+      setShareToken(null)
+    }
+
+    expect(mockFetch, 'share mode must not call the auth-protected endpoint')
+      .not.toHaveBeenCalled()
+    expect(container.querySelector('.chat-file-path'),
+      'the chip must survive as inert text').not.toBeNull()
+
+    vi.unstubAllGlobals()
+  })
+
+  it('marks non-existent paths as missing instead of stripping them', async () => {
+    // Issue #501: a verified-missing path used to lose every trace of the
+    // annotation (span unwrapped, <a> left as a live-looking dead link), so the
+    // user only learned the file was gone by clicking and getting a toast.
+    // It must now stay as a visibly-muted, non-interactive chip.
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ results: { 'missing.go': 'none' } }),
@@ -1390,17 +1554,113 @@ describe('verifyFilePaths', () => {
 
     await verifyFilePaths(['missing.go'], container)
 
-    // Button should be removed
+    // The open button is gone — there is nothing to open.
     expect(container.querySelector('.chat-file-open-btn')).toBeNull()
-    // Span should be unwrapped (plain text remains)
+    // The path text survives, still chip-styled, marked inert + typed 'none'.
+    const span = container.querySelector('.chat-file-path')
+    expect(span).not.toBeNull()
     expect(container.textContent).toContain('missing.go')
-    expect(container.querySelector('.chat-file-path')).toBeNull()
+    expect(span!.getAttribute('data-path-type')).toBe('none')
+    expect(span!.classList.contains('chat-file-path-inert')).toBe(true)
+    expect(span!.getAttribute('title')).toBeTruthy()
 
     // Verify batch API was called
     expect(mockFetch).toHaveBeenCalledTimes(1)
     const callArgs = mockFetch.mock.calls[0]
     expect(callArgs[0]).toBe('/api/file/batch-exists')
     expect(callArgs[1].method).toBe('POST')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('makes a verified-missing <a> non-navigable but keeps its text', async () => {
+    // The <a> case is the one the issue reported as "clicking says the file
+    // does not exist": the element kept its href, so it still navigated. It
+    // must lose the href (inert) while keeping the visible path text.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'docs/gone.md': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<a href="docs/gone.md" data-file-path="docs/gone.md" class="chat-file-path">the guide</a>'
+
+    await verifyFilePaths(['docs/gone.md'], container)
+
+    const a = container.querySelector('a')!
+    expect(a).not.toBeNull()
+    expect(a.hasAttribute('href'), 'a dead link must not stay navigable').toBe(false)
+    expect(a.getAttribute('data-inert-href')).toBe('docs/gone.md')
+    expect(a.getAttribute('data-path-type')).toBe('none')
+    expect(a.textContent).toContain('the guide')
+    // NOT aria-disabled: the chip is clickable (it searches for the filename),
+    // so marking it disabled would hide an operable control from AT. Only the
+    // glob case — which really cannot act — stays aria-disabled.
+    expect(a.hasAttribute('aria-disabled')).toBe(false)
+
+    vi.unstubAllGlobals()
+  })
+
+  it('stashes the line target instead of deleting it, so a search hit can land on the line', async () => {
+    // The chip becomes an entry point to a filename search. When the user picks
+    // a candidate, the originally-intended line should still be reachable — so
+    // the live `data-line-*` contract (read unconditionally for verified paths)
+    // is moved to a separate namespace rather than dropped.
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/gone.go': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/gone.go" data-line-start="42" data-line-end="48">src/gone.go</span>'
+
+    await verifyFilePaths(['src/gone.go'], container)
+
+    const span = container.querySelector('.chat-file-path')!
+    // Live attrs are gone — they mean "resolvable line target in a real file".
+    expect(span.hasAttribute('data-line-start')).toBe(false)
+    expect(span.hasAttribute('data-line-end')).toBe(false)
+    // …but the values survive under the inert namespace.
+    expect(span.getAttribute('data-inert-line-start')).toBe('42')
+    expect(span.getAttribute('data-inert-line-end')).toBe('48')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('stashes a multi-range line target as the canonical serialized list', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'src/gone.go': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="src/gone.go" data-line-start="90" data-line-end="91" data-line-ranges="90-91,309">src/gone.go</span>'
+
+    await verifyFilePaths(['src/gone.go'], container)
+
+    const span = container.querySelector('.chat-file-path')!
+    expect(span.hasAttribute('data-line-ranges')).toBe(false)
+    expect(span.getAttribute('data-inert-line-ranges')).toBe('90-91,309')
+
+    vi.unstubAllGlobals()
+  })
+
+  it('does not set aria-disabled on a verified-missing chip (it is clickable)', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ results: { 'gone.go': 'none' } }),
+    })
+    vi.stubGlobal('fetch', mockFetch)
+
+    const container = document.createElement('div')
+    container.innerHTML = '<span class="chat-file-path" data-file-path="gone.go">gone.go</span>'
+
+    await verifyFilePaths(['gone.go'], container)
+
+    expect(container.querySelector('.chat-file-path')!.hasAttribute('aria-disabled')).toBe(false)
 
     vi.unstubAllGlobals()
   })
@@ -1459,7 +1719,7 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
-  it('handles network error gracefully (assumes not exists, removes annotation)', async () => {
+  it('handles network error gracefully (assumes not exists, marks missing)', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1468,9 +1728,11 @@ describe('verifyFilePaths', () => {
 
     await verifyFilePaths(['test.go'], container)
 
-    // On network error, assumes not exists — annotation removed
+    // On network error, assumes not exists — button gone, path marked missing.
     expect(container.querySelector('.chat-file-open-btn')).toBeNull()
-    expect(container.querySelector('.chat-file-path')).toBeNull()
+    const span = container.querySelector('.chat-file-path')
+    expect(span).not.toBeNull()
+    expect(span!.getAttribute('data-path-type')).toBe('none')
     expect(container.textContent).toContain('test.go')
 
     vi.unstubAllGlobals()
@@ -1559,7 +1821,7 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
-  it('removes annotation when neither primary nor fallback exists', async () => {
+  it('marks the path missing when neither primary nor fallback exists', async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ results: { 'web/src/missing.ts': 'none', 'missing.ts': 'none' } }),
@@ -1571,10 +1833,14 @@ describe('verifyFilePaths', () => {
 
     await verifyFilePaths(['web/src/missing.ts', 'missing.ts'], container)
 
-    // Both should be removed
-    expect(container.querySelector('.chat-file-path')).toBeNull()
+    // Button gone; span marked missing (not unwrapped); text preserved.
     expect(container.querySelector('.chat-file-open-btn')).toBeNull()
-    // Text content preserved (unwrapped from span)
+    const span = container.querySelector('.chat-file-path')!
+    expect(span).not.toBeNull()
+    expect(span.getAttribute('data-path-type')).toBe('none')
+    expect(span.classList.contains('chat-file-path-inert')).toBe(true)
+    // The dead fallback must not linger as a clickable attribute.
+    expect(span.hasAttribute('data-fallback-path')).toBe(false)
     expect(container.textContent).toContain('missing.ts')
 
     vi.unstubAllGlobals()
@@ -1623,7 +1889,7 @@ describe('verifyFilePaths', () => {
     vi.unstubAllGlobals()
   })
 
-  it('removes annotations on network error (cache as none)', async () => {
+  it('marks annotations missing on network error (cache as none)', async () => {
     const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'))
     vi.stubGlobal('fetch', mockFetch)
 
@@ -1632,9 +1898,11 @@ describe('verifyFilePaths', () => {
 
     await verifyFilePaths(['maybe-missing.go'], container)
 
-    // On network error, paths are cached as 'none' → annotation removed
+    // On network error, paths are cached as 'none' → button gone, chip marked.
     expect(container.querySelector('.chat-file-open-btn')).toBeNull()
-    expect(container.querySelector('.chat-file-path')).toBeNull()
+    const span = container.querySelector('.chat-file-path')
+    expect(span).not.toBeNull()
+    expect(span!.getAttribute('data-path-type')).toBe('none')
     expect(container.textContent).toContain('maybe-missing.go')
 
     vi.unstubAllGlobals()
@@ -2661,6 +2929,55 @@ describe('openFilePath', () => {
     it('does not treat a bare number list as a line suffix', () => {
       expect(parseFileUri('1,2,3').path).toBe('1,2,3')
       expect(parseFileUri('1,2,3').lineRanges).toEqual([])
+    })
+
+    // AI-authored markdown routinely wraps a link destination in code
+    // decoration: `[.clawbench/x.html](`.clawbench/x.html`)`. CommonMark keeps
+    // the backticks as part of the destination, and marked percent-encodes them
+    // (`%60…%60`), so the annotation layer sees a path whose first and last
+    // characters are decoration rather than a real filename. Stripping a
+    // matching wrapping pair must happen BEFORE the line suffix is parsed —
+    // `:L10` is followed by a closing backtick, so the suffix regex would
+    // otherwise never match.
+    describe('wrapping decoration', () => {
+      it('strips a surrounding backtick pair', () => {
+        expect(parseFileUri('`.clawbench/generated/theme-picker-demo.html`').path)
+          .toBe('.clawbench/generated/theme-picker-demo.html')
+      })
+
+      it('strips percent-encoded backticks (%60…%60)', () => {
+        expect(parseFileUri('%60.clawbench/generated/theme-picker-demo.html%60').path)
+          .toBe('.clawbench/generated/theme-picker-demo.html')
+      })
+
+      it('strips a surrounding single- or double-quote pair', () => {
+        expect(parseFileUri("'src/main.go'").path).toBe('src/main.go')
+        expect(parseFileUri('"src/main.go"').path).toBe('src/main.go')
+        expect(parseFileUri('%22src/main.go%22').path).toBe('src/main.go')
+      })
+
+      it('parses the line suffix inside a wrapped path', () => {
+        expect(parseFileUri('`src/main.go:10-20`')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+        expect(parseFileUri('`src/main.go#L10`')).toMatchObject({ path: 'src/main.go', lineStart: 10 })
+        expect(parseFileUri('`src/main.go:L10-L20`')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+        expect(parseFileUri('%60src/main.go:10-20%60')).toMatchObject({ path: 'src/main.go', lineStart: 10, lineEnd: 20 })
+      })
+
+      it('decodes a percent-encoded path inside wrapping decoration', () => {
+        expect(parseFileUri('`src/%E4%B8%AD%E6%96%87.go`').path).toBe('src/中文.go')
+      })
+
+      it('does not strip an unmatched decoration character', () => {
+        // Only a MATCHING pair is decoration; a lone leading/trailing backtick
+        // is part of the name (a real, if unusual, filename).
+        expect(parseFileUri('`src/main.go').path).toBe('`src/main.go')
+        expect(parseFileUri('src/main.go`').path).toBe('src/main.go`')
+        expect(parseFileUri('"src/main.go`').path).toBe('"src/main.go`')
+      })
+
+      it('does not strip a decoration pair spanning the whole string when only one char', () => {
+        expect(parseFileUri('`').path).toBe('`')
+      })
     })
   })
 

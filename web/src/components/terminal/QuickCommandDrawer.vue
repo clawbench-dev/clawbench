@@ -112,6 +112,12 @@ watch(commands, (val) => {
 watch(() => props.open, (isOpen) => {
   if (isOpen) {
     deleteConfirmId.value = null
+  } else {
+    // The "more actions" menu is a PopupMenu teleported to <body>, so it is not
+    // covered by the BottomSheet's own v-show. Left open it would hover over
+    // whatever replaced the drawer — including after a tab switch, which closes
+    // the drawer via useTabDrawer's effectiveOpen.
+    showMoreMenu.value = false
   }
 })
 

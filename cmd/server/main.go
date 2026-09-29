@@ -28,6 +28,7 @@ import (
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
@@ -584,15 +585,6 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// InitDB creates moments from now, so a restart before the first config
 	// write would otherwise classify this install as pre-existing and silently
 	// drop the factory wallpaper.
-	// Persist the appearance values derived (fresh install) or normalized (a
-	// Bing mode with the fetch switch off) during ApplyDefaults. Both exist only
-	// in memory at this point and must survive a restart; ordinary existing
-	// installs write nothing here.
-	if err := handler.PersistStartupAppearance(); err != nil {
-		// Not fatal: the in-memory values still apply for this process.
-		slog.Warn("failed to persist startup appearance", slog.String("err", err.Error()))
-	}
-
 	// Reclaim gallery images left on disk but no longer referenced by config
 	// (e.g. an upload that failed between writing the file and recording it).
 	knownGalleryFiles := make([]string, 0, len(model.ConfigInstance.Appearance.Local.Items))
@@ -614,6 +606,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	model.ChatForkContextBudget = cfg.Chat.ForkContextBudget
 	model.ChatAutoContinueEnabled = cfg.Chat.AutoContinueEnabled
 	model.ChatAutoContinueMaxRetries = cfg.Chat.AutoContinueMaxRetries
+	model.ChatAutoRenameEnabled = cfg.Chat.AutoRenameEnabled
 	model.Language = cfg.Language
 	model.SessionMaxCount = cfg.Session.MaxCount
 	model.RecentProjectsMaxCount = cfg.RecentProjects.MaxCount
@@ -1222,6 +1215,8 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		hub.EmitACPStateEvents(clientID, sessionID)
 		// Re-emit the live run's question + stream_start so a client that
 		// subscribed mid-flight can render the reply under its own question.
+		// The frontend drains its buffered content events only on stream_start,
+		// so skipping this leaves a mid-flight subscriber with an empty reply.
 		// See EmitLiveRunStateToClient for why the order matters.
 		if service.IsSessionRunning(sessionID) {
 			hub.EmitLiveRunStateToClient(clientID, sessionID)
@@ -1241,10 +1236,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		return ctxState.Usage
 	})
 
-	// Inject the lookups behind the subscribe-time live-run recovery emit
+	// Inject the lookup behind the subscribe-time live-run recovery emit
 	// (breaks import cycle between ws and service).
-	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetStreamingMessageInfo)
-	ws.GetManager().StreamHub().SetQuestionLookupFunc(service.GetQuestionByQueueID)
+	ws.GetManager().StreamHub().SetStreamStateLookupFunc(service.GetLiveRunState)
 
 	// Inject pending_events write-ahead for user_message events (breaks import
 	// cycle between ws and service). StreamHub.Emit stores user_message before
@@ -1549,14 +1543,6 @@ func hotReloadReconfigure(port int) {
 	// --- DingTalk: reconfigure or toggle enabled ---
 	hotReloadDingTalk(cfg)
 	hotReloadFeishu(cfg)
-
-	// --- Bing wallpaper: fetch immediately when enabled ---
-	// The worker runs continuously and re-reads the enabled flag, so enabling
-	// the feature only needs a nudge — otherwise the user would wait up to 24h
-	// for the first image.
-	if cfg.Appearance.Bing.Enabled {
-		service.TriggerBingSync()
-	}
 }
 
 // hotReloadDingTalk reconfigures or toggles the DingTalk push subsystem on hot-reload.

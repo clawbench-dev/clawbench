@@ -7,6 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// These tests pin "what is the last user message of a session" for notification
+// previews. Two exclusions matter:
+//
+//   - streaming rows are in-flight and must never be quoted;
+//   - queued messages no longer live in chat_history at all (they wait in
+//     queued_messages until dequeue), so a message the user queued but that has
+//     not run yet is naturally invisible here. The *SkipsStreamingAndQueued
+//     tests seed that table explicitly to pin it.
+
 func TestGetLastUserMessagePlain_ReturnsLatestUserMessage(t *testing.T) {
 	_, teardown := setupTestDBForChatSummary(t)
 	defer teardown()
@@ -14,7 +23,7 @@ func TestGetLastUserMessagePlain_ReturnsLatestUserMessage(t *testing.T) {
 	sessionID := "sess-1"
 	insertMsg := func(role, content string) {
 		_, err := WriteExec(
-			"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', ?, ?, 'claude', 0, 0)",
+			"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', ?, ?, 'claude', 0)",
 			sessionID, role, content,
 		)
 		require.NoError(t, err)
@@ -35,7 +44,7 @@ func TestGetLastUserMessagePlain_ExtractsPlainTextFromBlocks(t *testing.T) {
 
 	sessionID := "sess-2"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, `{"blocks":[{"type":"text","text":"带格式的用户消息"}]}`,
 	)
 	require.NoError(t, err)
@@ -49,19 +58,20 @@ func TestGetLastUserMessagePlain_SkipsStreamingAndQueued(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-3"
-	// 流式中/排队中的 user 消息应被跳过
+	// 流式中的 user 消息应被跳过
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 1, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 1)",
 		sessionID, "流式中消息",
 	)
 	require.NoError(t, err)
+	// 排队消息只存在于 queued_messages，未出队前不进 chat_history
 	_, err = WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 1)",
+		"INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content) VALUES (?, 'proj', 'claude', 'q-lum-1', ?)",
 		sessionID, "排队消息",
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, "最终消息",
 	)
 	require.NoError(t, err)
@@ -76,7 +86,7 @@ func TestGetLastUserMessagePlain_EmptyWhenNoUserMessage(t *testing.T) {
 
 	sessionID := "sess-4"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'assistant', ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'assistant', ?, 'claude', 0)",
 		sessionID, `{"blocks":[{"type":"text","text":"只有助手消息"}]}`,
 	)
 	require.NoError(t, err)
@@ -91,7 +101,7 @@ func TestGetLastUserMessageMeta_ReturnsPlainAndNoFiles(t *testing.T) {
 
 	sessionID := "sess-m1"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, '', 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, '', 'claude', 0)",
 		sessionID, "没有附件的消息",
 	)
 	require.NoError(t, err)
@@ -107,7 +117,7 @@ func TestGetLastUserMessageMeta_ReportsFilesWhenPresent(t *testing.T) {
 
 	sessionID := "sess-m2"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0)",
 		sessionID, "带附件的问题", `[{"path":"/proj/src/main.go","isDir":false}]`,
 	)
 	require.NoError(t, err)
@@ -124,7 +134,7 @@ func TestGetLastUserMessageMeta_AttachmentOnlyMessage(t *testing.T) {
 	sessionID := "sess-m3"
 	// 纯附件消息：content 为空、files 非空
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0)",
 		sessionID, "", `[{"path":"/proj/img/logo.png","isDir":false},{"path":"/proj/docs/a.md","isDir":false}]`,
 	)
 	require.NoError(t, err)
@@ -140,7 +150,7 @@ func TestGetLastUserMessageMeta_EmptyFilesArrayMeansNoAttachments(t *testing.T) 
 
 	sessionID := "sess-m4"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, '[]', 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, '[]', 'claude', 0)",
 		sessionID, "空数组",
 	)
 	require.NoError(t, err)
@@ -156,17 +166,18 @@ func TestGetLastUserMessageMeta_SkipsStreamingAndQueued(t *testing.T) {
 
 	sessionID := "sess-m5"
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 1, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, ?, 'claude', 1)",
 		sessionID, "流式中", `[{"path":"/proj/a.go","isDir":false}]`,
 	)
 	require.NoError(t, err)
+	// Queued message with an attachment: it must not leak into the preview.
 	_, err = WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, files, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0, 1)",
+		"INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files) VALUES (?, 'proj', 'claude', 'q-lum-2', ?, ?)",
 		sessionID, "排队中", `[{"path":"/proj/b.go","isDir":false}]`,
 	)
 	require.NoError(t, err)
 	_, err = WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, "最终消息",
 	)
 	require.NoError(t, err)
@@ -184,7 +195,7 @@ func TestGetLastUserMessageMeta_CollapsesMultiBlockToSingleLine(t *testing.T) {
 	// 用户消息实际是两段话（两个 text block），ExtractPlainText 以 \n\n 连接；
 	// 通知引用块应折叠为单行流动文本（两个段落变"段一 段二"），而不是变成两行。
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, `{"blocks":[{"type":"text","text":"帮我看看这个报错"},{"type":"text","text":"以及怎么处理"}]}`,
 	)
 	require.NoError(t, err)
@@ -201,7 +212,7 @@ func TestGetLastUserMessageMeta_FlattensEmbeddedNewlinesToSpaces(t *testing.T) {
 	sessionID := "sess-m7"
 	// 纯文本消息内含换行/制表/连续空格——通知预览应折叠为单个空格流
 	_, err := WriteExec(
-		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming, queued) VALUES (?, 'proj', 'user', ?, 'claude', 0, 0)",
+		"INSERT INTO chat_history (session_id, project_path, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, "请修复这个bug\t如果方便\n\n谢谢",
 	)
 	require.NoError(t, err)

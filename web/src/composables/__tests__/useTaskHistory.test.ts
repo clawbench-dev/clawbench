@@ -56,7 +56,6 @@ vi.mock('@/composables/useChatRender.ts', () => ({
       blocks: [{ type: 'text', text: content }],
       metadata: null,
     }),
-    formatMessageTime: () => '2m ago',
   }),
 }))
 

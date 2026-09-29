@@ -10,12 +10,14 @@ import zh from '@/i18n/locales/zh'
 describe('i18n conversation-index keys completeness', () => {
   const keys = [
     'conversationIndexTitle',
-    'conversationIndexDesc',
     'conversationIndexSearch',
     'conversationIndexNoResults',
     'noUserMessages',
     'noUserMessagesHint',
     'userMsgIndexAttachment',
+    'conversationIndexRoleUser',
+    'conversationIndexRoleAssistant',
+    'conversationIndexNoText',
   ]
 
   it('en and zh have all conversation-index keys', () => {

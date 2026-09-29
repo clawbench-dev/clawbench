@@ -54,10 +54,18 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	external_message_id TEXT DEFAULT '',
-	queue_id TEXT DEFAULT '',
-	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	completed_at DATETIME
+);
+CREATE TABLE IF NOT EXISTS queued_messages (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	project_path TEXT NOT NULL,
+	backend TEXT NOT NULL DEFAULT '',
+	queue_id TEXT NOT NULL,
+	content TEXT NOT NULL,
+	files TEXT,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
@@ -113,7 +121,7 @@ func TestDrainLoop_UserCancel_ClearsQueueAndEmitsCancel(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -141,7 +149,7 @@ func TestDrainLoop_UserCancel_WithQueueIDs_EmitsQueueCancel(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -168,7 +176,7 @@ func TestDrainLoop_UserCancel_NoQueueIDs_NoQueueCancelEvent(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -196,7 +204,7 @@ func TestDrainLoop_ErrorResult_EmitsErrorEvent(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -225,7 +233,7 @@ func TestDrainLoop_EmptyResult_EmitsErrorWithReason(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -251,7 +259,7 @@ func TestDrainLoop_NonUserCancelReason_EmitsCancelled(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -274,7 +282,7 @@ func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -284,6 +292,125 @@ func TestDrainLoop_QueueEmpty_EmitsDone(t *testing.T) {
 
 	RunDrainLoop(cfg, DrainResult{})
 	assert.Equal(t, "done", finalEvent.Type)
+}
+
+// TestDrainLoop_OnTurnAnswered_PerIntermediateTurn is the regression for
+// "several queued messages produced a single notification": the loop's terminal
+// `done` fires only once, when the WHOLE queue is drained, so an intermediate
+// answer must report itself as it completes.
+//
+// The run is 1 initial message + 3 queued = 4 answers, and each must notify:
+// 3 intermediate callbacks here (including the FIRST, non-queued one) plus the
+// terminal push for the last. The final one deliberately goes through the
+// terminal path only, because that path owns the once-per-run push guard — so
+// the total is N notifications with no duplicate.
+func TestDrainLoop_OnTurnAnswered_PerIntermediateTurn(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-test-on-turn-answered"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	for _, q := range []string{"q1", "q2", "q3"} {
+		_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "msg "+q, nil, q, "")
+	}
+
+	var answered int32
+	var finalEvent ai.StreamEvent
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+			return DrainResult{}
+		},
+		OnTurnAnswered: func() {
+			atomic.AddInt32(&answered, 1)
+		},
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
+			finalEvent = event
+		},
+	}
+
+	RunDrainLoop(cfg, DrainResult{})
+
+	assert.Equal(t, int32(3), atomic.LoadInt32(&answered),
+		"1 initial + 3 queued answers → 3 intermediate notifications (the 4th is the terminal push)")
+	assert.Equal(t, eventTypeDone, finalEvent.Type)
+}
+
+// TestDrainLoop_OnTurnAnswered_NotCalledForSingleMessage pins the other half:
+// with nothing queued behind it, the only answer must NOT also fire the
+// intermediate hook — otherwise it would double-notify (once here, once from
+// the terminal push).
+func TestDrainLoop_OnTurnAnswered_NotCalledForSingleMessage(t *testing.T) {
+	setupDrainTest(t)
+	sessionID := "drain-test-on-turn-answered-single"
+	setupDrainSession(t, sessionID)
+	defer ClearQueuedMessages(sessionID)
+
+	var answered int32
+	cfg := DrainConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/test",
+		BackendName: "codebuddy",
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+			return DrainResult{}
+		},
+		OnTurnAnswered:       func() { atomic.AddInt32(&answered, 1) },
+		MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+	}
+
+	RunDrainLoop(cfg, DrainResult{})
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&answered),
+		"an empty queue has no intermediate turn to report")
+}
+
+// TestDrainLoop_OnTurnAnswered_SkipsUncleanTurns verifies an interrupted or
+// failed turn is not announced as an answer. The user cut it short (or it was
+// abandoned), so a "completed" notification would be a lie.
+func TestDrainLoop_OnTurnAnswered_SkipsUncleanTurns(t *testing.T) {
+	cases := []struct {
+		name   string
+		result DrainResult
+	}{
+		{"user cancel", DrainResult{CancelReason: cancelReasonUser}},
+		{"interrupt", DrainResult{CancelReason: cancelReasonInterrupt}},
+		{"error", DrainResult{Err: "boom"}},
+		{"empty", DrainResult{Empty: true}},
+		{"abnormal", DrainResult{AbnormalReason: "stalled"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupDrainTest(t)
+			sessionID := "drain-test-on-turn-unclean-" + tc.name
+			setupDrainSession(t, sessionID)
+			defer ClearQueuedMessages(sessionID)
+
+			// A message is queued so the loop would have an intermediate turn to
+			// report, were the previous turn clean.
+			_, _ = AddQueuedMessage("/test", "codebuddy", sessionID, "next", nil, "q1", "")
+
+			var answered int32
+			cfg := DrainConfig{
+				SessionID:   sessionID,
+				ProjectPath: "/test",
+				BackendName: "codebuddy",
+				ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+					return DrainResult{}
+				},
+				OnTurnAnswered:       func() { atomic.AddInt32(&answered, 1) },
+				MarkDoneAndSendFinal: func(event ai.StreamEvent) {},
+			}
+
+			// The FIRST turn's outcome is tc.result; the queued message only runs
+			// if the loop decides to continue (interrupt does; the rest terminate).
+			RunDrainLoop(cfg, tc.result)
+
+			assert.Equal(t, int32(0), atomic.LoadInt32(&answered),
+				"an unclean turn must not be announced as a completed answer")
+		})
+	}
 }
 
 func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
@@ -302,7 +429,7 @@ func TestDrainLoop_QueueHasNextMessage_ExecutesAndLoops(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			atomic.AddInt32(&executeCount, 1)
 			return DrainResult{}
 		},
@@ -338,9 +465,9 @@ func TestDrainLoop_QueueMessageReturnsError_StopsLoopAndClearsRest(t *testing.T)
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			atomic.AddInt32(&executeCount, 1)
-			if msg.QueueID == "q-err" {
+			if row.QueueID == "q-err" {
 				return DrainResult{Err: "execution failed"}
 			}
 			return DrainResult{}
@@ -372,7 +499,7 @@ func TestDrainLoop_QueueMessageCancelled_StopsLoop(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{CancelReason: cancelReasonUser}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -399,7 +526,7 @@ func TestDrainLoop_UserCancelWithQueueIDsOnly_IncludesOnlyNonEmptyQueueIDs(t *te
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -471,10 +598,10 @@ func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
 
 	assert.Equal(t, 1, GetQueuedCount(sessionID))
 
-	// The canceled row is gone from chat_history entirely.
+	// The canceled row is gone from queued_messages entirely.
 	var remaining int
 	err = UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
+		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ? AND queue_id = ?",
 		sessionID, "q-cancel",
 	).Scan(&remaining)
 	assert.NoError(t, err)
@@ -511,7 +638,7 @@ func TestClearQueuedMessages_DeletesRows(t *testing.T) {
 	assert.Equal(t, 0, GetQueuedCount(sessionID))
 	var remaining int
 	err := UnsafeDBForTest().QueryRow(
-		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id != ''",
+		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ?",
 		sessionID,
 	).Scan(&remaining)
 	assert.NoError(t, err)
@@ -529,8 +656,8 @@ func TestDrainLoop_PersistentDequeueError_AbortsAfterRetryWindow(t *testing.T) {
 
 	// Replace the dequeue with one that always fails.
 	origDequeue := dequeueQueuedMessage
-	dequeueQueuedMessage = func(sessionID string) (model.ChatMessage, bool, error) {
-		return model.ChatMessage{}, false, assert.AnError
+	dequeueQueuedMessage = func(sessionID string) (QueuedRow, int64, bool, error) {
+		return QueuedRow{}, 0, false, assert.AnError
 	}
 	defer func() { dequeueQueuedMessage = origDequeue }()
 
@@ -539,7 +666,7 @@ func TestDrainLoop_PersistentDequeueError_AbortsAfterRetryWindow(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) {
@@ -570,10 +697,10 @@ func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
 	// Fail the first 2 dequeue calls, then succeed — simulating a brief DB blip.
 	origDequeue := dequeueQueuedMessage
 	var calls int
-	dequeueQueuedMessage = func(sid string) (model.ChatMessage, bool, error) {
+	dequeueQueuedMessage = func(sid string) (QueuedRow, int64, bool, error) {
 		calls++
 		if calls <= 2 {
-			return model.ChatMessage{}, false, assert.AnError
+			return QueuedRow{}, 0, false, assert.AnError
 		}
 		return origDequeue(sid)
 	}
@@ -585,7 +712,7 @@ func TestDrainLoop_TransientDequeueError_RetriesAndRecovers(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			atomic.AddInt32(&executeCount, 1)
 			return DrainResult{}
 		},
@@ -634,7 +761,7 @@ func TestDrainHandleTerminal_InterruptKeepsQueue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetQueuedMessages failed: %v", err)
 	}
-	if len(queued) != 1 || queued[0].Content != "next message" {
+	if len(queued) != 1 || queued[0].Text != "next message" {
 		t.Fatalf("the queued message must survive an interrupt, got %+v", queued)
 	}
 }
@@ -823,7 +950,7 @@ func TestDrainLoop_AutoContinue_ResumesAbnormalResult(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
@@ -857,7 +984,7 @@ func TestDrainLoop_AutoContinue_NotCalledForUserCancel(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
@@ -888,7 +1015,7 @@ func TestDrainLoop_AutoContinue_RefusedFallsThroughToTerminal(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
@@ -921,7 +1048,7 @@ func TestDrainLoop_AutoContinue_SkippedWhenUserHasQueuedMessages(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			executed++
 			return DrainResult{}
 		},
@@ -951,7 +1078,7 @@ func TestDrainLoop_AutoContinue_SkippedWhenSessionNotRunning(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
@@ -979,7 +1106,7 @@ func TestDrainLoop_AutoContinue_PanicDegradesToTerminal(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		AutoContinue: func(attempt int, prev DrainResult) (DrainResult, bool) {
@@ -1014,7 +1141,7 @@ func TestDrainLoop_AutoContinue_DisabledCrashStillTerminates(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			return DrainResult{}
 		},
 		// The real runner is installed, so the disabled path is exercised for
@@ -1024,7 +1151,7 @@ func TestDrainLoop_AutoContinue_DisabledCrashStillTerminates(t *testing.T) {
 			SessionID:   sessionID,
 			ProjectPath: "/test",
 			BackendName: "codebuddy",
-			RunTurn:     func(prompt, queueID string) DrainResult { return DrainResult{} },
+			RunTurn:     func(prompt string) DrainResult { return DrainResult{} },
 		}),
 		MarkDoneAndSendFinal: func(event ai.StreamEvent) { finalEvent = event },
 	}
@@ -1061,7 +1188,7 @@ func TestDrainLoop_AutoContinue_AttemptsResetPerUserTurn(t *testing.T) {
 		SessionID:   sessionID,
 		ProjectPath: "/test",
 		BackendName: "codebuddy",
-		ExecuteRunWithMessage: func(msg model.ChatMessage) DrainResult {
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
 			// Every user turn fails abnormally.
 			return DrainResult{AbnormalReason: abnormalNoTerminal}
 		},

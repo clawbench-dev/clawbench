@@ -35,9 +35,101 @@ function mountDrawer(props: Record<string, unknown> = {}) {
 }
 
 describe('QuoteDetailDrawer', () => {
+  describe('annotation editing (staged vs sent)', () => {
+    // A staged quote is the user's own draft, still in the chat input — editing
+    // it is the whole point of the drawer.
+    it('offers an editable annotation for a staged quote', () => {
+      const wrapper = mountDrawer({ mode: 'staged' })
+
+      expect(wrapper.find('.qd-note-input').exists()).toBe(true)
+      expect(wrapper.find('.qd-note-readonly').exists()).toBe(false)
+    })
+
+    // Once sent, the quote is part of the conversation record. The user asked
+    // for it to be read-only; an edit affordance that silently writes to the DB
+    // is the worse failure.
+    it('shows a sent quote\'s annotation read-only', () => {
+      const wrapper = mountDrawer({ mode: 'sent', quote: fileQuote({ note: '为什么这么写' }) })
+
+      expect(wrapper.find('.qd-note-input').exists()).toBe(false)
+      expect(wrapper.find('.qd-note-readonly').text()).toBe('为什么这么写')
+    })
+
+    // The annotation must stay VISIBLE when read-only: it is context the user
+    // wrote and should still be readable, just not changeable.
+    it('keeps a sent annotation visible rather than hiding it', () => {
+      const wrapper = mountDrawer({ mode: 'sent', quote: fileQuote({ note: 'keep me' }) })
+
+      expect(wrapper.text()).toContain('keep me')
+    })
+
+    it('says so when a sent quote has no annotation', () => {
+      const wrapper = mountDrawer({ mode: 'sent', quote: fileQuote({ note: '' }) })
+
+      expect(wrapper.find('.qd-note-readonly').exists()).toBe(false)
+      expect(wrapper.find('.qd-note-empty').text()).toBe('quoteBar.noAnnotation')
+    })
+
+    // A sent quote has nothing to save, so the footer must not offer Save (or
+    // Cancel, which only makes sense next to a Save).
+    it('offers only Close in the footer for a sent quote', () => {
+      const wrapper = mountDrawer({ mode: 'sent' })
+
+      const footerButtons = wrapper.findAll('.bs-stub button.fbtn')
+      expect(footerButtons).toHaveLength(1)
+      expect(footerButtons[0].text()).toBe('common.close')
+    })
+
+    it('offers Cancel and Save for a staged quote', () => {
+      const wrapper = mountDrawer({ mode: 'staged' })
+
+      const footerButtons = wrapper.findAll('.bs-stub button.fbtn')
+      expect(footerButtons.map(b => b.text())).toEqual(['common.cancel', 'common.save'])
+    })
+
+    // Defaults to staged so an existing caller that does not pass `mode` keeps
+    // the old editable behaviour rather than silently losing the ability to
+    // annotate.
+    it('defaults to editable when no mode is given', () => {
+      const wrapper = mountDrawer()
+
+      expect(wrapper.find('.qd-note-input').exists()).toBe(true)
+    })
+  })
+
   it('renders the quoted content verbatim', () => {
     const wrapper = mountDrawer({ quote: fileQuote({ text: 'func main() {}' }) })
     expect(wrapper.find('.qd-quoted-text').text()).toBe('func main() {}')
+  })
+
+  // A whole-object quote ("quote this file") carries only a label. The empty
+  // <pre> read as a rendering bug rather than as "this references the object",
+  // so the whole section is omitted.
+  it('omits the quoted-content section for a whole-object quote', () => {
+    const wrapper = mountDrawer({
+      quote: fileQuote({ text: '', startLine: 0, endLine: 0 }),
+    })
+
+    expect(wrapper.find('.qd-quoted-text').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('quoteBar.quotedContent')
+    // The rest of the drawer still works: the source and the annotation.
+    expect(wrapper.find('.qd-source').text()).toContain('a.go')
+    expect(wrapper.find('.qd-note-input').exists()).toBe(true)
+  })
+
+  it('labels a free-form selection quote generically', () => {
+    const wrapper = mountDrawer({
+      quote: fileQuote({
+        text: 'npm run build', filePath: '', startLine: 0, endLine: 0,
+        sourceKind: 'selection',
+      }),
+    })
+
+    // Without the 'selection' kind it would be inferred as a chat message.
+    expect(wrapper.find('.qd-source').text()).toContain('quoteBar.selectionQuote')
+    expect(wrapper.find('.qd-source').text()).not.toContain('quoteBar.messageQuote')
+    // No source to open, so no jump button.
+    expect(wrapper.find('.qd-jump').exists()).toBe(false)
   })
 
   it('shows the source label with its line range', () => {
@@ -62,6 +154,73 @@ describe('QuoteDetailDrawer', () => {
     await wrapper.find('.qd-jump').trigger('click')
 
     expect(wrapper.emitted('jump')![0]).toEqual([quote])
+  })
+
+  // The jump navigates away (opens a file / switches tab / scrolls to a
+  // message). Leaving the drawer open would cover the very thing the user asked
+  // to see, so it must close as part of the same action.
+  it('closes the drawer when jumping', async () => {
+    const wrapper = mountDrawer()
+
+    await wrapper.find('.qd-jump').trigger('click')
+
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  // Order matters: closing first lets the sheet slide out while the (possibly
+  // async) navigation runs, instead of waiting on it.
+  it('closes before jumping so the drawer does not block the destination', async () => {
+    const wrapper = mountDrawer()
+
+    await wrapper.find('.qd-jump').trigger('click')
+
+    const events = Object.keys(wrapper.emitted())
+    expect(events.indexOf('close')).toBeLessThan(events.indexOf('jump'))
+  })
+
+  it('does not close when there is nothing to jump to', async () => {
+    // No jump button, so the drawer must stay open on its own.
+    const wrapper = mountDrawer({
+      quote: fileQuote({ sourceKind: 'message', filePath: '', startLine: 0, endLine: 0, text: 'chat' }),
+    })
+
+    expect(wrapper.find('.qd-jump').exists()).toBe(false)
+    expect(wrapper.emitted('close')).toBeUndefined()
+  })
+
+  describe('type badge', () => {
+    // The badge states WHAT KIND of thing was quoted. The source label alone
+    // does not say whether "a1b2c3d" is a commit or a CI run.
+    it.each([
+      ['a file', fileQuote({ filePath: 'src/a.go', sourceKind: 'file' }), 'quoteBar.typeFile'],
+      ['a git diff', fileQuote({ commitSha: 'abc123', language: 'diff', sourceKind: 'file' }), 'quoteBar.typeDiff'],
+      ['a CI run', fileQuote({ commitSha: 'abc', url: 'https://ci/1', language: 'pipeline', sourceKind: 'url' }), 'quoteBar.typePipeline'],
+      ['a scheduled task', fileQuote({ taskId: 12, language: 'task', sourceKind: 'file' }), 'quoteBar.typeTask'],
+      ['a task run', fileQuote({ taskId: 12, executionId: 'e1', language: 'task-exec', sourceKind: 'file' }), 'quoteBar.typeExec'],
+      ['a terminal selection', fileQuote({ sourceKind: 'terminal', filePath: '', text: 'ls' }), 'quoteBar.typeTerminal'],
+      ['a chat message', fileQuote({ sourceKind: 'message', filePath: '', text: 'hi' }), 'quoteBar.messageQuote'],
+      ['a bare selection', fileQuote({ sourceKind: 'selection', filePath: '', text: 'x' }), 'quoteBar.selectionQuote'],
+    ])('labels %s', (_label, quote, expectedKey) => {
+      const wrapper = mountDrawer({ quote })
+
+      expect(wrapper.find('.qd-type-label').text()).toBe(expectedKey)
+    })
+
+    it('renders an icon inside the badge', () => {
+      const wrapper = mountDrawer({ quote: fileQuote({ commitSha: 'abc123', language: 'diff' }) })
+
+      expect(wrapper.find('.qd-type .qd-type-icon').exists()).toBe(true)
+    })
+
+    // A PR and an issue are both sourceKind 'url'; the type marker is what tells
+    // them apart, and mislabelling a PR as an issue is user-visible.
+    it('labels a forge PR and issue distinctly', () => {
+      const pr = mountDrawer({ quote: fileQuote({ sourceKind: 'url', url: 'https://x/1', language: 'pr', filePath: 'a/b#1' }) })
+      expect(pr.find('.qd-type-label').text()).toBe('quoteBar.typePr')
+
+      const issue = mountDrawer({ quote: fileQuote({ sourceKind: 'url', url: 'https://x/2', language: 'issue', filePath: 'a/b#2' }) })
+      expect(issue.find('.qd-type-label').text()).toBe('quoteBar.typeIssue')
+    })
   })
 
   it('hides the jump button for a chat-message quote', () => {

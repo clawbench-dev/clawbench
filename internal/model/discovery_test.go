@@ -9,6 +9,7 @@ import (
 	_ "clawbench/internal/ai/backends/codex"
 	_ "clawbench/internal/ai/backends/copilot"
 	_ "clawbench/internal/ai/backends/deepseek"
+	_ "clawbench/internal/ai/backends/dsh"
 	_ "clawbench/internal/ai/backends/grok"
 	_ "clawbench/internal/ai/backends/kimi"
 	_ "clawbench/internal/ai/backends/mimo"
@@ -16,6 +17,7 @@ import (
 	_ "clawbench/internal/ai/backends/pi"
 	_ "clawbench/internal/ai/backends/qoder"
 	_ "clawbench/internal/ai/backends/vecli"
+	_ "clawbench/internal/ai/backends/zcode"
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -25,7 +27,7 @@ import (
 // --- Test 1: BackendRegistry ---
 
 func TestBackendRegistry_ContainsAllBackends(t *testing.T) {
-	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity"}
+	expectedIDs := []string{"claude", "codebuddy", "opencode", "codex", "qoder", "vecli", "deepseek", "pi", "kimi", "copilot", "mimo", "grok", "antigravity", "zcode", "dsh"}
 	assert.Len(t, model.GetBackendRegistry(), len(expectedIDs))
 
 	seen := make(map[string]bool)
@@ -72,6 +74,15 @@ func TestBackendRegistry_SpecificValues(t *testing.T) {
 	assert.Equal(t, "agy", specs["antigravity"].DefaultCmd)
 	assert.Equal(t, "npx -y agy-acp@latest", specs["antigravity"].AcpCommand)
 	assert.Equal(t, "grok agent stdio", specs["grok"].AcpCommand)
+
+	// DeepSeek Harness is ACP-only and detected via the `dsh` binary. Its
+	// session/load is unsupported (-32601), so ACPLoadSession must stay false
+	// or the explicit acp-load endpoint would attempt a method that never exists.
+	assert.Equal(t, "dsh", specs["dsh"].DefaultCmd)
+	assert.Equal(t, "dsh --profile acp", specs["dsh"].AcpCommand)
+	assert.False(t, specs["dsh"].ACPLoadSession, "dsh does not implement session/load")
+	assert.Equal(t, "npm install -g @deepseek-ai/dsh", specs["dsh"].InstallCmd)
+	assert.False(t, model.BackendSupportsCLI("dsh"), "dsh is ACP-only: no CLI factory")
 }
 
 func TestBackendSupportsCLI_ComputedFromFactoryRegistry(t *testing.T) {

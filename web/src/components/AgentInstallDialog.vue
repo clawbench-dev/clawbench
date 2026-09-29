@@ -9,18 +9,10 @@
         <div class="install-hint">{{ t('welcomeInfo.manualInstallHint') }}</div>
         <div class="install-cmd-row">
           <code class="install-cmd">{{ installCmd }}</code>
-          <button class="btn-copy" @click="copyCmd">
-            <svg v-if="!copied" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-              <rect x="9" y="9" width="13" height="13" rx="2"/>
-              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
-            </svg>
-            <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-              <path d="M20 6L9 17l-5-5"/>
-            </svg>
-          </button>
+          <CopyButton :text="installCmd" class="btn-copy" :duration="2000" />
         </div>
         <div class="install-actions">
-          <button class="dlg-btn dlg-cancel" @click="$emit('close')">{{ t('common.close') }}</button>
+          <button class="fbtn" @click="$emit('close')">{{ t('common.close') }}</button>
         </div>
       </div>
     </div>
@@ -31,9 +23,11 @@
 import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { PackagePlus } from 'lucide-vue-next'
+import CopyButton from '@/components/common/CopyButton.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import '@/assets/modal-footer-btn.css'
 
-const props = defineProps<{
+defineProps<{
   backendName: string
   installCmd: string
 }>()
@@ -43,7 +37,6 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const copied = ref(false)
 const overlayRef = ref<HTMLDivElement | null>(null)
 let unregisterBack: (() => void) | null = null
 
@@ -66,12 +59,6 @@ onMounted(() => {
 onBeforeUnmount(() => {
   if (unregisterBack) { unregisterBack(); unregisterBack = null }
 })
-
-function copyCmd() {
-  navigator.clipboard.writeText(props.installCmd)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
-}
 </script>
 
 <style scoped>
@@ -174,22 +161,8 @@ function copyCmd() {
   justify-content: flex-end;
 }
 
-.dlg-btn {
-  padding: var(--space-3) var(--space-7);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  border: none;
-  cursor: pointer;
-  transition: opacity var(--duration-base);
-}
-
-.dlg-btn:active { opacity: var(--opacity-soft); }
-
-.dlg-cancel {
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #555);
-}
+/* The Close button uses the shared .fbtn pill language
+   (assets/modal-footer-btn.css), the same as every other dialog footer. */
 </style>
 
 <style>

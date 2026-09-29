@@ -203,6 +203,101 @@ export const appLog = {
   e(tag: string, ...args: unknown[]) { emit('error', 'E', tag, args) },
 }
 
+/**
+ * Diagnostic logging that ALWAYS reaches the server, regardless of the
+ * `logCapture` setting.
+ *
+ * `logCapture` defaults to off, so appLog.* from a user's session is written to
+ * their console and then discarded — which makes a field report impossible to
+ * diagnose (the whole session's client.log ends up empty). This channel exists
+ * for temporary, targeted diagnostics during a specific bug hunt: it enqueues
+ * into the same relay and schedules a flush, so the line lands in
+ * {data-dir}/logs/client.log even with capture disabled.
+ *
+ * It deliberately bypasses the gate rather than flipping the setting: the
+ * setting is the user's, and silently changing it would both surprise them and
+ * turn on full log capture (every appLog line in the app) instead of just the
+ * lines being investigated.
+ *
+ * Flushing is DEBOUNCED, not immediate. An earlier version POSTed on every
+ * call, which is fine for a once-per-turn diagnostic but catastrophic for one
+ * on a render or per-delta path: a single session produced ~80k requests from
+ * a placeholder log alone. Coalescing a burst into one request keeps any call
+ * site safe, so the cost of a diagnostic is bounded by how long the burst lasts
+ * rather than by how many lines it emits.
+ *
+ * ⚠️ `immediate` exists for STARTUP diagnostics and is not an optimisation.
+ * The relay's ring buffer holds 200 entries and drops the OLDEST on overflow,
+ * so a line written at startup sits at the very front of a buffer that a busy
+ * chat view then floods (measured peaks: ~2450 lines/second while streaming).
+ * Within the 250ms debounce window that is >600 lines, so the line is trimmed
+ * away before it is ever sent — it silently never arrives. Measured on a real
+ * session: 14 page loads produced only 2 lines.
+ *
+ * Pass `immediate: true` when the line is written before the app is busy. Do
+ * NOT pass it from a render/per-delta path — that is the flood this debounce
+ * was introduced to prevent.
+ *
+ * Intended to be temporary — remove once the bug is understood.
+ */
+const DIAG_FLUSH_DEBOUNCE_MS = 250
+let diagFlushTimer: ReturnType<typeof setTimeout> | null = null
+
+export function diagLog(tag: string, msg: string, opts?: { immediate?: boolean }): void {
+  buffer.push({ level: 'W', tag: `DIAG:${tag}`, msg, ts: Date.now(), source: 'js' })
+
+  // A startup line must not wait: the buffer it is sitting in is about to be
+  // flooded past its 200-entry cap, and overflow drops from the front — i.e.
+  // exactly this entry. Cancel any pending debounce and send now.
+  if (opts?.immediate) {
+    if (diagFlushTimer) {
+      clearTimeout(diagFlushTimer)
+      diagFlushTimer = null
+    }
+    void doFlushForced()
+    return
+  }
+
+  if (diagFlushTimer) return // a flush is already scheduled; this line rides along
+  diagFlushTimer = setTimeout(() => {
+    diagFlushTimer = null
+    void doFlushForced()
+  }, DIAG_FLUSH_DEBOUNCE_MS)
+}
+
+async function doFlushForced(): Promise<void> {
+  if (buffer.length === 0) return
+  const toSend = buffer.splice(0, 200)
+  try {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), FLUSH_TIMEOUT_MS)
+    try {
+      await fetch(LOG_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ entries: toSend }),
+        signal: ctrl.signal,
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  } catch {
+    // Best-effort: a diagnostic line must never break the caller.
+  }
+  // A burst that overflowed the 200-entry batch continues on the next tick
+  // rather than being dropped.
+  if (buffer.length > 0) void doFlushForced()
+}
+
+/** Cancel a pending diagnostic flush. For testing only. */
+export function _resetDiagFlush(): void {
+  if (diagFlushTimer) {
+    clearTimeout(diagFlushTimer)
+    diagFlushTimer = null
+  }
+}
+
 /** Clear the HTTP relay buffer. For testing only. */
 export function _clearBuffer(): void {
   buffer.length = 0

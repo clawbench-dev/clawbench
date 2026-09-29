@@ -1,7 +1,17 @@
 <template>
   <div class="session-list-header-content">
-    <List :size="16" class="bs-header-icon" />
-    <span class="bs-header-title">{{ t('session.title') }}</span>
+    <div class="session-header-leading">
+      <List :size="16" class="bs-header-icon" />
+      <span class="bs-header-title">{{ t('session.title') }}</span>
+    </div>
+    <!-- Quota meter. It sits between two equal-flex groups (leading / actions),
+         so it lands on the header's center line whenever both sides fit.
+         Exact centering and non-overlap are mutually exclusive on a narrow
+         sidebar: with 4–5 buttons the action row alone needs more than half the
+         header, so a truly centered meter would sit on top of the buttons.
+         Hence the trailing group's `min-width: min-content`: when it cannot
+         shrink any further the meter slides left (still beside the actions)
+         instead of overlapping them. Measured at 220/280/360/480px. -->
     <div v-if="sessionMaxCount > 0" class="session-counter">
       <div class="session-counter-bar">
         <div class="session-counter-fill" :style="{ width: sessionPct + '%', background: sessionBarColor }"></div>
@@ -19,6 +29,10 @@
       <template v-if="pinned">
         <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh" />
       </template>
+      <!-- Trailing slot: hosts put the sidebar pin/unpin toggle here so it is the
+           right-most control in the header, after search/create/refresh. The
+           leading #actions slot is rendered before the built-in buttons. -->
+      <slot name="actions-end" />
     </div>
   </div>
 </template>
@@ -57,9 +71,12 @@ const sessionBarColor = computed(() => {
 </script>
 
 <style scoped>
-/* Header content — a flex row that lays out icon/title/counter/actions. Used
-   directly inside BottomSheet's own .bs-header (drawer) or a wrapper header
-   provided by the sidebar, so it must be a self-contained flex container. */
+/* Header content — a flex row: an equal-flex leading group (icon + title), the
+   auto-width quota meter, and an equal-flex actions group. Equal `flex: 1 1 0`
+   on the two side groups gives them the same share of the free space, which is
+   what puts the middle meter on the header's center line. Used directly inside
+   BottomSheet's own .bs-header (drawer) or a wrapper header provided by the
+   sidebar, so it must be a self-contained flex container. */
 .session-list-header-content {
   display: flex;
   align-items: center;
@@ -71,15 +88,30 @@ const sessionBarColor = computed(() => {
   flex-wrap: nowrap;
   overflow: hidden;
 }
-.session-list-header-content .bs-header-title {
+.session-header-leading {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  /* At the narrowest sidebar with every optional button present the header
+     simply cannot fit title + meter + actions, and this group is what gives
+     (the actions floor at min-content). Clipping here keeps the losing content
+     from painting underneath the meter; without it the icon box spills over the
+     meter and reads as an overlap. */
+  overflow: hidden;
+}
+.session-header-leading .bs-header-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* `flex: 0 0 auto` — the meter keeps its natural width; it is the side groups
+   that absorb the slack, and centering depends on them being equal. */
 .session-counter {
-  flex-shrink: 0;
+  flex: 0 0 auto;
 }
 .session-counter-bar {
   position: relative;
@@ -110,10 +142,15 @@ const sessionBarColor = computed(() => {
   letter-spacing: 0.3px;
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
 }
+/* `min-width: min-content` floors the shrink at the buttons' own width: without
+   it the group would keep shrinking and the meter would overlap the buttons on
+   a narrow sidebar. With it the meter slides left instead. */
 .session-header-actions {
+  flex: 1 1 0;
+  min-width: min-content;
   display: inline-flex;
   align-items: center;
-  flex-shrink: 0;
+  justify-content: flex-end;
 }
 </style>
 

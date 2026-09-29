@@ -1,7 +1,7 @@
 import { ref, onUnmounted, watch, type Ref } from 'vue'
 import { appLog } from '@/utils/appLog'
 import { useGlobalEvents } from './useGlobalEvents'
-import { findLastBlockOfType, type ContentBlock } from '@/utils/chatStreamUtils.ts'
+import { appendThinkingDelta, findLastBlockOfType, type ContentBlock } from '@/utils/chatStreamUtils.ts'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
 import { ToolUseWatchdog } from '@/utils/toolUseWatchdog'
 
@@ -127,12 +127,17 @@ export function useTaskExecStream(options: UseTaskExecStreamOptions) {
         const msg = streamingMsg.value
         if (!msg) return
         const blocks = msg.blocks as ContentBlock[]
-        const existingThinking = findLastBlockOfType(blocks, 'thinking')
-        if (existingThinking) {
-          existingThinking.text += (payload.text as string) ?? ''
-        } else {
-          blocks.push({ type: 'thinking', text: (payload.text as string) ?? '' })
-        }
+        // Shared with the chat reducer so the two cannot diverge: a bare
+        // positional scan opens a SECOND block when a tool_use sits after the
+        // thinking block (a sub-agent's tool_use interleaves on the wire), which
+        // produced two blocks with one think_id — the reported frozen head block.
+        appendThinkingDelta(
+          blocks,
+          (payload.text as string) ?? '',
+          payload.think_id as string | undefined,
+          undefined,
+          () => findLastBlockOfType(blocks, 'thinking'),
+        )
         break
       }
 

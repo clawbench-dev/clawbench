@@ -248,6 +248,7 @@
                 :get-agent-name="props.getAgentName"
                 :static-block-cache="props.staticBlockCache"
                 :active="props.active"
+                :read-only="props.readOnly"
                 @toggle-tool="$emit('toggle-tool', $event)"
                 @show-tool-detail="forwardSubagentToolDetail"
                 @task-card-click="$emit('task-card-click', $event)"
@@ -368,14 +369,16 @@ import { getToolIcon, toolDisplayName } from '@/utils/icons'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2 } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
-import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
+import { renderMarkdownHtml, renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
+import { getShareToolCall } from '@/share/shareMode'
 import { apiGet } from '@/utils/api'
-import { appLog } from '@/utils/appLog'
+import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useThinkingContent } from '@/composables/useThinkingContent.ts'
+import { thinkingRenderSource } from '@/utils/chatStreamUtils.ts'
 import { isThinkingUserAwayFromBottom } from '@/utils/thinkingScroll'
-import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
+import { verifyFilePaths, invalidateNegativePathCache } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 // Footer pill buttons (.fbtn) — the PermissionApproval card buttons share this
 // language, so the styles must be present wherever the chat surfaces render.
@@ -451,6 +454,17 @@ onMounted(() => {
   }
 })
 async function fetchToolCallInputForAutoExpand(block: any, msgId: string | number) {
+  // Session-share mode inlines tool input/output into the snapshot, so consult
+  // the provider before reaching for the authenticated detail endpoint.
+  const shared = getShareToolCall(msgId, block.id)
+  if (shared) {
+    if (shared.input && (!block.input || Object.keys(block.input).length === 0)) block.input = shared.input
+    if (shared.output && !block.output) block.output = shared.output
+    if (shared.status) block.status = shared.status
+    if (shared.done !== undefined) block.done = shared.done
+    return
+  }
+
   try {
     let url = `/api/ai/chat/tool-call?tool_id=${encodeURIComponent(block.id)}&message_id=${encodeURIComponent(msgId)}`
     if (props.sessionId) url += `&session_id=${encodeURIComponent(props.sessionId)}`
@@ -579,6 +593,11 @@ const props = defineProps({
   // resolve correctly at any depth.
   nested: { type: Boolean, default: false },
   rootBlocks: { type: Array as () => any[], default: null },
+  // Read-only rendering (public share page): interactive tool actions that POST
+  // back to the server (permission approval, ask-question submit, session reset)
+  // are suppressed. Display-only affordances (expanding a tool, copying, opening
+  // the detail drawer) keep working.
+  readOnly: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'reset-session'])
@@ -608,6 +627,11 @@ watch([() => props.streaming, () => props.startedAt], ([streaming]) => {
   elapsedTimer = setInterval(updateElapsed, 1000)
 }, { immediate: true })
 
+// Deliberately NOT formatDuration(): this is a live counter that ticks every
+// second, so it needs second-level precision to visibly move. formatDuration
+// caps at the largest unit (a 1h20m turn would read "1.3h" and appear frozen
+// for ~6 minutes at a time). Every *static* duration in the app goes through
+// formatDuration instead.
 const elapsedLabel = computed(() => {
   if (elapsedSeconds.value < 60) return `${elapsedSeconds.value}s`
   const minutes = Math.floor(elapsedSeconds.value / 60)
@@ -1068,8 +1092,11 @@ function handleSummaryToolClick(tool: any, ti: number) {
 
 /** Generate a stable key for a block, used for v-for :key and animation state.
  *  tool_use: block.id (unique tool call ID from backend)
- *  thinking: block.think_id (stable backend-assigned ID, survives re-opens),
- *            falling back to block._key (key assigned at creation/parsing)
+ *  thinking: block.think_id (the identity the backend mints when the block
+ *            opens and sends on the WS event), falling back to block._key for a
+ *            live block built from a payload that carried no think_id (a server
+ *            older than that field, e.g. the disk-served frontend running
+ *            against an un-restarted binary).
  *  text: text-${bi} (text blocks merge so index is stable)
  *  other: type-bi (fallback)
  *  The index fallback uses the ABSOLUTE root index (absIdx) so a nested
@@ -1119,9 +1146,12 @@ function handleThinkingClick(block: any, bi: number) {
     expandingThinking.value[blockKey] = true
     thinkingExpanded.value[blockKey] = true
     invalidateBlockHtml()
-    // Slim block (think_id, no text): lazy-load the thinking text on expand
+    // Slim block (think_id, no text): lazy-load the thinking text on expand.
+    // Provisional while the turn runs: a block can be `done` and still grow (the
+    // accumulator has no done check), so reading now may only get a prefix —
+    // flagged so the auto-load refetches the final text once the turn ends.
     if (!block.text && block.think_id) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     }
     // Clean up expanding state after animation
@@ -1133,7 +1163,7 @@ function handleThinkingClick(block: any, bi: number) {
     // Retry failed lazy-load when clicking an error-state slim block;
     // otherwise collapse.
     if (!block.text && block.think_id && thinkingContent.errors.value[block.think_id]) {
-      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId)
+      thinkingContent.loadThinking(block.think_id, props.msgId, props.sessionId, props.streaming)
         .catch(() => { /* error surfaced via errors ref */ })
     } else {
       triggerThinkingCollapse(blockKey)
@@ -1256,6 +1286,11 @@ function followThinkingScrollToBottom() {
 
 /** Click inside expanded tool-detail: dispatch to tool action handlers first, then fall through to generic behavior. */
 function handleToolDetailClick(event: Event) {
+  // Read-only (share) mode: never dispatch a tool action. handleToolAction can
+  // POST to the server (permission respond, ask-question submit), which an
+  // anonymous viewer must not do and which would fail anyway.
+  if (props.readOnly) return
+
   // Try tool-specific action handler first (via data-tool-name on the .tool-detail container)
   const el = event.currentTarget as HTMLElement | null
   const toolName = el?.dataset?.toolName
@@ -1343,6 +1378,44 @@ function reverifyAnnotations() {
 onMounted(() => nextTick(reverifyAnnotations))
 onUpdated(() => nextTick(reverifyAnnotations))
 
+/**
+ * Render any Mermaid blocks this component still holds as raw source.
+ *
+ * The chat Mermaid pass is a ONE-SHOT render: `updateRenderedContents(true)`
+ * schedules a single `renderMermaidInElement` on a `nextTick`
+ * (useChatRender.ts), and that function only picks up
+ * `pre.mermaid:not([data-rendered])`. Any `<pre class="mermaid">` written into
+ * the DOM AFTER that pass is therefore never rendered and stays visible as raw
+ * source. Two writers reliably land late:
+ *
+ *  - `listKey` embeds `messages.length` (ChatMessageList.vue), so a new message
+ *    remounts the whole list, recreating every `pre.mermaid` from cached HTML.
+ *  - The newest message's text block is re-patched by a late `v-html` write
+ *    (throttled flush / cache upgrade), inserting its block after the pass.
+ *
+ * Measured on a real session: every cold load ended with exactly ONE leftover
+ * `pre.mermaid`, always in the LAST assistant message — i.e. the diagram the
+ * user had just asked for. Any later render pass converted it (which is why a
+ * theme switch or session re-open appeared to "fix" it).
+ *
+ * Same shape as `reverifyAnnotations` above: scoped to this component's subtree
+ * (so concurrent instances never race for the same element) and idempotent.
+ * `onMounted` covers the list-remount path, where `onUpdated` never fires.
+ *
+ * Deliberately skipped while `streaming`: the fence is still incomplete
+ * mid-stream, and the post-streaming pass owns that first render. The
+ * synchronous guard keeps the lazy 608KB Mermaid import out of the update path
+ * when there is nothing to do.
+ */
+function renderPendingMermaid() {
+  if (props.streaming) return
+  const root = contentRootRef.value
+  if (!root || !root.querySelector('pre.mermaid:not([data-rendered])')) return
+  void renderMermaidInElement(root, 'chat-mermaid-block')
+}
+onMounted(() => nextTick(renderPendingMermaid))
+onUpdated(() => nextTick(renderPendingMermaid))
+
 // ── Throttled streaming render ──
 // Rendered-HTML cache for streaming text/thinking blocks, keyed by stable block
 // key. Deliberately a `shallowRef<Map>` rather than a `ref<Record>`:
@@ -1369,7 +1442,47 @@ const _blockHtmlSource = new Map<string, string>()
 let _throttleTimer: ReturnType<typeof setTimeout> | null = null
 let _throttlePending = false
 const THROTTLE_MS = 300
+// How many trailing blocks count as "currently visible" while streaming, for
+// the done-block auto-load. The live path keeps the newest reasoning rendered
+// open, so those must load without a click; anything further back is a
+// collapsed chip and loads on expand instead. Keeps a long turn from firing one
+// request per finished block on every render.
+const DONE_AUTOLOAD_TAIL = 6
 const _blockFlushScheduler = new StreamFrameScheduler()
+
+/**
+ * Options for rendering a thinking block WHILE streaming.
+ *
+ * Deliberately identical to the text-block streaming path (`renderTextBlock`
+ * with streaming=true): both enhancements are skipped. The two paths used to
+ * diverge — text skipped path annotation, thinking kept it — and that
+ * asymmetry was not a decision, just two independently-evolved call sites.
+ *
+ * What the divergence cost: a turn routinely names a file BEFORE writing it.
+ * The thinking block annotated that path mid-stream, verified it against a
+ * not-yet-created file and cached 'none'; when the turn's final text then
+ * reported the same path, verification hit the cached 'none' and STRIPPED the
+ * annotation — the file existed, the path stayed dead until a hard refresh.
+ * The turn-end `invalidateNegativePathCache()` below only papered over it.
+ *
+ * Nothing is lost: once streaming ends the block takes the non-streaming
+ * branch and is annotated in full, and `reverifyAnnotations` covers the
+ * paths `renderMarkdownHtml` discards.
+ */
+const THINKING_STREAMING_OPTS = { skipEnhancements: true, skipKatex: true } as const
+
+/**
+ * The text a thinking block should render during streaming.
+ *
+ * Thin wrapper over the shared `thinkingRenderSource` that supplies the
+ * lazy-loaded prefix from the thinking-text cache. Both render paths (this
+ * component's `getThinkingHtml` and the throttled `flushBlockHtml`) go through
+ * it so they can never disagree about a block's content — see the helper's doc
+ * for what that divergence cost.
+ */
+function thinkingSource(block: any): string {
+  return thinkingRenderSource(block, block?.think_id ? thinkingContent.cachedText(block.think_id) : undefined)
+}
 
 /** Drop every cached block's HTML and its source, forcing a full re-render.
  *  Use this instead of assigning `blockHtmlCache.value = new Map()` directly —
@@ -1420,13 +1533,23 @@ function flushBlockHtml() {
         newSources.set(key, src)
       } else if (block.type === 'thinking') {
         const key = `t-${stableBlockKey(i, block)}`
-        const src = block.text ?? ''
+        // The SOURCE must match what getThinkingHtml renders, not just block.text.
+        // A thinking block can carry a lazy-loaded prefix (think_id → chat_thinking)
+        // that is stitched onto its live deltas — so its rendered text is
+        // mergeThinkingPrefix(cachedText, block.text), not block.text. Using
+        // block.text here made this throttled flush render the block WITHOUT its
+        // prefix, while the normal render path (getThinkingHtml) rendered it WITH
+        // the prefix. The two alternate every ~300ms, so the block visibly
+        // blanked and refilled on a loop — the reported "flashes every few
+        // seconds, looks like it clears and reloads, no new text appears".
+        const src = thinkingSource(block)
         const cached = prevCache.get(key)
         if (_blockHtmlSource.get(key) === src && cached !== undefined) {
           newCache.set(key, cached)
         } else {
-          // Thinking blocks use renderMarkdownHtml during streaming
-          newCache.set(key, renderMarkdownHtml(block.text, { skipKatex: true }))
+          // Thinking blocks use renderMarkdownHtml during streaming. Same
+          // options as a streaming text block — see THINKING_STREAMING_OPTS.
+          newCache.set(key, renderMarkdownHtml(src, THINKING_STREAMING_OPTS))
         }
         newSources.set(key, src)
       }
@@ -1503,15 +1626,35 @@ function getBlockHtml(bi: number, block: any) {
   return html
 }
 
-/** Get HTML for thinking block content. Live blocks render text inline;
- *  slim blocks (think_id) render from the lazy-load cache/loading/error state. */
+/** Get HTML for thinking block content.
+ *
+ *  A block can hold BOTH a lazy-loaded prefix (think_id → chat_thinking) and
+ *  live deltas (text). That happens when a block's think_id is adopted from the
+ *  DB marker on a session switch: the prefix is everything flushed before the
+ *  switch, `text` is what arrived after. Rendering only `text` dropped the
+ *  prefix — the reported "same block, front half gone, continues from the
+ *  middle". mergeThinkingPrefix stitches them (trimming any overlap).
+ *
+ *  Slim blocks with no live text render purely from the lazy-load cache. */
 function getThinkingHtml(bi: number, block: any) {
-  if (block.text) {
-    return getThinkingTextHtml(block.text, bi, block)
+  // Read-only hosts (the public share page) render a settled snapshot: every
+  // thinking block starts collapsed and is hidden by CSS, yet `v-html` would
+  // still run full markdown + DOMPurify rendering for text nobody can see. A
+  // shared conversation routinely carries megabytes of reasoning across
+  // hundreds of blocks (measured: 4.4 MB / 134k DOM nodes on a 49-message
+  // thread = ~7s of blocked main thread), so here a collapsed block renders
+  // nothing and materializes only when the user expands it.
+  //
+  // Scoped to readOnly on purpose: the interactive app's streaming path calls
+  // this every frame and its collapse animation repaints the content for the
+  // 350ms grid transition, so that path is left exactly as it was.
+  if (props.readOnly && isThinkingCollapsed(block, bi)) return ''
+
+  const src = thinkingSource(block)
+  if (src) {
+    return getThinkingTextHtml(src, bi, block)
   }
   if (block.think_id) {
-    const text = thinkingContent.cachedText(block.think_id)
-    if (text) return renderMarkdownHtml(text)
     if (thinkingContent.errors.value[block.think_id]) {
       return `<div class="thinking-load-error"><span>${t('chat.contentBlocks.thinkingLoadFailed')}</span><button class="thinking-retry-btn" onclick="this.closest('.chat-thinking').querySelector('.thinking-header').click()">${t('chat.contentBlocks.retry')}</button></div>`
     }
@@ -1525,8 +1668,9 @@ function getThinkingTextHtml(text: string, bi: number, block: any) {
   if (!props.streaming || !props.active) {
     return renderMarkdownHtml(text)
   }
-  // Streaming: skip KaTeX (formulas may be incomplete)
-  const streamingOpts = { skipKatex: true } as const
+  // Streaming: skip KaTeX and path annotation (formulas incomplete, and the
+  // file a turn names may not be written yet — see THINKING_STREAMING_OPTS).
+  const streamingOpts = THINKING_STREAMING_OPTS
   const cacheKey = `t-${stableBlockKey(bi, block)}`
   // Streaming: deferred rendering with throttling (same pattern as text blocks)
   const cache = blockHtmlCache.value
@@ -1561,6 +1705,19 @@ watch(() => props.streaming, (streaming, wasStreaming) => {
     if (_throttleTimer) { clearTimeout(_throttleTimer); _throttleTimer = null }
     _throttlePending = false
     _blockFlushScheduler.cancelAll()
+    // A turn routinely names a file BEFORE writing it. Whichever pass verifies
+    // such a path while it does not exist yet caches 'none', and a cached
+    // 'none' is never re-checked — so a later turn that creates the file and
+    // reports it would hit the stale negative and have its annotation
+    // stripped (only a hard refresh recovered it). Thinking blocks used to be
+    // the mid-stream trigger; now that streaming skips enhancements, the
+    // remaining ones are the post-streaming pass of an earlier turn and any
+    // tool-detail markdown the user expanded before the file existed.
+    //
+    // Drop the negative entries before the post-streaming re-render below
+    // re-verifies every span, so this turn's newly created files resolve.
+    // Verified 'file'/'dir' entries are kept — a turn cannot invalidate them.
+    invalidateNegativePathCache()
     // Collapse all completed thinking blocks when message ends
     for (const blockKey of _collapseElKeys) {
       delete thinkingExpanded.value[blockKey]
@@ -1616,6 +1773,104 @@ watch(() => props.active, (active) => {
     _throttlePending = false
   }
 })
+
+// Load the text of thinking blocks that must be visible NOW, without a click.
+//
+// A thinking block's reasoning lives in chat_thinking, and the content row only
+// carries a slim {think_id} marker. getThinkingHtml renders that marker's block
+// from the lazy-load cache; with no cache entry it falls through to
+// placeholder-dots (three pulsing dots) — which the user reads as "this thinking
+// block is stuck and never finishes".
+//
+// Three shapes need a load, and all three were previously unhandled or handled
+// by a separate watcher:
+//
+//   in_progress  — the block is still streaming. Its already-emitted prefix must
+//                  be fetched immediately or the block "continues from the
+//                  middle". The snapshot may be incomplete, so it is cached as
+//                  PROVISIONAL (see useThinkingContent) and replaced later.
+//   done + provisional — the block finished while holding a provisional
+//                  snapshot. That snapshot is a prefix of the finished
+//                  reasoning, so it must be refetched; nothing else would ever
+//                  replace it (the render path serves the cache whenever an
+//                  entry exists). Reported case: a 25131-char reasoning frozen
+//                  at its first 10175 chars.
+//   done + never loaded — the block finished before this client looked at it.
+//                  Every other path excluded it (in_progress does not match,
+//                  provisional does not apply) and a chip showing only dots
+//                  gives no reason to click. Observed 40120 times in one
+//                  session's client.log as
+//                  done=true cached=none loading=false err=none.
+//
+// Scoped to the blocks the live view actually renders open — an expanded block,
+// or (while streaming) the tail — so a finished conversation does not bulk-load
+// hundreds of collapsed blocks, and so the auto-load does not preempt the click
+// path (a user expanding a FAILED block to retry must not silently receive the
+// cached failure). Everything else keeps lazy-load-on-click.
+watch(
+  () => {
+    const blocks = props.blocks || []
+    const turnOver = !props.streaming
+    const tailStart = props.streaming ? Math.max(0, blocks.length - DONE_AUTOLOAD_TAIL) : blocks.length
+    const ids: string[] = []
+    for (let bi = 0; bi < blocks.length; bi++) {
+      const b = blocks[bi] as any
+      if (b?.type !== 'thinking' || !b.think_id) continue
+      if (thinkingContent.errors.value[b.think_id]) continue
+      // A block with live deltas still needs its prefix fetched: the render
+      // path stitches prefix+text, so without the prefix the front half is
+      // missing. (A block with text but no think_id has nothing to fetch.)
+      const cached = thinkingContent.cachedText(b.think_id)
+      const provisional = thinkingContent.isProvisional(b.think_id)
+
+      // Still streaming: always (re)load. loadThinking is idempotent for a
+      // provisional entry, so re-firing on every blocks change is cheap.
+      if (b.in_progress) { ids.push(`p:${b.think_id}`); continue }
+      if (!b.done) continue
+
+      // Finished. Reload when the cached text is a stale mid-stream snapshot
+      // (nothing else would replace it), or when nothing was ever loaded AND
+      // the block is in the streaming tail the live view renders open.
+      //
+      // `done` does NOT mean the text is final, so the final fetch waits for the
+      // turn to end. The backend flushes before forwarding thinking_done, so the
+      // text is complete AS OF that event — but the accumulator keeps appending
+      // later deltas to the SAME block (it has no done check: a thinking →
+      // thinking_done → content → thinking sequence yields one block whose text
+      // grows after done). A "final" fetch on done would therefore cache a
+      // prefix and clear the provisional flag, after which `cached !== undefined`
+      // skipped it forever — the reported truncated reasoning (cached 760 of
+      // final 844; another case 17124 of 18887). At turn end the row is complete
+      // (the terminal `done` is sent after Finalize), so that is when we refetch.
+      if (provisional) { if (turnOver) ids.push(`f:${b.think_id}`); continue }
+      if (cached !== undefined) continue
+      // NOT for merely-expanded blocks: expanding one goes through
+      // handleThinkingClick, which loads it itself. Auto-loading it here would
+      // fire a second request that races the click's own — and on a FAILED
+      // block it would swallow the retry's fresh request.
+      //
+      // Mid-turn the snapshot is provisional (the block may still grow), so the
+      // refetch above can replace it with the final text once the turn ends.
+      if (bi >= tailStart) ids.push(`${turnOver ? 'f' : 'p'}:${b.think_id}`)
+    }
+    return ids.join('|')
+  },
+  (joined: string) => {
+    if (!joined) return
+    for (const entry of joined.split('|')) {
+      // `p:` — the block is still streaming, so the result is provisional.
+      const provisional = entry.startsWith('p:')
+      const thinkId = entry.slice(2)
+      thinkingContent.loadThinking(thinkId, props.msgId, props.sessionId, provisional)
+        .then((text) => {
+          diagLog(TAG, `thinking auto-load ok: msgId=${props.msgId} think_id=${thinkId} len=${text.length} provisional=${provisional}`)
+          invalidateBlockHtml()
+        })
+        .catch((e) => { diagLog(TAG, `thinking auto-load FAILED: msgId=${props.msgId} think_id=${thinkId} err=${e?.message || e}`) })
+    }
+  },
+  { immediate: true },
+)
 
 // Follow the live stream inside each thinking box. The thinking HTML is served
 // through v-html from blockHtmlCache; whenever the cache is rewritten during

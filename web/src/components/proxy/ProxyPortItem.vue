@@ -43,14 +43,13 @@
       <!-- Reverse mappings bind the SERVER's loopback: there is nothing to open
            on this device, so the useful action is copying the server-side
            address. Forward mappings keep the browser actions. -->
-      <button
+      <CopyButton
         v-if="direction === 'reverse'"
+        :text="serverAddress"
+        title-key="proxy.copyServerAddress"
         class="port-action-btn copy-address"
-        :title="t('proxy.copyServerAddress')"
-        @click.stop="$emit('copyAddress', localPort, protocol)"
-      >
-        <Copy :size="14" />
-      </button>
+        @click.stop
+      />
       <template v-else>
         <button class="port-action-btn sandbox" :disabled="!enabled" @click.stop="$emit('open', localPort, protocol, host)" :title="t('proxy.openInSandbox')">
           <Box :size="14" />
@@ -72,10 +71,12 @@
 </template>
 
 <script setup>
-import { Box, Copy, ExternalLink, Pencil, Trash2 } from 'lucide-vue-next'
+import { Box, ExternalLink, Pencil, Trash2 } from 'lucide-vue-next'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import RefreshButton from '@/components/common/RefreshButton.vue'
+import CopyButton from '@/components/common/CopyButton.vue'
+import { buildServerAddress } from '@/utils/portForwardUtils.ts'
 
 const { t } = useI18n()
 
@@ -104,7 +105,13 @@ const props = defineProps({
   tunnelReady: { type: null, default: null },
 })
 
-defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabled', 'copyAddress'])
+defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabled'])
+
+// The server-side loopback address a reverse mapping exposes. Built here rather
+// than passed up through `copyAddress` so the copy button owns its own feedback
+// state — the emit-based version could only show a toast (there was no button
+// element for the parent to flash).
+const serverAddress = computed(() => buildServerAddress(props.localPort, props.protocol))
 
 const statusClass = computed(() => {
   if (!props.enabled) return 'disabled'

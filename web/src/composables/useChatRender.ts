@@ -8,6 +8,7 @@ import { store } from '@/stores/app.ts'
 import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog.ts'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
+import { isShareMode } from '@/share/shareMode'
 import {
   extractScheduledTaskIds,
   stripScheduledTaskTags,
@@ -20,7 +21,6 @@ import {
   parseAssistantContent,
   toolCallSummary,
   hasImagesInContent,
-  formatMessageTime,
   formatDetailTime,
   truncate,
 } from '@/utils/chatBlocks.ts'
@@ -172,6 +172,13 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   // Batch-fetch task data using the list API to avoid per-task loading flicker.
   // ISS-013: delegates to taskBlockStore which does NOT mark deleted on network error.
   async function fetchBatchTaskData(taskKeys: Array<{ key: string; taskId: number }>) {
+    // The public share page renders through this same pipeline, and a shared
+    // conversation can contain <scheduled-task> tags. /api/tasks is
+    // auth-protected, so an anonymous reader would fire a 401 per tag and the
+    // card would sit as a permanent loading skeleton. There is nothing to fetch
+    // for an anonymous viewer, so short-circuit before the request. This mirrors
+    // the isShareMode guards on the file-path / commit / worktree checks.
+    if (isShareMode()) return
     await taskBlockStore.fetchBatchData(taskKeys)
     // Sync store blocks into our reactive blockTasks
     for (const key of Object.keys(taskBlockStore.blocks)) {
@@ -357,7 +364,6 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
     formatToolInput,
     toolCallSummary,
     hasImagesInContent,
-    formatMessageTime,
     formatDetailTime,
     truncate,
     // Expose cache for ContentBlocks.vue integration

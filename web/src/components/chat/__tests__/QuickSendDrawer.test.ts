@@ -154,6 +154,35 @@ describe('QuickSendDrawer', () => {
     expect((wrapper.vm as any).editingItem).toBeNull()
   })
 
+  // The "more actions" menu is a PopupMenu teleported to <body>, so the
+  // BottomSheet's v-show does not hide it. Without an explicit close it keeps
+  // hovering over whatever replaced the drawer — e.g. after a tab switch, which
+  // closes the drawer through useTabDrawer.
+  it('closes the more-actions menu when the drawer closes', async () => {
+    const wrapper = mountDrawer()
+    ;(wrapper.vm as any).showMoreMenu = true
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as any).showMoreMenu).toBe(true)
+
+    await wrapper.setProps({ open: false })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as any).showMoreMenu).toBe(false)
+  })
+
+  it('leaves the more-actions menu alone when the drawer re-opens', async () => {
+    // Re-opening must not be treated as a close (an inverted guard would clear
+    // the menu on the wrong transition).
+    const wrapper = mountDrawer()
+    await wrapper.setProps({ open: false })
+    await wrapper.vm.$nextTick()
+    ;(wrapper.vm as any).showMoreMenu = true
+    await wrapper.vm.$nextTick()
+
+    await wrapper.setProps({ open: true })
+    await wrapper.vm.$nextTick()
+    expect((wrapper.vm as any).showMoreMenu).toBe(true)
+  })
+
   it('toggleDeleteConfirm toggles deleteConfirmId', () => {
     const wrapper = mountDrawer()
     expect((wrapper.vm as any).deleteConfirmId).toBeNull()

@@ -24,11 +24,7 @@
       <FileX :size="48" />
       <div class="pdf-error-title">PDF 加载失败</div>
       <div class="pdf-error-desc">{{ error }}</div>
-      <a v-if="!isAppMode" :href="buildLocalFileUrl(file.path, { download: true })" class="pdf-download-link" download>
-        <Download :size="14" />
-        下载文件
-      </a>
-      <button v-else class="pdf-download-link" @click="handleDownload">
+      <button class="pdf-download-link" @click="handleDownload">
         <Download :size="14" />
         下载文件
       </button>
@@ -42,7 +38,6 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
-import { useAppMode } from '@/composables/useAppMode.ts'
 import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download.ts'
 
 const MIN_SCALE = 0.25
@@ -52,8 +47,6 @@ const RENDER_PADDING = 1
 const props = defineProps({
   file: Object,
 })
-
-const { isAppMode } = useAppMode()
 
 // PDF outline (bookmarks) for TOC
 const outline = ref([])

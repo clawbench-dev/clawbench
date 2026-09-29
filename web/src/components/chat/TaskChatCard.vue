@@ -2,6 +2,9 @@
   <div
     class="scheduled-task-card"
     :class="{ deleted, 'is-event': isEventTask }"
+    :data-quote-source="quoteSourceLabel"
+    :data-quote-task-id="taskIdAttr"
+    data-quote-language="task"
     @click="handleClick"
   >
     <div class="stask-header">
@@ -15,10 +18,20 @@
       <template v-if="deleted">{{ t('chat.contentBlocks.taskDeleted') }}</template>
       <template v-else-if="loading">{{ t('chat.contentBlocks.loading') }}</template>
       <template v-else>{{ task?.name || t('chat.contentBlocks.scheduledTaskCreated') }}</template>
-      <span v-if="actionable" class="stask-status-badge" :class="statusValue">{{ statusLabelSimpleOf(task!) }}</span>
     </div>
 
     <div v-if="actionable" class="stask-body">
+      <!-- ── Disabled event task ──
+           An event task fires only while status=active, so disabling one makes
+           it silently inert: no error, no notification, and the status dot just
+           goes grey. The detail page says so outright (TaskEventCard), and the
+           chat card must not leave the reader to infer it. Event-only: a paused
+           cron task simply has no next run, which its own rows already show. -->
+      <div v-if="eventPaused" class="stask-warn">
+        <AlertTriangle :size="13" />
+        <span>{{ t('task.overview.eventPausedNote') }}</span>
+      </div>
+
       <!-- ── Event trigger ──
            An event task has no schedule and its repeat mode is inert: the
            backend never exhausts it (scheduler.go's event-task branch), so
@@ -40,18 +53,38 @@
         </div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :size="14" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClassOf(task!)"></span>{{ statusLabelOf(task!) }}</div>
-        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTimeOf(task!.lastRunAt as string) }}</div>
+        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatRelativeTime(task!.lastRunAt as string) }}</div>
       </template>
 
       <!-- ── Cron schedule ── -->
       <template v-else>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.frequency') }}</strong>{{ humanizeCron(task!.cronExpr as string) }}</div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :size="14" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
-        <div class="stask-row"><strong>{{ t('chat.contentBlocks.repeat') }}</strong>{{ repeatLabel(task!.repeatMode as string, task!.maxRuns as number) }}</div>
+        <!-- Progress toward the run limit, matching the task list page. Only a
+             bounded task has progress to show; an unlimited one never advances
+             toward anything, so a count there would be noise. -->
+        <div class="stask-row">
+          <strong>{{ t('chat.contentBlocks.repeat') }}</strong>
+          <span>{{ repeatLabel(task!.repeatMode as string, task!.maxRuns as number) }}<span v-if="isBoundedRepeat" class="stask-progress">({{ (task!.runCount as number) || 0 }}/{{ task!.maxRuns || 1 }})</span></span>
+        </div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClassOf(task!)"></span>{{ statusLabelOf(task!) }}</div>
-        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatTimeOf(task!.lastRunAt as string) }}</div>
-        <div v-if="task!.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatTimeOf(task!.nextRunAt as string) }}</div>
+        <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatRelativeTime(task!.lastRunAt as string) }}</div>
+        <div v-if="task!.nextRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.nextRun') }}</strong>{{ formatRelativeTime(task!.nextRunAt as string) }}</div>
       </template>
+
+      <!-- ── What the task does ──
+           Every row above describes mechanics (when it runs, who runs it). The
+           prompt is the only place the card says what a run actually does, and
+           it is already in the /api/tasks payload, so no extra request is
+           needed. Last row for both trigger modes, mirroring the detail page's
+           trigger-card-then-prompt-card order.
+           Stripped of markdown and truncated by stripMarkdownPreview (counted in
+           code points, and it adds its own ellipsis); the CSS clamp is the
+           narrow-screen safety net. -->
+      <div v-if="promptPreview" class="stask-row stask-row-prompt">
+        <strong>{{ t('chat.contentBlocks.prompt') }}</strong>
+        <span class="stask-prompt">{{ promptPreview }}</span>
+      </div>
     </div>
   </div>
 </template>
@@ -69,13 +102,13 @@
  */
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Archive, Clock, Zap } from 'lucide-vue-next'
+import { AlertTriangle, Archive, Clock, Zap } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
-import { humanizeCron, repeatLabel } from '@/utils/format'
-import { statusClass, statusLabel, statusLabelSimple, formatTime } from '@/utils/contentBlocks.ts'
+import { humanizeCron, repeatLabel, formatRelativeTime, stripMarkdownPreview } from '@/utils/format'
+import { statusClass, statusLabel } from '@/utils/contentBlocks.ts'
 import { eventChips, eventKindLabel } from '@/utils/forgeEventLabels'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const props = defineProps<{
   /** Task record from /api/tasks (or the shared block store). */
@@ -95,24 +128,66 @@ const isEventTask = computed(() => (props.task?.triggerMode as string) === 'even
 
 const chips = computed(() => eventChips(props.task?.eventTypes as string))
 
-/** The task's raw status, used as the badge's modifier class. */
-const statusValue = computed(() => (props.task?.status as string) || '')
+/**
+ * A disabled event task can never fire (the trigger requires status=active),
+ * and nothing else in the app reports that — so the card states it. Cron tasks
+ * are excluded: pausing one only clears its next run, which its own row shows.
+ */
+const eventPaused = computed(() => isEventTask.value && props.task?.status === 'paused')
+
+/**
+ * The prompt, stripped of markdown and truncated for the preview row. Empty
+ * when the task carries no prompt (or has not resolved yet), which hides the
+ * row rather than printing an empty label.
+ */
+const promptPreview = computed(() => stripMarkdownPreview((props.task?.prompt as string) || ''))
+
+/**
+ * Whether the repeat mode has a limit to make progress toward. An unlimited
+ * task never advances toward anything, so `runCount` there is not progress and
+ * printing "12/1" (the maxRuns=0 fallback) would be actively wrong.
+ */
+const isBoundedRepeat = computed(() => {
+  const mode = props.task?.repeatMode as string
+  return mode === 'once' || mode === 'limited'
+})
 
 /** The card is only interactive once its data resolved and it still exists. */
 const actionable = computed(() => !props.deleted && !props.loading && !!props.task)
+
+/**
+ * Quote-source identity for this card.
+ *
+ * A scheduled-task card is quoted by selecting its title, so the quote must
+ * carry the task id (a machine key the jump handler and the AI can both use).
+ * The name alone is not addressable.
+ *
+ * No id is exposed for a deleted task: the task no longer exists, so offering
+ * its id would produce a quote whose jump goes nowhere. The same holds before
+ * the task record resolves.
+ */
+const taskIdAttr = computed(() => {
+  if (props.deleted || props.loading || !props.task) return ''
+  const id = props.task.id
+  return typeof id === 'number' || typeof id === 'string' ? String(id) : ''
+})
+
+const quoteSourceLabel = computed(() => {
+  const name = (props.task?.name as string) || ''
+  if (!name || !taskIdAttr.value) return ''
+  return `${name} (#${taskIdAttr.value})`
+})
 
 function handleClick() {
   if (actionable.value) emit('select')
 }
 
-// The shared helpers are locale-agnostic (they take `t`/`locale`), so these
-// wrappers bind the component's own i18n context for the template. The task
-// record arrives as a loose API payload, so the shape the helpers require is
-// asserted here rather than on the prop.
+// The status helpers take `t` explicitly (they are shared with non-component
+// callers), so these wrappers bind the component's own i18n context for the
+// template. The task record arrives as a loose API payload, so the shape the
+// helpers require is asserted here rather than on the prop.
 function statusClassOf(task: Record<string, unknown>) { return statusClass(task as { status: string }) }
 function statusLabelOf(task: Record<string, unknown>) { return statusLabel(task as { status: string; runCount: number; runningCount: number }, t) }
-function statusLabelSimpleOf(task: Record<string, unknown>) { return statusLabelSimple(task as { status: string }, t) }
-function formatTimeOf(iso: string) { return formatTime(iso, locale.value, t) }
 </script>
 
 <style scoped>
@@ -263,17 +338,51 @@ function formatTimeOf(iso: string) { return formatTime(iso, locale.value, t) }
   vertical-align: middle;
 }
 
-.stask-status-badge {
-  font-size: var(--font-size-2xs);
-  padding: 1px 5px;
-  border-radius: var(--radius-xs);
-  font-weight: var(--font-weight-medium);
-  margin-left: auto;
+/* ── Prompt preview ──
+   The value is the one row whose content is arbitrary user text, so it may
+   shrink and clamp (the header gutter `.stask-row strong` stays fixed). Two
+   lines is the budget: enough to recognise the task, short of turning the card
+   into a prompt viewer. `overflow-wrap: anywhere` keeps an unbroken token (a
+   long path) from overflowing the rounded card. */
+.stask-row-prompt {
+  align-items: baseline;
 }
 
-.stask-status-badge.active { background: rgba(34, 197, 94, 0.12); color: #22c55e; }
-.stask-status-badge.paused { background: rgba(234, 179, 8, 0.12); color: #eab308; }
-.stask-status-badge.completed { background: var(--bg-tertiary, #e9ecef); color: var(--text-muted, #999); }
+.stask-prompt {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.stask-progress {
+  margin-left: var(--space-2);
+  color: var(--accent-color, #4a90d9);
+  font-weight: var(--font-weight-medium);
+}
+
+/* ── Disabled event-task warning ──
+   Mirrors .event-paused-note on the task detail page (same amber tint, same
+   warning glyph) so the two surfaces agree on what the state means. */
+.stask-warn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  background: color-mix(in srgb, var(--color-yellow, #eab308) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-yellow, #eab308) 35%, transparent);
+  color: var(--color-yellow, #a16207);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+}
+
+.stask-warn svg {
+  flex-shrink: 0;
+}
 
 .stask-status-dot {
   width: 8px;

@@ -10,9 +10,17 @@ export interface QuoteData {
   /** External address when the quote came from a forge object. */
   url?: string
   /** Where the quote came from; drives the drawer's jump affordance. */
-  sourceKind?: 'file' | 'url' | 'message'
+  sourceKind?: 'file' | 'url' | 'message' | 'selection' | 'terminal'
   /** DB message id when the quote was taken from a chat message. */
   messageId?: number
+  /** Commit SHA when the quote came from a git-history or CI-pipeline view. */
+  commitSha?: string
+  /** Scheduled task id when the quote came from a task view. */
+  taskId?: number
+  /** Chat session id when the quote came from a chat message. */
+  sessionId?: string
+  /** Task execution id when the quote came from one run's detail view. */
+  executionId?: string
 }
 
 export interface StagedQuote extends QuoteData {
@@ -137,19 +145,37 @@ function setQuoteData(data: QuoteData | null) {
 }
 
 function sameQuote(a: QuoteData, b: QuoteData): boolean {
-  // messageId is part of the identity: quoting the same sentence out of two
-  // different chat messages produces two genuinely different quotes, and
-  // collapsing them would silently keep only the first.
+  // The LOCATORS are part of the identity, not just the label. A label is a
+  // human-facing name and is not unique: two scheduled tasks may share a name
+  // (the schema has no unique constraint), and two CI runs may share a workflow
+  // name and number across repositories. Comparing only the label would collapse
+  // them into a single card and silently drop one.
+  //
+  // messageId was the first field to need this (quoting the same sentence out of
+  // two different chat messages produces two genuinely different quotes), so the
+  // rule is simply "same label AND same locators".
   return a.filePath === b.filePath
     && a.startLine === b.startLine
     && a.endLine === b.endLine
     && a.text === b.text
     && (a.messageId ?? 0) === (b.messageId ?? 0)
+    && (a.taskId ?? 0) === (b.taskId ?? 0)
+    && (a.commitSha ?? '') === (b.commitSha ?? '')
+    && (a.executionId ?? '') === (b.executionId ?? '')
+    && (a.url ?? '') === (b.url ?? '')
 }
 
-function addStagedQuote(data: QuoteData, note = ''): StagedQuote {
+/**
+ * Mint a staged quote into `list`, deduping against what is already there.
+ *
+ * Split out of addStagedQuote so the same identity rules (dedupe by locator,
+ * normalize the note, mint a fresh id) apply whether the card lands in the
+ * LIVE input or in another session's stored draft — see stageQuoteIntoDraft.
+ * Duplicating the minting would let the two paths drift on dedupe.
+ */
+function mintQuote(list: StagedQuote[], data: QuoteData, note = ''): StagedQuote {
   const normalizedNote = note.trim()
-  const existing = stagedQuotes.value.find(item => sameQuote(item, data))
+  const existing = list.find(item => sameQuote(item, data))
   if (existing) {
     if (normalizedNote) existing.note = normalizedNote
     return existing
@@ -160,8 +186,12 @@ function addStagedQuote(data: QuoteData, note = ''): StagedQuote {
     id: `quote-${Date.now()}-${++quoteId}`,
     note: normalizedNote,
   }
-  stagedQuotes.value.push(item)
+  list.push(item)
   return item
+}
+
+function addStagedQuote(data: QuoteData, note = ''): StagedQuote {
+  return mintQuote(stagedQuotes.value, data, note)
 }
 
 function removeStagedQuote(id: string) {
@@ -220,6 +250,55 @@ function discardAttachmentDraft(sessionId: string) {
   if (sessionId) attachmentDrafts.delete(sessionId)
 }
 
+/**
+ * Get a session's stored draft, creating an empty one when absent.
+ *
+ * Creating on demand is load-bearing for the cross-session staging below:
+ * `restoreAttachments` is a no-op when no snapshot exists, so staging into a
+ * session the user has never opened would otherwise drop the card silently —
+ * it would only surface if that session happened to have a draft already.
+ */
+function ensureAttachmentDraft(sessionId: string): AttachmentSnapshot {
+  let snap = attachmentDrafts.get(sessionId)
+  if (!snap) {
+    snap = { files: [], quotes: [], quote: null }
+    attachmentDrafts.set(sessionId, snap)
+  }
+  return snap
+}
+
+/**
+ * Stage a quote into ANOTHER session's draft instead of the live input.
+ *
+ * Used when the user picks a session that is not the one on screen (the
+ * session picker). The card is written to that session's stored draft, so
+ * `restoreAttachments` brings it into the input the moment the user opens that
+ * session — the same mechanism that already preserves drafts across switches.
+ *
+ * Deliberately does NOT touch the live `stagedQuotes`: the current input is a
+ * different session's draft, and polluting it would make the card appear in
+ * the wrong conversation.
+ */
+function stageQuoteIntoDraft(sessionId: string, data: QuoteData, note = ''): StagedQuote | null {
+  if (!sessionId) return null
+  return mintQuote(ensureAttachmentDraft(sessionId).quotes, data, note)
+}
+
+/**
+ * Stage a file/URL attachment into another session's draft.
+ *
+ * Mirror of stageQuoteIntoDraft for the "attach to chat" buttons. Returns
+ * whether it was added (false when the same entry is already staged there), so
+ * a caller can report "already attached" instead of silently double-adding.
+ */
+function stageAttachmentIntoDraft(sessionId: string, entry: FileEntry): boolean {
+  if (!sessionId || !entry?.path) return false
+  const snap = ensureAttachmentDraft(sessionId)
+  if (snap.files.some(f => sameEntry(f, entry))) return false
+  snap.files.push({ ...entry })
+  return true
+}
+
 export function useChatContext() {
   return {
     attachedFiles,
@@ -240,5 +319,7 @@ export function useChatContext() {
     snapshotAttachments,
     restoreAttachments,
     discardAttachmentDraft,
+    stageQuoteIntoDraft,
+    stageAttachmentIntoDraft,
   }
 }

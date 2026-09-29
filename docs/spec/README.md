@@ -18,7 +18,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；14 个后端规格 |
+| [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；15 个后端规格 |
 | [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示，执行级逐条已读（不再切 tab 自动清零）；含事件触发任务（GitHub/GitLab 事件唤起，只读事件上下文注入，列表行与聊天预览卡均展示订阅事件而非空白 cron 字段，见 [Forge 集成](features/forge-integration.md)） |
 | [Forge 集成](features/forge-integration.md) | GitHub/GitLab Issue + PR/MR 只读浏览（仓库绑定 + 列表/详情/评论）、面板内「动态」页签（未读/已读/全部条目聚合）、后台轮询感知变化（水位线 + 快照 diff）、CI 完成事件（per-run 去重表 + 按 run 去重 debounce）、流水线 ↔ PR 双向跳转、按条目未读与通知、事件触发 AI 任务、URL 附件「引用到对话」、按 host 凭据隔离与自部署实例 http/https |
 | [会话标签](features/session-tags.md) | 按项目隔离的标签定义（`UNIQUE(name, project_path)`）+ 会话关联、长按菜单打标签、会话行标签行、顶部过滤栏（仅列在用标签，可换行 + 高度封顶）、可读性校准的哈希配色、胶囊即选中控件、失败可见、PATCH 全量替换语义 |
@@ -28,9 +28,10 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [Web 终端](features/terminal.md) | PTY 多标签会话（独立进程组防 /dev/tty 阻塞）、三模式手势系统（浏览/手势/选择）、拖拽选择+浮动复制栏、虚拟修饰键、键位/符号配置、终端主题切换、终端输入抽屉、终端帮助抽屉、TUI 应用支持 |
 | [Git 管理](features/git-management.md) | 历史浏览（含工作区变更页按需重拉）、文件 Diff 抽屉（prev/next 顺序导航）、Worktree 隔离、分支/标签 CRUD、内联操作按钮、代码量统计（存量 cloc 快照，两层排除=内置规则 ∩ 项目 `.gitignore` + 增量 git stats 时间窗，双子页）、停靠页与抽屉共享同一套历史视图逻辑 |
 | [文件管理](features/file-management.md) | 目录浏览（browse）+ 文件查看（view）独立 Tab、按 `.gitignore` 灰显 git 不跟踪的条目（仅淡化、仍可操作）、停靠预览窗格（工具栏开关 → 列表下方可拖拽高度的预览区，目录列出内容、文件复用代码切片/媒体渲染）、预览按行窗口取数（`lineStart`/`lineEnd` + `totalLines`，大文件不整体传输）、CodeMirror 代码编辑（浏览/编辑双模式）、VS Code 风格 sticky scroll、Markdown 标题锚定滚动同步、Markdown HTML 导出（共享渲染管线重建自包含单文件）、代码链接预览（点击验证过的代码文件路径/path:line 链接弹出代码切片浮层卡片，详见文件管理规格）、文件分享链接（capability token 公开只读，边界=创建时快照的根）、Excalidraw 画布编辑（iframe 内嵌独立构建 + 保存写回原文件）、内联音频/视频播放器、二进制文件处理（64KB/512KB 截断 + forceText）、目录导航栈、双候选路径解析、文件刷新与差异高亮（useFileRefresh 统一三种触发 + Markdown 块级差异 + 代码行级差异 + 两阶段闪烁）、刷新跳过加载遮罩、编辑、上传（含文件夹上传/目录树下载/粘贴上传）、目录跳转、拖放移动、面包屑拖拽到聊天、排序、网格视图、键盘快捷键、代码符号提取、归档打包 |
-| [文件发现](features/file-discovery.md) | 搜索融合进文件管理器主界面（内嵌视图，结果复用目录条目交互与 git 忽略灰显）、结果展示所在目录、全局搜索蕴含递归、PC Shift 范围选、最近文件、统一覆盖层打开行为 |
+| [文件发现](features/file-discovery.md) | 文件名搜索融合进文件管理器主界面（内嵌视图，结果复用目录条目交互与 git 忽略灰显）、按内容搜索（独立对话框：递归/正则/全词/大小写 + 包含排除 glob + 范围切换，SSE 流式、按文件分组、点击跳行）、结果展示所在目录、全局搜索蕴含递归、PC Shift 范围选、最近文件、统一覆盖层打开行为 |
 | [附件与系统分享](features/attachments-and-share.md) | 多文件附件（含行范围）、上传历史（支持删除）、Share In（支持删除）、文件夹上传（保持目录结构）、目录树下载（File System Access API）、粘贴上传、面包屑拖拽附件、缩略图与项目隔离 |
 | [会话导航与分叉](features/session-navigation.md) | 用户消息索引（含搜索框即时过滤 + 命中高亮）、跨分页定位、Ctrl+Up/Down 跳转消息、从指定消息创建对话分支（含 beforeMessageId、可选 Agent）、分叉上下文字符预算压缩（优先保留全部用户消息 + 助手条目填充剩余额度） |
+| [会话分享](features/session-share.md) | 对话快照的公开只读链接（capability token，无记录 404、重新生成即旋转）、冻结快照必须自包含（内联工具输入输出与思考文本，不经过 `ContentBlock` 往返）、路径相对化覆盖块顶层 `file_path`、超限按最长工具输出裁剪（16 MiB / 4 KiB 下限 + `truncated` 标记）、管理列表按项目隔离（与文件分享有意不同）、归档保留分享（可撤销、不可打开）、硬删除与保留期清理同事务撤销、只读渲染复用聊天管线（`readOnly` 须覆盖每个动作按钮）、状态指示放在菜单入口 |
 | [快捷操作](features/quick-actions.md) | 聊天 Quick Send、终端 Quick Commands、CRUD 与排序 |
 | [RAG 检索](features/rag.md) | 文档分块（含 chunk_overlap 配置）、向量化（可独立开关）、SQLite vec0 向量索引、混合检索（含 search_mode 配置）、三级索引重建（向量重建 + 全量重建 + 独立 FTS 重建）、可配置批次大小（`rag.batch_size`）、索引磁盘占用展示、会话聚合搜索、消息聚类分析、索引进度跟踪 |
 | [推送通知](features/push-notifications.md) | WebSocket 实时推送、通知音效开关（防止蓝牙耳机中断）、权限待审推送、离线事件持久化与游标拉取、钉钉/飞书企业机器人推送（Stream API + 交互式卡片/Markdown 单聊 + 会话交互命令） |
@@ -51,7 +52,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [事件体系](infra/event-system.md) | ws.Manager 系统广播、StreamHub 会话扇出、断线缓冲重放、投递丢弃计数（`/api/ws/delivery-stats`）与关键事件可靠投递、摘要与权限事件推送 |
 | [应用自升级](infra/self-upgrade.md) | 版本检查、安装目录可写预检、镜像 tarball URL 归一化、备份替换、进度推送、服务重启与断线轮询、容器内强制就地替换 |
 | [版本号策略](infra/versioning.md) | versionCode（`major*1e8+minor*1e5+patch*1e3+distance`，决定 Android 能否覆盖安装）与 versionName（仅展示）两套口径；CI 走 `--tag-only` 只拉 tag ref 不拉历史，本地走 `git describe` 含 distance；位宽防 `v0.100.0`/`v1.0.0` 撞码；release 带 `--assert` 防退化 |
-| [本地文件服务](infra/local-file-serving.md) | `/api/local-file/` 路径编码、媒体预览、下载与访问边界、目录树列表、批量文件存在检查、批量图片 Base64 |
+| [本地文件服务](infra/local-file-serving.md) | `/api/fs/raw/` 路径编码、媒体预览、下载与访问边界、目录树列表、批量文件存在检查、批量图片 Base64 |
 | [Docker 部署](infra/docker-deployment.md) | 单阶段运行时镜像、数据卷持久化、GHCR 双架构发布、容器内升级提示镜像优先 |
 | [系统资源监控](infra/system-resources.md) | CPU/内存/磁盘/磁盘 I/O/网络/系统负载实时采集、gopsutil 采样、500ms 缓存、MetricsPusher 按订阅需求推送（非缓冲投递）、前台/后台双速、AppHeader 压力指示图标、WS 断线状态展示、Gauge 弹出面板 |
 | [CLI 子命令](infra/cli-reference.md) | 仅剩 upgrade-replace（应用自升级内部机制）；业务子命令 task/rag 已移除，改由内置斜杠命令直调 HTTP API |
@@ -61,13 +62,14 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（154 路径 / 193 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
+| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（158 路径 / 200 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
 
 ### client/ — 客户端
 
 | 模块 | 说明 |
 |------|------|
 | [前端架构](client/frontend-architecture.md) | 单页布局、reactive store、composable 模式、统一 WebSocket 单通道、聊天渲染管线（useChatRender + useMarkdownRenderer + 数学块提取保护）、交互式提问卡（AskUserQuestion 选项卡片 + 单选可取消 + 答案状态跨重渲染持久化）、ACP 会话管理（含 context_state 持久化恢复）、标注管道（文件路径 + localhost URL + commit hash + Worktree）、thinking 惰性加载（useThinkingContent）、CodeMirror 代码编辑器（浏览/编辑双模式 + sticky scroll）、Excalidraw 画布编辑（iframe 内嵌独立构建 + postMessage）、会话重置、终端三模式手势 + 选择模式、终端帮助抽屉、统一搜索控件（SearchBar + CodeMirror 搜索面板 + Markdown 内嵌搜索条）、Read 工具行范围展示、流式渲染帧调度（StreamFrameScheduler）、前台恢复自包含重连、appLog 强制日志规范、历史加载 DB 权威重建（陈旧快照下按"会话在跑 + 快照无 streaming 行"保留活跃占位符）、代码链接预览（useCodeLinkPreview 单例状态机 + CodeLinkPreview 浮层/底部抽屉，详见前端架构规格）、FileHeader 三层弹性布局、键盘交互（DialogOverlay/BottomSheet Esc/Enter）、系统资源面板、统一返回状态机、文件/Agent/Provider 图标、会话搜索抽屉、WS 断线连接状态、消息聚类抽屉、LocalLinkGuard 全局链接拦截、文本选择感知、消息排队与 needs_start 重提交、文件刷新与差异高亮、Diff 前后导航、快捷键提示系统（shortcutTips）、会话身份管理（useSessionIdentity）、文件上传管理（useFileUpload）、异步组件重试（useAsyncComponent）、36 命名主题系统（data-theme 机制 + 快捷选择器 + 外观深链 + logo 深链「关于」 + 实时跟随系统）、自定义壁纸背景（半透明层透出 + 文件页"设置为主题背景"入口）、自定义字体双通道（代码/界面 + 备选）、TOC 停靠栏左右侧切换、宽屏聊天区切换、Dock 数据统计页签（StatsTabHost 三子页：用量/代码存量/代码增量）、统一刷新按钮（RefreshButton）、会话列表扁平化、Git 历史视图共享逻辑（useGitHistoryView）、Android 输入恢复（useSelectAllDeleteRecovery）、计数角标统一（.count-badge） |
+| [视觉设计指导手册](client/design-guide.md) | 改 UI 前必读：样式三层归属（`web/css/` 全局 → `src/assets/` 全局原语 → SFC scoped）、设计 token（7 档字号 / 间距 / 圆角 / 命名 z-index / 时长 / 透明度，含"为何是 px 非 rem"）、36 命名主题机制与新增主题改动清单、布局骨架（宽屏阈值 1024px 与物理宽度回退、安全区、壁纸层与 z-index 提升）、组件约定（`.fbtn` / `.count-badge` / `.chat-message` / `PopupMenu` / lucide 图标 14px 默认）、动效 token 与 keyframes 复用；**六条红线**（v-html 匹配不到 scoped、共享类基规则也必须全局、app-region 豁免只能是控件、对比度不能靠固定跳一档背景、content-visibility 滚动跳变、Android WebView 像素怪癖）；含改动检查清单与 15 个 CSS 守卫测试索引 |
 | [统一返回与跨界面导航](client/unified-back-navigation.md) | 两级分层栈（界面内文件历史 useFileNavStack + 跨界面 jump origin useNavigationContext）、useNavigationStateMachine 确定性优先级裁决、useNavigationCoordinator 全局文件打开唯一入口、目录游历事务 useDirectoryReturn、滚动/阅读位置精准还原 useFileScrollRestore、双击退出协议、多端返回入口（桌面顶栏导航簇 / 移动底部悬浮胶囊 / 右缘手势 / Android 物理键） |
 | [Android 集成](client/android-integration.md) | JS Bridge（25+ 方法）、12 个 Java 类模块（BackgroundService / PendingEventsWorker / FloatingStatusView 悬浮状态窗 + 会话面板 / LiveUpdateManager 实时更新等）、Android 全量国际化、APK 嵌入（`build.sh --android` → `go:embed` → `/api/apk`）、AppLog 兼容日志端点、推送感知生命周期、版本不匹配 Overlay、硬件返回键同步委托（evaluateJavascript 读 `__clawbenchBackHandled` + 双击退出） |
 | [多服务器管理](client/multi-server.md) | 服务器列表、凭据保存、登录页选择、应用内快速切换 |

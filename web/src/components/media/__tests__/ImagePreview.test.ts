@@ -1,8 +1,9 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { mount } from '@vue/test-utils'
 import ImagePreview from '@/components/media/ImagePreview.vue'
 import { readAttachDragData, cleanupDragGhost } from '@/utils/attachDrag'
+import { installLocalMediaFallback, uninstallLocalMediaFallback } from '@/utils/localMediaFallback'
 
 // Drive the draggable gate directly instead of depending on jsdom's viewport.
 const mockIsWideScreen = ref(false)
@@ -127,7 +128,7 @@ describe('ImagePreview', () => {
     const wrapper = mountPreview()
     const img = wrapper.find('.image-preview-img')
     expect(img.exists()).toBe(true)
-    expect(img.attributes('src')).toContain('/api/local-file/')
+    expect(img.attributes('src')).toContain('/api/fs/raw/')
     expect(img.attributes('alt')).toBe('image.png')
   })
 
@@ -283,4 +284,32 @@ describe('ImagePreview', () => {
     _resetForTest()
   })
 
+  // ── Load failure (the full-screen image viewer) ──
+
+  it('degrades a failed image through the shared fallback', async () => {
+    // This is the surface from the bug report: the broken-image glyph and its
+    // alt text used to sit next to the placeholder, because the hide rule was
+    // scoped to the markdown figure only. The <img> carries `lightbox-img`, so
+    // the document-level fallback covers it — assert the whole chain, not just
+    // the class, so a regression in either half is caught.
+    installLocalMediaFallback()
+    try {
+      const wrapper = mountPreview()
+      const img = wrapper.find('.image-preview-img').element as HTMLImageElement
+
+      img.dispatchEvent(new Event('error'))
+      await nextTick()
+
+      // Hidden (so no glyph), still present (so a retry can revive it)…
+      expect(img.classList.contains('local-media-hidden')).toBe(true)
+      expect(document.body.contains(img)).toBe(true)
+      // …and explained by the shared element.
+      const ph = document.querySelector('.media-load-error')
+      expect(ph).not.toBeNull()
+      expect(ph!.textContent).toContain('image.png')
+    } finally {
+      uninstallLocalMediaFallback()
+      document.querySelector('.media-load-error')?.remove()
+    }
+  })
 })

@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import AudioPreview from '@/components/media/AudioPreview.vue'
 
 vi.mock('@/utils/download.ts', () => ({
-  buildLocalFileUrl: (path: string) => `/api/local-file/${path}`,
+  buildLocalFileUrl: (path: string) => `/api/fs/raw/${path}`,
 }))
 
 describe('AudioPreview', () => {
@@ -47,7 +47,44 @@ describe('AudioPreview', () => {
     const wrapper = mountAudio()
     const audio = wrapper.find('audio.audio-player')
     expect(audio.exists()).toBe(true)
-    expect(audio.attributes('src')).toContain('/api/local-file/media/song.mp3')
+    expect(audio.attributes('src')).toContain('/api/fs/raw/media/song.mp3')
     expect(audio.attributes('src')).toMatch(/t=\d+/)
+  })
+
+  it('shows the shared failure element when the file cannot be loaded', async () => {
+    // A missing / unreadable file previously left a dead native player with no
+    // explanation — the browser just greys out the controls.
+    const wrapper = mountAudio()
+    expect(wrapper.find('.media-load-error').exists()).toBe(false)
+
+    await wrapper.find('audio').trigger('error')
+
+    const err = wrapper.find('.media-load-error')
+    expect(err.exists()).toBe(true)
+    expect(err.text()).toContain('Media failed to load')
+    expect(err.text()).toContain('song.mp3')
+    expect(err.find('.media-load-error-icon svg').attributes('class')).toContain('lucide-audio-lines')
+  })
+
+  it('hides the dead player and its file info once it has failed', async () => {
+    const wrapper = mountAudio()
+    await wrapper.find('audio').trigger('error')
+
+    // The unusable player must not sit under the failure card. It is hidden
+    // rather than removed so a later successful load can revive it.
+    expect(wrapper.find('audio.audio-player').classes()).toContain('local-media-hidden')
+    expect(wrapper.find('.audio-info').classes()).toContain('local-media-hidden')
+    expect(wrapper.find('.audio-icon').classes()).toContain('local-media-hidden')
+  })
+
+  it('clears the failure when the file later loads', async () => {
+    const wrapper = mountAudio()
+    await wrapper.find('audio').trigger('error')
+    expect(wrapper.find('.media-load-error').exists()).toBe(true)
+
+    await wrapper.find('audio').trigger('loadedmetadata')
+
+    expect(wrapper.find('.media-load-error').exists()).toBe(false)
+    expect(wrapper.find('audio.audio-player').classes()).not.toContain('local-media-hidden')
   })
 })

@@ -35,11 +35,21 @@ CREATE TABLE IF NOT EXISTS chat_history (
 	streaming INTEGER NOT NULL DEFAULT 0,
 	indexed INTEGER NOT NULL DEFAULT 0,
 	external_message_id TEXT DEFAULT '',
-	queue_id TEXT DEFAULT '',
-	queued INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	completed_at DATETIME
 );
+CREATE TABLE IF NOT EXISTS queued_messages (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	session_id TEXT NOT NULL,
+	project_path TEXT NOT NULL,
+	backend TEXT NOT NULL DEFAULT '',
+	queue_id TEXT NOT NULL,
+	content TEXT NOT NULL,
+	files TEXT,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_queued_session ON queued_messages(session_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_identity ON queued_messages(session_id, queue_id);
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
 	project_path TEXT NOT NULL,
@@ -57,6 +67,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	title_renamed INTEGER NOT NULL DEFAULT 0,
 	title_source TEXT NOT NULL DEFAULT '',
 	pinned INTEGER NOT NULL DEFAULT 0,
+	sort_order INTEGER NOT NULL DEFAULT 0,
 	archived INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -115,7 +126,7 @@ CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id)
 CREATE INDEX IF NOT EXISTS idx_tasks_project ON scheduled_tasks(project_path, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at);
 CREATE INDEX IF NOT EXISTS idx_history_unread ON chat_history(project_path, role, streaming, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, pinned DESC, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_path, archived, sort_order ASC, created_at DESC, id DESC);
 CREATE TABLE IF NOT EXISTS summaries (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	target_type TEXT NOT NULL,
@@ -1736,6 +1747,44 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 		"a reply that landed after the user last read it must be unread — otherwise the completion popup shows with no badge")
 }
 
+// TestGetLiveRunState_ResolvesQuestionByIdOrder guards the subscribe-time
+// recovery lookup. A client that subscribes mid-flight is handed the question
+// row plus the stream_start that anchors the reply under it; the question is
+// found by ID ORDER (greatest user id below the streaming row), because in this
+// model a queued message is materialized immediately before its reply.
+//
+// Regression: the previous implementation resolved it through the answered
+// queue id, which also failed for rows whose queue_id was empty.
+func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Live Run State")
+
+	// A question, then the streaming reply it is waiting on.
+	_, err := service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'user', 'what is 2+2?', 0)",
+		"/project", sid)
+	require.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'assistant', '', 1)",
+		"/project", sid)
+	require.NoError(t, err)
+
+	msgID, qID, qContent := service.GetLiveRunState(sid)
+	require.NotZero(t, msgID, "the streaming row must be reported")
+	require.NotZero(t, qID, "the question must be found by id order")
+	assert.Equal(t, "what is 2+2?", qContent)
+	assert.Less(t, qID, msgID, "the question must precede the reply it anchors")
+
+	// An idle session reports nothing: emitting a stream_start for it would open
+	// a phantom placeholder on the client.
+	_, err = service.UnsafeDBForTest().Exec(
+		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
+	require.NoError(t, err)
+	idleMsgID, idleQID, _ := service.GetLiveRunState(sid)
+	assert.Zero(t, idleMsgID, "nothing streaming → no live run state")
+	assert.Zero(t, idleQID)
+}
+
 // TestUnread_MarkReadAfterCompletionClearsBadge is the counterpart: once the
 // user is actually looking at the session when it completes, marking read must
 // clear the badge. This is what keeps the fix from turning every reply into a
@@ -2359,7 +2408,7 @@ func TestGetSessionsPaged_NoLimit_ReturnsAll(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 0, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore)
@@ -2371,7 +2420,7 @@ func TestGetSessionsPaged_LimitGreaterThanTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S1")
 	helperCreateSession(t, "/project", "claude", "S2")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2384,7 +2433,7 @@ func TestGetSessionsPaged_LimitEqualsTotal(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "S2")
 	helperCreateSession(t, "/project", "claude", "S3")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.False(t, hasMore) // limit+1=4, only 3 exist, so no more
@@ -2397,7 +2446,7 @@ func TestGetSessionsPaged_LimitLessThanTotal_HasMore(t *testing.T) {
 		helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 	}
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 3)
 	assert.True(t, hasMore)
@@ -2885,7 +2934,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	}
 
 	// First page: limit=2, no cursor
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -2896,7 +2945,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	cursorID := lastSession.ID
 
 	// Second page: cursor from last session of first page
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, "")
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2)
 	assert.True(t, hasMore2)
@@ -2921,7 +2970,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	}
 
 	// First page: limit=3
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 3, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.True(t, hasMore)
 
@@ -2930,7 +2979,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil, "")
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 3, cursor, cursorID, nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 2) // only 2 remaining
 	assert.False(t, hasMore2)
@@ -2939,7 +2988,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 func TestGetSessionsPaged_EmptyProject(t *testing.T) {
 	setupDB(t)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Empty(t, sessions)
 	assert.False(t, hasMore)
@@ -2952,7 +3001,7 @@ func TestGetSessionsPaged_FiltersByProject(t *testing.T) {
 	helperCreateSession(t, "/proj1", "claude", "P1-S2")
 	helperCreateSession(t, "/proj2", "claude", "P2-S1")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/proj1", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.False(t, hasMore)
@@ -2966,7 +3015,7 @@ func TestGetSessionsPaged_ExcludesDeletedSessions(t *testing.T) {
 	err := service.ArchiveSession("/project", "claude", archivedSID)
 	assert.NoError(t, err)
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.False(t, hasMore)
@@ -2979,7 +3028,7 @@ func TestGetSessionsPaged_ExcludesScheduledSessions(t *testing.T) {
 	helperCreateSession(t, "/project", "claude", "Chat")
 	helperCreateScheduledSession(t, "/project", "claude", "Scheduled")
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, "Chat", sessions[0].Title)
@@ -3001,7 +3050,7 @@ func TestGetSessionsPaged_OrderedByCreatedDesc(t *testing.T) {
 	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
-	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.Equal(t, sid2, sessions[0].ID) // most recently created first
@@ -3028,7 +3077,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	page := 0
 
 	for {
-		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil, "")
+		sessions, hasMore, err := service.GetSessionsPaged("/project", "", limit, cursor, cursorID, nil, nil, "")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, sessions, "page %d should not be empty", page)
 
@@ -3082,7 +3131,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 2, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 2)
 	assert.True(t, hasMore)
@@ -3092,7 +3141,7 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 	cursor := lastSession.CreatedAt.Format("2006-01-02 15:04:05")
 	cursorID := lastSession.ID
 
-	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, "")
+	sessions2, hasMore2, err := service.GetSessionsPaged("/project", "", 2, cursor, cursorID, nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions2, 1) // only 1 remaining
 	assert.False(t, hasMore2)
@@ -3137,7 +3186,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Page 1 (limit=1) → newest session.
-	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil, "")
+	page1, hasMore, err := service.GetSessionsPaged("/project", "", 1, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 1)
 	assert.Equal(t, sidNew, page1[0].ID)
@@ -3146,7 +3195,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// Page 2 uses the created_at cursor — must be the middle session, NOT a
 	// repeat of page 1.
 	cursor := page1[0].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil, "")
+	page2, _, err := service.GetSessionsPaged("/project", "", 1, cursor, page1[0].ID, nil, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.Equal(t, sidMid, page2[0].ID)
@@ -3159,7 +3208,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld,
 	).Scan(&oldUpdatedAt)
 	require.NoError(t, err)
-	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil, "")
+	badCursor, _, err := service.GetSessionsPaged("/project", "", 1, oldUpdatedAt, page1[0].ID, nil, nil, "")
 	assert.NoError(t, err)
 	require.Len(t, badCursor, 1)
 	assert.Equal(t, sidNew, badCursor[0].ID,
@@ -3858,7 +3907,7 @@ func TestGetSessionsPaged_UnreadCount(t *testing.T) {
 
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "msg", nil, false, "")
 
-	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, "")
+	sessions, hasMore, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 1)
 	assert.Equal(t, 1, sessions[0].UnreadCount)
@@ -4394,40 +4443,19 @@ func TestGetStreamingMessageID_SessionIsolation(t *testing.T) {
 	assert.NotEqual(t, id1, id2, "different sessions should not return each other's message IDs")
 }
 
-// ---------- GetStreamingMessageInfo ----------
+// ---------- GetStreamingMessageID ----------
 
-func TestGetStreamingMessageInfo_ReturnsQueueID(t *testing.T) {
+func TestGetStreamingMessageID_LiveRow(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Stream Info")
 
-	// Streaming assistant row answers a queued message (queue_id persisted).
 	_, err := service.AddChatMessage("/project", "claude", sid, "user", "question", nil, false, "")
 	assert.NoError(t, err)
-	streamingID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "{}", nil, true, "", "pending-abc")
+	streamingID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "{}", nil, true, "")
 	assert.NoError(t, err)
 
-	id, queueID := service.GetStreamingMessageInfo(sid)
-	assert.Equal(t, streamingID, id)
-	assert.Equal(t, "pending-abc", queueID)
-}
-
-func TestGetStreamingMessageInfo_NoStreamingRow(t *testing.T) {
-	setupDB(t)
-
-	sid := helperCreateSession(t, "/project", "claude", "Stream Info Empty")
-
-	// Only a finalized assistant row exists — GetStreamingMessageInfo must NOT
-	// fall back to it (unlike GetStreamingMessageID): the subscribe-time
-	// stream_start re-emit describes the LIVE stream only.
-	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "final", nil, true, "", "pending-stale")
-	assert.NoError(t, err)
-	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, "final content")
-	assert.NoError(t, err)
-
-	id, queueID := service.GetStreamingMessageInfo(sid)
-	assert.Equal(t, int64(0), id)
-	assert.Equal(t, "", queueID)
+	assert.Equal(t, streamingID, service.GetStreamingMessageID(sid))
 }
 
 // ---------- GetUnindexedMessages / MarkMessageIndexed / UnindexedCount ----------
@@ -4587,14 +4615,14 @@ func TestGetChatHistoryPaged_LimitAndBeforeID(t *testing.T) {
 	}
 
 	// Get last 2 messages with limit only (no cursor)
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 2, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 3", msgs[0].Content)
 	assert.Equal(t, "msg 4", msgs[1].Content)
 
 	// Get 2 messages before the last message (cursor-based)
-	msgs, _, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
+	msgs, _, err = service.GetChatHistoryPaged("/project", "claude", sid, 2, int(msgIDs[4]))
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 	assert.Equal(t, "msg 2", msgs[0].Content)
@@ -4672,7 +4700,7 @@ func TestGetChatHistoryPaged_NoLimit(t *testing.T) {
 	assert.NoError(t, err)
 
 	// limit=0 returns all messages
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 2)
 }
@@ -4688,7 +4716,7 @@ func TestGetChatHistoryPaged_LimitOnly(t *testing.T) {
 	}
 
 	// limit=3, no cursor — should return the 3 most recent
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 3, 0)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 3)
 	assert.Equal(t, "msg 2", msgs[0].Content) // oldest of the 3
@@ -4700,50 +4728,42 @@ func TestGetChatHistoryPaged_Empty(t *testing.T) {
 
 	sid := helperCreateSession(t, "/project", "claude", "Empty Paged")
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 10, 0)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
 }
 
-// TestGetChatHistoryPaged_ReturnsQueueFields verifies that queued messages are
-// returned by GetChatHistoryPaged with queueId/queued populated, so the
-// frontend can match the optimistic pending bubble to the DB row
-// (queued-message-persistence plan).
-func TestGetChatHistoryPaged_ReturnsQueueFields(t *testing.T) {
+// TestGetChatHistoryPaged_ExcludesQueuedMessages verifies the core invariant of
+// the dedicated queued_messages table: a message that is still queued has NO
+// chat_history row, so it is absent from the paged history and from the total.
+// This is what makes DB id order equal conversational order once it drains.
+func TestGetChatHistoryPaged_ExcludesQueuedMessages(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Paged Queue")
 	_, err := service.AddChatMessage("/project", "claude", sid, "user", "normal", nil, false, "")
 	assert.NoError(t, err)
 
-	// Insert a queued message directly (AddChatMessage doesn't set queue fields yet).
-	_, err = service.UnsafeDBForTest().Exec(
-		`INSERT INTO chat_history (project_path, role, content, session_id, backend, queue_id, queued)
-		 VALUES (?, 'user', ?, ?, 'claude', 'pending-abc', 1)`,
-		"/project", "queued msg", sid,
-	)
-	assert.NoError(t, err)
+	// A still-queued message lives only in queued_messages.
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "queued msg", nil, "pending-abc", "")
+	require.NoError(t, err)
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
-	assert.NoError(t, err)
-	assert.Len(t, msgs, 2)
+	msgs, total, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1, "a queued message must not appear in chat_history")
+	assert.Equal(t, "normal", msgs[0].Content)
+	assert.Equal(t, 1, total, "the total counts conversation history only")
 
-	var foundQueued bool
-	for _, m := range msgs {
-		if m.Content == "queued msg" {
-			foundQueued = true
-			assert.Equal(t, "pending-abc", m.QueueID, "queued message should carry queueId")
-			assert.True(t, m.Queued, "queued message should have Queued=true")
-		} else {
-			assert.Equal(t, "", m.QueueID, "normal message should have empty queueId")
-			assert.False(t, m.Queued, "normal message should have Queued=false")
-		}
-	}
-	assert.True(t, foundQueued, "queued message should be returned by GetChatHistoryPaged")
+	// It is still visible through the queue API.
+	queue, err := service.GetQueuedMessages(sid)
+	require.NoError(t, err)
+	require.Len(t, queue, 1)
+	assert.Equal(t, "pending-abc", queue[0].QueueID)
+	assert.Equal(t, "queued msg", queue[0].Text)
 }
 
-// TestAddQueuedMessage_Basic verifies that AddQueuedMessage persists a message
-// with queued=1 + queue_id, and returns a positive id.
+// TestAddQueuedMessage_Basic verifies that AddQueuedMessage inserts a row into
+// queued_messages (not chat_history) and returns its row id.
 func TestAddQueuedMessage_Basic(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue Basic")
@@ -4752,15 +4772,20 @@ func TestAddQueuedMessage_Basic(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Greater(t, id, int64(0))
 
-	var queueID string
-	var queued, indexed int
+	var queueID, content string
 	err = service.UnsafeDBForTest().QueryRow(
-		"SELECT queue_id, queued, indexed FROM chat_history WHERE id = ?", id,
-	).Scan(&queueID, &queued, &indexed)
+		"SELECT queue_id, content FROM queued_messages WHERE id = ?", id,
+	).Scan(&queueID, &content)
 	assert.NoError(t, err)
 	assert.Equal(t, "pending-1", queueID)
-	assert.Equal(t, 1, queued, "queued message should have queued=1")
-	assert.Equal(t, 1, indexed, "queued message should be indexed=1 (skip RAG until drained)")
+	assert.Equal(t, "hello", content)
+
+	// Nothing was written to chat_history at enqueue time.
+	var historyRows int
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid,
+	).Scan(&historyRows))
+	assert.Zero(t, historyRows, "enqueue must not materialize a chat_history row")
 }
 
 // TestAddQueuedMessage_SetsSessionTitleOnFirstMessage verifies B3: the first
@@ -4779,7 +4804,8 @@ func TestAddQueuedMessage_SetsSessionTitleOnFirstMessage(t *testing.T) {
 	assert.Equal(t, "help me fix the build", title, "first user message should update session title")
 }
 
-// TestAddQueuedMessage_WithFiles verifies file attachment persistence.
+// TestAddQueuedMessage_WithFiles verifies file attachment persistence on the
+// queued row (the files JSON round-trips through queued_messages).
 func TestAddQueuedMessage_WithFiles(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue Files")
@@ -4789,10 +4815,10 @@ func TestAddQueuedMessage_WithFiles(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Greater(t, id, int64(0))
 
-	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	msgs, err := service.GetQueuedMessages(sid)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 1)
-	assert.Len(t, msgs[0].Files, 1)
+	require.Len(t, msgs, 1)
+	require.Len(t, msgs[0].Files, 1)
 	assert.Equal(t, "/src/a.go", msgs[0].Files[0].Path)
 }
 
@@ -4805,43 +4831,38 @@ func TestAddQueuedMessage_EmptyQueueID(t *testing.T) {
 	assert.NoError(t, err)
 
 	var queueID string
-	err = service.UnsafeDBForTest().QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", id).Scan(&queueID)
+	err = service.UnsafeDBForTest().QueryRow("SELECT queue_id FROM queued_messages WHERE id = ?", id).Scan(&queueID)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, queueID, "auto-generated queue_id should not be empty")
 }
 
-// TestAddQueuedMessage_RollbackOnFailure verifies ISS-237: when the shared
-// transaction fails after the chat_history INSERT (simulated here by dropping
-// the table after enqueue, which breaks the follow-up UPDATE chat_sessions
-// statement), the whole insert is rolled back and NO orphan row (queued=0,
-// empty queue_id) is left behind as a normal user message. Before the fix,
-// AddChatMessage's INSERT committed first and a subsequent non-transactional
-// UPDATE failed, orphaning the row permanently.
-func TestAddQueuedMessage_RollbackOnFailure(t *testing.T) {
+// TestAddQueuedMessage_TitleFailureDoesNotFailEnqueue verifies that the
+// auto-title step is best-effort on the enqueue path: the message is still
+// queued even when the title update cannot run. The enqueue is a single INSERT
+// into queued_messages (no chat_history row, no shared transaction), so a title
+// failure must not roll the message back — losing a queued message is far worse
+// than a session keeping its placeholder title.
+func TestAddQueuedMessage_TitleFailureDoesNotFailEnqueue(t *testing.T) {
 	db := setupDB(t)
-	sid := helperCreateSession(t, "/project", "claude", "Queue Rollback")
+	sid := helperCreateSession(t, "/project", "claude", "Queue Title Fail")
 
-	// Drop the sessions table inside the test's raw DB connection. WAL
-	// semantics give the test connection its own snapshot: DDL issued here
-	// becomes visible to the next connection-level statement, so the UPDATE
-	// chat_sessions inside AddQueuedMessage's transaction fails with "no such
-	// table: chat_sessions" while the INSERT (only touching chat_history)
-	// still succeeds.
+	// Drop chat_sessions so applyAutoTitle's UPDATE fails while the queued_messages
+	// INSERT still succeeds.
 	_, err := db.Exec("DROP TABLE chat_sessions")
 	require.NoError(t, err)
 
-	_, err = service.AddQueuedMessage("/project", "claude", sid, "orphan me", nil, "q-fail", "")
-	assert.Error(t, err, "AddQueuedMessage must surface the transaction failure")
+	id, err := service.AddQueuedMessage("/project", "claude", sid, "still queued", nil, "q-titlefail", "")
+	assert.NoError(t, err, "a title failure must not fail the enqueue")
+	assert.Greater(t, id, int64(0))
 
-	// The chat_history row must not exist at all — no orphan with queued=0.
-	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, count, "failed AddQueuedMessage must leave no orphan chat_history row")
+	var content string
+	require.NoError(t, db.QueryRow("SELECT content FROM queued_messages WHERE id = ?", id).Scan(&content))
+	assert.Equal(t, "still queued", content)
 }
 
-// TestDequeueQueuedMessage_FIFO verifies messages are dequeued in insertion order.
-func TestDequeueQueuedMessage_FIFO(t *testing.T) {
+// TestClaimNextAndMaterialize_FIFO verifies messages are claimed in insertion
+// order and materialized into chat_history with increasing ids.
+func TestClaimNextAndMaterialize_FIFO(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue FIFO")
 
@@ -4849,69 +4870,84 @@ func TestDequeueQueuedMessage_FIFO(t *testing.T) {
 	id2, _ := service.AddQueuedMessage("/project", "claude", sid, "second", nil, "q-2", "")
 	assert.Less(t, id1, id2)
 
-	msg, ok, err := service.DequeueQueuedMessage(sid)
+	row, msgID, ok, err := service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, "first", msg.Content)
-	assert.Equal(t, "q-1", msg.QueueID)
+	assert.Equal(t, "first", row.Content)
+	assert.Equal(t, "q-1", row.QueueID)
+	assert.Greater(t, msgID, int64(0))
 
-	msg, ok, err = service.DequeueQueuedMessage(sid)
+	row, _, ok, err = service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.True(t, ok)
-	assert.Equal(t, "second", msg.Content)
-	assert.Equal(t, "q-2", msg.QueueID)
+	assert.Equal(t, "second", row.Content)
+	assert.Equal(t, "q-2", row.QueueID)
+
+	// Both are now real chat_history rows in claim order.
+	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 2)
+	assert.Equal(t, "first", msgs[0].Content)
+	assert.Equal(t, "second", msgs[1].Content)
 }
 
-// TestDequeueQueuedMessage_Empty verifies empty queue returns (msg, false, nil).
-func TestDequeueQueuedMessage_Empty(t *testing.T) {
+// TestClaimNextAndMaterialize_Empty verifies an empty queue returns ok=false
+// with no error.
+func TestClaimNextAndMaterialize_Empty(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue Empty")
 
-	msg, ok, err := service.DequeueQueuedMessage(sid)
+	row, msgID, ok, err := service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.False(t, ok)
-	assert.Equal(t, int64(0), msg.ID)
+	assert.Equal(t, int64(0), row.ID)
+	assert.Equal(t, int64(0), msgID)
 }
 
-// TestDequeueQueuedMessage_SetsQueuedZero verifies the row stays but queued flips to 0.
-func TestDequeueQueuedMessage_SetsQueuedZero(t *testing.T) {
+// TestClaimNextAndMaterialize_DeletesQueueRow verifies the claim moves the
+// message out of queued_messages (the row is truly gone) and into chat_history,
+// so a second claim finds nothing.
+func TestClaimNextAndMaterialize_DeletesQueueRow(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue Consumed")
 
-	id, _ := service.AddQueuedMessage("/project", "claude", sid, "msg", nil, "q-1", "")
-	_, ok, err := service.DequeueQueuedMessage(sid)
+	_, _ = service.AddQueuedMessage("/project", "claude", sid, "msg", nil, "q-1", "")
+	_, msgID, ok, err := service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.True(t, ok)
 
-	var queued int
-	err = service.UnsafeDBForTest().QueryRow("SELECT queued FROM chat_history WHERE id = ?", id).Scan(&queued)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, queued, "dequeued message should have queued=0 but stay in DB")
+	assert.Equal(t, 0, service.GetQueuedCount(sid), "claimed row must leave the queue")
+	var historyRows int
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT COUNT(*) FROM chat_history WHERE id = ?", msgID,
+	).Scan(&historyRows))
+	assert.Equal(t, 1, historyRows, "claimed row must be materialized into chat_history")
 
-	// Second dequeue finds nothing (the row is no longer queued).
-	_, ok, err = service.DequeueQueuedMessage(sid)
+	// Second claim finds nothing (the row is no longer queued).
+	_, _, ok, err = service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.False(t, ok)
 }
 
-// TestDequeueQueuedMessage_WithFiles verifies file entries survive dequeue.
-func TestDequeueQueuedMessage_WithFiles(t *testing.T) {
+// TestClaimNextAndMaterialize_WithFiles verifies file entries survive the claim.
+func TestClaimNextAndMaterialize_WithFiles(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue Files2")
 
 	files := []model.FileEntry{{Path: "/src/b.go", IsDir: false}}
 	_, _ = service.AddQueuedMessage("/project", "claude", sid, "with files", files, "q-1", "")
 
-	msg, ok, err := service.DequeueQueuedMessage(sid)
+	row, _, ok, err := service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.True(t, ok)
-	assert.Len(t, msg.Files, 1)
-	assert.Equal(t, "/src/b.go", msg.Files[0].Path)
+	assert.Len(t, row.Files, 1)
+	assert.Equal(t, "/src/b.go", row.Files[0].Path)
 }
 
-// TestGetChatHistoryPaged_ReturnsQueuedCount verifies the queuedCount return
-// value (plan C) so the frontend can compute hasMore excluding queued messages.
-func TestGetChatHistoryPaged_ReturnsQueuedCount(t *testing.T) {
+// TestGetChatHistoryPaged_TotalExcludesQueued verifies the total returned by
+// GetChatHistoryPaged counts only conversation history, so hasMore arithmetic
+// no longer has to subtract a queued count.
+func TestGetChatHistoryPaged_TotalExcludesQueued(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Paged QueuedCount")
 
@@ -4921,21 +4957,17 @@ func TestGetChatHistoryPaged_ReturnsQueuedCount(t *testing.T) {
 	_, _ = service.AddQueuedMessage("/project", "claude", sid, "queued1", nil, "q-1", "")
 	_, _ = service.AddQueuedMessage("/project", "claude", sid, "queued2", nil, "q-2", "")
 
-	msgs, total, queuedCount, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, total, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 4, "messages array includes queued rows")
-	assert.Equal(t, 4, total, "total includes queued rows")
-	assert.Equal(t, 2, queuedCount, "queuedCount counts queued rows")
+	assert.Len(t, msgs, 2, "only history rows are returned")
+	assert.Equal(t, 2, total, "total excludes queued rows")
 }
 
-// TestGetChatHistoryPaged_HasMoreWithQueued reproduces the plan-C scenario:
-// 50 history messages + 15 queued, initial load limit=40 returns the 40 newest
-// (25 history + 15 queued). The frontend computes hasMore from the dual count:
-// non-queued loaded (25) < non-queued total (50) → true (more history to load).
-// The single-count formula (messages.length < total) would also be true here,
-// but the dual count is what makes the arithmetic correct when queued rows are
-// interleaved with history.
-func TestGetChatHistoryPaged_HasMoreWithQueued(t *testing.T) {
+// TestGetChatHistoryPaged_HasMoreExcludesQueued reproduces the scenario the old
+// dual-count formula handled: 50 history messages + 15 queued. The 15 queued
+// messages are invisible to history, so an initial load of 40 returns 40 history
+// rows and hasMore is simply loaded(40) < total(50).
+func TestGetChatHistoryPaged_HasMoreExcludesQueued(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Paged HasMore")
 
@@ -4950,27 +4982,17 @@ func TestGetChatHistoryPaged_HasMoreWithQueued(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	msgs, total, queuedCount, err := service.GetChatHistoryPaged("/project", "claude", sid, 40, 0)
+	msgs, total, err := service.GetChatHistoryPaged("/project", "claude", sid, 40, 0)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 40, "initial load returns newest 40 rows")
-	assert.Equal(t, 65, total, "total counts history + queued")
-	assert.Equal(t, 15, queuedCount)
-
-	// Plan-C frontend formula: non-queued loaded < non-queued total.
-	nonQueuedLoaded := 0
-	for _, m := range msgs {
-		if !m.Queued {
-			nonQueuedLoaded++
-		}
-	}
-	assert.Equal(t, 25, nonQueuedLoaded, "40 newest = 25 history + 15 queued")
-	assert.True(t, nonQueuedLoaded < total-queuedCount, "hasMore must be true: 25 < 50")
+	assert.Len(t, msgs, 40, "initial load returns newest 40 history rows")
+	assert.Equal(t, 50, total, "total counts history only; queued rows are not history")
+	assert.True(t, len(msgs) < total, "hasMore must be true: 40 < 50")
 }
 
-// TestDequeueQueuedMessage_Atomic_NoDoubleConsume verifies two goroutines
-// dequeuing concurrently never consume the same row (WriteBegin + conditional
-// UPDATE under the write mutex).
-func TestDequeueQueuedMessage_Atomic_NoDoubleConsume(t *testing.T) {
+// TestClaimNextAndMaterialize_Atomic_NoDoubleConsume verifies two goroutines
+// claiming concurrently never consume the same row (DELETE + INSERT in one
+// transaction under the write mutex).
+func TestClaimNextAndMaterialize_Atomic_NoDoubleConsume(t *testing.T) {
 	db := setupDB(t)
 	// Single connection so the :memory: database is shared across goroutines.
 	db.SetMaxOpenConns(1)
@@ -4985,7 +5007,7 @@ func TestDequeueQueuedMessage_Atomic_NoDoubleConsume(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, ok, derr := service.DequeueQueuedMessage(sid)
+			_, _, ok, derr := service.ClaimNextAndMaterialize(sid)
 			assert.NoError(t, derr)
 			results[i] = ok
 		}(i)
@@ -5000,35 +5022,35 @@ func TestDequeueQueuedMessage_Atomic_NoDoubleConsume(t *testing.T) {
 	}
 	assert.Equal(t, 1, consumed, "exactly one goroutine may claim the row")
 
-	// Second dequeue finds nothing.
-	_, ok, err := service.DequeueQueuedMessage(sid)
+	// Second claim finds nothing.
+	_, _, ok, err := service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
 	assert.False(t, ok)
 }
 
-// TestDequeueQueuedMessage_DBError_NotEmptyQueue verifies a real DB error
-// (distinct from sql.ErrNoRows / empty queue) is surfaced to the caller so the
-// drain loop retries instead of treating it as "queue empty" and silently
-// dropping the message (B4). A closed DB yields such an error.
-func TestDequeueQueuedMessage_DBError_NotEmptyQueue(t *testing.T) {
+// TestClaimNextAndMaterialize_DBError_NotEmptyQueue verifies a real DB error
+// (distinct from an empty queue) is surfaced to the caller so the drain loop
+// retries instead of treating it as "queue empty" and silently dropping the
+// message (B4). A closed DB yields such an error.
+func TestClaimNextAndMaterialize_DBError_NotEmptyQueue(t *testing.T) {
 	db := setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Queue DBError")
 
 	_, err := service.AddQueuedMessage("/project", "claude", sid, "persisted msg", nil, "q-1", "")
 	assert.NoError(t, err)
 
-	// Close the DB underneath — the next dequeue must return a real error,
+	// Close the DB underneath — the next claim must return a real error,
 	// NOT (false, nil) which the drain loop would treat as "empty".
 	require.NoError(t, db.Close())
 
-	_, ok, derr := service.DequeueQueuedMessage(sid)
-	assert.False(t, ok, "must not report a successful dequeue")
+	_, _, ok, derr := service.ClaimNextAndMaterialize(sid)
+	assert.False(t, ok, "must not report a successful claim")
 	assert.Error(t, derr, "a real DB error must be surfaced, not swallowed as empty")
 }
 
 // TestQueuedMessage_PersistsAcrossRestart verifies a queued message survives a
-// simulated restart (fresh DB handle over the same file): the row is still
-// queued=1 and discoverable via GetQueuedMessages.
+// simulated restart (fresh DB handle over the same file): the row is still in
+// queued_messages and discoverable via GetQueuedMessages.
 func TestQueuedMessage_PersistsAcrossRestart(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -5065,12 +5087,12 @@ func TestQueuedMessage_PersistsAcrossRestart(t *testing.T) {
 	msgs, err := service.GetQueuedMessages(sid)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1, "queued message must survive restart")
-	assert.Equal(t, "before restart", msgs[0].Content)
-	assert.True(t, msgs[0].Queued)
+	assert.Equal(t, "before restart", msgs[0].Text)
+	assert.Equal(t, "q-restart", msgs[0].QueueID)
 }
 
 // TestQueuedMessage_DrainedAfterRestart verifies a queued message left over
-// from before a restart can be consumed by the drain loop afterwards.
+// from before a restart can be claimed by the drain loop afterwards.
 func TestQueuedMessage_DrainedAfterRestart(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
@@ -5105,17 +5127,18 @@ func TestQueuedMessage_DrainedAfterRestart(t *testing.T) {
 	})
 
 	// Drain the leftover message after restart.
-	msg, ok, err := service.DequeueQueuedMessage(sid)
+	row, msgID, ok, err := service.ClaimNextAndMaterialize(sid)
 	assert.NoError(t, err)
-	assert.True(t, ok, "leftover queued message must be consumable after restart")
-	assert.Equal(t, "stale queued", msg.Content)
+	assert.True(t, ok, "leftover queued message must be claimable after restart")
+	assert.Equal(t, "stale queued", row.Content)
 
-	// The row must now be queued=0 in the DB (msg.Queued reflects the value
-	// read BEFORE the claim UPDATE).
-	var queued int
-	err = service.UnsafeDBForTest().QueryRow("SELECT queued FROM chat_history WHERE id = ?", msg.ID).Scan(&queued)
-	assert.NoError(t, err)
-	assert.Equal(t, 0, queued, "drained row flips queued=0")
+	// It is now a chat_history row, not a queued row.
+	var content string
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT content FROM chat_history WHERE id = ?", msgID,
+	).Scan(&content))
+	assert.Equal(t, "stale queued", content)
+	assert.Equal(t, 0, service.GetQueuedCount(sid))
 }
 
 // ---------- CreateSession: session_type default ----------
@@ -5132,9 +5155,9 @@ func TestCreateSession_EmptySessionTypeDefaultsToChat(t *testing.T) {
 	assert.Equal(t, "chat", sessionType)
 }
 
-// ---------- GetUserMessageIndex ----------
+// ---------- GetConversationIndex ----------
 
-func TestGetUserMessageIndex_Basic(t *testing.T) {
+func TestGetConversationIndex_Basic(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Index Test")
@@ -5146,28 +5169,136 @@ func TestGetUserMessageIndex_Basic(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Second question", []model.FileEntry{{Path: "file1.go"}}, false, "NewSession")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 2)
+	assert.Len(t, msgs, 3)
 
 	assert.Equal(t, "user", msgs[0].Role)
 	assert.Equal(t, "First question", msgs[0].Content)
-	assert.Equal(t, "user", msgs[1].Role)
-	assert.Equal(t, "Second question", msgs[1].Content)
-	assert.Equal(t, []model.FileEntry{{Path: "file1.go"}}, msgs[1].Files)
+	assert.Nil(t, msgs[0].Summary)
+
+	// Assistant row: content is emptied, the fallback preview lands in Summary.
+	assert.Equal(t, "assistant", msgs[1].Role)
+	assert.Empty(t, msgs[1].Content)
+	require.NotNil(t, msgs[1].Summary)
+	assert.Equal(t, "Answer", *msgs[1].Summary)
+
+	assert.Equal(t, "user", msgs[2].Role)
+	assert.Equal(t, "Second question", msgs[2].Content)
+	assert.Equal(t, []model.FileEntry{{Path: "file1.go"}}, msgs[2].Files)
 }
 
-func TestGetUserMessageIndex_Empty(t *testing.T) {
+func TestGetConversationIndex_PrefersStoredSummary(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Stored Summary")
+
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", `{"blocks":[{"type":"text","text":"raw reply text"}]}`, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	// Give it a reading summary — that must win over the reply text.
+	var asstID int64
+	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid,
+	).Scan(&asstID))
+	require.NoError(t, service.SaveSummary("chat_message", asstID, "stored summary"))
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "stored summary", *msgs[0].Summary)
+	assert.Empty(t, msgs[0].Content, "assistant content must not cross the wire")
+}
+
+func TestGetConversationIndex_AssistantFallbackUsesLastAnswer(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Last Answer")
+
+	// The reply has tool noise plus a final answer — the index must show the
+	// conclusion, not the intermediate commentary.
+	content := `{"blocks":[` +
+		`{"type":"text","text":"Let me check that."},` +
+		`{"type":"tool_use","name":"Read","id":"t1"},` +
+		`{"type":"text","text":"The build passes."}` +
+		`]}`
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", content, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "The build passes.", *msgs[0].Summary)
+}
+
+func TestGetConversationIndex_AssistantFallbackTruncates(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Truncate")
+
+	long := strings.Repeat("测", indexSummaryMaxRunesForTest+50)
+	content := `{"blocks":[{"type":"text","text":"` + long + `"}]}`
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", content, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, indexSummaryMaxRunesForTest+1, utf8.RuneCountInString(*msgs[0].Summary)) // + ellipsis
+	assert.True(t, strings.HasSuffix(*msgs[0].Summary, "…"))
+}
+
+// indexSummaryMaxRunesForTest mirrors the unexported cap in chat.go so the
+// assertion above states the bound explicitly instead of restating the constant.
+const indexSummaryMaxRunesForTest = 200
+
+func TestGetConversationIndex_AssistantNoText(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "No Text")
+
+	// A tool-call-only turn has no answer text — the row exists but is empty.
+	content := `{"blocks":[{"type":"tool_use","name":"Bash","id":"t1"}]}`
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", content, nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary, "an assistant row must always carry a (possibly empty) summary")
+	assert.Empty(t, *msgs[0].Summary)
+}
+
+func TestGetConversationIndex_AssistantPlainTextContent(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Plain Text")
+
+	// Non-block assistant content (no {"blocks":...}) must still produce a row.
+	_, err := service.AddChatMessage("/project", "claude", sid, "assistant", "plain answer", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	require.NotNil(t, msgs[0].Summary)
+	assert.Equal(t, "plain answer", *msgs[0].Summary)
+}
+
+func TestGetConversationIndex_Empty(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Empty Index")
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
 }
 
-func TestGetUserMessageIndex_OnlyAssistantMessages(t *testing.T) {
+func TestGetConversationIndex_OnlyAssistantMessages(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "No User Msgs")
@@ -5177,12 +5308,14 @@ func TestGetUserMessageIndex_OnlyAssistantMessages(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "assistant", "World", nil, false, "NewSession")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
-	assert.Empty(t, msgs)
+	assert.Len(t, msgs, 2)
+	assert.Equal(t, "assistant", msgs[0].Role)
+	assert.Equal(t, "assistant", msgs[1].Role)
 }
 
-func TestGetUserMessageIndex_SkipsStreaming(t *testing.T) {
+func TestGetConversationIndex_SkipsStreaming(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Streaming Test")
@@ -5194,13 +5327,33 @@ func TestGetUserMessageIndex_SkipsStreaming(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Done msg", nil, false, "NewSession")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
 	assert.Len(t, msgs, 1)
 	assert.Equal(t, "Done msg", msgs[0].Content)
 }
 
-func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
+// TestGetConversationIndex_ExcludesQueued verifies a still-queued message is
+// absent from the conversation index: it has no chat_history row yet, so it
+// cannot be summarized or listed until it is drained.
+func TestGetConversationIndex_ExcludesQueued(t *testing.T) {
+	setupDB(t)
+
+	sid := helperCreateSession(t, "/project", "claude", "Queued Test")
+
+	// A still-queued message lives only in queued_messages.
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "Pending question", nil, "q-pending", "")
+	require.NoError(t, err)
+	_, err = service.AddChatMessage("/project", "claude", sid, "user", "Real question", nil, false, "NewSession")
+	require.NoError(t, err)
+
+	msgs, err := service.GetConversationIndex(sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "Real question", msgs[0].Content)
+}
+
+func TestGetConversationIndex_OrderPreserved(t *testing.T) {
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Order Test")
@@ -5212,11 +5365,15 @@ func TestGetUserMessageIndex_OrderPreserved(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
-	msgs, err := service.GetUserMessageIndex(sid)
+	msgs, err := service.GetConversationIndex(sid)
 	assert.NoError(t, err)
-	assert.Len(t, msgs, 5)
-	for i, msg := range msgs {
-		assert.Equal(t, fmt.Sprintf("Question %d", i+1), msg.Content)
+	assert.Len(t, msgs, 10)
+	for i := range 5 {
+		assert.Equal(t, "user", msgs[i*2].Role)
+		assert.Equal(t, fmt.Sprintf("Question %d", i+1), msgs[i*2].Content)
+		assert.Equal(t, "assistant", msgs[i*2+1].Role)
+		require.NotNil(t, msgs[i*2+1].Summary)
+		assert.Equal(t, fmt.Sprintf("Answer %d", i+1), *msgs[i*2+1].Summary)
 	}
 }
 
@@ -5632,7 +5789,7 @@ func TestGetChatHistoryPaged_SummaryStripsContent(t *testing.T) {
 	}
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.Equal(t, "assistant", msgs[0].Role)
@@ -5654,7 +5811,7 @@ func TestGetChatHistoryPaged_SummaryPreservesMetadata(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", nil))
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 
@@ -5688,7 +5845,7 @@ func TestGetChatHistoryPaged_SummaryKeepsStreamingContent(t *testing.T) {
 	cards := &model.SummaryCards{TaskIDs: []int64{7}}
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "reading summary", cards))
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.True(t, msgs[0].Streaming)
@@ -5708,7 +5865,7 @@ func TestGetChatHistoryPaged_SummaryKeepsEmptySummaryContent(t *testing.T) {
 	// Empty summary — the frontend omits content for summarized messages.
 	assert.NoError(t, service.SaveSummaryWithCards("chat_message", asstID, "", nil))
 
-	msgs, _, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged("/project", "claude", sid, 0, 0)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1)
 	assert.NotEqual(t, "", msgs[0].Content, "messages with an empty summary must keep content so they remain visible")
@@ -5819,7 +5976,7 @@ func TestEnqueueAndMaybeStart_NotRunning_StartsGoroutine(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Enqueue Start")
 
 	// Verify running state becomes true (goroutine started).
-	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5861,7 +6018,7 @@ func TestEnqueueAndMaybeStart_FirstMessageRace_PreservesEarlierQueued(t *testing
 
 	// EnqueueAndMaybeStart wins the idle-session claim and runs "current"
 	// directly via cfg.Message. It must consume only its own row.
-	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -5877,7 +6034,7 @@ func TestEnqueueAndMaybeStart_FirstMessageRace_PreservesEarlierQueued(t *testing
 	msgs, err := service.GetQueuedMessages(sid)
 	assert.NoError(t, err)
 	require.Len(t, msgs, 1, "earlier message must still be queued, only current consumed")
-	assert.Equal(t, "earlier", msgs[0].Content)
+	assert.Equal(t, "earlier", msgs[0].Text)
 	assert.Equal(t, "pending-earlier", msgs[0].QueueID)
 
 	// Clean up: cancel to kill the started goroutine, then wait for unwind.
@@ -5915,7 +6072,7 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+			started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 				SessionID:   sid,
 				ProjectPath: "/project",
 				BackendName: backendID,
@@ -5937,9 +6094,11 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 	}
 	assert.Equal(t, 1, startedCount, "exactly one enqueue should win the idle claim")
 
-	// Both messages must exist in the DB — no message may be lost. The loser
-	// stays queued for the drain loop (the winner's goroutine is blocked on the
-	// gate, so the B2 self-heal has not claimed it yet).
+	// Both messages must exist — no message may be lost. Under the queue model
+	// the winner's message is materialized into chat_history while the loser's
+	// stays in queued_messages for the drain loop (the winner's goroutine is
+	// blocked on the gate, so the drain has not claimed it yet). The count that
+	// must hold is the total across BOTH stores.
 	msgs, err := service.GetChatHistory("/project", backendID, sid)
 	assert.NoError(t, err)
 	userCount := 0
@@ -5948,7 +6107,9 @@ func TestEnqueueAndMaybeStart_ConcurrentEnqueues_NoMessageLoss(t *testing.T) {
 			userCount++
 		}
 	}
-	assert.Equal(t, 2, userCount, "both enqueued user messages must be present in DB")
+	queuedCount := service.GetQueuedCount(sid)
+	assert.Equal(t, 2, userCount+queuedCount,
+		"both enqueued user messages must be present across chat_history and queued_messages")
 
 	// Clean up: cancel kills the running session and releases the gate.
 	service.CancelSession(sid)
@@ -5988,7 +6149,7 @@ func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
 	// Mark session as already running.
 	service.SetSessionRunning(sid, true)
 
-	started, _, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
+	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:   sid,
 		ProjectPath: "/project",
 		BackendName: "claude",
@@ -6009,60 +6170,56 @@ func TestEnqueueAndMaybeStart_Running_DoesNotStartGoroutine(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 }
 
-// TestQueuedMessage_ReplyQueueIDAnchor verifies the backend end-to-end queue
-// flow for conversational ordering: user messages 2/3 are persisted at enqueue
-// time (queued=1), and when the drain loop answers them, the reply rows carry
-// the queue_id of the question they answer. This is what lets the frontend
-// restore the conversational order (msg2, reply2, msg3, reply3) from raw DB
-// id order (msg2, msg3, reply2, reply3).
-func TestQueuedMessage_ReplyQueueIDAnchor(t *testing.T) {
+// TestQueuedMessage_DrainYieldsConversationalIdOrder is the end-to-end proof of
+// the design that replaced the reply-anchor column: queued messages 2/3 are
+// materialized only when drained, so the DB id order (msg2, reply2, msg3,
+// reply3) already IS the conversational order. There is no queue_id anchor on
+// the reply any more, because there is nothing to re-anchor.
+func TestQueuedMessage_DrainYieldsConversationalIdOrder(t *testing.T) {
 	db := setupDB(t)
 	_ = db
-	sid := helperCreateSession(t, "/project", "claude", "Queue Anchor")
+	sid := helperCreateSession(t, "/project", "claude", "Queue Order")
 
-	// msg1: normal first message.
+	// msg1 + reply1 complete normally.
 	msg1ID, err := service.AddChatMessage("/project", "claude", sid, "user", "1", nil, false, "")
-	assert.NoError(t, err)
-	// reply1.
+	require.NoError(t, err)
 	reply1ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "")
-	assert.NoError(t, err)
-	// msg2, msg3 queued (persisted at enqueue time).
-	msg2ID, err := service.AddQueuedMessage("/project", "claude", sid, "2", nil, "pending-2", "")
-	assert.NoError(t, err)
-	msg3ID, err := service.AddQueuedMessage("/project", "claude", sid, "3", nil, "pending-3", "")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	// Drain answers msg2 → its reply row must carry queue_id pending-2.
-	reply2ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply2", nil, false, "", "pending-2")
-	assert.NoError(t, err)
-	// Drain answers msg3 → reply carries queue_id pending-3.
-	reply3ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply3", nil, false, "", "pending-3")
-	assert.NoError(t, err)
+	// msg2, msg3 wait in the queue — they have NO chat_history rows yet.
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "2", nil, "pending-2", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "3", nil, "pending-3", "")
+	require.NoError(t, err)
 
-	// Raw id order is exactly the buggy order: 1, reply1, 2, 3, reply2, reply3.
+	// The drain loop claims msg2, then its reply, then msg3, then its reply.
+	_, msg2ID, ok, err := service.ClaimNextAndMaterialize(sid)
+	require.NoError(t, err)
+	require.True(t, ok)
+	reply2ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply2", nil, false, "")
+	require.NoError(t, err)
+
+	_, msg3ID, ok, err := service.ClaimNextAndMaterialize(sid)
+	require.NoError(t, err)
+	require.True(t, ok)
+	reply3ID, err := service.AddChatMessage("/project", "claude", sid, "assistant", "reply3", nil, false, "")
+	require.NoError(t, err)
+
+	// Id order is exactly the conversational order — no re-anchoring needed.
 	assert.Less(t, msg1ID, reply1ID)
 	assert.Less(t, reply1ID, msg2ID)
-	assert.Less(t, msg2ID, msg3ID)
-	assert.Less(t, msg3ID, reply2ID)
-	assert.Less(t, reply2ID, reply3ID)
+	assert.Less(t, msg2ID, reply2ID)
+	assert.Less(t, reply2ID, msg3ID)
+	assert.Less(t, msg3ID, reply3ID)
 
-	// Each reply records the queue_id of the question it answers.
-	var q2, q3 string
-	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", reply2ID).Scan(&q2)
-	assert.NoError(t, err)
-	assert.Equal(t, "pending-2", q2, "reply2 must record queue_id of msg2")
-	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", reply3ID).Scan(&q3)
-	assert.NoError(t, err)
-	assert.Equal(t, "pending-3", q3, "reply3 must record queue_id of msg3")
-
-	// The queued user rows keep their queue_id even after drain (queued=0).
-	var qm2, qm3 string
-	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", msg2ID).Scan(&qm2)
-	assert.NoError(t, err)
-	assert.Equal(t, "pending-2", qm2)
-	err = db.QueryRow("SELECT queue_id FROM chat_history WHERE id = ?", msg3ID).Scan(&qm3)
-	assert.NoError(t, err)
-	assert.Equal(t, "pending-3", qm3)
+	// History read back in id order gives the natural conversation.
+	msgs, err := service.GetChatHistory("/project", "claude", sid)
+	require.NoError(t, err)
+	require.Len(t, msgs, 6)
+	want := []string{"1", "reply1", "2", "reply2", "3", "reply3"}
+	for i, w := range want {
+		assert.Equal(t, w, msgs[i].Content, "message %d", i)
+	}
 }
 
 func TestPatchContextStateMerge_UsageNakedZeroKeepsStoredWindow(t *testing.T) {
@@ -6132,29 +6289,39 @@ func TestPatchContextStateMerge_UsageFirstWriteAsIs(t *testing.T) {
 	assert.Equal(t, 0.5, state.Usage.Cost)
 }
 
+// TestPinnedSessionSortOrder covers the pinned block: pinned sessions lead the
+// list (pinned DESC is the leading sort key, ahead of the manual order), and
+// pinning must not bump updated_at (which drives the relative-time label and
+// GetLatestSessionID's "most recent" pick).
 func TestPinnedSessionSortOrder(t *testing.T) {
 	db := setupDB(t)
 	projectPath := "/test/pinned-sort"
 
-	// Create sessions with different pinned states
+	// Create sessions with different pinned states. created_at is set explicitly
+	// so the newest-first tiebreak (all default to sort_order 0) is deterministic.
 	s1 := helperCreateSession(t, projectPath, "claude", "First")
 	s2 := helperCreateSession(t, projectPath, "claude", "Second")
 	s3 := helperCreateSession(t, projectPath, "claude", "Third")
+	_, err := service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", s1)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", s2)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-03 00:00:00' WHERE id = ?", s3)
+	require.NoError(t, err)
 
-	// Pin is a UI preference, not session activity: it must not bump updated_at,
-	// which drives the relative-time label and GetLatestSessionID's "most recent"
-	// pick. Backdate updated_at first so a bump would be visible.
-	_, err := service.WriteExec(
-		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s2,
+	// Pin is a UI preference, not session activity: it must not bump updated_at.
+	// Backdate s1's updated_at first so a bump would be visible when it is pinned.
+	_, err = service.WriteExec(
+		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s1,
 	)
 	require.NoError(t, err)
 
-	// Pin the second session (oldest by creation)
-	require.NoError(t, service.UpdateSessionPinned(s2, true))
+	// Pin the OLDEST session: it must jump to the top despite being the oldest.
+	require.NoError(t, service.UpdateSessionPinned(s1, true))
 
 	var updatedAt string
 	require.NoError(t, service.UnsafeDBForTest().
-		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", s2).Scan(&updatedAt))
+		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", s1).Scan(&updatedAt))
 	assert.Contains(t, updatedAt, "2020-01-01",
 		"pinning must not rewrite updated_at")
 
@@ -6162,49 +6329,209 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, sessions, 3)
 
-	// Pinned session must be first regardless of created_at
-	assert.Equal(t, s2, sessions[0].ID, "pinned session should be first")
-	assert.True(t, sessions[0].Pinned, "pinned session should have Pinned=true")
-	assert.False(t, sessions[1].Pinned, "non-pinned session should have Pinned=false")
+	// The pinned row leads; the unpinned rest keep newest-first.
+	assert.Equal(t, s1, sessions[0].ID, "pinned session must lead")
+	assert.True(t, sessions[0].Pinned)
+	assert.Equal(t, s3, sessions[1].ID, "unpinned rows stay newest-first")
+	assert.Equal(t, s2, sessions[2].ID)
 
-	// Unpin — should revert to created_at order
-	require.NoError(t, service.UpdateSessionPinned(s2, false))
+	// Unpinning drops it back into the manual order (newest-first tiebreak).
+	require.NoError(t, service.UpdateSessionPinned(s1, false))
 	sessions, err = service.GetSessions(projectPath, "")
 	require.NoError(t, err)
-	assert.False(t, sessions[0].Pinned, "after unpin, first session should not be pinned")
-	assert.False(t, sessions[1].Pinned, "after unpin, second session should not be pinned")
-	assert.False(t, sessions[2].Pinned, "after unpin, third session should not be pinned")
+	for _, s := range sessions {
+		assert.False(t, s.Pinned, "all markers must be cleared")
+	}
+	assert.Equal(t, s3, sessions[0].ID, "unpinned list is newest-first")
 
-	// Pin multiple — all pinned sessions come before unpinned ones
+	// Pinning several sessions puts them all ahead of the unpinned ones.
 	require.NoError(t, service.UpdateSessionPinned(s1, true))
 	require.NoError(t, service.UpdateSessionPinned(s3, true))
 	sessions, err = service.GetSessions(projectPath, "")
 	require.NoError(t, err)
-	// Collect pinned and unpinned IDs
-	var pinnedIDs []string
-	var unpinnedIDs []string
-	for _, s := range sessions {
-		if s.Pinned {
-			pinnedIDs = append(pinnedIDs, s.ID)
-		} else {
-			unpinnedIDs = append(unpinnedIDs, s.ID)
-		}
-	}
-	assert.ElementsMatch(t, []string{s1, s3}, pinnedIDs, "pinned sessions should be s1 and s3")
-	assert.ElementsMatch(t, []string{s2}, unpinnedIDs, "unpinned session should be s2")
-	// Verify order: all pinned before unpinned
 	require.Len(t, sessions, 3)
-	assert.True(t, sessions[0].Pinned, "first session should be pinned")
-	assert.True(t, sessions[1].Pinned, "second session should be pinned")
-	assert.False(t, sessions[2].Pinned, "third session should not be pinned")
+	assert.True(t, sessions[0].Pinned, "pinned block leads")
+	assert.True(t, sessions[1].Pinned, "pinned block leads")
+	assert.False(t, sessions[2].Pinned, "unpinned tail follows")
+	assert.ElementsMatch(t, []string{s1, s3}, []string{sessions[0].ID, sessions[1].ID})
 
 	_ = db
 }
 
+// TestReorderSessionsIgnoresPinned guards the pinned block against the drag
+// write: pinned rows are positioned by pinned DESC, not sort_order, so a
+// reorder must neither move them nor overwrite the sort_order they held before
+// being pinned.
+func TestReorderSessionsIgnoresPinned(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder-pinned"
+
+	a := helperCreateSession(t, projectPath, "claude", "A")
+	b := helperCreateSession(t, projectPath, "claude", "B")
+	pinned := helperCreateSession(t, projectPath, "claude", "Pinned")
+
+	// Give the pinned row a distinctive sort_order, then pin it.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a, pinned}))
+	require.NoError(t, service.UpdateSessionPinned(pinned, true))
+	var before int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&before))
+
+	// The client (wrongly) posts the pinned row at the bottom. It must be
+	// ignored: pinned stays on top and keeps its old sort_order.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{a, b, pinned}))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, pinned, sessions[0].ID, "a pinned row cannot be dragged out of the pinned block")
+
+	var after int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&after))
+	assert.Equal(t, before, after, "a pinned row's sort_order must not be rewritten")
+
+	// The unpinned pair still honors the posted order.
+	assert.Equal(t, []string{a, b}, []string{sessions[1].ID, sessions[2].ID})
+}
+
+// TestReorderSessionsPersistsManualOrder covers the drag-order write: ids
+// become sort_order by index, the list reads back in that order, and a
+// session from another project cannot be renumbered through it.
+func TestReorderSessionsPersistsManualOrder(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder"
+
+	a := helperCreateSession(t, projectPath, "claude", "A")
+	b := helperCreateSession(t, projectPath, "claude", "B")
+	c := helperCreateSession(t, projectPath, "claude", "C")
+	foreign := helperCreateSession(t, "/test/reorder-other", "claude", "Foreign")
+
+	// Drag C to the top, then A, then B.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{c, a, b}))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, []string{c, a, b}, []string{sessions[0].ID, sessions[1].ID, sessions[2].ID})
+	assert.Equal(t, []int{0, 1, 2}, []int{sessions[0].SortOrder, sessions[1].SortOrder, sessions[2].SortOrder})
+
+	// A foreign-project id must be ignored, not renumbered.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{foreign}))
+	var foreignOrder int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", foreign).Scan(&foreignOrder))
+	assert.Equal(t, 0, foreignOrder, "another project's session must not be renumbered")
+
+	// The reorder must not touch updated_at (it is a UI preference).
+	var updatedAt string
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", c).Scan(&updatedAt))
+	assert.NotEmpty(t, updatedAt)
+}
+
+// TestReorderSessionsKeepsUnpostedVisibleRowsBelow guards the safety net: the
+// client posts every row it displays, but a row created between its load and
+// the drop is not in ids. Such a row defaults to sort_order 0 and would
+// otherwise sort above the whole dragged block, so the reorder must push it
+// below the posted rows.
+func TestReorderSessionsKeepsUnpostedVisibleRowsBelow(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder-prefix"
+
+	// All rows start at sort_order 0 (the un-dragged default). created_at is
+	// pinned so the newest-first tiebreak is deterministic.
+	ids := make([]string, 0, 5)
+	for i, title := range []string{"A", "B", "C", "D", "E"} {
+		id := helperCreateSession(t, projectPath, "claude", title)
+		ids = append(ids, id)
+		_, err := service.WriteExec(
+			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
+			fmt.Sprintf("2024-01-%02d 00:00:00", i+1), id,
+		)
+		require.NoError(t, err)
+	}
+
+	// The user swaps the first two rows; the other three were not posted.
+	require.NoError(t, service.ReorderSessions(projectPath, []string{ids[1], ids[0]}))
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 5)
+	// The two dragged rows lead, in the posted order...
+	assert.Equal(t, []string{ids[1], ids[0]}, []string{sessions[0].ID, sessions[1].ID})
+	// ...and the unposted rows follow, none interleaved above them.
+	assert.Equal(t, []string{ids[4], ids[3], ids[2]},
+		[]string{sessions[2].ID, sessions[3].ID, sessions[4].ID})
+}
+
+// TestReorderSessionsIgnoresArchived is the regression guard for the drag
+// slowness: the reorder used to renumber EVERY non-pinned row in the project,
+// including archived ones the list never shows (measured 1993 rows rewritten
+// for a 3-row list, ~3s per drag). Archived rows must be left untouched.
+func TestReorderSessionsIgnoresArchived(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/reorder-archived"
+
+	visible := helperCreateSession(t, projectPath, "claude", "Visible")
+	archived := helperCreateSession(t, projectPath, "claude", "Archived")
+	// A distinctive sort_order proves the archived row is not rewritten.
+	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 42 WHERE id = ?", archived)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", archived)
+	require.NoError(t, err)
+
+	require.NoError(t, service.ReorderSessions(projectPath, []string{visible}))
+
+	var archivedOrder int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", archived).Scan(&archivedOrder))
+	assert.Equal(t, 42, archivedOrder, "an archived row must not be renumbered")
+
+	// The visible row is numbered from 0 (archived rows do not occupy an index).
+	var visibleOrder int
+	require.NoError(t, service.UnsafeDBForTest().
+		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", visible).Scan(&visibleOrder))
+	assert.Equal(t, 0, visibleOrder)
+}
+
+// TestNewSessionLandsOnTop guards the "new session goes to the top" rule: a
+// fresh session defaults to sort_order 0 and wins the created_at DESC tiebreak,
+// so it leads even after the user has dragged other rows.
+func TestNewSessionLandsOnTop(t *testing.T) {
+	setupDB(t)
+	projectPath := "/test/new-on-top"
+
+	a := helperCreateSession(t, projectPath, "claude", "A")
+	b := helperCreateSession(t, projectPath, "claude", "B")
+	// Put B on top, then A. Their created_at differs, so pin down the drag order
+	// explicitly by backdating to make the assertion meaningful.
+	_, err := service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", a)
+	require.NoError(t, err)
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", b)
+	require.NoError(t, err)
+	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a}))
+
+	fresh := helperCreateSession(t, projectPath, "claude", "Fresh")
+	// The fresh session defaults to sort_order 0, tied with b; give it a newer
+	// created_at so the tiebreak is deterministic rather than second-precision.
+	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
+	require.NoError(t, err)
+
+	sessions, err := service.GetSessions(projectPath, "")
+	require.NoError(t, err)
+	require.Len(t, sessions, 3)
+	assert.Equal(t, fresh, sessions[0].ID, "a new session must land at the top of the manual order")
+	assert.Equal(t, b, sessions[1].ID)
+	assert.Equal(t, a, sessions[2].ID)
+}
+
 // TestPinnedSessionPaginationNoDuplicates guards the keyset cursor against the
-// pinned column. Ordering is (pinned DESC, created_at DESC, id DESC); paging on
-// created_at alone re-returns every pinned row on each page because a pinned row
-// sorts first no matter how old it is. The cursor must carry pinned too.
+// full sort key. Ordering is (pinned DESC, sort_order ASC, created_at DESC,
+// id DESC); when rows share a (pinned, sort_order) — the state after the #492
+// backfill, and any list the user has never dragged — paging on created_at
+// alone can skip or repeat rows. The cursor must carry pinned and sort_order
+// too.
 func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	setupDB(t)
 	projectPath := "/test/pinned-pagination"
@@ -6221,22 +6548,30 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// Pin the OLDEST session. It now sorts first while its created_at is the
-	// smallest — exactly the case that broke the created_at-only cursor.
+	// Force a shared sort_order, which is what an un-dragged list looks like
+	// (and what the migration backfill produces). Ties then fall back to
+	// created_at DESC, id DESC — so the newest session (ids[5]) leads.
+	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_path = ?", projectPath)
+	require.NoError(t, err)
+
+	// Pin the OLDEST session so the page boundary falls between the pinned block
+	// and the unpinned rows — the case where a created_at-only cursor would
+	// re-return the pinned row on page 2.
 	require.NoError(t, service.UpdateSessionPinned(ids[0], true))
 
-	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil, "")
+	page1, hasMore, err := service.GetSessionsPaged(projectPath, "", 3, "", "", nil, nil, "")
 	require.NoError(t, err)
 	require.True(t, hasMore, "there are more rows after page 1")
 	require.Len(t, page1, 3)
-	// Pinned row leads regardless of created_at.
-	assert.Equal(t, ids[0], page1[0].ID)
+	assert.Equal(t, ids[0], page1[0].ID, "the pinned row leads")
 	assert.True(t, page1[0].Pinned)
 
 	last1 := page1[len(page1)-1]
+	lastOrder := last1.SortOrder
+	lastPinned := last1.Pinned
 	page2, _, err := service.GetSessionsPaged(
 		projectPath, "", 3,
-		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &last1.Pinned, "",
+		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, &lastOrder, &lastPinned, "",
 	)
 	require.NoError(t, err)
 
@@ -6248,46 +6583,40 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 		assert.Equalf(t, 1, n, "session %s must appear exactly once across pages", id)
 	}
 	assert.Len(t, seen, 6, "both pages together must cover every session")
-
-	// The legacy (nil cursorPinned) predicate is retained for older clients that
-	// do not send cursor_pinned. It compares created_at only, so the pinned row
-	// is returned again — that is the very duplication this fix addresses, and
-	// pinning it here keeps the compatibility path intentional rather than a
-	// silent regression.
-	legacyPage2, _, err := service.GetSessionsPaged(
-		projectPath, "", 3,
-		last1.CreatedAt.Format("2006-01-02 15:04:05"), last1.ID, nil, "",
-	)
-	require.NoError(t, err)
-	require.NotEmpty(t, legacyPage2)
-	assert.Equal(t, ids[0], legacyPage2[0].ID,
-		"legacy created_at-only cursor still returns the pinned row first")
 }
 
-// TestGetQuestionByQueueID covers the subscribe-time recovery lookup: given the
-// streaming row's queue_id, the service must return the question row so the
-// late subscriber can be handed a bubble to attach the reply to.
-func TestGetQuestionByQueueID(t *testing.T) {
+// TestUpdateQueuedMessageQuoteNote covers editing a quote note while the message
+// is still queued: there is no chat_history row to update, so the queue-side
+// counterpart rewrites the queued_messages files JSON instead (the drain loop
+// re-reads it when it materializes the row).
+func TestUpdateQueuedMessageQuoteNote(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Q")
 
-	const qid = "q-20260921112506-1"
-	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, queue_id) VALUES (?, ?, ?, 'user', 'hello from dingtalk', 0, ?)",
-		"/project", "claude", sid, qid,
-	)
+	const qid = "q-queued-quote"
+	files := []model.FileEntry{{Path: "src/a.go", Kind: "quote", ID: "quote-1", Text: "x := 1", Note: "old"}}
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "解释一下", files, qid, "")
 	require.NoError(t, err)
 
-	id, content, ok := service.GetQuestionByQueueID(sid, qid)
-	require.True(t, ok, "the question row must be found by its queue id")
-	assert.NotZero(t, id)
-	assert.Equal(t, "hello from dingtalk", content)
+	entries, err := service.UpdateQueuedMessageQuoteNote(sid, qid, "quote-1", "new note")
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	assert.Equal(t, "new note", entries[0].Note)
 
-	// Unknown queue id → not found (scheduled runs have no question).
-	_, _, ok = service.GetQuestionByQueueID(sid, "q-does-not-exist")
-	assert.False(t, ok)
+	// The edit must be visible through the queue API too.
+	queue, err := service.GetQueuedMessages(sid)
+	require.NoError(t, err)
+	require.Len(t, queue, 1)
+	require.Len(t, queue[0].Files, 1)
+	assert.Equal(t, "new note", queue[0].Files[0].Note)
 
-	// Empty queue id must short-circuit rather than match the first empty row.
-	_, _, ok = service.GetQuestionByQueueID(sid, "")
-	assert.False(t, ok, "an empty queue id must never resolve to a row")
+	// A message that is not queued (or a quote that does not exist) → not found.
+	_, err = service.UpdateQueuedMessageQuoteNote(sid, "q-does-not-exist", "quote-1", "x")
+	assert.ErrorIs(t, err, service.ErrChatQuoteNotFound)
+	_, err = service.UpdateQueuedMessageQuoteNote(sid, qid, "quote-does-not-exist", "x")
+	assert.ErrorIs(t, err, service.ErrChatQuoteNotFound)
+
+	// Empty arguments short-circuit rather than matching an arbitrary row.
+	_, err = service.UpdateQueuedMessageQuoteNote(sid, "", "quote-1", "x")
+	assert.ErrorIs(t, err, service.ErrChatQuoteNotFound)
 }

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { mergeDbBlocksWithLive } from '@/utils/chatBlocks'
 
 /**
  * Tests for the block-merge logic used in TaskExecDetail.activeMsgData.
@@ -16,9 +17,10 @@ interface MsgLike {
 }
 
 /**
- * Pure-function equivalent of the activeMsgData merge logic.
- * Extracted for testability — the actual implementation is in
- * TaskExecDetail.vue's computed property.
+ * The merge is exercised through the SAME function the component calls.
+ * An earlier version of this file kept a hand-copied duplicate of the logic,
+ * which meant it could not fail when the component's real implementation
+ * regressed — a duplicate that only proves it agrees with itself.
  */
 function mergeStreamingWithHistory(
   isStreaming: boolean,
@@ -28,22 +30,16 @@ function mergeStreamingWithHistory(
   if (isStreaming && streamingMsg) {
     if (streamingMsg.blocks && streamingMsg.blocks.length > 0) {
       const dbBlocks = dbMsgData?.blocks
-      if (dbBlocks && dbBlocks.length > 0) {
-        return { ...streamingMsg, blocks: [...dbBlocks, ...streamingMsg.blocks] }
-      }
-      return streamingMsg
+      if (!dbBlocks || dbBlocks.length === 0) return streamingMsg
+      return { ...streamingMsg, blocks: mergeDbBlocksWithLive(dbBlocks, streamingMsg.blocks) }
     }
-    // Streaming started but no WS content yet — keep DB history visible
     if (dbMsgData) return dbMsgData
   }
-  // After streaming stops, merge streamingMsg blocks with DB history
   if (!isStreaming && streamingMsg) {
     if (streamingMsg.blocks && streamingMsg.blocks.length > 0) {
       const dbBlocks = dbMsgData?.blocks
-      if (dbBlocks && dbBlocks.length > 0) {
-        return { ...streamingMsg, blocks: [...dbBlocks, ...streamingMsg.blocks], streaming: false }
-      }
-      return { ...streamingMsg, streaming: false }
+      if (!dbBlocks || dbBlocks.length === 0) return { ...streamingMsg, streaming: false }
+      return { ...streamingMsg, blocks: mergeDbBlocksWithLive(dbBlocks, streamingMsg.blocks), streaming: false }
     }
   }
   return dbMsgData
@@ -145,5 +141,109 @@ describe('mergeStreamingWithHistory', () => {
     expect(result!.blocks[0]).toEqual({ type: 'tool_use', name: 'ReadFile', id: 't1', done: true })
     expect(result!.blocks[1]).toEqual({ type: 'text', text: 'File contents...' })
     expect(result!.blocks[2]).toEqual({ type: 'tool_use', name: 'WriteFile', id: 't2', done: false })
+  })
+
+  it('drops a DB thinking marker whose think_id the live stream already carries', () => {
+    // Regression: the DB row is flushed every 500ms while the turn runs, so its
+    // content carries a slim {think_id} marker for the SAME block the live
+    // stream is appending to. Concatenating both emitted one think_id twice,
+    // and the renderer keys thinking blocks by think_id — a duplicate v-for key
+    // corrupts Vue's keyed diff.
+    const dbMsg: MsgLike = {
+      blocks: [
+        { type: 'text', text: 'earlier' },
+        { type: 'thinking', think_id: 'th_same', in_progress: true },
+      ],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'thinking', text: 'live deltas', think_id: 'th_same' }],
+      streaming: true,
+    }
+
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    const keys = result.blocks
+      .filter((b: any) => b.type === 'thinking' && b.think_id)
+      .map((b: any) => b.think_id)
+    expect(new Set(keys).size, 'think_id must not repeat').toBe(keys.length)
+
+    // The DB marker is dropped, the live block (with the real text) survives,
+    // and the earlier non-thinking history is kept.
+    expect(result.blocks).toHaveLength(2)
+    expect(result.blocks[0]).toEqual({ type: 'text', text: 'earlier' })
+    expect(result.blocks[1]).toMatchObject({ type: 'thinking', think_id: 'th_same', text: 'live deltas' })
+  })
+
+  it('keeps a DB thinking marker the live stream does NOT have', () => {
+    // A block that finished before the placeholder was recreated must survive —
+    // only duplicates are dropped, not history.
+    const dbMsg: MsgLike = {
+      blocks: [{ type: 'thinking', think_id: 'th_old', done: true }],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'thinking', text: 'new block', think_id: 'th_new' }],
+      streaming: true,
+    }
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    expect(result.blocks).toHaveLength(2)
+    expect(result.blocks[0]).toMatchObject({ think_id: 'th_old' })
+    expect(result.blocks[1]).toMatchObject({ think_id: 'th_new' })
+  })
+
+  it('passes plain text history through untouched', () => {
+    // No thinking ids involved: the merge must behave exactly as before.
+    const dbMsg: MsgLike = {
+      blocks: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'text', text: 'c' }],
+      streaming: true,
+    }
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    expect(result.blocks).toEqual([
+      { type: 'text', text: 'a' },
+      { type: 'text', text: 'b' },
+      { type: 'text', text: 'c' },
+    ])
+  })
+
+  it('drops a DB tool_use whose id the live stream already carries', () => {
+    // Same key-collision class as thinking: the renderer keys tool_use by its
+    // tool-call id (computeStableBlockKey), and the DB row flushed mid-turn
+    // already contains that tool. Two blocks with one key corrupt the keyed diff.
+    const dbMsg: MsgLike = {
+      blocks: [
+        { type: 'text', text: 'earlier' },
+        { type: 'tool_use', name: 'Read', id: 't1', done: true },
+      ],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'tool_use', name: 'Read', id: 't1', done: true }],
+      streaming: true,
+    }
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    const toolIds = result.blocks.filter((b: any) => b.type === 'tool_use').map((b: any) => b.id)
+    expect(new Set(toolIds).size, 'tool id must not repeat').toBe(toolIds.length)
+    expect(result.blocks).toHaveLength(2)
+    expect(result.blocks[0]).toEqual({ type: 'text', text: 'earlier' })
+  })
+
+  it('keeps a DB tool_use the live stream does NOT have', () => {
+    const dbMsg: MsgLike = {
+      blocks: [
+        { type: 'tool_use', name: 'Read', id: 't1', done: true },
+        { type: 'tool_use', name: 'Write', id: 't2', done: true },
+      ],
+      streaming: false,
+    }
+    const streamingMsg: MsgLike = {
+      blocks: [{ type: 'tool_use', name: 'Write', id: 't2', done: true }],
+      streaming: true,
+    }
+    const result = mergeStreamingWithHistory(true, streamingMsg, dbMsg)!
+    expect(result.blocks.map((b: any) => b.id)).toEqual(['t1', 't2'])
   })
 })

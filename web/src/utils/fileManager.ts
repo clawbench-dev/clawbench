@@ -28,7 +28,7 @@ export { VIEW_MODE_KEY }
 
 export function buildThumbUrl(currentDir: string, entryName: string, width = 200): string {
   const path = joinPath(currentDir, entryName)
-  return `/api/file/thumb?path=${encodeURIComponent(path)}&w=${width}`
+  return `/api/fs/thumb?target=${encodeURIComponent(path)}&w=${width}`
 }
 
 // ── File type detection helpers ──

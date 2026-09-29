@@ -19,7 +19,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
 )
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -94,10 +93,18 @@ func TestThemeLocalUpload_MultipleFiles(t *testing.T) {
 		assert.NoError(t, err, "uploaded file must exist on disk")
 	}
 
-	// The first upload becomes the selection and switches the mode to local.
-	assert.Equal(t, resp.Items[0].File, model.ConfigInstance.Appearance.Local.Selected)
-	assert.Equal(t, "local", model.ConfigInstance.Appearance.WallpaperMode)
-	assert.True(t, model.ConfigInstance.Appearance.WallpaperEnabled)
+	// The upload itself changes no device's wallpaper: which image a device
+	// displays is that device's own local choice, so the uploader adopts the new
+	// file client-side. The server only records the gallery entry.
+	for _, it := range resp.Items {
+		found := false
+		for _, recorded := range model.ConfigInstance.Appearance.Local.Items {
+			if recorded.File == it.File {
+				found = true
+			}
+		}
+		assert.True(t, found, "uploaded file %q must be recorded in the gallery", it.File)
+	}
 }
 
 func TestThemeLocalUpload_PreservesOriginalNameForDisplay(t *testing.T) {
@@ -231,93 +238,6 @@ func TestThemeLocalUpload_MethodNotAllowed(t *testing.T) {
 
 // ── Delete ───────────────────────────────────────────────────────────────────
 
-func TestThemeLocalDelete_ReselectsNeighbor(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	items := []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-		seedGalleryItem(t, "local-2-b.png"),
-		seedGalleryItem(t, "local-3-c.png"),
-	}
-	model.ConfigInstance.Appearance.Local.Items = items
-	model.ConfigInstance.Appearance.Local.Selected = "local-2-b.png"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/theme/local/item?name=local-2-b.png", http.NoBody)
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalUpload, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Len(t, model.ConfigInstance.Appearance.Local.Items, 2)
-	// The previous item is preferred so repeated deletes walk backwards.
-	assert.Equal(t, "local-1-a.png", model.ConfigInstance.Appearance.Local.Selected)
-	// The file is removed from disk.
-	assert.NoFileExists(t, filepath.Join(wallpaper.LocalDir(), "local-2-b.png"))
-}
-
-func TestThemeLocalDelete_FirstItemSelectsNext(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-		seedGalleryItem(t, "local-2-b.png"),
-	}
-	model.ConfigInstance.Appearance.Local.Selected = "local-1-a.png"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/theme/local/item?name=local-1-a.png", http.NoBody)
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalUpload, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "local-2-b.png", model.ConfigInstance.Appearance.Local.Selected)
-}
-
-func TestThemeLocalDelete_NonSelectedKeepsSelection(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-		seedGalleryItem(t, "local-2-b.png"),
-	}
-	model.ConfigInstance.Appearance.Local.Selected = "local-1-a.png"
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/theme/local/item?name=local-2-b.png", http.NoBody)
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalUpload, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "local-1-a.png", model.ConfigInstance.Appearance.Local.Selected)
-}
-
-func TestThemeLocalDelete_LastItemClearsSelected(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-	}
-	model.ConfigInstance.Appearance.Local.Selected = "local-1-a.png"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
-
-	req := httptest.NewRequest(http.MethodDelete, "/api/theme/local/item?name=local-1-a.png", http.NoBody)
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalUpload, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Empty(t, model.ConfigInstance.Appearance.Local.Items)
-	assert.Empty(t, model.ConfigInstance.Appearance.Local.Selected)
-	// With nothing selected, no wallpaper resolves.
-	_, ok := wallpaper.ResolveActive(&model.ConfigInstance)
-	assert.False(t, ok)
-}
-
 func TestThemeLocalDelete_UnknownNameIs404(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
 	defer teardown()
@@ -350,176 +270,14 @@ func TestThemeLocalDelete_MissingNameIs400(t *testing.T) {
 
 // ── Select ───────────────────────────────────────────────────────────────────
 
-func TestThemeLocalSelect_SetsModeAndEnabled(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-		seedGalleryItem(t, "local-2-b.png"),
-	}
-	// Start on Bing with the wallpaper globally disabled.
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.WallpaperEnabled = false
-
-	body := strings.NewReader(`{"name":"local-2-b.png"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/local/select", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalSelect, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "local-2-b.png", model.ConfigInstance.Appearance.Local.Selected)
-	assert.Equal(t, "local", model.ConfigInstance.Appearance.WallpaperMode)
-	assert.True(t, model.ConfigInstance.Appearance.WallpaperEnabled, "selecting an image re-enables the wallpaper")
-
-	var resp wallpaperStateResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "local-2-b.png", resp.ActiveFile)
-}
-
-func TestThemeLocalSelect_NotInGalleryIs404(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	body := strings.NewReader(`{"name":"local-999-x.png"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/local/select", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalSelect, req)
-	assert.Equal(t, http.StatusNotFound, w.Code)
-}
-
-func TestThemeLocalSelect_RejectsTraversalName(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	body := strings.NewReader(`{"name":"../../etc/passwd"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/local/select", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalSelect, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestThemeLocalSelect_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/theme/local/select", http.NoBody)
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeLocalSelect, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-// ── Mode / enable switch ─────────────────────────────────────────────────────
-
-func TestThemeWallpaper_DisableHidesActiveFile(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-	}
-	model.ConfigInstance.Appearance.Local.Selected = "local-1-a.png"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
-
-	body := strings.NewReader(`{"enabled":false}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp wallpaperStateResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.False(t, resp.Enabled)
-	assert.Empty(t, resp.ActiveFile, "disabling must hide the wallpaper")
-	// The gallery and its selection are retained so it can be re-enabled.
-	assert.Equal(t, "local-1-a.png", resp.Selected)
-	assert.Len(t, model.ConfigInstance.Appearance.Local.Items, 1)
-}
-
-func TestThemeWallpaper_ReEnableRestoresActiveFile(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{
-		seedGalleryItem(t, "local-1-a.png"),
-	}
-	model.ConfigInstance.Appearance.Local.Selected = "local-1-a.png"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = false
-
-	body := strings.NewReader(`{"enabled":true}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	var resp wallpaperStateResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp.Enabled)
-	assert.Equal(t, "local-1-a.png", resp.ActiveFile)
-}
-
-func TestThemeWallpaper_SwitchMode(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.ConfigInstance.Appearance.Bing.File = "bing-20260910.jpg"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
-
-	body := strings.NewReader(`{"mode":"bing"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, "bing", model.ConfigInstance.Appearance.WallpaperMode)
-	var resp wallpaperStateResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "bing-20260910.jpg", resp.ActiveFile)
-}
-
-func TestThemeWallpaper_RejectsInvalidMode(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	body := strings.NewReader(`{"mode":"nonsense"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", body)
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestThemeWallpaper_MethodNotAllowed(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	req := httptest.NewRequest(http.MethodGet, "/api/theme/wallpaper", http.NoBody)
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
-}
-
-// ── Bing endpoints ───────────────────────────────────────────────────────────
-
 func TestThemeBingStatus_ReportsState(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
 	defer teardown()
 
-	model.ConfigInstance.Appearance.Bing.Enabled = true
 	model.ConfigInstance.Appearance.Bing.File = "bing-20260910.jpg"
 	model.ConfigInstance.Appearance.Bing.Copyright = "© Someone"
 	model.ConfigInstance.Appearance.Bing.Title = "A Title"
 	model.ConfigInstance.Appearance.Bing.LastError = "boom"
-	model.ConfigInstance.Appearance.Bing.Mkt = "en-US"
 
 	req := httptest.NewRequest(http.MethodGet, "/api/theme/bing/status", http.NoBody)
 	req = withAuthCookie(req, model.SessionToken)
@@ -528,12 +286,10 @@ func TestThemeBingStatus_ReportsState(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	var resp bingStatusResponse
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.True(t, resp.Enabled)
 	assert.Equal(t, "bing-20260910.jpg", resp.File)
 	assert.Equal(t, "© Someone", resp.Copyright)
 	assert.Equal(t, "A Title", resp.Title)
 	assert.Equal(t, "boom", resp.LastError)
-	assert.Equal(t, "en-US", resp.Mkt)
 }
 
 func TestThemeBingStatus_MethodNotAllowed(t *testing.T) {
@@ -546,7 +302,7 @@ func TestThemeBingStatus_MethodNotAllowed(t *testing.T) {
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-func TestThemeBingSync_TriggersAndPersistsMktFromLocale(t *testing.T) {
+func TestThemeBingSync_TriggersFetch(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
 	defer teardown()
 
@@ -562,24 +318,6 @@ func TestThemeBingSync_TriggersAndPersistsMktFromLocale(t *testing.T) {
 
 	assert.Equal(t, http.StatusAccepted, w.Code)
 	assert.Equal(t, 1, triggered, "sync must ask the worker for an immediate fetch")
-	assert.Equal(t, "en-US", model.ConfigInstance.Appearance.Bing.Mkt, "the request locale must persist as the market")
-}
-
-func TestThemeBingSync_UsesLocaleCookieFallback(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	origTrigger := triggerBingSync
-	triggerBingSync = func() {}
-	defer func() { triggerBingSync = origTrigger }()
-
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/sync", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("clawbench-locale"), Value: "zh"})
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeBingSync, req)
-
-	assert.Equal(t, http.StatusAccepted, w.Code)
-	assert.Equal(t, "zh-CN", model.ConfigInstance.Appearance.Bing.Mkt)
 }
 
 func TestThemeBingSync_MethodNotAllowed(t *testing.T) {
@@ -664,7 +402,6 @@ func TestPersistBingWallpaperState_WritesConfigAndMemory(t *testing.T) {
 		LastSuccessDate: "20260910",
 		Copyright:       "© Someone",
 		Title:           "A Title",
-		Mkt:             "zh-CN",
 		LastAttemptAt:   123,
 	})
 	require.NoError(t, err)
@@ -674,7 +411,6 @@ func TestPersistBingWallpaperState_WritesConfigAndMemory(t *testing.T) {
 	assert.Equal(t, "20260910", b.LastSuccessDate)
 	assert.Equal(t, "© Someone", b.Copyright)
 	assert.Equal(t, "A Title", b.Title)
-	assert.Equal(t, "zh-CN", b.Mkt)
 	assert.Empty(t, b.LastError)
 	assert.Equal(t, int64(123), b.LastAttemptAt)
 
@@ -736,44 +472,26 @@ func TestPersistBingWallpaperState_FailureKeepsCachedFile(t *testing.T) {
 
 // ── Config DTO ───────────────────────────────────────────────────────────────
 
-// ── Config DTO ───────────────────────────────────────────────────────────────
-
-func TestBuildConfigAppearance_ExposesResolvedActiveFile(t *testing.T) {
+func TestBuildConfigAppearance_ExposesGalleryAndBingResources(t *testing.T) {
 	cfg := model.Config{}
-	cfg.Appearance.WallpaperMode = "local"
-	cfg.Appearance.WallpaperEnabled = true
-	cfg.Appearance.Local.Selected = "local-1-a.png"
 	cfg.Appearance.Local.Items = []model.LocalWallpaperItem{
 		{File: "local-1-a.png", Name: "a.png", UploadedAt: 1, Size: 2},
 	}
-
-	out := buildConfigAppearance(cfg)
-	assert.Equal(t, "local-1-a.png", out.ActiveFile)
-	assert.Equal(t, "local", out.WallpaperMode)
-	assert.True(t, out.WallpaperEnabled)
-	require.Len(t, out.Local.Items, 1)
-	assert.Equal(t, "a.png", out.Local.Items[0].Name)
-}
-
-func TestBuildConfigAppearance_DisabledHasEmptyActiveFile(t *testing.T) {
-	cfg := model.Config{}
-	cfg.Appearance.WallpaperMode = "bing"
-	cfg.Appearance.WallpaperEnabled = false
 	cfg.Appearance.Bing.File = "bing-20260910.jpg"
 
 	out := buildConfigAppearance(cfg)
-	assert.Empty(t, out.ActiveFile)
-	assert.Equal(t, "bing-20260910.jpg", out.Bing.File, "the cached file is still reported")
+	require.Len(t, out.Local.Items, 1)
+	assert.Equal(t, "a.png", out.Local.Items[0].Name)
+	assert.Equal(t, "bing-20260910.jpg", out.Bing.File,
+		"the cached Bing image is a shared resource and stays in the response")
 }
 
 func TestBuildConfigAppearance_ExposesBingStatus(t *testing.T) {
 	cfg := model.Config{}
-	cfg.Appearance.Bing.Enabled = true
 	cfg.Appearance.Bing.Copyright = "© Someone"
 	cfg.Appearance.Bing.LastError = "boom"
 
 	out := buildConfigAppearance(cfg)
-	assert.True(t, out.Bing.Enabled)
 	assert.Equal(t, "© Someone", out.Bing.Copyright)
 	assert.Equal(t, "boom", out.Bing.LastError)
 }
@@ -788,13 +506,13 @@ func TestBuildConfigAppearance_EmptyItemsIsEmptySlice(t *testing.T) {
 // ── Absolute paths for thumbnail generation ──────────────────────────────────
 
 // TestBuildConfigAppearance_ExposesAbsPathsForThumbnails covers the field the
-// settings panel hands to GET /api/file/thumb, which takes a path rather than a
+// settings panel hands to GET /api/fs/thumb, which takes a path rather than a
 // bare name and returns a small JPEG instead of the full-size image.
 
 // ── Absolute paths for thumbnail generation ──────────────────────────────────
 
 // TestBuildConfigAppearance_ExposesAbsPathsForThumbnails covers the field the
-// settings panel hands to GET /api/file/thumb, which takes a path rather than a
+// settings panel hands to GET /api/fs/thumb, which takes a path rather than a
 // bare name and returns a small JPEG instead of the full-size image.
 func TestBuildConfigAppearance_ExposesAbsPathsForThumbnails(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
@@ -806,8 +524,6 @@ func TestBuildConfigAppearance_ExposesAbsPathsForThumbnails(t *testing.T) {
 	require.NoError(t, wallpaper.WriteAtomic(wallpaper.BingDir(), "bing-20260910.jpg", makeJPEG(8, 8)))
 
 	cfg := model.Config{}
-	cfg.Appearance.WallpaperMode = "local"
-	cfg.Appearance.WallpaperEnabled = true
 	cfg.Appearance.Local.Items = []model.LocalWallpaperItem{
 		{File: "local-1-a.png", Name: "a.png"},
 	}
@@ -865,240 +581,6 @@ func TestAbsWallpaperPath_EmptyName(t *testing.T) {
 
 // ── Startup appearance persistence (B1) + Bing-mode self-heal ────────────────
 
-func TestPersistStartupAppearance_FreshInstallWritesDefaultsToDisk(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.FirstRun = true
-	t.Cleanup(func() { model.FirstRun = false })
-
-	// The defaults ApplyDefaults derived for a fresh install: the Bing source is
-	// pre-selected with its fetch switch on, but the wallpaper itself is off.
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.WallpaperEnabled = false
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-	model.ConfigInstance.Appearance.Bing.Mkt = "zh-CN"
-
-	require.NoError(t, PersistStartupAppearance())
-
-	// The file must record them, otherwise a restart before any other write
-	// would classify the install as pre-existing and drop the factory wallpaper.
-	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	s := string(data)
-	assert.Contains(t, s, "wallpaper_mode: bing")
-	assert.Contains(t, s, "wallpaper_enabled: false")
-	assert.Contains(t, s, "enabled: true")
-	assert.Contains(t, s, "mkt: zh-CN")
-}
-
-func TestPersistStartupAppearance_DoesNotWritePlaintextPassword(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.FirstRun = true
-	t.Cleanup(func() { model.FirstRun = false })
-
-	// A fresh install has an auto-generated plaintext password in memory; it
-	// already lives in the 0600 auto-password file and must not be copied into
-	// the 0644 config.yaml.
-	model.ConfigInstance.Password = "super-secret-auto-password"
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
-	require.NoError(t, PersistStartupAppearance())
-
-	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	assert.NotContains(t, string(data), "super-secret-auto-password",
-		"the auto-generated password must not be persisted in plaintext")
-	// The in-memory password is restored for the rest of startup.
-	assert.Equal(t, "super-secret-auto-password", model.ConfigInstance.Password)
-}
-
-func TestPersistStartupAppearance_FreshInstallSurvivesReload(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.FirstRun = true
-	t.Cleanup(func() { model.FirstRun = false })
-
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.WallpaperEnabled = false
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-	model.ConfigInstance.Appearance.Bing.Mkt = "zh-CN"
-	require.NoError(t, PersistStartupAppearance())
-
-	// Simulate the restart: reload config.yaml into a zero-value Config with a
-	// non-nil presence map (the file now exists) and apply defaults again.
-	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-
-	reloaded := model.Config{}
-	require.NoError(t, yaml.Unmarshal(data, &reloaded))
-	model.ApplyDefaults(&reloaded, map[string]bool{"appearance": true})
-
-	assert.Equal(t, "bing", reloaded.Appearance.WallpaperMode,
-		"the factory wallpaper source must survive a restart")
-	assert.False(t, reloaded.Appearance.WallpaperEnabled,
-		"the wallpaper must stay off across a restart")
-	assert.True(t, reloaded.Appearance.Bing.Enabled)
-}
-
-// TestPersistStartupAppearance_HealsBingModeWithFetchDisabled covers the
-// unrepresentable state configs could reach before the mode endpoint kept the
-// two in step: mode says Bing while the fetch switch is off, so the worker
-// silently refused to fetch and the sync button did nothing. The settings UI
-// cannot reach this state, so startup must repair it.
-
-// TestPersistStartupAppearance_HealsBingModeWithFetchDisabled covers the
-// unrepresentable state configs could reach before the mode endpoint kept the
-// two in step: mode says Bing while the fetch switch is off, so the worker
-// silently refused to fetch and the sync button did nothing. The settings UI
-// cannot reach this state, so startup must repair it.
-func TestPersistStartupAppearance_HealsBingModeWithFetchDisabled(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.FirstRun = false
-	model.HealedBingFetch = true
-	t.Cleanup(func() { model.HealedBingFetch = false })
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
-	model.ConfigInstance.Appearance.Bing.Enabled = true // already healed in memory
-
-	require.NoError(t, PersistStartupAppearance())
-
-	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-
-	reloaded := model.Config{}
-	require.NoError(t, yaml.Unmarshal(data, &reloaded))
-	assert.True(t, reloaded.Appearance.Bing.Enabled,
-		"the healed switch must be on disk, not just in memory")
-}
-
-func TestPersistStartupAppearance_OrdinaryInstallWritesNothing(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.FirstRun = false
-	// A normal existing install that never touched a wallpaper setting.
-	model.ConfigInstance.Appearance.WallpaperMode = ""
-	model.ConfigInstance.Appearance.Bing.Enabled = false
-
-	require.NoError(t, PersistStartupAppearance())
-
-	assert.NoFileExists(t, filepath.Join(model.DataDir, "config", "config.yaml"),
-		"an ordinary install must not get a config.yaml created for it")
-}
-
-func TestPersistStartupAppearance_LocalModeDoesNotEnableBing(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	model.FirstRun = false
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.Local.Selected = "local-1-a.png"
-	model.ConfigInstance.Appearance.Bing.Enabled = false
-
-	require.NoError(t, PersistStartupAppearance())
-
-	assert.False(t, model.ConfigInstance.Appearance.Bing.Enabled,
-		"a local-mode install must not have Bing fetching enabled")
-}
-
-// ── Mode switch keeps the Bing fetch switch in step ──────────────────────────
-
-// ── Mode switch keeps the Bing fetch switch in step ──────────────────────────
-
-func TestThemeWallpaperMode_SelectingBingEnablesFetch(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	origTrigger := triggerBingSync
-	triggered := 0
-	triggerBingSync = func() { triggered++ }
-	defer func() { triggerBingSync = origTrigger }()
-
-	// Start from local with the Bing switch off — the state a user is in before
-	// choosing Bing, and the one that used to leave the sync button inert.
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.Bing.Enabled = false
-
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", strings.NewReader(`{"mode":"bing"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.True(t, model.ConfigInstance.Appearance.Bing.Enabled,
-		"selecting the Bing source must enable its fetch switch")
-	assert.Equal(t, 1, triggered, "selecting Bing should kick off a fetch immediately")
-
-	// And it must be on disk so a restart keeps fetching.
-	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	reloaded := model.Config{}
-	require.NoError(t, yaml.Unmarshal(data, &reloaded))
-	assert.True(t, reloaded.Appearance.Bing.Enabled)
-}
-
-func TestThemeWallpaperMode_SelectingLocalDisablesBingFetch(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	origTrigger := triggerBingSync
-	triggered := 0
-	triggerBingSync = func() { triggered++ }
-	defer func() { triggerBingSync = origTrigger }()
-
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", strings.NewReader(`{"mode":"local"}`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, model.ConfigInstance.Appearance.Bing.Enabled,
-		"switching away from Bing should stop its fetching")
-	assert.Zero(t, triggered, "switching to local must not trigger a Bing fetch")
-}
-
-func TestThemeWallpaperMode_EnabledToggleLeavesModeCouplingAlone(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	origTrigger := triggerBingSync
-	triggerBingSync = func() {}
-	defer func() { triggerBingSync = origTrigger }()
-
-	model.ConfigInstance.Appearance.WallpaperMode = "bing"
-	model.ConfigInstance.Appearance.Bing.Enabled = true
-
-	// Toggling the global switch must not be mistaken for a mode change.
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/wallpaper", strings.NewReader(`{"enabled":false}`))
-	req.Header.Set("Content-Type", "application/json")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeWallpaperMode, req)
-
-	require.Equal(t, http.StatusOK, w.Code)
-	assert.False(t, model.ConfigInstance.Appearance.WallpaperEnabled)
-	assert.True(t, model.ConfigInstance.Appearance.Bing.Enabled,
-		"the mode/Bing coupling must only change on an actual mode switch")
-}
-
-// ── Delete rollback integrity (I2) ───────────────────────────────────────────
-
-// ── Delete rollback integrity (I2) ───────────────────────────────────────────
-
 func TestThemeLocalDelete_PersistFailureRestoresGalleryExactly(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
 	defer teardown()
@@ -1107,9 +589,6 @@ func TestThemeLocalDelete_PersistFailureRestoresGalleryExactly(t *testing.T) {
 	b := seedGalleryItem(t, "local-2-b.png")
 	c := seedGalleryItem(t, "local-3-c.png")
 	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{a, b, c}
-	model.ConfigInstance.Appearance.Local.Selected = "local-2-b.png"
-	model.ConfigInstance.Appearance.WallpaperMode = "local"
-	model.ConfigInstance.Appearance.WallpaperEnabled = true
 
 	// Force the config write to fail: make the config dir uncreatable.
 	model.DataDir = filepath.Join(t.TempDir(), "nested")
@@ -1128,7 +607,6 @@ func TestThemeLocalDelete_PersistFailureRestoresGalleryExactly(t *testing.T) {
 	assert.Equal(t, "local-1-a.png", got[0].File)
 	assert.Equal(t, "local-2-b.png", got[1].File)
 	assert.Equal(t, "local-3-c.png", got[2].File)
-	assert.Equal(t, "local-2-b.png", model.ConfigInstance.Appearance.Local.Selected)
 }
 
 // ── Upload capacity under the lock (S5) ──────────────────────────────────────
@@ -1208,34 +686,6 @@ func TestReconcileLocalGallery_LeavesNonGalleryFilesAlone(t *testing.T) {
 
 // ── Bing mkt persistence (S6) ────────────────────────────────────────────────
 
-func TestThemeBingSync_PersistsMktEvenWhenDisabled(t *testing.T) {
-	_, teardown := setupThemeTestEnv(t)
-	defer teardown()
-
-	origTrigger := triggerBingSync
-	triggerBingSync = func() {}
-	defer func() { triggerBingSync = origTrigger }()
-
-	// Disabled: the worker returns early and would never persist the market.
-	model.ConfigInstance.Appearance.Bing.Enabled = false
-
-	req := httptest.NewRequest(http.MethodPost, "/api/theme/bing/sync", http.NoBody)
-	req.Header.Set("X-Locale", "en")
-	req = withAuthCookie(req, model.SessionToken)
-	w := callHandler(ServeThemeBingSync, req)
-	require.Equal(t, http.StatusAccepted, w.Code)
-
-	cfgPath := filepath.Join(model.DataDir, "config", "config.yaml")
-	data, err := os.ReadFile(cfgPath)
-	require.NoError(t, err)
-	assert.Contains(t, string(data), "mkt: en-US",
-		"the market must reach disk, not just memory")
-}
-
-// ── Sanity: uploaded bytes are a decodable image ─────────────────────────────
-
-// ── Sanity: uploaded bytes are a decodable image ─────────────────────────────
-
 func TestThemeLocalUpload_StoredImageIsDecodable(t *testing.T) {
 	_, teardown := setupThemeTestEnv(t)
 	defer teardown()
@@ -1260,4 +710,60 @@ func TestThemeLocalUpload_StoredImageIsDecodable(t *testing.T) {
 	assert.Equal(t, 24, img.Bounds().Dx())
 	assert.Equal(t, 16, img.Bounds().Dy())
 	_ = png.Encode
+}
+
+// ── Delete success response shape ────────────────────────────────────────────
+
+// TestThemeLocalDelete_SuccessReturnsRemainingGallery covers the success path of
+// the delete handler and the two helpers it alone reaches
+// (`galleryItemsToViews` / `currentWallpaperState`). The response is the
+// authoritative gallery snapshot the settings panel re-renders from, so it must
+// reflect the deletion immediately rather than the pre-delete list.
+func TestThemeLocalDelete_SuccessReturnsRemainingGallery(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	a := seedGalleryItem(t, "local-1-a.png")
+	b := seedGalleryItem(t, "local-2-b.png")
+	model.ConfigInstance.Appearance.Local.Items = []model.LocalWallpaperItem{a, b}
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/theme/local/item?name=local-1-a.png", http.NoBody)
+	req = withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeThemeLocalUpload, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var body galleryDeleteResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	require.Len(t, body.Items, 1, "the deleted item must be gone from the response")
+	assert.Equal(t, "local-2-b.png", body.Items[0].File)
+	// Every field the settings panel reads must survive the view conversion.
+	assert.Equal(t, "local-2-b.png", body.Items[0].Name)
+	assert.Equal(t, int64(1), body.Items[0].UploadedAt)
+	assert.Equal(t, int64(10), body.Items[0].Size)
+}
+
+// TestCurrentWallpaperState_EmptyGalleryIsEmptySlice pins the JSON shape: the
+// client iterates `items` directly, so a nil slice would serialize as null and
+// break that iteration.
+func TestCurrentWallpaperState_EmptyGalleryIsEmptySlice(t *testing.T) {
+	_, teardown := setupThemeTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance.Appearance.Local.Items = nil
+	got := currentWallpaperState()
+	assert.NotNil(t, got.Items, "items must be an empty slice, not nil")
+
+	raw, err := json.Marshal(got)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"items":[]}`, string(raw))
+}
+
+// TestGalleryItemsToViews_PreservesFields guards the field-by-field copy: a
+// mis-mapped field would silently drop a column in the settings panel.
+func TestGalleryItemsToViews_PreservesFields(t *testing.T) {
+	out := galleryItemsToViews([]model.LocalWallpaperItem{
+		{File: "local-1-a.png", Name: "a.png", UploadedAt: 111, Size: 222},
+	})
+	require.Len(t, out, 1)
+	assert.Equal(t, galleryItemView{File: "local-1-a.png", Name: "a.png", UploadedAt: 111, Size: 222}, out[0])
 }

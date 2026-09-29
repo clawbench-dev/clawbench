@@ -25,19 +25,29 @@
           ></textarea>
           <div class="dlg-actions">
             <button
+              v-if="dlg.state.value.type === 'prompt' && dlg.state.value.generateText"
+              class="fbtn dlg-generate"
+              :disabled="generating"
+              @click="handleGenerate"
+            >
+              <Loader2 v-if="generating" :size="14" class="dlg-generate-spin" />
+              <Sparkles v-else :size="14" />
+              {{ dlg.state.value.generateText }}
+            </button>
+            <button
               v-if="dlg.state.value.extraText && dlg.state.value.type !== 'alert'"
-              class="dlg-btn dlg-extra"
+              class="fbtn fbtn-danger dlg-extra"
               :class="{ 'dlg-extra-primed': extraPrimed }"
               @click="handleExtraClick"
             >{{ extraPrimed ? (dlg.state.value.extraPrimedText || t('common.confirm')) : dlg.state.value.extraText }}</button>
             <button
               v-if="dlg.state.value.type !== 'alert'"
-              class="dlg-btn dlg-cancel"
+              class="fbtn dlg-cancel"
               @click="handleCancel"
             >{{ dlg.state.value.cancelText || t('common.cancel') }}</button>
             <button
-              class="dlg-btn dlg-ok"
-              :class="{ 'dlg-danger': dlg.state.value.dangerous }"
+              class="fbtn dlg-ok"
+              :class="dlg.state.value.dangerous ? 'fbtn-danger' : 'fbtn-primary'"
               @click="handleConfirm"
             >{{ dlg.state.value.confirmText || (dlg.state.value.type === 'alert' ? t('common.ok') : t('common.confirm')) }}</button>
           </div>
@@ -50,10 +60,12 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Info, MessageSquareText } from 'lucide-vue-next'
+import { Info, MessageSquareText, Loader2, Sparkles } from 'lucide-vue-next'
 import { useDialog } from '@/composables/useDialog'
+import '@/assets/modal-footer-btn.css'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteRecovery'
+import { appLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 const dlg = useDialog()
@@ -61,6 +73,7 @@ const inputVal = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const overlayRef = ref<HTMLElement | null>(null)
 const extraPrimed = ref(false)
+const generating = ref(false)
 let unregisterBack: (() => void) | null = null
 
 // Android WebView: deleting the whole selection (which `select()` below creates)
@@ -80,6 +93,7 @@ watch(() => dlg.state.value.visible, async (v) => {
   }
   inputVal.value = dlg.state.value.value ?? ''
   extraPrimed.value = false
+  generating.value = false
   await nextTick()
   if (dlg.state.value.type === 'prompt') {
     inputRef.value?.focus()
@@ -128,6 +142,25 @@ function handleExtraClick() {
     dlg.resolve(null)
   } else {
     extraPrimed.value = true
+  }
+}
+
+// Fill the input with a generated value. The caller owns error feedback (it
+// has the toast); a null result simply leaves the field untouched. The dialog
+// stays open and the value is NOT auto-saved — the user still confirms.
+async function handleGenerate() {
+  const gen = dlg.state.value.onGenerate
+  if (!gen || generating.value) return
+  generating.value = true
+  try {
+    const value = await gen()
+    // The dialog may have been closed while the request was in flight; writing
+    // the field then would leak into whatever dialog opens next.
+    if (value && dlg.state.value.visible) inputVal.value = value
+  } catch (err) {
+    appLog.e('DialogOverlay', 'generate failed:', err)
+  } finally {
+    generating.value = false
   }
 }
 
@@ -220,71 +253,78 @@ onBeforeUnmount(() => {
 
 .dlg-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-4);
   justify-content: flex-end;
 }
 
-.dlg-btn {
-  padding: var(--space-3) var(--space-7);
-  border-radius: var(--radius-sm);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  border: none;
-  cursor: pointer;
-  transition: opacity var(--duration-base);
-  -webkit-tap-highlight-color: transparent;
-}
+/* Button visuals come from the shared .fbtn pill language
+   (assets/modal-footer-btn.css): geometry, neutral/danger/primary variants and
+   the dark-theme foreground lifts all live there. What stays here is only what
+   is genuinely per-button for this dialog — the accent-outline treatment of the
+   auxiliary "generate" action and the primed state of the two-step destructive
+   "extra" action.
 
-.dlg-btn:active { opacity: var(--opacity-soft); }
+   Each rule is scoped under .dlg-actions so it outranks the single-class .fbtn
+   (and .fbtn:hover / .fbtn-danger:hover) regardless of how the bundler orders
+   the imported stylesheet against this block. */
 
-.dlg-cancel {
-  background: var(--bg-tertiary, #f0f0f0);
-  color: var(--text-secondary, #555);
-}
-
-.dlg-ok {
-  background: var(--accent-color, #0066cc);
-  color: #fff;
-}
-
-.dlg-danger {
-  background: #d32f2f;
-  color: #fff;
-}
-
-.dlg-extra {
+/* Auto-generate sits opposite the confirm/cancel pair: margin-right:auto
+   pushes it to the left of the right-aligned actions row without a modifier
+   class (and without affecting dialogs that have no generate button). */
+.dlg-actions .dlg-generate {
+  display: inline-flex;
+  align-items: center;
+  margin-right: auto;
   background: transparent;
-  color: #d32f2f;
-  border: 1px solid #d32f2f;
-  font-size: var(--font-size-sm);
-  padding:5px var(--space-5);
-  transition: background var(--duration-base), color var(--duration-base), border-color var(--duration-base);
+  border-color: color-mix(in srgb, var(--accent-color) 55%, transparent);
+  color: var(--accent-color);
 }
 
-.dlg-extra-primed {
-  background: #d32f2f;
+.dlg-actions .dlg-generate:hover {
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+  border-color: var(--accent-color);
+  color: var(--accent-color);
+}
+
+.dlg-actions .dlg-generate:disabled {
+  opacity: var(--opacity-muted);
+  cursor: not-allowed;
+}
+
+.dlg-generate-spin {
+  animation: refresh-spin 0.8s linear infinite;
+}
+
+/* Second click of the two-step destructive action: go solid so the primed
+   state is unmistakable. Derived from the theme's own red token rather than a
+   literal, so it stays in tune across all 36 themes (same recipe as the
+   .fbtn-danger border, deepened). */
+.dlg-actions .dlg-extra-primed,
+.dlg-actions .dlg-extra-primed:hover {
+  background: var(--color-red);
+  border-color: color-mix(in srgb, var(--color-red) 72%, black);
   color: #fff;
-  border-color: #d32f2f;
 }
 
-[data-theme-base="dark"] .dlg-extra {
-  border-color: #ef4444;
-  color: #ef4444;
+.dlg-actions .dlg-extra-primed:hover {
+  background: color-mix(in srgb, var(--color-red) 85%, black);
+  border-color: color-mix(in srgb, var(--color-red) 55%, black);
 }
 
-[data-theme-base="dark"] .dlg-extra-primed {
-  background: #ef4444;
+/* The primed state is a SOLID red fill, so its label must stay white even on
+   dark themes — where [data-theme-base="dark"] .fbtn-danger (and its :hover)
+   would otherwise lift the colour to the 300-level pastel meant for the
+   soft-tint rest state. Both states are pinned here: without the :hover member
+   the dark rule ties on specificity with the shared :hover rule and the winner
+   would depend on how the bundler orders the imported sheet. */
+[data-theme-base="dark"] .dlg-actions .dlg-extra-primed,
+[data-theme-base="dark"] .dlg-actions .dlg-extra-primed:hover {
   color: #fff;
-  border-color: #ef4444;
 }
 
 [data-theme-base="dark"] .dlg-box {
   box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5), 0 16px 48px rgba(0, 0, 0, 0.65);
-}
-
-[data-theme-base="dark"] .dlg-cancel {
-  background: #333;
-  color: #ccc;
 }
 
 .dlg-enter-active, .dlg-leave-active {

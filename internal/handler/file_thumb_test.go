@@ -68,7 +68,7 @@ func TestFileThumb(t *testing.T) {
 		// Create a 100x80 PNG
 		createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -90,7 +90,7 @@ func TestFileThumb(t *testing.T) {
 		createTestPNG(t, env.ProjectDir, "img.png", 100, 100)
 
 		// Width too small → should clamp to 50
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=img.png&w=10", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=img.png&w=10", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -98,7 +98,7 @@ func TestFileThumb(t *testing.T) {
 		assert.Equal(t, "image/jpeg", w.Header().Get("Content-Type"))
 
 		// Width too large → should clamp to 800
-		req2 := newRequest(t, http.MethodGet, "/api/file/thumb?path=img.png&w=9999", nil)
+		req2 := newRequest(t, http.MethodGet, "/api/fs/thumb?target=img.png&w=9999", nil)
 		withProjectCookie(req2, env.ProjectDir)
 
 		w2 := callHandler(FileThumb, req2)
@@ -111,7 +111,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestPNG(t, env.ProjectDir, "img.png", 300, 200)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=img.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=img.png", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -125,7 +125,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "readme.md", "# Hello")
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=readme.md", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=readme.md", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -138,7 +138,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -147,7 +147,7 @@ func TestFileThumb(t *testing.T) {
 		require.NotEmpty(t, etag)
 
 		// Revalidate with the same ETag → 304 (no re-encode).
-		req2 := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		req2 := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 		withProjectCookie(req2, env.ProjectDir)
 		req2.Header.Set("If-None-Match", etag)
 
@@ -164,7 +164,7 @@ func TestFileThumb(t *testing.T) {
 		createTestPNG(t, env.ProjectDir, rel, 100, 80)
 
 		getThumb := func() (int, string) {
-			req := newRequest(t, http.MethodGet, "/api/file/thumb?path="+rel+"&w=50", nil)
+			req := newRequest(t, http.MethodGet, "/api/fs/thumb?target="+rel+"&w=50", nil)
 			withProjectCookie(req, env.ProjectDir)
 			w := callHandler(FileThumb, req)
 			return w.Code, w.Header().Get("ETag")
@@ -189,7 +189,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -198,7 +198,7 @@ func TestFileThumb(t *testing.T) {
 		require.NotEmpty(t, lastMod)
 
 		// Revalidate with a Last-Modified equal to (or after) the file's mtime → 304.
-		req2 := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		req2 := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 		withProjectCookie(req2, env.ProjectDir)
 		req2.Header.Set("If-Modified-Since", lastMod)
 
@@ -213,7 +213,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestJPG(t, env.ProjectDir, "photo.jpg", 200, 150)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.jpg", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.jpg", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -228,7 +228,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestFile(t, env.ProjectDir, "logo.svg", `<svg xmlns="http://www.w3.org/2000/svg"><circle r="10"/></svg>`)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=logo.svg", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=logo.svg", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -239,7 +239,7 @@ func TestFileThumb(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=missing.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=missing.png", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -250,7 +250,7 @@ func TestFileThumb(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=img.png", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=img.png", nil)
 
 		w := callHandler(FileThumb, req)
 		assert.Equal(t, http.StatusForbidden, w.Code)
@@ -260,7 +260,7 @@ func TestFileThumb(t *testing.T) {
 		env, teardown := setupTestEnv(t)
 		defer teardown()
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=../../../etc/passwd", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=../../../etc/passwd", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -273,7 +273,7 @@ func TestFileThumb(t *testing.T) {
 
 		_ = os.MkdirAll(filepath.Join(env.ProjectDir, "subdir"), 0o755)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=subdir", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=subdir", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -288,7 +288,7 @@ func TestFileThumb(t *testing.T) {
 		// All pixels are the same solid color (R=255, G=100, B=50)
 		createTestPNG(t, env.ProjectDir, "tall.png", 100, 400)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=tall.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=tall.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -311,7 +311,7 @@ func TestFileThumb(t *testing.T) {
 		// Create a wide 400x100 image (4:1 width:height ratio)
 		createTestPNG(t, env.ProjectDir, "wide.png", 400, 100)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=wide.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=wide.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -332,7 +332,7 @@ func TestFileThumb(t *testing.T) {
 
 		createTestPNG(t, env.ProjectDir, "square.png", 200, 200)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=square.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=square.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -355,7 +355,7 @@ func TestFileThumb(t *testing.T) {
 
 		// Request thumbnail using absolute path (as stored in DB by chat handler)
 		absPath := filepath.Join(env.ProjectDir, ".clawbench/uploads/photo.png")
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path="+absPath+"&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target="+absPath+"&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -374,7 +374,7 @@ func TestFileThumb(t *testing.T) {
 		absOutside, err := filepath.Abs(outsidePath)
 		require.NoError(t, err)
 
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path="+url.QueryEscape(absOutside), nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target="+url.QueryEscape(absOutside), nil)
 		withProjectCookie(req, env.ProjectDir)
 
 		w := callHandler(FileThumb, req)
@@ -397,7 +397,7 @@ func TestFileThumb_CacheHitSkipsDecode(t *testing.T) {
 	createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
 
 	request := func() []byte {
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 		w := callHandler(FileThumb, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -428,7 +428,7 @@ func TestFileThumb_CacheInvalidatedWhenSourceChanges(t *testing.T) {
 	createTestPNG(t, env.ProjectDir, rel, 100, 80)
 
 	request := func() (int, []byte, string) {
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path="+rel+"&w=50", nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target="+rel+"&w=50", nil)
 		withProjectCookie(req, env.ProjectDir)
 		w := callHandler(FileThumb, req)
 		return w.Code, w.Body.Bytes(), w.Header().Get("ETag")
@@ -471,7 +471,7 @@ func TestFileThumb_CacheKeyedByWidth(t *testing.T) {
 	createTestPNG(t, env.ProjectDir, "photo.png", 400, 300)
 
 	request := func(width string) image.Image {
-		req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w="+width, nil)
+		req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w="+width, nil)
 		withProjectCookie(req, env.ProjectDir)
 		w := callHandler(FileThumb, req)
 		require.Equal(t, http.StatusOK, w.Code)
@@ -512,7 +512,7 @@ func TestFileThumb_ConcurrentDecodesAreBounded(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/file/thumb?path=img%d.png&w=50", i), nil)
+			req := newRequest(t, http.MethodGet, fmt.Sprintf("/api/fs/thumb?target=img%d.png&w=50", i), nil)
 			withProjectCookie(req, env.ProjectDir)
 			w := callHandler(FileThumb, req)
 			assert.Equal(t, http.StatusOK, w.Code)
@@ -539,7 +539,7 @@ func TestFileThumb_SemaphoreReleasedOnDecodeFailure(t *testing.T) {
 	// A .png that is not a valid image → decode fails.
 	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "broken.png"), []byte("not an image"), 0o644))
 
-	req := newRequest(t, http.MethodGet, "/api/file/thumb?path=broken.png&w=50", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=broken.png&w=50", nil)
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(FileThumb, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
@@ -558,13 +558,13 @@ func TestFileThumb_UnchangedSource_StillReturns304(t *testing.T) {
 
 	createTestPNG(t, env.ProjectDir, "photo.png", 100, 80)
 
-	req := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+	req := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 	withProjectCookie(req, env.ProjectDir)
 	w := callHandler(FileThumb, req)
 	require.Equal(t, http.StatusOK, w.Code)
 	etag := w.Header().Get("ETag")
 
-	req2 := newRequest(t, http.MethodGet, "/api/file/thumb?path=photo.png&w=50", nil)
+	req2 := newRequest(t, http.MethodGet, "/api/fs/thumb?target=photo.png&w=50", nil)
 	withProjectCookie(req2, env.ProjectDir)
 	req2.Header.Set("If-None-Match", etag)
 

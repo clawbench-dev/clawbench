@@ -4,7 +4,6 @@ import {
   toolCallSummary,
   hasImagesInContent,
   formatDetailTime,
-  formatMessageTime,
   truncate,
 } from '@/utils/chatBlocks.ts'
 import {
@@ -110,6 +109,69 @@ describe('parseAssistantContent', () => {
       blocks: [{ type: 'tool_use', name: 'Read', id: '1', input: {}, done: true }],
     })
     expect(parseAssistantContent(content).blocks[0].done).toBe(true)
+  })
+
+  // ── liveStreaming: a row of a turn that is STILL RUNNING ──
+  //
+  // Regression: a running sub-agent's Agent pill showed its green check while
+  // the sub-agent was still producing output. The DB row of a streaming turn
+  // carries the real, current tool status (the backend flips `done` only when
+  // the tool actually completes), so it must NOT be defaulted to "finished".
+  describe('liveStreaming', () => {
+    it('preserves done=false on a live row (running sub-agent keeps its spinner)', () => {
+      const content = JSON.stringify({
+        blocks: [
+          { type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false, status: '' },
+          { type: 'tool_use', name: 'Read', id: 'call_child', input: {}, done: false, parent_tool_call_id: 'call_agent' },
+        ],
+      })
+      const result = parseAssistantContent(content, { liveStreaming: true })
+      expect(result.blocks[0].done).toBe(false)
+      expect(result.blocks[1].done).toBe(false)
+    })
+
+    it('still preserves done=true on a live row (finished tool stays finished)', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Read', id: '1', input: {}, done: true, status: 'success' }],
+      })
+      expect(parseAssistantContent(content, { liveStreaming: true }).blocks[0].done).toBe(true)
+    })
+
+    it('does NOT default a live row missing done to true', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Agent', id: 'call_agent', input: {} }],
+      })
+      expect(parseAssistantContent(content, { liveStreaming: true }).blocks[0].done).toBe(undefined)
+    })
+
+    it('keeps in_progress on a live row (the block is still streaming)', () => {
+      // The render layer reads this flag to decide "lazy-load the prefix and
+      // keep appending" rather than "finished chip".
+      const content = JSON.stringify({
+        blocks: [{ type: 'thinking', think_id: 'th_1', in_progress: true }],
+      })
+      const result = parseAssistantContent(content, { liveStreaming: true })
+      expect(result.blocks[0].in_progress).toBe(true)
+    })
+
+    it('clears in_progress on a non-live row (the turn is over)', () => {
+      // A snapshot read mid-finalize can still carry the flag, and the flag only
+      // means anything while deltas are still arriving. Left set, it would keep
+      // a finished block in its "still writing" render state forever.
+      const content = JSON.stringify({
+        blocks: [{ type: 'thinking', think_id: 'th_1', in_progress: true }],
+      })
+      const result = parseAssistantContent(content)
+      expect(result.blocks[0].in_progress).toBeUndefined()
+    })
+
+    it('is opt-in: the default (historical) path still forces done=true', () => {
+      const content = JSON.stringify({
+        blocks: [{ type: 'tool_use', name: 'Agent', id: 'call_agent', input: {}, done: false }],
+      })
+      expect(parseAssistantContent(content).blocks[0].done).toBe(true)
+      expect(parseAssistantContent(content, { liveStreaming: false }).blocks[0].done).toBe(true)
+    })
   })
 
   it('migrates input.output to output field (Codex backward compat)', () => {
@@ -230,7 +292,18 @@ describe('parseAssistantContent', () => {
 
   // ── Thinking block _key assignment ──
 
-  it('assigns _key to thinking blocks parsed from DB', () => {
+  it('does not invent a _key for DB thinking blocks', () => {
+    // DB content carries the block's real identity (think_id) — that is what
+    // keys it. A synthetic _key was only ever a stand-in for live blocks whose
+    // payload had no id, and inventing one here shadowed nothing useful.
+    //
+    // The renderer's index fallback (`thinking-<absIdx>`) is stable for these:
+    // a legacy block without a think_id is only ever relocated by a merge that
+    // ALSO has a live thinking block — and in that case liveHasThinking drops
+    // every DB thinking block, so the legacy one is removed rather than moved
+    // (verified). Measured on real data: of 310,391 persisted thinking blocks,
+    // the 245 without a think_id all carry their full text and done=true, so
+    // they need no id to render or lazy-load.
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'first thought' },
@@ -239,11 +312,28 @@ describe('parseAssistantContent', () => {
       ],
     })
     const result = parseAssistantContent(content)
-    expect(result.blocks[0]._key).toBe('thinking-0')
-    expect(result.blocks[2]._key).toBe('thinking-1')
+    expect(result.blocks[0]._key).toBeUndefined()
+    expect(result.blocks[2]._key).toBeUndefined()
+    // The blocks themselves survive intact.
+    expect(result.blocks[0].text).toBe('first thought')
+    expect(result.blocks[2].text).toBe('second thought')
   })
 
-  it('does not overwrite existing _key on thinking blocks', () => {
+  it('preserves a think_id that the persisted content carries', () => {
+    // The real identity must round-trip: it is the v-for key and the key into
+    // chat_thinking for the lazy-loaded prefix.
+    const content = JSON.stringify({
+      blocks: [
+        { type: 'thinking', think_id: 'th_abc', done: true },
+        { type: 'thinking', think_id: 'th_def', done: true },
+      ],
+    })
+    const result = parseAssistantContent(content)
+    expect(result.blocks[0].think_id).toBe('th_abc')
+    expect(result.blocks[1].think_id).toBe('th_def')
+  })
+
+  it('does not overwrite a _key already present on a DB block', () => {
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'thought', _key: 'thinking-5' },
@@ -265,7 +355,9 @@ describe('parseAssistantContent', () => {
     expect(result.blocks[1]._key).toBeUndefined()
   })
 
-  it('assigns sequential _key across multiple thinking blocks with interleaved tools', () => {
+  it('keeps interleaved thinking blocks distinct without inventing keys', () => {
+    // Each block stays its own object at its own index, which is what the
+    // renderer's index fallback keys on. Interleaved tools must not merge them.
     const content = JSON.stringify({
       blocks: [
         { type: 'thinking', text: 'think1' },
@@ -276,9 +368,13 @@ describe('parseAssistantContent', () => {
       ],
     })
     const result = parseAssistantContent(content)
-    expect(result.blocks[0]._key).toBe('thinking-0')
-    expect(result.blocks[2]._key).toBe('thinking-1')
-    expect(result.blocks[4]._key).toBe('thinking-2')
+    expect(result.blocks).toHaveLength(5)
+    expect(result.blocks[0].text).toBe('think1')
+    expect(result.blocks[2].text).toBe('think2')
+    expect(result.blocks[4].text).toBe('think3')
+    expect(result.blocks[0]._key).toBeUndefined()
+    expect(result.blocks[2]._key).toBeUndefined()
+    expect(result.blocks[4]._key).toBeUndefined()
   })
 })
 
@@ -684,77 +780,6 @@ describe('truncate', () => {
   })
 })
 
-// ── formatMessageTime ──
-
-describe('formatMessageTime', () => {
-  it('shows "just now" for timestamps less than 1 minute ago', () => {
-    const now = new Date().toISOString()
-    const result = formatMessageTime(now)
-    expect(result).toContain('time.justNow')
-  })
-
-  it('shows "minutes ago" for timestamps within the last hour', () => {
-    const fiveMinAgo = new Date(Date.now() - 5 * 60000).toISOString()
-    const result = formatMessageTime(fiveMinAgo)
-    expect(result).toContain('time.minutesAgo')
-    expect(result).toContain('count=5')
-  })
-
-  it('shows "hours ago" for timestamps within the last day', () => {
-    const twoHoursAgo = new Date(Date.now() - 2 * 3600000).toISOString()
-    const result = formatMessageTime(twoHoursAgo)
-    expect(result).toContain('time.hoursAgo')
-    expect(result).toContain('count=2')
-  })
-
-  it('shows "days ago" for timestamps within the last week', () => {
-    const threeDaysAgo = new Date(Date.now() - 3 * 86400000).toISOString()
-    const result = formatMessageTime(threeDaysAgo)
-    expect(result).toContain('time.daysAgo')
-    expect(result).toContain('count=3')
-  })
-
-  it('shows date for timestamps older than 7 days', () => {
-    const tenDaysAgo = new Date(Date.now() - 10 * 86400000).toISOString()
-    const result = formatMessageTime(tenDaysAgo)
-    // Falls back to locale date format, should NOT contain "time." i18n keys
-    expect(result).not.toContain('time.justNow')
-    expect(result).not.toContain('time.minutesAgo')
-    expect(result).not.toContain('time.hoursAgo')
-    expect(result).not.toContain('time.daysAgo')
-    // Should contain a date-like string (digits and delimiters)
-    expect(result.length).toBeGreaterThan(0)
-  })
-
-  it('shows 1 minute ago correctly', () => {
-    const oneMinAgo = new Date(Date.now() - 60000).toISOString()
-    const result = formatMessageTime(oneMinAgo)
-    expect(result).toContain('time.minutesAgo')
-    expect(result).toContain('count=1')
-  })
-
-  it('shows 59 minutes ago correctly', () => {
-    const fiftyNineMinAgo = new Date(Date.now() - 59 * 60000).toISOString()
-    const result = formatMessageTime(fiftyNineMinAgo)
-    expect(result).toContain('time.minutesAgo')
-    expect(result).toContain('count=59')
-  })
-
-  it('shows 23 hours ago correctly', () => {
-    const twentyThreeHoursAgo = new Date(Date.now() - 23 * 3600000).toISOString()
-    const result = formatMessageTime(twentyThreeHoursAgo)
-    expect(result).toContain('time.hoursAgo')
-    expect(result).toContain('count=23')
-  })
-
-  it('shows 6 days ago correctly', () => {
-    const sixDaysAgo = new Date(Date.now() - 6 * 86400000).toISOString()
-    const result = formatMessageTime(sixDaysAgo)
-    expect(result).toContain('time.daysAgo')
-    expect(result).toContain('count=6')
-  })
-})
-
 // ── formatDetailTime (enhanced) ──
 
 describe('formatDetailTime', () => {
@@ -805,7 +830,8 @@ describe('parseAssistantContent slim thinking', () => {
     expect(blocks[1].type).toBe('thinking')
     expect(blocks[1].think_id).toBe('th_01')
     expect(blocks[1].text).toBeUndefined()
-    expect(blocks[1]._key).toBe('thinking-0')
+    // No synthetic _key: the block is keyed by its think_id.
+    expect(blocks[1]._key).toBeUndefined()
   })
 
   it('keeps live thinking blocks with text', () => {

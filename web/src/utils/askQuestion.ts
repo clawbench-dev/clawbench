@@ -460,13 +460,53 @@ function markdownOption(s: string): AskOption | null {
   return desc === '' ? { label } : { label, description: desc }
 }
 
-/** Split an option on its first separator, preferring the em dash. */
+/**
+ * Split an option on its first separator, preferring the em dash.
+ *
+ * A separator inside a `**bold**` run does not split: the bold run is part of
+ * the label. Models routinely bold the whole "label — short gloss" phrase and
+ * then add the explanation after it —
+ *
+ *   - **A — 回合结束时失效负缓存（推荐，最小改动）** — 在 ContentBlocks.vue …
+ *
+ * — so splitting on the inner dash truncated the label to `**A` and left the
+ * unmatched `**` visible in the card (production message 52484). Splitting on
+ * the dash after the bold run keeps the phrase intact and still separates the
+ * description.
+ */
 function splitMarkdownOption(s: string): { label: string; desc: string } {
+  const bold = boldSpans(s)
   for (const sep of ['\u2014', '\u2013', ' - ']) {
-    const i = s.indexOf(sep)
+    const i = indexOutsideSpans(s, sep, bold)
     if (i >= 0) return { label: s.slice(0, i), desc: s.slice(i + sep.length) }
   }
   return { label: s, desc: '' }
+}
+
+/** [start, end) ranges of every `**bold**` run in s. */
+function boldSpans(s: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = []
+  RE_MD_BOLD.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = RE_MD_BOLD.exec(s)) !== null) {
+    spans.push([m.index, m.index + m[0].length])
+    if (m[0].length === 0) RE_MD_BOLD.lastIndex++
+  }
+  return spans
+}
+
+/**
+ * First index of sep that is not inside one of the spans, or -1 when every
+ * occurrence lies inside one.
+ */
+function indexOutsideSpans(s: string, sep: string, spans: Array<[number, number]>): number {
+  let from = 0
+  for (;;) {
+    const i = s.indexOf(sep, from)
+    if (i < 0) return -1
+    if (!spans.some(([start, end]) => i >= start && i < end)) return i
+    from = i + 1
+  }
 }
 
 /**

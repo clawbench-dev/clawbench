@@ -104,6 +104,64 @@ describe('useSettingsNavigation', () => {
         })
     })
 
+    // ── truncateNav (breadcrumb jumps) ──
+
+    describe('truncateNav', () => {
+        it('truncates to the given depth and updates currentCategory', () => {
+            const { pushNav, truncateNav, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('tts')
+            pushNav('tts:tts_engine')
+            truncateNav(1)
+
+            expect(navStack.value).toEqual(['tts'])
+            expect(currentCategory.value).toBe('tts')
+        })
+
+        it('depth 0 returns to the index', () => {
+            const { pushNav, truncateNav, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('tts')
+            pushNav('tts:tts_engine')
+            truncateNav(0)
+
+            expect(navStack.value).toEqual([])
+            expect(currentCategory.value).toBeNull()
+        })
+
+        it('clamps a depth beyond the stack length (never pushes deeper)', () => {
+            const { pushNav, truncateNav, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('general')
+            truncateNav(99)
+
+            expect(navStack.value).toEqual(['general'])
+            expect(currentCategory.value).toBe('general')
+        })
+
+        it('clamps a negative depth to 0', () => {
+            const { pushNav, truncateNav, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('general')
+            truncateNav(-5)
+
+            expect(navStack.value).toEqual([])
+            expect(currentCategory.value).toBeNull()
+        })
+
+        it('is a no-op when already at the requested depth', () => {
+            const { pushNav, truncateNav, navStack } = useSettingsNavigation()
+
+            pushNav('general')
+            const before = navStack.value
+            truncateNav(1)
+
+            expect(navStack.value).toEqual(['general'])
+            // Identity preserved — the array was not replaced.
+            expect(navStack.value).toBe(before)
+        })
+    })
+
     // ── resetState ──
 
     describe('resetState', () => {

@@ -168,6 +168,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Copy external_session_id from the source session so that --resume works correctly.
 	// The continued session inherits the CLI backend's session context, allowing the
 	// same resume flow as a normal session (no special-casing needed).
+	// sort_order stays at its default 0 so the new session lands at the top of the
+	// manual order (#492) via the created_at DESC tiebreak.
 	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
 		newSessionID, sessProjectPath, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
@@ -175,9 +177,13 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if err != nil {
 		return "", false, fmt.Errorf("failed to create continued session: %w", err)
 	}
-	// The "⏰ [time] task" title is deliberately chosen — lock it so the first
-	// user message cannot replace it (matters when no messages were copied).
-	markSessionTitleRenamed(newSessionID)
+	// The "⏰ [time] task" title is a PLACEHOLDER, not a deliberate choice: it
+	// identifies which run this session came from, but says nothing about what
+	// the user wants to do with it. Like a fork, this session copies the source
+	// history (so its own first message is never message #1), and it should be
+	// named by the first message after that point — see maybeAutoTitleSessionTx.
+	// A manual rename still locks it by writing 'custom'.
+	markSessionTitlePlaceholder(newSessionID)
 	// Apply the agent's auto-approve default like CreateSession does, so the
 	// continued interactive session matches a freshly created one.
 	applyAgentAutoApproveDefault(newSessionID, agentID)
@@ -351,6 +357,8 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	// 4. Title is provided by handler (localized prefix + source title)
 
 	// 5. Create new session (no external_session_id inheritance)
+	// sort_order stays at its default 0 so the fork lands at the top of the
+	// manual order (#492) via the created_at DESC tiebreak.
 	newSessionID := generateSessionID()
 	_, err = WriteExec(
 		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
@@ -359,9 +367,13 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	if err != nil {
 		return "", fmt.Errorf("failed to create forked session: %w", err)
 	}
-	// The fork title ("🔀 <source title>") is deliberately chosen — lock it so a
-	// first user message on a fork with no copied history cannot replace it.
-	markSessionTitleRenamed(newSessionID)
+	// The fork title ("🔀 <source title>") is a PLACEHOLDER, not a deliberate
+	// choice: the source's title says nothing about what this branch is for, and
+	// a fork copies the source history so its own first message is never message
+	// #1. Leaving the source as placeholder lets the first message after the fork
+	// point name the branch (see maybeAutoTitleSessionTx); a manual rename still
+	// locks it by writing 'custom'.
+	markSessionTitlePlaceholder(newSessionID)
 	// Inherit the agent's auto-approve default like CreateSession does, so a
 	// forked session matches a freshly created one for the same agent.
 	applyAgentAutoApproveDefault(newSessionID, agentID)
@@ -577,6 +589,13 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 type RewindResult struct {
 	// DeletedCount is the number of chat_history rows removed.
 	DeletedCount int64
+	// QueuedCount is the number of queued (not yet run) messages discarded.
+	// Rewind discards work that has not run yet, and the queue is exactly that,
+	// so it is cleared alongside the history. It is reported separately because
+	// the handler's no-op guard must treat "a queued message was discarded" as a
+	// real rewind — otherwise it would report NothingToRewind while having just
+	// deleted the user's message.
+	QueuedCount int64
 	// RestoredText is the plain text of the first user message removed by the
 	// truncation (the user message immediately following the anchor assistant
 	// reply). Empty when no user message was removed.
@@ -662,7 +681,7 @@ func CountMessagesAfterAnchor(sessionID string, anchorID int64) (int, error) {
 // The caller (handler) is responsible for resetting the AI-side session state
 // (clearing external_session_id and closing the ACP connection) — this function
 // only rewrites the local DB history.
-func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult, error) {
+func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult, error) { //nolint:gocyclo // rewind validation + queue drain + transactional delete are inherently branchy
 	var res RewindResult
 
 	// 1. Validate the anchor message: must exist, be an assistant message and finalized.
@@ -670,19 +689,43 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		return res, err
 	}
 
-	// 2. No-op when nothing follows the anchor.
+	// 2. No-op when nothing follows the anchor — in chat_history OR in the queue.
+	//    The queue is checked too: a queued message is work that has not run yet,
+	//    so rewinding past it must discard it and return its text for re-editing.
+	//    Without this check a session whose only trailing work is queued would
+	//    silently keep the queue.
 	trailingCount, err := CountMessagesAfterAnchor(sessionID, anchorID)
 	if err != nil {
 		return res, err
 	}
 	if trailingCount == 0 {
+		queued, qErr := GetQueuedMessages(sessionID)
+		if qErr != nil {
+			return res, qErr
+		}
+		if len(queued) == 0 {
+			return res, nil
+		}
+		res.RestoredText = ExtractPlainText(queued[0].Text)
+		if err := ClearQueuedMessages(sessionID); err != nil {
+			return res, err
+		}
+		// Reported so the handler knows a real rewind happened (it must not
+		// answer NothingToRewind after discarding a message the user queued).
+		res.QueuedCount = int64(len(queued))
 		return res, nil
 	}
 
 	// 3. Capture the prefill text of the first removed user message BEFORE the
-	//    rows are deleted. queued/streaming user rows are included deliberately —
-	//    they are user-typed inputs the rewind discards, so they belong in the
-	//    input box for re-editing.
+	//    rows are deleted. A streaming (in-flight) user row is included
+	//    deliberately — it is a user-typed input the rewind discards, so it
+	//    belongs in the input box for re-editing.
+	//
+	//    Queued messages are NOT in chat_history any more. They are cleared
+	//    wholesale below (rewind discards everything after the anchor, and the
+	//    queue is by definition work that has not run yet). When nothing was
+	//    removed from chat_history but the queue is non-empty, the first queued
+	//    message is the input the user most likely wants back.
 	var removedContent sql.NullString
 	err = dbRead.QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND id > ? AND role = 'user' ORDER BY id ASC LIMIT 1",
@@ -692,6 +735,8 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		res.RestoredText = ExtractPlainText(removedContent.String)
 	} else if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return res, err
+	} else if queued, qErr := GetQueuedMessages(sessionID); qErr == nil && len(queued) > 0 {
+		res.RestoredText = ExtractPlainText(queued[0].Text)
 	}
 
 	// 4. Transactional delete — mirrors HardDeleteSession (chat.go): child rows
@@ -753,6 +798,18 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 		return res, err
 	}
 	res.DeletedCount, _ = result.RowsAffected()
+
+	// Discard the queue in the SAME transaction as the history delete: a queued
+	// message is work that has not run yet, so rewinding past it must drop it,
+	// and doing it here means a failure rolls both back together (never a
+	// truncated history with an orphaned queue, or vice versa). Counted so the
+	// handler can tell "this was a real rewind" from "nothing followed the
+	// anchor" — a queue-only rewind must not answer NothingToRewind.
+	qres, err := tx.Exec("DELETE FROM queued_messages WHERE session_id = ?", sessionID)
+	if err != nil {
+		return res, err
+	}
+	res.QueuedCount, _ = qres.RowsAffected()
 
 	if err := tx.Commit(); err != nil {
 		return res, err

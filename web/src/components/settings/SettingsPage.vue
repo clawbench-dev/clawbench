@@ -1,14 +1,14 @@
 <template>
   <div class="settings-page">
     <header class="settings-page__header">
-      <template v-if="navStack.length > 0">
-        <button class="settings-page__back" @click="handleBack">
-          <ChevronLeft :size="22" />
-        </button>
-        <span class="settings-page__title">{{ currentCategoryTitle }}</span>
-      </template>
+      <!-- One header shape for both levels, matching the task panel's header:
+           the root level shows the section glyph + title, a drilled-down level
+           swaps in the breadcrumb. There is no back button — the root crumb
+           ("设置") is the way back, exactly as the task breadcrumb's root is,
+           and it runs through the same unsaved-changes guard. -->
+      <SettingsBreadcrumb v-if="navStack.length > 0" :crumbs="breadcrumbs" @navigate="handleCrumbNavigate" />
       <template v-else>
-        <Settings :size="20" class="settings-page__header-icon" />
+        <Settings :size="14" class="settings-page__header-icon" />
         <span class="settings-page__title">{{ t('nav.settings') }}</span>
         <span v-if="serverVersion" class="settings-page__version">{{ serverVersion }}</span>
       </template>
@@ -40,10 +40,11 @@
 
 <script setup lang="ts">
 import { computed, watch, onMounted } from 'vue'
-import { RefreshCw, ChevronLeft, Settings } from 'lucide-vue-next'
+import { RefreshCw, Settings } from 'lucide-vue-next'
 import SettingsIndex from './SettingsIndex.vue'
 import SettingsCategory from './SettingsCategory.vue'
 import SettingsRestartDialog from './SettingsRestartDialog.vue'
+import SettingsBreadcrumb, { type BreadcrumbCrumb } from './SettingsBreadcrumb.vue'
 import { useSettingsNavigation, consumePendingSettingsCategory, pendingSettingsCategory } from '@/composables/useSettingsNavigation'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import '@/assets/modal-footer-btn.css'
@@ -58,7 +59,7 @@ const props = defineProps<{
 
 const {
   t, loadConfig,
-  navStack, currentCategory, pushNav, popNav,
+  navStack, currentCategory, pushNav, popNav, truncateNav,
   restartDialogVisible, changedColdFields, needsRestart,
   restarting,
   handleRestartNeeded, handleRestart,
@@ -70,20 +71,37 @@ const dialog = useDialog()
 
 // ── Back navigation with unsaved changes guard ──
 
+/**
+ * Confirm discarding unsaved panel edits. Returns false when a guard is
+ * violated and the user chooses to keep editing.
+ *
+ * Shared by every way of leaving the current level (back button, breadcrumb
+ * crumb, external deep-link) so none of them can slip past the guard.
+ */
+async function confirmDiscardIfDirty(): Promise<boolean> {
+  if (checkAllGuards()) return true
+  return dialog.confirm(
+    t('settings.panel.unsavedMessage'),
+    {
+      title: t('settings.panel.unsavedTitle'),
+      confirmText: t('settings.panel.discard'),
+      cancelText: t('settings.panel.continueEditing'),
+    },
+  )
+}
+
 async function handleBack() {
-  // Check all registered panel guards (module-level registry)
-  if (!checkAllGuards()) {
-    const confirmed = await dialog.confirm(
-      t('settings.panel.unsavedMessage'),
-      {
-        title: t('settings.panel.unsavedTitle'),
-        confirmText: t('settings.panel.discard'),
-        cancelText: t('settings.panel.continueEditing'),
-      },
-    )
-    if (!confirmed) return
-  }
+  if (!(await confirmDiscardIfDirty())) return
   popNav()
+}
+
+/**
+ * Breadcrumb crumb click — jump straight to an ancestor level (multi-level
+ * pop). Depth 0 is the settings index, which is not a nav-stack entry.
+ */
+async function handleCrumbNavigate(depth: number) {
+  if (!(await confirmDiscardIfDirty())) return
+  truncateNav(depth)
 }
 
 // Register back handler for settings navigation
@@ -94,9 +112,13 @@ useFeatureBackHandler(
   PRIORITY_PAGE,
 )
 
-const currentCategoryTitle = computed(() => {
-  const cat = currentCategory.value
-  if (!cat) return ''
+/**
+ * Human-readable label for one nav-stack entry.
+ *
+ * Three id shapes are possible: a plain category (`appearance`), an agent
+ * detail route (`agents:<id>`), and a data-driven sub-page (`tts:tts_engine`).
+ */
+function labelForCategory(cat: string): string {
   // For agent detail pages (agents:{id}), show the agent name as title
   if (cat.startsWith('agents:')) {
     const { getAgent } = useAgents()
@@ -110,6 +132,25 @@ const currentCategoryTitle = computed(() => {
     return titleKey ? t(titleKey) : cat
   }
   return t(`settings.categories.${cat}`)
+}
+
+/**
+ * Breadcrumb trail for the current position: the settings root followed by one
+ * crumb per nav-stack entry. Each crumb's `depth` is the stack length to keep
+ * when it is clicked, so the root crumb (depth 0) returns to the index.
+ *
+ * The root is always present (like TaskBreadcrumb/GitBreadcrumb/DirBreadcrumb),
+ * even at a first-level category where the remaining trail equals the page
+ * title — a breadcrumb whose root appears and disappears with depth reads as
+ * inconsistent, and the root crumb is the only affordance that says "this whole
+ * page lives under 设置".
+ */
+const breadcrumbs = computed<BreadcrumbCrumb[]>(() => {
+  const trail: BreadcrumbCrumb[] = [{ depth: 0, label: t('nav.settings') }]
+  navStack.value.forEach((cat, i) => {
+    trail.push({ depth: i + 1, label: labelForCategory(cat) })
+  })
+  return trail
 })
 
 const serverVersion = computed(() => serverConfig.value?.version ?? '')
@@ -125,17 +166,7 @@ async function openPendingDeepLink() {
   if (!categoryId) return
   if (navStack.value[navStack.value.length - 1] === categoryId) return
   // Leaving a category with unsaved panel edits must confirm first (same as back).
-  if (!checkAllGuards()) {
-    const confirmed = await dialog.confirm(
-      t('settings.panel.unsavedMessage'),
-      {
-        title: t('settings.panel.unsavedTitle'),
-        confirmText: t('settings.panel.discard'),
-        cancelText: t('settings.panel.continueEditing'),
-      },
-    )
-    if (!confirmed) return
-  }
+  if (!(await confirmDiscardIfDirty())) return
   pushNav(categoryId)
 }
 
@@ -169,6 +200,8 @@ watch(() => props.active, (val) => {
   overflow: hidden;
 }
 
+/* Same bar geometry as the task panel header (.list-header): --header-height,
+   the same padding and gap, bg-primary with a bottom border. */
 .settings-page__header {
   display: flex;
   align-items: center;
@@ -180,33 +213,11 @@ watch(() => props.active, (val) => {
   gap: var(--space-3);
 }
 
-.settings-page__back {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
-  cursor: pointer;
-  flex-shrink: 0;
-  -webkit-tap-highlight-color: transparent;
-}
-
-@media (hover: hover) {
-  .settings-page__back:hover {
-    background: var(--bg-tertiary);
-  }
-}
-
-.settings-page__back:active {
-  background: var(--bg-tertiary);
-}
-
+/* Matches the task header's title (.drilldown-title / task breadcrumb): the
+   panel title is body-sized, not a display heading — the bar is only 36px tall
+   and a 16px title read as a second, competing page title. */
 .settings-page__title {
-  font-size: var(--font-size-2xl);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
   white-space: nowrap;

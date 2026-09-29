@@ -120,7 +120,7 @@ const props = defineProps<{
   dirName: string
   /**
    * Project-relative path of the directory being listed. Needed to build
-   * thumbnail URLs (`/api/file/thumb?path=…`); when absent, entries fall back to
+   * thumbnail URLs (`/api/fs/thumb?target=…`); when absent, entries fall back to
    * type icons instead of thumbnails.
    */
   dirPath?: string
@@ -152,7 +152,7 @@ const { t } = useI18n()
 const shown = computed(() => props.entries.filter(e => props.visible(e)))
 
 // ── Thumbnails ──
-// Same mechanism as the file manager list: ask /api/file/thumb for decodable
+// Same mechanism as the file manager list: ask /api/fs/thumb for decodable
 // raster images and remember failures so a 404 isn't re-requested on every
 // re-render. Keyed by the FULL path (not the bare name) — two directories can
 // both hold `logo.png`, and a name-only key would suppress a valid thumbnail

@@ -43,7 +43,16 @@
     </div>
 
     <template v-else-if="detail.run.value">
-      <div class="forge-detail-body">
+      <!-- `data-quote-*` makes a selection in the run's metadata quotable with
+           its provenance: the run's web link (to reopen it) and its commit SHA
+           (so the AI can inspect the code the run built, via `git show`). -->
+      <div
+        class="forge-detail-body"
+        :data-quote-source="quoteSourceLabel"
+        :data-quote-url="detail.run.value.url"
+        :data-quote-commit="detail.run.value.sha || ''"
+        data-quote-language="pipeline"
+      >
         <!-- Title + metadata. A run has no markdown body or comments, so the
              metadata IS the content; the jobs table below is the detail. -->
         <div class="forge-detail-title-row">
@@ -138,7 +147,7 @@
                 <span class="forge-state-dot" :class="`pipeline-${job.status}`"></span>
                 {{ t(`forge.pipeline.status.${job.status}`) }}
               </span>
-              <span class="col-duration">{{ formatDuration(job.durationSeconds) }}</span>
+              <span class="col-duration">{{ formatJobDuration(job.durationSeconds) }}</span>
             </div>
           </div>
         </div>
@@ -156,6 +165,7 @@ import {
 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useForgePipelineDetail } from '@/composables/useForge'
+import { formatDuration } from '@/utils/format'
 import type { ForgePipelineRun, ForgePipelinePullRequest } from '@/utils/forgeApi'
 
 const props = defineProps<{
@@ -191,7 +201,21 @@ const errorTitle = computed(() => {
 /** Duration is only shown when the platform reported it. */
 const durationText = computed(() => {
   const seconds = detail.run.value?.durationSeconds
-  return seconds ? formatDuration(seconds) : ''
+  return seconds ? formatJobDuration(seconds) : ''
+})
+
+/**
+ * Quote-source label for a selection in the run view.
+ *
+ * Names the workflow and the run number, since a workflow has many runs and
+ * "which run" is the user's question. The run's link and commit SHA travel as
+ * separate attributes — they are what make the quote openable and inspectable.
+ */
+const quoteSourceLabel = computed(() => {
+  const run = detail.run.value
+  if (!run) return ''
+  const parts = [run.name, `#${run.number}`].filter(Boolean)
+  return parts.join(' ')
 })
 
 /**
@@ -209,13 +233,13 @@ function onQuote() {
   if (run) emit('quote', run)
 }
 
-/** Human-readable duration; empty for a missing or zero value. */
-function formatDuration(seconds: number | undefined): string {
+/** Human-readable duration for a job; '—' for a missing or zero value, which is
+ *  what the platform reports when it has no timing data. Delegates the actual
+ *  formatting to the shared formatter so pipeline durations read the same as
+ *  every other duration in the app (the API reports seconds, it takes ms). */
+function formatJobDuration(seconds: number | undefined): string {
   if (!seconds || seconds <= 0) return '—'
-  const m = Math.floor(seconds / 60)
-  const s = Math.round(seconds % 60)
-  if (m === 0) return `${s}s`
-  return `${m}m ${s}s`
+  return formatDuration(seconds * 1000)
 }
 
 function formatTime(iso: string): string {

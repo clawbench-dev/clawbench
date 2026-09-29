@@ -19,7 +19,9 @@ export function buildMessageSnapshot(rawMsgs: Record<string, unknown>[]): string
  * Adds blocks, metadata, cancelled, fromDB fields as needed.
  *
  * @param rawMsgs - Raw message objects from the API
- * @param onParseAssistantContent - Parser function for assistant message content
+ * @param onParseAssistantContent - Parser function for assistant message
+ *   content. Receives `{ liveStreaming }` so it can preserve the `done` flag on
+ *   a row that belongs to a turn which is STILL RUNNING (see chatBlocks.ts).
  * @param existingMessages - Optional: current messages array, used to preserve
  *   user-set showingSummary state across loadHistory refreshes. Without this,
  *   every loadHistory call would reset showingSummary to true for messages
@@ -30,7 +32,7 @@ export function buildMessageSnapshot(rawMsgs: Record<string, unknown>[]): string
  */
 export function parseMessages(
   rawMsgs: Record<string, unknown>[],
-  onParseAssistantContent: (content: string) => Record<string, unknown>,
+  onParseAssistantContent: (content: string, opts?: { liveStreaming?: boolean }) => Record<string, unknown>,
   existingMessages?: Record<string, unknown>[],
   sessionRunning?: boolean
 ): Record<string, unknown>[] {
@@ -41,7 +43,13 @@ export function parseMessages(
 
   return rawMsgs.map(msg => {
     if (msg.role === 'assistant') {
-      const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content as string)
+      // A streaming row on a still-running session is LIVE: its `done` flags
+      // describe tools that may be mid-flight right now, so they must survive
+      // parsing. (When the session is idle the same flag is stale — handled
+      // below — and the row is historical, where a missing `done` is
+      // meaningless and defaults to settled.)
+      const liveStreaming = !!msg.streaming && sessionRunning !== false
+      const { blocks, metadata, cancelled } = onParseAssistantContent(msg.content as string, { liveStreaming })
       msg.blocks = blocks
       if (metadata) msg.metadata = metadata
       if (cancelled) msg.cancelled = cancelled

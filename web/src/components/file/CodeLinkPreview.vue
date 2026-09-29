@@ -30,75 +30,38 @@
     </template>
 
     <div class="code-preview-sheet-body">
-      <!-- Second-row toolbar: file meta info plus the code view tools
-           (Search, Wrap, Copy Code, Reveal in Tree). Only the copy-path
-           shortcut lives in the drawer header. -->
-      <div class="code-preview-sheet-row2">
-        <div class="code-preview-sheet-meta-info">
-          <span v-if="contextMeta">{{ contextMeta }}</span>
-        </div>
-
-        <div class="code-preview-sheet-tools">
-          <!-- Copy Path -->
-          <button
-            class="code-preview-btn icon-only copy-path-btn"
-            :class="{ 'is-copied': isPathCopied }"
-            :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            @click="handleCopyPath"
-          >
-            <Check v-if="isPathCopied" :size="13" />
-            <Link v-else :size="13" />
-          </button>
-          <!-- Rendered / Source toggle (Markdown only, no line range) -->
-          <button
-            v-if="showTextTools && showRenderToggle"
-            class="code-preview-btn icon-only"
-            :class="{ 'is-active': isRenderedView }"
-            :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-            :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-            :aria-pressed="isRenderedView"
-            @click="toggleRenderView"
-          >
-            <Eye :size="13" />
-          </button>
-          <!-- Word Wrap Toggle (code-slice view only) -->
-          <button
-            v-if="showTextTools && !isRenderedView"
-            class="code-preview-btn icon-only"
-            :class="{ 'is-active': isWordWrap }"
-            :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-            :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-            @click="toggleWordWrap"
-          >
-            <TextWrap :size="13" />
-          </button>
-          <!-- Line Numbers Toggle (code-slice view only) -->
-          <button
-            v-if="showTextTools && !isRenderedView"
-            class="code-preview-btn icon-only"
-            :class="{ 'is-active': showLineNumbers }"
-            :title="t('file.header.lineNumbers')"
-            :aria-label="t('file.header.lineNumbers')"
-            :aria-pressed="showLineNumbers"
-            @click="toggleLineNumbers"
-          >
-            <Hash :size="13" />
-          </button>
-          <!-- Copy Code (code-slice view only) -->
-          <button
-            v-if="showTextTools && !isRenderedView"
-            class="code-preview-btn icon-only"
-            :class="{ 'is-copied': copied }"
-            :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-            :aria-label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-            @click="handleCopy"
-          >
-            <Check v-if="copied" :size="13" />
-            <Copy v-else :size="13" />
-          </button>
-        </div>
-      </div>
+      <!-- The drawer reuses the SAME tool row as the floating card and the
+           file manager's docked pane (CodePreviewToolbar). It previously had a
+           sheet-only tool row here plus a pill-button footer below, so the same
+           preview wore two different toolbars depending on where it was
+           opened. One toolbar, no surface-specific variant.
+           The custom fast tooltip is not wired here: the sheet has no card
+           element to anchor it to, so native `title` is used. -->
+      <CodePreviewToolbar
+        :meta-text="contextMeta"
+        :show-text-tools="showTextTools"
+        :show-render-toggle="showRenderToggle"
+        :is-rendered-view="isRenderedView"
+        :is-dir-view="isDirView"
+        :is-image-target="isImageTarget"
+        :too-large="tooLarge"
+        :is-search-open="isSearchOpen"
+        :is-word-wrap="isWordWrap"
+        :show-line-numbers="showLineNumbers"
+        :copied="copied"
+        :is-path-copied="isPathCopied"
+        @toggle-render-view="toggleRenderView"
+        @toggle-search="toggleSearch"
+        @toggle-word-wrap="toggleWordWrap"
+        @toggle-line-numbers="toggleLineNumbers"
+        @refresh="preview.refresh()"
+        @quote="handleQuoteToChat"
+        @copy="handleCopy"
+        @copy-path="handleCopyPath"
+        @reveal="handleRevealInTree"
+        @open-full="preview.openFull()"
+        @view-lightbox="handleViewLightbox"
+      />
       <!-- Notices -->
       <div v-if="preview.isLargeFile.value" class="code-preview-notice notice-warning">
         {{ t('file.codePreview.largeFileNotice') }}
@@ -113,8 +76,10 @@
         {{ t('file.codePreview.windowTruncatedNotice') }}
       </div>
 
-      <!-- Mobile In-Preview Search Bar -->
-      <div v-if="isSearchOpen" class="code-preview-search-bar">
+      <!-- Mobile In-Preview Search Bar. Gated on showTextTools too: retargeting
+           an open search onto a binary/media/directory file must not leave a
+           dead search bar over a body with nothing to search. -->
+      <div v-if="isSearchOpen && showTextTools" class="code-preview-search-bar">
         <input
           ref="sheetSearchInputRef"
           v-model="searchQuery"
@@ -138,9 +103,22 @@
         </button>
       </div>
 
-      <!-- Content Area: directory listing / media / rendered Markdown / code -->
+      <!-- Content Area: unsupported / directory listing / media / rendered
+           Markdown / code -->
+      <UnsupportedFileBody
+        v-if="isUnsupportedView"
+        :name="fileBaseName"
+        :path="targetFilePath"
+        :size="unsupportedSize"
+        :description="unsupportedDescription"
+      >
+        <button class="code-preview-download-btn" @click="handleDownload">
+          <Download :size="14" />
+          {{ t('common.download') }}
+        </button>
+      </UnsupportedFileBody>
       <DirPreviewBody
-        v-if="isDirView"
+        v-else-if="isDirView"
         chromeless
         :entries="preview.dirEntries.value"
         :loading="preview.dirLoading.value"
@@ -198,77 +176,6 @@
       />
     </div>
 
-    <!-- Bottom Action Bar (Thumb area - Left-hand optimized) -->
-    <template #footer>
-      <div class="code-preview-sheet-footer">
-        <!-- Refresh: icon-only round button -->
-        <button
-          class="code-preview-footer-btn icon-btn fbtn refresh-btn"
-          :class="{ 'is-loading': preview.status.value === 'loading' }"
-          :title="t('file.codePreview.refresh')"
-          :aria-label="t('file.codePreview.refresh')"
-          @click="preview.refresh()"
-        >
-          <RefreshCw :size="15" />
-        </button>
-
-        <!-- Search in preview: icon-only, code-slice view only -->
-        <button
-          v-if="showTextTools && !isRenderedView"
-          class="code-preview-footer-btn icon-btn fbtn"
-          :class="{ 'is-active': isSearchOpen }"
-          :title="t('file.codePreview.findInPreview')"
-          :aria-label="t('file.codePreview.findInPreview')"
-          @click="toggleSearch"
-        >
-          <Search :size="15" />
-        </button>
-
-        <!-- Reveal in file tree: icon-only -->
-        <button
-          class="code-preview-footer-btn icon-btn fbtn reveal-btn"
-          :title="t('file.codePreview.revealInTree')"
-          :aria-label="t('file.codePreview.revealInTree')"
-          @click="handleRevealInTree"
-        >
-          <Folder :size="15" />
-        </button>
-
-        <!-- Zoom image (image targets only): opens the shared Lightbox. -->
-        <button
-          v-if="isImageTarget"
-          class="code-preview-footer-btn icon-btn fbtn"
-          :title="t('file.codePreview.openLightbox')"
-          :aria-label="t('file.codePreview.openLightbox')"
-          @click="handleViewLightbox"
-        >
-          <Maximize2 :size="15" />
-        </button>
-
-        <!-- Open Full / View Details — primary action. Both cases render the
-             same control: an oversize file opens the same way (the label already
-             reads "Full file"). -->
-        <button
-          v-if="!isDirView"
-          class="code-preview-footer-btn action-btn fbtn fbtn-primary primary-btn"
-          @click="preview.openFull()"
-        >
-          <ExternalLink :size="15" />
-          <span>{{ t('file.codePreview.openFileShort') }}</span>
-        </button>
-
-        <!-- Quote to Chat (text files only — media has no quotable text) -->
-        <button
-          v-if="showTextTools"
-          class="code-preview-footer-btn action-btn fbtn quote-btn"
-          :title="t('file.codePreview.quoteToChat')"
-          @click="handleQuoteToChat"
-        >
-          <MessageSquareQuote :size="15" />
-          <span>{{ t('file.codePreview.quoteShort') }}</span>
-        </button>
-      </div>
-    </template>
   </BottomSheet>
 
   <!-- Desktop Floating: Teleport to body. When docked, Teleport is disabled so
@@ -362,181 +269,41 @@
         </div>
       </div>
 
-      <!-- Row 2: File Meta & Remaining Action Tools. -->
-      <div class="code-preview-meta" @pointerdown="onDragPointerDown">
-        <div class="code-preview-meta-info">
-          <span>{{ contextMeta || t('file.codePreview.title') }}</span>
-        </div>
+      <!-- Row 2: the shared tool row (CodePreviewToolbar) — the same one the
+           touch sheet and the file manager's docked pane render. Only the
+           floating card passes the drag starter + custom tooltip hooks. -->
+      <CodePreviewToolbar
+        ref="floatingToolbarRef"
+        :meta-text="contextMeta"
+        :show-text-tools="showTextTools"
+        :show-render-toggle="showRenderToggle"
+        :is-rendered-view="isRenderedView"
+        :is-dir-view="isDirView"
+        :is-image-target="isImageTarget"
+        :too-large="tooLarge"
+        :is-search-open="isSearchOpen"
+        :is-word-wrap="isWordWrap"
+        :show-line-numbers="showLineNumbers"
+        :copied="copied"
+        :is-path-copied="isPathCopied"
+        :on-row-pointer-down="onDragPointerDown"
+        :show-tooltip="showTooltip"
+        :hide-tooltip="hideTooltip"
+        @toggle-render-view="toggleRenderView"
+        @toggle-search="toggleSearch"
+        @toggle-word-wrap="toggleWordWrap"
+        @toggle-line-numbers="toggleLineNumbers"
+        @refresh="preview.refresh()"
+        @quote="handleQuoteToChat"
+        @copy="handleCopy"
+        @copy-path="handleCopyPath"
+        @reveal="handleRevealInTree"
+        @open-full="preview.openFull()"
+        @view-lightbox="handleViewLightbox"
+      />
 
-        <div class="code-preview-actions" @pointerdown.stop>
-          <!-- Rendered / Source toggle (Markdown only, no line range) -->
-          <button
-            v-if="showRenderToggle"
-            class="code-preview-btn"
-            :class="{ 'is-active': isRenderedView }"
-            :aria-pressed="isRenderedView"
-            :title="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-            :aria-label="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-            :data-tooltip="isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView')"
-            @pointerenter="showTooltip($event, isRenderedView ? t('file.codePreview.sourceView') : t('file.codePreview.renderedView'))"
-            @pointerleave="hideTooltip()"
-            @click="toggleRenderView"
-          >
-            <Eye :size="12" />
-          </button>
-          <!-- Viewer Tools: Find, Wrap, Line Numbers, Refresh (code-slice view only) -->
-          <button
-            v-if="showTextTools && !isRenderedView"
-            ref="firstActionBtnRef"
-            class="code-preview-btn"
-            :class="{ 'is-active': isSearchOpen }"
-            :title="t('file.codePreview.findInPreview')"
-            :aria-label="t('file.codePreview.findInPreview')"
-            :data-tooltip="t('file.codePreview.findInPreview')"
-            @pointerenter="showTooltip($event, t('file.codePreview.findInPreview'))"
-            @pointerleave="hideTooltip()"
-            @click="toggleSearch"
-          >
-            <Search :size="12" />
-          </button>
-          <button
-            v-if="showTextTools && !isRenderedView"
-            class="code-preview-btn"
-            :class="{ 'is-active': isWordWrap }"
-            :title="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-            :aria-label="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-            :aria-pressed="isWordWrap"
-            :data-tooltip="isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap')"
-            @pointerenter="showTooltip($event, isWordWrap ? t('file.codePreview.unwrap') : t('file.codePreview.wrap'))"
-            @pointerleave="hideTooltip()"
-            @click="toggleWordWrap"
-          >
-            <TextWrap :size="12" />
-          </button>
-          <button
-            v-if="showTextTools && !isRenderedView"
-            class="code-preview-btn"
-            :class="{ 'is-active': showLineNumbers }"
-            :aria-pressed="showLineNumbers"
-            :title="t('file.header.lineNumbers')"
-            :aria-label="t('file.header.lineNumbers')"
-            :data-tooltip="t('file.header.lineNumbers')"
-            @pointerenter="showTooltip($event, t('file.header.lineNumbers'))"
-            @pointerleave="hideTooltip()"
-            @click="toggleLineNumbers"
-          >
-            <Hash :size="12" />
-          </button>
-          <button
-            class="code-preview-btn"
-            :title="t('file.codePreview.refresh')"
-            :aria-label="t('file.codePreview.refresh')"
-            :data-tooltip="t('file.codePreview.refresh')"
-            @pointerenter="showTooltip($event, t('file.codePreview.refresh'))"
-            @pointerleave="hideTooltip()"
-            @click="preview.refresh()"
-          >
-            <RefreshCw :size="12" />
-          </button>
-
-          <span class="code-preview-actions-divider" />
-
-          <!-- Actions: Quote, Copy Code (code view). Then the contiguous file
-               tools — Copy Path / Open Directory (reveal) / Open File — with no
-               dividers between them, in that left-to-right order. -->
-          <button
-            v-if="showTextTools"
-            class="code-preview-btn"
-            :title="t('file.codePreview.quoteToChat')"
-            :aria-label="t('file.codePreview.quoteToChat')"
-            :data-tooltip="t('file.codePreview.quoteToChat')"
-            @pointerenter="showTooltip($event, t('file.codePreview.quoteToChat'))"
-            @pointerleave="hideTooltip()"
-            @click="handleQuoteToChat"
-          >
-            <MessageSquareQuote :size="12" />
-          </button>
-          <button
-            v-if="showTextTools && !isRenderedView"
-            class="code-preview-btn"
-            :class="{ 'is-copied': copied }"
-            :title="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-            :aria-label="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-            :data-tooltip="copied ? t('file.codePreview.copied') : t('file.codePreview.copy')"
-            @pointerenter="showTooltip($event, copied ? t('file.codePreview.copied') : t('file.codePreview.copy'))"
-            @pointerleave="hideTooltip()"
-            @click="handleCopy"
-          >
-            <Check v-if="copied" :size="12" />
-            <Copy v-else :size="12" />
-          </button>
-
-          <!-- Copy Path -->
-          <button
-            class="code-preview-btn copy-path-btn"
-            :class="{ 'is-copied': isPathCopied }"
-            :title="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            :aria-label="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            :data-tooltip="isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath')"
-            @pointerenter="showTooltip($event, isPathCopied ? t('file.codePreview.pathCopied') : t('file.codePreview.copyPath'))"
-            @pointerleave="hideTooltip()"
-            @click="handleCopyPath"
-          >
-            <Check v-if="isPathCopied" :size="12" />
-            <Link v-else :size="12" />
-          </button>
-          <!-- Open Directory (reveal in tree) -->
-          <button
-            class="code-preview-btn"
-            :title="t('file.codePreview.revealInTree')"
-            :aria-label="t('file.codePreview.revealInTree')"
-            :data-tooltip="t('file.codePreview.revealInTree')"
-            @pointerenter="showTooltip($event, t('file.codePreview.revealInTree'))"
-            @pointerleave="hideTooltip()"
-            @click="handleRevealInTree"
-          >
-            <Folder :size="12" />
-          </button>
-          <!-- Open File / View Details.
-               A too-large file used to swap this for a wide text button reading
-               "View details / Download", which was 4x the width of every other
-               control in the row (111px vs 26px) and broke the icon strip. It
-               also did nothing different: it called the same openFull() as the
-               normal case. So the icon is used in both cases, and only the
-               tooltip changes — it carries the "download" affordance for an
-               oversize file. -->
-          <button
-            v-if="!isDirView"
-            class="code-preview-btn"
-            :title="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
-            :aria-label="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
-            :data-tooltip="tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull')"
-            @pointerenter="showTooltip($event, tooLarge ? t('file.codePreview.viewDetails') : t('file.codePreview.openFull'))"
-            @pointerleave="hideTooltip()"
-            @click="preview.openFull()"
-          >
-            <ExternalLink :size="12" />
-          </button>
-          <!-- Zoom image (image targets only): opens the shared Lightbox.
-               Sits directly beside Open File — both are file-level actions, so
-               they stay grouped and separate from the code tools above. -->
-          <button
-            v-if="isImageTarget"
-            class="code-preview-btn"
-            :title="t('file.codePreview.openLightbox')"
-            :aria-label="t('file.codePreview.openLightbox')"
-            :data-tooltip="t('file.codePreview.openLightbox')"
-            @pointerenter="showTooltip($event, t('file.codePreview.openLightbox'))"
-            @pointerleave="hideTooltip()"
-            @click="handleViewLightbox"
-          >
-            <Maximize2 :size="12" />
-          </button>
-        </div>
-      </div>
-
-      <!-- Desktop In-Preview Search Bar -->
-      <div v-if="isSearchOpen" class="code-preview-search-bar" @pointerdown.stop>
+      <!-- Desktop In-Preview Search Bar (gated on showTextTools, see above) -->
+      <div v-if="isSearchOpen && showTextTools" class="code-preview-search-bar" @pointerdown.stop>
         <input
           ref="searchInputRef"
           v-model="searchQuery"
@@ -599,10 +366,22 @@
         </div>
       </div>
 
-      <!-- Body / Scroll pane: directory listing / media / rendered Markdown /
-           source code slice -->
+      <!-- Body / Scroll pane: unsupported / directory listing / media /
+           rendered Markdown / source code slice -->
+      <UnsupportedFileBody
+        v-if="isUnsupportedView"
+        :name="fileBaseName"
+        :path="targetFilePath"
+        :size="unsupportedSize"
+        :description="unsupportedDescription"
+      >
+        <button class="code-preview-download-btn" @click="handleDownload">
+          <Download :size="14" />
+          {{ t('common.download') }}
+        </button>
+      </UnsupportedFileBody>
       <DirPreviewBody
-        v-if="isDirView"
+        v-else-if="isDirView"
         chromeless
         :entries="preview.dirEntries.value"
         :loading="preview.dirLoading.value"
@@ -665,21 +444,25 @@
 <script setup lang="ts">
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, nextTick, inject, type Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, ChevronDown, ChevronUp, Copy, Eye, ExternalLink, Folder, Hash, Link, Maximize2, MessageSquareQuote, Pin, RefreshCw, Search, TextWrap, X } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, Download, Pin, X } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
+import CodePreviewToolbar from '@/components/file/CodePreviewToolbar.vue'
 import CodePreviewBody from '@/components/file/CodePreviewBody.vue'
 import MarkdownPreviewBody from '@/components/file/MarkdownPreviewBody.vue'
 import MediaPreviewBody from '@/components/file/MediaPreviewBody.vue'
 import DirPreviewBody from '@/components/file/DirPreviewBody.vue'
+import UnsupportedFileBody from '@/components/file/UnsupportedFileBody.vue'
 import FileIcon from '@/components/common/FileIcon.vue'
 import HeaderMarquee from '@/components/common/HeaderMarquee.vue'
 import { highlightCode } from '@/utils/globals'
 import { getFileType } from '@/utils/fileType'
-import { buildLocalFileUrl } from '@/utils/download'
+import { copyText } from '@/utils/clipboard'
+import { useToast } from '@/composables/useToast'
+import { buildLocalFileUrl, downloadFileByPath } from '@/utils/download'
 import { clampCardPosition, splitHighlightedHtml, getAppHeaderBottom, SCROLL_LOAD_STEP } from '@/utils/codeLinkPreview'
 import { toFixedCSS, useSettingsConfig, getZoomedViewport } from '@/composables/useSettingsConfig'
-import { useToast } from '@/composables/useToast'
 import { useChatContext } from '@/composables/useChatContext'
+import { requestTarget } from '@/composables/useConversationTarget.ts'
 import { store } from '@/stores/app'
 import { navToFileInManager } from '@/composables/useFilePathAnnotation'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
@@ -781,7 +564,19 @@ const mediaKind = computed<'image' | 'video' | 'audio' | 'pdf' | null>(() => {
   return null
 })
 // Text-slice tools are only meaningful when a code/markdown body is showing.
-const showTextTools = computed(() => !isMediaView.value && !isDirView.value)
+// An unsupported file (binary / past the whole-file cap) renders the
+// placeholder instead, so it has no searchable, wrappable or copyable text
+// either — the same rule the full-screen viewer applies.
+const showTextTools = computed(() => !isMediaView.value && !isDirView.value && !isUnsupportedView.value)
+
+/**
+ * The file cannot be sliced as text (binary sniff, or past the whole-file cap)
+ * — the body renders the unsupported placeholder instead, matching the
+ * full-screen viewer's presentation.
+ */
+const isUnsupportedView = computed(() =>
+  props.preview.errorCode.value === 'binary' || props.preview.errorCode.value === 'too-large'
+)
 
 // ── Directory body ─────────────────────────────────────────────────────────
 // A directory annotation has no file content, so the card lists it with the
@@ -845,7 +640,8 @@ const cardRef = ref<HTMLElement | null>(null)
 // The currently-rendered code pane (sheet mode OR floating mode — only one
 // renders at a time), typed as the exposed instance of CodePreviewBody.
 const bodyRef = ref<{ scrollToTargetLine: () => void; scrollLineIntoView: (i: number) => void } | null>(null)
-const firstActionBtnRef = ref<HTMLButtonElement | null>(null)
+/** The shared tool row, so F2 can focus its first action button. */
+const floatingToolbarRef = ref<{ focusFirstAction: () => void } | null>(null)
 const copied = ref(false)
 const isWordWrap = ref<boolean>(true)
 
@@ -1010,23 +806,14 @@ const contextMeta = computed(() => {
 const isPathCopied = ref(false)
 let pathCopiedTimer: ReturnType<typeof setTimeout> | null = null
 
-const handleCopyPath = async () => {
+const handleCopyPath = () => {
   const target = props.preview.target.value
   if (!target?.filePath) return
   const pathText = target.filePath + (lineRangeSuffix.value || '')
-  try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(pathText)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = pathText
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
+  // No toast: the toolbar button this host drives now shows a check glyph
+  // (shared CopyButton). `copyText` supplies the insecure-context fallback the
+  // hand-rolled clipboard call had.
+  copyText(pathText, () => {
     if (pathCopiedTimer) clearTimeout(pathCopiedTimer)
     isPathCopied.value = true
     updateTooltipText(t('file.codePreview.pathCopied'))
@@ -1034,10 +821,7 @@ const handleCopyPath = async () => {
       isPathCopied.value = false
       pathCopiedTimer = null
     }, 1500)
-    useToast().show(t('file.codePreview.pathCopied'), { icon: '📋', type: 'success', duration: 1500 })
-  } catch {
-    // ignore
-  }
+  })
 }
 
 const handleQuoteToChat = () => {
@@ -1050,6 +834,27 @@ const handleQuoteToChat = () => {
   const endLine = sliced?.endLine ?? target.lineEnd ?? (startLine + Math.max(0, code.split('\n').length - 1))
 
   const { addStagedQuote } = useChatContext()
+  // The card is a quote (with the code as its content), not a bare attachment
+  // chip — see the note below. Route it through the conversation picker when the
+  // chat panel is off screen, so the destination is the user's choice.
+  if (requestTarget({
+    mode: 'add',
+    quotes: [{
+      text: code,
+      filePath: target.filePath,
+      language: ft.lang || '',
+      startLine,
+      endLine,
+      note: '',
+      id: `quote-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    }],
+    attachments: [],
+    text: '',
+  })) {
+    props.preview.close()
+    return
+  }
+
   addStagedQuote({
     text: code,
     filePath: target.filePath,
@@ -1315,6 +1120,25 @@ const errorMessageText = computed(() => {
  */
 const tooLarge = computed(() => props.preview.errorCode.value === 'too-large')
 
+/** Reason shown in the placeholder, matching the full-screen viewer's wording. */
+const unsupportedDescription = computed(() =>
+  props.preview.errorCode.value === 'too-large'
+    ? t('file.viewer.fileTooLarge')
+    : t('file.viewer.binaryFile')
+)
+
+/** Size for the placeholder's parenthetical. A windowed fetch reports the real
+ *  file size even when it answered with isBinary (no content), so this is the
+ *  file's size, not the response's. */
+const unsupportedSize = computed(() => props.preview.fileContent.value?.size ?? null)
+
+/** Download the previewed file through the shared in-product progress path. */
+const handleDownload = () => {
+  const filePath = props.preview.target.value?.filePath
+  if (!filePath) return
+  downloadFileByPath(filePath, fileBaseName.value)
+}
+
 const isTargetLine = (lineNum: number): boolean => {
   const sliced = props.preview.slicedCode.value
   if (!sliced) return false
@@ -1493,30 +1317,15 @@ const cardStyle = computed(() => {
   }
 })
 
-const handleCopy = async () => {
+const handleCopy = () => {
   const code = props.preview.slicedCode.value?.code
   if (!code) return
-
-  try {
-    if (navigator?.clipboard?.writeText) {
-      await navigator.clipboard.writeText(code)
-    } else {
-      const textarea = document.createElement('textarea')
-      textarea.value = code
-      textarea.style.position = 'fixed'
-      textarea.style.opacity = '0'
-      document.body.appendChild(textarea)
-      textarea.select()
-      document.execCommand('copy')
-      textarea.remove()
-    }
+  copyText(code, () => {
     copied.value = true
     setTimeout(() => {
       copied.value = false
     }, 1500)
-  } catch {
-    // ignore
-  }
+  })
 }
 
 // Media bodies (image/video/audio/PDF) size themselves from the file's own
@@ -1882,7 +1691,9 @@ const onKeyDown = (e: KeyboardEvent) => {
   if (!props.preview.visible.value) return
   if (e.key === 'F2') {
     e.preventDefault()
-    firstActionBtnRef.value?.focus()
+    // The first action button now lives in the shared toolbar child; ask it to
+    // focus rather than holding a ref into its template.
+    floatingToolbarRef.value?.focusFirstAction?.()
   } else if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
     e.preventDefault()
     toggleSearch()

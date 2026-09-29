@@ -83,6 +83,40 @@ describe('useDialog', () => {
       const result = await promise
       expect(result).toBeNull()
     })
+
+    it('passes generate options to state', async () => {
+      const onGenerate = vi.fn().mockResolvedValue('Generated')
+      const promise = prompt('Rename:', { generateText: 'Auto-generate', onGenerate })
+
+      expect(state.value.generateText).toBe('Auto-generate')
+      expect(state.value.onGenerate).toBe(onGenerate)
+
+      resolve(null)
+      await promise
+    })
+
+    it('defaults generate fields to empty/null', async () => {
+      const promise = prompt('Enter:')
+
+      expect(state.value.generateText).toBe('')
+      expect(state.value.onGenerate).toBeNull()
+
+      resolve(null)
+      await promise
+    })
+
+    it('does not carry generate options into the next dialog', async () => {
+      const onGenerate = vi.fn().mockResolvedValue('Generated')
+      const first = prompt('Rename:', { generateText: 'Auto-generate', onGenerate })
+      resolve(null)
+      await first
+
+      const second = confirm('Sure?')
+      expect(state.value.generateText).toBe('')
+      expect(state.value.onGenerate).toBeNull()
+      resolve(true)
+      await second
+    })
   })
 
   describe('alert', () => {

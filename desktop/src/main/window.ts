@@ -7,9 +7,100 @@ import { classifyUrl } from './urlPolicy'
 import { markRendererLoading } from './navReady'
 import { handleShortcut } from './shortcuts'
 import { shouldFallBackToLogin, buildConnectErrorScript } from './loadFailure'
+import { createSplashController, type SplashController } from './splash'
+import {
+  beginNavigation,
+  checkVersionGate,
+  getActiveGate,
+  installServerVersion,
+  setActiveGate,
+} from './versionGate'
 import { nextZoomFactor, type ZoomAction } from './zoom'
+import { shouldUseFramelessWindow } from './windowChrome'
+import { WINDOW_STATE_CHANNEL, type WindowState } from '../shared/types'
 
 let mainWindow: BrowserWindow | null = null
+
+/**
+ * The native loading overlay for the main window, if one is up.
+ *
+ * Kept at module scope because the bridge (`native:dismiss-splash` from the
+ * app, `native:splash-cancel` from the overlay's cancel button) and the window
+ * lifecycle both need it, and they reach it through the exported helpers below
+ * rather than each holding their own reference.
+ */
+let splash: SplashController | null = null
+
+/** Show the loading overlay for a navigation to `url`, if it warrants one. */
+export function showSplashFor(url: string): void {
+  splash?.show(url)
+}
+
+/** Hide the loading overlay. Idempotent; safe when none is up. */
+export function dismissSplash(): void {
+  splash?.dismiss()
+}
+
+/**
+ * Abort the in-flight connection from the overlay's cancel button: stop the
+ * navigation, hide the overlay, and return to the server-selection page.
+ */
+export function cancelSplash(): void {
+  splash?.cancel()
+}
+
+/**
+ * Check the desktop/server version consistency for a navigation to `url` and,
+ * on a mismatch, raise the blocking gate. Fire-and-forget: the check is
+ * asynchronous and its result is applied only if the navigation is still the
+ * current one.
+ */
+export function checkVersionGateFor(url: string): void {
+  const gen = beginNavigation()
+  void checkVersionGate(url, gen)
+    .then((info) => {
+      if (!info) {
+        // No mismatch (or nothing to compare): make sure a gate from an earlier
+        // navigation cannot be acted on.
+        setActiveGate(null)
+        return
+      }
+      setActiveGate(info)
+      splash?.showVersionMismatch(info)
+    })
+    .catch(() => { /* a gate check must never break a connection */ })
+}
+
+/** Dismiss the version gate (the overlay's "continue" action). */
+export function continueVersionGate(): void {
+  setActiveGate(null)
+  splash?.continueGate()
+}
+
+/**
+ * Abandon any version-gate work for the current navigation.
+ *
+ * Bumps the navigation generation so an in-flight check cannot raise the gate
+ * afterwards, and clears any gate already up. Used when the connection fails or
+ * the user returns to the login page, where a gate would be meaningless.
+ */
+export function abortVersionGate(): void {
+  beginNavigation()
+  setActiveGate(null)
+  splash?.continueGate()
+}
+
+/**
+ * Install the server's version from the gate ("download" action). The gate
+ * stays up on failure; on success the app restarts into the new version (or the
+ * gate closes when the user defers the restart, so it stops offering a download
+ * of the version already on disk).
+ */
+export async function downloadVersionFromGate(): Promise<void> {
+  const info = getActiveGate()
+  if (!info) return
+  if (await installServerVersion(info, mainWindow)) continueVersionGate()
+}
 
 export function getMainWindow(): BrowserWindow | null { return mainWindow }
 
@@ -122,21 +213,107 @@ function registerContextMenu(webContents: Electron.WebContents): void {
   })
 }
 
+/**
+ * Keep the renderer's view of the maximize state in step with the window's.
+ *
+ * The header's maximize/restore button must show the right glyph, but the state
+ * can change from places the renderer cannot see: our own IPC toggle, an OS
+ * snap/tile, or a double-click on the drag region (Electron's built-in
+ * behaviour for a draggable region, which does NOT go through our IPC at all).
+ * Listening to the window events therefore covers every path, whereas mirroring
+ * state in the renderer after each click would miss the others.
+ *
+ * The initial value is NOT pushed here: a push on load would race the
+ * renderer's own subscription (the preload's listener fires before Vue mounts),
+ * so the renderer instead queries the current state once when it mounts. That
+ * makes the initial read deterministic instead of order-dependent.
+ */
+function registerWindowStateReporting(win: BrowserWindow): void {
+  const send = () => {
+    if (win.isDestroyed()) return
+    const state: WindowState = { maximized: win.isMaximized() }
+    win.webContents.send(WINDOW_STATE_CHANNEL, state)
+  }
+  win.on('maximize', send)
+  win.on('unmaximize', send)
+}
+
+/** Minimize the main window (frameless header control). */
+export function minimizeMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize()
+}
+
+/**
+ * Toggle the main window between maximized and restored (frameless header
+ * control). Toggling rather than setting avoids the two sides disagreeing about
+ * the current state — the window is the authority.
+ */
+export function toggleMaximizeMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  if (mainWindow.isMaximized()) mainWindow.unmaximize()
+  else mainWindow.maximize()
+}
+
+/** Close the main window (frameless header control). */
+export function closeMainWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
+}
+
+/** Whether the main window is currently maximized (frameless header control). */
+export function isMainWindowMaximized(): boolean {
+  return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMaximized()
+}
+
 export function createMainWindow(): BrowserWindow {
   mainWindow = new BrowserWindow({
     width: 1280, height: 800, show: false,
+    // Windows/Linux get a frameless window and draw their own controls in the
+    // header (see windowChrome.ts). macOS keeps the native frame so its
+    // top-left traffic lights stay where users expect them. A frameless window
+    // is NOT draggable by default — the header supplies the drag region — and
+    // is still resizable on Windows/Linux; on Wayland Electron gives frameless
+    // windows GTK shadow plus an extended resize border.
+    frame: !shouldUseFramelessWindow(process.platform),
     webPreferences: { preload: path.join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false },
   })
   registerContextMenu(mainWindow.webContents)
   registerKeyboardShortcuts(mainWindow.webContents)
+  registerWindowStateReporting(mainWindow)
   // A (re)load tears down the renderer's listeners, so anything clicked before
   // it re-registers must be deferred rather than sent into the void.
   mainWindow.webContents.on('did-start-loading', () => markRendererLoading())
+
+  // Native loading overlay, floating above the window's own page. Created before
+  // the first navigation so a cold start can cover it too.
+  splash?.destroy()
+  splash = createSplashController(mainWindow, {
+    onAbort: (reason) => {
+      // Both paths land on the login page. A timeout also reports why, through
+      // the same onConnectError hook the did-fail-load fallback uses — without
+      // it the user would be returned to the login page with no explanation.
+      void mainWindow?.loadFile(loginPagePath())
+        .then(() => {
+          if (reason !== 'timeout') return
+          const wc = mainWindow?.webContents
+          if (!wc) return
+          void wc.executeJavaScript(buildConnectErrorScript('Connection timed out'), true)
+        })
+        .catch(() => { /* login page itself failed to load; nothing to report to */ })
+    },
+  })
+
   const serverUrl = getStore().get('serverUrl')
   if (serverUrl) {
+    // Cold start with a saved server: same gap as connecting from the login
+    // page, so the overlay covers it here too.
+    showSplashFor(serverUrl)
     mainWindow.loadURL(serverUrl)
+    // The version gate runs alongside the load; on a mismatch it replaces the
+    // loading overlay with the blocking gate.
+    checkVersionGateFor(serverUrl)
   } else {
     // First run: no server configured — show a built-in login page to enter the server URL.
+    // No overlay: the login page is a local document with nothing to wait for.
     mainWindow.loadFile(loginPagePath())
   }
 
@@ -150,6 +327,13 @@ export function createMainWindow(): BrowserWindow {
     // Subframe failures, cancelled navigations and a failure of the login page
     // itself must not hijack the window — see shouldFallBackToLogin.
     if (!shouldFallBackToLogin({ errorCode, failedUrl, loginUrl, isMainFrame })) return
+    // The server is unreachable, so the overlay's premise (something is
+    // loading) no longer holds — drop it before showing the login page.
+    dismissSplash()
+    // And abandon any version-gate check for this navigation: a mismatch against
+    // an unreachable server is not actionable, and its result must not cover the
+    // login page the user is about to see.
+    abortVersionGate()
     // Server page failed to load (unreachable) — fall back to the server-selection
     // login page so the user can pick another server instead of a blank page.
     // loadFile resolves once the page is ready, so the failure can then be
@@ -185,13 +369,24 @@ export function createMainWindow(): BrowserWindow {
     }
     return { action: 'deny' }
   })
-  mainWindow.on('closed', () => { mainWindow = null })
+  mainWindow.on('closed', () => {
+    splash?.destroy()
+    splash = null
+    mainWindow = null
+  })
   return mainWindow
 }
 
 /** Navigate the main window back to the server-selection login page. */
 export function showLoginPage(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    // Reached from the settings "reconfigure server" action and from the
+    // notification deep-link fallback. The overlay must come down, or it would
+    // sit on top of the login page the user just asked for.
+    dismissSplash()
+    // A version gate is meaningless on the login page; drop it and invalidate
+    // any in-flight check so it cannot reappear here.
+    abortVersionGate()
     mainWindow.loadFile(loginPagePath())
   }
 }

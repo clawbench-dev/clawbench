@@ -52,6 +52,17 @@ type SessionUpdateData struct {
 	ToolInput            string `json:"tool_input,omitempty"` // tool input JSON for approval details (permission_pending only)
 }
 
+// SessionTitleUpdateData is the data payload for "session_title_update" events.
+// Emitted when a session's title changes outside the normal rename flow — today
+// the automatic AI rename. The rename endpoint does not use it (the client that
+// renamed already knows); this event exists so OTHER clients' open chat header
+// and session list converge.
+type SessionTitleUpdateData struct {
+	SessionID   string `json:"session_id"`
+	Title       string `json:"title"`
+	ProjectPath string `json:"project_path,omitempty"`
+}
+
 // TaskUpdateData is the data payload for "task_update" events.
 type TaskUpdateData struct {
 	TaskID               string `json:"task_id"`

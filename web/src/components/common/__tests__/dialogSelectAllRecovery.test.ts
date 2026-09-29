@@ -38,7 +38,8 @@ describe('DialogOverlay Android select-all delete recovery', () => {
     state.value = {
       visible: true, type: 'prompt', title: 'T', message: 'M', value,
       placeholder: 'p', confirmText: '', cancelText: '', dangerous: false,
-      extraText: '', extraPrimedText: '', onExtraAction: null, resolve: vi.fn(),
+      extraText: '', extraPrimedText: '', onExtraAction: null,
+      generateText: '', onGenerate: null, resolve: vi.fn(),
     } as any
     wrapper = mount(DialogOverlay, { attachTo: document.body })
   }

@@ -26,6 +26,9 @@
           :key="task.id"
           class="task-item"
           :class="[task.status, { 'has-unread': task.unreadCount > 0, 'is-running': task.runningCount > 0 }]"
+          draggable="true"
+          @dragstart="onTaskDragStart(task, $event)"
+          @dragend="cleanupDragGhost()"
           @click="$emit('select', task.id)"
         >
           <div class="task-item-main">
@@ -109,6 +112,8 @@ import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import { startQuoteDrag, taskDragPayload } from '@/utils/quoteDrag'
+import { cleanupDragGhost } from '@/utils/attachDrag'
 
 const { t } = useI18n()
 const { loadTasks, markAllTasksRead } = useTaskTab()
@@ -147,6 +152,18 @@ defineEmits<{
   create: []
   select: [taskId: number]
 }>()
+
+/**
+ * Start dragging a scheduled task into the chat: dropping it stages a quote card
+ * for that task (no annotation). The task id is the locator, which is what lets
+ * the card jump back to the task's detail view.
+ */
+function onTaskDragStart(task: { id: number; name?: string }, e: DragEvent) {
+  if (!startQuoteDrag(e, taskDragPayload(task))) {
+    // Nothing usable to drag — cancel rather than start an empty drag.
+    e.preventDefault()
+  }
+}
 
 async function refresh() {
   if (loading.value) return

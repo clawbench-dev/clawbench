@@ -24,6 +24,11 @@ const { mockStore } = vi.hoisted(() => ({
 
 vi.mock('@/stores/app.ts', () => ({ store: mockStore }))
 
+// The component now goes through the shared clipboard helper; mock it so the
+// test controls success/failure without depending on jsdom's clipboard support.
+const { mockCopyText } = vi.hoisted(() => ({ mockCopyText: vi.fn() }))
+vi.mock('@/utils/clipboard', () => ({ copyText: mockCopyText }))
+
 vi.mock('@/utils/fileType.ts', () => ({
   getFileType: (name: string) => ({
     label: 'TypeScript',
@@ -153,60 +158,33 @@ describe('FileDetailsDrawer — detailItems', () => {
   })
 })
 
-describe('FileDetailsDrawer — copyValue', () => {
-  it('uses navigator.clipboard when available', async () => {
-    const writeText = vi.fn(() => Promise.resolve())
-    ;(navigator as any).clipboard = { writeText }
-    const toastShow = vi.fn()
+describe('FileDetailsDrawer — copyValue (clickable text)', () => {
+  it('copies via the shared clipboard helper and flashes the clicked text', async () => {
+    // The dedicated button beside the value owns its own state via CopyButton;
+    // this path is for clicking the TEXT itself, so it only flashes that
+    // element. It no longer toasts — the flash is the feedback.
+    mockCopyText.mockReset()
+    mockCopyText.mockImplementation((_t: string, ok?: () => void) => ok?.())
     const wrapper = mountDrawer(
-      { file: { name: 'foo.ts', path: 'src/foo.ts' }, open: true },
-      { toast: { show: toastShow } }
+      { file: { name: 'foo.ts', path: 'src/foo.ts' }, open: true }
     )
     const vm = wrapper.vm as any
-    const wrap = document.createElement('div')
-    wrap.innerHTML = '<span class="details-value">value</span><button class="details-copy-btn"></button>'
-    Object.defineProperty(wrap, 'closest', { value: () => wrap })
-    const btn = wrap.querySelector('.details-copy-btn')!
-    const txt = wrap.querySelector('.details-value')!
-    const ev = { currentTarget: wrap } as any
+    const txt = document.createElement('span')
+    const ev = { currentTarget: txt } as any
     vm.copyValue('value', ev)
     await flushPromises()
-    expect(writeText).toHaveBeenCalledWith('value')
-    expect(btn.classList.contains('copied')).toBe(true)
+    expect(mockCopyText).toHaveBeenCalledWith('value', expect.any(Function))
     expect(txt.classList.contains('copied')).toBe(true)
-    expect(toastShow).toHaveBeenCalled()
   })
 
-  it('falls back to execCommand when clipboard API unavailable', async () => {
-    ;(navigator as any).clipboard = undefined
-    ;(document as any).execCommand = vi.fn(() => true)
+  it('does nothing without a value', async () => {
     const wrapper = mountDrawer(
       { file: { name: 'foo.ts', path: 'src/foo.ts' }, open: true }
     )
     const vm = wrapper.vm as any
-    const wrap = document.createElement('div')
-    wrap.innerHTML = '<span class="details-value">value</span><button class="details-copy-btn"></button>'
-    Object.defineProperty(wrap, 'closest', { value: () => wrap })
-    const ev = { currentTarget: wrap } as any
-    vm.copyValue('value', ev)
-    expect((document as any).execCommand).toHaveBeenCalledWith('copy')
-  })
-
-  it('catches clipboard rejection and uses fallback', async () => {
-    ;(navigator as any).clipboard = {
-      writeText: () => Promise.reject(new Error('denied')),
-    }
-    ;(document as any).execCommand = vi.fn(() => true)
-    const wrapper = mountDrawer(
-      { file: { name: 'foo.ts', path: 'src/foo.ts' }, open: true }
-    )
-    const vm = wrapper.vm as any
-    const wrap = document.createElement('div')
-    wrap.innerHTML = '<span class="details-value">value</span><button class="details-copy-btn"></button>'
-    Object.defineProperty(wrap, 'closest', { value: () => wrap })
-    const ev = { currentTarget: wrap } as any
-    vm.copyValue('value', ev)
-    await flushPromises()
-    expect((document as any).execCommand).toHaveBeenCalledWith('copy')
+    const txt = document.createElement('span')
+    const ev = { currentTarget: txt } as any
+    vm.copyValue('', ev)
+    expect(txt.classList.contains('copied')).toBe(false)
   })
 })

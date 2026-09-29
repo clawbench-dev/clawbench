@@ -10,7 +10,7 @@ const i18n = createI18n({
   messages: {
     zh: {
       common: { ok: '确定' },
-      settings: { needsRestart: '需重启', items: { resetToDefault: '重置' } },
+      settings: { needsRestart: '需重启', items: { resetToDefault: '重置', summaryModelConfigured: '已配置', summaryModelNotConfigured: '未配置' } },
     },
   },
 })
@@ -21,6 +21,8 @@ vi.mock('lucide-vue-next', () => ({
   EyeOff: { name: 'EyeOff', template: '<span class="icon-eyeoff" />' },
   RefreshCw: { name: 'RefreshCw', template: '<span class="icon-refresh" />' },
   ChevronsUpDown: { name: 'ChevronsUpDown', template: '<span class="icon-chevron" />' },
+  Check: { name: 'Check', template: '<span class="icon-check" />' },
+  AlertTriangle: { name: 'AlertTriangle', template: '<span class="icon-alert" />' },
 }))
 
 // Mock useTabDrawer — plain object state; the component's font filter is
@@ -110,6 +112,37 @@ describe('SettingsItem', () => {
     await wrapper.find('.settings-item').trigger('click')
     expect(wrapper.emitted('click')).toBeTruthy()
     expect(wrapper.emitted('click')!.length).toBe(1)
+  })
+
+  // ── Shared AI-summary-model status pill ──
+
+  describe('summaryModelStatus', () => {
+    it('renders no pill when the prop is absent', () => {
+      const wrapper = mountItem({ type: 'action' })
+      expect(wrapper.find('.settings-item__status-pill').exists()).toBe(false)
+      expect(wrapper.find('.settings-item').classes()).not.toContain('settings-item--warn')
+    })
+
+    it('renders a success pill when configured, without the warning tint', () => {
+      const wrapper = mountItem({ type: 'action', summaryModelStatus: 'configured' })
+      const pill = wrapper.find('.settings-item__status-pill')
+      expect(pill.exists()).toBe(true)
+      expect(pill.text()).toBe('已配置')
+      expect(pill.classes()).toContain('settings-item__status-pill--configured')
+      expect(pill.find('.icon-check').exists()).toBe(true)
+      expect(wrapper.find('.settings-item').classes()).not.toContain('settings-item--warn')
+    })
+
+    it('renders a warning pill and tints the row when unconfigured', () => {
+      const wrapper = mountItem({ type: 'action', summaryModelStatus: 'unconfigured' })
+      const pill = wrapper.find('.settings-item__status-pill')
+      expect(pill.exists()).toBe(true)
+      expect(pill.text()).toBe('未配置')
+      expect(pill.classes()).toContain('settings-item__status-pill--unconfigured')
+      expect(pill.find('.icon-alert').exists()).toBe(true)
+      // The row itself must read as "needs attention", not just carry a pill.
+      expect(wrapper.find('.settings-item').classes()).toContain('settings-item--warn')
+    })
   })
 
   // ── Header type ──
@@ -244,19 +277,32 @@ describe('SettingsItem', () => {
       expect(wrapper.find('.settings-item__slider-value').text()).toBe('75%')
     })
 
-    it('renders reset button when value differs from default', () => {
-      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, defaultValue: 100 })
-      expect(wrapper.find('.settings-item__slider-reset').exists()).toBe(true)
-    })
-
-    it('does not render reset button when value equals default', () => {
+    it('keeps the reset button in the layout, inert at the default value', () => {
+      // The button must NOT be removed at the default: it is the disappearance
+      // that shifted the slider and value label on every reset. It stays in
+      // flow but disabled.
       const wrapper = mountItem({ type: 'slider', modelValue: 100, min: 0, max: 100, defaultValue: 100 })
-      expect(wrapper.find('.settings-item__slider-reset').exists()).toBe(false)
+      const btn = wrapper.find('.settings-item__slider-reset')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeDefined()
     })
 
-    it('does not render reset button when no defaultValue', () => {
+    it('enables the reset button once the value differs from the default', () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, defaultValue: 100 })
+      const btn = wrapper.find('.settings-item__slider-reset')
+      expect(btn.exists()).toBe(true)
+      expect(btn.attributes('disabled')).toBeUndefined()
+    })
+
+    it('omits the reset button entirely when there is no defaultValue', () => {
+      // Nothing to reset to, so the slot is genuinely absent rather than inert.
       const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100 })
       expect(wrapper.find('.settings-item__slider-reset').exists()).toBe(false)
+    })
+
+    it('disables the reset button together with the row', () => {
+      const wrapper = mountItem({ type: 'slider', modelValue: 50, min: 0, max: 100, defaultValue: 100, disabled: true })
+      expect(wrapper.find('.settings-item__slider-reset').attributes('disabled')).toBeDefined()
     })
 
     it('emits defaultValue on reset click', async () => {

@@ -85,11 +85,21 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			external_message_id TEXT DEFAULT '',
-			queue_id TEXT DEFAULT '',
-			queued INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
 		);
+		CREATE TABLE IF NOT EXISTS queued_messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			project_path TEXT NOT NULL,
+			backend TEXT NOT NULL DEFAULT '',
+			queue_id TEXT NOT NULL,
+			content TEXT NOT NULL,
+			files TEXT,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_queued_session ON queued_messages(session_id, id);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_queued_identity ON queued_messages(session_id, queue_id);
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
 			project_path TEXT NOT NULL,
@@ -108,6 +118,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			compacted INTEGER NOT NULL DEFAULT 0,
 			archived INTEGER NOT NULL DEFAULT 0,
 			pinned INTEGER NOT NULL DEFAULT 0,
+			sort_order INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_read_at DATETIME,
@@ -337,6 +348,11 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	// Create file share tables
 	if _, err := db.Exec(service.FileSharesDDL); err != nil {
 		t.Fatalf("failed to create file share tables: %v", err)
+	}
+
+	// Create conversation (session) share tables
+	if _, err := db.Exec(service.SessionSharesDDL); err != nil {
+		t.Fatalf("failed to create session share tables: %v", err)
 	}
 
 	// Create forge binding + sync tables

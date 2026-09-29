@@ -32,6 +32,9 @@ afterEach(() => {
   // Drop buffered appLog entries so the 50-entry flush never fires mid-test,
   // which would otherwise consume a fetch mock with a POST to /api/client-log.
   _clearLogBuffer()
+  // Module-level queue state must not leak between tests.
+  resetQueuesForTest()
+  resetInFlightSendsForTest()
 })
 
 // ── Hoisted mock state (plain objects, no Vue imports needed) ──
@@ -62,7 +65,7 @@ const { mockState, resetMockState } = vi.hoisted(() => {
   return { mockState, resetMockState }
 })
 
-const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockForceCleanupStreamingState, mockOnAppForeground, resetAdditionalMocks } = vi.hoisted(() => {
+const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, mockForceCleanupStreamingState, mockOnAppResume, resetAdditionalMocks } = vi.hoisted(() => {
   const mockIdentity: Record<string, string | boolean> = {
     currentSessionTitle: '',
     currentBackend: '',
@@ -103,14 +106,17 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     parseMessages: vi.fn().mockReturnValue([]),
   }
   const mockForceCleanupStreamingState = vi.fn().mockReturnValue(undefined)
-  // Captures callbacks registered via onAppForeground by useChatSession —
-  // tests fire these to simulate app background/foreground transitions.
-  const foregroundHandlers: Array<(fg: boolean) => void> = []
-  const mockOnAppForeground = vi.fn((cb: (fg: boolean) => void) => {
-    foregroundHandlers.push(cb)
+  // Captures callbacks registered via onAppResume by useChatSession — tests
+  // fire these to simulate the app returning to the foreground (Android
+  // onResume). Deliberately NOT the state-transition listener: the resume
+  // signal fires even when the foreground state never changed (the WebView was
+  // frozen while paused so the onPause notification was dropped).
+  const resumeHandlers: Array<() => void> = []
+  const mockOnAppResume = vi.fn((cb: () => void) => {
+    resumeHandlers.push(cb)
     return () => {
-      const idx = foregroundHandlers.indexOf(cb)
-      if (idx !== -1) foregroundHandlers.splice(idx, 1)
+      const idx = resumeHandlers.indexOf(cb)
+      if (idx !== -1) resumeHandlers.splice(idx, 1)
     }
   })
   function resetAdditionalMocks() {
@@ -138,9 +144,9 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
     mockForceCleanupStreamingState.mockReset().mockReturnValue(undefined)
     mockAppInForeground.value = true
     mockIsReplayingEvents.value = false
-    foregroundHandlers.length = 0
+    resumeHandlers.length = 0
   }
-  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockOnAppForeground, resetAdditionalMocks }
+  return { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockForceCleanupStreamingState, mockIdentityFns, mockOnAppResume, resetAdditionalMocks }
 })
 
 // ── Mocks ──
@@ -327,7 +333,7 @@ vi.mock('@/composables/useToast', () => ({
 }))
 vi.mock('@/composables/useAppForeground', () => ({
   useAppForeground: () => ({ appInForeground: mockAppInForeground }),
-  onAppForeground: mockOnAppForeground,
+  onAppResume: mockOnAppResume,
 }))
 vi.mock('@/composables/useGlobalEvents', () => ({
   useGlobalEvents: () => ({ isReplayingEvents: mockIsReplayingEvents }),
@@ -385,7 +391,8 @@ vi.mock('@/utils/chatStreamUtils', async (importOriginal) => {
 import { useChatSession, loadSessionsOnce, resetChatSessionState } from '@/composables/useChatSession'
 import { recordRecentSession } from '@/composables/useRecentSession'
 import { store } from '@/stores/app.ts'
-import { chatMessageReducer } from '@/utils/chatStreamUtils.ts'
+import { chatMessageReducer, resetInFlightSendsForTest } from '@/utils/chatStreamUtils.ts'
+import { addQueued, getQueue, removeQueued, resetQueuesForTest } from '@/composables/useMessageQueue.ts'
 import { updatePlanEntries, clearPlanState, usePlanProgress } from '@/composables/usePlanProgress'
 
 // Get direct references to the mocked functions from useSessionIdentity
@@ -424,6 +431,7 @@ function createSessionInternal() {
     onScrollBottom: vi.fn(),
     onConnectStream: vi.fn(),
     onDisconnectStream: vi.fn(),
+    onResubscribeStream: vi.fn(),
     onOpen: vi.fn(),
     onEnsureStreamingPlaceholder: vi.fn(),
   }
@@ -1468,13 +1476,15 @@ describe('foreground return marks current session read', () => {
     resetMockState()
     resetChatSessionState()
     resetAdditionalMocks()
-    mockOnAppForeground.mockClear()
+    mockOnAppResume.mockClear()
   })
 
-  // Helper: capture the onAppForeground callback registered by useChatSession.
+  // Helper: capture the onAppResume callback registered by useChatSession.
+  // The resume signal (not the state-transition one) is what drives the
+  // re-sync — it must fire even when the foreground state never changed.
   function captureForegroundHandlers() {
-    const calls = mockOnAppForeground.mock.calls
-    return calls.map(c => c[0]) as Array<(fg: boolean) => void>
+    const calls = mockOnAppResume.mock.calls
+    return calls.map(c => c[0]) as Array<() => void>
   }
 
   function createForegroundTestSession() {
@@ -1495,7 +1505,7 @@ describe('foreground return marks current session read', () => {
     expect(handlers.length).toBeGreaterThan(0)
 
     // Simulate the app returning to the foreground (Android onResume).
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     await vi.waitFor(() => {
       expect(globalThis.fetch).toHaveBeenCalledWith(
@@ -1505,18 +1515,25 @@ describe('foreground return marks current session read', () => {
     })
   })
 
-  it('does NOT mark read when the app transitions to the background', async () => {
+  it('re-syncs on resume even when the foreground state never left true', async () => {
+    // Regression: the resume signal must not be gated on a state transition.
+    // Android freezes the WebView while paused, so onPause's JS call can be
+    // dropped — the state is still true on return. The old implementation
+    // listened on the state transition, so this exact case silently skipped the
+    // re-sync and the session stayed stale until the user switched away and
+    // back. The state here is deliberately left at its default (true).
+    mockAppInForeground.value = true
     const session = createForegroundTestSession()
     const handlers = captureForegroundHandlers()
 
-    // Simulate the app going to the background (Android onPause).
-    handlers[handlers.length - 1](false)
+    handlers[handlers.length - 1]()
 
-    await new Promise(r => setTimeout(r, 50))
-    const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
-      (c: unknown[]) => String(c[0]).includes('/api/ai/chat/read')
-    )
-    expect(readCalls.length).toBe(0)
+    await vi.waitFor(() => {
+      const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
+        (c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1')
+      )
+      expect(chatFetches.length).toBeGreaterThan(0)
+    })
   })
 
   it('does nothing when returning to foreground with no active session', async () => {
@@ -1528,7 +1545,7 @@ describe('foreground return marks current session read', () => {
     options.currentSessionId.value = ''
     const handlers = captureForegroundHandlers()
 
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     await new Promise(r => setTimeout(r, 50))
     const readCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.filter(
@@ -1541,12 +1558,12 @@ describe('foreground return marks current session read', () => {
     // Regression: on Android, document.visibilityState is unreliable in the
     // WebView, so the WS may NOT have been disconnected while backgrounded —
     // no clawbench-reconnect event fires on return, and background messages
-    // never appear. The native __setAppForeground bridge drives this callback
-    // regardless, so the current session must be re-synced (loadHistory) here.
+    // never appear. The native resume hook drives this callback regardless, so
+    // the current session must be re-synced (loadHistory) here.
     const session = createForegroundTestSession()
     const handlers = captureForegroundHandlers()
 
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     // Foreground return now uses the manual-refresh path
     // (handleManualRefresh → syncSessionOnReconnect(true)): an authoritative
@@ -1586,7 +1603,7 @@ describe('foreground return marks current session read', () => {
     const fetchCountBefore = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length
 
     // App returns to foreground.
-    handlers[handlers.length - 1](true)
+    handlers[handlers.length - 1]()
 
     // Even with an unchanged snapshot the forced reload must fetch history —
     // the lightweight WS-reconnect path (skipIfUnchanged=true) would have
@@ -1597,6 +1614,117 @@ describe('foreground return marks current session read', () => {
         .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat?session_id=current-s1'))
       expect(chatFetches.length).toBeGreaterThanOrEqual(1)
     })
+  })
+
+  // ── Foreground return reopens the session ──
+  //
+  // One physical return to the foreground runs the SAME reopen as the refresh
+  // button: clear the session, then rebuild it authoritatively. This is what
+  // makes a resume behave like switching away and back — the only path that
+  // discards frontend-only state (a stale thinking block) the DB does not know
+  // about. It is deliberately NOT deduped against the WS reconnect that follows:
+  // a reopen that failed (Android resumes before the radio is back) leaves an
+  // empty list, and the reconnect is the only thing that can heal it.
+
+  it('reopens the session on resume, discarding frontend-only state the DB does not know about', async () => {
+    // The session is RUNNING and the DB snapshot carries no streaming row — the
+    // exact shape where the old in-place merge (rebuildFromDb) preserved the
+    // live placeholder. The reopen must instead clear it: only a real clear
+    // discards frontend-only state like a stale thinking block.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 'current-s1', running: true }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: true }),
+      })
+    })
+    const session = createSession()
+    mockState.currentSessionId = 'current-s1'
+    const options = lastSessionOptions!
+    // A stale streaming placeholder + thinking block that exists ONLY in the
+    // frontend. The old resume merged DB rows in place and kept it.
+    options.messages.value = [{
+      role: 'assistant', id: 'stale-1', streaming: true, content: '',
+      blocks: [{ type: 'thinking', text: 'stale reasoning', think_id: 'th_stale' }],
+      createdAt: '2026-01-01T00:00:00Z',
+    }]
+    const handlers = captureForegroundHandlers()
+
+    handlers[handlers.length - 1]()
+
+    await vi.waitFor(() => {
+      expect(options.messages.value).toHaveLength(0)
+    })
+    expect(session.currentSessionId.value).toBe('current-s1')
+  })
+
+  it('re-establishes the stream subscription on resume (a same-id reopen does not retrigger the watcher)', async () => {
+    const session = createForegroundTestSession()
+    const onResubscribeStream = lastSessionOptions!.onResubscribeStream as ReturnType<typeof vi.fn>
+    const handlers = captureForegroundHandlers()
+
+    handlers[handlers.length - 1]()
+
+    await vi.waitFor(() => {
+      expect(onResubscribeStream).toHaveBeenCalledWith('current-s1')
+    })
+    expect(session.currentSessionId.value).toBe('current-s1')
+  })
+
+  it('a failed reopen leaves an empty list, and the next WS reconnect heals it (not deduped)', async () => {
+    // Android resumes the app before the network/radio is back, so the reopen's
+    // history GET commonly rejects with a transport error. Because the session
+    // was cleared first, that leaves the message list EMPTY — and the only
+    // automatic heal is the WS reconnect. A resume/refresh dedupe window would
+    // swallow it, which is why the dedupe was removed.
+    const session = createForegroundTestSession()
+    const options = lastSessionOptions!
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 'm1', role: 'assistant', blocks: [], content: 'healed' },
+    ])
+    // A non-empty snapshot so the reconnect's skipIfUnchanged load is not
+    // treated as "unchanged" against the empty snapshot a cleared array yields.
+    mockUtilsFns.buildMessageSnapshot.mockReturnValue('snap-heal')
+
+    let chatFails = true
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      const u = String(url)
+      if (u.includes('/api/ai/chat?session_id=') || u.includes('/api/ai/chat?')) {
+        if (chatFails) return Promise.reject(new TypeError('Failed to fetch'))
+      }
+      if (u.includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 'current-s1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 'current-s1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    const handlers = captureForegroundHandlers()
+    handlers[handlers.length - 1]()
+
+    // The reopen failed at the transport layer — no toast, empty list.
+    await vi.waitFor(() => {
+      const chatAttempts = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
+        .filter((c: unknown[]) => String(c[0]).includes('/api/ai/chat'))
+      expect(chatAttempts.length).toBeGreaterThan(0)
+    })
+    expect(mockToastFn).not.toHaveBeenCalled()
+
+    // The socket comes back: the reconnect must run and repopulate the list.
+    chatFails = false
+    await session.handleWsReconnect()
+
+    expect(options.messages.value).toHaveLength(1)
   })
 })
 
@@ -2268,29 +2396,28 @@ describe('switchSession', () => {
     expect(globalThis.fetch).toHaveBeenCalled()
   })
 
-  it('marks DB-returned queued messages as pending after switchSession', async () => {
-    // Queued messages are real chat_history rows now (queued=true, queueId
-    // set). loadHistory must mark them pending so the UI shows a waiting bubble.
+  it('rebuilds the queue store from the response queue field after switchSession', async () => {
+    // Queued messages are NOT chat_history rows any more — they live in their
+    // own table and arrive in a separate `queue` field. loadHistory calls
+    // syncFromHistory, so the panel is rebuilt from the authoritative snapshot.
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'hello' },
       { id: 2, role: 'assistant', content: 'hi' },
-      { id: 3, role: 'user', content: 'queued message 1', queueId: 'pending-abc123', queued: true },
-      { id: 4, role: 'user', content: 'queued message 2', queueId: 'pending-def456', queued: true, files: [{ path: '/tmp/file.txt', isDir: false }] },
     ])
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
-        // Chat history fetch with queued messages
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's2',
           messages: [
             { id: 1, role: 'user', content: 'hello' },
             { id: 2, role: 'assistant', content: 'hi' },
-            { id: 3, role: 'user', content: 'queued message 1', queueId: 'pending-abc123', queued: true },
-            { id: 4, role: 'user', content: 'queued message 2', queueId: 'pending-def456', queued: true, files: [{ path: '/tmp/file.txt', isDir: false }] },
           ],
-          total: 4,
-          queuedCount: 2,
+          queue: [
+            { queueId: 'pending-abc123', text: 'queued message 1' },
+            { queueId: 'pending-def456', text: 'queued message 2', files: [{ path: '/tmp/file.txt', isDir: false }] },
+          ],
+          total: 2,
           backend: 'claude',
           agentId: 'agent1',
           modelId: '',
@@ -2299,7 +2426,6 @@ describe('switchSession', () => {
         }),
       })
       .mockResolvedValue({
-        // Catch-all for loadSessionsOnce etc.
         ok: true,
         json: () => Promise.resolve({ sessions: [], totalCount: 0 }),
       })
@@ -2307,25 +2433,22 @@ describe('switchSession', () => {
     const session = createSession()
     await session.switchSession('s2')
 
-    // Queued messages should be marked pending, normal messages not.
-    const pendingMsgs = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    expect(pendingMsgs.length).toBe(2)
-    expect(pendingMsgs[0].content).toBe('queued message 1')
-    expect(pendingMsgs[0].queueId).toBe('pending-abc123')
-    expect(pendingMsgs[1].content).toBe('queued message 2')
-    expect(pendingMsgs[1].queueId).toBe('pending-def456')
-    // queuedCount should be synced for hasMore (plan C).
-    expect(session.queuedCount.value).toBe(2)
+    // The queued messages are in the queue store, keyed by the returned id.
+    const queue = getQueue('s2')
+    expect(queue).toHaveLength(2)
+    expect(queue[0].queueId).toBe('pending-abc123')
+    expect(queue[0].text).toBe('queued message 1')
+    expect(queue[1].queueId).toBe('pending-def456')
+    // And NOT in the conversation messages.
+    expect(lastSessionOptions!.messages.value.some((m: any) => m.queueId === 'pending-abc123')).toBe(false)
   })
 
-  it('marks a DB-returned queued message pending even when the optimistic bubble was replaced', async () => {
-    // The optimistic bubble pushed by sendMessageNow is replaced by its DB row
-    // on loadHistory. The DB row carries queueId/queued=true, so it must be
-    // re-marked pending — otherwise the UI loses the waiting bubble.
+  it('replaces (not merges) the queue store on a later loadHistory', async () => {
+    // syncFromHistory REPLACES the session's queue from the snapshot, so a
+    // drained/cancelled entry the snapshot no longer lists disappears.
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'A' },
       { id: 2, role: 'assistant', content: 'A reply' },
-      { id: 3, role: 'user', content: 'queued during reload', queueId: 'pending-xyz789', queued: true },
     ])
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -2334,50 +2457,9 @@ describe('switchSession', () => {
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
-          { id: 3, role: 'user', content: 'queued during reload', queueId: 'pending-xyz789', queued: true },
         ],
-        total: 3,
-        queuedCount: 1,
-        running: false,
-      }),
-    })
-
-    const session = createSession()
-    // Guard against state leaking from a prior test that populated the same
-    // shared messages ref.
-    lastSessionOptions!.messages.value = []
-
-    await session.loadHistory(true, false, false)
-
-    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    const xyz = pending.filter((m: any) => m.queueId === 'pending-xyz789')
-    // The DB row (id=3) is pending because it is still queued.
-    expect(xyz.length).toBe(1)
-    expect(xyz[0].id).toBe(3)
-    expect(xyz[0].content).toBe('queued during reload')
-    // queuedCount is synced for hasMore (plan C).
-    expect(session.queuedCount.value).toBe(1)
-  })
-
-  it('marks multiple DB-returned queued messages as pending', async () => {
-    mockUtilsFns.parseMessages.mockReturnValue([
-      { id: 1, role: 'user', content: 'A' },
-      { id: 2, role: 'assistant', content: 'A reply' },
-      { id: 3, role: 'user', content: 'queued B', queueId: 'pending-b1', queued: true },
-      { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
-    ])
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessionId: 'current-s1',
-        messages: [
-          { id: 1, role: 'user', content: 'A' },
-          { id: 2, role: 'assistant', content: 'A reply' },
-          { id: 3, role: 'user', content: 'queued B', queueId: 'pending-b1', queued: true },
-          { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
-        ],
-        total: 4,
-        queuedCount: 2,
+        queue: [{ queueId: 'pending-xyz789', text: 'queued during reload' }],
+        total: 2,
         running: false,
       }),
     })
@@ -2387,21 +2469,14 @@ describe('switchSession', () => {
 
     await session.loadHistory(true, false, false)
 
-    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    const queueIds = pending.map((m: any) => m.queueId)
-    expect(queueIds).toContain('pending-b1')
-    expect(queueIds).toContain('pending-b2')
+    expect(getQueue('current-s1')).toHaveLength(1)
+    expect(getQueue('current-s1')[0].queueId).toBe('pending-xyz789')
   })
 
-  it('does NOT mark a drained message pending when queued=false but queueId lingers (B2)', async () => {
-    // B2 regression: DequeueQueuedMessage flips queued=0 but keeps queue_id.
-    // A drained message arrives with queueId set and queued=false — it is a
-    // normal conversation message and must NOT show a waiting bubble.
+  it('clears the queue store when the snapshot has no queued messages', async () => {
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'A' },
       { id: 2, role: 'assistant', content: 'A reply' },
-      { id: 3, role: 'user', content: 'drained B', queueId: 'pending-b1', queued: false },
-      { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
     ])
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -2410,39 +2485,32 @@ describe('switchSession', () => {
         messages: [
           { id: 1, role: 'user', content: 'A' },
           { id: 2, role: 'assistant', content: 'A reply' },
-          { id: 3, role: 'user', content: 'drained B', queueId: 'pending-b1', queued: false },
-          { id: 4, role: 'user', content: 'queued C', queueId: 'pending-b2', queued: true },
         ],
-        total: 4,
-        queuedCount: 1,
+        queue: [],
+        total: 2,
         running: false,
       }),
     })
 
     const session = createSession()
     lastSessionOptions!.messages.value = []
+    addQueued('current-s1', { queueId: 'stale-q', text: 'stale', files: [] })
 
     await session.loadHistory(true, false, false)
 
-    const pending = lastSessionOptions!.messages.value.filter((m: any) => m.pending)
-    // Only the truly queued message (queued=true) is pending; the drained one
-    // (queued=false, queueId lingers) is a normal message.
-    expect(pending).toHaveLength(1)
-    expect(pending[0].content).toBe('queued C')
-    const drainedB = lastSessionOptions!.messages.value.find((m: any) => m.content === 'drained B')
-    expect(drainedB.pending).toBeUndefined()
+    expect(getQueue('current-s1')).toHaveLength(0)
   })
 
   it('does NOT carry the old session\u2019s queued messages into a new session on switch', async () => {
-    // Regression: syncSessionState merges in-flight messages across a reload,
-    // but a session SWITCH must start fresh — otherwise the old session's
-    // queued messages would leak into the new session.
+    // Regression: the queue store is keyed by session id, so a switch must not
+    // leak the old session's queued entries into the new session's panel.
     globalThis.fetch = vi.fn()
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's2',
           messages: [{ id: 1, role: 'user', content: 'new A' }, { id: 2, role: 'assistant', content: 'new reply' }],
+          queue: [],
           total: 2,
           running: false,
         }),
@@ -2452,15 +2520,13 @@ describe('switchSession', () => {
     const session = createSession()
     lastSessionOptions!.messages.value = []
     // The old session has an in-flight queued message.
-    lastSessionOptions!.messages.value.push({
-      role: 'user', id: 'pending-old', content: 'queued in OLD session', pending: true, seq: 1,
-    })
+    addQueued('current-s1', { queueId: 'pending-old', text: 'queued in OLD session', files: [] })
 
     await session.switchSession('s2')
 
-    const contents = lastSessionOptions!.messages.value.map((m: any) => m.content)
-    // The old session's queued message must NOT leak into the new session.
-    expect(contents).not.toContain('queued in OLD session')
+    // The old session's queue entry stays under its own key and does not leak.
+    expect(getQueue('s2')).toHaveLength(0)
+    expect(getQueue('current-s1').some((m) => m.text === 'queued in OLD session')).toBe(true)
   })
 
   it('a cancelled queued message does not reappear after reload (it was never persisted)', async () => {
@@ -2469,6 +2535,7 @@ describe('switchSession', () => {
       json: () => Promise.resolve({
         sessionId: 'current-s1',
         messages: [{ id: 1, role: 'user', content: 'A' }],
+        queue: [],
         total: 1,
         running: false,
       }),
@@ -2476,16 +2543,15 @@ describe('switchSession', () => {
 
     const session = createSession()
     lastSessionOptions!.messages.value = []
-    // A queued message is in flight, then cancelled (removed from the array).
-    lastSessionOptions!.messages.value.push({
-      role: 'user', id: 'pending-c', content: 'cancelled msg', pending: true, seq: 1,
-    })
-    lastSessionOptions!.messages.value = lastSessionOptions!.messages.value.filter((m: any) => m.id !== 'pending-c')
+    // A queued message is in flight, then cancelled (removed from the store).
+    addQueued('current-s1', { queueId: 'pending-c', text: 'cancelled msg', files: [] })
+    removeQueued('current-s1', 'pending-c')
 
     await session.loadHistory(true, false, false)
 
     const contents = lastSessionOptions!.messages.value.map((m: any) => m.content)
     expect(contents).not.toContain('cancelled msg')
+    expect(getQueue('current-s1')).toHaveLength(0)
   })
 
             it('does not merge DB identity into drain messages while a new turn is streaming (done→send→loadHistory race)', async () => {
@@ -2539,11 +2605,9 @@ describe('switchSession', () => {
     expect(id2).not.toBe(drainA)
   })
 
-  it('adopts DB identity into a drained reply (stale anchor cleared)', async () => {
-    // Regression: queued replies carry an anchor (afterSort in the old design,
-    // parentQueueId today) computed from the transient parent value. When the
-    // reply adopts its DB id via loadHistory, the anchor must not pin it after
-    // all DB messages — DB id order must be authoritative.
+  it('drops a transient drain-* reply and adopts the authoritative DB row', async () => {
+    // Regression: a transient drain-* reply (no anchor machinery any more) must
+    // be replaced by its DB row on loadHistory — DB id order is authoritative.
     const drainReply2 = {
       role: 'assistant', id: 'drain-reply2', content: '', blocks: [{ type: 'text', text: 'reply2' }],
       createdAt: '2026-01-01T00:00:05Z', seq: 3,
@@ -2583,18 +2647,16 @@ describe('switchSession', () => {
     expect(adopted.content).toContain('reply2')
   })
 
-  it('restores conversational order for queued replies after loadHistory', async () => {
-    // Backend persists queued user messages at enqueue time, so raw DB id
-    // order is msg2, msg3, reply2, reply3. Each reply carries the queue_id of
-    // the question it answers; anchorRepliesToQuestions must restore the
-    // conversational order msg2, reply2, msg3, reply3.
+  it('sorts conversation messages by DB id after loadHistory', async () => {
+    // A queued message is materialized into chat_history only when dequeued, so
+    // its id always precedes the reply it produced. Ordering is therefore a
+    // plain numeric-id sort — no reply anchor is needed.
     mockUtilsFns.parseMessages.mockReturnValue([
       { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
       { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
-      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', queued: false, blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
-      { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: false, blocks: [{ type: 'text', text: 'msg3' }], createdAt: '2026-01-01T00:00:03Z' },
-      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2', createdAt: '2026-01-01T00:00:04Z' },
-      { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}', queueId: 'q3', createdAt: '2026-01-01T00:00:05Z' },
+      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
+      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', createdAt: '2026-01-01T00:00:04Z' },
+      { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}', createdAt: '2026-01-01T00:00:05Z' },
     ])
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -2604,48 +2666,10 @@ describe('switchSession', () => {
           { id: 1, role: 'user', content: 'msg1' },
           { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
           { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
-          { id: 4, role: 'user', content: 'msg3', queueId: 'q3' },
-          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2' },
-          { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}', queueId: 'q3' },
-        ],
-        total: 6,
-        running: false,
-      }),
-    })
-
-    const session = createSession()
-    lastSessionOptions!.messages.value = []
-
-    await session.loadHistory(true, false, false)
-
-    const msgs = lastSessionOptions!.messages.value as any[]
-    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4, 6])
-  })
-
-  it('keeps queued replies anchored when some messages are still queued (mixed state)', async () => {
-    // Mid-drain state: msg2 drained (reply2 exists), msg3 still queued
-    // (pending bubble, queued=true). loadHistory must keep reply2 after msg2
-    // and msg3 as a pending bubble after reply2.
-    mockUtilsFns.parseMessages.mockReturnValue([
-      { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
-      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
-      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', queued: false, blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
-      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2', createdAt: '2026-01-01T00:00:04Z' },
-      { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: true, blocks: [{ type: 'text', text: 'msg3' }], createdAt: '2026-01-01T00:00:03Z' },
-    ])
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessionId: 'current-s1',
-        messages: [
-          { id: 1, role: 'user', content: 'msg1' },
-          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
-          { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
-          { id: 4, role: 'user', content: 'msg3', queueId: 'q3', queued: true },
-          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', queueId: 'q2' },
+          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}' },
+          { id: 6, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply3"}]}' },
         ],
         total: 5,
-        queuedCount: 1,
         running: false,
       }),
     })
@@ -2656,10 +2680,45 @@ describe('switchSession', () => {
     await session.loadHistory(true, false, false)
 
     const msgs = lastSessionOptions!.messages.value as any[]
-    // reply2 (id 5) stays anchored to msg2 (id 3), msg3 (id 4) pending after it.
-    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 4])
-    const msg3 = msgs.find((m: any) => m.id === 4)
-    expect(msg3.pending).toBe(true)
+    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5, 6])
+  })
+
+  it('keeps a still-queued message out of the array while its DB reply lands', async () => {
+    // Mid-drain state: msg2 was materialized (id 3) and reply2 exists (id 5),
+    // while msg3 is STILL queued — it has no chat_history row, so it lives only
+    // in the queue store and must not appear in the array.
+    mockUtilsFns.parseMessages.mockReturnValue([
+      { id: 1, role: 'user', content: 'msg1', blocks: [{ type: 'text', text: 'msg1' }], createdAt: '2026-01-01T00:00:00Z' },
+      { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}', createdAt: '2026-01-01T00:00:01Z' },
+      { id: 3, role: 'user', content: 'msg2', queueId: 'q2', blocks: [{ type: 'text', text: 'msg2' }], createdAt: '2026-01-01T00:00:02Z' },
+      { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}', createdAt: '2026-01-01T00:00:04Z' },
+    ])
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1',
+        messages: [
+          { id: 1, role: 'user', content: 'msg1' },
+          { id: 2, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply1"}]}' },
+          { id: 3, role: 'user', content: 'msg2', queueId: 'q2' },
+          { id: 5, role: 'assistant', content: '{"blocks":[{"type":"text","text":"reply2"}]}' },
+        ],
+        queue: [{ queueId: 'q3', text: 'msg3' }],
+        total: 4,
+        running: false,
+      }),
+    })
+
+    const session = createSession()
+    lastSessionOptions!.messages.value = []
+
+    await session.loadHistory(true, false, false)
+
+    const msgs = lastSessionOptions!.messages.value as any[]
+    expect(msgs.map((m: any) => m.id)).toEqual([1, 2, 3, 5])
+    // msg3 is in the queue store, not the array.
+    expect(msgs.some((m: any) => m.content === 'msg3')).toBe(false)
+    expect(getQueue('current-s1').some((m) => m.text === 'msg3')).toBe(true)
   })
 
   it('restores usage state from API response after switch', async () => {
@@ -3109,6 +3168,43 @@ describe('loadHistory', () => {
       ok: false,
       status: 500,
       json: () => Promise.resolve({ error: 'Internal Server Error' }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockToastFn).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({ type: 'error' })
+    )
+  })
+
+  it('transport-layer failure (offline / Failed to fetch): logs but does NOT toast', async () => {
+    // On Android the app resumes and immediately fires an authoritative reload
+    // (onAppResume → handleManualRefresh) before the network/radio has come
+    // back, so the fetch rejects with TypeError('Failed to fetch'). The
+    // connection then recovers on its own and the reconnect re-syncs the
+    // session — a toast describing the already-healed blip is pure noise. The
+    // connectivity state is already expressed by ConnectionOverlay and the
+    // header status dot. Only the log line remains.
+    globalThis.fetch = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'))
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockToastFn).not.toHaveBeenCalled()
+  })
+
+  it('HTTP-layer failure (server reachable, non-2xx): still toasts', async () => {
+    // Guard the discriminator: a server that answers with an error must keep
+    // producing a visible failure — only unreachable-server failures are
+    // suppressed. The body deliberately echoes the transport wording (a proxy
+    // upstream error would look exactly like this) so the test also pins that
+    // the status is attached structurally and not inferred from the message.
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 502,
+      json: () => Promise.resolve({ error: 'failed to fetch upstream' }),
     })
 
     const session = createSession()
@@ -4437,32 +4533,31 @@ describe('handleWsReconnect', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // Mock loadSessionsOnce to NOT include s1 in runningSessions
-    globalThis.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({
-        sessions: [{ id: 's1', running: false }],
-        totalCount: 1,
-      }),
-    })
-
-    // Mock loadHistory fetch
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        // First call: loadSessionsOnce
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: false }],
-          totalCount: 1,
-        }),
-      })
-      .mockResolvedValueOnce({
-        // Second call: loadHistory
+    // URL-aware mock. The order-dependent form is fragile here: the force=false
+    // reconnect path also fires markSessionRead (POST /api/ai/chat/read) before
+    // the list load, so a positional mock feeds that response to the wrong call
+    // and the history fetch never returns — which now correctly means "not
+    // confirmed finished, keep the stream" instead of exercising the teardown.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            sessions: [{ id: 's1', running: false }],
+            totalCount: 1,
+          }),
+        })
+      }
+      if (String(url).includes('/api/ai/chat/read')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+      }
+      return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's1', messages: [], total: 0, running: false,
         }),
       })
+    })
 
     await session.handleWsReconnect()
 
@@ -4600,8 +4695,8 @@ describe('handleWsReconnect', () => {
     // Regression: the WS reconnect path (skipIfUnchanged=true) must skip the
     // message re-parse / re-dispatch when the snapshot is unchanged — the
     // messages array must not be rebuilt or rewritten. This is what makes the
-    // onAppForeground → handleWsReconnect belt-and-suspenders refresh harmless
-    // on every return to the foreground when nothing changed in the background.
+    // lightweight reconnect refresh harmless on every return to the foreground
+    // when nothing changed in the background.
     // Note: onRenderUpdate(true) is intentionally STILL called — syncSessionOnReconnect
     // forces a full re-render after any reconnect-style sync (matching the WS
     // reconnect behavior), so the test asserts the data layer stays quiet, not
@@ -4648,6 +4743,59 @@ describe('handleWsReconnect', () => {
 
     expect(mockUtilsFns.parseMessages.mock.calls.length).toBe(parseCallsBefore)
     expect(options.messages.value).toEqual(msgsSnapshot)
+
+    vi.restoreAllMocks()
+  })
+
+  it('when the verification response is for another session: keeps the stream (does NOT unsubscribe)', async () => {
+    // The identity guard rejects a stale response for a different session. That
+    // response carries `running:false` for SOMEONE ELSE — adopting it as
+    // authoritative for our session would authorise a teardown on data that does
+    // not describe the run in question. This is the lightweight reconnect path,
+    // which must NOT tear down a possibly-live subscription.
+    const loading = ref(true)
+    const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId: ref('s1'),
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      if (String(url).includes('/api/ai/chat/read')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({}) })
+      }
+      // Stale: describes s2, not the session we are looking at.
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 's2', messages: [], total: 0, running: false }),
+      })
+    })
+
+    await session.handleWsReconnect()
+
+    expect(onDisconnectStream).not.toHaveBeenCalled()
+    expect(mockForceCleanupStreamingState).not.toHaveBeenCalled()
+    expect(loading.value).toBe(true)
 
     vi.restoreAllMocks()
   })
@@ -4833,11 +4981,10 @@ describe('handleWsReconnect', () => {
     vi.restoreAllMocks()
   })
 
-  it('does NOT mark the session read on manual refresh (force path)', async () => {
-    // The force path is the manual refresh button / foreground return. A manual
-    // refresh is not evidence about what the user saw, and onAppForeground
-    // already marks read on a genuine foreground transition — so the reconnect
-    // mark-read must stay on the non-force path only.
+  it('marks the session read on manual refresh (it reopens the session)', async () => {
+    // The refresh button now runs the same reopen as a session switch, and a
+    // switch marks the session read (the user's explicit intent to look at it).
+    // This deliberately replaces the old "refresh does NOT mark read" contract.
     mockAppInForeground.value = true
     const loading = ref(false)
     const options = {
@@ -4881,7 +5028,7 @@ describe('handleWsReconnect', () => {
         url.startsWith('/api/ai/chat/read') &&
         (init as RequestInit | undefined)?.method === 'POST'
     )
-    expect(readCalls.length).toBe(0)
+    expect(readCalls.length).toBe(1)
 
     vi.restoreAllMocks()
   })
@@ -4901,7 +5048,7 @@ describe('handleManualRefresh', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('when loading=true and session still running: force reloads history which re-subscribes the stream', async () => {
+  it('reopens the session (clear + rebuild) and re-subscribes the stream when still running', async () => {
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onConnectStream = vi.fn()
@@ -4928,41 +5075,57 @@ describe('handleManualRefresh', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // First fetch: loadSessionsOnce — s1 is still running.
-    // Second fetch: loadHistory — returns running:true so syncSessionState's
-    // isRunning branch re-subscribes the stream.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: true }],
-          totalCount: 1,
-        }),
-      })
-      .mockResolvedValueOnce({
+    // A frontend-only streaming placeholder the DB knows nothing about — the
+    // "stuck thinking block" shape. The OLD refresh merged DB rows in place
+    // (rebuildFromDb) and preserved this object whenever the session was still
+    // running and the snapshot carried no streaming row, which is exactly why
+    // the block survived a refresh and only went away on a session switch.
+    options.messages.value = [{
+      role: 'assistant', id: 'stale-1', streaming: true, content: '',
+      blocks: [{ type: 'thinking', text: 'stale reasoning', think_id: 'th_stale' }],
+      createdAt: '2026-01-01T00:00:00Z',
+    }]
+
+    // The reopen issues, in order: chat history (switchSession), mark-read,
+    // session list (loadSessionsOnce). parseMessages is mocked to [] so the
+    // authoritative snapshot has no rows at all.
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: true }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
         json: () => Promise.resolve({
           sessionId: 's1', messages: [], total: 0, running: true,
         }),
       })
+    })
 
     await session.handleManualRefresh()
 
-    // loadHistory was executed (the fetch mock above also serves the chat fetch;
-    // assert a session-scoped fetch happened) — the running branch forces the
-    // history reload; the placeholder is restored from the DB streaming=1 row.
+    // The stale frontend-only placeholder is GONE — proof the session was
+    // cleared before the authoritative rebuild, not merged in place.
+    expect(options.messages.value).toHaveLength(0)
+    // switchSession always tears the old subscription down first...
+    expect(onDisconnectStream).toHaveBeenCalled()
     expect(onConnectStream).not.toHaveBeenCalled()
-    expect(onDisconnectStream).not.toHaveBeenCalled()
     expect(loading.value).toBe(true)
-    // A manual refresh must re-establish the WS stream subscription (a plain
-    // loadHistory cannot heal a server-side-dropped StreamHub subscription).
+    // ...and a same-id reopen does NOT retrigger watch(currentSessionId), so the
+    // subscription must be re-established explicitly.
     expect(onResubscribeStream).toHaveBeenCalledTimes(1)
     expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
 
-  it('when loading=true and session no longer running: cleans up stuck loading, then reloads history (no resubscribe)', async () => {
+  it('reopen when the run finished while away: rebuilds from the DB and still resubscribes', async () => {
+    // A same-id reopen is not conditional on the run state: it always clears and
+    // rebuilds, and always re-establishes the subscription (the teardown is part
+    // of the switch-session flow). The DB row is authoritative, so the loading
+    // state converges to whatever the server reports.
     const loading = ref(true)
     const onDisconnectStream = vi.fn()
     const onResubscribeStream = vi.fn()
@@ -4989,36 +5152,85 @@ describe('handleManualRefresh', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // First fetch: loadSessionsOnce — s1 NOT running.
-    // Second fetch: loadHistory — the forced reload after cleanup.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: false }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: false }],
-          totalCount: 1,
-        }),
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's1', messages: [], total: 0, running: false,
-        }),
-      })
+    })
 
     await session.handleManualRefresh()
 
+    // switchSession tears the old subscription down; the reopen then
+    // re-establishes it (the guard only skips it when the session CHANGED).
     expect(onDisconnectStream).toHaveBeenCalled()
-    expect(mockForceCleanupStreamingState).toHaveBeenCalled()
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
+    // syncSessionState reports the run is over, so loading converges to false.
     expect(loading.value).toBe(false)
-    // Session finished — nothing to re-subscribe to.
-    expect(onResubscribeStream).not.toHaveBeenCalled()
-    // The forced history reload must actually fire after the cleanup.
+    // The authoritative history reload fired.
     await vi.waitFor(() => {
       const chatFetches = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls
         .filter((c: any[]) => String(c[0]).includes('/api/ai/chat?session_id=s1'))
       expect(chatFetches.length).toBeGreaterThanOrEqual(1)
     })
+
+    vi.restoreAllMocks()
+  })
+
+  it('when the user switches sessions during the reopen: does not flip the new session\'s subscription', async () => {
+    // switchSession is an await, so the user can switch sessions while the
+    // reload is in flight. resubscribe() sends a REAL unsubscribe for whatever
+    // is currently subscribed, so applying the stale reopen to the session the
+    // user just left would unsubscribe their NEW session and subscribe the OLD
+    // one. The guard must drop the stale result.
+    const loading = ref(true)
+    const currentSessionId = ref('s1')
+    const onDisconnectStream = vi.fn()
+    const onResubscribeStream = vi.fn()
+    const options = {
+      currentSessionId,
+      messages: ref([]),
+      dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
+      loading,
+      inputDisabled: ref(false),
+      blockTasks: {},
+      blockAskQuestions: {},
+      expandedTools: ref({}),
+      onParseAssistantContent: vi.fn(),
+      onExtractScheduledTasks: vi.fn(),
+      onRenderUpdate: vi.fn(),
+      onScrollBottom: vi.fn(),
+      onConnectStream: vi.fn(),
+      onDisconnectStream,
+      onResubscribeStream,
+      onOpen: vi.fn(),
+    }
+    lastSessionOptions = options
+    const session = useChatSession(options)
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ sessions: [], totalCount: 0 }) })
+      }
+      // Simulate the switch landing while the reopen's history GET is in flight.
+      currentSessionId.value = 's2'
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: false }),
+      })
+    })
+
+    await session.handleManualRefresh()
+
+    // The stale result must be dropped: no resubscribe that would flip the
+    // subscription onto the abandoned session.
+    expect(onResubscribeStream).not.toHaveBeenCalled()
 
     vi.restoreAllMocks()
   })
@@ -5081,13 +5293,21 @@ describe('handleManualRefresh', () => {
       const forceFullCalls = onRenderUpdate.mock.calls.filter((c: any[]) => c[0] === true)
       expect(forceFullCalls.length).toBeGreaterThanOrEqual(1)
     })
-    // Session idle and not running — nothing to re-subscribe.
-    expect(onResubscribeStream).not.toHaveBeenCalled()
+    // Session idle and not running — the subscription is still re-established:
+    // a reopen is unconditional, and the WS may have been dropped while the app
+    // was backgrounded even if no turn was live.
+    expect(onResubscribeStream).toHaveBeenCalledWith('s1')
 
     vi.restoreAllMocks()
   })
 
-  it('when loading=false but the session IS running: idle refresh also re-subscribes the stream', async () => {
+  it('when the run started server-side while the UI was idle: re-subscribes so live events reach us', async () => {
+    // The "stuck stream" recovery case: the UI believed the session was idle
+    // (loading=false) but the backend has a run in progress. The reopen's
+    // authoritative loadHistory reveals it and flips loading=true; the
+    // resubscribe makes the server re-emit stream_start so the live turn
+    // resumes. The resubscribe must be unconditional — gating it on the stale
+    // pre-reload state is exactly what would leave the stream dead.
     const loading = ref(false)
     const onRenderUpdate = vi.fn()
     const onResubscribeStream = vi.fn()
@@ -5112,23 +5332,18 @@ describe('handleManualRefresh', () => {
     lastSessionOptions = options
     const session = useChatSession(options)
 
-    // loadSessionsOnce reports s1 as running (a run started server-side while
-    // loading was still false — the exact "stuck stream" recovery case), and
-    // the chat fetch confirms it with running:true.
-    globalThis.fetch = vi.fn()
-      .mockResolvedValueOnce({
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes('/api/ai/sessions')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ sessions: [{ id: 's1', running: true }], totalCount: 1 }),
+        })
+      }
+      return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          sessions: [{ id: 's1', running: true }],
-          totalCount: 1,
-        }),
+        json: () => Promise.resolve({ sessionId: 's1', messages: [], total: 0, running: true }),
       })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({
-          sessionId: 's1', messages: [], total: 0, running: true,
-        }),
-      })
+    })
 
     await session.handleManualRefresh()
 
@@ -5516,7 +5731,6 @@ describe('loadMoreMessages', () => {
 
     // Even with total > 0, a null cursor (no DB history loaded) forces hasMore false.
     session.totalMessages.value = 6
-    session.queuedCount.value = 0
     expect(session.oldestLoadedId.value).toBeNull()
     expect(session.hasMore.value).toBe(false)
 
@@ -5586,13 +5800,13 @@ describe('loadMoreMessages', () => {
     expect((globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length).toBe(fetchCallsBefore)
   })
 
-  it('refreshes queuedCount from the loadMore response (plan C)', async () => {
-    // First: loadHistory returns 2 normal messages + 5 queued → queuedCount=5.
+  it('hasMore compares the loaded window against total (queued messages are not in chat_history)', async () => {
+    // loadHistory returns 2 loaded rows out of total=50 → hasMore true. Queued
+    // messages are not chat_history rows, so they need no adjustment.
     mockUtilsFns.parseMessages
       .mockReturnValueOnce([
         { id: 50, role: 'user', content: 'hello' },
         { id: 51, role: 'assistant', content: 'hi' },
-        { id: 52, role: 'user', content: 'q1', queueId: 'q1', queued: true },
       ])
       .mockReturnValueOnce([
         { id: 42, role: 'user', content: 'older' },
@@ -5607,10 +5821,8 @@ describe('loadMoreMessages', () => {
           messages: [
             { id: 50 },
             { id: 51 },
-            { id: 52, queueId: 'q1', queued: true },
           ],
           total: 50,
-          queuedCount: 5,
           running: false,
         }),
       })
@@ -5619,7 +5831,6 @@ describe('loadMoreMessages', () => {
         json: () => Promise.resolve({
           messages: [{ id: 42 }, { id: 43 }],
           total: 50,
-          queuedCount: 2,
         }),
       })
 
@@ -5644,12 +5855,12 @@ describe('loadMoreMessages', () => {
     const session = useChatSession(options)
 
     await session.loadHistory(true, false, false)
-    expect(session.queuedCount.value).toBe(5)
+    expect(session.hasMore.value).toBe(true)
 
     await session.loadMoreMessages()
 
-    // queuedCount must reflect the freshest response.
-    expect(session.queuedCount.value).toBe(2)
+    // Two more rows loaded (4 of 50) → still more to load.
+    expect(session.hasMore.value).toBe(true)
   })
 
   it('converges hasMore to false when loadMore returns no older messages', async () => {
@@ -5927,19 +6138,15 @@ describe('loadMoreMessages', () => {
     expect(session.hasMore.value).toBe(true)
   })
 
-  it('hasMore stays true while only queued messages are unloaded (plan C)', () => {
-    // All 40 normal messages are loaded, but 15 queued messages are still
-    // pending (they ARE in the messages array). total=55, queuedCount=15.
-    // There is no more NORMAL history to load → hasMore must be false.
+  it('hasMore is false once every chat_history row is loaded (queued messages are not counted)', () => {
+    // All 40 chat_history rows are loaded. Queued messages live in their own
+    // store, so total (40) equals the loaded count and hasMore is false.
     const normal = Array.from({ length: 40 }, (_, i) => ({
       id: i + 1, role: i % 2 === 0 ? 'user' : 'assistant', content: `m${i}`,
     }))
-    const queued = Array.from({ length: 15 }, (_, i) => ({
-      id: 100 + i, role: 'user', content: `q${i}`, queueId: `pq${i}`, queued: true,
-    }))
     const options = {
       currentSessionId: ref('current-s1'),
-      messages: ref([...normal, ...queued] as any),
+      messages: ref([...normal] as any),
       dispatch: (action: any) => { options.messages.value = chatMessageReducer(options.messages.value, action) },
       loading: ref(false),
       inputDisabled: ref(false),
@@ -5956,12 +6163,11 @@ describe('loadMoreMessages', () => {
     }
     lastSessionOptions = options
     const session = useChatSession(options)
-    session.totalMessages.value = 55
-    session.queuedCount.value = 15
-    // Establish a real loaded window (normal rows start at id 1).
+    session.totalMessages.value = 40
+    // Establish a real loaded window (rows start at id 1).
     session.oldestLoadedId.value = 1
 
-    // Non-queued loaded (40) == non-queued total (55-15=40) → no more history.
+    // Loaded (40) == total (40) → no more history.
     expect(session.hasMore.value).toBe(false)
   })
 })

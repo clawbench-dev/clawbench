@@ -140,6 +140,36 @@ describe('useTaskTab', () => {
       expect(store.state.taskUnreadCount).toBe(0)
     })
 
+    // tasksLoaded is the authority signal the detail view uses to tell a
+    // deleted task from a not-yet-fetched one. It must only flip on success.
+    it('marks the list as loaded only after a successful fetch', async () => {
+      const { loadTasks, tasksLoaded } = useTaskTab()
+      expect(tasksLoaded.value).toBe(false)
+
+      mockTasksResponse([makeTask({ id: 1 })])
+      await loadTasks()
+      expect(tasksLoaded.value).toBe(true)
+    })
+
+    it('does NOT mark the list as loaded when the fetch fails', async () => {
+      const { loadTasks, tasksLoaded } = useTaskTab()
+      mockFetchNotOk(500)
+
+      await loadTasks()
+
+      expect(tasksLoaded.value).toBe(false)
+    })
+
+    it('resets the loaded flag on project switch', async () => {
+      const { loadTasks, tasksLoaded } = useTaskTab()
+      mockTasksResponse([makeTask({ id: 1 })])
+      await loadTasks()
+      expect(tasksLoaded.value).toBe(true)
+
+      resetTaskTabState()
+      expect(tasksLoaded.value).toBe(false)
+    })
+
     it('sets taskRunning when any task has runningCount > 0', async () => {
       const { loadTasks } = useTaskTab()
       mockTasksResponse([makeTask({ runningCount: 1 })])

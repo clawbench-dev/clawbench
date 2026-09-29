@@ -96,6 +96,22 @@ export function useSettingsNavigation() {
     }
   }
 
+  /**
+   * Truncate the stack to its first `depth` entries (0 = back to the index).
+   *
+   * This is what a breadcrumb crumb click does: jumping to an ancestor is a
+   * multi-level pop, not a single one. Depth is clamped to the current stack
+   * length so an out-of-range crumb can never *push* the user deeper.
+   */
+  function truncateNav(depth: number) {
+    const target = Math.max(0, Math.min(depth, navStack.value.length))
+    if (target === navStack.value.length) return
+    // Mutate in place (like push/pop) so the array identity is preserved for
+    // any holder that captured the ref.
+    navStack.value.splice(target)
+    currentCategory.value = target > 0 ? navStack.value[target - 1] : null
+  }
+
   function resetState() {
     if (!checkAllGuards()) return  // at least one guard says don't reset
     navStack.value = []
@@ -176,6 +192,7 @@ export function useSettingsNavigation() {
     currentCategory,
     pushNav,
     popNav,
+    truncateNav,
     resetState,
     restartDialogVisible,
     changedColdFields,

@@ -33,6 +33,18 @@ vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
 
+// The download/archive primitives stream via XHR and drive the progress bar.
+// Mocking them keeps these tests on FileManagerContent's own wiring (which
+// path/name it hands over) rather than on the transport.
+const { mockDownloadFileByPath, mockPostForBlobWithProgress } = vi.hoisted(() => ({
+  mockDownloadFileByPath: vi.fn(),
+  mockPostForBlobWithProgress: vi.fn(() => Promise.resolve({ blob: new Blob() })),
+}))
+vi.mock('@/utils/download.ts', () => ({
+  downloadFileByPath: mockDownloadFileByPath,
+  postForBlobWithProgress: mockPostForBlobWithProgress,
+}))
+
 vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({
     confirm: vi.fn(() => Promise.resolve(true)),
@@ -90,7 +102,7 @@ vi.mock('@/utils/fileType', () => ({
 }))
 
 vi.mock('@/utils/fileManager', () => ({
-  buildThumbUrl: (dir: string, name: string) => `/api/file/thumb?path=${dir}/${name}`,
+  buildThumbUrl: (dir: string, name: string) => `/api/fs/thumb?target=${dir}/${name}`,
   isImage: () => false,
   isAudio: () => false,
   isVideo: () => false,
@@ -221,7 +233,10 @@ describe('FileManagerContent — doAttachToChat', () => {
     expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
   })
 
-  it('shows info toast when file is already attached', async () => {
+  it('is add-only: an already-attached file is added again, not removed', async () => {
+    // The per-file paperclip badge and its toggle were removed — with an
+    // arbitrary target session no single icon could represent "attached", so the
+    // context menu no longer doubles as a remove.
     mockHasAttachedFile.mockReturnValue(true)
     const wrapper = mountContent()
 
@@ -231,49 +246,12 @@ describe('FileManagerContent — doAttachToChat', () => {
 
     await wrapper.vm.doAttachToChat()
 
-    expect(mockAddAttachedFile).not.toHaveBeenCalled()
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'info' }),
-    )
-  })
-})
-
-describe('FileManagerContent — toggleAttach', () => {
-  it('removes file and shows info toast when already attached', async () => {
-    mockHasAttachedFile.mockReturnValue(true)
-    const wrapper = mountContent()
-
-    await wrapper.vm.toggleAttach('test.ts')
-
-    expect(mockRemoveAttachedFileByPath).toHaveBeenCalledWith('test.ts')
-    expect(mockToastShow).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({ type: 'info' }),
-    )
-  })
-
-  it('adds file and shows success toast when not attached', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
-    const wrapper = mountContent()
-
-    await wrapper.vm.toggleAttach('test.ts')
-
     expect(mockAddAttachedFile).toHaveBeenCalledWith('test.ts', false)
+    expect(mockRemoveAttachedFileByPath).not.toHaveBeenCalled()
     expect(mockToastShow).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({ type: 'success' }),
     )
-  })
-
-  it('attaches a directory with isDir=true', async () => {
-    mockHasAttachedFile.mockReturnValue(false)
-    const wrapper = mountContent()
-
-    await wrapper.vm.toggleAttach('src', true)
-
-    expect(mockAddAttachedFile).toHaveBeenCalledWith('src', true)
   })
 })
 
@@ -387,44 +365,23 @@ describe('FileManagerContent — doDelete emits correct path after closeCtxMenu'
 })
 
 describe('FileManagerContent — doDownload uses saved path/name after closeCtxMenu', () => {
-  it('creates download link with correct path after closeCtxMenu nulls entry', async () => {
-    vi.useFakeTimers()
+  it('passes the saved path/name to downloadFileByPath after closeCtxMenu nulls entry', async () => {
+    mockDownloadFileByPath.mockClear()
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
     wrapper.vm.ctxMenu.entry = { type: 'file', name: 'readme.md', path: 'docs/readme.md' }
     await nextTick()
 
-    const clickSpy = vi.fn()
-    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((el) => el)
-    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((el) => el)
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(clickSpy)
-
     wrapper.vm.doDownload()
 
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
-    expect(appendSpy).toHaveBeenCalled()
-    const anchor = appendSpy.mock.calls[0][0]
-    expect(anchor.href).toContain('docs/readme.md')
-    expect(anchor.download).toBe('readme.md')
-    expect(clickSpy).toHaveBeenCalled()
-
-    // Flush the setTimeout cleanup in downloadFileByPath
-    vi.advanceTimersByTime(1500)
-
-    appendSpy.mockRestore()
-    removeSpy.mockRestore()
-    vi.useRealTimers()
+    expect(mockDownloadFileByPath).toHaveBeenCalledWith('docs/readme.md', 'readme.md')
   })
 })
 
 describe('FileManagerContent — doArchiveDir uses saved entry after closeCtxMenu', () => {
-  it('fetches /api/file/archive with correct path after closeCtxMenu nulls entry', async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      blob: () => Promise.resolve(new Blob()),
-    })
-    vi.stubGlobal('fetch', fetchSpy)
-
+  it('posts the saved path to /api/file/archive after closeCtxMenu nulls entry', async () => {
+    mockPostForBlobWithProgress.mockClear()
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
     wrapper.vm.ctxMenu.entry = { type: 'dir', name: 'src', path: 'src' }
@@ -433,18 +390,13 @@ describe('FileManagerContent — doArchiveDir uses saved entry after closeCtxMen
     wrapper.vm.doArchiveDir()
 
     expect(wrapper.vm.ctxMenu.entry).toBeNull()
-    expect(fetchSpy).toHaveBeenCalledWith('/api/file/archive', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify({ paths: ['src'] }),
-    }))
-
-    vi.unstubAllGlobals()
+    expect(mockPostForBlobWithProgress).toHaveBeenCalledWith(
+      '/api/file/archive', { paths: ['src'] }, 'src.zip'
+    )
   })
 
   it('does nothing for file entries', async () => {
-    const fetchSpy = vi.fn()
-    vi.stubGlobal('fetch', fetchSpy)
-
+    mockPostForBlobWithProgress.mockClear()
     const wrapper = mountContent()
     wrapper.vm.ctxMenu.visible = true
     wrapper.vm.ctxMenu.entry = { type: 'file', name: 'test.ts', path: 'test.ts' }
@@ -452,8 +404,7 @@ describe('FileManagerContent — doArchiveDir uses saved entry after closeCtxMen
 
     wrapper.vm.doArchiveDir()
 
-    expect(fetchSpy).not.toHaveBeenCalled()
-    vi.unstubAllGlobals()
+    expect(mockPostForBlobWithProgress).not.toHaveBeenCalled()
   })
 
   it('does nothing when no entry in context menu', () => {
@@ -783,12 +734,8 @@ describe('FileManagerContent — doBatchCopy/doBatchCut/doBatchDelete', () => {
 })
 
 describe('FileManagerContent — doBatchArchive', () => {
-  it('calls doArchive with selected paths', async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({
-      ok: true,
-      blob: () => Promise.resolve(new Blob()),
-    })
-    vi.stubGlobal('fetch', fetchSpy)
+  it('archives the selected paths through the progress-aware helper', async () => {
+    mockPostForBlobWithProgress.mockClear()
 
     const wrapper = mountContent()
     wrapper.vm.multiSelectState.active = true
@@ -797,11 +744,9 @@ describe('FileManagerContent — doBatchArchive', () => {
 
     wrapper.vm.doBatchArchive()
 
-    expect(fetchSpy).toHaveBeenCalledWith('/api/file/archive', expect.objectContaining({
-      method: 'POST',
-    }))
-
-    vi.unstubAllGlobals()
+    expect(mockPostForBlobWithProgress).toHaveBeenCalledWith(
+      '/api/file/archive', { paths: ['test.ts'] }, expect.stringContaining('.zip')
+    )
   })
 })
 

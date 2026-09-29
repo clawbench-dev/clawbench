@@ -275,3 +275,34 @@ func TestIsCoalescableDelta_MatchesAddBehaviour(t *testing.T) {
 		assert.False(t, isCoalescableDelta(ai.StreamEvent{Type: typ}), typ)
 	}
 }
+
+func TestCoalescer_DoesNotMergeDifferentThinkIDs(t *testing.T) {
+	// Two consecutive thinking deltas of the same parent but DIFFERENT blocks
+	// must not merge into one frame: the client keys blocks by think_id, so a
+	// merged frame would carry text belonging to two blocks.
+	c, emitted := newTestCoalescer()
+
+	c.add(ai.StreamEvent{Type: "thinking", Content: "block A", ThinkID: "th_a"})
+	c.add(ai.StreamEvent{Type: "thinking", Content: "block B", ThinkID: "th_b"})
+	c.flush()
+
+	require.Len(t, *emitted, 2, "a differing think_id is a block boundary")
+	assert.Equal(t, "th_a", (*emitted)[0].ThinkID)
+	assert.Equal(t, "block A", (*emitted)[0].Content)
+	assert.Equal(t, "th_b", (*emitted)[1].ThinkID)
+	assert.Equal(t, "block B", (*emitted)[1].Content)
+}
+
+func TestCoalescer_MergesSameThinkID(t *testing.T) {
+	// Deltas of ONE block must still coalesce — the id must not defeat the
+	// batching that keeps a long reasoning stream to a sane frame rate.
+	c, emitted := newTestCoalescer()
+
+	c.add(ai.StreamEvent{Type: "thinking", Content: "part1 ", ThinkID: "th_a"})
+	c.add(ai.StreamEvent{Type: "thinking", Content: "part2", ThinkID: "th_a"})
+	c.flush()
+
+	require.Len(t, *emitted, 1)
+	assert.Equal(t, "th_a", (*emitted)[0].ThinkID)
+	assert.Equal(t, "part1 part2", (*emitted)[0].Content)
+}

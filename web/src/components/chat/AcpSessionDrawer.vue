@@ -29,7 +29,7 @@
             <div class="acp-session-item-info">
               <span class="acp-session-item-title">{{ session.title || t('chat.acpSession.untitled') }}</span>
               <div class="acp-session-item-meta">
-                <span v-if="session.updatedAt" class="acp-session-item-time">{{ formatTime(session.updatedAt) }}</span>
+                <span v-if="session.updatedAt" class="acp-session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
                 <span class="acp-session-item-id" :title="session.sessionId">{{ session.sessionId }}</span>
               </div>
             </div>
@@ -74,6 +74,7 @@ import SearchInput from '@/components/common/SearchInput.vue'
 import { useAcpSession, type AcpSessionInfo } from '@/composables/useAcpSession'
 import { useAgents } from '@/composables/useAgents'
 import { getBackendDisplayName } from '@/utils/backendNames'
+import { formatRelativeTime } from '@/utils/format'
 import { store } from '@/stores/app.ts'
 
 const props = defineProps<{
@@ -199,24 +200,6 @@ watch(sentinelRef, (el) => {
 })
 
 onBeforeUnmount(teardownObserver)
-
-function formatTime(iso: string): string {
-  try {
-    const d = new Date(iso)
-    const now = new Date()
-    const diffMs = now.getTime() - d.getTime()
-    const diffMin = Math.floor(diffMs / 60000)
-    if (diffMin < 1) return t('chat.acpSession.justNow')
-    if (diffMin < 60) return t('chat.acpSession.minutesAgo', { n: diffMin })
-    const diffH = Math.floor(diffMin / 60)
-    if (diffH < 24) return t('chat.acpSession.hoursAgo', { n: diffH })
-    const diffD = Math.floor(diffH / 24)
-    if (diffD < 30) return t('chat.acpSession.daysAgo', { n: diffD })
-    return d.toLocaleDateString()
-  } catch {
-    return iso
-  }
-}
 </script>
 
 <style scoped>
