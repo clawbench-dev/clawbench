@@ -93,7 +93,14 @@
                 <div class="session-item-info">
                   <div class="session-item-header">
                     <span class="session-item-title">{{ row.session.title }}</span>
-                    <span v-if="row.depth > 0" class="session-fork-gen" :title="t('session.forkGenerationTitle', { n: row.depth })">{{ t('session.forkGeneration', { n: row.depth }) }}</span>
+                    <!-- Generation chip, shown from the SECOND generation on.
+                         A direct fork (depth 1) needs no label: the indent, the
+                         tree rail and the anchor's "N forks" count already say
+                         "this hangs off that row" three times over, and the chip
+                         spends the title line's scarcest space repeating it. Only
+                         a fork OF a fork carries a fact the structure cannot
+                         express — that it is not a sibling of the rows above it. -->
+                    <span v-if="row.depth > 1" class="session-fork-gen" :title="t('session.forkGenerationTitle', { n: row.depth })">{{ t('session.forkGeneration', { n: row.depth }) }}</span>
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>

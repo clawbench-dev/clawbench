@@ -729,12 +729,27 @@ describe('SessionList', () => {
       expect(wrapper.findAll('.session-rows .session-group-header').length).toBe(0)
     })
 
-    it('labels each member with its generation', async () => {
+    it('shows the generation chip only from the second generation on', async () => {
+      // A direct fork (depth 1) is already fully described three times over by
+      // the indent, the tree rail and the anchor's "N forks" count; a "Gen 1"
+      // chip repeats the same fact in the row's most expensive space. Only the
+      // links the structure cannot express (a fork of a fork) keep the chip.
       const wrapper = await mountGrouped()
-      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').text()).toBe('session.forkGeneration')
-      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').text()).toBe('session.forkGeneration')
       // The anchor row carries no generation chip — it is generation 0.
       expect(wrapper.find('[data-session-id="root"] .session-fork-gen').exists()).toBe(false)
+    })
+
+    it('still labels a third-generation member, not just the second', async () => {
+      // Pins `depth > 1` rather than `depth === 2`: the chip must keep working
+      // for arbitrarily deep chains, not stop at the one depth the default
+      // fixture happens to contain.
+      const fork3 = { id: 'f3', title: '🔀 🔀 🔀 Topic', sourceSessionId: 'f2', createdAt: '2025-01-04', updatedAt: '2025-01-04', agentId: 'agent-1', backend: 'cli' }
+      const wrapper = await mountGrouped([root, fork1, fork2, fork3, other])
+      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="f3"] .session-fork-gen').exists()).toBe(true)
     })
 
     it('collapses and expands the group from the anchor row toggle', async () => {
