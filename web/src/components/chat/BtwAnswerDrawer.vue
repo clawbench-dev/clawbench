@@ -186,8 +186,13 @@ async function handleContentClick(event) {
  * TaskExecDetail builds. `streaming: false` selects the full (non-streaming)
  * render branch — the same one a settled chat message takes.
  *
- * A failed question has no answer; its assistant bubble carries the error text
- * so the drawer still explains what happened instead of showing an empty reply.
+ * A failed question has no answer. It is rendered with the SAME error block the
+ * main chat area uses for a failed turn (`ContentBlocks`' `.chat-error-card`:
+ * red left rail + alert icon + localized reason) rather than as plain assistant
+ * text, so a /btw failure is visually indistinguishable from any other failure
+ * the user sees. `error_source: 'clawbench'` is accurate — the answer came from
+ * ClawBench's own summary model, not from the session's agent — and it drives
+ * the source chip so the failure is not misread as the agent's.
  *
  * A pending record (the question was just asked and is still being answered)
  * renders an empty assistant bubble carrying `pending: true`; ChatMessageItem
@@ -196,7 +201,11 @@ async function handleContentClick(event) {
  */
 const items = computed(() => props.records.map((rec, i) => {
   const failed = !rec.answer && rec.error
-  const answerText = rec.answer || (failed ? t('chat.btw.failedWithReason', { reason: rec.error }) : '')
+  const answerBlocks = rec.answer
+    ? [{ type: 'text', text: rec.answer }]
+    : failed
+      ? [{ type: 'error', text: t('chat.btw.failedWithReason', { reason: rec.error }), error_source: 'clawbench' }]
+      : []
   return {
     key: `btw-${rec.id ?? i}`,
     pending: rec.pending === true,
@@ -214,7 +223,7 @@ const items = computed(() => props.records.map((rec, i) => {
       id: `btw-a-${rec.id ?? i}`,
       role: 'assistant',
       content: '',
-      blocks: answerText ? [{ type: 'text', text: answerText }] : [],
+      blocks: answerBlocks,
       metadata: null,
       createdAt: rec.createdAt || '',
       // A pending answer takes the streaming branch so the bubble shows the

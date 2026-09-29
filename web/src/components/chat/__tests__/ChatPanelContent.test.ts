@@ -616,9 +616,13 @@ describe('ChatPanelContent — /btw side question', () => {
     expect(region).toMatch(/await loadBtwRecords\(sid\)/)
   })
 
-  it('surfaces a recorded model failure as a toast but still opens the drawer', async () => {
+  it('does not toast a recorded model failure — the drawer shows the error card', async () => {
+    // The drawer opens right after this and renders the failure as a chat-style
+    // error card (BtwAnswerDrawer maps `error` to an `error` block). Toasting as
+    // well would report the same failure twice, once transiently and once in the
+    // drawer, so the toast is deliberately absent for a RECORDED failure.
     const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
-    expect(region).toMatch(/if\s*\(rec\.error\)[\s\S]*?toast\.show\(/)
+    expect(region).not.toMatch(/rec\.error[\s\S]{0,200}?toast\.show\(/)
   })
 
   it('toasts instead of opening a drawer when the request fails outright', async () => {

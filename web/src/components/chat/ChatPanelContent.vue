@@ -1257,11 +1257,9 @@ async function handleBtw(question) {
       return
     }
     // A model failure still returns a record (with `error` set) so the anchor
-    // appears; surface the failure as a toast too, and let the drawer show the
-    // question with the reason.
-    if (rec.error) {
-      toast.show(rec.error, { icon: '⚠️', type: 'error' })
-    }
+    // appears; the drawer opens below and renders it as a chat-style error card.
+    // No toast: the drawer is already on screen with the same message, and the
+    // request-level failures that DO need a toast never reach here.
     // Re-read the list so the new anchor (and its count) is authoritative; the
     // pending entry is dropped first so it cannot double the marker.
     removePendingBtw(pendingId)

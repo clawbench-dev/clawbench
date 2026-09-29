@@ -108,14 +108,29 @@ describe('BtwAnswerDrawer', () => {
     expect(exchanges[1].text()).toContain('Q2')
   })
 
-  it('shows the failure reason in the assistant bubble when the answer is missing', () => {
+  it('renders a failed question as a chat-style error block, not plain text', () => {
+    // The drawer must reuse the main chat area's failure presentation: an
+    // `error` block renders as ContentBlocks' .chat-error-card (red rail +
+    // alert icon), so a /btw failure looks like every other failure. A plain
+    // text block would render as ordinary assistant prose instead.
     captured.props.length = 0
     const wrapper = mountDrawer({
       records: [{ id: 3, question: '会失败吗', answer: '', error: 'upstream 401' }],
     })
     const a = captured.props.find(p => p.msg?.role === 'assistant')
+    expect(a.msg.blocks[0].type).toBe('error')
     expect(a.msg.blocks[0].text).toContain('upstream 401')
+    // The failure is ClawBench's own summary model, not the session's agent, so
+    // the source chip must say so.
+    expect(a.msg.blocks[0].error_source).toBe('clawbench')
     expect(wrapper.find('.cmi-user').text()).toContain('会失败吗')
+  })
+
+  it('renders no answer block when the record has neither answer nor error', () => {
+    captured.props.length = 0
+    mountDrawer({ records: [{ id: 4, question: '空', answer: '', error: '' }] })
+    const a = captured.props.find(p => p.msg?.role === 'assistant')
+    expect(a.msg.blocks).toEqual([])
   })
 
   it('forwards the host render maps so the pipeline is shared, not re-created', () => {
