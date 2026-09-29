@@ -5,6 +5,7 @@ package ai
 import (
 	"context"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -50,6 +51,61 @@ func TestAppendTerminalEnv_Empty(t *testing.T) {
 }
 
 func ptrStr(s string) *string { return &s }
+
+func TestCreateTerminal_ArgsAreExecuted(t *testing.T) {
+	// Regression: Kimi ACP sends terminal/create with Command "/bin/bash" and
+	// the real command in Args ["-c", "..."]. When Args were ignored, the bare
+	// interactive shell exited 0 immediately — the tool call reported success
+	// but the command never ran.
+	client := NewClawBenchACPClient()
+	cwd := t.TempDir()
+	client.connRef = &ACPConn{cwd: cwd}
+
+	marker := filepath.Join(cwd, "args-marker.txt")
+	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		Command: "/bin/bash",
+		Args:    []string{"-c", "touch " + marker},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.TerminalId)
+
+	_, err = client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
+		TerminalId: resp.TerminalId,
+	})
+	require.NoError(t, err)
+	assert.FileExists(t, marker)
+
+	_, _ = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		TerminalId: resp.TerminalId,
+	})
+}
+
+func TestCreateTerminal_ArgsOutputCaptured(t *testing.T) {
+	client := NewClawBenchACPClient()
+	cwd := t.TempDir()
+	client.connRef = &ACPConn{cwd: cwd}
+
+	resp, err := client.CreateTerminal(context.Background(), acp.CreateTerminalRequest{
+		Command: "/bin/echo",
+		Args:    []string{"hello", "from", "args"},
+	})
+	require.NoError(t, err)
+
+	_, err = client.WaitForTerminalExit(context.Background(), acp.WaitForTerminalExitRequest{
+		TerminalId: resp.TerminalId,
+	})
+	require.NoError(t, err)
+
+	outResp, err := client.TerminalOutput(context.Background(), acp.TerminalOutputRequest{
+		TerminalId: resp.TerminalId,
+	})
+	require.NoError(t, err)
+	assert.Contains(t, outResp.Output, "hello from args")
+
+	_, _ = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
+		TerminalId: resp.TerminalId,
+	})
+}
 
 func TestCreateTerminal_ProcessGroupIsolation(t *testing.T) {
 	// Verify that CreateTerminal calls setProcessGroup, which puts the
