@@ -49,6 +49,26 @@ func TestRunOnce_FailedMigrationIsRetried(t *testing.T) {
 		"未完成的迁移不得记账，下次启动必须重试")
 }
 
+// 守护台账读取的错误分支：读失败必须当作「未应用」，否则一次瞬时错误
+// （表缺失、连接抖动等）会让迁移被永久跳过。
+func TestIsMigrationApplied_ReturnsFalseOnReadError(t *testing.T) {
+	d, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	d.SetMaxOpenConns(1)
+	restore := SetDBForTest(d, d)
+	t.Cleanup(func() {
+		restore()
+		_ = d.Close()
+	})
+
+	// 不建表（若已存在则删掉），使 SELECT COUNT(*) FROM schema_migrations 报错。
+	_, err = d.Exec("DROP TABLE IF EXISTS schema_migrations")
+	require.NoError(t, err)
+
+	assert.False(t, isMigrationApplied("anything"),
+		"read error must not be treated as applied, or a transient failure would permanently skip the migration")
+}
+
 func TestRunOnce_DistinctNamesAreIndependent(t *testing.T) {
 	setupTestDBForMigrations(t)
 
