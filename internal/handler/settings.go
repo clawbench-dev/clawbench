@@ -36,14 +36,20 @@ import (
 // configMutex protects ConfigInstance from concurrent access.
 // PATCH acquires a full lock; GET acquires a read lock to allow concurrent reads.
 //
-// It also serializes access to the agent globals (model.Agents / model.AgentList):
-// the agent handlers read and write them under this same lock (see agent.go).
+// It also serializes access to the agent globals (model.Agents / model.AgentList)
+// for the agent handlers that use it (see agent.go). NOTE: this is NOT complete
+// coverage — several readers in this package (handler.go resolveAgentConfig,
+// chat.go, chat_session.go, validatePatchValues) and all readers in
+// internal/service and internal/ai access the globals WITHOUT this lock, so a
+// write racing them is still possible. See StartModelDiscoveryAsync in
+// internal/model/refresh.go.
 var configMutex sync.RWMutex
 
 // WithConfigLock runs fn while holding the config write lock. Code outside this
-// package that mutates the agent globals (model.Agents / model.AgentList) must
-// go through this so it serializes with the HTTP handlers, which read and write
-// those globals under configMutex.
+// package that mutates the agent globals (model.Agents / model.AgentList) should
+// go through this so it serializes with the HTTP handlers that use configMutex.
+// It is not a complete barrier: many readers access those globals without the
+// lock (see the note on configMutex).
 func WithConfigLock(fn func()) {
 	configMutex.Lock()
 	defer configMutex.Unlock()

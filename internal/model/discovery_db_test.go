@@ -748,11 +748,18 @@ func TestStartModelDiscoveryAsync_UsesInjectedLock(t *testing.T) {
 	require.NoError(t, err)
 	RegisterModelSource(StaticSource(backend, "", []AgentModel{{ID: "m1", Name: "M1"}}))
 
-	var lockedDuringReload bool
+	// 在两个时刻各记一次内存状态：进入锁时、fn() 返回后。
+	//
+	// 只在 fn() 之后断言是不够的：那样无法区分「重载在锁 runner 内」与
+	// 「runner 被调用，但重载发生在它之前/之外」——例如把生产代码改成
+	// `reload(); withAgentsLock(func(){})`，锁仍在，但重载已不再被包裹。
+	// 进入锁时若已有 agent，正说明重载发生在锁外。
+	var hadAgentBeforeLock bool
+	var hasAgentAfterLock bool
 	lock := func(fn func()) {
+		hadAgentBeforeLock = GetAgent(backend) != nil
 		fn()
-		// 若重载真的在锁内发生，此刻内存里应已有该 agent。
-		lockedDuringReload = GetAgent(backend) != nil
+		hasAgentAfterLock = GetAgent(backend) != nil
 	}
 
 	done := make(chan struct{})
@@ -763,6 +770,8 @@ func TestStartModelDiscoveryAsync_UsesInjectedLock(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("异步发现未在 5s 内完成")
 	}
-	assert.True(t, lockedDuringReload,
-		"内存重载必须在注入的锁内完成（否则与 handler 读 Agents 竞争）")
+	assert.False(t, hadAgentBeforeLock,
+		"进入锁时不应已有 agent——否则重载发生在锁外")
+	assert.True(t, hasAgentAfterLock,
+		"重载必须在锁内完成（否则与 handler 读 Agents 竞争）")
 }
