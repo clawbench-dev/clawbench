@@ -263,6 +263,45 @@ func TestScheduleAutoRename_DisabledIsNoop(t *testing.T) {
 	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-sched-off"))
 }
 
+// The fallback contract the user asked about: with the toggle ON but the shared
+// ai_summary model unconfigured, the local title must survive untouched. This
+// is the exact "AI 摘要模型未配置" case — it must degrade to the local title, not
+// blank the session or error out. ScheduleAutoRename gates on AutoRenameEnabled
+// (which folds in the model check) so it returns before spawning anything.
+func TestScheduleAutoRename_UnconfiguredModelKeepsLocalTitle(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-sched-nomodel", "本地标题", TitleSourceAuto)
+	insertAutoRenameUserMessage(t, 161, "sess-sched-nomodel", "问题")
+	model.ConfigInstance = model.Config{} // no ai_summary base_url
+	model.ChatAutoRenameEnabled = true
+	t.Cleanup(func() { model.ChatAutoRenameEnabled = false })
+
+	assert.False(t, AutoRenameEnabled(), "toggle on but no model must be unusable")
+
+	ScheduleAutoRename("sess-sched-nomodel", "问题")
+	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-sched-nomodel"))
+}
+
+// Even when reached directly (bypassing the ScheduleAutoRename gate), the
+// rename must keep the local title if the model is unconfigured. Pins the
+// GenerateSessionTitleFromMessages → ErrSummaryModelNotConfigured → early-return
+// path so a future refactor cannot turn a missing model into a blank title.
+func TestAutoRenameSession_UnconfiguredModelKeepsLocalTitle(t *testing.T) {
+	_, cleanup := setupRecommendTest(t)
+	defer cleanup()
+
+	insertSessionWithTitle(t, "sess-auto-nomodel", "本地标题", TitleSourceAuto)
+	insertAutoRenameUserMessage(t, 162, "sess-auto-nomodel", "问题")
+	model.ConfigInstance = model.Config{} // no ai_summary base_url
+	model.ChatAutoRenameEnabled = true
+	t.Cleanup(func() { model.ChatAutoRenameEnabled = false })
+
+	autoRenameSession(context.Background(), "sess-auto-nomodel", "问题")
+	assert.Equal(t, "本地标题", sessionTitleOf(t, "sess-auto-nomodel"))
+}
+
 // ── additional branch coverage ──
 
 // A read failure must not panic and must yield no messages, so the caller
