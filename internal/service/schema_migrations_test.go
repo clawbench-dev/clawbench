@@ -7,8 +7,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
-
-	"clawbench/internal/model"
 )
 
 // setupTestDBForMigrations 建一个内存库，装上 schema_migrations 表，并把
@@ -82,8 +80,11 @@ func TestRunOnce_DistinctNamesAreIndependent(t *testing.T) {
 // TestInitDB_DataMigrationsAreGatedByLedger 走真实 InitDB：
 // 第一次应转换旧格式数据并记账；清掉台账后第二次应重跑。
 func TestInitDB_DataMigrationsAreGatedByLedger(t *testing.T) {
-	dir := t.TempDir()
-	model.DataDir = dir
+	withTempDataDir(t)
+	// InitDB 打开包级 db/dbRead 池；必须关掉，否则 Windows 上 t.TempDir() 的
+	// RemoveAll 会因文件句柄未释放而失败（modernc 的 VFS 不带 FILE_SHARE_DELETE）。
+	// LIFO：CloseDB 先于 withTempDataDir 注册的 DataDir 还原、再于 TempDir 清理。
+	t.Cleanup(CloseDB)
 
 	// 第一次启动：空库，4 个迁移无待转换行 → 全部记账。
 	require.NoError(t, InitDB(true))
