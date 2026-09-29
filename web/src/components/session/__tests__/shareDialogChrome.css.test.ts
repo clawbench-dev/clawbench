@@ -171,13 +171,16 @@ describe('share-dialog chrome lives in the shared asset', () => {
     }
   })
 
-  it('keeps the spin animation available to both dialogs', () => {
-    // The regenerate button renders RefreshCw with this class; without the
-    // keyframes it silently does not spin.
-    expect(sharedSource).toContain('@keyframes share-dialog-spin')
+  it('keeps the spinner styling available to both dialogs', () => {
+    // The regenerate button renders the shared LoadingIndicator with this class.
+    // It no longer animates itself (the component owns the ring + rotation), so
+    // this rule must only tint the arc; a stale `animation:` here would fight
+    // the component's own keyframes.
     const spin = sharedSource.match(/\.share-dialog-spin\s*\{([\s\S]*?)\}/)
     expect(spin, '.share-dialog-spin rule must exist').not.toBeNull()
-    expect(spin![1]).toContain('animation: share-dialog-spin')
+    expect(spin![1]).toContain('--li-color: currentColor')
+    expect(spin![1], 'the component owns the rotation now').not.toContain('animation:')
+    expect(sharedSource, 'the old local keyframes must be gone').not.toContain('@keyframes share-dialog-spin')
   })
 
   it('does not leave the shared chrome in either dialog scoped block', () => {
