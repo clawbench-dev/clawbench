@@ -1086,6 +1086,15 @@ const btwRecords = ref([])
 /** Records currently shown in the drawer (the ones for the clicked anchor). */
 const btwDrawerRecords = ref([])
 
+// A /btw question makes the server call the summary model synchronously, which
+// routinely takes ~10s (compressing the history + one full LLM round-trip). The
+// default 10s API timeout therefore aborts the request right as the answer
+// arrives, surfacing as a bare "signal is aborted without reason" while the
+// server actually returned 200. Keep this above the server's own 120s LLM
+// budget is unnecessary (the server bounds it), but it must comfortably exceed
+// a slow model, so it matches that budget.
+const BTW_REQUEST_TIMEOUT_MS = 120_000
+
 /**
  * Records grouped by anchor message id. ChatMessageList looks up a message's
  * anchor count here; anchor 0 ("asked before any message") is included like any
@@ -1129,7 +1138,7 @@ async function handleBtw(question) {
   inputBarRef.value?.setBtwLoading?.(true)
 
   try {
-    const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question })
+    const data = await apiPost('/api/ai/session/btw', { sessionId: sid, question }, { timeoutMs: BTW_REQUEST_TIMEOUT_MS })
     const rec = data?.record
     if (!rec) {
       toast.show(t('chat.btw.failed'), { icon: '⚠️', type: 'error' })

@@ -25,24 +25,41 @@ export interface ApiOptions {
 function createSignal(opts: ApiOptions = {}): { signal: AbortSignal; cleanup: () => void } {
     const controller = new AbortController()
     const timeout = opts.timeoutMs ?? API_TIMEOUT_MS
-    const timer = setTimeout(() => controller.abort(), timeout)
+    // Pass a reason: a bare abort() makes fetch throw the opaque
+    // "signal is aborted without reason", which tells neither the user nor a
+    // log reader that this was a client-side timeout (the server may well have
+    // answered — see the /btw case, where a ~10s LLM call raced the default 10s
+    // budget). The reason is what surfaces in the rejection.
+    //
+    // It must be a DOMException with name 'AbortError', not a plain Error:
+    // callers across the app distinguish a superseded request from a real
+    // failure via `name === 'AbortError'` (some via `instanceof DOMException`),
+    // and a plain Error would make an expected abort look like a hard error.
+    const timer = setTimeout(
+        () => controller.abort(new DOMException(`request timed out after ${timeout}ms`, 'AbortError')),
+        timeout,
+    )
+
+    // Forward the caller's abort reason (when it has one) so a superseded
+    // request reports why it was cancelled instead of the opaque default.
+    const forwardAbort = () => {
+        clearTimeout(timer)
+        const reason = opts.signal?.reason
+        if (reason !== undefined) controller.abort(reason)
+        else controller.abort()
+    }
 
     // If external signal is already aborted, abort immediately
     if (opts.signal?.aborted) {
-        clearTimeout(timer)
-        controller.abort()
+        forwardAbort()
     }
 
     // Forward external abort to our controller
-    const onExternalAbort = () => {
-        clearTimeout(timer)
-        controller.abort()
-    }
-    opts.signal?.addEventListener('abort', onExternalAbort)
+    opts.signal?.addEventListener('abort', forwardAbort)
 
     const cleanup = () => {
         clearTimeout(timer)
-        opts.signal?.removeEventListener('abort', onExternalAbort)
+        opts.signal?.removeEventListener('abort', forwardAbort)
     }
 
     return { signal: controller.signal, cleanup }

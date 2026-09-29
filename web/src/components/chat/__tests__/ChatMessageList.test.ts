@@ -793,11 +793,63 @@ describe('ChatMessageList — /btw anchors', () => {
     expect(src).toContain("'open-btw'")
   })
 
+  it('insets the anchor from the panel edge, matching the plan panel', async () => {
+    const src = await source('ChatMessageList.vue')
+    // The message list has no horizontal padding of its own, so without an
+    // explicit inset the pill sits flush against the panel edge. The plan
+    // panel's scroll body uses var(--space-4), so the anchor matches it.
+    const block = src.slice(src.indexOf('.btw-anchor {'), src.indexOf('.btw-anchor:hover'))
+    expect(block).toMatch(/margin-left:\s*var\(--space-4\)/)
+    // RTL must flip the inset to the other edge.
+    expect(src).toMatch(/\[dir='rtl'\]\s*\.btw-anchor\s*\{[^}]*margin-right:\s*var\(--space-4\)/)
+  })
+
   it('only anchors settled numeric ids (optimistic/placeholder ids cannot match rows)', async () => {
     const src = await source('ChatMessageList.vue')
     // The rule itself lives in the util; the component must delegate to it
     // rather than re-implementing a weaker check.
-    expect(src).toContain("import { anchorCount } from '@/utils/btwAnchors.ts'")
+    expect(src).toContain("import { anchorCount, messageAnchorKey } from '@/utils/btwAnchors.ts'")
     expect(src).toMatch(/anchorCount\(props\.btwAnchors, msg\)/)
+  })
+
+  // Regression: a refactor dropped the local anchorKeyFor helper while the
+  // template kept calling it, so clicking the anchor threw and the drawer never
+  // opened. The earlier guard only asserted the call TEXT existed, which is
+  // exactly what a broken build still contains — it passed. These guards verify
+  // every identifier the anchor template uses is actually declared/imported.
+  it('declares every helper the anchor template calls', async () => {
+    const src = await source('ChatMessageList.vue')
+    const script = src.slice(src.indexOf('<script setup>'))
+    for (const fn of ['anchorCountFor', 'anchorKeyFor']) {
+      // Must be defined in the script block, not merely referenced in the template.
+      expect(script, `${fn} must be defined in the script block`).toMatch(
+        new RegExp(`function\\s+${fn}\\s*\\(`),
+      )
+    }
+    expect(script).toMatch(/function\s+anchorKeyFor\s*\(msg\)\s*\{\s*return messageAnchorKey\(msg\)/)
+  })
+
+  it('leaves no template identifier undeclared', async () => {
+    const src = await source('ChatMessageList.vue')
+    // Slice to the LAST </template>: the markup contains nested <template>
+    // blocks (the v-for wrapper), so the first </template> truncates the slice
+    // before the anchor markup — which is exactly the region under test.
+    const template = src.slice(src.indexOf('<template>'), src.lastIndexOf('</template>'))
+    const script = src.slice(src.indexOf('<script setup>'))
+    // Every bare function call in the anchor markup must resolve somewhere in
+    // the script (defined locally or imported).
+    const called = [...template.matchAll(/\b([a-zA-Z_$][\w$]*)\s*\(/g)]
+      .map(m => m[1])
+      .filter(name => /^(anchorCountFor|anchorKeyFor|t)$/.test(name))
+    expect(called.length).toBeGreaterThan(0)
+    for (const name of new Set(called)) {
+      if (name === 't') {
+        expect(script).toMatch(/const\s*\{\s*t\s*\}\s*=\s*useI18n\(\)/)
+        continue
+      }
+      const defined = new RegExp(`function\\s+${name}\\s*\\(`).test(script)
+      const imported = new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(script)
+      expect(defined || imported, `${name} is called in the template but not defined/imported`).toBe(true)
+    }
   })
 })

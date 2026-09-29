@@ -581,6 +581,20 @@ describe('ChatPanelContent — /btw side question', () => {
     expect(region).not.toMatch(/enqueueAndMaybeStart\(/)
   })
 
+  it('gives the btw request a timeout above the default 10s', async () => {
+    // The server answers a /btw by calling the summary model synchronously,
+    // which routinely takes ~10s. With the default 10s API timeout the request
+    // was aborted just as the answer arrived, surfacing as a bare
+    // "signal is aborted without reason" while the server returned 200.
+    const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
+    expect(region).toMatch(/timeoutMs:\s*BTW_REQUEST_TIMEOUT_MS/)
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    const source = typeof mod.default === 'string' ? mod.default : ''
+    const m = source.match(/const BTW_REQUEST_TIMEOUT_MS = ([\d_]+)/)
+    expect(m, 'BTW_REQUEST_TIMEOUT_MS must be declared').toBeTruthy()
+    expect(Number(m![1].replace(/_/g, ''))).toBeGreaterThan(10_000)
+  })
+
   it('never writes to the session loading flag', async () => {
     const region = await sourceRegion('async function handleBtw(question)', 'async function sendMessage(text)')
     // loading drives the queue decision and the stop button; a side question

@@ -193,7 +193,7 @@ import { handleCodeBlockClick, handleTableBlockClick, closeAllTableBlockMenus } 
 import { useLocalhostUrlClickHandler } from '@/composables/useLocalhostAnnotation.ts'
 import { useDialog } from '@/composables/useDialog'
 import { useUserMsgIndex } from '@/composables/useUserMsgIndex.ts'
-import { anchorCount } from '@/utils/btwAnchors.ts'
+import { anchorCount, messageAnchorKey } from '@/utils/btwAnchors.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { store } from '@/stores/app.ts'
 import { computeRemainingCount } from '@/utils/messageListUtils.ts'
@@ -249,6 +249,15 @@ function isLastAssistant(msg, _i) {
 /** Number of /btw questions asked after this message (0 = no anchor). */
 function anchorCountFor(msg) {
   return anchorCount(props.btwAnchors, msg)
+}
+
+/**
+ * The /btw anchor key for a message — the id its records are grouped under.
+ * Empty for a message with no settled numeric id (nothing can be anchored to
+ * it). Delegates to the util so the rule has one definition.
+ */
+function anchorKeyFor(msg) {
+  return messageAnchorKey(msg)
 }
 
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -1316,6 +1325,12 @@ defineExpose({
   align-items: center;
   gap: var(--space-2);
   align-self: flex-start;
+  /* The message list itself has no horizontal padding (messages carry their own
+     inset inside .chat-message), so without this the pill would sit flush
+     against the panel edge. Match the plan panel's scroll body inset
+     (TaskListPage .task-list-body uses var(--space-4)) so the anchor lines up
+     with that panel's content. */
+  margin-left: var(--space-4);
   /* Pull up into the gap the list adds before the NEXT message, so the anchor
      reads as attached to the message above it rather than floating between. */
   margin-top: calc(var(--space-8) * -1 + var(--space-3));
@@ -1340,6 +1355,12 @@ defineExpose({
    the list's normal top gap. */
 .btw-anchor-top {
   margin-top: 0;
+}
+
+/* RTL flips the reading edge: the inset must follow it. */
+[dir='rtl'] .btw-anchor {
+  margin-left: 0;
+  margin-right: var(--space-4);
 }
 
 .btw-anchor-count {
