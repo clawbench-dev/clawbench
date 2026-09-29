@@ -346,7 +346,7 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Close the ACP connection for a non-empty archived session.
-	if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
+	if agent := model.GetAgent(agentID); agent != nil && agent.SupportsACP() {
 		slog.Info("acp: closing connection for archived session", "session_id", sessionID, "agent_id", agentID)
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
@@ -370,7 +370,7 @@ func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID
 	// next session/list enumeration.
 	// 仅关闭（不 ACP 删除）agent 连接：磁盘上的 agent 会话文件保持原样，
 	// 会话仍可从外部列表重新发现。空会话的连接映射在此释放。
-	if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
+	if agent := model.GetAgent(agentID); agent != nil && agent.SupportsACP() {
 		slog.Info("acp: closing connection for empty archived session", "session_id", sessionID, "agent_id", agentID)
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
@@ -423,7 +423,7 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 	// 会话仍可从外部列表重新发现。destroy 现在只删 ClawBench 数据库记录。
 	agentID := service.GetSessionAgentID(sessionID)
 	if agentID != "" {
-		if agent, ok := model.Agents[agentID]; ok && agent.SupportsACP() {
+		if agent := model.GetAgent(agentID); agent != nil && agent.SupportsACP() {
 			slog.Info("acp: closing connection for removed session", "session_id", sessionID, "agent_id", agentID)
 			go ai.GetACPConnManager().CloseConn(sessionID)
 		}

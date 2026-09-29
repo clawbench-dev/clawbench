@@ -99,8 +99,7 @@ func ServeAgents(w http.ResponseWriter, r *http.Request) {
 
 func serveAgentsGet(w http.ResponseWriter, _ *http.Request) {
 	configMutex.RLock()
-	agents := make([]*model.Agent, len(model.AgentList))
-	copy(agents, model.AgentList)
+	agents := model.GetAgentList()
 	defaultAgent := model.GetDefaultAgentID()
 	configMutex.RUnlock()
 
@@ -227,8 +226,7 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Add to in-memory maps for immediate reflection
-	model.Agents[clone.ID] = clone
-	model.AgentList = append(model.AgentList, clone)
+	model.AddAgent(clone)
 
 	// Populate runtime-only fields
 	if spec := model.FindSpecByBackend(clone.Backend); spec != nil {
@@ -262,8 +260,7 @@ func serveAgentsRescan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return the current agent list (same shape as GET /api/agents)
-	agents := make([]*model.Agent, len(model.AgentList))
-	copy(agents, model.AgentList)
+	agents := model.GetAgentList()
 	defaultAgent := model.GetDefaultAgentID()
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -294,8 +291,8 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent, ok := model.Agents[req.ID]
-	if !ok {
+	agent := model.GetAgent(req.ID)
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}
@@ -314,14 +311,7 @@ func serveAgentsDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Remove from in-memory maps
-	delete(model.Agents, req.ID)
-	newAgentList := make([]*model.Agent, 0, len(model.AgentList)-1)
-	for _, a := range model.AgentList {
-		if a.ID != req.ID {
-			newAgentList = append(newAgentList, a)
-		}
-	}
-	model.AgentList = newAgentList
+	model.DeleteAgent(req.ID)
 
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": req.ID})
 }
@@ -390,8 +380,8 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	agent, ok := model.Agents[agentID]
-	if !ok {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}
@@ -641,8 +631,8 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	configMutex.Lock()
 	defer configMutex.Unlock()
 
-	agent, ok := model.Agents[agentID]
-	if !ok {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}
@@ -772,10 +762,10 @@ func acpSessionsAgentCheck(w http.ResponseWriter, r *http.Request) (string, *mod
 	}
 
 	configMutex.RLock()
-	agent, ok := model.Agents[agentID]
+	agent := model.GetAgent(agentID)
 	configMutex.RUnlock()
 
-	if !ok {
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return "", nil, false
 	}

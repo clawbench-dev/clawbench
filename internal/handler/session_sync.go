@@ -233,9 +233,9 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	configMutex.RLock()
-	agent, ok := model.Agents[req.AgentID]
+	agent := model.GetAgent(req.AgentID)
 	configMutex.RUnlock()
-	if !ok {
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}

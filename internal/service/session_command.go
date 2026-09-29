@@ -513,7 +513,7 @@ func handleACPCleanup(sessionID, agentID string) {
 	effectiveTransport := transportCLI
 	if t := GetSessionTransport(sessionID); t != "" {
 		effectiveTransport = t
-	} else if agent, ok := model.Agents[agentID]; ok && agent.Transport != "" {
+	} else if agent := model.GetAgent(agentID); agent != nil && agent.Transport != "" {
 		effectiveTransport = agent.Transport
 	}
 	if effectiveTransport == transportACPStdio {

@@ -127,7 +127,7 @@ func RefreshAgents(db dbutil.Writer, opts RefreshOptions) (*RefreshResult, error
 	if err := LoadAgentsIntoMemoryFromDB(db); err != nil {
 		return result, err
 	}
-	result.LoadedAgents = len(AgentList)
+	result.LoadedAgents = len(GetAgentList())
 
 	slog.Info("agents refreshed",
 		"present", len(result.PresentCLIs),
@@ -608,8 +608,7 @@ func LoadAgentsIntoMemoryFromDB(db dbutil.Reader) error {
 		newAgentsMap[agent.ID] = agent
 	}
 
-	Agents = newAgentsMap
-	AgentList = agents
+	ReplaceAgents(newAgentsMap, agents)
 	return nil
 }
 

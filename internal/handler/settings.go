@@ -1134,14 +1134,13 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 
 	// 3. default_agent must be an existing agent ID.
 	if v, ok := patch["default_agent"].(string); ok && v != "" {
-		if model.Agents != nil {
-			if _, exists := model.Agents[v]; !exists {
-				available := make([]string, 0, len(model.AgentList))
-				for _, a := range model.AgentList {
-					available = append(available, a.ID)
-				}
-				return fmt.Errorf("default_agent \"%s\" not found (available: %s)", v, strings.Join(available, ", "))
+		if model.AgentSetLoaded() && !model.HasAgent(v) {
+			list := model.GetAgentList()
+			available := make([]string, 0, len(list))
+			for _, a := range list {
+				available = append(available, a.ID)
 			}
+			return fmt.Errorf("default_agent \"%s\" not found (available: %s)", v, strings.Join(available, ", "))
 		}
 	}
 

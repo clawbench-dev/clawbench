@@ -208,8 +208,8 @@ func resolveAgentConfig(agentID string) (string, string, string, string, bool) {
 	if agentID == "" {
 		return "", "", "", "", false
 	}
-	agent, found := model.Agents[agentID]
-	if !found {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
 		return "", "", "", "", false
 	}
 	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, agent.Command, true

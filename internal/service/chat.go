@@ -1863,8 +1863,8 @@ func markSessionTitlePlaceholder(sessionID string) {
 // creation does not depend on the auto_approve column being present in minimal
 // schemas. Failure is non-fatal: the session exists, only the flag is missing.
 func applyAgentAutoApproveDefault(sessionID, agentID string) {
-	agent, ok := model.Agents[agentID]
-	if !ok || !agent.AutoApprove {
+	agent := model.GetAgent(agentID)
+	if agent == nil || !agent.AutoApprove {
 		return
 	}
 	if _, err := WriteExec("UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", sessionID); err != nil {

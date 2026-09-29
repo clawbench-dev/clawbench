@@ -426,10 +426,10 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 	// Validate agent exists and supports LoadSession
 	configMutex.RLock()
-	agent, ok := model.Agents[req.AgentID]
+	agent := model.GetAgent(req.AgentID)
 	configMutex.RUnlock()
 
-	if !ok {
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}

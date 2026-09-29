@@ -180,8 +180,8 @@ func resolveAgentConfig(agentID, projectPath, modelOverride, thinkingEffort, mod
 	effectiveThinkingEffort = thinkingEffort
 	effectiveMode = mode
 
-	agent, ok := model.Agents[agentID]
-	if !ok {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
 		return "", "", "", effectiveThinkingEffort, effectiveMode
 	}
 
@@ -215,8 +215,8 @@ func resolveIsACP(agentID, transportOverride string) bool {
 	if transportOverride != "" {
 		return transportOverride == transportACPStdio
 	}
-	agent, ok := model.Agents[agentID]
-	if !ok {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
 		return false
 	}
 	return agent.Transport == transportACPStdio

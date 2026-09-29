@@ -1409,7 +1409,7 @@ func (e *SessionExecutor) injectSessionMetadata(meta *ai.Metadata) {
 	effectiveTransport := transportCLI
 	if t := GetSessionTransport(e.cfg.SessionID); t != "" {
 		effectiveTransport = t
-	} else if agent, ok := model.Agents[e.cfg.AgentID]; ok && agent.Transport != "" {
+	} else if agent := model.GetAgent(e.cfg.AgentID); agent != nil && agent.Transport != "" {
 		effectiveTransport = agent.Transport
 	}
 	meta.Transport = effectiveTransport

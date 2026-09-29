@@ -626,7 +626,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			effectiveTransport := "cli"
 			if t := service.GetSessionTransport(sessionID); t != "" {
 				effectiveTransport = t
-			} else if agent, ok := model.Agents[effectiveAgentID]; ok && agent.Transport != "" {
+			} else if agent := model.GetAgent(effectiveAgentID); agent != nil && agent.Transport != "" {
 				effectiveTransport = agent.Transport
 			}
 			if effectiveTransport == "acp-stdio" {

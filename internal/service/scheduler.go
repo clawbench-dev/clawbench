@@ -268,7 +268,7 @@ func (s *Scheduler) LoadTasksFromDB(projectPath string) error {
 			continue
 		}
 		// Validate agent_id against loaded agents
-		if _, ok := model.Agents[task.AgentID]; !ok {
+		if !model.HasAgent(task.AgentID) {
 			// Skip registration but do NOT pause — the agent may not be loaded yet
 			// (e.g., if agents haven't been loaded yet). The task stays active in DB and
 			// will be registered on next restart when agents are available.
@@ -830,8 +830,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	agent, ok := model.Agents[task.AgentID]
-	if !ok {
+	agent := model.GetAgent(task.AgentID)
+	if agent == nil {
 		slog.Error(
 			"agent not found for task, pausing",
 			slog.String("agent_id", task.AgentID),
