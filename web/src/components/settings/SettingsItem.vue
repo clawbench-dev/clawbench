@@ -655,7 +655,7 @@ function confirmEdit() {
 }
 
 .settings-item__label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -723,7 +723,7 @@ function confirmEdit() {
 }
 
 .settings-item__value {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   max-width: 160px;
   overflow: hidden;
@@ -742,7 +742,7 @@ function confirmEdit() {
 .settings-item__info-detail {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   word-break: break-all;
   line-height: var(--line-height-snug);
@@ -1060,7 +1060,7 @@ function confirmEdit() {
 }
 
 .settings-item__option-label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   min-width: 0;
 }

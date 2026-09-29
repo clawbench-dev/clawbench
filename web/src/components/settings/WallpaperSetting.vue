@@ -918,7 +918,7 @@ onUnmounted(() => {
 }
 
 .settings-item__label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
