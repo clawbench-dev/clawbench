@@ -161,25 +161,25 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
 
   it('serves /api/tunnel/control to an AUTHENTICATED request (registry exists for enabled:false)', async () => {
     // Same reasoning as the stream probe: the nil guard is inside the handler,
-    // so only an authenticated request can reach it. A successful control bind
-    // is an NDJSON stream, so the status is read from the headers and the body
-    // is abandoned.
+    // so only an authenticated request can reach it.
+    //
+    // The expected status is 426 (Upgrade Required), NOT 200: `-R` needs HTTP/2,
+    // and the handler rejects HTTP/1.1 up front (tunnel_control.go ProtoMajor
+    // guard, added in 427b9923) rather than letting the client discover it as a
+    // bare 403 at claim time. Node's `fetch` is HTTP/1.1, so 426 is the correct
+    // outcome and — crucially — it is a HANDLER-produced status, which is the
+    // positive evidence this test wants: the handler ran past the nil-registry
+    // guard (a 503 would mean the registry was missing).
     const res = await authFetch(`${SERVER_FROM_RUNNER}/api/tunnel/control`, {
       method: 'POST',
       body: '',
     });
-    console.log(`[tier2] POST /api/tunnel/control (authenticated) -> ${res.status}`);
-    // Stop the stream (if it opened) without reading it to completion.
-    try {
-      await res.body?.cancel();
-    } catch {
-      // Already finished.
-    }
-    // 200 means the control stream opened, which a live registry must serve.
+    const text = await res.text();
+    console.log(`[tier2] POST /api/tunnel/control (authenticated, h1) -> ${res.status} ${text.slice(0, 160)}`);
     assert.equal(
       res.status,
-      200,
-      `expected 200 (control stream opened) but got ${res.status} — a live registry must serve this`,
+      426,
+      `expected 426 (handler reached its HTTP/2 guard) but got ${res.status} — a live registry must serve this`,
     );
   });
 
@@ -222,38 +222,47 @@ describe('Tier 2 — real server + h2 endpoint liveness', () => {
   it('selects the h2 transport through the JS bridge and reports it back', async () => {
     await enterWebView();
 
-    // This is the exact call the Vue settings flow makes
-    // (useSettingsConfig.syncTunnelTransportToNative); driving it directly is
-    // the point of the test.
-    await bridge('setTunnelTransport', 'h2');
+    // The bridge exposes the transport as a BOOLEAN toggle now
+    // (`setTunnelTransportH2Enabled`, persisted in SharedPreferences), not the
+    // old string preference. This is the exact call the Vue settings flow makes.
+    await bridge('setTunnelTransportH2Enabled', true);
 
+    assert.equal(await bridge('getTunnelTransportH2Enabled'), true, 'the h2 toggle did not stick');
     const pref = await bridge('getTunnelTransport');
     console.log(`[tier2] getTunnelTransport() = ${pref}`);
     assert.equal(pref, 'h2', `transport preference did not stick: ${pref}`);
 
-    // No session is live yet, so the active wire must be empty — not stale from
-    // a previous connection.
+    // No session is live yet, so the active family must be empty — not stale
+    // from a previous connection.
     const activeBefore = await getActiveTunnelTransport();
     console.log(`[tier2] getActiveTunnelTransport() before connecting = "${activeBefore}"`);
     assert.equal(activeBefore, '', `expected no active transport before connecting, got "${activeBefore}"`);
   });
 
-  it('reports the transport preference verbatim for each recognised value, and "" active before any connect', async () => {
-    // P0 transport-preference matrix. The preference is a pure round-trip
-    // through the JS bridge (setTunnelTransport -> BackgroundService static ->
-    // getTunnelTransport); it must not be normalized or dropped. `getActive`
-    // stays empty for every value because nothing has connected.
+  it('maps the h2 toggle to the transport preference, and "" active before any connect', async () => {
+    // P0 transport-preference matrix. The boolean toggle is the single source of
+    // truth, and `getTunnelTransport()` is derived from it ("h2" on / "ssh"
+    // off); the round-trip must not be normalized or dropped. `getActive` stays
+    // empty for every value because nothing has connected.
     await enterWebView();
-    for (const pref of ['ssh', 'h2', 'both']) {
-      await bridge('setTunnelTransport', pref);
+    for (const enabled of [true, false, true]) {
+      await bridge('setTunnelTransportH2Enabled', enabled);
+      const gotToggle = await bridge('getTunnelTransportH2Enabled');
       const got = await bridge('getTunnelTransport');
-      console.log(`[tier2] setTunnelTransport(${pref}) -> getTunnelTransport() = ${got}`);
-      assert.equal(got, pref, `preference ${pref} did not round-trip (got ${got})`);
+      console.log(
+        `[tier2] setTunnelTransportH2Enabled(${enabled}) -> toggle=${gotToggle} transport=${got}`,
+      );
+      assert.equal(gotToggle, enabled, `toggle did not round-trip (got ${gotToggle})`);
+      assert.equal(
+        got,
+        enabled ? 'h2' : 'ssh',
+        `transport preference did not derive from the toggle (got ${got})`,
+      );
       const active = await getActiveTunnelTransport();
       assert.equal(active, '', `getActiveTunnelTransport() must be "" before any connect, got "${active}"`);
     }
     // Restore the h2 preference for the specs that follow.
-    await bridge('setTunnelTransport', 'h2');
+    await bridge('setTunnelTransportH2Enabled', true);
     assert.equal(await bridge('getTunnelTransport'), 'h2');
   });
 

@@ -7,10 +7,11 @@
  * request body carries client->server bytes and whose response body carries
  * server->client bytes.
  *
- * The headline result is `getActiveTunnelTransport()`: which wire actually won,
- * `tls` or `h2c`. Against this plain-HTTP server the TLS probe fails at the
- * handshake (fast, not a timeout) and h2c wins — both are accepted here, and the
- * observed value is printed.
+ * The headline result is `getActiveTunnelTransport()`: whether a live h2 session
+ * exists. It now returns the transport FAMILY (`"h2"`), not the wire kind — the
+ * bridge was refactored when the string preference became a boolean toggle, and
+ * `tls`/`h2c` are no longer distinguishable from JS (see helpers/tunnel.mjs).
+ * Against this plain-HTTP server the h2c wire is the one that connects.
  *
  * ## Authentication fixture
  *
@@ -71,7 +72,7 @@ const OWNED_LOCAL_PORTS = [L_LOCAL_PORT, L_LOCAL_PORT_2];
  */
 async function ensureLocalForward(localPort = L_LOCAL_PORT) {
   await enterWebView();
-  await bridge('setTunnelTransport', 'h2');
+  await bridge('setTunnelTransportH2Enabled', true);
   const existing = JSON.parse(await bridge('getForwardedPorts')).find(
     (p) => p.port === localPort && p.direction === 'forward',
   );
@@ -110,7 +111,7 @@ describe('Tier 2 — h2 tunnel -L', () => {
 
   it('opens a -L forward over h2 and reports which wire won', async () => {
     await enterWebView();
-    await bridge('setTunnelTransport', 'h2');
+    await bridge('setTunnelTransportH2Enabled', true);
     assert.equal(await bridge('getTunnelTransport'), 'h2');
 
     // The control proves the target is alive independently of the tunnel, so a
@@ -127,7 +128,7 @@ describe('Tier 2 — h2 tunnel -L', () => {
 
     // === HEADLINE RESULT ===
     console.log(`[tier2] getActiveTunnelTransport() = "${wire}"`);
-    assert.ok(['tls', 'h2c'].includes(wire), `unexpected active transport "${wire}"`);
+    assert.equal(wire, 'h2', `unexpected active transport "${wire}"`);
 
     const error = await getTunnelError();
     const errorType = await getTunnelErrorType();
@@ -219,10 +220,10 @@ describe('Tier 2 — h2 tunnel -L', () => {
     const wire = await waitFor(
       async () => {
         const w = await getActiveTunnelTransport();
-        return ['tls', 'h2c'].includes(w) ? w : null;
+        return w === 'h2' ? w : null;
       },
       30000,
-      'getActiveTunnelTransport() to report a live h2 wire after reconnect',
+      'getActiveTunnelTransport() to report a live h2 session after reconnect',
     );
     console.log(`[tier2] after reconnect: getActiveTunnelTransport() = "${wire}"`);
 

@@ -113,8 +113,9 @@ export const HOME_MARKER = 'e2e-home-marker';
 /** Device-side scratch dir. `/data/local/tmp` is world-writable and survives. */
 const DEVICE_TMP = '/data/local/tmp';
 
-/** The two wires the h2 transport can win on. */
-export const H2_WIRES = ['tls', 'h2c'];
+/** The live h2 session's transport family. `getActiveTunnelTransport()` no
+ *  longer distinguishes the wire kind (see that function), so this is `["h2"]`. */
+export const H2_WIRES = ['h2'];
 
 // ---------------------------------------------------------------- generic ----
 
@@ -200,12 +201,25 @@ export async function bridge(method, ...args) {
   );
 }
 
-/** The transport preference in effect, e.g. `"h2"`. */
+/**
+ * The transport preference in effect, derived from the local h2 toggle:
+ * `"h2"` when enabled, `"ssh"` otherwise.
+ */
 export async function getTunnelTransport() {
   return bridge('getTunnelTransport');
 }
 
-/** The wire that actually carried the last connect: `"tls"`, `"h2c"`, or `""`. */
+/**
+ * The transport FAMILY of the live h2 session: `"h2"`, or `""` when there is no
+ * live h2 session.
+ *
+ * This used to be the wire kind (`"tls"` / `"h2c"`). The bridge was refactored
+ * when the string preference became a boolean toggle
+ * (`setTunnelTransportH2Enabled`): `getActiveTunnelTransport()` now returns the
+ * family name, matching the desktop client's `getActiveTransport()`. The wire
+ * kind is no longer observable from JS — so `waitForActiveWire` below waits for
+ * `"h2"` and the specs must not assert `tls`/`h2c`.
+ */
 export async function getActiveTunnelTransport() {
   return bridge('getActiveTunnelTransport');
 }
@@ -220,12 +234,18 @@ export async function getTunnelErrorType() {
   return bridge('getTunnelErrorType');
 }
 
-/** Wait for a live h2 session and return the winning wire. */
+/**
+ * Wait for a live h2 session and return its transport family.
+ *
+ * The name is kept from when this returned a wire kind; the return value is now
+ * always `"h2"` (see `getActiveTunnelTransport`). Callers that only need "is an
+ * h2 session live?" are unchanged.
+ */
 export async function waitForActiveWire(timeoutMs = 60000) {
   return waitFor(async () => {
     const active = await getActiveTunnelTransport();
     return H2_WIRES.includes(active) ? active : null;
-  }, timeoutMs, 'getActiveTunnelTransport() to report tls or h2c');
+  }, timeoutMs, 'getActiveTunnelTransport() to report a live h2 session');
 }
 
 // -------------------------------------------------------- device shell -------

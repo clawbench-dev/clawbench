@@ -81,7 +81,7 @@ async function findReverse(serverPort) {
  */
 async function ensureReverseForward(serverPort = R_SERVER_PORT) {
   await enterWebView();
-  await bridge('setTunnelTransport', 'h2');
+  await bridge('setTunnelTransportH2Enabled', true);
   if (!(await findReverse(serverPort))) {
     await bridge('addReverseForwardedPort', serverPort, R_DEVICE_TARGET_PORT, '127.0.0.1');
   }
@@ -139,7 +139,7 @@ async function assertReverseAddsRejected(reservedPorts, barrierPort) {
   await enterWebView();
   // The barrier's valid bind must ride the h2 transport; make the helper
   // self-contained rather than relying on a previous test having set it.
-  await bridge('setTunnelTransport', 'h2');
+  await bridge('setTunnelTransportH2Enabled', true);
 
   // Keep a baseline reverse mapping alive for the whole helper. Phase 1 below
   // unbinds the barrier port, and `removeReversePortForward` calls `stopSelf()`
@@ -235,7 +235,7 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     // The h2 session must be live: a reverse mapping is only servable over a
     // connected tunnel.
     console.log(`[tier2][-R] getActiveTunnelTransport() = "${wire}"`);
-    assert.ok(['tls', 'h2c'].includes(wire), `unexpected active transport "${wire}"`);
+    assert.equal(wire, 'h2', `unexpected active transport "${wire}"`);
 
     // The mapping appears in getForwardedPorts() only once the server accepted
     // the bind. That bind rides the authenticated control stream, so it is the
@@ -348,7 +348,7 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     // mapping survival is asserted inside the helper (it must be listed); here
     // we additionally carry real bytes through it.
     const wire = await assertReverseAddsRejected([20000, 20001], R_SERVER_PORT_2);
-    assert.ok(['tls', 'h2c'].includes(wire), `the tunnel died after the reserved-port rejections (wire="${wire}")`);
+    assert.equal(wire, 'h2', `the tunnel died after the reserved-port rejections (wire="${wire}")`);
     const nonce = `after-reserved-${crypto.randomUUID()}`;
     const probe = await reverseProbe(R_SERVER_PORT_2, nonce, 10000);
     console.log(`[tier2][-R] valid bind after rejections -> ${JSON.stringify(probe).slice(0, 240)}`);
@@ -370,7 +370,7 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     // The barrier port must differ from the baseline (R_SERVER_PORT); reuse the
     // sibling port the previous spec cleaned up.
     const wire = await assertReverseAddsRejected([0], R_SERVER_PORT_2);
-    assert.ok(['tls', 'h2c'].includes(wire), `the tunnel died after the out-of-range rejection (wire="${wire}")`);
+    assert.equal(wire, 'h2', `the tunnel died after the out-of-range rejection (wire="${wire}")`);
     const nonce = `after-range-${crypto.randomUUID()}`;
     const probe = await reverseProbe(R_SERVER_PORT_2, nonce, 10000);
     await assertDeviceAnswer(probe, nonce, 'after the out-of-range rejection');
@@ -388,7 +388,7 @@ describe('Tier 2 — h2 tunnel -R end-to-end', () => {
     // while the target stalls, so it is started without awaiting and the removal
     // happens while it is open.
     await enterWebView();
-    await bridge('setTunnelTransport', 'h2');
+    await bridge('setTunnelTransportH2Enabled', true);
     await startReverseStallTarget(R_DEVICE_STALL_PORT);
     try {
       await bridge('addReverseForwardedPort', R_SERVER_PORT_3, R_DEVICE_STALL_PORT, '127.0.0.1');
