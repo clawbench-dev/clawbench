@@ -19,6 +19,20 @@ import { readAndroidBridge, androidBridgeExposes } from '@/testUtils/androidBrid
  * this file pins "what the frontend requires of the host", not "what the host
  * happens to expose".
  *
+ * The set asserted here is deliberately narrow: the four h2-toggle bridge
+ * methods, plus `getTunnelTransport` / `getActiveTunnelTransport` (consumed by
+ * usePortForward.refreshActiveTransport). The latter two are optional in the TS
+ * contract and degrade to a hidden status line, so they are not load-bearing
+ * like the h2 toggle — but they are still consumed, and this file's own rule
+ * ("a method belongs here iff the frontend consumes it") puts them in scope.
+ * The many other cross-platform methods the frontend calls (getAppVersion,
+ * isTunnelConnected, getForwardedPorts, testPortReachable, the download and
+ * share actions, reconnectTunnel, …) are NOT asserted here: they are
+ * long-shipped and each is already pinned by a host-specific test on the
+ * Android side (e.g. MainActivityTunnelBridgeTest's annotation reflection) or
+ * by the method's own behaviour spec. This file exists to catch the h2-era
+ * additions that slipped through, not to re-encode the whole bridge.
+ *
  * The two `getFloatingWindowEnabled` / `getLiveUpdateEnabled` declarations that
  * this file's sibling change removed from `clawbenchNative.ts` are intentionally
  * absent: they were dead (zero consumers, never bridged — the Android bridge
@@ -67,5 +81,32 @@ describe('Android host contract: bridge methods the frontend consumes', () => {
 
   it('setTunnelTransportH2Enabled delegates to the SharedPreferences writer', () => {
     expect(src).toContain('BackgroundService.setTunnelTransportH2Enabled(activity, enabled)')
+  })
+
+  it('getTunnelTransport is bridged (read by usePortForward.refreshActiveTransport)', () => {
+    // usePortForward.ts:560 — the panel's "transport" line falls back to this
+    // read when getActiveTunnelTransport() reports no live wire. Both are
+    // optional in the TS contract, so a host that stops exposing this one
+    // silently hides the line instead of failing.
+    expect(androidBridgeExposes(src, 'getTunnelTransport')).toBe(true)
+  })
+
+  it('getTunnelTransport derives the name from the local h2 preference', () => {
+    // Pins that the bridge reports the persisted preference rather than a stub
+    // string: 'h2' when the toggle is on, 'ssh' otherwise.
+    expect(src).toContain('BackgroundService.isTunnelTransportH2Enabled(activity) ? "h2" : "ssh"')
+  })
+
+  it('getActiveTunnelTransport is bridged (preferred by usePortForward.refreshActiveTransport)', () => {
+    // usePortForward.ts:559 — the panel prefers this read, which reports the
+    // wire that actually carried the last connect (a 'both' client reports the
+    // winner), before falling back to the preference above.
+    expect(androidBridgeExposes(src, 'getActiveTunnelTransport')).toBe(true)
+  })
+
+  it('getActiveTunnelTransport delegates to the live-session accessor', () => {
+    // The empty-string answer (no live h2 session) is what lets the frontend
+    // fall back to getTunnelTransport(); a hardcoded "h2" would break that.
+    expect(src).toContain('BackgroundService.getActiveTunnelTransport()')
   })
 })
