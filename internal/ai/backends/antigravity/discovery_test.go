@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -94,6 +95,18 @@ func TestAntigravitySource_Registered(t *testing.T) {
 	src, ok := model.LookupModelSource("antigravity")
 	require.True(t, ok)
 	assert.Equal(t, model.SourceKindCLI, src.Kind())
+}
+
+func TestAntigravitySourceHasShortTimeout(t *testing.T) {
+	src, ok := model.LookupModelSource("antigravity")
+	require.True(t, ok, "antigravity 必须注册了模型源")
+	// Positive guards against the accessor silently returning the zero value
+	// (a static/plugin source, or a cliSource whose Timeout() is not wired):
+	// a broken accessor would satisfy the <=5s bound below while the real probe
+	// still used the 10s default.
+	require.Positive(t, src.Timeout(), "antigravity 是 CLI 探针，超时必须被真实设置")
+	assert.LessOrEqual(t, src.Timeout(), 5*time.Second,
+		"antigravity 探针超时必须 <=5s（agy 未登录时挂 ~16s）")
 }
 
 func TestAntigravitySource_FallsBackOnMissingBinary(t *testing.T) {

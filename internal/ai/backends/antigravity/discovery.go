@@ -3,15 +3,21 @@ package antigravity
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"clawbench/internal/model"
 )
 
 func init() {
 	model.RegisterModelSource(model.NewCLISource("antigravity", model.CLIOptions{
-		Command:  "agy",
-		Args:     []string{"models"},
-		Parse:    parseAgyModels,
+		Command: "agy",
+		Args:    []string{"models"},
+		Parse:   parseAgyModels,
+		// agy 未登录时会联网重试 ~16s 才输出错误（实测 16.0/16.5/16.0s），
+		// 而结果永远是 Fallback 里的 AntigravityCatalog。默认 10s 会在每次
+		// 启动白等 10s，这里收紧到 5s：登录用户的一次真实拉取足够，
+		// 未登录用户少等一半。
+		Timeout:  5 * time.Second,
 		Fallback: model.AntigravityCatalog,
 	}))
 }
