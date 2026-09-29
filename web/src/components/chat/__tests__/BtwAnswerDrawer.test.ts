@@ -136,6 +136,21 @@ describe('BtwAnswerDrawer', () => {
     }
   })
 
+  it('keeps vertical breathing room so bubbles do not touch the edges', async () => {
+    // The body has no padding of its own, so the content wrapper must supply
+    // top AND bottom padding; a zero top made the first bubble sit flush
+    // against the header line.
+    const raw = await import('../BtwAnswerDrawer.vue?raw')
+    const src = typeof raw.default === 'string' ? raw.default : ''
+    const block = src.slice(src.indexOf('.btw-content {'), src.indexOf('.btw-exchange'))
+    const m = block.match(/padding:\s*([^;]+);/)
+    expect(m, '.btw-content must declare padding').toBeTruthy()
+    // Shorthand is "top <horizontal> bottom".
+    const [top, , bottom] = m![1].trim().split(/\s+/)
+    expect(top, 'top padding must be non-zero').toMatch(/var\(--space-/)
+    expect(bottom, 'bottom padding must be non-zero').toMatch(/var\(--space-/)
+  })
+
   it('renders nothing when there are no records', () => {
     const wrapper = mountDrawer({ records: [] })
     expect(wrapper.find('.cmi-mock').exists()).toBe(false)

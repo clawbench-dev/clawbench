@@ -125,7 +125,11 @@ defineExpose({
    they are removed here. Everything else (bubble background, radius, padding,
    typography) stays exactly as in the chat area. */
 .btw-content {
-  padding: 0 0 var(--space-6);
+  /* Breathing room above and below the exchange(s). Top matters most: without
+     it the first bubble sits flush against the header's shadow line. Bottom is
+     larger because the panel can be dragged to full height and the last line
+     otherwise ends at the screen edge. */
+  padding: var(--space-5) 0 var(--space-7);
 }
 
 .btw-exchange + .btw-exchange {
