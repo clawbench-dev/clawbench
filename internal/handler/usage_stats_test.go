@@ -18,15 +18,18 @@ func seedUsageStatsData(t *testing.T, projectPath, sessionID, model, createdAt s
 	t.Helper()
 	db := service.UnsafeDBForTest()
 
+	// Project-scoped columns store an id; resolve (and register) the path.
+	projectID := service.ProjectIDForTest(t, projectPath)
+
 	_, err := db.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id) VALUES (?, ?, 'codebuddy', 't', 'codebuddy')",
-		sessionID, projectPath,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'codebuddy', 't', 'codebuddy')",
+		sessionID, projectID,
 	)
 	require.NoError(t, err)
 
 	res, err := db.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, created_at) VALUES (?, 'codebuddy', ?, 'assistant', '{}', 0, ?)",
-		projectPath, sessionID, createdAt,
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'codebuddy', ?, 'assistant', '{}', 0, ?)",
+		projectID, sessionID, createdAt,
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
@@ -34,9 +37,9 @@ func seedUsageStatsData(t *testing.T, projectPath, sessionID, model, createdAt s
 	_, err = db.Exec(
 		`INSERT INTO chat_metadata (message_id, model, input_tokens, output_tokens, total_tokens,
 			cache_hit_tokens, cache_miss_tokens, credit, cost_usd, created_at,
-			project_path, backend, agent_id, clawbench_session_id)
+			project_id, backend, agent_id, clawbench_session_id)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'codebuddy', 'codebuddy', ?)`,
-		msgID, model, total, 0, total, 0, 0, 0, 0, createdAt, projectPath, sessionID,
+		msgID, model, total, 0, total, 0, 0, 0, 0, createdAt, projectID, sessionID,
 	)
 	require.NoError(t, err)
 }

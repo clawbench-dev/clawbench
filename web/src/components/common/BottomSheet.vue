@@ -6,6 +6,7 @@
       ref="overlayRef"
       class="bs-overlay"
       :class="[{ 'bs-leaving': leaving, 'bs-instant': instant, 'bs-transparent-overlay': transparentOverlay, 'bs-overlay-fullscreen': fullscreen, 'bs-overlay-wide-auto': isWideScreen }, $attrs.class]"
+      :style="{ '--bs-open-order': openOrder }"
       tabindex="-1"
       @click.self="handleClose"
       @keydown.escape="handleEscapeKey"
@@ -41,6 +42,7 @@
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { getWideScreenState } from '@/composables/useWideScreenLayout'
+import { nextDrawerId, pushDrawer, removeDrawer, drawerZOffset } from '@/utils/drawerStack'
 import '@/assets/modal-footer-btn.css'
 
 const props = defineProps({
@@ -81,19 +83,29 @@ const everOpened = ref(false)
 const overlayRef = ref(null)
 let leaveTimer = null
 
-// ── Back handler: edge-swipe / Android back closes the topmost drawer ──
-// Module-level counter gives each BottomSheet instance a unique sequence number.
-// Higher sequence = more recently opened = topmost = closed first by back gesture.
-let _drawerSeq = 0
-function nextDrawerSeq() { return ++_drawerSeq }
-const instanceSeq = nextDrawerSeq()
+// ── Open-order stacking ──
+// A drawer opened from inside another must paint above it, but every BottomSheet
+// teleports to <body> at one z-index tier, so DOM order decides — and Teleport
+// fixes that at MOUNT time, not open time (see utils/drawerStack.ts).
+//
+// The stack lives in a module on purpose: top-level state in `<script setup>`
+// runs once per instance, so a stack declared here would give every drawer its
+// own copy and every offset would read 0.
+const instanceSeq = nextDrawerId()
 let unregisterBack = null
+
+/** This drawer's z-index offset within the overlay band. */
+const openOrder = drawerZOffset(instanceSeq)
 
 watch(() => props.open, (val) => {
   clearTimeout(leaveTimer)
   if (val) {
     everOpened.value = true
     leaving.value = false
+    // Claim the top of the open stack so this drawer paints above any drawer
+    // that was already open (see utils/drawerStack.ts). Idempotent: an
+    // already-open drawer must not be pushed twice.
+    pushDrawer(instanceSeq)
     // Auto-focus overlay so Escape key works immediately
     nextTick(() => {
       overlayRef.value?.focus()
@@ -111,6 +123,9 @@ watch(() => props.open, (val) => {
     unregisterBack()
     unregisterBack = null
   }
+  // Release the stack slot once closed, so the drawers opened before it drop
+  // back to their original (lower) z-index.
+  if (!val) removeDrawer(instanceSeq)
 }, { immediate: true })
 
 // Respond to dynamic closeGuard changes (e.g. when a native file picker
@@ -149,6 +164,10 @@ onBeforeUnmount(() => {
     unregisterBack()
     unregisterBack = null
   }
+  // A drawer can be unmounted while still open (its host is torn down, e.g. a
+  // tab switch or session change). Without this the slot would be held forever
+  // and every later drawer would open one level too high.
+  removeDrawer(instanceSeq)
 })
 
 function handleEscapeKey(e) {
@@ -195,7 +214,11 @@ defineExpose({
   right: 0;
   bottom: var(--dock-height, 0);
   background: rgba(0, 0, 0, 0.5);
-  z-index: var(--z-overlay);
+  /* Base tier, raised by the drawer's open-order slot (see openDrawerStack) so
+     a drawer opened from inside another one paints above it regardless of the
+     Teleport mount order. --bs-open-order defaults to 0 for any caller that
+     renders the class outside the component. */
+  z-index: calc(var(--z-overlay) + var(--bs-open-order, 0));
   display: flex;
   align-items: flex-end;
   overflow: hidden;
@@ -387,7 +410,7 @@ defineExpose({
 .bs-overlay.bs-overlay-fullscreen {
   top: 0;
   bottom: 0;
-  z-index: var(--z-sheet);
+  z-index: calc(var(--z-sheet) + var(--bs-open-order, 0));
 }
 
 /* ── Wide-screen auto mode: centered floating card ── */

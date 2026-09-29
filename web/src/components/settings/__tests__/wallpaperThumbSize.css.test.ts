@@ -97,4 +97,31 @@ describe('wallpaper preview thumbnail sizing', () => {
     expect(active).toContain('box-shadow: inset 0 0 0 2px var(--accent-color);')
     expect(active).not.toContain('border-color')
   })
+
+  it('keeps the preview image left and pushes only the action button right', () => {
+    // Measured in a real browser (settings panel 445px wide): the Bing text
+    // block (label + date + title + credit) is ~413px, so this group always
+    // wraps onto its own line. The image must stay at the LEFT edge, aligned
+    // with the text above it; only the action button is pushed to the right
+    // (`margin-left: auto` on the BUTTON — putting it on the wrapper drags the
+    // thumbnail along and strands the image at the right edge).
+    const wrap = blockFor('.wallpaper-thumb-wrap')
+    expect(wrap, 'the wrapper must span the row so the button can reach its edge').toContain('width: 100%;')
+    expect(wrap, 'the wrapper must NOT carry the right-push').not.toContain('margin-left: auto;')
+
+    // The push lives on the button inside the wrapper.
+    expect(style).toMatch(/\.wallpaper-thumb-wrap\s+\.settings-item__action\s*\{[^}]*margin-left:\s*auto/)
+  })
+
+  it('keeps the tile Apply button always visible', () => {
+    // It shipped hover-revealed (opacity 0 until the tile was hovered), which
+    // the user reported as "I can't see the Apply button" — the affordance is
+    // undiscoverable if it only appears once you already found the tile. Like
+    // the delete button in the opposite corner, it must be permanently drawn;
+    // only the DISABLED state may dim it.
+    const apply = blockFor('.wallpaper-gallery__apply')
+    expect(apply, 'the Apply button must not start hidden').not.toMatch(/opacity:\s*0\s*;/)
+    // A hover rule that turns it ON is the hover-reveal pattern — reject it.
+    expect(style).not.toMatch(/\.wallpaper-gallery__item:hover\s+\.wallpaper-gallery__apply/)
+  })
 })

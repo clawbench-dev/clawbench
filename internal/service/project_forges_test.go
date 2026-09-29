@@ -26,13 +26,9 @@ func setupTestDBForProjectForges(t *testing.T) {
 
 	_, err = db.Exec(service.ProjectForgesDDL)
 	require.NoError(t, err)
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS project_meta (
-		project_path TEXT PRIMARY KEY,
-		next_session_number INTEGER NOT NULL DEFAULT 0,
-		forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	)`)
+	// project_meta was folded into the projects registry (its one live column is
+	// forge_bind_opt_out there now), so the fixture needs the registry instead.
+	_, err = db.Exec(service.ProjectsDDL)
 	require.NoError(t, err)
 
 	cleanup := service.SetDBForTest(db, db)

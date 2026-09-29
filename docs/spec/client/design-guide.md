@@ -106,7 +106,7 @@
 
 ```
 --z-overlay: 1000              欢迎页/弹窗/底部抽屉的遮罩
---z-overlay-raised: 1001       升级提示，压在遮罩之上
+--z-overlay-raised: 1050       升级提示，压在遮罩之上
 --z-header: 1100               应用头部
 --z-sheet: 1200                全屏抽屉、代码预览浮层
 --z-preview-tooltip: 1300      预览浮层上的 tooltip
@@ -119,6 +119,13 @@
 --z-popover: 9999              菜单、下拉、tooltip、toast
 --z-lightbox: 10000            图片灯箱——最高
 ```
+
+**`--z-overlay` 之上留了一条 1000..1049 的带**给 BottomSheet 按**打开顺序**叠放
+（`calc(var(--z-overlay) + var(--bs-open-order))`）：所有 BottomSheet 都 teleport 到
+`<body>` 且同一层级，两个同时打开时由 **DOM 顺序**决定谁在上，而 Teleport 在**挂载**时
+就固定了顺序——于是在 App 根部挂载、却**后**打开的抽屉（如 /btw 抽屉里打开的失效路径
+选择器）会被先打开的抽屉盖住。开序叠放修的就是这个。`--z-overlay-raised` 因此停在整条
+带之上（1050），保证升级提示仍压过任何数量的抽屉。
 
 两条不变量（`designTokens.css.test.ts:156`）：
 1. 每个 `-backdrop` **恰好比它的表面小 1**——相等会让遮罩盖住自己的菜单。
@@ -207,6 +214,14 @@
   .bottom-dock-wrapper  z-index:1（壁纸时）
 ```
 
+### 软键盘与底部 dock
+
+- **键盘弹起时隐藏 dock**（`v-show` 上挂 `!isSoftKeyboardOpen`，状态来自 `web/src/composables/useSoftKeyboard.ts`），**两端一致，含 Android WebView**。
+- 为什么不是把 dock 顶上去：手机浏览器弹键盘只缩**视觉视口**，`position:fixed; inset:0` 的 `.app-container` 与其中的 dock 仍按完整布局高度排布；用 `bottom: <键盘高>px` 补偿实测会差约 20%，仍被遮住。Android WebView 走 `adjustResize`（布局视口本身缩短）所以从不复现——别用「安卓没事」推断浏览器也没事。
+- 判定要点：`focusin/focusout` 认**任意可编辑元素**（不只聊天框/终端）+ 阈值（≥120px，排除浏览器地址栏）+ 轮询（部分 WebView 不发 resize 事件）。
+- 隐藏是 `display:none` 切换，Android WebView 可能不派发该转变的 ResizeObserver 回调，故必须保留键盘关闭后 `nextTick` 重测 dock 宽度的安全网（否则溢出布局按隐藏期的宽度算）。
+- `useChatKeyboard` / `useTerminalKeyboard` 仍在，但它们只负责**内容区**不被键盘遮住（`.chat-keyboard-open` / `.terminal-keyboard-open` 的 `bottom` 收缩），与 dock 可见性是两件事。
+
 ### 宽屏 vs 窄屏
 
 - 阈值（`useWideScreenLayout.ts:8`）：CSS 宽度 ≥1024px，**或**物理宽度 ≥1280px **且**横屏。
@@ -233,6 +248,27 @@
 - 次要按钮的边框从**文字色**混出来（`color-mix(--text-secondary 40%)`），不用 `--border-color`——后者在浅色主题上太接近 `--bg-tertiary`，按钮会融进面板。
 - 深色主题下 hover 用 `--text-primary` 提亮而非换灰，否则浅色文字压在同色底上。
 - **复用自 `<a>` 的类必须显式 `border: none`**，图标按钮同理（`components.css:129`）——`<a>` 的 UA 边框不会自己消失。
+- **设置面板内的按钮一律复用 `.fbtn`**（不新建按钮类）：行内动作按钮、编辑器确认按钮、主题重试按钮等。
+  30px 高是设置面板的**控件基准高度**——开关、滑块行、分段按钮都对齐它。
+  scoped 块里只留布局（`flex-shrink` / `flex` / `margin`），形状与配色全交给 `.fbtn`。
+  **组件若独立使用 `.fbtn`（而非经 ModalDialog 继承），必须自己 `import '@/assets/modal-footer-btn.css'`**，
+  不能依赖祖先恰好导入过。
+
+### 设置面板控件（`.settings-item__switch` / `__slider*`）
+
+开关、滑块、滑块重置按钮的**形状只定义一次**，在全局 `web/css/components.css` 的
+「Settings controls (shared)」段——它们原先在 `SettingsItem.vue` 与 `WallpaperSetting.vue`
+里逐字重复（开关还多出第三份 `.group-panel__switch`），改尺寸要改 2~3 处且漏一处就静默发散。
+
+- 开关 **44×26**（滑块 22px、位移 18px = 44−22−2×2）；滑块宽 **100px**；重置按钮 **26×26**。
+- **必须全局，不能 scoped**：scoped 规则编译成 `.foo[data-v-x]`（0,2,0），特异性**高于**全局单类（0,1,0），
+  scoped 里残留的任何几何声明都会静默压过共享尺寸（同[红线 2](#红线-2共享类必须全局而且基规则也必须全局)）。
+  组件里只留布局。守卫 `settingsControls.css.test.ts` 同时钉「形状只在全局」与「scoped 不得重加几何」。
+- **输入框是刻意的例外：保持圆角矩形**（`--radius-sm`），不跟随药丸——否则「可输入」与「可点击」在形状上无法区分。
+  高度仍对齐 30px 基准；**字号不缩**（输入值不得小于其标签，见 `settingsRowTypography.css.test.ts`）。
+- **非设置页也能复用**：任务表单的门控脚本开关（`TaskFormPage.vue`）直接用
+  `.settings-item__switch` / `-input` / `-track` 三个类，只在自己的 scoped 块里加
+  行布局（`.script-switch-row`），不复制几何。需要开关时照此办理，别再写第四份。
 
 ### 行内重置按钮（`.settings-item__slider-reset`）
 
@@ -241,7 +277,7 @@
 - **为什么**：按值出现/消失会让控件簇宽度变化——重置的瞬间按钮消失，滑块和数值标签横向跳动（用户实测「很难受」）。
 - **做法**：`:disabled="当前值 === 默认值"`，CSS 用 `opacity: var(--opacity-disabled)` + `cursor: not-allowed` 灰显。按钮留在文档流里，宽度恒定。
 - **唯一允许的 `v-if` 是 `defaultValue !== undefined`**：整行没有可重置的目标时，按钮应当是**不存在**而不是永久禁用（永不生效的控件是噪音，同 §壁纸那条）。判据是「该控件**能否**生效」，不是「此刻**是否**已生效」。
-- 两份实现：`SettingsItem.vue`（共享行）与 `WallpaperSetting.vue`（手写行）各有一份同名类，改一处必须改另一处。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
+- 形状只在 `css/components.css` 定义一次（见 §设置面板控件）；两个组件只保留模板与 `:disabled` 绑定。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
 
 ### 角标
 
@@ -279,6 +315,9 @@
 - **keyframes 复用现成的**：`refresh-spin`（刷新，0.8s）、`check-in`（成功弹跳，0.4s）、`modal-fadeIn/scaleIn`、`bs-slideUp/Down`、`line-flash`（跳转闪烁）、`refresh-pulse-glow`（陈旧数据脉动）。
 - **新按钮不要自建旋转 keyframes**——统一用 `.refresh-spin` + `RefreshButton` 组件（19 处已收敛）。`RefreshButton` 用 WAAPI 驱动旋转并内联 `animation:none` 覆盖 CSS 动画。
 - **菜单淡入**：`opacity` + `transform: translateY(-4px)`，`--duration-base`。
+- **长耗时动作（分叉 / ACP 同步）用 `BusyBar` + 常驻 toast**：`components/common/BusyBar.vue` 是 3px 不确定进度条，`position:absolute` 贴在宿主顶部（不占布局高度），只接 `visible` + `label`。**为什么不用按钮内 spinner 代替**：动作栏在窄屏是横向滚动的，被点的按钮可能根本不在屏内；整宽的条与滚动位置、屏宽无关。`ChatPanelContent.vue` 的 `startBusy(kind)` 是**认领制**（已占用则返回 false），因为它和 toast 都是单例——两个动作并发会互相覆盖文案、且先结束的那个会把对方的 toast 关掉。`stopBusy(kind)` 只释放自己认领的那种。
+  - 分叉按钮另有就地 spinner（`ChatMessageItem` 的 `.is-forking`）：`forkingMessageId` 从面板透传到消息项，**按 id 匹配**（消息 id 可能是数字、标记是字符串，须 `String()` 归一化）。该按钮是 `disabled` 的，而共享 `:disabled` 规则会把它压到 `--opacity-disabled`——**spinner 本身就是「点击已生效」的反馈，压暗会抵消它的意义**，所以 scoped 规则显式恢复 `opacity:1`（scoped 的 (0,3,0) 压过共享的 (0,2,0)）。
+  - `BusyBar` **刻意不做 `prefers-reduced-motion` opt-out**：扫过本身就是信息（唯一区分「在跑」与「卡死」的通道），冻结会留下一个静止的半截条＝读作「传输卡住了」，正是它要消除的歧义；也与 `TransferProgressBar` 的不确定填充、以及走 WAAPI（从不查该偏好）的 `RefreshButton`/底边彗星一致。守卫 `BusyBar.test.ts` 断言该 media query 不存在**且**动画仍在（只断言前者的话，把动画整个删掉也能过）。
 - **`prefers-reduced-motion` 必须逐处处理**（没有全局规则）。已处理的参考 `CompletionPopover.vue`、`ChatInputBar.vue`；`flashReducedMotion.css.test.ts` 守住闪烁类。
   - ⚠️ **但「逐处处理」不是绝对的：如果动效承载了信息、不能靠别的东西替代，就不要 opt-out。** 会话行状态槽（`.session-status`）是**刻意的例外**，它**不**响应这个偏好。理由：冻结会**合并状态**——「待审批」（脉动点）与「未读」（静止点）形状尺寸完全相同，只靠脉动与色相区分，冻结后只剩色相，而 36 套主题里有 3 套 `--accent-color` 与 `--color-orange` 相同（色觉障碍读者在**任何**主题上都拿不到色相）。加回那条 media query 之前先读 `SessionList.vue` 里那段注释与 `sessionStatusSlot.css.test.ts` 的守卫。
   - **第二处刻意的例外：推荐回复采纳时的「飞入输入框」动效**（`ChatInputBar.vue` 的 `.recommendation-chip.accepted` / `recommendation-chip-fly`）。飞行**本身**就是信息（「文字被填进了这个框」），没有别的通道承载它——只剩绿色按钮的话，读作「按钮被点了」，正是这个动效要消除的歧义。曾给它加过 opt-out，后果是**所有在系统里关闭动画的用户完全看不到这个功能**（线上 Windows `reduce=true` 实测：与改动前无差异）。`ChatInputBar.test.ts` 的守卫**已反转**为断言该 opt-out 不存在（同 `sessionStatusSlot.css.test.ts` 的先例）；**不要**在未确认飞行不再承载信息的情况下「修复」回去。
@@ -356,6 +395,24 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 
 ## 改动检查清单
 
+### 任务详情页卡片（`.overview-card` 等）
+
+任务详情页叠了好几张卡（提示词预览、执行计划/事件触发、门控脚本、事件上下文），
+形状**只在 `web/src/assets/task-overview-card.css` 定义一次**：`.overview-card`、
+`.card-title`、`.card-icon`、`.card-title-text`、`.card-toggle-btn`、`.card-chevron`，
+可折叠标题加 `.card-title.is-collapsible`、箭头收起态加 `.is-collapsed`。
+
+- **必须全局**：这些类原先在 `TaskOverviewTab` / `TaskScheduleCard` / `TaskEventCard`
+  各自的 `<style scoped>` 里逐字重复三份。新加的 `TaskScriptCard` 只用了类名却没声明，
+  而父组件的 scoped 规则带 `[data-v-x]`、**永远匹配不到子组件根元素** ⇒ 那张卡完全
+  没样式（无背景/边框/内边距），和旁边的提示词卡长得完全不一样。
+- 消费方只保留自己的布局（如 `.script-body` 的 `padding-top`），**不得**在 scoped 块里
+  重声明上述选择器。守卫 `taskOverviewCard.css.test.ts` 同时钉「只在全局定义」
+  「scoped 不得重复」「四个消费组件都必须 import 该 css」。
+- 守卫注意：判 import 必须匹配 **import 语句**（`/^\s*import\s+['"]@\/assets\/…['"]\s*$/m`），
+  不能只 `toContain(文件名)`——好几个文件在**注释里**提到该路径，删掉真 import 后
+  注释仍会让断言通过（实际踩过）。
+
 ### 加一个共享类 / 原语样式
 
 - [ ] 放进 `web/css/components.css` 或 `web/src/assets/*.css`（**全局**）
@@ -403,17 +460,23 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 |---|---|
 | `components/common/__tests__/designTokens.css.test.ts` | token 值、主题块完整性、未定义 token 引用、窗口控件对比度配方 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
+| `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
 | `components/file/__tests__/flashReducedMotion.css.test.ts` | 闪烁动效遵守 `prefers-reduced-motion` |
+| `components/common/__tests__/BusyBar.test.ts` | 长动作进度条存在且动画在、**无** reduced-motion opt-out（扫过即信息）、不吞指针事件 |
+| `components/chat/__tests__/chatPanelBusyWiring.test.ts` | `startBusy` 认领制（不抢占）、各自只释放自己的 kind、BusyBar 已挂载、卸载清 ticker |
 | `components/file/__tests__/dockedPaneStacking.css.test.ts` | 停靠预览窗格层级 |
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |
 | `components/git/__tests__/gitHistoryChrome.css.test.ts` | git 历史 chrome 全局 |
 | `components/settings/__tests__/settingsRowTypography.css.test.ts` | 设置行字号层级 |
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
 | `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
+| `components/settings/__tests__/settingsControls.css.test.ts` | 设置控件形状全局唯一（开关/滑块/重置）、尺寸对齐 30px、scoped 不得重加几何、按钮复用 `.fbtn` |
+| `components/task/__tests__/taskOverviewCard.css.test.ts` | 任务详情页卡片 chrome 全局唯一（scoped 不得重复）、四个消费组件都必须 import |
+| `utils/__tests__/codeHighlightStyle.test.ts` | CodeMirror 语法高亮映射全局唯一（不得在组件里重复 `HighlightStyle.define`）、颜色必须来自 CSS 变量 |
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |

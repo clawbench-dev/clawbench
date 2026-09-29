@@ -2,7 +2,16 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <!-- `interactive-widget=resizes-content` makes the LAYOUT viewport shrink
+         when the on-screen keyboard opens. Chrome 108+ defaults to
+         `resizes-visual`, which shrinks only the visual viewport and leaves the
+         layout viewport full-height — so a `position: fixed; inset: 0` shell
+         stays full-height, the visual viewport can still be panned inside it,
+         and panning reveals a blank band exactly as tall as the keyboard.
+         Android WebView never showed this because `adjustResize` really shrinks
+         the layout viewport. Unsupported browsers (iOS Safari) ignore the
+         keyword and keep their existing behaviour. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
     <meta name="theme-color" content="#161b22">
     <meta name="description" content="一款专为移动端设计的轻量级代码和文档工作台">
 

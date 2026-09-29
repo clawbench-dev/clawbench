@@ -3,6 +3,7 @@ import { useI18n } from 'vue-i18n'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { flashElement } from '@/utils/domFlash'
 import { formatIndexMsg } from '@/utils/userMsgIndexUtils.ts'
+import { anchorCount } from '@/utils/btwAnchors.ts'
 
 /**
  * Composable for user message index overlay logic.
@@ -25,6 +26,13 @@ export function useUserMsgIndex(options: {
    *  the chat list injects a queue that defers the flash until its smooth
    *  scroll settles, so a long-distance jump still shows the full animation. */
   highlightMessage?: (el: Element) => void
+  /**
+   * /btw anchors, keyed by anchor message id (the same map the chat list draws
+   * its markers from). The conversation index marks those rows with an icon.
+   * Read as a live getter so marks track records loaded after the list is
+   * built; absent (e.g. the share TOC) simply renders no marks.
+   */
+  getBtwAnchors?: () => Record<string, unknown[]>
 }) {
   const { t } = useI18n()
 
@@ -73,6 +81,20 @@ export function useUserMsgIndex(options: {
     }
     drawer.open()
     await ensureIndexLoaded()
+  }
+
+  /**
+   * Whether a message has a /btw side question anchored to it, so the index can
+   * mark its row.
+   *
+   * Exposed as a lookup rather than an extra field on `userMsgIndexList`: the
+   * list is a straight copy of the API payload, and other consumers depend on
+   * that shape. Reading the anchors here keeps the rule shared with the chat
+   * area (both go through utils/btwAnchors) and stays reactive, since callers
+   * pass a Vue-backed map.
+   */
+  function hasBtw(msg: { id?: unknown } | null | undefined): boolean {
+    return anchorCount(options.getBtwAnchors?.() || {}, msg) > 0
   }
 
   function closeUserMsgIndex() {
@@ -195,6 +217,7 @@ export function useUserMsgIndex(options: {
     loadingTarget,
     loadingIndex,
     formatIndexLabel,
+    hasBtw,
     toggleUserMsgIndex,
     closeUserMsgIndex,
     jumpToUserMessage,

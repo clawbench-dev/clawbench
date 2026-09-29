@@ -30,10 +30,13 @@ type Chunk struct {
 	TokenCount         int       `json:"token_count"`
 	Embedding          []float64 `json:"embedding"`
 	HasEmbedding       bool      `json:"has_embedding"`
-	ProjectPath        string    `json:"project_path"`
-	Backend            string    `json:"backend"`
-	Role               string    `json:"role"`
-	CreatedAt          time.Time `json:"created_at"`
+	// ProjectID is the stored key; ProjectPath mirrors it for the JSON contract
+	// (and is what the indexer naturally has in hand).
+	ProjectID   int64     `json:"-"`
+	ProjectPath string    `json:"project_path"`
+	Backend     string    `json:"backend"`
+	Role        string    `json:"role"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // MatchRange represents a character-level (rune offset) match position within chunk text.
@@ -59,12 +62,13 @@ type SearchHit struct {
 
 // PendingChunk represents a chunk that needs embedding backfill.
 type PendingChunk struct {
-	ID          int64
-	ChunkText   string
-	ProjectPath string
-	Backend     string
-	Role        string
-	SessionID   string
+	ID        int64
+	ChunkText string
+	// ProjectID is what the vec0 row stores; see Chunk.ProjectID.
+	ProjectID int64
+	Backend   string
+	Role      string
+	SessionID string
 }
 
 // WriteLocker abstracts the global write mutex for database writes.
@@ -97,6 +101,10 @@ type Store struct {
 	embDim        int
 	vecTableReady bool // cached: true after rag_vec table confirmed to exist
 	writeMu       WriteLocker
+	// projectIDs caches canonical path -> project id, so chunk inserts do not
+	// re-query the registry per chunk. Bounded by the number of projects.
+	projectIDsMu sync.RWMutex
+	projectIDs   map[string]int64
 }
 
 // getEmbDim returns the current embedding dimension under the read lock.
@@ -176,8 +184,9 @@ func newSQLiteStoreWithLocker(dbPath string, locker WriteLocker) (*Store, error)
 	}
 
 	s := &Store{
-		db:      db,
-		writeMu: locker,
+		db:         db,
+		writeMu:    locker,
+		projectIDs: map[string]int64{},
 	}
 
 	if err := s.initSchema(); err != nil {
@@ -230,19 +239,27 @@ func (s *Store) initSchema() error {
 			has_embedding INTEGER NOT NULL DEFAULT 0,
 			embedding_dim INTEGER NOT NULL DEFAULT 0,
 			needs_resegment INTEGER NOT NULL DEFAULT 0,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL DEFAULT 0,
 			backend TEXT NOT NULL,
 			role TEXT NOT NULL,
 			created_at DATETIME NOT NULL
 		);
 
 		CREATE INDEX IF NOT EXISTS idx_rag_chunks_session ON rag_chunks(session_id);
-		CREATE INDEX IF NOT EXISTS idx_rag_chunks_project ON rag_chunks(project_path);
 		CREATE INDEX IF NOT EXISTS idx_rag_chunks_created ON rag_chunks(created_at);
 		CREATE INDEX IF NOT EXISTS idx_rag_chunks_message ON rag_chunks(message_id);
 	`)
 	if err != nil {
 		return fmt.Errorf("create rag_chunks table: %w", err)
+	}
+
+	// The projects registry. Owned by the service package (it is the authority
+	// and its migration creates it on an existing database), but created here too
+	// so a store opened on its own — a standalone indexer run, or a test fixture
+	// database — still resolves project ids and filters by project instead of
+	// silently degrading to "no project".
+	if _, projErr := s.db.Exec(service.ProjectsDDL); projErr != nil {
+		return fmt.Errorf("create projects table: %w", projErr)
 	}
 
 	// Create partial index for embedding queries
@@ -281,8 +298,28 @@ func (s *Store) initSchema() error {
 func (s *Store) addMissingColumns() error {
 	// needs_resegment: marks chunks whose chunk_text_segmented must be recomputed
 	// from chunk_text by the indexer (set by the FTS rebuild trigger).
-	return s.addColumnIfMissing("rag_chunks", "needs_resegment",
-		"INTEGER NOT NULL DEFAULT 0")
+	if err := s.addColumnIfMissing("rag_chunks", "needs_resegment",
+		"INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// project_id replaced project_path. The service package's
+	// migrateProjectsToIDs does the real conversion (including the backfill and
+	// the index rebuild) before rag.Init runs; this is a safety net for a store
+	// opened against a database that never went through that path, so queries
+	// here do not fail on a missing column.
+	if err := s.addColumnIfMissing("rag_chunks", "project_id",
+		"INTEGER NOT NULL DEFAULT 0"); err != nil {
+		return err
+	}
+	// The project index is created HERE, not in initSchema: on a database whose
+	// rag_chunks predates project_id, initSchema's CREATE TABLE is a no-op and
+	// an index on the new column would abort the whole schema init. By this
+	// point the column is guaranteed to exist.
+	if _, err := s.db.Exec(
+		"CREATE INDEX IF NOT EXISTS idx_rag_chunks_project ON rag_chunks(project_id)"); err != nil {
+		return fmt.Errorf("create rag_chunks project index: %w", err)
+	}
+	return nil
 }
 
 // addColumnIfMissing issues ALTER TABLE ADD COLUMN unless the column already
@@ -304,6 +341,163 @@ func (s *Store) addColumnIfMissing(table, column, decl string) error {
 	}
 	slog.Info("rag: added column to existing schema", slog.String("table", table), slog.String("column", column))
 	return nil
+}
+
+// projectIDForPath resolves a project path to its id through THIS store's
+// connection, creating the projects row when it does not exist yet.
+//
+// Deliberately not service.ProjectIDForPath: the store owns its own *sql.DB on
+// the same file, and it is also opened standalone (tests, and any embedding-only
+// deployment) where the service package's global handle is nil — calling into it
+// there would dereference nil. Resolving through s.db keeps this package
+// self-sufficient, and it is the same database either way.
+//
+// This is the WRITE variant, for indexing only. A chunk must not lose its
+// project attribution just because nothing had registered the project yet, so
+// InsertChunks may legitimately create the row. Read paths must use
+// projectIDByPath instead: a search must not have the side effect of inventing a
+// project.
+//
+// Returns ok=false when the projects table does not exist yet (a store opened
+// before the service migration) or the path is unknown.
+func (s *Store) projectIDForPath(path string) (int64, bool, error) {
+	id, ok, err := s.projectIDByPath(path)
+	if err != nil || ok {
+		return id, ok, err
+	}
+
+	// Miss (or no registry): register it, then re-read. ON CONFLICT makes this
+	// race-safe; whoever loses the insert still reads the winner's id.
+	canon := service.NormalizeProjectPath(path)
+	if canon == "" {
+		return 0, false, nil
+	}
+	if _, err := s.db.Exec(
+		"INSERT INTO projects (path) VALUES (?) ON CONFLICT(path) DO NOTHING", canon,
+	); err != nil {
+		if isMissingTableErr(err) {
+			return 0, false, nil
+		}
+		return 0, false, fmt.Errorf("upsert project: %w", err)
+	}
+	return s.projectIDByPath(canon)
+}
+
+// projectIDByPath resolves a project path to its id WITHOUT creating a row.
+//
+// Use this on read paths (search): a read must not register a project, and an
+// unknown project is equivalent to "no data" rather than something to invent.
+//
+// Returns ok=false when the registry is absent or the path has never been seen.
+func (s *Store) projectIDByPath(path string) (int64, bool, error) {
+	canon := service.NormalizeProjectPath(path)
+	if canon == "" {
+		return 0, false, nil
+	}
+	s.projectIDsMu.RLock()
+	if id, ok := s.projectIDs[canon]; ok {
+		s.projectIDsMu.RUnlock()
+		return id, true, nil
+	}
+	s.projectIDsMu.RUnlock()
+
+	var id int64
+	err := s.db.QueryRow("SELECT id FROM projects WHERE path = ?", canon).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) || isMissingTableErr(err) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("query project id: %w", err)
+	}
+	s.projectIDsMu.Lock()
+	s.projectIDs[canon] = id
+	s.projectIDsMu.Unlock()
+	return id, true, nil
+}
+
+// isMissingTableErr reports whether err is SQLite's "no such table", which for
+// projectIDForPath means the projects registry has not been created yet.
+func isMissingTableErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "no such table")
+}
+
+// projectPathForID resolves a stored project id back to its path, returning ""
+// when the id is the 0 sentinel, unknown, or the registry does not exist.
+//
+// Read paths resolve the path in Go rather than with a LEFT JOIN projects: this
+// store is also opened against databases that predate the registry (standalone
+// tests, embedding-only deployments), where naming projects in the SQL would
+// fail the whole query instead of just leaving the label empty.
+func (s *Store) projectPathForID(id int64) string {
+	if id == 0 {
+		return ""
+	}
+	var path string
+	err := s.db.QueryRow("SELECT path FROM projects WHERE id = ?", id).Scan(&path)
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+// appendEqualityFilters appends one " AND <col> = ?" clause and its bind value
+// for every filter whose value is non-empty, preserving order. It keeps the
+// optional-filter chains in the search builders flat.
+func appendEqualityFilters(query string, args []any, filters ...[2]string) (string, []any) {
+	for _, f := range filters {
+		if f[1] == "" {
+			continue
+		}
+		query += " AND " + f[0] + " = ?"
+		args = append(args, f[1])
+	}
+	return query, args
+}
+
+// resolveSearchProjectID turns an optional project path into the id a search
+// filter should use.
+//
+// A read must not register a project, so this uses projectIDByPath. An unknown
+// path (or a store opened before the registry exists) means "no data" — the
+// caller must return no hits rather than run an unfiltered search, because 0 is
+// the "no filter" sentinel to the query builders. Returns ok=false to signal
+// that.
+func (s *Store) resolveSearchProjectID(projectPath string) (id int64, ok bool, err error) {
+	if projectPath == "" {
+		return 0, true, nil
+	}
+	id, found, err := s.projectIDByPath(projectPath)
+	if err != nil {
+		return 0, false, err
+	}
+	if !found {
+		return 0, false, nil
+	}
+	return id, true, nil
+}
+
+// fillProjectPaths sets ProjectPath on each hit from its project id, resolving
+// each distinct id once.
+//
+// Must be called AFTER the search rows are closed: it runs its own queries, and
+// on a single-connection store an open result set would deadlock.
+func (s *Store) fillProjectPaths(hits []SearchHit, projectIDs []int64) {
+	cache := map[int64]string{}
+	for i := range hits {
+		if i >= len(projectIDs) {
+			break
+		}
+		id := projectIDs[i]
+		if id == 0 {
+			continue
+		}
+		path, ok := cache[id]
+		if !ok {
+			path = s.projectPathForID(id)
+			cache[id] = path
+		}
+		hits[i].ProjectPath = path
+	}
 }
 
 // ensureChunkUniqueness deduplicates rag_chunks on (message_id, chunk_index) and
@@ -404,7 +598,7 @@ func (s *Store) migrateEmbeddingsToVec() error {
 	}
 
 	rows, err := s.db.Query(`
-		SELECT id, embedding, project_path, backend, role, session_id
+		SELECT id, embedding, project_id, backend, role, session_id
 		FROM rag_chunks
 		WHERE has_embedding = 1 AND embedding IS NOT NULL
 		AND id NOT IN (SELECT rowid FROM rag_vec)
@@ -418,8 +612,9 @@ func (s *Store) migrateEmbeddingsToVec() error {
 	for rows.Next() {
 		var id int64
 		var blob []byte
-		var projectPath, backend, role, sessionID string
-		if err := rows.Scan(&id, &blob, &projectPath, &backend, &role, &sessionID); err != nil {
+		var projectID int64
+		var backend, role, sessionID string
+		if err := rows.Scan(&id, &blob, &projectID, &backend, &role, &sessionID); err != nil {
 			continue
 		}
 		// Convert float64 BLOB → float32 BLOB for vec0
@@ -432,9 +627,9 @@ func (s *Store) migrateEmbeddingsToVec() error {
 		vecBlob := serializeFloat32(vec32)
 		s.writeMu.Lock()
 		_, err := s.db.Exec(
-			`INSERT OR IGNORE INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
+			`INSERT OR IGNORE INTO rag_vec(rowid, embedding, project_id, backend, role, session_id)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			id, vecBlob, projectPath, backend, role, sessionID,
+			id, vecBlob, projectID, backend, role, sessionID,
 		)
 		s.writeMu.Unlock()
 		if err != nil {
@@ -482,7 +677,7 @@ func (s *Store) ensureVecTable() error {
 	_, err = s.db.Exec(fmt.Sprintf(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS rag_vec USING vec0(
 			embedding float[%d] distance_metric=cosine,
-			project_path TEXT,
+			project_id INTEGER,
 			backend TEXT,
 			role TEXT,
 			session_id TEXT
@@ -520,6 +715,17 @@ func (s *Store) InsertChunks(chunks []Chunk) error {
 	}
 
 	vecReady := s.prepareVecTable(chunks)
+
+	// Fill in any missing project id from the chunk's path BEFORE the batch loop
+	// opens a transaction: resolving touches the DB, and doing it inside the tx
+	// would deadlock on the single-connection stores.
+	for i := range chunks {
+		if chunks[i].ProjectID == 0 && chunks[i].ProjectPath != "" {
+			if id, ok, err := s.projectIDForPath(chunks[i].ProjectPath); err == nil && ok {
+				chunks[i].ProjectID = id
+			}
+		}
+	}
 
 	// Resolve the vec0 table width once, before opening any transaction: the
 	// per-chunk width check must not query the DB from inside a tx (single
@@ -671,11 +877,11 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool, vecDim int) (
 	result, err := tx.Exec(
 		`INSERT INTO rag_chunks (session_id, message_id, chunk_text, chunk_text_segmented,
 			chunk_index, token_count, embedding, has_embedding, embedding_dim,
-			project_path, backend, role, created_at)
+			project_id, backend, role, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.SessionID, c.MessageID, c.ChunkText, c.ChunkTextSegmented,
 		c.ChunkIndex, c.TokenCount, embBlob, boolToInt(willStoreVector), embDim,
-		c.ProjectPath, c.Backend, c.Role, c.CreatedAt,
+		c.ProjectID, c.Backend, c.Role, c.CreatedAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("insert chunk (message_id=%d, chunk_index=%d): %w", c.MessageID, c.ChunkIndex, err)
@@ -691,9 +897,9 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool, vecDim int) (
 	if willStoreVector {
 		vecBlob := serializeFloat32(float64ToFloat32(c.Embedding))
 		if _, err = tx.Exec(
-			`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
+			`INSERT INTO rag_vec(rowid, embedding, project_id, backend, role, session_id)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			chunkID, vecBlob, c.ProjectPath, c.Backend, c.Role, c.SessionID,
+			chunkID, vecBlob, c.ProjectID, c.Backend, c.Role, c.SessionID,
 		); err != nil {
 			return 0, fmt.Errorf("insert vec entry for chunk %d: %w", chunkID, err)
 		}
@@ -704,7 +910,7 @@ func (s *Store) insertOneChunk(tx *sql.Tx, c Chunk, vecReady bool, vecDim int) (
 
 // vectorFilterSQL holds the optional metadata predicates for a KNN query.
 type vectorFilterSQL struct {
-	projectPath      string
+	projectID        int64
 	backend          string
 	role             string
 	sessionID        string
@@ -730,7 +936,9 @@ func (f vectorFilterSQL) sql() string {
 			sb.WriteString(" AND " + col + " = ?")
 		}
 	}
-	addEq("v.project_path", f.projectPath)
+	if f.projectID != 0 {
+		sb.WriteString(" AND v.project_id = ?")
+	}
 	addEq("v.backend", f.backend)
 	addEq("v.role", f.role)
 	addEq("v.session_id", f.sessionID)
@@ -759,7 +967,9 @@ func (f vectorFilterSQL) args() []any {
 			args = append(args, val)
 		}
 	}
-	appendIfSet(f.projectPath)
+	if f.projectID != 0 {
+		args = append(args, f.projectID)
+	}
 	appendIfSet(f.backend)
 	appendIfSet(f.role)
 	appendIfSet(f.sessionID)
@@ -783,15 +993,29 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 	vecBlob := serializeFloat32(float64ToFloat32(queryEmbedding))
 
 	// Build KNN query with metadata filters
+	// vec0 filters run on its own metadata columns, so the project filter must be
+	// an id; the path is resolved back out via the join for the wire type.
+	//
+	// An unknown project must yield NO rows, not an unfiltered search: 0 means
+	// "no project filter" to vectorFilterSQL, so passing it through would return
+	// every project's hits. A search is also a read — it must not register the
+	// project as a side effect.
+	projectID, ok, idErr := s.resolveSearchProjectID(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
+	if !ok {
+		return nil, nil
+	}
 	query := `
 		SELECT v.rowid, v.distance,
 		       c.chunk_text, c.session_id, c.message_id, c.role,
-		       c.project_path, c.backend, c.created_at
+		       c.project_id, c.backend, c.created_at
 		FROM rag_vec v
 		JOIN rag_chunks c ON c.id = v.rowid
 		WHERE v.embedding MATCH ? AND v.k = ?`
 	filter := vectorFilterSQL{
-		projectPath:      projectPath,
+		projectID:        projectID,
 		backend:          backend,
 		role:             role,
 		sessionID:        sessionID,
@@ -815,19 +1039,27 @@ func (s *Store) SearchVector(queryEmbedding []float64, limit int, projectPath, b
 	}
 	defer func() { _ = rows.Close() }()
 
+	// The project id is collected first and resolved to a path AFTER the rows are
+	// closed: projectPathForID issues its own query, and on a single-connection
+	// store (":memory:") running it while these rows are open deadlocks.
 	var hits []SearchHit
+	var projectIDs []int64
 	for rows.Next() {
 		var h SearchHit
+		var projectID int64
 		if err := rows.Scan(&h.ChunkID, &h.Score, &h.ChunkText, &h.SessionID,
-			&h.MessageID, &h.Role, &h.ProjectPath, &h.Backend, &h.CreatedAt); err != nil {
+			&h.MessageID, &h.Role, &projectID, &h.Backend, &h.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan vector hit: %w", err)
 		}
 		hits = append(hits, h)
+		projectIDs = append(projectIDs, projectID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	_ = rows.Close()
 
+	s.fillProjectPaths(hits, projectIDs)
 	return hits, nil
 }
 
@@ -888,7 +1120,7 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 		       rag_chunks.session_id,
 		       rag_chunks.message_id,
 		       rag_chunks.role,
-		       rag_chunks.project_path,
+		       rag_chunks.project_id,
 		       rag_chunks.backend,
 		       rag_chunks.created_at
 		FROM rag_chunks_fts
@@ -897,22 +1129,22 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 	`
 	args := []any{ftsQuery}
 
-	if projectPath != "" {
-		query += " AND rag_chunks.project_path = ?"
-		args = append(args, projectPath)
+	projectID, ok, idErr := s.resolveSearchProjectID(projectPath)
+	if idErr != nil {
+		return nil, idErr
 	}
-	if backend != "" {
-		query += " AND rag_chunks.backend = ?"
-		args = append(args, backend)
+	if !ok {
+		return nil, nil
 	}
-	if role != "" {
-		query += " AND rag_chunks.role = ?"
-		args = append(args, role)
+	if projectID != 0 {
+		query += " AND rag_chunks.project_id = ?"
+		args = append(args, projectID)
 	}
-	if sessionID != "" {
-		query += " AND rag_chunks.session_id = ?"
-		args = append(args, sessionID)
-	}
+	query, args = appendEqualityFilters(query, args,
+		[2]string{"rag_chunks.backend", backend},
+		[2]string{"rag_chunks.role", role},
+		[2]string{"rag_chunks.session_id", sessionID},
+	)
 	if excludeSessionID != "" {
 		query += " AND rag_chunks.session_id != ?"
 		args = append(args, excludeSessionID)
@@ -936,18 +1168,24 @@ func (s *Store) SearchFTS(queryText string, limit int, projectPath, backend, rol
 	defer func() { _ = rows.Close() }()
 
 	var hits []SearchHit
+	var projectIDs []int64
 	for rows.Next() {
 		var h SearchHit
-		if err := rows.Scan(&h.ChunkID, &h.ChunkText, &h.Score, &h.SessionID, &h.MessageID, &h.Role, &h.ProjectPath, &h.Backend, &h.CreatedAt); err != nil {
+		var projectID int64
+		if err := rows.Scan(&h.ChunkID, &h.ChunkText, &h.Score, &h.SessionID, &h.MessageID, &h.Role, &projectID, &h.Backend, &h.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan fts hit: %w", err)
 		}
 		// BM25 returns negative scores for better ranking; negate for consistency
 		h.Score = -h.Score
 		hits = append(hits, h)
+		projectIDs = append(projectIDs, projectID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	_ = rows.Close()
+
+	s.fillProjectPaths(hits, projectIDs)
 
 	return hits, nil
 }
@@ -1020,7 +1258,8 @@ func (s *Store) PendingEmbeddingCount() (int, error) {
 
 // GetPendingEmbeddings returns chunks that need embedding backfill, including metadata for vec0.
 func (s *Store) GetPendingEmbeddings(limit int) ([]PendingChunk, error) {
-	rows, err := s.db.Query("SELECT id, chunk_text, project_path, backend, role, session_id FROM rag_chunks WHERE has_embedding = 0 ORDER BY created_at DESC, id DESC LIMIT ?", limit)
+	rows, err := s.db.Query(`SELECT c.id, c.chunk_text, c.project_id, c.backend, c.role, c.session_id
+		FROM rag_chunks c WHERE c.has_embedding = 0 ORDER BY c.created_at DESC, c.id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1029,7 +1268,7 @@ func (s *Store) GetPendingEmbeddings(limit int) ([]PendingChunk, error) {
 	var pending []PendingChunk
 	for rows.Next() {
 		var p PendingChunk
-		if err := rows.Scan(&p.ID, &p.ChunkText, &p.ProjectPath, &p.Backend, &p.Role, &p.SessionID); err != nil {
+		if err := rows.Scan(&p.ID, &p.ChunkText, &p.ProjectID, &p.Backend, &p.Role, &p.SessionID); err != nil {
 			return nil, err
 		}
 		pending = append(pending, p)
@@ -1057,7 +1296,7 @@ func backfillOneChunk(emb []float64, p PendingChunk, vecDim int, deleteVecStmt, 
 
 	_, _ = deleteVecStmt.Exec(p.ID)
 	vecBlob := serializeFloat32(float64ToFloat32(emb))
-	if _, err := insertVecStmt.Exec(p.ID, vecBlob, p.ProjectPath, p.Backend, p.Role, p.SessionID); err != nil {
+	if _, err := insertVecStmt.Exec(p.ID, vecBlob, p.ProjectID, p.Backend, p.Role, p.SessionID); err != nil {
 		slog.Warn("rag: batch insert vec failed", slog.Int64("chunk_id", p.ID), slog.String("err", err.Error()))
 		return false
 	}
@@ -1113,7 +1352,7 @@ func (s *Store) BatchUpdateEmbeddings(pendingChunks []PendingChunk, embeddings [
 	}
 
 	insertVecStmt, err := tx.Prepare(
-		`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
+		`INSERT INTO rag_vec(rowid, embedding, project_id, backend, role, session_id)
 		VALUES (?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
@@ -1186,9 +1425,9 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 	_, _ = tx.Exec(`DELETE FROM rag_vec WHERE rowid = ?`, chunkID)
 	vecBlob := serializeFloat32(float64ToFloat32(embedding))
 	_, vecErr := tx.Exec(
-		`INSERT INTO rag_vec(rowid, embedding, project_path, backend, role, session_id)
+		`INSERT INTO rag_vec(rowid, embedding, project_id, backend, role, session_id)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		chunkID, vecBlob, "", "", "", "",
+		chunkID, vecBlob, 0, "", "", "",
 	)
 	if vecErr != nil {
 		// Vec0 unavailable (no dimension yet) — store the embedding BLOB but
@@ -1197,14 +1436,15 @@ func (s *Store) UpdateEmbedding(chunkID int64, embedding []float64) error {
 			slog.String("err", vecErr.Error()))
 	} else {
 		// Fetch metadata and update vec0 columns
-		var projectPath, backend, role, sessionID string
+		var projectID int64
+		var backend, role, sessionID string
 		_ = tx.QueryRow(
-			`SELECT project_path, backend, role, session_id FROM rag_chunks WHERE id = ?`,
+			`SELECT project_id, backend, role, session_id FROM rag_chunks WHERE id = ?`,
 			chunkID,
-		).Scan(&projectPath, &backend, &role, &sessionID)
+		).Scan(&projectID, &backend, &role, &sessionID)
 		_, _ = tx.Exec(
-			`UPDATE rag_vec SET project_path = ?, backend = ?, role = ?, session_id = ? WHERE rowid = ?`,
-			projectPath, backend, role, sessionID, chunkID,
+			`UPDATE rag_vec SET project_id = ?, backend = ?, role = ?, session_id = ? WHERE rowid = ?`,
+			projectID, backend, role, sessionID, chunkID,
 		)
 	}
 
@@ -1865,6 +2105,25 @@ func (s *Store) Close() error {
 		return s.db.Close()
 	}
 	return nil
+}
+
+// InvalidateProjectPathCache drops the cached path→id entries for the given
+// paths, so the next lookup re-reads them from the registry.
+//
+// Needed because RenameProject moves a project's path in the projects table
+// while this store holds its own path→id cache: without this, a lookup under the
+// NEW path would miss the cache, INSERT a second projects row for the same
+// directory, and then filter by that fresh id — returning no chunks, since the
+// existing ones still carry the old id.
+func (s *Store) InvalidateProjectPathCache(paths ...string) {
+	if len(paths) == 0 {
+		return
+	}
+	s.projectIDsMu.Lock()
+	for _, p := range paths {
+		delete(s.projectIDs, service.NormalizeProjectPath(p))
+	}
+	s.projectIDsMu.Unlock()
 }
 
 // validateEmbedding checks that all values in the embedding are finite.

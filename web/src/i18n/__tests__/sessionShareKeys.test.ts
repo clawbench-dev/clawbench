@@ -48,7 +48,7 @@ describe('i18n sessionShare keys completeness', () => {
   // roleAssistant/active, caught only by an end-to-end browser test.
   it('every key the share UI references exists', () => {
     const requiredSessionShare = [
-      'button', 'buttonActive', 'title', 'explain', 'securityHint',
+      'button', 'title', 'explain', 'securityHint',
       'selectAll', 'deselectAll', 'selectedCount',
       'viewFullInLink', 'generatingCannotShare', 'empty',
       'generate', 'regenerate', 'regenerateTip', 'copyTip', 'copied',

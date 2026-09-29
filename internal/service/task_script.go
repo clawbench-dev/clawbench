@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"os/exec"
-	"strings"
 	"time"
 
 	"clawbench/internal/platform"
@@ -44,18 +43,22 @@ func scriptTimeoutDuration(seconds int) time.Duration {
 // the parent's pipe ends and unblocks.
 const taskScriptWaitDelay = 5 * time.Second
 
-// ScriptOutcome classifies the result of a scheduled task's pre-AI script.
+// ScriptOutcome classifies the result of a scheduled task's gating script.
+//
+// The script is a gate: exit code 0 opens it and the AI runs, any other
+// outcome closes it and the AI is skipped for this run. Output is data, not a
+// control signal — a script may print anything on stdout/stderr without
+// changing whether the AI runs.
 type ScriptOutcome int
 
 const (
-	// ScriptSkipped means the script exited 0 with no output at all (stdout and
-	// stderr both empty). The caller must skip the AI call and send no notification.
-	ScriptSkipped ScriptOutcome = iota
-	// ScriptProduced means the script exited 0 and produced output.
-	ScriptProduced
-	// ScriptFailed means a non-zero exit status, or the process could not be started.
+	// ScriptSucceeded means the script exited 0: the gate is open and the
+	// caller must run the AI turn.
+	ScriptSucceeded ScriptOutcome = iota
+	// ScriptFailed means a non-zero exit status, or the process could not be
+	// started: the gate is closed and the AI must be skipped.
 	ScriptFailed
-	// ScriptTimedOut means the timeout elapsed.
+	// ScriptTimedOut means the timeout elapsed: the gate is closed.
 	ScriptTimedOut
 	// ScriptCanceled means the caller's context was canceled (e.g. user pressed cancel).
 	ScriptCanceled
@@ -74,6 +77,8 @@ type ScriptResult struct {
 	// that was cut from one that happened to end exactly at the cap.
 	StdoutTruncated bool
 	StderrTruncated bool
+	// Duration is how long the script ran, for the execution-result card.
+	Duration time.Duration
 }
 
 // cappedBuffer is an io.Writer that retains at most cap bytes and discards the
@@ -120,10 +125,10 @@ func (c *cappedBuffer) String() string { return c.buf.String() }
 // timeout <= 0 means DefaultScriptTimeout (300 * time.Second).
 // ctx cancellation and timeout must both terminate the whole process group.
 //
-// stdout and stderr are captured into distinct buffers so the caller can decide
-// whether the script produced any output. The emptiness test used for
-// ScriptSkipped compares the *trimmed* output: a script that emits only
-// whitespace (e.g. a bare trailing newline) counts as no output and is skipped.
+// stdout and stderr are captured into distinct buffers so the caller can
+// substitute them into the prompt template and persist them on the execution
+// record. The script's exit code is the gate signal: 0 succeeds and lets the
+// AI run, anything else closes the gate. Output does not affect classification.
 func RunTaskScript(ctx context.Context, script string, workDir string, timeout time.Duration) ScriptResult {
 	if timeout <= 0 {
 		timeout = DefaultScriptTimeout
@@ -172,7 +177,9 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 	}
 	cmd.WaitDelay = taskScriptWaitDelay
 
+	startedAt := time.Now()
 	runErr := cmd.Run()
+	duration := time.Since(startedAt)
 
 	res := ScriptResult{
 		Stdout:          stdout.String(),
@@ -180,6 +187,7 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 		ExitCode:        -1,
 		StdoutTruncated: stdout.truncated,
 		StderrTruncated: stderr.truncated,
+		Duration:        duration,
 	}
 
 	// A script that leaves a backgrounded child holding the inherited pipes
@@ -187,8 +195,8 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 	// That is a pipe-plumbing artifact, not a script failure: the script
 	// itself already exited successfully. Classify from the process's own exit
 	// status in that case — otherwise a perfectly successful `foo &` script
-	// would be reported as failed (and a silent one would stop being skipped),
-	// inverting the feature's contract for any script that daemonizes.
+	// would be reported as failed and the gate would close on a script that
+	// actually passed.
 	//
 	// os/exec only substitutes ErrWaitDelay when the process's own wait error
 	// was nil (see exec.go awaitGoroutines), so a non-zero exit still surfaces
@@ -214,11 +222,7 @@ func RunTaskScript(ctx context.Context, script string, workDir string, timeout t
 		}
 	default:
 		res.ExitCode = 0
-		if strings.TrimSpace(res.Stdout) == "" && strings.TrimSpace(res.Stderr) == "" {
-			res.Outcome = ScriptSkipped
-		} else {
-			res.Outcome = ScriptProduced
-		}
+		res.Outcome = ScriptSucceeded
 	}
 
 	// Never log the script body at Info level — it may contain secrets.
@@ -246,10 +250,8 @@ func dropWaitDelayError(runErr error) (bool, error) {
 // scriptOutcomeName renders an outcome for logging.
 func scriptOutcomeName(o ScriptOutcome) string {
 	switch o {
-	case ScriptSkipped:
-		return "skipped"
-	case ScriptProduced:
-		return "produced"
+	case ScriptSucceeded:
+		return "succeeded"
 	case ScriptFailed:
 		return "failed"
 	case ScriptTimedOut:

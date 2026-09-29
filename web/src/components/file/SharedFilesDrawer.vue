@@ -10,7 +10,7 @@
         :title="t('sharedFiles.clearAll')"
         @click.stop="clearAll"
       >
-        <RefreshCw v-if="clearing" :size="13" class="shared-files-clear-spin" />
+        <LoadingIndicator v-if="clearing" size="sm" inline class="shared-files-clear-spin" />
         <Trash2 v-else :size="13" />
         {{ clearing ? t('common.loading') : t('sharedFiles.clear') }}
       </button>
@@ -91,7 +91,7 @@
 
 <script setup>
 import { ref, watch } from 'vue'
-import { ScreenShare, ExternalLink, Trash2, RefreshCw } from 'lucide-vue-next'
+import { ScreenShare, ExternalLink, Trash2 } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
@@ -347,10 +347,10 @@ defineExpose({ open: openDrawer })
   flex-shrink: 0;
 }
 .shared-files-clear:disabled { opacity: var(--opacity-muted); cursor: default; }
-.shared-files-clear-spin { animation: shared-files-clear-spin 0.8s linear infinite; }
-@keyframes shared-files-clear-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+/* Shared LoadingIndicator, tinted with the destructive red the button (and the
+   icon it replaced) already carries. */
+.shared-files-clear-spin {
+  --li-color: currentColor;
 }
 @media (hover: hover) {
   .shared-files-clear:not(:disabled):hover { background: color-mix(in srgb, var(--color-red) 10%, transparent); }

@@ -22,9 +22,17 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 	db.SetMaxOpenConns(1) // :memory: is per-connection — one conn or tables vanish
 	t.Cleanup(func() { db.Close() })
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS chat_history (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		project_path TEXT NOT NULL,
+		path TEXT NOT NULL,
+		forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(path)
+	);
+	CREATE TABLE IF NOT EXISTS chat_history (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		project_id INTEGER NOT NULL,
 		role TEXT NOT NULL,
 		content TEXT NOT NULL,
 		files TEXT,
@@ -39,7 +47,7 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS queued_messages (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id TEXT NOT NULL,
-		project_path TEXT NOT NULL,
+		project_id INTEGER NOT NULL,
 		backend TEXT NOT NULL DEFAULT '',
 		queue_id TEXT NOT NULL,
 		content TEXT NOT NULL,
@@ -48,9 +56,17 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 	)`)
 	require.NoError(t, err)
 
-	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS chat_sessions (
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 		id TEXT PRIMARY KEY,
-		project_path TEXT NOT NULL DEFAULT '',
+		project_id INTEGER NOT NULL DEFAULT 0,
 		backend TEXT NOT NULL DEFAULT 'claude',
 		title TEXT NOT NULL DEFAULT '',
 		title_source TEXT NOT NULL DEFAULT '',
@@ -68,8 +84,12 @@ func setupReaperTestDB(t *testing.T) *sql.DB {
 // insertReaperSession creates the chat_sessions row the reaper joins against.
 func insertReaperSession(t *testing.T, db *sql.DB, sessionID string, archived int) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, archived)
-		VALUES (?, '/test', 'claude', 't', 'claude', ?)`, sessionID, archived)
+	// The fixtures use project_id = 1; register that project so assertions that
+	// read the path back out resolve it.
+	_, err := db.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj/x') ON CONFLICT(id) DO NOTHING")
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, archived)
+		VALUES (?, 1, 'claude', 't', 'claude', ?)`, sessionID, archived)
 	require.NoError(t, err)
 }
 
@@ -79,9 +99,8 @@ func insertReaperSession(t *testing.T, db *sql.DB, sessionID string, archived in
 func insertQueuedRow(t *testing.T, db *sql.DB, sessionID, queueID string, age time.Duration) {
 	t.Helper()
 	createdAt := time.Now().UTC().Add(-age).Format("2006-01-02 15:04:05")
-	_, err := db.Exec(`INSERT INTO queued_messages
-		(project_path, session_id, backend, queue_id, content, created_at)
-		VALUES ('/test', ?, 'claude', ?, 'hello', ?)`,
+	_, err := db.Exec(`INSERT INTO queued_messages (project_id, session_id, backend, queue_id, content, created_at)
+		VALUES (1, ?, 'claude', ?, 'hello', ?)`,
 		sessionID, queueID, createdAt)
 	require.NoError(t, err)
 }
@@ -389,9 +408,12 @@ func TestEnsureConsumer_BackendInfoIsPassedThrough(t *testing.T) {
 	cleanupAllSessionState()
 
 	calls := stubConsumer(t)
-	_, err := db.Exec(`INSERT INTO chat_sessions
-		(id, project_path, backend, title, agent_id, archived)
-		VALUES ('sess-info', '/proj/x', 'codebuddy', 't', 'codebuddy', 0)`)
+	// Register the project this row points at, so the launched execution carries
+	// a path rather than an empty string.
+	_, err := db.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj/x') ON CONFLICT(id) DO NOTHING")
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, archived)
+		VALUES ('sess-info', 1, 'codebuddy', 't', 'codebuddy', 0)`)
 	require.NoError(t, err)
 	insertQueuedRow(t, db, "sess-info", "q-info", time.Minute)
 
@@ -415,17 +437,15 @@ func TestEnsureConsumer_CarriesAttachments(t *testing.T) {
 	cleanupAllSessionState()
 
 	calls := stubConsumer(t)
-	_, err := db.Exec(`INSERT INTO chat_sessions
-		(id, project_path, backend, title, agent_id, archived)
-		VALUES ('sess-files', '/proj/x', 'claude', 't', 'claude', 0)`)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, archived)
+		VALUES ('sess-files', 1, 'claude', 't', 'claude', 0)`)
 	require.NoError(t, err)
 
 	// Stored the way AddQueuedMessage stores them: a JSON array of FileEntry.
 	filesJSON := `[{"path":"/proj/x/a.png"},{"path":"/proj/x/b.go","startLine":3,"endLine":9}]`
 	createdAt := time.Now().UTC().Add(-time.Minute).Format("2006-01-02 15:04:05")
-	_, err = db.Exec(`INSERT INTO queued_messages
-		(project_path, session_id, backend, queue_id, content, files, created_at)
-		VALUES ('/proj/x', 'sess-files', 'claude', 'q-files', 'look at these', ?, ?)`,
+	_, err = db.Exec(`INSERT INTO queued_messages (project_id, session_id, backend, queue_id, content, files, created_at)
+		VALUES (1, 'sess-files', 'claude', 'q-files', 'look at these', ?, ?)`,
 		filesJSON, createdAt)
 	require.NoError(t, err)
 

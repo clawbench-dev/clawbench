@@ -208,8 +208,8 @@ func resolveAgentConfig(agentID string) (string, string, string, string, bool) {
 	if agentID == "" {
 		return "", "", "", "", false
 	}
-	agent, found := model.Agents[agentID]
-	if !found {
+	agent := model.GetAgent(agentID)
+	if agent == nil {
 		return "", "", "", "", false
 	}
 	return agent.Backend, agent.DefaultModelID(), agent.RuntimeSystemPrompt, agent.Command, true
@@ -311,6 +311,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/theme/local/item", ServeThemeLocalUpload)
 	register("/api/theme/bing/sync", ServeThemeBingSync)
 	register("/api/theme/bing/status", ServeThemeBingStatus)
+	register("/api/theme/bing/save-to-gallery", ServeThemeBingSaveToGallery)
 	register("/api/file/theme-wallpaper", ServeThemeWallpaperGet)
 	register("/api/projects", ServeProjects)
 	register("/api/project", ServeProjectSet)
@@ -321,6 +322,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/queue", QueueHandler)
 	register("/api/ai/queue/inject", QueueInjectHandler)
 	register("/api/ai/queue/interrupt", QueueInterruptHandler)
+	register("/api/ai/queue/merge", QueueMergeHandler)
 	register("/api/ai/session/update", ServeAISessionUpdate)
 	register("/api/ai/session/generate-title", ServeGenerateSessionTitle)
 	register("/api/ai/session/tags", ServeSessionTags)
@@ -333,6 +335,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/ai/session/acp-load", ServeACPLoadSession)
 	register("/api/ai/session/acp-sync", ServeACPSyncSession)
 	register("/api/ai/session/fork", ServeForkSession)
+	register("/api/ai/session/btw", ServeBtwQuestion)
 	register("/api/ai/session/reset", ServeSessionReset)
 	register("/api/ai/session/rewind", ServeSessionRewind)
 	// Path kept as "user-messages" for compatibility: the frontend is served from

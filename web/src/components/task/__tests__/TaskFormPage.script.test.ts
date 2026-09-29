@@ -35,6 +35,17 @@ vi.mock('@/utils/forgeApi', async () => {
   return { ...actual, fetchForgeBinding: mockFetchForgeBinding }
 })
 
+// The script editor mounts real CodeMirror, which is heavyweight and unrelated
+// to the form contract under test. Stub it so the tests can assert on the
+// field's presence/props without a real editor instance.
+vi.mock('@/components/task/TaskScriptEditor.vue', () => ({
+  default: {
+    name: 'TaskScriptEditor',
+    props: ['modelValue', 'language', 'placeholder', 'disabled'],
+    template: '<div class="script-editor-stub" :data-placeholder="placeholder"></div>',
+  },
+}))
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
@@ -63,8 +74,17 @@ const i18n = createI18n({
           varPipelineSha: 'psha', varPipelineTrigger: 'ptr', varPipelineDuration: 'pd',
           varPipelineLinkedPrs: 'plpr',
           repeatMode: 'Repeat', presets: {},
-          script: 'Custom script',
-          scriptPlaceholder: 'Optional shell script. If it exits 0 with no output, the AI is skipped.',
+          script: 'Gating script',
+          scriptEnabled: 'Enable gating script',
+          scriptHint: 'Runs before the agent',
+          scriptPlaceholder: 'Enter a shell script',
+          scriptGuideTitle: 'About the gating script',
+          scriptGuideIntro: 'Exits 0 to run the agent.',
+          scriptGuideVarsTitle: 'The prompt can reference:',
+          scriptVarCode: 'Exit code',
+          scriptVarStdout: 'Script stdout',
+          scriptVarStderr: 'Script stderr',
+          scriptVarOutput: 'Script output',
           scriptTimeout: 'Script timeout (seconds)',
           scriptTimeoutInvalid: 'bad timeout',
         },
@@ -73,21 +93,25 @@ const i18n = createI18n({
   },
 })
 
-function mountForm() {
+function mountForm(props: Record<string, unknown> = {}) {
   return mount(TaskFormPage, {
-    props: { mode: 'create' },
+    props: { mode: 'create', ...props },
     global: { plugins: [i18n], stubs: { RefreshButton: true } },
   })
 }
 
-/** The script textarea, located by its label so the test does not depend on
- *  the field order in the form. */
-function scriptSection(wrapper: ReturnType<typeof mountForm>) {
-  return wrapper.findAll('.form-group').find(g => g.find('.form-label').exists()
-    && g.find('.form-label').text() === 'Custom script')
+/** The gating-script switch row, located by its label text. */
+function switchRow(wrapper: ReturnType<typeof mountForm>) {
+  return wrapper.findAll('.script-switch-row')[0]
 }
 
-describe('TaskFormPage custom script section', () => {
+/** The script editor field group, located by its label. */
+function scriptSection(wrapper: ReturnType<typeof mountForm>) {
+  return wrapper.findAll('.form-group').find(g => g.find('.form-label').exists()
+    && g.find('.form-label').text() === 'Gating script')
+}
+
+describe('TaskFormPage gating script section', () => {
   beforeEach(() => {
     formRef.value.triggerMode = 'cron'
     formRef.value.script = ''
@@ -97,15 +121,37 @@ describe('TaskFormPage custom script section', () => {
     resetForgeBindingState()
   })
 
-  it('renders the script field and timeout for a cron task', () => {
+  it('hides the script config by default for a task without a script', () => {
+    // The switch is off unless the stored task has a script, so a fresh form
+    // shows no script configuration at all.
     const wrapper = mountForm()
+    expect(switchRow(wrapper), 'the gate switch must render').toBeTruthy()
+    expect(scriptSection(wrapper), 'the script editor must stay hidden while the switch is off').toBeFalsy()
+    expect(wrapper.text()).not.toContain('Script timeout (seconds)')
+  })
+
+  it('reveals the script editor and timeout when the switch is enabled', async () => {
+    const wrapper = mountForm()
+    await switchRow(wrapper).find('input[type="checkbox"]').setValue(true)
     const section = scriptSection(wrapper)
-    expect(section, 'the cron form must offer a custom script').toBeTruthy()
-    expect(section!.find('textarea').exists()).toBe(true)
-    // The timeout is a numeric input, not free text.
-    const timeout = wrapper.findAll('.form-input').find(i => i.attributes('type') === 'number')
-    expect(timeout, 'the cron form must offer a script timeout').toBeTruthy()
+    expect(section, 'the cron form must offer a gating script once enabled').toBeTruthy()
+    expect(section!.find('.script-editor-stub').exists()).toBe(true)
     expect(wrapper.text()).toContain('Script timeout (seconds)')
+  })
+
+  it('turns the gate on when editing a task that already has a script', async () => {
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'test -f x', cronExpr: '0 9 * * *' } })
+    // The switch is flipped in onMounted, so the DOM needs a tick to patch.
+    await wrapper.vm.$nextTick()
+    expect(scriptSection(wrapper), 'a stored script must not be silently dropped').toBeTruthy()
+  })
+
+  it('clears the script when the switch is turned off', async () => {
+    // A disabled gate must not leave a stale script behind to run later.
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
+    await wrapper.vm.$nextTick()
+    await switchRow(wrapper).find('input[type="checkbox"]').setValue(false)
+    expect(formRef.value.script).toBe('')
   })
 
   it('hides the script field for an event task', async () => {
@@ -115,43 +161,44 @@ describe('TaskFormPage custom script section', () => {
     const wrapper = mountForm()
     await wrapper.vm.$nextTick()
 
+    expect(switchRow(wrapper), 'the gate switch is cron-only').toBeFalsy()
     expect(scriptSection(wrapper)).toBeFalsy()
     expect(wrapper.text()).not.toContain('Script timeout (seconds)')
   })
 
-  it('shows the 300s default as a placeholder on an empty timeout input', () => {
-    // The field is empty by default and reads as 300 via the placeholder —
-    // rendering a literal 0 would read as "no timeout".
-    const wrapper = mountForm()
+  it('shows the 300s default as a placeholder on an empty timeout input', async () => {
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
+    await wrapper.vm.$nextTick()
     const timeout = wrapper.findAll('.form-input').find(i => i.attributes('type') === 'number')!
     expect((timeout.element as HTMLInputElement).value).toBe('')
     expect(timeout.attributes('placeholder')).toBe('300')
   })
 
-  it('carries the skip explanation in the script textarea placeholder', () => {
-    // The skip semantics moved out of the (now removed) long hint paragraph
-    // and into the placeholder, so the placeholder must mention the skip.
-    const wrapper = mountForm()
-    const textarea = scriptSection(wrapper)!.find('textarea')
-    expect(textarea.attributes('placeholder')).toContain('the AI is skipped')
+  it('documents the template variables in a dedicated guide panel', async () => {
+    // The four substitution variables are the feature's contract. They belong
+    // in a persistent, styleable panel — not the editor placeholder, which
+    // disappears on the first keystroke.
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
+    await wrapper.vm.$nextTick()
+    const guide = wrapper.find('.script-guide')
+    expect(guide.exists(), 'the guide panel must render once the gate is on').toBe(true)
+    expect(guide.text()).toContain('About the gating script')
+
+    const tokens = wrapper.findAll('.script-guide-token').map(t => t.text())
+    expect(tokens).toEqual(['{{code}}', '{{stdout}}', '{{stderr}}', '{{output}}'])
   })
 
-  it('no longer renders the verbose script hint paragraph', () => {
-    // The long helper text (which sat under the timeout input) was removed as
-    // too verbose. Its i18n key is gone, so the timeout's form-group must not
-    // render any .form-hint, and the old copy must be absent from the form.
-    const wrapper = mountForm()
-    const timeoutGroup = wrapper.findAll('.form-group').find(g => g.find('.form-label').exists()
-      && g.find('.form-label').text() === 'Script timeout (seconds)')
-    expect(timeoutGroup, 'the timeout field must still render').toBeTruthy()
-    expect(timeoutGroup!.findAll('.form-hint')).toHaveLength(0)
+  it('keeps the placeholder to a short hint', async () => {
+    // The explanation moved out, so the placeholder must no longer be a wall
+    // of text repeating the guide panel.
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
+    await wrapper.vm.$nextTick()
+    const placeholder = scriptSection(wrapper)!.find('.script-editor-stub').attributes('data-placeholder')!
+    expect(placeholder).not.toContain('{{')
   })
 
-  it('sets the script textarea in the monospace face', () => {
-    // A shell script is code; the shared textarea style is proportional, so the
-    // section must opt into the mono face explicitly.
+  it('hides the guide panel along with the rest of the script config', () => {
     const wrapper = mountForm()
-    const textarea = scriptSection(wrapper)!.find('textarea')
-    expect(textarea.classes()).toContain('script-textarea')
+    expect(wrapper.find('.script-guide').exists()).toBe(false)
   })
 })

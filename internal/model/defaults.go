@@ -226,12 +226,15 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.Chat.AutoContinueMaxRetries < AutoContinueUnlimited {
 		cfg.Chat.AutoContinueMaxRetries = 0
 	}
-	// AutoRenameEnabled: bool zero-value (false) is the intentional default —
-	// auto-renaming spends an LLM call without the user asking, so it is
-	// opt-in. Use the presence map to distinguish "user wrote false" from
-	// "user omitted the field".
-	if p, ok := presence["chat.auto_rename_enabled"]; !ok || !p {
-		cfg.Chat.AutoRenameEnabled = false
+	// AutoRenameEnabled: default ON. This costs nothing on an install that has
+	// not configured the shared ai_summary model: the AI layer is gated a
+	// second time on that model being present (service.AutoRenameEnabled), so
+	// the session simply keeps its synchronous local title — the fallback is
+	// the pre-existing behavior, not a new failure mode. Use the presence map
+	// to distinguish "user wrote false" (opt-out, kept) from "user omitted the
+	// field" (takes the default).
+	if !presence["chat.auto_rename_enabled"] {
+		cfg.Chat.AutoRenameEnabled = true
 	}
 
 	// --- Session ---

@@ -66,7 +66,7 @@ func TestGetRecentProjectGroups_GroupsWorktreesOfOneRepo(t *testing.T) {
 	db := setupRecentProjectsDB(t)
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	parent := t.TempDir()
+	parent := canon(t, t.TempDir())
 	repo := filepath.Join(parent, "clawbench")
 	require.NoError(t, os.MkdirAll(repo, 0o755))
 	makeRepo(t, repo)
@@ -110,7 +110,7 @@ func TestGetRecentProjectGroups_SeparateReposStaySeparate(t *testing.T) {
 	db := setupRecentProjectsDB(t)
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	parent := t.TempDir()
+	parent := canon(t, t.TempDir())
 	repoA := filepath.Join(parent, "clawbench")
 	repoB := filepath.Join(parent, "clawbench-master-backup")
 	require.NoError(t, os.MkdirAll(repoA, 0o755))
@@ -138,7 +138,7 @@ func TestGetRecentProjectGroups_BackfillsSiblingBeyondWindow(t *testing.T) {
 	model.RecentProjectsMaxCount = 2
 	t.Cleanup(func() { model.RecentProjectsMaxCount = origLimit })
 
-	parent := t.TempDir()
+	parent := canon(t, t.TempDir())
 	repo := filepath.Join(parent, "clawbench")
 	require.NoError(t, os.MkdirAll(repo, 0o755))
 	makeRepo(t, repo)
@@ -204,7 +204,7 @@ func TestGetRecentProjectGroups_FiltersAndCleansStalePaths(t *testing.T) {
 
 	var count int
 	require.NoError(t, db.QueryRow(
-		"SELECT COUNT(*) FROM recent_projects WHERE project_path = ?", dead,
+		"SELECT COUNT(*) FROM recent_projects WHERE project_id = ?", dead,
 	).Scan(&count))
 	assert.Zero(t, count, "stale row is cleaned up, as the flat listing did")
 }
@@ -226,7 +226,7 @@ func TestGetRecentProjectGroups_GroupOrderFollowsMostRecentMember(t *testing.T) 
 	db := setupRecentProjectsDB(t)
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	parent := t.TempDir()
+	parent := canon(t, t.TempDir())
 	repoOld := filepath.Join(parent, "old-repo")
 	repoNew := filepath.Join(parent, "new-repo")
 	require.NoError(t, os.MkdirAll(repoOld, 0o755))

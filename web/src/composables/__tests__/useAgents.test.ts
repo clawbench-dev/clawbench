@@ -1,5 +1,36 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { flushPromises } from '@vue/test-utils'
 import { useAgents, resetAgents, updateACPModelList, applyResolvedModelList, restoreOriginalModels, applyRefreshedModelList, populateACPStateFromCache, registerIdentityUpdaters, invalidateACPStateCache } from '@/composables/useAgents'
+
+// ── Controllable useGlobalEvents fake ──
+// useAgents wires an onEvent handler so the async model discovery broadcast
+// (`agents_updated`) forces a reload. useAgents loads useGlobalEvents with a
+// dynamic import (see useAgents.ts) to avoid a TDZ from the
+// useAgents → useGlobalEvents → useNotification → useSettingsConfig → useAgents
+// import cycle, so the fake keeps a registry of handlers and tests wait for the
+// registration to land before emitting.
+const wsHolder = vi.hoisted(() => ({
+  handlers: [] as Array<(event: string, data: unknown) => void>,
+}))
+vi.mock('@/composables/useGlobalEvents', () => ({
+  useGlobalEvents: () => ({
+    onEvent: (handler: (event: string, data: unknown) => void) => {
+      wsHolder.handlers.push(handler)
+      return () => {
+        const i = wsHolder.handlers.indexOf(handler)
+        if (i >= 0) wsHolder.handlers.splice(i, 1)
+      }
+    },
+  }),
+}))
+
+/** Wait for the deferred (dynamic-import) registration, then dispatch to every handler. */
+async function emitGlobalEvent(event: string, data: unknown) {
+  for (let i = 0; i < 10 && wsHolder.handlers.length === 0; i++) {
+    await Promise.resolve()
+  }
+  for (const h of [...wsHolder.handlers]) h(event, data)
+}
 
 // Mock apiGet/apiPatch/apiPost/apiDelete to control agent data
 const mockApiGet = vi.fn()
@@ -497,6 +528,35 @@ describe('useAgents', () => {
       // Only one API call should have been made (deduplication via loadPromise)
       expect(mockApiGet).toHaveBeenCalledTimes(1)
       expect(agents.value).toHaveLength(3)
+    })
+  })
+
+  // --- agents_updated global event ---
+  //
+  // Model discovery runs in a background goroutine after startup and the
+  // server broadcasts `agents_updated` on completion. The picker may already
+  // have rendered with an empty model list, so the event must force a reload.
+
+  describe('agents_updated event', () => {
+    it('agents_updated 事件触发强制重载', async () => {
+      // Load once so loadPromise is settled (beforeEach already did, but be explicit).
+      await loadAgents()
+      const callsBefore = mockApiGet.mock.calls.length
+
+      await emitGlobalEvent('agents_updated', {})
+
+      await flushPromises()
+      expect(mockApiGet.mock.calls.length).toBeGreaterThan(callsBefore)
+    })
+
+    it('其他事件不触发重载', async () => {
+      await loadAgents()
+      const callsBefore = mockApiGet.mock.calls.length
+
+      await emitGlobalEvent('some_other_event', {})
+
+      await flushPromises()
+      expect(mockApiGet.mock.calls.length).toBe(callsBefore)
     })
   })
 

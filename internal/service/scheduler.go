@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -267,7 +268,7 @@ func (s *Scheduler) LoadTasksFromDB(projectPath string) error {
 			continue
 		}
 		// Validate agent_id against loaded agents
-		if _, ok := model.Agents[task.AgentID]; !ok {
+		if !model.HasAgent(task.AgentID) {
 			// Skip registration but do NOT pause — the agent may not be loaded yet
 			// (e.g., if agents haven't been loaded yet). The task stays active in DB and
 			// will be registered on next restart when agents are available.
@@ -368,9 +369,10 @@ func (s *Scheduler) RemoveTask(id int64) {
 
 	// Cascade: archive associated chat sessions
 	rows, err := dbRead.Query(`
-		SELECT te.session_id, cs.project_path, cs.backend
+		SELECT te.session_id, COALESCE(p.path, ''), cs.backend
 		FROM task_executions te
 		JOIN chat_sessions cs ON cs.id = te.session_id
+		LEFT JOIN projects p ON p.id = cs.project_id
 		WHERE te.task_id = ?`, id)
 	if err != nil {
 		slog.Error(
@@ -828,8 +830,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	agent, ok := model.Agents[task.AgentID]
-	if !ok {
+	agent := model.GetAgent(task.AgentID)
+	if agent == nil {
 		slog.Error(
 			"agent not found for task, pausing",
 			slog.String("agent_id", task.AgentID),
@@ -845,12 +847,17 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		backendName = "codebuddy"
 	}
 
-	// ── Pre-AI script phase ──────────────────────────────────────────────
-	// An optional script runs BEFORE the session/AI. It lets a cron task bail
-	// out cheaply (e.g. "nothing changed") without spawning an AI turn or
-	// notifying the user. Only cron tasks have a script: an event task's
-	// prompt is driven entirely by the injected event context.
-	var scriptPromptBlock string
+	// ── Pre-AI gating script phase ───────────────────────────────────────
+	// An optional script runs BEFORE the session/AI as a gate: exit code 0
+	// opens it and the AI turn runs, anything else (non-zero, timeout) closes
+	// it and the run is skipped without spawning a session. Only cron tasks
+	// have a script: an event task's prompt is driven entirely by the injected
+	// event context.
+	//
+	// The script's result is always persisted on the execution row (exit code,
+	// stdout, stderr) so the run's history can show what the gate saw, and its
+	// output is substituted into the prompt through the template variables.
+	var scriptRes *ScriptResult
 	if !task.IsEventTriggered() && task.Script != "" {
 		// Register the script as a cancellable running execution so a user
 		// cancel reaches the script's context (CancelExecution looks up by the
@@ -859,9 +866,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 		//
 		// Deliberately NO task_update event here. A "running" task_update is a
 		// user-visible notification (browser notification; DingTalk/Feishu
-		// "任务已启动"), and a skip must emit NOTHING — a "task started" that is
-		// never followed by a result is exactly the noise this feature exists
-		// to avoid. The script row is still discoverable through
+		// "任务已启动"), and a gated run must not announce itself before the
+		// gate has decided. The script row is still discoverable through
 		// GetRunningExecutions (GET /api/tasks/{id}) for the UI to label it.
 		scriptExecID := fmt.Sprintf("script-%d", task.ID)
 		s.runningExecutions.Store(scriptExecID, &RunningExecution{
@@ -875,9 +881,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 		res := RunTaskScript(ctx, task.Script, projectPath, scriptTimeoutDuration(task.ScriptTimeout))
 		s.runningExecutions.Delete(scriptExecID)
+		scriptRes = &res
 
-		switch res.Outcome {
-		case ScriptSkipped, ScriptCanceled:
+		// The gate is closed for anything but a clean exit 0, and for a cancel.
+		if res.Outcome != ScriptSucceeded {
 			status := "skipped"
 			if res.Outcome == ScriptCanceled {
 				status = "cancelled"
@@ -886,8 +893,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			// session_id (AddTaskExecutionWithStatus allows it).
 			execID, err := AddTaskExecutionWithStatus(task.ID, "", triggerType, status)
 			if err != nil {
-				slog.Error("failed to record script-skip execution",
+				slog.Error("failed to record script-gated execution",
 					slog.Int64("task_id", task.ID), slog.String("err", err.Error()))
+			} else if err := SetTaskExecutionScriptResult(execID, res); err != nil {
+				slog.Warn("failed to persist script result",
+					slog.Int64("execution_id", execID), slog.String("err", err.Error()))
 			}
 			s.finishScriptOnlyRun(task, status)
 			if status == "cancelled" {
@@ -900,10 +910,8 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 				}
 				emitTaskEvent(fmt.Sprintf("%d", task.ID), "cancelled", execIDArg, "", projectPath, task.Name)
 			}
-			// Skipped emits nothing: a content-free skip must not notify.
+			// A gate-closed run emits nothing: it is a deliberate no-op.
 			return
-		default:
-			scriptPromptBlock = buildScriptPromptBlock(res)
 		}
 	}
 
@@ -978,9 +986,11 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 
 	// Render the final prompt. For event-triggered runs the forge event context
 	// is prepended as a fixed, read-only block; the task's own prompt follows as
-	// the user's instruction. Cron runs use the prompt verbatim, with any
-	// pre-AI script output injected between the event context (if any) and the
-	// task prompt.
+	// the user's instruction. The prompt's {{code}} / {{stdout}} / {{stderr}} /
+	// {{output}} variables are then substituted with the gating script's result
+	// (a task with no script leaves them untouched). The substituted prompt is
+	// what lands in the session history via AddChatMessage below, so the user
+	// can see exactly what the AI was given.
 	renderedPrompt := task.Prompt
 	if eventCtx != nil {
 		renderedPrompt = RenderEventContext(*eventCtx) + "\n\n" + task.Prompt
@@ -993,12 +1003,16 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			}
 		}
 	}
-	// The script output is injected before the task prompt so the AI sees the
-	// data it must act on, then the instruction. It also lands in the session
-	// history via AddChatMessage below, which is intended: the user can see
-	// exactly what the script produced.
-	if scriptPromptBlock != "" {
-		renderedPrompt = scriptPromptBlock + "\n\n" + renderedPrompt
+	if scriptRes != nil {
+		renderedPrompt = renderScriptPrompt(renderedPrompt, *scriptRes)
+		// Persist the script result on the AI-phase execution row too, so the
+		// execution detail can show the gate's output alongside the answer.
+		if executionID != 0 {
+			if err := SetTaskExecutionScriptResult(executionID, *scriptRes); err != nil {
+				slog.Warn("failed to record script result on execution",
+					slog.Int64("execution_id", executionID), slog.String("err", err.Error()))
+			}
+		}
 	}
 
 	// Write user message (the prompt)
@@ -1426,45 +1440,54 @@ func (s *Scheduler) finishScriptOnlyRun(task *model.ScheduledTask, status string
 	)
 }
 
-// buildScriptPromptBlock renders the script result into a delimited block that
-// is injected into the prompt. A successful run injects its stdout then stderr;
-// a failure/timeout injects the error text (with whatever output was produced).
-func buildScriptPromptBlock(res ScriptResult) string {
+// Script prompt template variables. The prompt may reference any of them and
+// they are replaced with the gating script's result before the AI is called.
+const (
+	scriptVarCode   = "{{code}}"
+	scriptVarStdout = "{{stdout}}"
+	scriptVarStderr = "{{stderr}}"
+	scriptVarOutput = "{{output}}"
+)
+
+// renderScriptPrompt substitutes the script template variables in prompt with
+// the gating script's result. Output is capped at scriptOutputCap (the same
+// constant the capture used) so a runaway producer cannot blow up the context.
+//
+// {{output}} is the merged stdout+stderr stream, for prompts that just want
+// "everything the script said" without caring which stream it came from.
+func renderScriptPrompt(prompt string, res ScriptResult) string {
+	stdout := truncateScriptOutput(res.Stdout, res.StdoutTruncated)
+	stderr := truncateScriptOutput(res.Stderr, res.StderrTruncated)
+	combined := combineScriptOutput(stdout, stderr, res.StdoutTruncated || res.StderrTruncated)
+
+	// Replace {{output}} first: it is the longest name and does not share a
+	// prefix with the others, but a single pass over a replacer keeps the
+	// substitution unambiguous and avoids re-substituting injected output.
+	return strings.NewReplacer(
+		scriptVarOutput, combined,
+		scriptVarStdout, stdout,
+		scriptVarStderr, stderr,
+		scriptVarCode, strconv.Itoa(res.ExitCode),
+	).Replace(prompt)
+}
+
+// combineScriptOutput merges the two streams for {{output}}, labeling stderr
+// only when it is non-empty so a clean run reads as plain output.
+func combineScriptOutput(stdout, stderr string, truncated bool) string {
 	var b strings.Builder
-	b.WriteString("<<<TASK_SCRIPT_OUTPUT>>>\n")
-	switch res.Outcome {
-	case ScriptFailed, ScriptTimedOut:
-		if res.Outcome == ScriptTimedOut {
-			b.WriteString("The task script timed out.\n")
-		} else {
-			fmt.Fprintf(&b, "The task script failed (exit code %d).\n", res.ExitCode)
-		}
-		if res.Err != nil {
-			b.WriteString(res.Err.Error())
-			b.WriteString("\n")
-		}
-		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
-			b.WriteString("--- stdout ---\n")
-			b.WriteString(out)
-			b.WriteString("\n")
-		}
-		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
-			b.WriteString("--- stderr ---\n")
-			b.WriteString(errOut)
-			b.WriteString("\n")
-		}
-	default: // ScriptProduced
-		if out := truncateScriptOutput(res.Stdout, res.StdoutTruncated); out != "" {
-			b.WriteString(out)
-			b.WriteString("\n")
-		}
-		if errOut := truncateScriptOutput(res.Stderr, res.StderrTruncated); errOut != "" {
-			b.WriteString("--- stderr ---\n")
-			b.WriteString(errOut)
-			b.WriteString("\n")
-		}
+	if stdout != "" {
+		b.WriteString(stdout)
 	}
-	b.WriteString("<<<END_TASK_SCRIPT_OUTPUT>>>")
+	if stderr != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("--- stderr ---\n")
+		b.WriteString(stderr)
+	}
+	if truncated && b.Len() > 0 {
+		b.WriteString(scriptTruncationMarker)
+	}
 	return b.String()
 }
 
@@ -1493,22 +1516,30 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 	var args []interface{}
 
 	if projectPath == "" {
-		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
+		query = `SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
 			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
-			FROM scheduled_tasks s ORDER BY s.created_at DESC`
+			FROM scheduled_tasks s
+			LEFT JOIN projects p ON p.id = s.project_id
+			ORDER BY s.created_at DESC`
 	} else {
-		query = `SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
+		projectID, idErr := ProjectIDForPath(projectPath)
+		if idErr != nil {
+			return nil, idErr
+		}
+		query = `SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 			s.trigger_mode, s.event_types,
 			s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 			s.last_read_at, s.created_at, s.updated_at,
 			(SELECT COUNT(*) FROM task_executions e
 			 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
-			FROM scheduled_tasks s WHERE s.project_path = ? ORDER BY s.created_at DESC`
-		args = []interface{}{projectPath}
+			FROM scheduled_tasks s
+			LEFT JOIN projects p ON p.id = s.project_id
+			WHERE s.project_id = ? ORDER BY s.created_at DESC`
+		args = []interface{}{projectID}
 	}
 
 	rows, err := dbRead.Query(query, args...)
@@ -1542,13 +1573,15 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var t model.ScheduledTask
 	var lastRun, nextRun, lastRead sql.NullTime
 	err := dbRead.QueryRow(
-		`SELECT s.id, s.project_path, s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
+		`SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 		s.trigger_mode, s.event_types,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
 		s.last_read_at, s.created_at, s.updated_at,
 		(SELECT COUNT(*) FROM task_executions e
 		 WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) AS unread_count
-		FROM scheduled_tasks s WHERE s.id = ?`,
+		FROM scheduled_tasks s
+		LEFT JOIN projects p ON p.id = s.project_id
+		WHERE s.id = ?`,
 		id,
 	).Scan(&t.ID, &t.ProjectPath, &t.Name, &t.CronExpr, &t.AgentID, &t.Prompt, &t.Script, &t.ScriptTimeout, &t.SessionID, &t.TriggerMode, &t.EventTypes, &t.Status, &t.RepeatMode, &t.MaxRuns, &lastRun, &nextRun, &t.RunCount, &lastRead, &t.CreatedAt, &t.UpdatedAt, &t.UnreadCount)
 	if err != nil {
@@ -1568,10 +1601,14 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 
 // insertTask inserts a new task into the database and sets the auto-generated ID.
 func insertTask(task *model.ScheduledTask) error {
+	projectID, idErr := ProjectIDForPath(task.ProjectPath)
+	if idErr != nil {
+		return idErr
+	}
 	result, err := WriteExec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ProjectPath, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
+		projectID, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
 		return err
@@ -1641,6 +1678,20 @@ func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary stri
 	return err
 }
 
+// SetTaskExecutionScriptResult records the gating script's result on an
+// execution, so the detail view can show the exit code and both output streams
+// without re-running the script or digging through the chat transcript. The
+// stored output is already capped at scriptOutputCap by the capture.
+func SetTaskExecutionScriptResult(executionID int64, res ScriptResult) error {
+	_, err := WriteExec(
+		`UPDATE task_executions
+		 SET script_exit_code = ?, script_stdout = ?, script_stderr = ?, script_duration_ms = ?
+		 WHERE id = ?`,
+		res.ExitCode, res.Stdout, res.Stderr, res.Duration.Milliseconds(), executionID,
+	)
+	return err
+}
+
 // MarkTaskExecutionsRead marks every finished execution of a task as read.
 //
 // This is the "mark all read" action. It writes per-execution read_at rather
@@ -1702,7 +1753,9 @@ func DeleteTaskExecution(executionID int64) error {
 	// Only archive the associated chat session AFTER successful execution deletion.
 	var projectPath, backend string
 	err = dbRead.QueryRow(
-		"SELECT project_path, backend FROM chat_sessions WHERE id = ?",
+		`SELECT COALESCE(p.path, ''), s.backend FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ?`,
 		sessionID,
 	).Scan(&projectPath, &backend)
 	if err == nil {
@@ -1726,9 +1779,10 @@ func DeleteTaskExecution(executionID int64) error {
 func DeleteAllTaskExecutions(taskID int64) error {
 	// Collect all non-running executions with their session info
 	rows, err := dbRead.Query(`
-		SELECT te.id, te.session_id, cs.project_path, cs.backend
+		SELECT te.id, te.session_id, COALESCE(p.path, ''), cs.backend
 		FROM task_executions te
 		JOIN chat_sessions cs ON cs.id = te.session_id
+		LEFT JOIN projects p ON p.id = cs.project_id
 		WHERE te.task_id = ? AND te.status != 'running'`, taskID)
 	if err != nil {
 		return fmt.Errorf("failed to query executions: %w", err)
@@ -1782,12 +1836,16 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
 		).Scan(&count)
 	} else {
+		projectID, idErr := ProjectIDForPath(projectPath)
+		if idErr != nil {
+			return false, idErr
+		}
 		err = dbRead.QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
-			 WHERE s.project_path = ?
+			 WHERE s.project_id = ?
 			 AND (SELECT COUNT(*) FROM task_executions e
 			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
-			projectPath,
+			projectID,
 		).Scan(&count)
 	}
 	return count > 0, err

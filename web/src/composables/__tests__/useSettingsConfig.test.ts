@@ -160,6 +160,18 @@ describe('useSettingsConfig', () => {
     expect(getServerValueWithDefault('chat.system_prompt_interval')).toBe(0)
   })
 
+  it('serverDefaults mirrors the backend default for chat.auto_rename_enabled', () => {
+    // serverDefaults claims to mirror ApplyDefaults() in internal/model/defaults.go.
+    // Auto-rename now defaults ON: an install with no shared ai_summary model is
+    // unaffected because the AI layer is gated a second time on that model, so
+    // the session just keeps its local title. A stale false here would make the
+    // settings panel show the toggle off until /api/config resolves, while the
+    // server already has it on.
+    const { getServerValueWithDefault } = useSettingsConfig()
+
+    expect(getServerValueWithDefault('chat.auto_rename_enabled')).toBe(true)
+  })
+
   it('serverDefaults mirrors the backend default for chat.recommend_context_messages', () => {
     // Same contract as above. The backend default is 10 (defaults.go rewrites any
     // <= 0 to 10), not 3 — a stale 3 makes the settings panel understate how much

@@ -61,11 +61,12 @@ describe('slider reset button stays resident', () => {
     }
   })
 
-  it.each([SETTINGS_ITEM, WALLPAPER])('%s dims the disabled reset button', (file) => {
-    const src = readWebFile(file)
-    // Anchor on the newline so the rule body is matched, not the many other
-    // selectors that merely start with the same prefix.
-    const rule = src.match(/\n\.settings-item__slider-reset:disabled\s*\{([^}]*)\}/)
+  it('dims the disabled reset button', () => {
+    // The rule now lives once in the shared sheet (css/components.css) instead
+    // of being duplicated per component; the components only keep the template
+    // + the :disabled binding asserted above.
+    const css = readWebFile('css/components.css')
+    const rule = css.match(/\n\.settings-item__slider-reset:disabled\s*\{([^}]*)\}/)
     if (!rule) throw new Error('missing .settings-item__slider-reset:disabled rule')
     expect(rule[1]).toContain('--opacity-disabled')
   })

@@ -869,4 +869,217 @@ describe('useSessionManager', () => {
             expect(result).toEqual({ exists: false, sessionId: '' })
         })
     })
+
+    // ── handlePendingAction toast reporting ──
+    //
+    // The insert action has two distinct failure flavours and they must not be
+    // conflated: a benign 409 decline (attachments, turn already ended, stale
+    // queueId) means "still queued, it will run later" — an INFO toast — while a
+    // 5xx may have stranded the message and needs the ERROR toast telling the
+    // user to resend. Treating any non-2xx as an error (the previous behaviour)
+    // made the 409 path dead code and showed "action failed" for a non-failure.
+    describe('handlePendingAction toast reporting', () => {
+        function jsonResponse(status: number, body: unknown): Response {
+            return {
+                ok: status >= 200 && status < 300,
+                status,
+                json: async () => body,
+            } as unknown as Response
+        }
+
+        it('reports a benign 409 insert decline as info, not an error', async () => {
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(409, { inserted: false, queued: true }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'insert')
+
+            expect(ok).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.insertFailed',
+                expect.objectContaining({ type: 'info' }),
+            )
+            expect(mockToastShow).not.toHaveBeenCalledWith(
+                'chat.pending.actionFailed',
+                expect.anything(),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('reports a 500 insert failure as an error (message may be stranded)', async () => {
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(500, { msgKey: 'QueueInjectStranded' }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'insert')
+
+            expect(ok).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.insertStranded',
+                expect.objectContaining({ type: 'error' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('reports a non-stranded 500 insert failure with the generic error', async () => {
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(500, { msgKey: 'SomethingElse' }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'insert')
+
+            expect(ok).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.actionFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('reports an interrupt failure instead of failing silently', async () => {
+            // Interrupt previously had NO non-2xx handling: a 500 was swallowed
+            // and the click produced no feedback at all.
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(500, {}),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'interrupt')
+
+            expect(ok).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.actionFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('reports a stale interrupt (409 not_queued) with its specific message', async () => {
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(409, { interrupted: false, reason: 'not_queued' }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'interrupt')
+
+            expect(ok).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.interruptNotQueued',
+                expect.objectContaining({ type: 'info' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('reports a transport failure as an error', async () => {
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('offline'))
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'insert')
+
+            expect(ok).toBe(false)
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.actionFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('drops the entry from the queue on a successful insert', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'hello' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(200, { inserted: true, msgId: 7 }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const ok = await mgr.handlePendingAction('q1', 'insert')
+
+            expect(ok).toBe(true)
+            expect(getQueue('session-1')).toHaveLength(0)
+            fetchSpy.mockRestore()
+        })
+    })
+
+    // ── handleMergeQueue ──
+    //
+    // Merging is a queue-WIDE action backed by the atomic POST
+    // /api/ai/queue/merge: the backend replaces N rows with 1 in a single
+    // transaction, and this device mirrors that locally without waiting for the
+    // broadcast.
+    describe('handleMergeQueue', () => {
+        function jsonResponse(status: number, body: unknown): Response {
+            return {
+                ok: status >= 200 && status < 300,
+                status,
+                json: async () => body,
+            } as unknown as Response
+        }
+
+        it('replaces the local queue with the single merged entry', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'first' })
+            addQueued('session-1', { queueId: 'q2', text: 'second' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(200, { merged: true, queueId: 'q-merged', text: 'first\n\nsecond', files: [] }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const mergedId = await mgr.handleMergeQueue()
+
+            expect(mergedId).toBe('q-merged')
+            const queue = getQueue('session-1')
+            expect(queue).toHaveLength(1)
+            expect(queue[0].queueId).toBe('q-merged')
+            expect(queue[0].text).toBe('first\n\nsecond')
+            // The request carries only the session, not a queueId list.
+            expect(fetchSpy).toHaveBeenCalledWith(
+                expect.stringContaining('/api/ai/queue/merge?session_id=session-1'),
+                expect.objectContaining({ method: 'POST' }),
+            )
+            fetchSpy.mockRestore()
+        })
+
+        it('is a no-op (no request) when fewer than two messages are queued', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'only' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch')
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const mergedId = await mgr.handleMergeQueue()
+
+            expect(mergedId).toBe('')
+            expect(fetchSpy).not.toHaveBeenCalled()
+            expect(getQueue('session-1')).toHaveLength(1)
+            fetchSpy.mockRestore()
+        })
+
+        it('leaves the queue untouched and reports an error on failure', async () => {
+            addQueued('session-1', { queueId: 'q1', text: 'first' })
+            addQueued('session-1', { queueId: 'q2', text: 'second' })
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+                jsonResponse(500, { msgKey: 'QueueMergeFailed' }),
+            )
+            const opts = createMockOptions()
+            const mgr = useSessionManager(opts)
+
+            const mergedId = await mgr.handleMergeQueue()
+
+            expect(mergedId).toBe('')
+            expect(getQueue('session-1').map((m) => m.queueId)).toEqual(['q1', 'q2'])
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'chat.pending.mergeFailed',
+                expect.objectContaining({ type: 'error' }),
+            )
+            fetchSpy.mockRestore()
+        })
+    })
 })

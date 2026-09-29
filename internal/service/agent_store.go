@@ -300,8 +300,8 @@ func LoadAgentsIntoMemory() error {
 // It generates a unique ID (sourceID-copy-timestamp), copies all configuration
 // fields from the source, and saves to DB.
 func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
-	source, ok := model.Agents[sourceID]
-	if !ok {
+	source := model.GetAgent(sourceID)
+	if source == nil {
 		return nil, fmt.Errorf("source agent %s not found", sourceID)
 	}
 

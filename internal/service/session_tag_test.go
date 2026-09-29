@@ -9,9 +9,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	tagProjectA = "/proj/a"
-	tagProjectB = "/proj/b"
+// The project paths are canonicalized because the tag rows store a project id
+// and the accessors resolve it back to the registry's canonical path — on
+// Windows filepath.Abs("/proj/a") is a drive-rooted path, not "/proj/a".
+var (
+	tagProjectA = service.NormalizeProjectPath("/proj/a")
+	tagProjectB = service.NormalizeProjectPath("/proj/b")
 )
 
 // namesOf is a tiny projection helper so assertions read as tag names.
@@ -671,8 +674,8 @@ func TestGetSessionsPaged_TagFilterRequiresVisibleDefinition(t *testing.T) {
 	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{{Name: "shared"}}))
 	var foreignTagID int64
 	require.NoError(t, service.UnsafeDBForTest().QueryRow(
-		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_path = ?",
-		tagProjectB,
+		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_id = ?",
+		service.ProjectIDForTest(t, tagProjectB),
 	).Scan(&foreignTagID))
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO session_tag_links (session_id, tag_id) VALUES (?, ?)", mine, foreignTagID,
@@ -805,8 +808,8 @@ func TestFilterSessionsByTag_RequiresVisibleDefinition(t *testing.T) {
 	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{{Name: "shared"}}))
 	var foreignTagID int64
 	require.NoError(t, service.UnsafeDBForTest().QueryRow(
-		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_path = ?",
-		tagProjectB,
+		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_id = ?",
+		service.ProjectIDForTest(t, tagProjectB),
 	).Scan(&foreignTagID))
 	_, err := service.UnsafeDBForTest().Exec(
 		"INSERT INTO session_tag_links (session_id, tag_id) VALUES (?, ?)", mine, foreignTagID,

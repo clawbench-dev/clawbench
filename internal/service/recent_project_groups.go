@@ -49,7 +49,14 @@ type recentProjectRow struct {
 // grouping so that sibling worktrees of a displayed project can be pulled in
 // without consuming a slot of their own.
 func loadRecentProjectRows(ctx context.Context) ([]recentProjectRow, error) {
-	rows, err := dbRead.QueryContext(ctx, "SELECT project_path FROM recent_projects ORDER BY accessed_at DESC, id DESC")
+	// Joined through projects: recent_projects is keyed by project_id now, while
+	// the grouping/stat/prune logic below still works in paths.
+	rows, err := dbRead.QueryContext(ctx, `
+		SELECT COALESCE(p.path, '')
+		  FROM recent_projects r
+		  JOIN projects p ON p.id = r.project_id
+		 WHERE p.path != ''
+		 ORDER BY r.accessed_at DESC, r.id DESC`)
 	if err != nil {
 		return nil, err
 	}

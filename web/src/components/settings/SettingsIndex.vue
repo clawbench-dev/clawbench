@@ -130,7 +130,7 @@ const groups = computed(() =>
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 48px;
+  height: 42px;
   padding:0 var(--space-7);
   cursor: pointer;
   gap: var(--space-6);
@@ -172,7 +172,7 @@ const groups = computed(() =>
 }
 
 .settings-index__label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;

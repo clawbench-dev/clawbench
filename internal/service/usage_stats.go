@@ -16,9 +16,9 @@ const (
 	DimModel   UsageDim = "model"
 	DimBackend UsageDim = "backend"
 	DimAgent   UsageDim = "agent"
-	// DimProject groups by the ledger's denormalized project_path. It is only
-	// meaningful in cross-project scope: in single-project scope every row
-	// carries the same project, so grouping by it adds nothing.
+	// DimProject groups by the ledger's denormalized project (resolved back to a
+	// path). It is only meaningful in cross-project scope: in single-project
+	// scope every row carries the same project, so grouping by it adds nothing.
 	DimProject UsageDim = "project"
 )
 
@@ -144,7 +144,10 @@ func dimExpr(d UsageDim) (string, bool) {
 		// Denormalized at write time (SaveMetadata), so the ledger keeps the
 		// project even after the session is deleted. Rows written before the
 		// column existed were backfilled by migrateChatMetadataLedger.
-		return "COALESCE(NULLIF(m.project_path,''),'" + emptyGroupLabel + "')", true
+		//
+		// The stored value is a project id, resolved back to its path through
+		// the join in `from` so the report keeps labeling buckets by path.
+		return "COALESCE(NULLIF(p.path,''),'" + emptyGroupLabel + "')", true
 	}
 	return "", false
 }
@@ -281,7 +284,9 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	// (those rows may have been deleted). agents is joined only to resolve the
 	// agent display name.
 	from := "FROM chat_metadata m " +
-		"LEFT JOIN agents a ON a.id = m.agent_id"
+		"LEFT JOIN agents a ON a.id = m.agent_id " +
+		// The ledger stores project_id; DimProject needs the path.
+		"LEFT JOIN projects p ON p.id = m.project_id"
 
 	limit := p.Limit
 	if limit <= 0 {
@@ -297,21 +302,25 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	}
 	sortBy, _ := sortExpr(p.SortBy)
 
-	// Where clause. project_path filters the ledger's denormalized project;
+	// Where clause. project_id filters the ledger's denormalized project;
 	// created_at bounds the usage window. UTC-formatted params match SQLite
 	// stored text.
 	//
 	// The project predicate is omitted entirely in ScopeAll rather than passed
-	// as an empty string: legacy rows can carry project_path='', so
-	// `project_path = ''` would silently hide them from the very query whose
+	// as the 0 sentinel: legacy rows can carry project_id = 0 (unattributed), so
+	// `project_id = 0` would silently hide them from the very query whose
 	// purpose is an instance-wide total.
 	startStr := p.Start.UTC().Format("2006-01-02 15:04:05")
 	endStr := p.End.UTC().Format("2006-01-02 15:04:05")
 	where := "WHERE m.created_at >= ? AND m.created_at < ?"
 	args := []any{startStr, endStr}
 	if p.Scope != ScopeAll {
-		where = "WHERE m.project_path = ? AND m.created_at >= ? AND m.created_at < ?"
-		args = []any{p.ProjectPath, startStr, endStr}
+		projectID, idErr := ProjectIDForPath(p.ProjectPath)
+		if idErr != nil {
+			return nil, idErr
+		}
+		where = "WHERE m.project_id = ? AND m.created_at >= ? AND m.created_at < ?"
+		args = []any{projectID, startStr, endStr}
 	}
 	res := &UsageStatsResult{}
 

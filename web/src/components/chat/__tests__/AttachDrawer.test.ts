@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick, h, defineComponent } from 'vue'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 vi.mock('lucide-vue-next', () => ({
   Paperclip: { name: 'Paperclip', render: () => h('span', { class: 'icon-paperclip' }) },
@@ -14,6 +16,7 @@ vi.mock('lucide-vue-next', () => ({
   Check: { name: 'Check', render: () => h('span', { class: 'icon-check' }) },
   ExternalLink: { name: 'ExternalLink', render: () => h('span', { class: 'icon-external-link' }) },
   Trash2: { name: 'Trash2', render: () => h('span', { class: 'icon-trash2' }) },
+  Square: { name: 'Square', render: () => h('span', { class: 'icon-square' }) },
   Loader2: { name: 'Loader2', render: () => h('span', { class: 'icon-loader2' }) },
   LoaderCircle: { name: 'LoaderCircle', render: () => h('span', { class: 'icon-loader-circle' }) },
   X: { name: 'X', render: () => h('span', { class: 'icon-x' }) },
@@ -38,6 +41,9 @@ const mockFetchRecentUploads = vi.fn()
 const mockDeleteRecentShare = vi.fn()
 const mockDeleteRecentUpload = vi.fn()
 const mockDialogConfirm = vi.fn()
+const mockHandleFileSelect = vi.fn()
+const mockCancelChatUpload = vi.fn()
+const sharedChatUploadCancelled = ref(false)
 
 vi.mock('@/composables/useDialog.ts', () => ({
   useDialog: () => ({
@@ -69,9 +75,11 @@ vi.mock('@/composables/useFileUpload', () => ({
   useFileUpload: () => ({
     pendingFiles: sharedPendingFiles,
     attachedFiles: sharedAttachedFiles,
-    handleFileSelect: vi.fn(),
+    handleFileSelect: mockHandleFileSelect,
     handleFileDrop: vi.fn(),
     removeFile: vi.fn(),
+    cancelChatUpload: mockCancelChatUpload,
+    chatUploadCancelled: sharedChatUploadCancelled,
   }),
 }))
 
@@ -154,6 +162,11 @@ describe('AttachDrawer', () => {
     mockDeleteRecentShare.mockClear()
     mockDeleteRecentUpload.mockClear()
     mockDialogConfirm.mockClear()
+    mockHandleFileSelect.mockReset()
+    mockHandleFileSelect.mockResolvedValue([])
+    mockCancelChatUpload.mockReset()
+    mockCancelChatUpload.mockReturnValue([])
+    sharedChatUploadCancelled.value = false
   })
 
   it('renders drawer when open=true', () => {
@@ -314,7 +327,8 @@ describe('AttachDrawer', () => {
     expect(state.filePickerOpen.value).toBe(true)
   })
 
-  it('onFileSelect resets filePickerOpen, calls handleFileSelect, switches to uploads tab', async () => {
+  it('onFileSelect resets filePickerOpen and switches to uploads tab on success', async () => {
+    mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
     const wrapper = mountDrawer()
     const state = getRawState(wrapper)
     state.filePickerOpen.value = true
@@ -322,6 +336,116 @@ describe('AttachDrawer', () => {
     await state.onFileSelect(fakeEvent)
     expect(state.filePickerOpen.value).toBe(false)
     expect(state.activeTab.value).toBe('uploads')
+  })
+
+  it('onFileSelect does NOT switch tabs when nothing was uploaded (cancel / empty)', async () => {
+    // Regression: the tab used to switch unconditionally, so cancelling the
+    // native picker yanked the user from their current tab to an empty Uploads tab.
+    mockHandleFileSelect.mockResolvedValue([])
+    const wrapper = mountDrawer()
+    const state = getRawState(wrapper)
+    state.filePickerOpen.value = true
+    await state.onFileSelect({ target: { files: [] } })
+    expect(state.activeTab.value).toBe('current')
+  })
+
+  it('onFileSelect auto-selects each freshly uploaded file', async () => {
+    mockHandleFileSelect.mockResolvedValue([
+      '.clawbench/uploads/a.png',
+      '.clawbench/uploads/b.png',
+    ])
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    const added = wrapper.emitted('add-attached')!
+    expect(added).toEqual([
+      ['.clawbench/uploads/a.png', false],
+      ['.clawbench/uploads/b.png', false],
+    ])
+  })
+
+  it('onFileSelect does not re-emit add-attached for an already-attached upload', async () => {
+    mockHandleFileSelect.mockResolvedValue(['.clawbench/uploads/a.png'])
+    const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/a.png' }] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+  })
+
+  it('onFileSelect attaches nothing when the batch was terminated mid-flight', async () => {
+    // The terminate button sets the flag while handleFileSelect is still
+    // awaiting; the files that finished before the abort must NOT be attached
+    // (terminate = clear everything).
+    mockHandleFileSelect.mockImplementation(async () => {
+      sharedChatUploadCancelled.value = true
+      return ['.clawbench/uploads/a.png']
+    })
+    const wrapper = mountDrawer({ attachedFiles: [] })
+    await getRawState(wrapper).onFileSelect({ target: { files: [] } })
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    expect(getRawState(wrapper).activeTab.value).toBe('current')
+  })
+
+  describe('batch terminate button', () => {
+    beforeEach(() => {
+      sharedPendingFiles.value = []
+      sharedAttachedFiles.value = []
+      sharedRecentUploads.value = []
+    })
+    afterEach(() => {
+      sharedPendingFiles.value = []
+      sharedAttachedFiles.value = []
+      sharedRecentUploads.value = []
+    })
+
+    async function openUploadsTab(wrapper: ReturnType<typeof mountDrawer>) {
+      await wrapper.findAll('.ad-tab')[3].trigger('click')
+      await nextTick()
+      await nextTick()
+    }
+
+    it('renders the terminate button only while a batch is in flight', async () => {
+      const wrapper = mountDrawer()
+      await openUploadsTab(wrapper)
+      expect(wrapper.find('.ad-terminate-btn').exists()).toBe(false)
+
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+      ]
+      await nextTick()
+      expect(wrapper.find('.ad-terminate-btn').exists()).toBe(true)
+      expect(wrapper.find('.ad-upload-banner').exists()).toBe(true)
+    })
+
+    it('clicking terminate cancels the batch and detaches the finished files', async () => {
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+      ]
+      // cancelChatUpload returns the paths that had already finished.
+      mockCancelChatUpload.mockReturnValue([
+        '.clawbench/uploads/done-a.png',
+        '.clawbench/uploads/done-b.png',
+      ])
+      const wrapper = mountDrawer({ attachedFiles: [{ path: '.clawbench/uploads/done-a.png' }] })
+      await openUploadsTab(wrapper)
+      await wrapper.find('.ad-terminate-btn').trigger('click')
+
+      expect(mockCancelChatUpload).toHaveBeenCalledTimes(1)
+      // Finished files are cleared — but only the ones actually attached.
+      expect(wrapper.emitted('remove-attached')).toEqual([
+        [{ path: '.clawbench/uploads/done-a.png' }],
+      ])
+    })
+
+    it('does not emit remove-attached for finished files that were not attached', async () => {
+      sharedPendingFiles.value = [
+        { path: '', previewUrl: null, isImage: false, uploading: true, progress: 30, size: 100 },
+      ]
+      mockCancelChatUpload.mockReturnValue(['.clawbench/uploads/never-attached.png'])
+      const wrapper = mountDrawer({ attachedFiles: [] })
+      await openUploadsTab(wrapper)
+      await wrapper.find('.ad-terminate-btn').trigger('click')
+
+      expect(wrapper.emitted('remove-attached')).toBeFalsy()
+    })
   })
 
   it('getFileName returns baseName for a path', () => {
@@ -681,5 +805,51 @@ describe('AttachDrawer', () => {
     await state.handleDeleteUpload({ path: '.clawbench/uploads/a.txt' })
     expect(mockDeleteRecentUpload).not.toHaveBeenCalled()
     expect(wrapper.emitted('remove-attached')).toBeFalsy()
+  })
+})
+
+describe('AttachDrawer selected-badge CSS', () => {
+  // jsdom has no CSS engine, so this is a source-sniffing guard (same pattern
+  // as countBadge.css.test.ts / wrapCheck.css.test.ts).
+  //
+  // Why it exists: the check badge is anchored OUTSIDE the 28px icon box
+  // (right/bottom: -3px) so it sits on the thumbnail's corner. `overflow:
+  // hidden` on `.ad-icon-wrap` therefore clipped the badge — and its 2px
+  // white ring — along the image edge, so a selected image showed a chopped
+  // tick. The wrapper must NOT clip; the thumbnail rounds itself instead.
+  const source = readFileSync(
+    join(__dirname, '..', 'AttachDrawer.vue'),
+    'utf8',
+  )
+
+  /** Declarations of the first `<selector> {` rule in the SFC. */
+  function declsOf(selector: string): string {
+    const m = source.match(
+      new RegExp(selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*\\{([^}]*)\\}'),
+    )
+    expect(m, `${selector} rule must exist in AttachDrawer.vue`).not.toBeNull()
+    return m![1]
+  }
+
+  it('.ad-icon-wrap does not clip its overflowing badge', () => {
+    const decls = declsOf('.ad-icon-wrap')
+    expect(decls).not.toMatch(/overflow\s*:\s*hidden/)
+  })
+
+  it('.ad-icon-wrap is positioned so the absolute badge anchors to it', () => {
+    expect(declsOf('.ad-icon-wrap')).toMatch(/position\s*:\s*relative/)
+  })
+
+  it('the badge sits outside the icon box on the bottom-right corner', () => {
+    const decls = declsOf('.ad-icon-wrap .ad-icon-check')
+    expect(decls).toMatch(/position\s*:\s*absolute/)
+    expect(decls).toMatch(/right\s*:\s*-3px/)
+    expect(decls).toMatch(/bottom\s*:\s*-3px/)
+  })
+
+  it('the thumbnail still rounds its own corners (no clip needed)', () => {
+    const decls = declsOf('.ad-icon-wrap .ad-thumb')
+    expect(decls).toMatch(/object-fit\s*:\s*cover/)
+    expect(decls).toMatch(/border-radius\s*:\s*var\(--radius-sm\)/)
   })
 })

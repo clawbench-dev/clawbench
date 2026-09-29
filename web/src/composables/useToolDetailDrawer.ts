@@ -173,7 +173,7 @@ export function useToolDetailDrawer(options: ToolDetailDrawerOptions) {
     if (_fetchInFlight) return
     _fetchInFlight = true
     if (!toolDetailData.value.inputHtml) {
-      toolDetailData.value.inputHtml = '<div class="tool-call-loading"></div>'
+      toolDetailData.value.inputHtml = '<div class="tool-call-loading"><span class="li-spinner"></span></div>'
     }
     try {
       // Session-share mode inlines the tool payload, so render straight from the

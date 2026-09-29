@@ -1,7 +1,8 @@
 # 定时任务自定义脚本
 
 日期：2026-09-21
-状态：已确认，待实施
+状态：**已被「门控脚本」重构取代（2026-09-29）**——本文档记录最初设计，语义已反转，
+见文末「2026-09-29 重构」一节。当前行为以代码与那一节为准。
 
 ## 背景与目标
 
@@ -226,3 +227,45 @@ unix/windows 各一）：
     `sessionId`，继续对话必然服务端报 `source session not found`。原实现只排除了
     `skipped`，漏了 `cancelled`。现改为按 `sessionId` 是否为空门控（而非枚举 status），
     AI 阶段取消（有 session）仍可继续。
+
+## 2026-09-29 重构：门控脚本（gating script）
+
+用户反馈两点：①「只跑脚本不调 AI」虽然能做到，但依赖「输出为空」这一隐式信号，
+不符合直觉；②脚本执行结果在执行记录里完全看不到。根因是**把控制信号编码进了输出
+内容**：原判据是「退出码 0 且 stdout/stderr 皆空 → 跳过」，于是 gate 脚本一旦打日志
+（`echo`、`git`/`npm` 的 stderr 警告）就永远拦不住；反过来非 0 退出不阻断，反而把
+错误注入 prompt 让 AI 自由发挥，与 CI 直觉相反。
+
+同时脚本结果**没有任何持久化**：它只被拼进 `renderedPrompt` 落进 AI 会话，执行记录
+自己的 `preview` 取的是 AI 回复，所以跳过时（按定义无输出）永远无内容可看。
+
+### 新语义（取代原「已确认的需求决策」第 1、2 条）
+
+1. **退出码 0 → 放行**，照常调用 AI；**非 0 / 超时 → 关闭门控**，跳过本次 AI
+   （不建会话、不发通知，记录一条 `skipped`）。输出内容**不再参与控制判定**。
+2. **取消**：仍记为 `cancelled`（不推进调度，不消耗 `once` 次数）。
+3. **结果持久化**：`task_executions` 新增 `script_exit_code` / `script_stdout` /
+   `script_stderr` / `script_duration_ms`（NULL 退出码 = 该任务没有脚本，前端据此
+   决定是否渲染卡片）。写入点在两条路径：门控关闭路径（`skipped`/`cancelled`）与
+   AI 阶段（同一脚本结果也挂在 AI 那行上）。
+4. **prompt 模板变量**：不再自动注入 `<<<TASK_SCRIPT_OUTPUT>>>` 定界块，改为在
+   `task.Prompt` 中替换 `{{code}}` / `{{stdout}}` / `{{stderr}}` / `{{output}}`
+   （`{{output}}` = stdout+stderr 合并，stderr 非空时加 `--- stderr ---` 标签）。
+   输出仍按 `scriptOutputCap` 截断。
+5. **前端**：表单「自定义脚本」改名「门控脚本」，脚本配置收进一个**默认关闭**的
+   开关（存储的脚本非空则自动开启，编辑不丢脚本；关闭会清空脚本）；脚本编辑区改用
+   CodeMirror（shell 高亮）；任务详情页新增默认收起的门控脚本卡片（CodeMirror
+   只读）；执行详情页新增脚本结果卡片（退出码/stdout/stderr，仿聊天 bash 工具卡）。
+
+### 实现要点与陷阱
+
+- **i18n 花括号**：`{{code}}` 在 vue-i18n 里是嵌套插值语法，直接写进 locale 会让
+  消息编译失败（`Not allowed nest placeholder`）并**打挂整个表单渲染**。placeholder
+  里必须写成 `{'{{'}code{'}}'}`。测试自己的 i18n 消息同理。
+- **门控脚本仅 cron**（事件任务忽略），与原设计第 4 条一致。
+- 共享 CodeMirror 高亮映射抽到 `web/src/utils/codeHighlightStyle.ts`，两个编辑器
+  共用；`utils/__tests__/codeHighlightStyle.test.ts` 守「只定义一次」与「颜色必须
+  来自 CSS 变量」。
+- 脚本执行器的 `ScriptOutcome` 分类改为 `ScriptSucceeded` / `ScriptFailed` /
+  `ScriptTimedOut` / `ScriptCanceled`（原 `ScriptSkipped`/`ScriptProduced` 删除）。
+- 取消路径（`finishScriptOnlyRun`）与「门控关闭仍推进调度」的记账语义**不变**。

@@ -99,9 +99,8 @@ func setupRunTurnTest(t *testing.T, events []ai.StreamEvent) (*sql.DB, string) {
 	setRunTurnScript(events...)
 
 	sessionID := "run-turn-sess"
-	_, err := db.Exec(`INSERT INTO chat_sessions
-		(id, project_path, backend, title, agent_id, agent_source, model, session_type, auto_approve)
-		VALUES (?, '/tmp', 'run-turn-test', 'Test', 'run-turn-agent', 'default', '', 'chat', 0)`, sessionID)
+	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve)
+		VALUES (?, (SELECT id FROM projects WHERE path = ?), 'run-turn-test', 'Test', 'run-turn-agent', 'default', '', 'chat', 0)`, sessionID, NormalizeProjectPath("/tmp"))
 	require.NoError(t, err)
 	return db, sessionID
 }

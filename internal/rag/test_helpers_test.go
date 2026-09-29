@@ -2,19 +2,23 @@ package rag
 
 import (
 	"time"
+
+	"clawbench/internal/model"
 )
 
 // Shared test constants to avoid goconst duplicates across test files.
 const (
-	testModelBgeM3Latest    = "bge-m3:latest"
-	testModelBgeM3          = "bge-m3"
-	testV1Models            = "/v1/models"
-	testV1Embeddings        = "/v1/embeddings"
-	testRoleAssistant       = "assistant"
-	testRoleUser            = "user"
-	testSession1            = "sess-1"
-	testSession2            = "sess-2"
-	testProjectPath         = "/test"
+	testModelBgeM3Latest = "bge-m3:latest"
+	testModelBgeM3       = "bge-m3"
+	testV1Models         = "/v1/models"
+	testV1Embeddings     = "/v1/embeddings"
+	testRoleAssistant    = "assistant"
+	testRoleUser         = "user"
+	testSession1         = "sess-1"
+	testSession2         = "sess-2"
+	// testProjectID is the projects.id that testProjectPath maps to in the
+	// fixtures that create a projects row (see ensureTestProject).
+	testProjectID           = 1
 	testBackendClaude       = "claude"
 	testBackendCodebuddy    = "codebuddy"
 	testNeedsBackfill       = "needs backfill"
@@ -29,6 +33,12 @@ const (
 	testSearchQueryChunk    = "chunk"
 	testEmbeddingTextHello  = "hello"
 )
+
+// testProjectPath is the canonical form of the fixture project path. The store
+// keys chunks by project id and resolves the path back out through the registry,
+// so both the input and the asserted output must use the canonical spelling —
+// on Windows filepath.Abs("/test") is a drive-rooted path, not "/test".
+var testProjectPath = model.NormalizeProjectPath("/test")
 
 // makeTestEmbedding creates a 1024-dim float64 slice
 // with simple sequential values for testing.

@@ -334,10 +334,12 @@ function onModalClose() {
 .password-dialog__input {
   width: 100%;
   min-width: 0;
-  padding: var(--space-5) 40px var(--space-5) var(--space-6);
+  height: 30px;
+  /* Right padding reserves room for the absolutely-positioned eye toggle. */
+  padding: 0 40px 0 var(--space-6);
   font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;

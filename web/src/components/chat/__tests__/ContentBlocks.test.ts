@@ -177,6 +177,14 @@ const i18n = createI18n({
         subagentSteps: '{count} steps',
         subagentExpand: 'Expand sub-agent output',
         subagentCollapse: 'Collapse sub-agent output',
+        // Needed by the error_source chip: getErrorSourceLabel looks up
+        // `chat.contentBlocks.errorSources.<source>` and returns '' when the key
+        // is missing (mirrors the real t()).
+        errorSources: {
+          agent: 'Agent error',
+          clawbench: 'ClawBench error',
+          network: 'Network error',
+        },
       },
     },
     tool: {
@@ -649,6 +657,24 @@ describe('ContentBlocks', () => {
       })
       expect(wrapper.find('.chat-error-card').exists()).toBe(true)
       expect(wrapper.find('.error-text').text()).toBe('Something went wrong')
+    })
+
+    it('renders the error_source chip for a clawbench-tagged error', () => {
+      // The /btw drawer tags its failures `clawbench` (the answer came from
+      // ClawBench's summary model, not the session's agent). That only reads as
+      // "ClawBench error" if the chip renders — pin the full path, since the
+      // drawer has no markup of its own for it.
+      const wrapper = mountBlocks({
+        blocks: [{ type: 'error', text: 'Failed to answer: upstream 401', error_source: 'clawbench' }],
+      })
+      // The card itself: red left rail + alert icon, i.e. the main chat area's
+      // failure presentation rather than plain assistant text.
+      expect(wrapper.find('.chat-error-card').exists()).toBe(true)
+      expect(wrapper.find('.chat-error-card .error-icon').exists()).toBe(true)
+      const chip = wrapper.find('.error-source-chip')
+      expect(chip.exists()).toBe(true)
+      expect(chip.classes()).toContain('src-clawbench')
+      expect(chip.text()).toBe('ClawBench error')
     })
 
     it('renders severe warning as error-level', () => {

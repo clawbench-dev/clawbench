@@ -211,26 +211,71 @@
           <input type="number" class="form-input" v-model.number="form.maxRuns" min="1" />
         </div>
 
-        <!-- Custom script (pre-AI precondition). Cron tasks only: an event
+        <!-- Gating script (pre-AI precondition). Cron tasks only: an event
              task's prompt is driven by the injected event context, and the
-             backend ignores a script on an event task. -->
+             backend ignores a script on an event task.
+
+             Gated behind a switch so a task without a gate carries no script
+             configuration at all. The switch is off unless the stored task
+             already has a script, so an edit never silently drops one. -->
         <div class="form-group">
-          <label class="form-label">{{ t('task.form.script') }}</label>
-          <textarea
-            class="form-textarea script-textarea font-mono"
-            v-model="form.script"
-            :placeholder="t('task.form.scriptPlaceholder')"
-          ></textarea>
+          <!-- Reuses the global switch primitive (`.settings-item__switch*`,
+               shape defined once in css/components.css) — only the row layout
+               is local, per the design guide's rule that components keep
+               layout while the shared shape stays global. -->
+          <label class="script-switch-row">
+            <span class="settings-item__switch">
+              <input
+                type="checkbox"
+                class="settings-item__switch-input"
+                v-model="scriptEnabled"
+              />
+              <span class="settings-item__switch-track"></span>
+            </span>
+            <span class="script-switch-label">{{ t('task.form.scriptEnabled') }}</span>
+          </label>
+          <div class="form-hint">{{ t('task.form.scriptHint') }}</div>
         </div>
 
-        <div class="form-group">
-          <label class="form-label">{{ t('task.form.scriptTimeout') }}</label>
-          <!-- Left empty by default: the 300s backend default is shown as a
-               placeholder, so an untouched field submits 0 (= "use default")
-               rather than reading as "no timeout". -->
-          <input type="number" class="form-input" v-model.number="form.scriptTimeout" min="0" placeholder="300" />
-          <div v-if="errors.scriptTimeout" class="form-error">{{ errors.scriptTimeout }}</div>
-        </div>
+        <template v-if="scriptEnabled">
+          <!-- Gate semantics + template variables live here rather than in the
+               editor placeholder: a placeholder is transient (it disappears as
+               soon as the user types) and cannot be laid out, so the four
+               variables were effectively undiscoverable while writing the
+               script. A dedicated panel stays visible and readable. -->
+          <div class="script-guide">
+            <div class="script-guide-head">
+              <Info :size="13" class="script-guide-icon" />
+              <span>{{ t('task.form.scriptGuideTitle') }}</span>
+            </div>
+            <p class="script-guide-intro">{{ t('task.form.scriptGuideIntro') }}</p>
+            <div class="script-guide-vars-title">{{ t('task.form.scriptGuideVarsTitle') }}</div>
+            <ul class="script-guide-vars">
+              <li v-for="v in scriptVars" :key="v.token" class="script-guide-var">
+                <code class="script-guide-token">{{ v.token }}</code>
+                <span class="script-guide-label">{{ v.label }}</span>
+              </li>
+            </ul>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.script') }}</label>
+            <TaskScriptEditor
+              v-model="form.script"
+              language="shell"
+              :placeholder="t('task.form.scriptPlaceholder')"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">{{ t('task.form.scriptTimeout') }}</label>
+            <!-- Left empty by default: the 300s backend default is shown as a
+                 placeholder, so an untouched field submits 0 (= "use default")
+                 rather than reading as "no timeout". -->
+            <input type="number" class="form-input" v-model.number="form.scriptTimeout" min="0" placeholder="300" />
+            <div v-if="errors.scriptTimeout" class="form-error">{{ errors.scriptTimeout }}</div>
+          </div>
+        </template>
         </template>
       </div>
 
@@ -272,9 +317,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, ChevronDown, GitBranch, Save } from 'lucide-vue-next'
+import { AlertTriangle, ChevronDown, GitBranch, Info, Save } from 'lucide-vue-next'
+import TaskScriptEditor from '@/components/task/TaskScriptEditor.vue'
 import TaskBreadcrumb from '@/components/task/TaskBreadcrumb.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
@@ -425,6 +471,29 @@ const weekday = ref(1)     // 0=Sun, 1=Mon, ..., 6=Sat
 const monthDay = ref(1)
 const customCron = ref('')
 
+// ── Gating script switch ──
+// The switch gates whether the task carries a script at all. It is a separate
+// ref rather than a computed over form.script because an empty script is a
+// legitimate intermediate state while the user is about to type — deriving it
+// from the content would collapse the editor the moment it is opened.
+//
+// Turning the switch off clears the script, so a disabled gate can never leave
+// a stale script behind to run on the next schedule.
+const scriptEnabled = ref(false)
+watch(scriptEnabled, (on) => {
+  if (!on) form.value.script = ''
+})
+
+// The prompt template variables. Tokens are built here rather than written in
+// the template: `{{code}}` in a template expression is Vue interpolation and
+// would be parsed (and fail) instead of rendered literally.
+const scriptVars = computed(() => [
+  { token: '{{' + 'code' + '}}', label: t('task.form.scriptVarCode') },
+  { token: '{{' + 'stdout' + '}}', label: t('task.form.scriptVarStdout') },
+  { token: '{{' + 'stderr' + '}}', label: t('task.form.scriptVarStderr') },
+  { token: '{{' + 'output' + '}}', label: t('task.form.scriptVarOutput') },
+])
+
 // ── Time option lists ──
 // MenuSelect holds a flat option array, so the generated ranges live here
 // rather than in the template's v-for. Values stay numbers to match the refs
@@ -531,6 +600,10 @@ async function submit() {
 // Initialize form on mount
 onMounted(() => {
   init(props.mode === 'edit' ? props.task : null)
+
+  // A stored script implies the gate was on; an edit must never silently drop
+  // it (the switch defaults to off, which would clear it on save).
+  scriptEnabled.value = !!(props.task?.script || '').trim()
 
   if (props.mode === 'edit' && props.task) {
     preset.value = detectPreset(props.task.cronExpr)
@@ -673,12 +746,97 @@ onMounted(() => {
   font-family: var(--font-mono);
 }
 
-/* A shell script is code, so it is set in the monospace face and given more
-   room than a one-line input. */
-.script-textarea {
-  min-height: 120px;
-  font-family: var(--font-mono);
+/* Gating-script switch row. Layout only: the switch's shape (44x26, thumb,
+   track colours) lives in css/components.css as `.settings-item__switch*` and
+   must not be redeclared here — a scoped geometry rule would outrank it. */
+.script-switch-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+}
+
+.script-switch-label {
+  font-size: var(--font-size-md);
+  color: var(--text-primary, #1a1a1a);
+}
+
+/* ── Gating script guide ──
+   A tinted info panel that documents the gate semantics and the four prompt
+   template variables. Replaces the placeholder-only explanation: a
+   placeholder vanishes on the first keystroke and cannot be styled. */
+.script-guide {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-sm);
+  /* Accent-tinted rather than a warning yellow: this is reference material,
+     not a problem to fix. */
+  background: color-mix(in srgb, var(--accent-color) 6%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--accent-color) 22%, var(--border-color));
+}
+
+.script-guide-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary, #1a1a1a);
+}
+
+.script-guide-icon {
+  color: var(--accent-color);
+  flex-shrink: 0;
+}
+
+.script-guide-intro {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
+  color: var(--text-secondary, #666);
+}
+
+.script-guide-vars-title {
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-muted, #6b7280);
+}
+
+.script-guide-vars {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.script-guide-var {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+/* The token is the thing the user copies, so it gets a distinct chip. */
+.script-guide-token {
+  flex-shrink: 0;
+  min-width: 84px;
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-xs);
+  background: var(--bg-primary, #fff);
+  border: 1px solid var(--border-color, #e5e5e5);
+  color: var(--accent-color);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  text-align: center;
+}
+
+.script-guide-label {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary, #666);
 }
 
 .form-input:focus,

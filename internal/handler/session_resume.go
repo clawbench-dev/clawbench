@@ -317,13 +317,21 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Check session exists and belongs to project
-	var sessionProjectPath string
+	// The row stores a project id; resolve the caller's project to compare.
+	// Both sides go through the registry so a renamed directory cannot make a
+	// session look like it belongs to another project.
+	callerProjectID, idErr := service.ProjectIDForPath(projectPath)
+	if idErr != nil {
+		model.WriteError(w, model.Internal(idErr))
+		return
+	}
+	var sessionProjectID int64
 	var archived int
 	err := service.ReadDB().QueryRowContext(
 		r.Context(),
-		"SELECT project_path, archived FROM chat_sessions WHERE id = ?",
+		"SELECT project_id, archived FROM chat_sessions WHERE id = ?",
 		req.SessionID,
-	).Scan(&sessionProjectPath, &archived)
+	).Scan(&sessionProjectID, &archived)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "SessionNotFound")
 		return
@@ -334,7 +342,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Project isolation
-	if sessionProjectPath != projectPath {
+	if sessionProjectID != callerProjectID {
 		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 		return
 	}
@@ -345,8 +353,8 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 			var count int
 			err = service.ReadDB().QueryRowContext(
 				r.Context(),
-				"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'",
-				sessionProjectPath,
+				"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+				sessionProjectID,
 			).Scan(&count)
 			if err != nil {
 				model.WriteError(w, model.Internal(err))
@@ -374,11 +382,11 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Info("session restored from archive",
 			slog.String("session", req.SessionID),
-			slog.String("project", sessionProjectPath))
+			slog.String("project", projectPath))
 	} else {
 		slog.Info("session resume requested (already active)",
 			slog.String("session", req.SessionID),
-			slog.String("project", sessionProjectPath))
+			slog.String("project", projectPath))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -418,10 +426,10 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 
 	// Validate agent exists and supports LoadSession
 	configMutex.RLock()
-	agent, ok := model.Agents[req.AgentID]
+	agent := model.GetAgent(req.AgentID)
 	configMutex.RUnlock()
 
-	if !ok {
+	if agent == nil {
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
 	}

@@ -76,7 +76,8 @@ const i18n = createI18n({
           edit: 'Edit',
         },
         archive: { confirm: 'Archive current session? You can restore archived sessions via session search.' },
-        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage' },
+        clawbenchCommand: { chatsearchDesc: 'Search', taskDesc: 'Task', usageDesc: 'Usage', btwDesc: 'Side question' },
+        btw: { title: 'By the way', answering: 'Answering…', failed: 'Failed' },
         slashCommand: { title: 'Slash' },
         completion: {
           source: {
@@ -1015,6 +1016,83 @@ describe('ChatInputBar', () => {
     expect(wrapper.emitted('send')![0]).toEqual(['/test'])
   })
 
+  // ── /btw side question ──
+  // Every send entry point must route /btw to its own event instead of 'send',
+  // so the question never reaches the agent or the queue. The three cases below
+  // cover the three entry points, because a /btw typed and then submitted with
+  // the button must behave identically to one submitted with Enter.
+
+  it('routes /btw through the send button to the btw event, not send', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw 为什么并发一高就慢'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    expect(wrapper.emitted('send')).toBeFalsy()
+    expect(wrapper.emitted('btw')).toBeTruthy()
+    expect(wrapper.emitted('btw')![0]).toEqual(['为什么并发一高就慢'])
+  })
+
+  it('routes /btw entered with the Enter key to the btw event', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw 连接池是多大？'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-textarea').trigger('keydown', { key: 'Enter' })
+    expect(wrapper.emitted('send')).toBeFalsy()
+    expect(wrapper.emitted('btw')).toBeTruthy()
+    expect(wrapper.emitted('btw')![0]).toEqual(['连接池是多大？'])
+  })
+
+  it('routes a /btw quick-send command to the btw event', () => {
+    const wrapper = mountBar()
+    wrapper.vm.handleQuickSendClick({ id: '1', label: 'Btw', command: '/btw 总结一下' })
+    expect(wrapper.emitted('send')).toBeFalsy()
+    expect(wrapper.emitted('btw')).toBeTruthy()
+    expect(wrapper.emitted('btw')![0]).toEqual(['总结一下'])
+  })
+
+  it('does not fire a bare /btw with no question', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    // The incomplete command stays in the input for the user to finish.
+    expect(wrapper.emitted('btw')).toBeFalsy()
+    expect(wrapper.emitted('send')).toBeFalsy()
+  })
+
+  it('does not intercept a message that merely mentions btw', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = 'what does /btw do?'
+    await wrapper.vm.$nextTick()
+    await wrapper.find('.chat-send-btn').trigger('click')
+    expect(wrapper.emitted('btw')).toBeFalsy()
+    expect(wrapper.emitted('send')![0]).toEqual(['what does /btw do?'])
+  })
+
+  it('offers /btw in the slash command menu', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    // The candidate list is what the completion menu renders from.
+    const keys = wrapper.vm.commandMenuItems.map(i => i.key)
+    expect(keys).toContain('/btw')
+  })
+
+  it('never shows a btw loading state and never disables the composer', async () => {
+    // A /btw question runs in the background: the wait is shown on the message
+    // anchor, not here. The composer must stay fully usable so the user can keep
+    // typing or ask another question while the first is still being answered.
+    const wrapper = mountBar()
+    const textarea = wrapper.find('.chat-textarea')
+    expect(textarea.attributes('disabled')).toBeUndefined()
+    // No /btw spinner exists in the composer, and the send button is never
+    // disabled by a background question.
+    expect(wrapper.find('.send-btn-spinner').exists()).toBe(false)
+    expect(wrapper.find('.chat-send-btn').attributes('disabled')).toBeUndefined()
+    // The mechanism itself is gone: no setBtwLoading is exposed any more.
+    expect((wrapper.vm as any).setBtwLoading).toBeUndefined()
+  })
+
   it('quick-send menu items disable text selection', async () => {
     // The quick-send row and its trailing "add to input" icon are UI controls,
     // not selectable text — user-select:none keeps clicks/long-presses from
@@ -1413,18 +1491,72 @@ describe('ChatInputBar', () => {
     mockSupportsACP.mockReturnValue(false)
   })
 
-  it('shows both entries when a ClawBench and agent command share a name', async () => {
+  it('hides an agent command that collides with a ClawBench built-in', async () => {
     mockSupportsACP.mockReturnValue(true)
     mockSessionTransport.value = 'acp-stdio'
     // An agent command literally named /cb-task collides with the built-in.
-    // Both must remain visible, distinguished by source.
+    // ClawBench intercepts /cb-task before it can reach the agent, so the
+    // agent's copy could never run — only the ClawBench entry is shown.
     mockAvailableCommands.value = [{ name: 'cb-task', description: 'Agent task', inputHint: '' }]
     const wrapper = mountBar()
     wrapper.vm.inputText = '/cb-task'
     await wrapper.vm.$nextTick()
     const items = wrapper.findAll('.completion-item')
-    expect(items).toHaveLength(2)
+    expect(items).toHaveLength(1)
     expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  // CodeBuddy ACP ships its own /btw. ClawBench intercepts /btw before the
+  // agent sees it, so the native copy must not appear in the menu.
+  it('hides the AI backend native /btw in favour of the ClawBench one', async () => {
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: 'btw', description: 'Native side question', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toContain('/btw')
+    expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('hides a slash-prefixed native /btw too', async () => {
+    // Names arrive either slashless or slash-prefixed depending on the source.
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [{ name: '/btw', description: 'Native side question', inputHint: '' }]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/btw'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.findAll('.completion-item--agent')).toHaveLength(0)
+    expect(wrapper.findAll('.completion-item--clawbench')).toHaveLength(1)
+    mockAvailableCommands.value = []
+    mockSessionTransport.value = ''
+    mockSupportsACP.mockReturnValue(false)
+  })
+
+  it('still shows unrelated agent commands', async () => {
+    // The dedupe must only drop the ClawBench-owned names, not everything.
+    mockSupportsACP.mockReturnValue(true)
+    mockSessionTransport.value = 'acp-stdio'
+    mockAvailableCommands.value = [
+      { name: 'btw', description: 'Native', inputHint: '' },
+      { name: 'mmx-cli', description: 'MMX', inputHint: '' },
+    ]
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/'
+    await wrapper.vm.$nextTick()
+    const labels = wrapper.findAll('.completion-item .completion-label').map(i => i.text())
+    expect(labels.some(l => l.includes('/mmx-cli'))).toBe(true)
     expect(wrapper.findAll('.completion-item--agent')).toHaveLength(1)
     mockAvailableCommands.value = []
     mockSessionTransport.value = ''
@@ -2205,9 +2337,9 @@ describe('ChatInputBar', () => {
     await wrapper.find('.chat-textarea').trigger('keydown', { key: 'ArrowUp' })
     await flushPromises()
     await wrapper.vm.$nextTick()
-    // ClawBench has 3 items: /cb-chatsearch (0), /cb-task (1), /cb-usage (2);
-    // ArrowUp wraps to the last, index 2.
-    expect(wrapper.vm.commandMenuIndex).toBe(2)
+    // Wraps to the LAST built-in. Derived from the candidate list rather than a
+    // literal so adding a built-in command does not silently break this test.
+    expect(wrapper.vm.commandMenuIndex).toBe(wrapper.vm.commandMenuItems.length - 1)
   })
 
   it('keyboard nav scrolls highlighted command item into view even when menu is teleported', async () => {
@@ -2245,8 +2377,11 @@ describe('ChatInputBar', () => {
     // watchers and mocks alive and corrupts the tests that follow.
     try {
       const items = wrapper.findAll('.completion-item')
-      // 3 ClawBench built-ins + 2 deduped agent commands
-      expect(items).toHaveLength(5)
+      // All ClawBench built-ins + the 2 deduped agent commands (mmx-cli is
+      // reported twice and must collapse to one entry). Derived from the
+      // rendered candidate count so adding a built-in does not break this.
+      const builtinCount = wrapper.vm.clawbenchCommands.length
+      expect(items).toHaveLength(builtinCount + 2)
       const labels = items.map(i => i.find('.completion-label').text())
       expect(labels.some(l => l.startsWith('//'))).toBe(false)
       expect(labels.some(l => l.startsWith('/mmx-cli'))).toBe(true)

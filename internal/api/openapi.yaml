@@ -545,6 +545,26 @@ paths:
               schema:
                 $ref: "#/components/schemas/BingStatus"
 
+  /api/theme/bing/save-to-gallery:
+    post:
+      tags: [Theme]
+      summary: 将当前 Bing 壁纸加入本地图库
+      description: |
+        将服务器缓存的 Bing 每日壁纸复制到 `<DataDir>/theme/local/` 图库目录，
+        使其不受每日轮换影响而永久保留。图库已满时返回 400。
+      operationId: themeBingSaveToGallery
+      responses:
+        "200":
+          description: 已加入图库，返回图库条目
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveToGalleryResponse"
+        "400":
+          description: 图库已满
+        "404":
+          description: 当前无缓存的 Bing 图片
+
   /api/file/theme-wallpaper:
     get:
       tags: [Theme]
@@ -1490,6 +1510,48 @@ paths:
         "200":
           description: 新会话
 
+  /api/ai/session/btw:
+    post:
+      tags: [Sessions]
+      summary: 旁路问答（/btw）
+      description: >-
+        用会话历史（复用分叉压缩）向 AI 摘要模型提一个旁路问题并落库，返回存储后的记录。
+        不经过当前会话的 agent。记录锚定在提问时最后一条消息之后（anchorMessageId），
+        供聊天区渲染锚点。模型失败也会落库（record.error 非空）并返回 200，因为用户确实
+        问过这个问题、锚点仍须出现；只有无法产生记录的情况（会话不存在/空问题/未配置摘要
+        模型）才返回 4xx。sessionId 缺省时回退到查询参数 / 会话 Cookie。
+      operationId: sessionBtw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sessionId:
+                  type: string
+                question:
+                  type: string
+      responses:
+        "200":
+          description: 存储后的旁路问答记录
+    get:
+      tags: [Sessions]
+      summary: 列出会话的旁路问答
+      description: >-
+        按时间顺序返回该会话的全部 /btw 记录，客户端据此在聊天区放置锚点。
+      operationId: sessionBtwList
+      parameters:
+        - name: session_id
+          in: query
+          required: false
+          schema:
+            type: string
+          description: 会话 ID；缺省时回退到会话 Cookie。
+      responses:
+        "200":
+          description: 旁路问答记录列表
+
   /api/ai/session/reset:
     post:
       tags: [Sessions]
@@ -1653,6 +1715,34 @@ paths:
       responses:
         "200":
           description: 已中断
+
+  /api/ai/queue/merge:
+    post:
+      tags: [Queue]
+      summary: 合并全部排队消息
+      description: |
+        把该会话当前**全部**排队消息合并成一条：旧的排队行被删除，插入一条新的
+        排队行（正文按入队顺序以空行拼接，附件按同序拼接并去重）。整个「删旧 + 建新」
+        在**一个事务**内完成，因此失败不会出现重复或丢消息。
+
+        合并后的正文/附件在响应里返回，客户端无需再拉取；服务端同时广播
+        `queue_cancel`（旧 queueId）与 `queue_added`（新 queueId）供其他设备同步。
+
+        队列少于两条时无内容可合并，返回 409 婉拒（`reason: "not_enough"`），不是错误。
+      operationId: queueMerge
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 已合并
+        "409":
+          description: 队列不足两条，无可合并内容
+        "500":
+          description: 合并失败（事务已回滚，队列保持原样）
 
   # ── Events ────────────────────────────────────────────────────────────────
   /api/ai/events/ws:
@@ -3705,8 +3795,10 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选预执行脚本，AI 调用前执行，工作目录为项目路径；仅 cron 任务生效。
-                    退出码 0 且无输出 → 跳过 AI 且不发通知；有输出或非 0/超时 → 注入 prompt 后照常调用 AI。
+                    可选门控脚本（仅 cron），AI 调用前执行，工作目录为项目路径。
+                    退出码 0 放行并调用 AI；非 0 / 超时关闭门控，跳过本次 AI（不建会话、不发通知）。
+                    结果记录在执行记录上；提示词可用模板变量：
+                    {{code}}、{{stdout}}、{{stderr}}、{{output}}。
                 script_timeout:
                   type: integer
                   minimum: 0
@@ -3760,7 +3852,8 @@ paths:
                 script:
                   type: string
                   description: |
-                    可选预执行脚本（仅 cron）。`action=update` 时生效。
+                    可选门控脚本（仅 cron）。`action=update` 时生效。
+                    退出码 0 放行 AI，非 0 / 超时跳过 AI；脚本结果可在提示词中以模板变量引用。
                     **省略该字段表示保持不变**（与 `name` / `prompt` 等一致的部分更新语义）；
                     传空字符串表示清除脚本。
                 script_timeout:
@@ -3814,7 +3907,9 @@ paths:
             type: string
       responses:
         "200":
-          description: 执行记录
+          description: |
+            执行记录。每条可带 `script`（门控脚本结果），仅在任务配置了脚本时出现：
+            `exitCode` / `stdout` / `stderr` / `durationMs`。
 
   /api/tasks/{id}/executions/{execId}/continue:
     get:
@@ -4688,7 +4783,8 @@ components:
     GalleryItem:
       type: object
       description: |
-        图库中的一张图片，由 `POST /api/theme/local/upload` 返回。
+        图库中的一张图片，由 `POST /api/theme/local/upload` 或
+        `POST /api/theme/bing/save-to-gallery` 返回。
         注意：绝对路径 `abs_path` 不在此响应中，只出现在 `GET /api/config` 的
         `appearance.local.items[]` 里。
       properties:
@@ -4697,11 +4793,20 @@ components:
           description: 存储用的生成文件名。
         name:
           type: string
-          description: 上传时的原始文件名。
+          description: 展示名。上传时为原始文件名；Bing 保存时为 `Bing <日期><扩展名>`。
         uploaded_at:
           type: integer
         size:
           type: integer
+
+    SaveToGalleryResponse:
+      type: object
+      description: |
+        `POST /api/theme/bing/save-to-gallery` 的响应。只有一张来源图片，故不存在
+        逐文件错误列表——失败通过 HTTP 状态码表达。
+      properties:
+        item:
+          $ref: "#/components/schemas/GalleryItem"
 
     BingStatus:
       type: object

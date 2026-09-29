@@ -1,0 +1,310 @@
+import { describe, expect, it, vi } from 'vitest'
+import { mount } from '@vue/test-utils'
+import { createI18n } from 'vue-i18n'
+import { defineComponent, h } from 'vue'
+import BtwAnswerDrawer from '../BtwAnswerDrawer.vue'
+
+vi.mock('lucide-vue-next', () => ({
+  MessageCircleQuestion: { name: 'MessageCircleQuestionIcon', render: () => null },
+}))
+
+// BottomSheet teleports to <body>; stub it as a passthrough.
+vi.mock('@/components/common/BottomSheet.vue', () => ({
+  default: {
+    name: 'BottomSheet',
+    props: ['open', 'auto', 'title'],
+    emits: ['close'],
+    template: '<div class="bs-mock" :data-open="String(open)"><slot name="header" /><slot /></div>',
+  },
+}))
+
+// Capture the props each ChatMessageItem receives so we can assert both the
+// synthetic question (user) and answer (assistant) messages.
+const captured = vi.hoisted(() => ({ props: [] as any[] }))
+vi.mock('../ChatMessageItem.vue', () => ({
+  default: defineComponent({
+    name: 'ChatMessageItem',
+    props: ['msg', 'index', 'expandedTools', 'blockTasks', 'blockAskQuestions', 'agents', 'staticBlockCache', 'active', 'isLastAssistant', 'isLastMessage', 'hideSessionActions', 'readOnly'],
+    setup(props) {
+      captured.props.push(props)
+      return () => h('div', { class: `cmi-mock cmi-${props.msg?.role}` }, props.msg?.blocks?.[0]?.text || '')
+    },
+  }),
+}))
+
+const i18n = createI18n({
+  legacy: false,
+  locale: 'en',
+  messages: {
+    en: {
+      chat: {
+        btw: {
+          title: 'By the way',
+          answering: 'Answering…',
+          failed: 'Failed',
+          failedWithReason: 'Failed to answer: {reason}',
+          anchorLabel: 'Asked by the way',
+          anchorTitle: 'View the side question asked here',
+          close: 'Close',
+        },
+      },
+    },
+  },
+})
+
+/** The component's raw SFC source, for asserting on its <style> block. */
+async function drawerSource(): Promise<string> {
+  const raw = await import('../BtwAnswerDrawer.vue?raw')
+  return typeof raw.default === 'string' ? raw.default : ''
+}
+
+function mountDrawer(props = {}) {
+  return mount(BtwAnswerDrawer, {
+    props: {
+      records: [{ id: 1, question: '为什么并发一高就慢', answer: '# 因为连接池只有 2 个连接。', error: '', createdAt: '2026-09-29T00:00:00Z' }],
+      expandedTools: {},
+      blockTasks: {},
+      blockAskQuestions: {},
+      staticBlockCache: {},
+      ...props,
+    },
+    global: { plugins: [i18n] },
+  })
+}
+
+describe('BtwAnswerDrawer', () => {
+  it('renders the question as a user bubble and the answer as an assistant bubble', () => {
+    const wrapper = mountDrawer()
+    // Both go through ChatMessageItem, so the chat-area styling applies.
+    expect(wrapper.find('.cmi-user').exists()).toBe(true)
+    expect(wrapper.find('.cmi-assistant').exists()).toBe(true)
+    expect(wrapper.find('.cmi-user').text()).toContain('为什么并发一高就慢')
+    expect(wrapper.find('.cmi-assistant').text()).toContain('因为连接池只有 2 个连接。')
+  })
+
+  it('builds the question as a user message and the answer as a settled assistant message', () => {
+    captured.props.length = 0
+    mountDrawer()
+    const [q, a] = captured.props
+    expect(q.msg.role).toBe('user')
+    expect(q.msg.blocks).toEqual([{ type: 'text', text: '为什么并发一高就慢' }])
+    expect(a.msg.role).toBe('assistant')
+    // streaming:false selects the full non-streaming render branch, same as a
+    // settled chat message.
+    expect(a.msg.streaming).toBe(false)
+    expect(a.msg.blocks).toEqual([{ type: 'text', text: '# 因为连接池只有 2 个连接。' }])
+  })
+
+  it('renders one exchange per record, in order', () => {
+    const wrapper = mountDrawer({
+      records: [
+        { id: 1, question: 'Q1', answer: 'A1', error: '' },
+        { id: 2, question: 'Q2', answer: 'A2', error: '' },
+      ],
+    })
+    const exchanges = wrapper.findAll('.btw-exchange')
+    expect(exchanges).toHaveLength(2)
+    expect(exchanges[0].text()).toContain('Q1')
+    expect(exchanges[1].text()).toContain('Q2')
+  })
+
+  it('renders a failed question as a chat-style error block, not plain text', () => {
+    // The drawer must reuse the main chat area's failure presentation: an
+    // `error` block renders as ContentBlocks' .chat-error-card (red rail +
+    // alert icon), so a /btw failure looks like every other failure. A plain
+    // text block would render as ordinary assistant prose instead.
+    captured.props.length = 0
+    const wrapper = mountDrawer({
+      records: [{ id: 3, question: '会失败吗', answer: '', error: 'upstream 401' }],
+    })
+    const a = captured.props.find(p => p.msg?.role === 'assistant')
+    expect(a.msg.blocks[0].type).toBe('error')
+    expect(a.msg.blocks[0].text).toContain('upstream 401')
+    // The failure is ClawBench's own summary model, not the session's agent, so
+    // the source chip must say so.
+    expect(a.msg.blocks[0].error_source).toBe('clawbench')
+    expect(wrapper.find('.cmi-user').text()).toContain('会失败吗')
+  })
+
+  it('renders no answer block when the record has neither answer nor error', () => {
+    captured.props.length = 0
+    mountDrawer({ records: [{ id: 4, question: '空', answer: '', error: '' }] })
+    const a = captured.props.find(p => p.msg?.role === 'assistant')
+    expect(a.msg.blocks).toEqual([])
+  })
+
+  it('forwards the host render maps so the pipeline is shared, not re-created', () => {
+    captured.props.length = 0
+    mountDrawer({
+      expandedTools: { toolA: true },
+      blockTasks: { taskA: 1 },
+      blockAskQuestions: { askA: 1 },
+      staticBlockCache: { cacheA: 1 },
+    })
+    const last = captured.props[captured.props.length - 1]
+    expect(last.expandedTools).toEqual({ toolA: true })
+    expect(last.blockTasks).toEqual({ taskA: 1 })
+    expect(last.blockAskQuestions).toEqual({ askA: 1 })
+    expect(last.staticBlockCache).toEqual({ cacheA: 1 })
+  })
+
+  it('renders read-only with session actions hidden', () => {
+    captured.props.length = 0
+    mountDrawer()
+    for (const p of captured.props) {
+      expect(p.readOnly).toBe(true)
+      expect(p.hideSessionActions).toBe(true)
+    }
+  })
+
+  it('keeps vertical breathing room so bubbles do not touch the edges', async () => {
+    // The body has no padding of its own, so the content wrapper must supply
+    // top AND bottom padding; a zero top made the first bubble sit flush
+    // against the header line.
+    const src = await drawerSource()
+    const block = src.slice(src.indexOf('.btw-content {'), src.indexOf('.btw-exchange'))
+    const m = block.match(/padding:\s*([^;]+);/)
+    expect(m, '.btw-content must declare padding').toBeTruthy()
+    // Shorthand is "top <horizontal> bottom".
+    const [top, , bottom] = m![1].trim().split(/\s+/)
+    expect(top, 'top padding must be non-zero').toMatch(/var\(--space-/)
+    expect(bottom, 'bottom padding must be non-zero').toMatch(/var\(--space-/)
+  })
+
+  it('spaces the question and answer inside an exchange like chat messages', async () => {
+    // The chat area separates messages with gap: var(--space-8); the drawer has
+    // no such list container, so the exchange wrapper must supply it or the
+    // question and answer would touch.
+    const src = await drawerSource()
+    const block = src.slice(src.indexOf('.btw-exchange {'), src.indexOf('.btw-exchange +'))
+    expect(block).toMatch(/display:\s*flex/)
+    expect(block).toMatch(/flex-direction:\s*column/)
+    expect(block).toMatch(/gap:\s*var\(--space-8\)/)
+  })
+
+  it('separates successive exchanges by more than the intra-exchange gap', async () => {
+    const src = await drawerSource()
+    const block = src.slice(src.indexOf('.btw-exchange + .btw-exchange'))
+    const m = block.match(/margin-top:\s*var\((--space-\d+)\)/)
+    expect(m, 'exchanges must be separated').toBeTruthy()
+    // Must exceed the intra-exchange gap (--space-8) so pairs read as separate.
+    const spacing: Record<string, number> = {
+      '--space-1': 2, '--space-2': 4, '--space-3': 6, '--space-4': 8,
+      '--space-5': 10, '--space-6': 12, '--space-7': 16, '--space-8': 20,
+      '--space-9': 24, '--space-10': 28,
+    }
+    expect(spacing[m![1]]).toBeGreaterThan(spacing['--space-8'])
+  })
+
+  it('leaves the user bubble its own right inset (does not flatten it)', async () => {
+    // The chat area insets the user bubble from the right edge via
+    // margin-right var(--space-5) + max-width calc(100% - 20px) on .msg-card.
+    // An earlier version reset both here, so the bubble ran to the drawer edge.
+    const src = await drawerSource()
+    expect(src).not.toMatch(/margin-right:\s*0/)
+    expect(src).not.toMatch(/max-width:\s*100%/)
+  })
+
+  it('does not redeclare the bubble width rules the chat area already provides', async () => {
+    // ChatMessageItem's bubble rules are non-scoped, so they apply in the
+    // drawer too; re-declaring them risks silently diverging from the chat
+    // area. The drawer should only own spacing.
+    const src = await drawerSource()
+    expect(src).not.toMatch(/chat-message\.user \.msg-card/)
+    expect(src).not.toMatch(/chat-message\.assistant \.msg-card/)
+  })
+
+  it('renders nothing when there are no records', () => {
+    const wrapper = mountDrawer({ records: [] })
+    expect(wrapper.find('.cmi-mock').exists()).toBe(false)
+  })
+
+  it('exposes open/close bound to the tab drawer', async () => {
+    const wrapper = mountDrawer()
+    expect(wrapper.vm.isOpen).toBe(false)
+    wrapper.vm.open()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.isOpen).toBe(true)
+    wrapper.vm.close()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.isOpen).toBe(false)
+  })
+})
+
+// ── Container click layer ──
+// The drawer is teleported to <body>, so clicks inside it never reach
+// ChatMessageList's container handler. Without a local layer, annotations and
+// code-link previews render but do nothing — which is exactly the reported bug.
+// These tests mount the drawer and CLICK, so a dropped delegation fails loudly
+// rather than only being visible in a source grep.
+describe('BtwAnswerDrawer — click layer', () => {
+  /** Clicks the content container with a given element as the event target. */
+  async function clickContent(wrapper: ReturnType<typeof mountDrawer>, target: HTMLElement) {
+    const content = wrapper.find('.btw-content').element
+    content.appendChild(target)
+    const ev = new MouseEvent('click', { bubbles: true })
+    target.dispatchEvent(ev)
+    await wrapper.vm.$nextTick()
+    return ev
+  }
+
+  it('delegates a click inside the content to the file-path handler', async () => {
+    const mod = await import('@/composables/useCodeLinkPreview.ts')
+    // Claim the click, as a verified path would, so the handler chain stops here
+    // and the test observes only the delegation under test.
+    const spy = vi.spyOn(mod, 'handleVerifiedFilePathClick').mockReturnValue(true)
+
+    const wrapper = mountDrawer()
+    const pathEl = document.createElement('span')
+    pathEl.className = 'chat-file-path'
+    pathEl.setAttribute('data-file-path', 'src/main.go')
+    pathEl.setAttribute('data-path-type', 'file')
+    await clickContent(wrapper, pathEl)
+
+    // The drawer's own handler must have offered the click to the path layer.
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('routes a table-row click to the row modal handler', async () => {
+    const mod = await import('@/composables/useTableRowExpand.ts')
+    const spy = vi.spyOn(mod, 'useTableRowExpand')
+    const wrapper = mountDrawer()
+    const rowEl = document.createElement('tr')
+    rowEl.className = 'chat-table-row'
+    await clickContent(wrapper, rowEl)
+    // The layer must have created its own table-row expander (that is what
+    // opens the modal); without it a row click inside the drawer does nothing.
+    expect(spy).toHaveBeenCalled()
+    spy.mockRestore()
+  })
+
+  it('wires a click listener on the content container', async () => {
+    // Source guard: the layer only works if the template actually binds it.
+    const src = await drawerSource()
+    expect(src).toMatch(/class="btw-content"[^>]*@click="handleContentClick"/)
+  })
+
+  it('declares every dependency the click layer calls', async () => {
+    const src = await drawerSource()
+    for (const dep of [
+      'useCodeLinkPreview',
+      'handleVerifiedFilePathClick',
+      'handleLocalhostUrlClick',
+      'handleTableRowClick',
+      'readLineTargetFromEl',
+      'openFilePath',
+      'handleDblClick',
+      'handleCodeBlockClick',
+      'handleTableBlockClick',
+    ]) {
+      expect(src, `${dep} must be wired into the drawer's click layer`).toContain(dep)
+    }
+  })
+
+  it('renders the floating preview and the table-row modal', async () => {
+    const src = await drawerSource()
+    expect(src).toContain('<CodeLinkPreview')
+    expect(src).toContain('<TableRowModal')
+  })
+})

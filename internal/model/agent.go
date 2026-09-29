@@ -2,6 +2,7 @@ package model
 
 import (
 	"strings"
+	"sync"
 )
 
 // AgentModel represents a model option for an agent.
@@ -132,10 +133,30 @@ func (a *Agent) SupportsACP() bool {
 	return a.AcpCommand != ""
 }
 
+// Agents and AgentList are package globals because agents are read from many
+// packages. They can now be REPLACED while the server is live: the async model
+// discovery (StartModelDiscoveryAsync) reloads them in a background goroutine
+// after the HTTP server has started accepting requests.
+//
+// Therefore every production read and write must go through the accessors below,
+// which hold agentsMu. Direct indexing is only safe before the listener starts
+// (initial load) or in tests.
 var (
+	agentsMu  sync.RWMutex
 	Agents    map[string]*Agent // indexed by ID
 	AgentList []*Agent          // ordered list for API responses
 )
+
+// ReplaceAgents atomically swaps in a new agent map and ordered list. This is the
+// only supported way to replace the whole set (the initial load and every
+// refresh). The new values are fully built before the swap, so a concurrent
+// reader never observes a partially populated set (ISS-302).
+func ReplaceAgents(m map[string]*Agent, list []*Agent) {
+	agentsMu.Lock()
+	defer agentsMu.Unlock()
+	Agents = m
+	AgentList = list
+}
 
 // GetAgent returns the current in-memory agent for an ID, or nil.
 //
@@ -147,12 +168,44 @@ func GetAgent(id string) *Agent {
 	if id == "" {
 		return nil
 	}
+	agentsMu.RLock()
+	defer agentsMu.RUnlock()
 	return Agents[id]
+}
+
+// HasAgent reports whether an agent ID exists in the current in-memory set.
+func HasAgent(id string) bool {
+	agentsMu.RLock()
+	defer agentsMu.RUnlock()
+	_, ok := Agents[id]
+	return ok
+}
+
+// AgentSetLoaded reports whether the in-memory agent set has been populated.
+// Validation paths use it to skip existence checks before the initial load —
+// an unloaded set must not make every configured agent look missing.
+func AgentSetLoaded() bool {
+	agentsMu.RLock()
+	defer agentsMu.RUnlock()
+	return Agents != nil
+}
+
+// GetAgentList returns the ordered agent list. It is a shallow copy: the slice is
+// safe to iterate without holding the lock, but the *Agent pointers are shared
+// (same exposure as before this accessor existed).
+func GetAgentList() []*Agent {
+	agentsMu.RLock()
+	defer agentsMu.RUnlock()
+	out := make([]*Agent, len(AgentList))
+	copy(out, AgentList)
+	return out
 }
 
 // GetDefaultAgentID returns the default agent ID for new sessions.
 // Priority: configured DefaultAgentID > first agent in AgentList > empty string.
 func GetDefaultAgentID() string {
+	agentsMu.RLock()
+	defer agentsMu.RUnlock()
 	if DefaultAgentID != "" {
 		if _, ok := Agents[DefaultAgentID]; ok {
 			return DefaultAgentID
@@ -162,6 +215,42 @@ func GetDefaultAgentID() string {
 		return AgentList[0].ID
 	}
 	return ""
+}
+
+// SetDefaultAgentID records the configured default agent for new sessions.
+func SetDefaultAgentID(id string) {
+	agentsMu.Lock()
+	defer agentsMu.Unlock()
+	DefaultAgentID = id
+}
+
+// AddAgent inserts an agent into the map and appends it to the ordered list.
+func AddAgent(a *Agent) {
+	agentsMu.Lock()
+	defer agentsMu.Unlock()
+	Agents[a.ID] = a
+	AgentList = append(AgentList, a)
+}
+
+// DeleteAgent removes an agent from the map and the ordered list.
+func DeleteAgent(id string) {
+	agentsMu.Lock()
+	defer agentsMu.Unlock()
+	delete(Agents, id)
+	out := make([]*Agent, 0, len(AgentList))
+	for _, a := range AgentList {
+		if a.ID != id {
+			out = append(out, a)
+		}
+	}
+	AgentList = out
+}
+
+// SetAgentList replaces the ordered list without touching the map (reorder paths).
+func SetAgentList(list []*Agent) {
+	agentsMu.Lock()
+	defer agentsMu.Unlock()
+	AgentList = list
 }
 
 // commonRulesTemplate is the built-in system prompt prepended to all agents.

@@ -72,8 +72,8 @@ func TestServeSessionResume_RestoresArchivedSession(t *testing.T) {
 
 	sessionID := "test-resume-session"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Test Session', 1)",
-		sessionID, env.ProjectDir,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Test Session', 1)",
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -98,8 +98,8 @@ func TestServeSessionResume_ActiveSessionPassthrough(t *testing.T) {
 
 	sessionID := "test-active-session"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Active Session', 0)",
-		sessionID, env.ProjectDir,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Active Session', 0)",
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -137,8 +137,8 @@ func TestServeSessionResume_SessionCountBelowLimit(t *testing.T) {
 	// Create a archived session to resume
 	sessionID := "test-resume-below-limit"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Archived Session', 1)",
-		sessionID, env.ProjectDir,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Archived Session', 1)",
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -163,7 +163,10 @@ func TestServeSessionResume_CrossProjectDenied(t *testing.T) {
 
 	sessionID := "test-other-project-session"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, '/other/project', 'claude', 'Other Session', 0)",
+		"INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING")
+	assert.NoError(t, err)
+	_, err = service.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other Session', 0)",
 		sessionID,
 	)
 	assert.NoError(t, err)
@@ -188,15 +191,15 @@ func TestServeSessionResume_SessionCountLimit(t *testing.T) {
 
 	// Create an active session (fills the 1-slot limit)
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Active', 0)",
-		"existing-session", env.ProjectDir,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Active', 0)",
+		"existing-session", service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
 	// Create a archived session to resume
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, archived) VALUES (?, ?, 'claude', 'Archived', 1)",
-		"archived-session", env.ProjectDir,
+		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Archived', 1)",
+		"archived-session", service.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -219,7 +222,7 @@ func TestFindExistingACPSessions_FindsActiveSession(t *testing.T) {
 
 	// Insert a session with source_session_id = "acp:test-acp-123"
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id) VALUES (?, ?, 'claude', 'Test', ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id) VALUES (?, ?, 'claude', 'Test', ?)",
 		"cb-session-1", env.ProjectDir, "acp:test-acp-123",
 	)
 	require.NoError(t, err)
@@ -236,7 +239,7 @@ func TestFindExistingACPSessions_FindsExternalSessionID(t *testing.T) {
 	// A session whose raw backend session id is stored in external_session_id
 	// (the common case for opencode ses_... ids) — no acp: prefix.
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id) VALUES (?, ?, 'opencode', 'Native', ?)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id) VALUES (?, ?, 'opencode', 'Native', ?)",
 		"cb-ext-1", env.ProjectDir, "ses_00c202c74ffeZdhwsMNwtbwPm5",
 	)
 	require.NoError(t, err)
@@ -251,7 +254,7 @@ func TestFindExistingACPSessions_FindsArchivedSession(t *testing.T) {
 
 	// Insert a archived session
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id, archived) VALUES (?, ?, 'claude', 'Archived', ?, 1)",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, archived) VALUES (?, ?, 'claude', 'Archived', ?, 1)",
 		"cb-session-archived", env.ProjectDir, "acp:archived-acp-123",
 	)
 	require.NoError(t, err)
@@ -360,14 +363,14 @@ func TestServeACPLoadSession_ExistingACPSessionHardDeleted(t *testing.T) {
 
 	// Insert an existing session for the ACP session ID
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id, session_type) VALUES (?, ?, 'acp-stdio', 'Old', ?, 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, session_type) VALUES (?, ?, 'acp-stdio', 'Old', ?, 'chat')",
 		"old-cb-session", env.ProjectDir, "acp:existing-acp-sid",
 	)
 	require.NoError(t, err)
 
 	// Insert a chat_history entry for the old session to verify hard delete
 	_, err = service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content) VALUES (?, 'acp-stdio', ?, 'user', 'hello')",
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content) VALUES (?, 'acp-stdio', ?, 'user', 'hello')",
 		env.ProjectDir, "old-cb-session",
 	)
 	require.NoError(t, err)
@@ -687,7 +690,7 @@ func TestServeACPSessions_FilterExistingSessions(t *testing.T) {
 
 	// Pre-create a CB session for one of the ACP sessions
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, source_session_id, session_type) VALUES (?, ?, 'acp-stdio', 'Existing', ?, 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, session_type) VALUES (?, ?, 'acp-stdio', 'Existing', ?, 'chat')",
 		"cb-existing-1", env.ProjectDir, "acp:acp-session-1",
 	)
 	require.NoError(t, err)
@@ -1013,7 +1016,7 @@ func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 	// A session whose raw backend id (e.g. opencode ses_...) is stored only in
 	// external_session_id — source_session_id stays NULL (the common case).
 	_, err := service.UnsafeDBForTest().Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, external_session_id, session_type) VALUES (?, ?, 'opencode', 'Native', ?, 'chat')",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id, session_type) VALUES (?, ?, 'opencode', 'Native', ?, 'chat')",
 		"cb-ext-1", env.ProjectDir, "ses_00c202c74ffeZdhwsMNwtbwPm5",
 	)
 	require.NoError(t, err)

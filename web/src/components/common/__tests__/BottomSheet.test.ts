@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount, VueWrapper } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 import { handleBackNavigation, canNavigateBack, _resetHandlers, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
+import { _resetDrawerStack, _drawerStackSnapshot } from '@/utils/drawerStack'
 
 // BottomSheet imports useBackHandler directly — no mock needed for the core logic.
 // We mock appLog to avoid Android bridge calls in test.
@@ -559,3 +560,124 @@ describe('BottomSheet wide-screen card (all drawers match ModalDialog)', () => {
   })
 })
 
+
+// ── Open-order stacking ──
+// All BottomSheets teleport to <body> at one z-index tier, so two open drawers
+// used to be ordered by DOM position — which Teleport fixes at MOUNT time. A
+// drawer mounted early (at the app root) but opened LATER therefore painted
+// under the drawer that opened it. This is the reported /btw → inert-path-picker
+// case: the picker is an App-root sibling, so it lost to the /btw drawer.
+describe('BottomSheet open-order stacking', () => {
+  let mounted: VueWrapper<any>[]
+
+  beforeEach(() => {
+    // The stack is module-level, so entries left by earlier tests would shift
+    // every offset in this suite.
+    _resetDrawerStack()
+    mounted = []
+  })
+
+  afterEach(() => {
+    mounted.forEach(w => w.unmount())
+    document.body.querySelectorAll('.bs-overlay').forEach(el => el.remove())
+    _resetHandlers()
+    _resetDrawerStack()
+  })
+
+  /** Mount a sheet whose slot text uniquely identifies its overlay in the DOM. */
+  function mountTagged(tag: string, open = true) {
+    const w = mount(BottomSheet, {
+      props: { open, title: tag },
+      slots: { default: `<span class="tag-${tag}">${tag}</span>` },
+      attachTo: document.body,
+    })
+    mounted.push(w)
+    return w
+  }
+
+  /** The overlay element that owns the given tag's slot content. */
+  function overlayOf(tag: string): HTMLElement | null {
+    const marker = document.body.querySelector(`.tag-${tag}`)
+    return marker?.closest('.bs-overlay') as HTMLElement | null
+  }
+
+  /** The z-index slot this overlay was given (its --bs-open-order). */
+  function orderOf(tag: string): number {
+    return Number(overlayOf(tag)?.style.getPropertyValue('--bs-open-order'))
+  }
+
+  it('raises a later-opened drawer above an earlier-opened one', async () => {
+    // Simulate the real DOM order: the "inner" drawer (like InertPathPicker) is
+    // mounted FIRST at the app root, the outer one (the /btw drawer) later.
+    mountTagged('inner', false)
+    mountTagged('outer', true)
+    await nextTick()
+    expect(orderOf('outer')).toBe(0)
+
+    // Now open the inner drawer from inside the outer one.
+    await mounted[0].setProps({ open: true })
+    await nextTick()
+    expect(orderOf('inner')).toBeGreaterThan(orderOf('outer'))
+  })
+
+  it('drops a closing drawer back out of the stack', async () => {
+    mountTagged('a', true)
+    mountTagged('b', true)
+    await nextTick()
+    expect(orderOf('b')).toBeGreaterThan(orderOf('a'))
+    expect(_drawerStackSnapshot()).toHaveLength(2)
+
+    // Closing the top drawer must RELEASE its slot, not just stop reporting it:
+    // assert the stack itself, because the offset clamp would hide a leak.
+    await mounted[1].setProps({ open: false })
+    await nextTick()
+    expect(_drawerStackSnapshot()).toHaveLength(1)
+    expect(orderOf('a')).toBe(0)
+  })
+
+  it('does not push the same instance twice when open is set repeatedly', async () => {
+    mountTagged('a', true)
+    mountTagged('b', true)
+    await nextTick()
+
+    // Re-asserting open=true (a no-op watcher fire) must not consume a new slot.
+    await mounted[0].setProps({ open: true })
+    await mounted[1].setProps({ open: true })
+    await nextTick()
+    expect(orderOf('a')).toBe(0)
+    expect(orderOf('b')).toBe(1)
+  })
+
+  it('keeps every slot inside the reserved overlay band', async () => {
+    // The band is 1000..1049 (--z-overlay-raised starts at 1050), so even a
+    // pathological stack must stay below the raised tier and the app header.
+    for (let i = 0; i < 60; i++) mountTagged(`s${i}`, true)
+    await nextTick()
+    const orders = Array.from({ length: 60 }, (_, i) => orderOf(`s${i}`))
+    expect(Math.max(...orders)).toBeLessThanOrEqual(49)
+  })
+
+  it('releases the slot when an open drawer is unmounted', async () => {
+    // A host can be torn down while its drawer is still open (tab switch,
+    // session change). The slot must not leak, or every later drawer opens one
+    // level too high.
+    const first = mountTagged('first', true)
+    const second = mountTagged('second', true)
+    await nextTick()
+    expect(orderOf('second')).toBe(1)
+
+    // Unmount the top drawer WITHOUT closing it first.
+    second.unmount()
+    mounted = mounted.filter(w => w !== second)
+    await nextTick()
+
+    // A drawer mounted afterwards must take slot 0 again, not slot 2.
+    mountTagged('third', true)
+    await nextTick()
+    expect(orderOf('first')).toBe(0)
+    expect(orderOf('third')).toBe(1)
+    expect(first.exists()).toBe(true)
+    // Exactly the two live drawers remain — nothing leaked from the unmount.
+    expect(_drawerStackSnapshot()).toHaveLength(2)
+  })
+})

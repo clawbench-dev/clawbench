@@ -6,6 +6,32 @@ import (
 	"strings"
 )
 
+// NormalizeProjectPath canonicalizes a project path so the same directory always
+// compares equal regardless of how it was spelled. It makes the path absolute,
+// resolves symlinks when possible, cleans it, and strips a trailing separator.
+// On any error it falls back to the cleaned path rather than failing the caller.
+//
+// This is the identity function for a project: the projects registry stores this
+// form, and any path arriving from a cookie / query string must be normalized
+// the same way before it is compared against a stored path. On macOS a
+// t.TempDir()-style path lives under /var, a symlink to /private/var, so the raw
+// and normalized forms differ and a naive string compare reports a mismatch.
+func NormalizeProjectPath(p string) string {
+	p = strings.TrimSpace(p)
+	if p == "" {
+		return ""
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		p = resolved
+	}
+	p = filepath.Clean(p)
+	// filepath.Clean already removes trailing separators except for the root.
+	return p
+}
+
 // ValidatePath validates that a relative path stays within the base directory boundary.
 // It resolves symlinks on both sides before comparing, preventing symlink traversal attacks.
 // Returns the lexical absolute path (for OS operations) and whether it's valid.

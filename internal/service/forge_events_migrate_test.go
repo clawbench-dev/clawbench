@@ -123,6 +123,58 @@ func TestMigration_ForgeEventsItemKeyIdempotent(t *testing.T) {
 	assert.Equal(t, 1, unread, "re-running the migration must not retire live unread rows")
 }
 
+// TestMigration_TaskExecutionScriptColumns verifies the additive migration that
+// gives a pre-existing task_executions table the gating-script result columns.
+// Without it, every read of an execution would fail with "no such column:
+// script_exit_code" on an upgraded install.
+func TestMigration_TaskExecutionScriptColumns(t *testing.T) {
+	withTempDataDir(t)
+	t.Cleanup(CloseDB)
+
+	// Build a legacy table that predates the script columns.
+	path := filepath.Join(model.DataDir, "ClawBench.db")
+	legacy, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = legacy.Exec(`
+CREATE TABLE task_executions (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	task_id INTEGER NOT NULL,
+	session_id TEXT NOT NULL,
+	trigger_type TEXT NOT NULL DEFAULT 'auto',
+	status TEXT NOT NULL DEFAULT 'running',
+	read_at DATETIME,
+	summary TEXT,
+	event_url TEXT NOT NULL DEFAULT '',
+	event_summary TEXT NOT NULL DEFAULT '',
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO task_executions (task_id, session_id, trigger_type, status)
+VALUES (1, 's-legacy', 'auto', 'completed');`)
+	require.NoError(t, err)
+	require.NoError(t, legacy.Close())
+
+	require.NoError(t, InitDB())
+
+	for _, col := range []string{"script_exit_code", "script_stdout", "script_stderr", "script_duration_ms"} {
+		var n int
+		require.NoError(t, db.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?`, col).Scan(&n))
+		assert.Equal(t, 1, n, "the migration must add %s", col)
+	}
+
+	// The pre-existing row survives with the columns defaulted (NULL exit code
+	// is what marks "no script").
+	var exitCode sql.NullInt64
+	var stdout string
+	require.NoError(t, db.QueryRow(
+		"SELECT script_exit_code, script_stdout FROM task_executions WHERE session_id = 's-legacy'").Scan(&exitCode, &stdout))
+	assert.False(t, exitCode.Valid, "a legacy row has no script result")
+	assert.Equal(t, "", stdout)
+
+	// Re-running must be a no-op (idempotent ALTER guards).
+	require.NoError(t, InitDB())
+}
+
 // TestMigration_TaskUnreadBackfill: unread became per-execution, which REMOVED a
 // suppression the task-level watermark used to provide. Without a backfill, a
 // long-lived task would report every run it ever made as unread on upgrade.
@@ -143,8 +195,8 @@ func TestMigration_TaskUnreadBackfill(t *testing.T) {
 
 	watermark := time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC)
 	_, err = raw.Exec(
-		`INSERT INTO scheduled_tasks (project_path, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at)
-		 VALUES ('/proj','Task','0 * * * *','agent1','p','','active','unlimited',?,?,?)`,
+		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at)
+		 VALUES (1,'Task','0 * * * *','agent1','p','','active','unlimited',?,?,?)`,
 		watermark, watermark, watermark)
 	require.NoError(t, err)
 	var taskID int64

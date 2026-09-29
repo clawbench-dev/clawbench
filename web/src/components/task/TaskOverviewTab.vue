@@ -27,13 +27,19 @@
       <TaskScheduleCard v-if="!isEventTriggered" :task="task" />
       <TaskEventCard v-else :task="task" />
 
+      <!-- Gating script card (collapsible). Shown only when the task has a
+           script configured: an empty card would document a feature the task
+           does not use. Cron tasks only, matching the backend, which ignores a
+           script on an event task. -->
+      <TaskScriptCard v-if="taskHasScript" :task="task" />
+
       <!-- Prompt preview card (collapsible) -->
       <div class="overview-card">
-        <h3 class="card-title prompt-card-title" @click="promptCollapsed = !promptCollapsed">
+        <h3 class="card-title is-collapsible" @click="promptCollapsed = !promptCollapsed">
           <MessageSquare class="card-icon" :size="14" />
-          <span class="prompt-title-text">{{ t('task.form.prompt') }}</span>
-          <button class="prompt-toggle-btn" :title="promptCollapsed ? t('task.overview.showPrompt') : t('task.overview.hidePrompt')">
-            <ChevronDown :size="14" :class="{ 'prompt-chevron-collapsed': promptCollapsed }" class="prompt-chevron" />
+          <span class="card-title-text">{{ t('task.form.prompt') }}</span>
+          <button class="card-toggle-btn" :title="promptCollapsed ? t('task.overview.showPrompt') : t('task.overview.hidePrompt')">
+            <ChevronDown :size="14" :class="{ 'is-collapsed': promptCollapsed }" class="card-chevron" />
           </button>
         </h3>
         <div v-show="!promptCollapsed" class="prompt-body markdown-body" ref="promptBodyRef" @click="handlePromptClick" v-html="renderedPrompt"></div>
@@ -54,6 +60,7 @@ import { useAgents } from '@/composables/useAgents'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import TaskScheduleCard from '@/components/task/TaskScheduleCard.vue'
 import TaskEventCard from '@/components/task/TaskEventCard.vue'
+import TaskScriptCard from '@/components/task/TaskScriptCard.vue'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
@@ -62,6 +69,7 @@ import { handleCodeBlockClick, handleTableBlockClick } from '@/composables/useCo
 import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { copyText } from '@/utils/clipboard.ts'
 import { store } from '@/stores/app.ts'
+import '@/assets/task-overview-card.css'
 
 const { t } = useI18n()
 const { getAgentBackend, getAgentName } = useAgents()
@@ -81,6 +89,8 @@ const taskBackend = computed(() => getAgentBackend(taskAgentId.value))
 const taskStatus = computed(() => task.value.status as string)
 const taskRunningCount = computed(() => task.value.runningCount as number)
 const taskPrompt = computed(() => task.value.prompt as string)
+// A task with no script (or a whitespace-only one) has no gate to show.
+const taskHasScript = computed(() => !!((task.value.script as string) || '').trim())
 
 // Trigger mode selects which card renders above the prompt. Absent means cron
 // (the pre-event-task default the backend also assumes).
@@ -323,76 +333,8 @@ function handlePromptClick(event: MouseEvent) {
   background: var(--bg-tertiary, rgba(0, 0, 0, 0.06));
 }
 
-/* Cards */
-.overview-card {
-  background: var(--bg-secondary, #f8f9fa);
-  border: 1px solid var(--border-color, #e5e5e5);
-  border-radius: 0;
-  padding: var(--space-5);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
-.card-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-4);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary, #1a1a1a);
-  margin: 0;
-}
-
-/* Collapsible prompt card title */
-.prompt-card-title {
-  cursor: pointer;
-  user-select: none;
-}
-
-.prompt-title-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.prompt-toggle-btn {
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted, #999);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  padding: 0;
-  transition: background var(--duration-slow), color var(--duration-slow);
-}
-
-@media (hover: hover) {
-  .prompt-toggle-btn:hover {
-    background: var(--bg-tertiary, #eef1f4);
-    color: var(--text-primary, #1a1a1a);
-  }
-}
-
-.prompt-toggle-btn:active {
-  transform: scale(0.92);
-}
-
-.prompt-chevron {
-  transition: transform var(--duration-slow) ease;
-}
-
-.prompt-chevron-collapsed {
-  transform: rotate(-90deg);
-}
-
-.card-icon {
-  color: var(--text-muted, #999);
-}
+/* Card chrome (.overview-card / .card-title / .card-toggle-btn / .card-chevron)
+   is global — see assets/task-overview-card.css. */
 
 .overview-divider {
   height: 1px;

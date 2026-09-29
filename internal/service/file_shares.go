@@ -24,9 +24,11 @@ CREATE TABLE IF NOT EXISTS file_shares (
 	path TEXT NOT NULL,
 	name TEXT NOT NULL,
 	root TEXT NOT NULL DEFAULT '',
+	project_id INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_file_shares_path ON file_shares(path);
+CREATE INDEX IF NOT EXISTS idx_file_shares_project ON file_shares(project_id);
 `
 
 // GenerateShareToken returns a cryptographically random 32-hex-char token

@@ -24,9 +24,13 @@ import (
 // GetChatHistory retrieves all chat messages for a given project path, backend, and session.
 // Returns full content (no stripping). Used by non-chat-panel callers (fork, RAG, etc.).
 func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage, error) {
+	projectID, err := ProjectIDForPath(projectPath)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := dbRead.Query(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC",
-		projectPath, sessionID,
+		"SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC",
+		projectID, sessionID,
 	)
 	if err != nil {
 		return nil, err
@@ -62,6 +66,10 @@ func GetChatHistory(projectPath, backend, sessionID string) ([]model.ChatMessage
 // so the total and the returned rows are both pure conversation history — the
 // caller no longer has to subtract a queued count to compute hasMore.
 func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, beforeID int) ([]model.ChatMessage, int, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return []model.ChatMessage{}, 0, idErr
+	}
 	messages := []model.ChatMessage{}
 	totalCount, countErr := GetChatMessageCount(sessionID)
 	if countErr != nil {
@@ -77,10 +85,10 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 		// Cursor-based: load messages older than beforeID
 		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
 			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
-			WHERE project_path = ? AND session_id = ? AND id < ?
+			WHERE project_id = ? AND session_id = ? AND id < ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
-		rows, err := dbRead.Query(query, projectPath, sessionID, beforeID, limit)
+		rows, err := dbRead.Query(query, projectID, sessionID, beforeID, limit)
 		if err != nil {
 			return messages, totalCount, err
 		}
@@ -93,10 +101,10 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 		// Initial load: get the most recent (limit) messages
 		query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM (
 			SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history
-			WHERE project_path = ? AND session_id = ?
+			WHERE project_id = ? AND session_id = ?
 			ORDER BY id DESC LIMIT ?
 		) sub ORDER BY id ASC`
-		rows, err := dbRead.Query(query, projectPath, sessionID, limit)
+		rows, err := dbRead.Query(query, projectID, sessionID, limit)
 		if err != nil {
 			return messages, totalCount, err
 		}
@@ -106,8 +114,8 @@ func GetChatHistoryPaged(projectPath, backend, sessionID string, limit int, befo
 	}
 
 	// No limit: return all messages in chronological order
-	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_path = ? AND session_id = ? ORDER BY id ASC`
-	rows, err := dbRead.Query(query, projectPath, sessionID)
+	query := `SELECT id, role, content, files, backend, streaming, created_at, indexed FROM chat_history WHERE project_id = ? AND session_id = ? ORDER BY id ASC`
+	rows, err := dbRead.Query(query, projectID, sessionID)
 	if err != nil {
 		return messages, totalCount, err
 	}
@@ -297,8 +305,14 @@ func GetMessageByID(id int64) (*model.ChatMessage, error) {
 	var streaming int
 	var indexed int
 
+	// project_path is resolved through projects so the wire type keeps carrying a
+	// path even though the column is now an id.
 	err := dbRead.QueryRow(
-		"SELECT id, role, content, files, backend, streaming, created_at, indexed, session_id, project_path FROM chat_history WHERE id = ?",
+		`SELECT h.id, h.role, h.content, h.files, h.backend, h.streaming, h.created_at, h.indexed, h.session_id,
+		        COALESCE(p.path, '')
+		   FROM chat_history h
+		   LEFT JOIN projects p ON p.id = h.project_id
+		  WHERE h.id = ?`,
 		id,
 	).Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.Backend, &streaming, &msg.CreatedAt, &indexed, &msg.SessionID, &msg.ProjectPath)
 	if err != nil {
@@ -617,6 +631,13 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 		streamingInt = 1
 	}
 
+	// Resolved before WriteBegin: ProjectIDForPath may write on a cache miss and
+	// the write mutex is held for the transaction below.
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
+
 	// Use transaction under write mutex to ensure data consistency
 	var msgID int64
 	var titled bool
@@ -627,7 +648,7 @@ func AddChatMessage(projectPath, backend, sessionID, role, content string, files
 	defer writeMu.Unlock()
 	defer tx.Rollback()
 
-	msgID, titled, txErr = insertChatMessageTx(tx, projectPath, backend, sessionID, role, content, files, streamingInt, fallbackTitle)
+	msgID, titled, txErr = insertChatMessageTx(tx, projectID, backend, sessionID, role, content, files, streamingInt, fallbackTitle)
 	if txErr != nil {
 		return 0, txErr
 	}
@@ -738,7 +759,7 @@ func UpdateChatQuoteNote(sessionID string, messageID int64, quoteID, note string
 // It returns the LastInsertId (msgID) and whether this call wrote the session's
 // local title (titled), so the caller can schedule the AI rename for exactly the
 // message that earned the title. The caller owns Commit/Rollback.
-func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle string) (int64, bool, error) {
+func insertChatMessageTx(tx *sql.Tx, projectID int64, backend, sessionID, role, content string, files []model.FileEntry, streamingInt int, fallbackTitle string) (int64, bool, error) {
 	var filesJSON string
 	if len(files) > 0 {
 		data, _ := json.Marshal(files)
@@ -746,8 +767,8 @@ func insertChatMessageTx(tx *sql.Tx, projectPath, backend, sessionID, role, cont
 	}
 
 	result, txErr := tx.Exec(
-		"INSERT INTO chat_history (project_path, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
-		projectPath, backend, sessionID, role, content, filesJSON, streamingInt,
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, files, streaming, indexed) VALUES (?, ?, ?, ?, ?, ?, ?, 0)",
+		projectID, backend, sessionID, role, content, filesJSON, streamingInt,
 	)
 	if txErr != nil {
 		return 0, false, txErr
@@ -978,13 +999,14 @@ type ConversationProject struct {
 // must stay listed.
 func GetConversationProjects() ([]ConversationProject, error) {
 	rows, err := dbRead.QueryContext(context.Background(), `
-		SELECT project_path, COUNT(*), MAX(last_at) FROM (
-			SELECT project_path, created_at AS last_at FROM chat_sessions WHERE project_path != ''
+		SELECT p.path, COUNT(*), MAX(agg.last_at) FROM (
+			SELECT project_id, created_at AS last_at FROM chat_sessions WHERE project_id != 0
 			UNION ALL
-			SELECT project_path, created_at AS last_at FROM chat_metadata WHERE project_path != ''
-		)
-		GROUP BY project_path
-		ORDER BY MAX(last_at) DESC, project_path ASC`)
+			SELECT project_id, created_at AS last_at FROM chat_metadata WHERE project_id != 0
+		) agg
+		JOIN projects p ON p.id = agg.project_id
+		GROUP BY agg.project_id
+		ORDER BY MAX(agg.last_at) DESC, p.path ASC`)
 	if err != nil {
 		return nil, err
 	}
@@ -1034,10 +1056,14 @@ func GetRecentProjects() ([]string, error) {
 
 // AddRecentProject upserts a project path and prunes old entries beyond configured limit.
 func AddRecentProject(projectPath string) error {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
 	_, err := WriteExec(
-		"INSERT INTO recent_projects (project_path, accessed_at) VALUES (?, CURRENT_TIMESTAMP) "+
-			"ON CONFLICT(project_path) DO UPDATE SET accessed_at = CURRENT_TIMESTAMP",
-		projectPath,
+		"INSERT INTO recent_projects (project_id, accessed_at) VALUES (?, CURRENT_TIMESTAMP) "+
+			"ON CONFLICT(project_id) DO UPDATE SET accessed_at = CURRENT_TIMESTAMP",
+		projectID,
 	)
 	if err != nil {
 		return err
@@ -1056,8 +1082,12 @@ func AddRecentProject(projectPath string) error {
 // RemoveRecentProject deletes a project path from the recent projects list.
 // If the removed project was the default, its is_default flag is cleared first.
 func RemoveRecentProject(projectPath string) error {
-	_, _ = WriteExec("UPDATE recent_projects SET is_default = 0 WHERE project_path = ? AND is_default = 1", projectPath)
-	_, err := WriteExec("DELETE FROM recent_projects WHERE project_path = ?", projectPath)
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
+	_, _ = WriteExec("UPDATE recent_projects SET is_default = 0 WHERE project_id = ? AND is_default = 1", projectID)
+	_, err := WriteExec("DELETE FROM recent_projects WHERE project_id = ?", projectID)
 	return err
 }
 
@@ -1068,7 +1098,9 @@ func RemoveRecentProject(projectPath string) error {
 func GetDefaultProject() (string, error) {
 	// 1. Try is_default=1 row
 	var path string
-	err := dbRead.QueryRow("SELECT project_path FROM recent_projects WHERE is_default = 1 LIMIT 1").Scan(&path)
+	err := dbRead.QueryRow(
+		`SELECT p.path FROM recent_projects r JOIN projects p ON p.id = r.project_id
+		  WHERE r.is_default = 1 LIMIT 1`).Scan(&path)
 	if err == nil {
 		// Verify directory still exists
 		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
@@ -1108,7 +1140,11 @@ func SetDefaultProject(projectPath string) error {
 		return err
 	}
 	// Set the new default
-	_, err := WriteExec("UPDATE recent_projects SET is_default = 1 WHERE project_path = ?", projectPath)
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
+	_, err := WriteExec("UPDATE recent_projects SET is_default = 1 WHERE project_id = ?", projectID)
 	return err
 }
 
@@ -1132,14 +1168,14 @@ func generateSessionID() string {
 //
 // Two details are load-bearing, and both are asserted by tests:
 //
-//  1. h.project_path = s.project_path must stay. It is redundant for rows
+//  1. h.project_id = s.project_id must stay. It is redundant for rows
 //     written by current code, but historic rows can disagree (messages
 //     persisted under the cookie's project instead of the session's, ISS-420).
 //     Dropping it would count those as unread here while UpdateLastRead anchors
 //     on a different set — the two sides must agree or the badge never clears.
 //  2. idx_history_sess_unread must exist. The subquery always mentions
-//     project_path (see point 1), and idx_history_unread also leads with
-//     project_path — so without a session_id-leading alternative the planner
+//     project_id (see point 1), and idx_history_unread also leads with
+//     project_id — so without a session_id-leading alternative the planner
 //     picks idx_history_unread and rescans the whole project once per listed
 //     session (~186ms vs 0.01ms measured on a 15.9k-message project). The
 //     index is what makes the seek win; it is not merely an optimisation.
@@ -1148,7 +1184,7 @@ func generateSessionID() string {
 // need one, because a missed join yields NULL).
 const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
 			WHERE h.session_id = s.id
-			  AND h.project_path = s.project_path
+			  AND h.project_id = s.project_id
 			  AND h.role = 'assistant' AND h.streaming = 0
 			  AND (s.last_read_at IS NULL OR COALESCE(h.completed_at, h.created_at) > s.last_read_at)
 		) AS unread_count`
@@ -1160,13 +1196,14 @@ const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
 const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
-		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
+		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type = 'chat'`
 
 // overviewSessionsQuery is GetOverviewSessions' full query. Package-level for
 // the same reason as sessionsQueryBase.
-const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, s.project_path,
+const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.created_at, s.updated_at, s.last_read_at, COALESCE(p.path, ''),
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
+		LEFT JOIN projects p ON p.id = s.project_id
 		WHERE s.archived = 0 AND s.session_type = 'chat'
 		ORDER BY s.updated_at DESC, s.id DESC`
 
@@ -1176,7 +1213,7 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
-		WHERE s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'`
+		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type = 'chat'`
 
 // GetSessions retrieves chat sessions for a given project path, ordered by
 // pinned DESC, sort_order ASC, created_at DESC — pinned sessions are a fixed
@@ -1188,9 +1225,13 @@ const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.a
 // The unread count is unreadCountSubquery — see its doc comment for why it is a
 // correlated subquery rather than a grouped join.
 func GetSessions(projectPath, backend string) ([]model.ChatSession, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return []model.ChatSession{}, idErr
+	}
 	sessions := []model.ChatSession{}
 	query := sessionsQueryBase
-	args := []interface{}{projectPath}
+	args := []interface{}{projectID}
 	if backend != "" {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
@@ -1298,8 +1339,12 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 	// Build main query with cursor and limit+1.
 	// The unread count is unreadCountSubquery — see its doc comment for why it
 	// is a correlated subquery rather than a grouped join.
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return nil, false, idErr
+	}
 	query := pagedSessionsQueryBase
-	args := []interface{}{projectPath}
+	args := []interface{}{projectID}
 	if backend != "" {
 		query += " AND s.backend = ?"
 		args = append(args, backend)
@@ -1314,8 +1359,8 @@ func GetSessionsPaged(projectPath, backend string, limit int, cursor string, cur
 			JOIN session_tags t ON t.id = l.tag_id
 			WHERE l.session_id = s.id
 			  AND t.name = ? COLLATE NOCASE
-			  AND (t.scope = 'global' OR t.project_path = ?))`
-		args = append(args, tagName, projectPath)
+			  AND (t.scope = 'global' OR t.project_id = ?))`
+		args = append(args, tagName, projectID)
 	}
 	if cursor != "" && cursorID != "" {
 		if cursorSortOrder != nil && cursorPinned != nil {
@@ -1416,6 +1461,10 @@ func FilterSessionsByTag(sessions []model.ChatSession, projectPath, tagName stri
 // report one definition's count while the filter returned the union of both —
 // a chip reading "2" that lists 3 sessions.
 func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
 	rows, err := dbRead.Query(`
 		SELECT MIN(t.name) AS name,
 		       MIN(CASE WHEN t.scope = 'global' THEN 0 ELSE 1 END) AS is_project,
@@ -1423,10 +1472,10 @@ func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
 		FROM session_tags t
 		JOIN session_tag_links l ON l.tag_id = t.id
 		JOIN chat_sessions s ON s.id = l.session_id
-		WHERE (t.scope = 'global' OR t.project_path = ?)
-		  AND s.project_path = ? AND s.archived = 0 AND s.session_type = 'chat'
+		WHERE (t.scope = 'global' OR t.project_id = ?)
+		  AND s.project_id = ? AND s.archived = 0 AND s.session_type = 'chat'
 		GROUP BY t.name COLLATE NOCASE
-		ORDER BY cnt DESC, name COLLATE NOCASE`, projectPath, projectPath)
+		ORDER BY cnt DESC, name COLLATE NOCASE`, projectID, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -1514,7 +1563,10 @@ func GetSessionBackend(sessionID string) string {
 // GetSessionProjectPath returns the project path of a session, or empty string if not found.
 func GetSessionProjectPath(sessionID string) string {
 	var projectPath string
-	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ? AND archived = 0", sessionID).Scan(&projectPath)
+	err := dbRead.QueryRow(
+		`SELECT COALESCE(p.path, '') FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ? AND s.archived = 0`, sessionID).Scan(&projectPath)
 	if err != nil {
 		return ""
 	}
@@ -1527,7 +1579,10 @@ func GetSessionProjectPath(sessionID string) string {
 // search's lazy first-message preview).
 func GetSessionProjectPathIncludeArchived(sessionID string) string {
 	var projectPath string
-	err := dbRead.QueryRow("SELECT project_path FROM chat_sessions WHERE id = ?", sessionID).Scan(&projectPath)
+	err := dbRead.QueryRow(
+		`SELECT COALESCE(p.path, '') FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ?`, sessionID).Scan(&projectPath)
 	if err != nil {
 		return ""
 	}
@@ -1537,11 +1592,15 @@ func GetSessionProjectPathIncludeArchived(sessionID string) string {
 // GetLatestSessionID returns the ID and backend of the most recently updated chat session
 // for a project. Returns sql.ErrNoRows if no sessions exist.
 func GetLatestSessionID(projectPath string) (sessionID, backend string, err error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return "", "", idErr
+	}
 	err = dbRead.QueryRow(
 		`SELECT id, backend FROM chat_sessions
-		 WHERE project_path = ? AND archived = 0 AND session_type = 'chat'
+		 WHERE project_id = ? AND archived = 0 AND session_type = 'chat'
 		 ORDER BY updated_at DESC, id DESC LIMIT 1`,
-		projectPath,
+		projectID,
 	).Scan(&sessionID, &backend)
 	return
 }
@@ -1551,12 +1610,16 @@ func GetLatestSessionID(projectPath string) (sessionID, backend string, err erro
 // clients that still send ?before=<timestamp> instead of ?before_id=<id>.
 // Returns the max ID of messages created before the given timestamp, or 0 if none found.
 func GetMessageIDBeforeTime(projectPath, backend, sessionID, beforeTime string) (int, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
 	var id sql.NullInt64
 	err := dbRead.QueryRow(
 		`SELECT MAX(id) FROM chat_history
-		 WHERE project_path = ? AND backend = ? AND session_id = ?
+		 WHERE project_id = ? AND backend = ? AND session_id = ?
 		 AND created_at < ?`,
-		projectPath, backend, sessionID, beforeTime,
+		projectID, backend, sessionID, beforeTime,
 	).Scan(&id)
 	if err != nil {
 		return 0, err
@@ -1645,15 +1708,16 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 	// Resolve denormalized attribution from the message's own row. A missing
 	// row (ErrNoRows) is benign — the message was already deleted — and leaves
 	// the columns empty. Any other error is propagated rather than swallowed:
-	// writing a row with empty project_path would make it permanently invisible
+	// writing a row with project_id = 0 would make it permanently invisible
 	// to every project-scoped stats query, i.e. silent under-counting.
-	var projectPath, backend, agentID, clawbenchSessionID string
+	var projectID int64
+	var backend, agentID, clawbenchSessionID string
 	if err := dbRead.QueryRow(
-		`SELECT h.project_path, h.backend, h.session_id, COALESCE(s.agent_id, '')
+		`SELECT h.project_id, h.backend, h.session_id, COALESCE(s.agent_id, '')
 		 FROM chat_history h
 		 LEFT JOIN chat_sessions s ON s.id = h.session_id
 		 WHERE h.id = ?`, messageID,
-	).Scan(&projectPath, &backend, &clawbenchSessionID, &agentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	).Scan(&projectID, &backend, &clawbenchSessionID, &agentID); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("resolve metadata attribution for message %d: %w", messageID, err)
 	}
 	_, err := WriteExec(
@@ -1666,7 +1730,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 			 usage_by_category, session_id,
 			 request_id, trace_id, agent_message_id, message_request_id, request_model_name,
 			 response_model_id, finish_reason, outcome, agent_phase,
-			 project_path, backend, agent_id, clawbench_session_id)
+			 project_id, backend, agent_id, clawbench_session_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		messageID, meta.Mode, meta.ThinkingEffort, meta.Transport, meta.Model,
 		meta.InputTokens, meta.OutputTokens, meta.DurationMs, meta.WallMs,
@@ -1676,7 +1740,7 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 		categoryJSON, meta.SessionID,
 		meta.RequestID, meta.TraceID, meta.MessageID, meta.MessageRequestID, meta.RequestModelName,
 		meta.ResponseModelID, meta.FinishReason, meta.Outcome, meta.AgentPhase,
-		projectPath, backend, agentID, clawbenchSessionID,
+		projectID, backend, agentID, clawbenchSessionID,
 	)
 	return err
 }
@@ -1686,10 +1750,14 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 // (caller should fall back to agent defaults).
 // Used by tasks to respect the user's global model preference.
 func GetLatestUserModel(agentID, projectPath string) string {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return ""
+	}
 	var modelID string
 	err := dbRead.QueryRow(
-		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_path = ? AND archived = 0 AND model != '' ORDER BY updated_at DESC LIMIT 1",
-		agentID, projectPath,
+		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' ORDER BY updated_at DESC LIMIT 1",
+		agentID, projectID,
 	).Scan(&modelID)
 	if err != nil {
 		return ""
@@ -1731,12 +1799,16 @@ func createSession(projectPath, backend, title, agentID, modelName, agentSource,
 	if sessionID == "" {
 		return "", fmt.Errorf("failed to generate unique session ID after 10 attempts")
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return "", idErr
+	}
 	// sort_order is left at its default 0: a new session ties the current top
 	// row and wins on the created_at DESC tiebreak, so it lands at the top of
 	// the manual order (#492) without disturbing the rows the user dragged.
 	_, err := WriteExec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		sessionID, projectPath, backend, title, agentID, agentSource, modelName, sessionType, "",
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		sessionID, projectID, backend, title, agentID, agentSource, modelName, sessionType, "",
 	)
 	if err != nil {
 		return "", err
@@ -1791,8 +1863,8 @@ func markSessionTitlePlaceholder(sessionID string) {
 // creation does not depend on the auto_approve column being present in minimal
 // schemas. Failure is non-fatal: the session exists, only the flag is missing.
 func applyAgentAutoApproveDefault(sessionID, agentID string) {
-	agent, ok := model.Agents[agentID]
-	if !ok || !agent.AutoApprove {
+	agent := model.GetAgent(agentID)
+	if agent == nil || !agent.AutoApprove {
 		return
 	}
 	if _, err := WriteExec("UPDATE chat_sessions SET auto_approve = 1 WHERE id = ?", sessionID); err != nil {
@@ -1868,6 +1940,10 @@ func ReorderSessions(projectPath string, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
 	// One statement, so a crash cannot leave the project half-renumbered. The
 	// `posted` CTE carries the target order; `rest` numbers the remaining
 	// visible rows by their current order, starting at len(ids). Both the CTE
@@ -1882,20 +1958,20 @@ func ReorderSessions(projectPath string, ids []string) error {
 		posted.WriteString("(?,?)")
 		args = append(args, id, i)
 	}
-	args = append(args, projectPath, len(ids), projectPath)
+	args = append(args, projectID, len(ids), projectID)
 
 	query := `WITH posted(id, ord) AS (VALUES ` + posted.String() + `),
 		rest AS (
 			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.created_at DESC, s.id DESC) - 1 AS rn
 			FROM chat_sessions s
-			WHERE s.project_path = ? AND s.session_type = 'chat' AND s.pinned = 0 AND s.archived = 0
+			WHERE s.project_id = ? AND s.session_type = 'chat' AND s.pinned = 0 AND s.archived = 0
 			  AND s.id NOT IN (SELECT id FROM posted)
 		)
 		UPDATE chat_sessions SET sort_order = COALESCE(
 			(SELECT ord FROM posted WHERE posted.id = chat_sessions.id),
 			(SELECT ? + rn FROM rest WHERE rest.rid = chat_sessions.id)
 		)
-		WHERE project_path = ? AND session_type = 'chat' AND pinned = 0 AND archived = 0`
+		WHERE project_id = ? AND session_type = 'chat' AND pinned = 0 AND archived = 0`
 
 	_, err := WriteExec(query, args...)
 	return err
@@ -1911,15 +1987,23 @@ func ArchiveSession(projectPath, backend, sessionID string) error {
 	// backend param kept for API compatibility but not used in WHERE —
 	// session ID (UUID) is already unique; filtering by backend could cause
 	// silent no-op when the client sends a wrong/empty backend value.
-	_, err := WriteExec("UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE project_path = ? AND id = ?", projectPath, sessionID)
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
+	_, err := WriteExec("UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE project_id = ? AND id = ?", projectID, sessionID)
 	return err
 }
 
 // GetSessionCount returns the number of chat sessions for a given project.
 // Only counts sessions with session_type='chat' (excludes scheduled sessions).
 func GetSessionCount(projectPath string) (int, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
 	var count int
-	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_path = ? AND archived = 0 AND session_type = 'chat'", projectPath).Scan(&count)
+	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'", projectID).Scan(&count)
 	return count, err
 }
 
@@ -1934,11 +2018,15 @@ func GetSessionCount(projectPath string) (int, error) {
 // baseTitle is the localized base auto-title (e.g. "新会话"). A session whose
 // title matches "baseTitle N" is treated as unnamed with number N.
 func NextSessionNumber(projectPath, baseTitle string) (int, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
 	prefix := baseTitle + " "
 	rows, err := dbRead.Query(
 		`SELECT title FROM chat_sessions
-		 WHERE project_path = ? AND archived = 0 AND session_type = 'chat'`,
-		projectPath,
+		 WHERE project_id = ? AND archived = 0 AND session_type = 'chat'`,
+		projectID,
 	)
 	if err != nil {
 		return 0, err
@@ -2088,13 +2176,18 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter,
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
 		sessionType = "scheduled"
 	}
-	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at, s.session_type
+	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
+		LEFT JOIN projects p ON p.id = s.project_id
 		WHERE s.session_type = ?`
 	args := []interface{}{sessionType}
 	if projectPath != "" {
-		query += " AND s.project_path = ?"
-		args = append(args, projectPath)
+		projectID, idErr := ProjectIDForPath(projectPath)
+		if idErr != nil {
+			return nil, false, idErr
+		}
+		query += " AND s.project_id = ?"
+		args = append(args, projectID)
 	}
 	switch NormalizeSessionArchiveFilter(archiveFilter) {
 	case SessionArchiveFilterActive:
@@ -2198,13 +2291,18 @@ func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiv
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
 		sessionType = "scheduled"
 	}
-	query := `SELECT s.id, s.title, s.backend, s.project_path, s.archived, s.created_at, s.session_type
+	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
+		LEFT JOIN projects p ON p.id = s.project_id
 		WHERE s.session_type = ?`
 	args := []interface{}{sessionType}
 	if projectPath != "" {
-		query += " AND s.project_path = ?"
-		args = append(args, projectPath)
+		projectID, idErr := ProjectIDForPath(projectPath)
+		if idErr != nil {
+			return nil, idErr
+		}
+		query += " AND s.project_id = ?"
+		args = append(args, projectID)
 	}
 	switch NormalizeSessionArchiveFilter(archiveFilter) {
 	case SessionArchiveFilterActive:
@@ -2665,8 +2763,10 @@ func GetSessionInfo(sessionID string) (*SessionInfo, error) {
 func GetSessionFullInfo(sessionID string) *SessionInfo {
 	info := &SessionInfo{}
 	err := dbRead.QueryRow(
-		`SELECT backend, project_path, title, agent_id, model, COALESCE(transport, ''), auto_approve
-		 FROM chat_sessions WHERE id = ? AND archived = 0`,
+		`SELECT s.backend, COALESCE(p.path, ''), s.title, s.agent_id, s.model, COALESCE(s.transport, ''), s.auto_approve
+		   FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ? AND s.archived = 0`,
 		sessionID,
 	).Scan(&info.Backend, &info.ProjectPath, &info.Title, &info.AgentID, &info.Model, &info.Transport, &info.AutoApprove)
 	if err != nil {
@@ -2686,7 +2786,9 @@ func GetSessionFullInfo(sessionID string) *SessionInfo {
 func GetSessionProjectPathAny(sessionID string) (string, bool) {
 	var projectPath string
 	err := dbRead.QueryRow(
-		`SELECT project_path FROM chat_sessions WHERE id = ?`, sessionID,
+		`SELECT COALESCE(p.path, '') FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ?`, sessionID,
 	).Scan(&projectPath)
 	if err != nil {
 		return "", false
@@ -2718,13 +2820,17 @@ func GetAssistantMessageCount(sessionID string) int {
 // Uses subquery with ORDER BY id DESC LIMIT 1 to target only the most recent streaming=1 row,
 // preventing accidental updates to stale streaming rows left by failed finalizations.
 func UpdateStreamingMessage(projectPath, backend, sessionID, content string) error {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
 	_, err := WriteExec(
 		`UPDATE chat_history SET content = ? WHERE id = (
 			SELECT id FROM chat_history
-			WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
+			WHERE project_id = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
 			ORDER BY id DESC LIMIT 1
 		)`,
-		content, projectPath, backend, sessionID,
+		content, projectID, backend, sessionID,
 	)
 	return err
 }
@@ -2829,13 +2935,17 @@ func finalizeStreamingMessage(projectPath, backend, sessionID, content string, s
 	if !stampCompletedAt {
 		completedAtSet = "completed_at = NULL"
 	}
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
 	result, err := WriteExec(
 		`UPDATE chat_history SET content = ?, streaming = 0, indexed = 0, `+completedAtSet+` WHERE id = (
 			SELECT id FROM chat_history
-			WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
+			WHERE project_id = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 1
 			ORDER BY id DESC LIMIT 1
 		)`,
-		content, projectPath, backend, sessionID,
+		content, projectID, backend, sessionID,
 	)
 	if err != nil {
 		return 0, err
@@ -2847,8 +2957,8 @@ func finalizeStreamingMessage(projectPath, backend, sessionID, content string, s
 	// Look up the message ID for the just-finalized row
 	var msgID int64
 	err = dbRead.QueryRow(
-		"SELECT id FROM chat_history WHERE project_path = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
-		projectPath, backend, sessionID,
+		"SELECT id FROM chat_history WHERE project_id = ? AND backend = ? AND session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
+		projectID, backend, sessionID,
 	).Scan(&msgID)
 	if err != nil {
 		return 0, nil //nolint:nilerr // message finalized but ID lookup failed — non-fatal
@@ -3015,7 +3125,11 @@ type UnindexedMessage struct {
 // Returns up to limit messages ordered by creation time DESC (newest first).
 func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 	rows, err := dbRead.Query(
-		"SELECT id, content, role, session_id, project_path, backend, created_at FROM chat_history WHERE indexed = 0 AND streaming = 0 ORDER BY created_at DESC LIMIT ?",
+		`SELECT h.id, h.content, h.role, h.session_id, COALESCE(p.path, ''), h.backend, h.created_at
+		   FROM chat_history h
+		   LEFT JOIN projects p ON p.id = h.project_id
+		  WHERE h.indexed = 0 AND h.streaming = 0
+		  ORDER BY h.created_at DESC LIMIT ?`,
 		limit,
 	)
 	if err != nil {
@@ -3177,6 +3291,9 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 	// same cleanup; this retention path was missed).
 	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id IN ("+placeholders+")", args...)
 
+	// Delete /btw side questions for purged sessions (no FK to chat_sessions).
+	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id IN ("+placeholders+")", args...)
+
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)
 	if err != nil {
@@ -3224,6 +3341,9 @@ func HardDeleteSession(sessionID string) error {
 	// chat_sessions, so without this the rows would linger forever. The tag
 	// definitions themselves are preserved (other sessions may use them).
 	_, _ = tx.Exec("DELETE FROM session_tag_links WHERE session_id = ?", sessionID)
+	// /btw side questions belong to the conversation they were asked about;
+	// without this they would linger as orphan markers.
+	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err
@@ -3251,6 +3371,12 @@ type ReplayMessage struct {
 // history cannot double-count; keeping the ledger preserves the real token/cost
 // consumed by the messages being replaced.
 func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []ReplayMessage) (int, error) {
+	// Resolved before WriteBegin: ProjectIDForPath writes on a cache miss, and
+	// the write mutex is held for the whole transaction below.
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
 	tx, err := WriteBegin()
 	if err != nil {
 		return 0, err
@@ -3262,14 +3388,17 @@ func ReplaceSessionHistory(sessionID, projectPath, backend string, messages []Re
 	_, _ = tx.Exec("DELETE FROM chat_thinking WHERE session_id = ?", sessionID)
 	_, _ = tx.Exec("DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
 	_, _ = tx.Exec("DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE session_id = ?)", sessionID)
+	// The replayed history replaces the whole conversation, so the /btw markers
+	// anchored into the old message ids no longer point at anything.
+	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id = ?", sessionID)
 	if _, err := tx.Exec("DELETE FROM chat_history WHERE session_id = ?", sessionID); err != nil {
 		return 0, err
 	}
 
 	for _, m := range messages {
 		res, err := tx.Exec(
-			"INSERT INTO chat_history (project_path, backend, session_id, role, content, streaming, indexed, external_message_id) VALUES (?, ?, ?, ?, ?, 0, 0, ?)",
-			projectPath, backend, sessionID, m.Role, m.Content, m.ExtMsgID,
+			"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, indexed, external_message_id) VALUES (?, ?, ?, ?, ?, 0, 0, ?)",
+			projectID, backend, sessionID, m.Role, m.Content, m.ExtMsgID,
 		)
 		if err != nil {
 			return 0, err

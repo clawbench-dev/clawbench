@@ -62,17 +62,25 @@ func normalizeSessionTagScope(scope string) string {
 // ListSessionTags returns the tag candidates selectable in projectPath:
 // every global tag plus the project tags belonging to projectPath.
 //
-// Uniqueness is (name, project_path), so a project tag named "bug" and a
+// Uniqueness is (name, project_id), so a project tag named "bug" and a
 // global tag named "bug" are two distinct rows. Only the global one is visible
 // outside its own project, and inside that project the global definition wins
 // (de-duplicated by name below) so a session never shows the same label twice.
+//
+// The path is resolved back out through projects so the wire type keeps carrying
+// projectPath; a global tag (project_id = 0) has no projects row and reads as ”.
 func ListSessionTags(projectPath string) ([]SessionTag, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
 	rows, err := dbRead.Query(`
-		SELECT t.name, t.scope, t.project_path,
+		SELECT t.name, t.scope, COALESCE(p.path, ''),
 		       (SELECT COUNT(*) FROM session_tag_links l WHERE l.tag_id = t.id) AS cnt
 		FROM session_tags t
-		WHERE t.scope = 'global' OR t.project_path = ?
-		ORDER BY t.name COLLATE NOCASE, t.scope ASC`, projectPath)
+		LEFT JOIN projects p ON p.id = t.project_id
+		WHERE t.scope = 'global' OR t.project_id = ?
+		ORDER BY t.name COLLATE NOCASE, t.scope ASC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -151,9 +159,10 @@ func GetTagsForSessions(sessionIDs []string) (map[string][]SessionTag, error) {
 	}
 
 	query := fmt.Sprintf(`
-		SELECT l.session_id, t.name, t.scope, t.project_path
+		SELECT l.session_id, t.name, t.scope, COALESCE(p.path, '')
 		FROM session_tag_links l
 		JOIN session_tags t ON t.id = l.tag_id
+		LEFT JOIN projects p ON p.id = t.project_id
 		WHERE l.session_id IN (%s)
 		ORDER BY t.name COLLATE NOCASE`, placeholders)
 	rows, err := dbRead.Query(query, args...)
@@ -185,6 +194,12 @@ func GetTagsForSessions(sessionIDs []string) (map[string][]SessionTag, error) {
 // Runs in a single write transaction: a partially-applied tag set would leave
 // the UI showing tags the user removed.
 func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
+	// Resolved before WriteBegin: the tag helpers below run inside the write
+	// transaction and must not resolve (that would re-enter the write mutex).
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
 	// Normalize + de-duplicate by name, preserving first-seen order so the
 	// caller's ordering is stable for the returned list.
 	names := make([]string, 0, len(refs))
@@ -223,7 +238,7 @@ func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
 	}
 
 	for _, name := range names {
-		tagID, err := resolveOrCreateSessionTag(tx, existingIDs, name, scopeByName[name], projectPath)
+		tagID, err := resolveOrCreateSessionTag(tx, existingIDs, name, scopeByName[name], projectID)
 		if err != nil {
 			return err
 		}
@@ -277,14 +292,16 @@ func sessionTagIDsByName(tx *sql.Tx, sessionID string) (map[string]int64, error)
 //  3. this project's own definition,
 //  4. create a new row with the caller's requested scope.
 //
-// An existing definition always keeps its own scope/project_path; the caller's
+// An existing definition always keeps its own scope/project_id; the caller's
 // requested scope only applies to a brand-new definition.
-func resolveOrCreateSessionTag(tx *sql.Tx, existingIDs map[string]int64, name, scope, projectPath string) (int64, error) {
+//
+// Takes a project ID, not a path: it runs inside the caller's write transaction.
+func resolveOrCreateSessionTag(tx *sql.Tx, existingIDs map[string]int64, name, scope string, projectID int64) (int64, error) {
 	if id, ok := existingIDs[name]; ok {
 		return id, nil
 	}
 
-	tagID, err := findSessionTagID(tx, name, projectPath)
+	tagID, err := findSessionTagID(tx, name, projectID)
 	if err == nil {
 		return tagID, nil
 	}
@@ -292,8 +309,8 @@ func resolveOrCreateSessionTag(tx *sql.Tx, existingIDs map[string]int64, name, s
 		return 0, fmt.Errorf("failed to look up session tag %q: %w", name, err)
 	}
 
-	owner := projectPathForScope(scope, projectPath)
-	res, err := tx.Exec(`INSERT INTO session_tags (name, scope, project_path) VALUES (?, ?, ?)`,
+	owner := projectIDForScope(scope, projectID)
+	res, err := tx.Exec(`INSERT INTO session_tags (name, scope, project_id) VALUES (?, ?, ?)`,
 		name, scope, owner)
 	if err != nil {
 		return 0, fmt.Errorf("failed to create session tag %q: %w", name, err)
@@ -301,13 +318,13 @@ func resolveOrCreateSessionTag(tx *sql.Tx, existingIDs map[string]int64, name, s
 	return res.LastInsertId()
 }
 
-// findSessionTagID looks up the definition a session in projectPath would see
+// findSessionTagID looks up the definition a session in projectID would see
 // for `name`: the global one first, then the project's own. Returns
 // sql.ErrNoRows when neither exists.
 //
 // Comparisons use COLLATE NOCASE so a mixed-case row (written before names were
 // folded to lowercase) is still found rather than duplicated.
-func findSessionTagID(tx *sql.Tx, name, projectPath string) (int64, error) {
+func findSessionTagID(tx *sql.Tx, name string, projectID int64) (int64, error) {
 	var tagID int64
 	err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND scope = 'global'`, name).Scan(&tagID)
 	if err == nil {
@@ -316,8 +333,8 @@ func findSessionTagID(tx *sql.Tx, name, projectPath string) (int64, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
-	err = tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND project_path = ?`,
-		name, projectPath).Scan(&tagID)
+	err = tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND project_id = ?`,
+		name, projectID).Scan(&tagID)
 	if err != nil {
 		return 0, err
 	}
@@ -335,7 +352,7 @@ func findSessionTagID(tx *sql.Tx, name, projectPath string) (int64, error) {
 // When scope is 'project' only this project's own row is targeted, never a
 // global one the user did not select. This is stricter than the fallback chain
 // so a delete can never silently destroy the wrong project's label.
-func findSessionTagIDForDelete(tx *sql.Tx, name, projectPath, scope string) (int64, error) {
+func findSessionTagIDForDelete(tx *sql.Tx, name string, projectID int64, scope string) (int64, error) {
 	switch scope {
 	case SessionTagScopeGlobal:
 		var tagID int64
@@ -343,22 +360,22 @@ func findSessionTagIDForDelete(tx *sql.Tx, name, projectPath, scope string) (int
 		return tagID, err
 	case SessionTagScopeProject:
 		var tagID int64
-		err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND scope = 'project' AND project_path = ?`,
-			name, projectPath).Scan(&tagID)
+		err := tx.QueryRow(`SELECT id FROM session_tags WHERE name = ? COLLATE NOCASE AND scope = 'project' AND project_id = ?`,
+			name, projectID).Scan(&tagID)
 		return tagID, err
 	default:
-		return findSessionTagID(tx, name, projectPath)
+		return findSessionTagID(tx, name, projectID)
 	}
 }
 
-// projectPathForScope stores the owning project only for project-scoped tags;
-// global tags carry an empty path so they are never matched by the
-// project_path filter in ListSessionTags.
-func projectPathForScope(scope, projectPath string) string {
+// projectIDForScope stores the owning project only for project-scoped tags;
+// global tags carry the 0 sentinel so they are never matched by the
+// project_id filter in ListSessionTags.
+func projectIDForScope(scope string, projectID int64) int64 {
 	if scope == SessionTagScopeGlobal {
-		return ""
+		return GlobalScopeProjectID
 	}
-	return projectPath
+	return projectID
 }
 
 // DeleteSessionTag removes a tag definition and every link to it, i.e. the tag
@@ -380,6 +397,12 @@ func DeleteSessionTag(name, projectPath, scope string) error {
 	if normalized == "" {
 		return fmt.Errorf("tag name is required")
 	}
+	// Resolved before WriteBegin: findSessionTagIDForDelete runs inside the
+	// transaction and must not resolve.
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
 
 	tx, err := WriteBegin()
 	if err != nil {
@@ -388,7 +411,7 @@ func DeleteSessionTag(name, projectPath, scope string) error {
 	defer WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	tagID, err := findSessionTagIDForDelete(tx, normalized, projectPath, scope)
+	tagID, err := findSessionTagIDForDelete(tx, normalized, projectID, scope)
 	if errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("session tag %q not found", normalized)
 	}

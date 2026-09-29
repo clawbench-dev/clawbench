@@ -22,10 +22,10 @@ import (
 // schedulerScriptSchema is the schema needed for the script-phase executeTask
 // tests. It mirrors schedulerExecSchema but is declared here so the tests can
 // evolve independently.
-const schedulerScriptSchema = `
+const schedulerScriptSchema = ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
 	content TEXT NOT NULL,
 	files TEXT,
@@ -40,7 +40,7 @@ CREATE TABLE IF NOT EXISTS chat_history (
 );
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	backend TEXT NOT NULL,
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
@@ -57,11 +57,11 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	last_read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	UNIQUE(project_path, backend, id)
+	UNIQUE(backend, id)
 );
 CREATE TABLE IF NOT EXISTS scheduled_tasks (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	project_path TEXT NOT NULL,
+	project_id INTEGER NOT NULL,
 	name TEXT NOT NULL,
 	cron_expr TEXT NOT NULL,
 	agent_id TEXT NOT NULL,
@@ -91,11 +91,15 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	summary TEXT,
 	event_url TEXT NOT NULL DEFAULT '',
 	event_summary TEXT NOT NULL DEFAULT '',
+	script_exit_code INTEGER,
+	script_stdout TEXT NOT NULL DEFAULT '',
+	script_stderr TEXT NOT NULL DEFAULT '',
+	script_duration_ms INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 CREATE INDEX IF NOT EXISTS idx_executions_session ON task_executions(session_id);
 `
 
@@ -154,14 +158,14 @@ func registerScriptAgent(t *testing.T, backend string) {
 	t.Cleanup(func() { model.Agents = orig })
 }
 
-// TestExecuteTask_ScriptSkip_NoSessionNoEvent is the core skip-path guard: a
-// script that exits 0 with no output must not create a session, must not call
-// the AI, must record a `skipped` execution with an empty session_id, must
-// advance run_count/next_run_at, and must emit nothing at all.
-func TestExecuteTask_ScriptSkip_NoSessionNoEvent(t *testing.T) {
+// TestExecuteTask_ScriptGateClosed_NoSessionNoEvent is the core gate guard: a
+// script that exits non-zero must not create a session, must not call the AI,
+// must record a `skipped` execution with an empty session_id, must persist the
+// script result, must advance run_count/next_run_at, and must emit nothing.
+func TestExecuteTask_ScriptGateClosed_NoSessionNoEvent(t *testing.T) {
 	skipOnWindows(t)
 	setupSchedulerScriptDB(t)
-	// No AI backend registered: the skip path must not need one.
+	// No AI backend registered: the closed-gate path must not need one.
 
 	origAgents := model.Agents
 	// The agent must exist (executeTask looks it up before the script phase),
@@ -184,12 +188,12 @@ func TestExecuteTask_ScriptSkip_NoSessionNoEvent(t *testing.T) {
 
 	task := &model.ScheduledTask{
 		ProjectPath: projectPath,
-		Name:        "Skip Task",
+		Name:        "Gated Task",
 		CronExpr:    "0 * * * *",
 		AgentID:     "script-agent",
 		Prompt:      "do work",
 		RepeatMode:  "unlimited",
-		Script:      "true", // exits 0, no output
+		Script:      "echo 'nothing changed'; exit 1", // non-zero closes the gate
 		Status:      "active",
 	}
 	require.NoError(t, s.AddTask(task))
@@ -205,43 +209,100 @@ func TestExecuteTask_ScriptSkip_NoSessionNoEvent(t *testing.T) {
 	require.NotNil(t, before.NextRunAt, "a cron task must have a next_run_at after AddTask")
 
 	var writeMu sync.Mutex
-	sub := mgr.Subscribe(nil, &writeMu, "script-skip-client", "")
+	sub := mgr.Subscribe(nil, &writeMu, "script-gate-client", "")
 
 	s.executeTask(task, task.ProjectPath, "auto", nil)
 
 	// No session was created.
 	var sessionCount int
 	require.NoError(t, dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_path = ?", task.ProjectPath).Scan(&sessionCount))
-	assert.Zero(t, sessionCount, "a skipped run must not create a chat session")
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ?", ProjectIDForTest(t, task.ProjectPath)).Scan(&sessionCount))
+	assert.Zero(t, sessionCount, "a gate-closed run must not create a chat session")
 
 	// No chat message was written.
 	var msgCount int
 	require.NoError(t, dbRead.QueryRow("SELECT COUNT(*) FROM chat_history").Scan(&msgCount))
-	assert.Zero(t, msgCount, "a skipped run must not write any chat message")
+	assert.Zero(t, msgCount, "a gate-closed run must not write any chat message")
 
-	// An execution row with status skipped and an empty session_id exists.
-	var status, sessionID string
+	// An execution row with status skipped and an empty session_id exists, and
+	// carries the script's result so the UI can show why the gate closed.
+	var status, sessionID, scriptStdout string
+	var scriptExit int
 	require.NoError(t, dbRead.QueryRow(
-		"SELECT status, session_id FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
-		task.ID).Scan(&status, &sessionID))
+		"SELECT status, session_id, script_exit_code, script_stdout FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+		task.ID).Scan(&status, &sessionID, &scriptExit, &scriptStdout))
 	assert.Equal(t, "skipped", status)
-	assert.Empty(t, sessionID, "a skipped run has no session")
+	assert.Empty(t, sessionID, "a gate-closed run has no session")
+	assert.Equal(t, 1, scriptExit, "the script exit code must be persisted")
+	assert.Contains(t, scriptStdout, "nothing changed", "the script output must be persisted")
 
 	// run_count incremented and next_run_at advanced.
 	after, err := GetTaskByID(task.ID)
 	require.NoError(t, err)
-	assert.Equal(t, before.RunCount+1, after.RunCount, "run_count must be incremented by a skip")
+	assert.Equal(t, before.RunCount+1, after.RunCount, "run_count must be incremented by a gate-closed run")
 	require.NotNil(t, after.NextRunAt)
 	assert.True(t, after.NextRunAt.After(*before.NextRunAt),
 		"next_run_at must advance (before=%v after=%v)", before.NextRunAt, after.NextRunAt)
 
 	// No task_update event was emitted.
-	assert.Empty(t, sub.GetBufferedEvents(), "a skipped run must emit no task_update event")
+	assert.Empty(t, sub.GetBufferedEvents(), "a gate-closed run must emit no task_update event")
 
 	// runningCount stays 0 for the task.
 	counts := s.GetRunningCounts()
 	assert.Equal(t, 0, counts[task.ID], "a script-phase run must not count as running")
+}
+
+// TestExecuteTask_ScriptGateOpen_RunsAI is the converse guard: exit 0 opens
+// the gate and the AI turn runs, with the script result persisted on the
+// AI-phase execution row.
+func TestExecuteTask_ScriptGateOpen_RunsAI(t *testing.T) {
+	skipOnWindows(t)
+	setupSchedulerScriptDB(t)
+
+	gate := registerGatedBackend(t, "test-script-gate-open")
+	registerScriptAgent(t, "test-script-gate-open")
+
+	mgr := ws.NewManagerForTest()
+	ws.SetManagerForTest(mgr)
+	t.Cleanup(func() { ws.SetManagerForTest(nil) })
+
+	s := NewScheduler()
+	t.Cleanup(s.Stop)
+
+	task := &model.ScheduledTask{
+		ProjectPath: t.TempDir(),
+		Name:        "Open Gate",
+		CronExpr:    "0 * * * *",
+		AgentID:     "script-agent",
+		Prompt:      "run the job",
+		RepeatMode:  "unlimited",
+		Script:      "echo changed",
+		Status:      "active",
+	}
+	require.NoError(t, s.AddTask(task))
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.executeTask(task, task.ProjectPath, "auto", nil)
+	}()
+
+	// The AI turn must have started (a session exists) while it blocks on the gate.
+	require.Eventually(t, func() bool {
+		var n int
+		_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_sessions").Scan(&n)
+		return n > 0
+	}, 2*time.Second, 10*time.Millisecond, "exit 0 must open the gate and create a session")
+
+	close(gate)
+	<-done
+
+	var status string
+	var scriptExit int
+	require.NoError(t, dbRead.QueryRow(
+		"SELECT status, script_exit_code FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
+		task.ID).Scan(&status, &scriptExit))
+	assert.Equal(t, 0, scriptExit, "the AI-phase row must carry the script's exit code")
 }
 
 // TestExecuteTask_ScriptPhase_VisibleButNotCounted asserts the design point:
@@ -450,10 +511,10 @@ func TestExecuteTask_ScriptPhase_CancelWithoutExecutionRow(t *testing.T) {
 	assert.Empty(t, cancelled.ExecutionID, "no execution row was written, so no id may be advertised")
 }
 
-// TestExecuteTask_ScriptOutput_InjectedIntoPrompt asserts that a script which
-// prints something has its output injected into the prompt, visible in the
-// persisted user chat message.
-func TestExecuteTask_ScriptOutput_InjectedIntoPrompt(t *testing.T) {
+// TestExecuteTask_ScriptTemplate_InjectedIntoPrompt asserts that the prompt's
+// template variables are substituted with the gating script's result, and that
+// the substituted prompt is what gets persisted as the user chat message.
+func TestExecuteTask_ScriptTemplate_InjectedIntoPrompt(t *testing.T) {
 	skipOnWindows(t)
 	setupSchedulerScriptDB(t)
 
@@ -474,7 +535,7 @@ func TestExecuteTask_ScriptOutput_InjectedIntoPrompt(t *testing.T) {
 		Name:        "Inject Task",
 		CronExpr:    "0 * * * *",
 		AgentID:     "script-agent",
-		Prompt:      "summarize the findings",
+		Prompt:      "script said {{stdout}} and exited {{code}}; then summarize",
 		RepeatMode:  "unlimited",
 		Script:      "echo script-ran-here",
 		Status:      "active",
@@ -498,56 +559,61 @@ func TestExecuteTask_ScriptOutput_InjectedIntoPrompt(t *testing.T) {
 	close(gate)
 	<-done
 
-	assert.Contains(t, content, "script-ran-here", "the script output must be injected into the prompt")
-	assert.Contains(t, content, "<<<TASK_SCRIPT_OUTPUT>>>", "the injected block must be delimited")
-	assert.Contains(t, content, "summarize the findings", "the task prompt must still follow the script block")
-	// Script output precedes the task prompt.
-	assert.Less(t, strings.Index(content, "script-ran-here"), strings.Index(content, "summarize the findings"),
-		"the script block must come before the task prompt")
+	assert.Contains(t, content, "script-ran-here", "{{stdout}} must be substituted")
+	assert.Contains(t, content, "exited 0", "{{code}} must be substituted")
+	assert.NotContains(t, content, "{{stdout}}", "the variable must not survive substitution")
+	assert.NotContains(t, content, "{{code}}", "the variable must not survive substitution")
+	assert.Contains(t, content, "then summarize", "the task prompt must still follow the substitution")
 }
 
-// TestBuildScriptPromptBlock_Outcomes covers the prompt-block builder in
-// isolation, so the failure/timeout branches need no real backend.
-func TestBuildScriptPromptBlock_Outcomes(t *testing.T) {
-	produced := buildScriptPromptBlock(ScriptResult{
-		Outcome: ScriptProduced, Stdout: "hello\n", Stderr: "warn\n",
-	})
-	assert.Contains(t, produced, "hello")
-	assert.Contains(t, produced, "warn")
-	assert.Contains(t, produced, "<<<TASK_SCRIPT_OUTPUT>>>")
-	assert.Contains(t, produced, "<<<END_TASK_SCRIPT_OUTPUT>>>")
+// TestRenderScriptPrompt covers the template renderer in isolation.
+func TestRenderScriptPrompt(t *testing.T) {
+	res := ScriptResult{
+		Outcome: ScriptSucceeded, ExitCode: 0,
+		Stdout: "out-line\n", Stderr: "err-line\n",
+	}
 
-	failed := buildScriptPromptBlock(ScriptResult{
-		Outcome: ScriptFailed, Stdout: "partial\n", ExitCode: 2, Err: assertErr("exit status 2"),
-	})
-	assert.Contains(t, failed, "failed")
-	assert.Contains(t, failed, "partial")
+	// All four variables are substituted.
+	got := renderScriptPrompt("code={{code}} out={{stdout}} err={{stderr}} all={{output}}", res)
+	assert.Contains(t, got, "code=0")
+	assert.Contains(t, got, "out=out-line")
+	assert.Contains(t, got, "err=err-line")
+	assert.Contains(t, got, "out-line")
+	assert.Contains(t, got, "err-line")
+	assert.NotContains(t, got, "{{", "no variable may survive")
 
-	timedOut := buildScriptPromptBlock(ScriptResult{Outcome: ScriptTimedOut, Err: assertErr("deadline exceeded")})
-	assert.Contains(t, timedOut, "timed out")
+	// {{output}} merges both streams, labeling stderr.
+	outOnly := renderScriptPrompt("{{output}}", res)
+	assert.Contains(t, outOnly, "out-line")
+	assert.Contains(t, outOnly, "err-line")
+	assert.Contains(t, outOnly, "--- stderr ---")
+
+	// A clean stdout-only run has no stderr label.
+	clean := renderScriptPrompt("{{output}}", ScriptResult{ExitCode: 0, Stdout: "only\n"})
+	assert.Contains(t, clean, "only")
+	assert.NotContains(t, clean, "stderr")
+
+	// A non-zero exit code is available to the prompt.
+	failed := renderScriptPrompt("exit={{code}}", ScriptResult{ExitCode: 2})
+	assert.Contains(t, failed, "exit=2")
+
+	// A prompt with no variables is returned unchanged.
+	assert.Equal(t, "no vars here", renderScriptPrompt("no vars here", res))
 
 	// Output beyond the cap is truncated with a marker.
-	big := buildScriptPromptBlock(ScriptResult{
-		Outcome: ScriptProduced, Stdout: string(make([]byte, scriptOutputCap+100)),
-		StdoutTruncated: true,
+	big := renderScriptPrompt("{{stdout}}", ScriptResult{
+		ExitCode: 0, Stdout: strings.Repeat("x", scriptOutputCap+100), StdoutTruncated: true,
 	})
 	assert.Contains(t, big, "output truncated")
 
 	// A stream that reached exactly the cap is NOT truncated, so it must not
 	// carry the marker: the flag comes from cappedBuffer, not from the length,
 	// which cannot distinguish "cut" from "ended exactly here".
-	atCap := buildScriptPromptBlock(ScriptResult{
-		Outcome: ScriptProduced, Stdout: strings.Repeat("x", scriptOutputCap),
+	atCap := renderScriptPrompt("{{stdout}}", ScriptResult{
+		ExitCode: 0, Stdout: strings.Repeat("x", scriptOutputCap),
 	})
 	assert.NotContains(t, atCap, "output truncated",
 		"a stream that ended exactly at the cap was not cut and must not be marked")
-
-	// The truncation flag alone drives the marker, even for a short stream
-	// (defensive: the caller is authoritative about what was dropped).
-	flagged := buildScriptPromptBlock(ScriptResult{
-		Outcome: ScriptProduced, Stdout: "short", StdoutTruncated: true,
-	})
-	assert.Contains(t, flagged, "output truncated")
 }
 
 // TestExecuteTask_EventTask_IgnoresScript asserts the guard: an event task
@@ -573,8 +639,10 @@ func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
 		RepeatMode:  "unlimited",
 		TriggerMode: "event",
 		EventTypes:  "issue.opened",
-		// A script is stored but must be ignored for event tasks.
-		Script: "true",
+		// A script is stored but must be ignored for event tasks. It exits
+		// non-zero, so if it ever ran it would close the gate and write a
+		// `skipped` row — the assertion below is then meaningful.
+		Script: "exit 1",
 		Status: "active",
 	}
 	require.NoError(t, s.AddTask(task))
@@ -588,11 +656,6 @@ func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
 		"SELECT COUNT(*) FROM task_executions WHERE task_id = ? AND status = 'skipped'", task.ID).Scan(&skipped))
 	assert.Zero(t, skipped, "an event task must not run the script")
 }
-
-// assertErr is a tiny error helper so tests do not need fmt.
-type assertErr string
-
-func (e assertErr) Error() string { return string(e) }
 
 // TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun guards the cancel
 // bookkeeping: cancelling during the script phase aborts a run that never
@@ -659,11 +722,11 @@ func TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun(t *testing.T) {
 	assert.Equal(t, "cancelled", status)
 }
 
-// TestExecuteTask_ScriptSkip_StillConsumesRun is the converse guard: a skip is
-// a completed decision ("nothing to do"), so it must keep advancing the
-// schedule — including completing a `once` task, which has then legitimately
-// run its course.
-func TestExecuteTask_ScriptSkip_StillConsumesRun(t *testing.T) {
+// TestExecuteTask_ScriptGateClosed_StillConsumesRun is the converse guard: a
+// gate-closed run is a completed decision ("nothing to do"), so it must keep
+// advancing the schedule — including completing a `once` task, which has then
+// legitimately run its course.
+func TestExecuteTask_ScriptGateClosed_StillConsumesRun(t *testing.T) {
 	skipOnWindows(t)
 	setupSchedulerScriptDB(t)
 
@@ -678,12 +741,12 @@ func TestExecuteTask_ScriptSkip_StillConsumesRun(t *testing.T) {
 
 	task := &model.ScheduledTask{
 		ProjectPath: t.TempDir(),
-		Name:        "Once Skip",
+		Name:        "Once Gate Closed",
 		CronExpr:    "0 * * * *",
 		AgentID:     "script-agent",
 		Prompt:      "do work",
 		RepeatMode:  "once",
-		Script:      "true", // exits 0, no output -> skip
+		Script:      "exit 1", // non-zero closes the gate -> skip
 		Status:      "active",
 	}
 	require.NoError(t, s.AddTask(task))
@@ -692,6 +755,6 @@ func TestExecuteTask_ScriptSkip_StillConsumesRun(t *testing.T) {
 
 	after, err := GetTaskByID(task.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "completed", after.Status, "a skip is a completed run for a once task")
+	assert.Equal(t, "completed", after.Status, "a gate-closed run is a completed decision for a once task")
 	assert.Equal(t, 1, after.RunCount)
 }

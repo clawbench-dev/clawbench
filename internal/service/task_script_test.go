@@ -16,10 +16,10 @@ func skipOnWindows(t *testing.T) {
 	}
 }
 
-func TestRunTaskScript_SkippedOnNoOutput(t *testing.T) {
+func TestRunTaskScript_SucceedsSilently(t *testing.T) {
 	res := RunTaskScript(context.Background(), "true", "", 0)
-	if res.Outcome != ScriptSkipped {
-		t.Fatalf("outcome = %v, want ScriptSkipped (err=%v)", res.Outcome, res.Err)
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", res.Outcome, res.Err)
 	}
 	if res.Stdout != "" || res.Stderr != "" {
 		t.Fatalf("stdout=%q stderr=%q, want both empty", res.Stdout, res.Stderr)
@@ -29,22 +29,23 @@ func TestRunTaskScript_SkippedOnNoOutput(t *testing.T) {
 	}
 }
 
-func TestRunTaskScript_SkippedOnWhitespaceOnlyOutput(t *testing.T) {
+func TestRunTaskScript_WhitespaceOnlyOutputStillSucceeds(t *testing.T) {
 	skipOnWindows(t)
-	// `echo` emits only a trailing newline; whitespace-only output must still
-	// count as no output.
+	// Output is data, not a control signal: a script that prints only a
+	// trailing newline must still open the gate (the old design treated this
+	// as "no output -> skip", which is exactly the coupling being removed).
 	res := RunTaskScript(context.Background(), "echo", "", 0)
-	if res.Outcome != ScriptSkipped {
-		t.Fatalf("outcome = %v, want ScriptSkipped (stdout=%q stderr=%q err=%v)",
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (stdout=%q stderr=%q err=%v)",
 			res.Outcome, res.Stdout, res.Stderr, res.Err)
 	}
 }
 
-func TestRunTaskScript_ProducedWithStdout(t *testing.T) {
+func TestRunTaskScript_SucceedsWithStdout(t *testing.T) {
 	skipOnWindows(t)
 	res := RunTaskScript(context.Background(), "echo hello-stdout", "", 0)
-	if res.Outcome != ScriptProduced {
-		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", res.Outcome, res.Err)
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", res.Outcome, res.Err)
 	}
 	if got := res.Stdout; got != "hello-stdout\n" {
 		t.Fatalf("stdout = %q, want %q", got, "hello-stdout\n")
@@ -54,19 +55,29 @@ func TestRunTaskScript_ProducedWithStdout(t *testing.T) {
 	}
 }
 
-func TestRunTaskScript_ProducedWithStderrOnly(t *testing.T) {
+func TestRunTaskScript_SucceedsWithStderrOnly(t *testing.T) {
 	skipOnWindows(t)
 	// Output goes to stderr only: proves the two streams are captured
-	// separately rather than merged.
+	// separately rather than merged. A stderr warning must NOT close the gate.
 	res := RunTaskScript(context.Background(), "echo hello-stderr 1>&2", "", 0)
-	if res.Outcome != ScriptProduced {
-		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", res.Outcome, res.Err)
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", res.Outcome, res.Err)
 	}
 	if got := res.Stderr; got != "hello-stderr\n" {
 		t.Fatalf("stderr = %q, want %q", got, "hello-stderr\n")
 	}
 	if res.Stdout != "" {
 		t.Fatalf("stdout = %q, want empty", res.Stdout)
+	}
+}
+
+// TestRunTaskScript_DurationRecorded guards the timing that the execution
+// detail card displays.
+func TestRunTaskScript_DurationRecorded(t *testing.T) {
+	skipOnWindows(t)
+	res := RunTaskScript(context.Background(), "sleep 0.2", "", 0)
+	if res.Duration <= 0 {
+		t.Fatalf("duration = %v, want a positive value", res.Duration)
 	}
 }
 
@@ -136,7 +147,7 @@ func TestRunTaskScript_GrandchildHoldingPipeDoesNotHang(t *testing.T) {
 		t.Fatalf("call took %v, want it bounded by WaitDelay (~5s) rather than the 15s grandchild sleep", elapsed)
 	}
 	// The grandchild was still holding the pipe when the deadline elapsed, so
-	// the call is classified as timed out rather than produced.
+	// the call is classified as timed out rather than succeeded.
 	if res.Outcome != ScriptTimedOut {
 		t.Fatalf("outcome = %v, want ScriptTimedOut (stdout=%q err=%v)", res.Outcome, res.Stdout, res.Err)
 	}
@@ -146,8 +157,8 @@ func TestRunTaskScript_WorkDir(t *testing.T) {
 	skipOnWindows(t)
 	dir := t.TempDir()
 	res := RunTaskScript(context.Background(), "pwd", dir, 0)
-	if res.Outcome != ScriptProduced {
-		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", res.Outcome, res.Err)
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", res.Outcome, res.Err)
 	}
 	got := res.Stdout
 	if got != "" && got[len(got)-1] == '\n' {
@@ -169,8 +180,8 @@ func TestRunTaskScript_OutputCappedAtCaptureTime(t *testing.T) {
 	res := RunTaskScript(context.Background(), "head -c 2000000 /dev/zero | tr '\\0' 'a'", "", 0)
 	elapsed := time.Since(start)
 
-	if res.Outcome != ScriptProduced {
-		t.Fatalf("outcome = %v, want ScriptProduced — a capped script still produced output (err=%v)", res.Outcome, res.Err)
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded — a capped script still exits 0 (err=%v)", res.Outcome, res.Err)
 	}
 	if elapsed > 30*time.Second {
 		t.Fatalf("call took %v, want it to return promptly", elapsed)
@@ -181,8 +192,8 @@ func TestRunTaskScript_OutputCappedAtCaptureTime(t *testing.T) {
 	if res.Stdout == "" {
 		t.Fatal("stdout is empty, want the retained prefix of the script's output")
 	}
-	// The capture dropped bytes, so the result must say so — the prompt block
-	// relies on this flag (not on len == cap) to append its marker.
+	// The capture dropped bytes, so the result must say so — the prompt
+	// template relies on this flag (not on len == cap) to append its marker.
 	if !res.StdoutTruncated {
 		t.Fatal("StdoutTruncated = false, want true after the cap dropped bytes")
 	}
@@ -191,11 +202,11 @@ func TestRunTaskScript_OutputCappedAtCaptureTime(t *testing.T) {
 func TestRunTaskScript_StderrCappedAtCaptureTime(t *testing.T) {
 	skipOnWindows(t)
 	// Same cap on the other stream, and it must not disturb the classification:
-	// stderr-only output is still ScriptProduced.
+	// stderr-only output still succeeds.
 	res := RunTaskScript(context.Background(), "head -c 2000000 /dev/zero | tr '\\0' 'b' 1>&2", "", 0)
 
-	if res.Outcome != ScriptProduced {
-		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", res.Outcome, res.Err)
+	if res.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", res.Outcome, res.Err)
 	}
 	if len(res.Stderr) > scriptOutputCap {
 		t.Fatalf("len(stderr) = %d, want it bounded at the %d-byte cap", len(res.Stderr), scriptOutputCap)
@@ -256,17 +267,16 @@ func TestCappedBuffer_ExactCapIsNotTruncated(t *testing.T) {
 // TestRunTaskScript_BackgroundedChildDoesNotLookLikeFailure guards the
 // WaitDelay classification. A script that backgrounds a child which inherits
 // the pipes makes cmd.Wait() report exec.ErrWaitDelay; that is plumbing, not a
-// script failure. Both a silent script (must stay skipped) and a noisy one
-// (must stay produced) have to survive it.
+// script failure. Both a silent script and a noisy one must keep the gate open.
 func TestRunTaskScript_BackgroundedChildDoesNotLookLikeFailure(t *testing.T) {
 	skipOnWindows(t)
 
 	// Exit 0 with no output, but a 20s grandchild holds the pipe. Without the
-	// ErrWaitDelay handling this is misread as failed, and the skip contract
-	// inverts: the AI would run with a bogus "script failed" block.
+	// ErrWaitDelay handling this is misread as failed and the gate would close
+	// on a script that actually passed.
 	silent := RunTaskScript(context.Background(), "sleep 20 & exit 0", "", 0)
-	if silent.Outcome != ScriptSkipped {
-		t.Fatalf("outcome = %v, want ScriptSkipped (err=%v)", silent.Outcome, silent.Err)
+	if silent.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", silent.Outcome, silent.Err)
 	}
 	if silent.Err != nil {
 		t.Fatalf("err = %v, want nil — WaitDelay is not a script failure", silent.Err)
@@ -275,10 +285,10 @@ func TestRunTaskScript_BackgroundedChildDoesNotLookLikeFailure(t *testing.T) {
 		t.Fatalf("exit code = %d, want 0", silent.ExitCode)
 	}
 
-	// Exit 0 with output: must be classified produced, not failed.
+	// Exit 0 with output: must succeed, not fail.
 	noisy := RunTaskScript(context.Background(), "sleep 20 & echo hello", "", 0)
-	if noisy.Outcome != ScriptProduced {
-		t.Fatalf("outcome = %v, want ScriptProduced (err=%v)", noisy.Outcome, noisy.Err)
+	if noisy.Outcome != ScriptSucceeded {
+		t.Fatalf("outcome = %v, want ScriptSucceeded (err=%v)", noisy.Outcome, noisy.Err)
 	}
 	if noisy.ExitCode != 0 {
 		t.Fatalf("exit code = %d, want 0", noisy.ExitCode)

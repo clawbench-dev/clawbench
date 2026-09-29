@@ -66,7 +66,11 @@
        the literals they replace — this names the order, it does not retune
        it. ── */
     --z-overlay: 1000;              /* welcome / modal / bottom-sheet scrim */
-    --z-overlay-raised: 1001;       /* upgrade prompts, above those scrims */
+    /* BottomSheet overlays stack within 1000..1049 by open order (a drawer
+       opened from inside another must paint above it). --z-overlay-raised is
+       parked above that whole band so an upgrade prompt still beats every
+       scrim, however many are stacked. */
+    --z-overlay-raised: 1050;       /* upgrade prompts, above those scrims */
     --z-header: 1100;               /* app header */
     --z-sheet: 1200;                /* fullscreen sheet, code-preview float */
     --z-preview-tooltip: 1300;      /* tooltip attached to the preview float */

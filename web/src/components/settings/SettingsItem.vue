@@ -111,7 +111,7 @@
           @input="editValue = ($event.target as HTMLInputElement).value"
           @keydown.enter="confirmEdit"
         />
-        <button class="settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+        <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
       </div>
     </template>
     <!-- Text editor -->
@@ -125,7 +125,7 @@
           @input="editValue = ($event.target as HTMLInputElement).value"
           @keydown.enter="confirmEdit"
         />
-        <button class="settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+        <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
       </div>
     </template>
     <!-- Password editor -->
@@ -144,7 +144,7 @@
           <EyeOff v-if="showPassword" :size="16" />
           <Eye v-else :size="16" />
         </button>
-        <button class="settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+        <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
       </div>
     </template>
     <!-- Textarea editor -->
@@ -158,7 +158,7 @@
           @input="editValue = ($event.target as HTMLTextAreaElement).value"
         ></textarea>
         <div class="settings-item__textarea-actions">
-          <button class="settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
+          <button class="fbtn fbtn-primary settings-item__editor-confirm" @click="confirmEdit">{{ t('common.ok') }}</button>
         </div>
       </div>
       <div v-if="warning" class="settings-item__textarea-warning">{{ warning }}</div>
@@ -227,7 +227,7 @@
         class="theme-picker-error"
       >
         <span class="theme-picker-error-text">{{ t('settings.items.terminalThemeLoadFailed') }}</span>
-        <button class="theme-picker-error-retry" @click.stop="onRetryTerminalThemes?.()">
+        <button class="fbtn fbtn-primary theme-picker-error-retry" @click.stop="onRetryTerminalThemes?.()">
           {{ t('common.retry') }}
         </button>
       </div>
@@ -272,6 +272,8 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
+// Shared pill button language (.fbtn) used by the row's confirm/retry buttons.
+import '@/assets/modal-footer-btn.css'
 import { Eye, EyeOff, RefreshCw, ChevronsUpDown, Sun, Moon, Palette, Check, AlertTriangle } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -655,7 +657,7 @@ function confirmEdit() {
 }
 
 .settings-item__label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -723,7 +725,7 @@ function confirmEdit() {
 }
 
 .settings-item__value {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   max-width: 160px;
   overflow: hidden;
@@ -742,7 +744,7 @@ function confirmEdit() {
 .settings-item__info-detail {
   flex: 1;
   min-width: 0;
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   word-break: break-all;
   line-height: var(--line-height-snug);
@@ -821,88 +823,6 @@ function confirmEdit() {
   font-weight: var(--font-weight-medium);
 }
 
-/* iOS-style switch toggle */
-.settings-item__switch {
-  position: relative;
-  display: inline-block;
-  width: 51px;
-  height: 31px;
-  cursor: pointer;
-}
-
-.settings-item__switch-input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-  position: absolute;
-}
-
-.settings-item__switch-track {
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-lg);
-  background: var(--bg-tertiary);
-  transition: background var(--duration-slow) ease;
-}
-
-.settings-item__switch-track::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 27px;
-  height: 27px;
-  border-radius: 50%;
-  background: var(--bg-primary);
-  transition: transform var(--duration-slow) ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
-}
-
-.settings-item__switch-input:checked + .settings-item__switch-track {
-  background: var(--accent-color);
-}
-
-.settings-item__switch-input:checked + .settings-item__switch-track::after {
-  transform: translateX(20px);
-}
-
-/* Slider */
-.settings-item__slider-value {
-  font-size: var(--font-size-md);
-  color: var(--text-secondary);
-  min-width: 36px;
-  text-align: right;
-}
-
-.settings-item__slider {
-  width: 120px;
-  cursor: pointer;
-  accent-color: var(--accent-color);
-}
-
-.settings-item__slider-reset {
-  font-size: var(--font-size-lg);
-  color: var(--text-muted);
-  background: none;
-  border: none;
-  cursor: pointer;
-  padding: var(--space-1) var(--space-2);
-  line-height: 1;
-}
-
-/* Inert at the default value. Reserved (not hidden) so the control cluster
-   width is constant — the button disappearing on reset was the layout shift.
-   Dimmed via the "unusable" token and given the not-allowed cursor, matching
-   the other disabled controls in the settings panel. */
-.settings-item__slider-reset:disabled {
-  opacity: var(--opacity-disabled);
-  cursor: not-allowed;
-}
-
-.settings-item__slider-reset:active {
-  color: var(--accent-color);
-}
-
 /* ── Inline Editor ── */
 .settings-item__editor {
   background: var(--bg-primary);
@@ -918,11 +838,15 @@ function confirmEdit() {
   padding: var(--space-4) var(--space-7);
 }
 
+/* 30px tall to match the .fbtn buttons in the same rows, but kept
+   RECTANGULAR (--radius-sm) so a field never reads as a pill button. Font
+   size is not reduced — a value must not render smaller than its label. */
 .settings-item__number-input,
 .settings-item__text-input {
   flex: 1;
   min-width: 0;
-  padding: var(--space-4) var(--space-6);
+  height: 30px;
+  padding: 0 var(--space-6);
   font-size: var(--font-size-lg);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
@@ -948,26 +872,9 @@ function confirmEdit() {
   line-height: 1;
 }
 
+/* Shape/colour come from the shared .fbtn pill; only layout is local. */
 .settings-item__editor-confirm {
   flex-shrink: 0;
-  padding: var(--space-4) var(--space-7);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--accent-color);
-  color: #fff;
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .settings-item__editor-confirm:hover {
-    background: var(--accent-hover);
-  }
-}
-
-.settings-item__editor-confirm:active {
-  background: var(--accent-hover);
 }
 
 /* Textarea editor */
@@ -1016,9 +923,9 @@ function confirmEdit() {
   display: flex;
   align-items: center;
   gap: var(--space-5);
-  padding: var(--space-6) var(--space-7);
+  padding: var(--space-4) var(--space-7);
   cursor: pointer;
-  min-height: 44px;
+  min-height: 38px;
   position: relative;
 }
 
@@ -1060,7 +967,7 @@ function confirmEdit() {
 }
 
 .settings-item__option-label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   min-width: 0;
 }
@@ -1140,22 +1047,9 @@ function confirmEdit() {
   line-height: var(--line-height-snug);
 }
 
+/* Shape/colour come from the shared .fbtn pill; only layout is local. */
 .theme-picker-error-retry {
   flex-shrink: 0;
-  padding: var(--space-2) var(--space-6);
-  border: none;
-  border-radius: var(--radius-sm);
-  background: var(--accent-color);
-  color: #fff;
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
-  cursor: pointer;
-}
-
-@media (hover: hover) {
-  .theme-picker-error-retry:hover {
-    background: var(--accent-hover);
-  }
 }
 
 .theme-picker-swatch--terminal {

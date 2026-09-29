@@ -99,6 +99,17 @@ const minCacheableRunes = 1024
 // turns; the rolling conversation tail follows uncached. Returns an error if the
 // recommendation request or response fails.
 func (s *AnthropicSummarizer) DoRecommendPass(ctx context.Context, systemPrompt, stable, rolling string) (string, error) {
+	return s.DoAskPass(ctx, systemPrompt, stable, rolling, recommendMaxTokens)
+}
+
+// DoAskPass performs a one-shot question call with an explicit output cap. It is
+// the shared implementation behind DoRecommendPass (maxTokens = recommendMaxTokens)
+// and AskAboutContext (the /btw path, which passes a larger cap). Anthropic's
+// max_tokens is a required field, so an explicit value is always sent.
+func (s *AnthropicSummarizer) DoAskPass(ctx context.Context, systemPrompt, stable, rolling string, maxTokens int) (string, error) {
+	if maxTokens <= 0 {
+		maxTokens = recommendMaxTokens
+	}
 	content := make([]anthropicContentBlock, 0, 2)
 	if len([]rune(stable)) >= minCacheableRunes {
 		content = append(content, anthropicContentBlock{
@@ -117,7 +128,7 @@ func (s *AnthropicSummarizer) DoRecommendPass(ctx context.Context, systemPrompt,
 		Messages: []anthropicRecommendMessage{
 			{Role: roleUser, Content: content},
 		},
-		MaxTokens:   1024,
+		MaxTokens:   maxTokens,
 		Temperature: 0.3,
 	}
 

@@ -48,6 +48,54 @@ const queueVersion = ref(0)
 /** Which session the panel currently shows. Set by ChatPanelContent. */
 const activeSessionId = ref('')
 
+/**
+ * Monotonic counter identifying a queue-snapshot REQUEST. `loadHistory` takes a
+ * value with `beginQueueSnapshot()` when it starts fetching and hands it to
+ * `syncFromHistory`, which uses it to tell a snapshot that predates an enqueue
+ * POST's commit (stale — must NOT drop the optimistic entry) from one that
+ * postdates it (authoritative — the entry's row is genuinely gone).
+ */
+let snapshotGeneration = 0
+
+/** Claim the generation for a snapshot request about to be fetched. */
+export function beginQueueSnapshot(): number {
+  return ++snapshotGeneration
+}
+
+/**
+ * queueId → the snapshot generation in effect when its enqueue POST resolved.
+ *
+ * A snapshot whose REQUEST started at a generation strictly greater than this
+ * was issued after the row was committed, so its silence about the entry is
+ * authoritative: the row was deleted (drained or cancelled) and this client
+ * missed the event. Absent means the POST has not resolved yet, so the entry
+ * must be preserved against ANY snapshot.
+ */
+const committedSends = new Map<string, number>()
+
+/**
+ * Record that an enqueue POST has resolved (its row is committed). Called by
+ * `enqueueAndMaybeStart` after the POST succeeds — NOT at track time, because a
+ * snapshot fetched before the commit legitimately lacks the row.
+ */
+export function markSendCommitted(queueId: string): void {
+  if (queueId) committedSends.set(queueId, snapshotGeneration)
+}
+
+/**
+ * Whether a snapshot can prove a guarded entry's row is gone.
+ *
+ * Only when the snapshot was requested strictly after the POST resolved: an
+ * earlier request may have been served from a read that began before the commit
+ * (the race the in-flight guard exists for), so it cannot prove anything.
+ */
+function snapshotProvesAbsent(queueId: string, snapshotGenerationValue?: number): boolean {
+  if (snapshotGenerationValue === undefined) return false
+  const committed = committedSends.get(queueId)
+  if (committed === undefined) return false
+  return snapshotGenerationValue > committed
+}
+
 function bump() {
   queueVersion.value += 1
 }
@@ -106,19 +154,53 @@ export function getQueue(sessionId: string): QueuedMessage[] {
  * (trackInFlightSend) is preserved when absent from the snapshot: the snapshot
  * may have been fetched before the POST committed its row. Its entry is cleared
  * once the snapshot contains it.
+ *
+ * `snapshotGen` is the generation claimed by `beginQueueSnapshot()` when the
+ * request was ISSUED. It lets this function tell the two reasons an entry can be
+ * absent from a snapshot apart:
+ *
+ *  - The request was issued before the enqueue POST resolved → the server may
+ *    simply not have the row yet. Keep the optimistic entry (the original race
+ *    this guard exists for).
+ *  - The request was issued AFTER the POST resolved → the row was committed, so
+ *    a snapshot that lacks it is authoritative: it was drained, injected or
+ *    cancelled, and this client missed the event (typically because it was
+ *    backgrounded and the WS dropped it). Drop the entry.
+ *
+ * Without that distinction the entry was preserved forever: the guard is only
+ * ever released by a snapshot that CONTAINS the entry, and a drained row is
+ * deleted server-side, so no later snapshot can ever contain it. The stale card
+ * then survived even an explicit foreground reopen (whose authoritative empty
+ * queue was overridden by the guard) — the reported "queued message card stays
+ * after it has finished".
  */
-export function syncFromHistory(sessionId: string, wire: QueuedMessageWire[] | undefined): void {
+export function syncFromHistory(
+  sessionId: string,
+  wire: QueuedMessageWire[] | undefined,
+  snapshotGen?: number,
+): void {
   if (!sessionId) return
   const incoming = (wire || []).map(fromWire)
   const incomingIds = new Set(incoming.map((m) => m.queueId))
 
   // The snapshot contains an in-flight entry → the POST is fully acked.
-  for (const id of incomingIds) untrackInFlightSend(id)
+  for (const id of incomingIds) {
+    untrackInFlightSend(id)
+    committedSends.delete(id)
+  }
 
-  // Keep optimistic entries the snapshot does not yet know about.
+  // Keep optimistic entries the snapshot cannot yet disprove.
   const existing = queues.get(sessionId) || []
   for (const m of existing) {
-    if (!incomingIds.has(m.queueId) && isInFlightSend(m.queueId)) {
+    if (incomingIds.has(m.queueId)) continue
+    if (snapshotProvesAbsent(m.queueId, snapshotGen)) {
+      // Authoritative absence: the row is gone. Release the guard so the entry
+      // cannot be resurrected by an even later stale rebuild either.
+      untrackInFlightSend(m.queueId)
+      committedSends.delete(m.queueId)
+      continue
+    }
+    if (isInFlightSend(m.queueId)) {
       incoming.push(m)
       incomingIds.add(m.queueId)
     }
@@ -163,6 +245,7 @@ export function removeQueued(sessionId: string, queueId: string): void {
   // The entry is gone, so its in-flight guard (set by enqueueAndMaybeStart)
   // must be released — it would otherwise leak for the process lifetime.
   untrackInFlightSend(queueId)
+  committedSends.delete(queueId)
   if (next.length === 0) {
     queues.delete(sessionId)
   } else {
@@ -179,7 +262,10 @@ export function removeQueuedMany(sessionId: string, queueIds: string[]): void {
   const drop = new Set(queueIds)
   const next = list.filter((m) => !drop.has(m.queueId))
   if (next.length === list.length) return
-  for (const id of queueIds) untrackInFlightSend(id)
+  for (const id of queueIds) {
+    untrackInFlightSend(id)
+    committedSends.delete(id)
+  }
   if (next.length === 0) {
     queues.delete(sessionId)
   } else {
@@ -193,7 +279,10 @@ export function clearQueue(sessionId: string): void {
   if (!sessionId) return
   const list = queues.get(sessionId)
   if (list) {
-    for (const m of list) untrackInFlightSend(m.queueId)
+    for (const m of list) {
+      untrackInFlightSend(m.queueId)
+      committedSends.delete(m.queueId)
+    }
   }
   if (queues.delete(sessionId)) bump()
 }
@@ -201,6 +290,8 @@ export function clearQueue(sessionId: string): void {
 /** Test hook: reset all state. */
 export function resetQueuesForTest(): void {
   queues.clear()
+  committedSends.clear()
+  snapshotGeneration = 0
   activeSessionId.value = ''
   queueVersion.value = 0
 }
@@ -214,6 +305,8 @@ export function useMessageQueue() {
     queuedCount,
     setActiveQueueSession,
     getQueue,
+    beginQueueSnapshot,
+    markSendCommitted,
     syncFromHistory,
     addQueued,
     removeQueued,

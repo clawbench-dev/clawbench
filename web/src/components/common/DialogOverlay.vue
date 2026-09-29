@@ -30,7 +30,7 @@
               :disabled="generating"
               @click="handleGenerate"
             >
-              <Loader2 v-if="generating" :size="14" class="dlg-generate-spin" />
+              <LoadingIndicator v-if="generating" size="sm" inline class="dlg-generate-spin" />
               <Sparkles v-else :size="14" />
               {{ dlg.state.value.generateText }}
             </button>
@@ -60,7 +60,8 @@
 <script setup lang="ts">
 import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Info, MessageSquareText, Loader2, Sparkles } from 'lucide-vue-next'
+import { Info, MessageSquareText, Sparkles } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useDialog } from '@/composables/useDialog'
 import '@/assets/modal-footer-btn.css'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
@@ -292,8 +293,11 @@ onBeforeUnmount(() => {
   cursor: not-allowed;
 }
 
+/* In-flight spinner for the "generate" action. It is the shared
+   LoadingIndicator, tinted with the button's own accent text colour (the icon
+   it replaced used currentColor). */
 .dlg-generate-spin {
-  animation: refresh-spin 0.8s linear infinite;
+  --li-color: currentColor;
 }
 
 /* Second click of the two-step destructive action: go solid so the primed

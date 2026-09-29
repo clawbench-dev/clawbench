@@ -122,10 +122,11 @@ function handleClose() {
 .copy-agent-dialog__input {
   width: 100%;
   min-width: 0;
-  padding: var(--space-5) var(--space-6);
+  height: 30px;
+  padding: 0 var(--space-6);
   font-size: var(--font-size-xl);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-primary);
   outline: none;

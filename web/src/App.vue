@@ -416,8 +416,11 @@
         @select="handleAcpSessionSelect"
       />
 
-      <!-- Bottom dock (tab bar) -->
-      <div v-if="isAuthenticated" v-show="!isWideScreen" class="bottom-dock-wrapper">
+      <!-- Bottom dock (tab bar). Hidden while the soft keyboard is open: on a
+           mobile browser the fixed layout keeps full height, so the dock would
+           sit behind the IME. Android WebView is covered too (see
+           useSoftKeyboard). -->
+      <div v-if="isAuthenticated" v-show="!isWideScreen && !isSoftKeyboardOpen" class="bottom-dock-wrapper">
         <div ref="dockRef" class="bottom-dock">
           <div class="dock-center">
             <div class="dock-active-indicator" :style="dockIndicatorStyle"></div>
@@ -588,6 +591,7 @@ import { useAppMode } from './composables/useAppMode.ts'
 import { requestNotificationPermission } from './composables/useNotification'
 import { useTerminalKeyboard } from './composables/useTerminalKeyboard.ts'
 import { useChatKeyboard } from './composables/useChatKeyboard.ts'
+import { useSoftKeyboard } from './composables/useSoftKeyboard.ts'
 import { usePortForward } from './composables/usePortForward.ts'
 import { useTerminalStatus } from './composables/useTerminalStatus.ts'
 import { useFileWatch } from './composables/useFileWatch.ts'
@@ -1744,10 +1748,9 @@ window.addEventListener('clawbench-reconnect', handleReconnect)
 const terminalRequestedCwd = ref<string | null>(null)
 
 // Terminal keyboard height for detecting when soft keyboard is open in terminal tab.
-// Dock is hidden only when keyboard is open. Detection is driven by
-// useTerminalViewport (the terminal container ResizeObserver), which writes this
-// singleton — reliable on Android WebViews that don't dispatch window/viewport
-// resize events. App.vue only reads it here.
+// Detection is driven by useTerminalViewport (the terminal container
+// ResizeObserver), which writes this singleton — reliable on Android WebViews
+// that don't dispatch window/viewport resize events. App.vue only reads it here.
 const terminalActive = computed(() => activeTab.value === 'terminal')
 const { keyboardHeight: terminalKeyboardHeight, isAdjustResize: terminalIsAdjustResize, noteFullScreenHeight: seedFullHeight } = useTerminalKeyboard()
 // Seed the full-screen innerHeight baseline here: at app startup no soft keyboard
@@ -1767,6 +1770,14 @@ const terminalKeyboardNeedsShrink = computed(() => terminalKeyboardActive.value 
 // keyboard via visualViewport and compensate in the web layer.
 const { chatKeyboardHeight } = useChatKeyboard()
 const chatKeyboardActive = computed(() => chatActive.value === 'chat' && chatKeyboardHeight.value > 0)
+
+// Global soft keyboard state — hides the bottom dock while ANY editable is
+// focused (not just the chat input / terminal). Installed here because it owns
+// the dock's visibility; App.vue is never unmounted in practice, but the
+// teardown keeps the composable safe to unit test and hot-reload.
+const { isSoftKeyboardOpen, install: installSoftKeyboard, uninstall: uninstallSoftKeyboard } = useSoftKeyboard()
+onMounted(() => installSoftKeyboard())
+onUnmounted(() => uninstallSoftKeyboard())
 
 const quoteQuestion = useQuoteQuestion()
 // The conversation picker decides whether to pop by asking "can the user see
@@ -2533,6 +2544,29 @@ const {
 // Close overflow popup when layout changes (resize promotes/demotes items)
 watch(() => inlineOverflowTabs.value.length, () => {
   overflowMenuOpen.value = false
+})
+
+// Safety net: re-measure the dock when it reappears after the soft keyboard
+// closes. Hiding the dock uses v-show (display:none), and Android WebView may
+// not deliver the ResizeObserver callback for the display:none → visible
+// transition — especially with CSS zoom applied. Without this the dock would
+// keep the width measured while hidden and lay its overflow items out wrong.
+// --dock-height follows the same rule as the wide-screen branch below: a hidden
+// dock must leave bottom-sheet drawers flush with the screen bottom, not
+// floating above an invisible bar.
+watch(isSoftKeyboardOpen, (open) => {
+  if (open) {
+    document.documentElement.style.setProperty('--dock-height', '0px')
+    return
+  }
+  nextTick(() => {
+    startDockResize()
+    const dw = document.querySelector<HTMLElement>('.bottom-dock-wrapper')
+    if (dw) {
+      const h = dw.offsetHeight
+      document.documentElement.style.setProperty('--dock-height', h ? `${h}px` : '0px')
+    }
+  })
 })
 
 // Safety net: re-measure dock when UI scale (CSS zoom) changes.

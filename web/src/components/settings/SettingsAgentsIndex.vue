@@ -79,7 +79,7 @@ async function handleRescan() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 48px;
+  min-height: 38px;
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
   background: var(--bg-primary);
@@ -107,7 +107,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__rescan-label {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
 }
 
@@ -126,7 +126,7 @@ async function handleRescan() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 48px;
+  min-height: 38px;
   padding: var(--space-4) var(--space-7);
   cursor: pointer;
   gap: var(--space-6);
@@ -182,7 +182,7 @@ async function handleRescan() {
 }
 
 .settings-agents-index__name {
-  font-size: var(--font-size-lg);
+  font-size: var(--font-size-md);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;

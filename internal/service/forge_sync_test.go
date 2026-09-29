@@ -22,7 +22,9 @@ func setupTestDBForForgeSync(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
 
-	for _, ddl := range []string{service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
+	// ProjectsDDL first: project_forges is keyed by project_id, and the service
+	// functions under test resolve paths through the registry.
+	for _, ddl := range []string{service.ProjectsDDL, service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
 		_, err := db.Exec(ddl)
 		require.NoError(t, err)
 	}

@@ -215,7 +215,7 @@ export async function renderMermaidInElement(
         if (srcLine) container.setAttribute('data-source-line', srcLine)
         const srcEnd = (block as HTMLElement).getAttribute('data-source-end')
         if (srcEnd) container.setAttribute('data-source-end', srcEnd)
-        container.innerHTML = '<div class="mermaid-loading"><span class="mermaid-spinner"></span></div>'
+        container.innerHTML = '<div class="mermaid-loading"><span class="li-spinner mermaid-spinner"></span></div>'
         ;(block as Element).replaceWith(container)
         containers.push({ container, source })
     })

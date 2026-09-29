@@ -6,6 +6,8 @@ import {
   setActiveQueueSession,
   getQueue,
   syncFromHistory,
+  beginQueueSnapshot,
+  markSendCommitted,
   addQueued,
   removeQueued,
   removeQueuedMany,
@@ -277,6 +279,102 @@ describe('syncFromHistory', () => {
     addQueued('s1', { queueId: 'a', text: 'A', files: [] })
     syncFromHistory('', [{ queueId: 'x', text: 'X' }])
     expect(getQueue('s1')).toHaveLength(1)
+  })
+})
+
+// ── Drained-while-backgrounded entries ──
+//
+// Reported: queue a message, background the app, let the queue drain, then
+// return to the foreground — the queue card is still there although the message
+// finished. The drain's WS events (user_message / queue_drain) were missed
+// while backgrounded, and the queue row is DELETED server-side at dequeue, so
+// the guard's only release path ("a snapshot contains the entry") can never
+// fire. The entry then survived even the authoritative foreground reopen, whose
+// empty queue was overridden by the guard.
+describe('syncFromHistory — authoritative absence of a committed entry', () => {
+  it('drops a committed entry absent from a snapshot issued after the POST resolved', () => {
+    addQueued('s1', { queueId: 'q1', text: 'queued', files: [] })
+    trackInFlightSend('q1')
+    markSendCommitted('q1') // the enqueue POST resolved → row committed
+
+    // A later snapshot (generation > the commit's) has an empty queue: the row
+    // was drained/cancelled and the client missed the event.
+    const gen = beginQueueSnapshot()
+    syncFromHistory('s1', [], gen)
+
+    expect(getQueue('s1')).toHaveLength(0)
+    // The guard is released too, so an even later stale rebuild cannot
+    // resurrect the entry.
+    expect(isInFlightSend('q1')).toBe(false)
+  })
+
+  it('PRESERVES an un-acked entry absent from any snapshot (POST still in flight)', () => {
+    addQueued('s1', { queueId: 'q1', text: 'queued', files: [] })
+    trackInFlightSend('q1')
+    // No markSendCommitted: the POST has not resolved, so no snapshot can prove
+    // the row is missing.
+    const gen = beginQueueSnapshot()
+    syncFromHistory('s1', [], gen)
+
+    expect(getQueue('s1').map((m) => m.queueId)).toEqual(['q1'])
+    expect(isInFlightSend('q1')).toBe(true)
+  })
+
+  it('PRESERVES a committed entry against a snapshot issued BEFORE the POST resolved', () => {
+    // The race the guard exists for: the snapshot request started before the
+    // enqueue POST committed, so its missing row proves nothing.
+    const genBeforeCommit = beginQueueSnapshot()
+    addQueued('s1', { queueId: 'q1', text: 'queued', files: [] })
+    trackInFlightSend('q1')
+    markSendCommitted('q1') // POST resolves after the snapshot was requested
+
+    syncFromHistory('s1', [], genBeforeCommit)
+
+    expect(getQueue('s1').map((m) => m.queueId)).toEqual(['q1'])
+    expect(isInFlightSend('q1')).toBe(true)
+  })
+
+  it('drops a committed entry once a snapshot is issued after its commit', () => {
+    const genBeforeCommit = beginQueueSnapshot()
+    addQueued('s1', { queueId: 'q1', text: 'queued', files: [] })
+    trackInFlightSend('q1')
+    markSendCommitted('q1')
+
+    // The pre-commit snapshot preserves it…
+    syncFromHistory('s1', [], genBeforeCommit)
+    expect(getQueue('s1')).toHaveLength(1)
+
+    // …and the next snapshot (issued after the commit) is authoritative.
+    const genAfterCommit = beginQueueSnapshot()
+    syncFromHistory('s1', [], genAfterCommit)
+    expect(getQueue('s1')).toHaveLength(0)
+    expect(isInFlightSend('q1')).toBe(false)
+  })
+
+  it('keeps a committed entry that the later snapshot still lists', () => {
+    addQueued('s1', { queueId: 'q1', text: 'queued', files: [] })
+    trackInFlightSend('q1')
+    markSendCommitted('q1')
+
+    const gen = beginQueueSnapshot()
+    syncFromHistory('s1', [{ queueId: 'q1', text: 'still queued' }], gen)
+
+    expect(getQueue('s1')).toHaveLength(1)
+    expect(getQueue('s1')[0].text).toBe('still queued')
+    expect(isInFlightSend('q1')).toBe(false)
+  })
+
+  it('releases the committed-send bookkeeping on explicit removal', () => {
+    addQueued('s1', { queueId: 'q1', text: 'queued', files: [] })
+    trackInFlightSend('q1')
+    markSendCommitted('q1')
+
+    removeQueued('s1', 'q1')
+
+    // A later authoritative empty snapshot must not need the bookkeeping, and
+    // re-adding the same id must not inherit the old commit generation.
+    expect(isInFlightSend('q1')).toBe(false)
+    expect(getQueue('s1')).toHaveLength(0)
   })
 })
 

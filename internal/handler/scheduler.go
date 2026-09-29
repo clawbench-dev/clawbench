@@ -487,6 +487,88 @@ func ServeTaskByID(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 	}
 }
 
+// ScriptResultView is the frontend-facing shape of a gating script result.
+type ScriptResultView struct {
+	ExitCode   int    `json:"exitCode"`
+	Stdout     string `json:"stdout"`
+	Stderr     string `json:"stderr"`
+	DurationMs int64  `json:"durationMs"`
+}
+
+// Execution is one row of a task's execution history.
+type Execution struct {
+	ID          int64   `json:"id"`
+	MessageID   int64   `json:"messageId"`
+	SessionID   string  `json:"sessionId"`
+	TriggerType string  `json:"triggerType"`
+	Status      string  `json:"status"`
+	Content     *string `json:"content"`
+	Summary     *string `json:"summary"`
+	CreatedAt   string  `json:"createdAt"`
+	IsUnread    bool    `json:"isUnread"`
+	// EventURL/EventSummary identify the forge event that triggered this run,
+	// so the user can trace a notification back to the issue/PR.
+	EventURL     string `json:"eventUrl,omitempty"`
+	EventSummary string `json:"eventSummary,omitempty"`
+	// Script is the gating script's result, present only when the task has a
+	// script. It lets the detail view show the exit code and output without the
+	// script having to be re-run.
+	Script *ScriptResultView `json:"script,omitempty"`
+}
+
+// scanExecutionRow reads one joined execution row into its response shape.
+//
+// Extracted from serveTaskExecutions: the row has enough nullable columns
+// (content, summary, read_at, message id, script exit code) that inlining the
+// scan pushes the handler past its cognitive-complexity budget, and the mapping
+// is a self-contained concern worth naming.
+func scanExecutionRow(rows *sql.Rows) (Execution, error) {
+	var exec Execution
+	var content sql.NullString
+	var summary sql.NullString
+	var readAt sql.NullTime
+	var messageID sql.NullInt64
+	var scriptExitCode sql.NullInt64
+	var scriptStdout, scriptStderr string
+	var scriptDurationMs int64
+	if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &exec.EventURL, &exec.EventSummary,
+		&scriptExitCode, &scriptStdout, &scriptStderr, &scriptDurationMs, &content); err != nil {
+		return exec, err
+	}
+	if messageID.Valid {
+		exec.MessageID = messageID.Int64
+	}
+	if content.Valid {
+		exec.Content = &content.String
+	}
+	if summary.Valid {
+		exec.Summary = &summary.String
+	}
+	// A NULL exit code means the task had no gating script (or the row predates
+	// the column), so the card is omitted entirely rather than shown as
+	// "exit 0" with no output.
+	if scriptExitCode.Valid {
+		exec.Script = &ScriptResultView{
+			ExitCode:   int(scriptExitCode.Int64),
+			Stdout:     scriptStdout,
+			Stderr:     scriptStderr,
+			DurationMs: scriptDurationMs,
+		}
+	}
+	// An execution is unread if it has no read_at and is not running.
+	//
+	// The task-level last_read_at is deliberately NOT consulted: unread is
+	// tracked per execution, so "mark all read" writes read_at on each row
+	// instead of moving a watermark. A watermark could not express "this one
+	// read, that one not", and it would silently absorb a run that finished
+	// after the watermark was written.
+	//
+	// "skipped" is excluded too: a content-free skip produced no result to
+	// read, so counting it would inflate the unread badge.
+	exec.IsUnread = !readAt.Valid && exec.Status != "running" && exec.Status != "skipped"
+	return exec, nil
+}
+
 // serveTaskExecutions returns the execution history for a task.
 // It joins task_executions with chat_history to fetch the assistant content.
 // Supports cursor-based pagination: ?limit=N&cursor=timestamp&cursor_id=id
@@ -519,25 +601,10 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		cursor = strings.TrimSuffix(cursor, "+00:00")
 	}
 
-	type Execution struct {
-		ID          int64   `json:"id"`
-		MessageID   int64   `json:"messageId"`
-		SessionID   string  `json:"sessionId"`
-		TriggerType string  `json:"triggerType"`
-		Status      string  `json:"status"`
-		Content     *string `json:"content"`
-		Summary     *string `json:"summary"`
-		CreatedAt   string  `json:"createdAt"`
-		IsUnread    bool    `json:"isUnread"`
-		// EventURL/EventSummary identify the forge event that triggered this
-		// run, so the user can trace a notification back to the issue/PR.
-		EventURL     string `json:"eventUrl,omitempty"`
-		EventSummary string `json:"eventSummary,omitempty"`
-	}
-
 	query := `
 		SELECT te.id, ch.id, te.session_id, te.trigger_type, te.status, te.created_at,
 		       te.read_at, sm.summary, te.event_url, te.event_summary,
+		       te.script_exit_code, te.script_stdout, te.script_stderr, te.script_duration_ms,
 		       ch.content AS assistant_content
 		FROM task_executions te
 		LEFT JOIN chat_history ch ON ch.id = (
@@ -574,35 +641,11 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 
 	var executions []Execution
 	for rows.Next() {
-		var exec Execution
-		var content sql.NullString
-		var summary sql.NullString
-		var readAt sql.NullTime
-		var messageID sql.NullInt64
-		if err := rows.Scan(&exec.ID, &messageID, &exec.SessionID, &exec.TriggerType, &exec.Status, &exec.CreatedAt, &readAt, &summary, &exec.EventURL, &exec.EventSummary, &content); err != nil {
+		exec, err := scanExecutionRow(rows)
+		if err != nil {
 			model.WriteError(w, model.Internal(fmt.Errorf("failed to scan execution record")))
 			return
 		}
-		if messageID.Valid {
-			exec.MessageID = messageID.Int64
-		}
-		if content.Valid {
-			exec.Content = &content.String
-		}
-		if summary.Valid {
-			exec.Summary = &summary.String
-		}
-		// An execution is unread if it has no read_at and is not running.
-		//
-		// The task-level last_read_at is deliberately NOT consulted: unread is
-		// tracked per execution, so "mark all read" writes read_at on each row
-		// instead of moving a watermark. A watermark could not express "this one
-		// read, that one not", and it would silently absorb a run that finished
-		// after the watermark was written.
-		//
-		// "skipped" is excluded too: a content-free skip produced no result to
-		// read, so counting it would inflate the unread badge.
-		exec.IsUnread = !readAt.Valid && exec.Status != "running" && exec.Status != "skipped"
 		executions = append(executions, exec)
 	}
 	if err := rows.Err(); err != nil {

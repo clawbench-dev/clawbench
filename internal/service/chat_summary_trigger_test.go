@@ -27,7 +27,7 @@ func setupTestDBForTriggerSummary(t *testing.T) (*sql.DB, func()) {
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			role TEXT NOT NULL,
 			content TEXT NOT NULL,
 			files TEXT,
@@ -40,9 +40,17 @@ func setupTestDBForTriggerSummary(t *testing.T) (*sql.DB, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			completed_at DATETIME
 		);
-		CREATE TABLE IF NOT EXISTS chat_sessions (
+		CREATE TABLE IF NOT EXISTS projects (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	path TEXT NOT NULL,
+	forge_bind_opt_out INTEGER NOT NULL DEFAULT 0,
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	UNIQUE(path)
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
-			project_path TEXT NOT NULL,
+			project_id INTEGER NOT NULL,
 			backend TEXT NOT NULL,
 			title TEXT NOT NULL,
 			agent_id TEXT DEFAULT '',
@@ -58,7 +66,7 @@ func setupTestDBForTriggerSummary(t *testing.T) (*sql.DB, func()) {
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE(project_path, backend, id)
+			UNIQUE(backend, id)
 		);
 		CREATE TABLE IF NOT EXISTS summaries (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,8 +77,8 @@ func setupTestDBForTriggerSummary(t *testing.T) (*sql.DB, func()) {
 			created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(target_type, target_id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_path, backend, session_id, created_at);
-		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_path, backend);
+		CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
+		CREATE INDEX IF NOT EXISTS idx_sessions_project_backend ON chat_sessions(project_id, backend);
 	`)
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
@@ -97,9 +105,9 @@ func TestTriggerChatSummarization_NoAssistantMessages(t *testing.T) {
 	defer teardown()
 
 	// Create session and user message only
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-1', '/test', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', 'hello', 'sess-1', 'claude')")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'user', 'hello', 'sess-1', 'claude')")
 	assert.NoError(t, err)
 
 	// No assistant message — should return without saving a summary
@@ -111,13 +119,13 @@ func TestTriggerChatSummarization_AlreadySummarized(t *testing.T) {
 	defer teardown()
 
 	// Create session with assistant message
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-2', '/test', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-2', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	content, _ := json.Marshal(map[string]any{
 		"blocks": []any{map[string]any{"type": "text", "text": strings.Repeat("这是一段较长的AI回复内容。", 30)}},
 	})
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-2', 'claude')", string(content))
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-2', 'claude')", string(content))
 	assert.NoError(t, err)
 
 	// Get the message ID
@@ -142,11 +150,11 @@ func TestTriggerChatSummarization_EmptyBlocks(t *testing.T) {
 	defer teardown()
 
 	// Create session with assistant message that has no blocks
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-3', '/test', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-3', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	content, _ := json.Marshal(map[string]any{"blocks": []any{}})
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-3', 'claude')", string(content))
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-3', 'claude')", string(content))
 	assert.NoError(t, err)
 
 	// Should return since blocks are empty
@@ -158,9 +166,9 @@ func TestTriggerChatSummarization_InvalidJSON(t *testing.T) {
 	defer teardown()
 
 	// Create session with assistant message that has invalid JSON content
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-4', '/test', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-4', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', 'not valid json', 'sess-4', 'claude')")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', 'not valid json', 'sess-4', 'claude')")
 	assert.NoError(t, err)
 
 	// Should return on JSON parse error without panicking
@@ -172,14 +180,14 @@ func TestTriggerChatSummarization_Success(t *testing.T) {
 	defer teardown()
 
 	// Create session with assistant message containing long text
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-5', '/test', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-5', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	longText := strings.Repeat("这是一段较长的AI回复内容。", 30)
 	content, _ := json.Marshal(map[string]any{
 		"blocks": []any{map[string]any{"type": "text", "text": longText}},
 	})
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-5', 'claude')", string(content))
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-5', 'claude')", string(content))
 	assert.NoError(t, err)
 
 	// Trigger summarization
@@ -229,7 +237,7 @@ func TestTriggerChatSummarization_MultipleAssistantMessages(t *testing.T) {
 	// then a queued message is drained and produces a second assistant reply (m2).
 	// Only m2 was summarized because the old trigger summarized the LAST assistant.
 	// m1 must also receive a summary.
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('sess-multi', '/test', 'claude', 'Test')")
+	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-multi', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	text1 := strings.Repeat("第一条回复内容。", 30)
@@ -237,14 +245,14 @@ func TestTriggerChatSummarization_MultipleAssistantMessages(t *testing.T) {
 	content1, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"type": "text", "text": text1}}})
 	content2, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"type": "text", "text": text2}}})
 
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', 'q1', 'sess-multi', 'claude')")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'user', 'q1', 'sess-multi', 'claude')")
 	assert.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-multi', 'claude')", string(content1))
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-multi', 'claude')", string(content1))
 	assert.NoError(t, err)
 	// queued user message drained immediately after m1
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'user', 'q2', 'sess-multi', 'claude')")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'user', 'q2', 'sess-multi', 'claude')")
 	assert.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_path, role, content, session_id, backend) VALUES ('/test', 'assistant', ?, 'sess-multi', 'claude')", string(content2))
+	_, err = db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', ?, 'sess-multi', 'claude')", string(content2))
 	assert.NoError(t, err)
 
 	// Simulate that only m2 was summarized before (old behavior)

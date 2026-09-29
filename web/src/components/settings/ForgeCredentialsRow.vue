@@ -20,7 +20,7 @@
            already on the server, without retyping it. -->
       <div class="forge-cred-host-actions">
         <button class="fbtn" :disabled="verifyingHost === host" @click="verifySaved(host)">
-          <Loader2 v-if="verifyingHost === host" :size="13" class="forge-spin" />
+          <LoadingIndicator v-if="verifyingHost === host" size="sm" inline class="forge-spin" />
           <ShieldCheck v-else :size="13" />
           {{ t('settings.items.forgeTokenVerify') }}
         </button>
@@ -54,7 +54,7 @@
         :disabled="!newHost || !newToken || verifyingDraft"
         @click="verifyDraft"
       >
-        <Loader2 v-if="verifyingDraft" :size="13" class="forge-spin" />
+        <LoadingIndicator v-if="verifyingDraft" size="sm" inline class="forge-spin" />
         <ShieldCheck v-else :size="13" />
         {{ t('settings.items.forgeTokenVerify') }}
       </button>
@@ -82,7 +82,8 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Check, AlertCircle, ShieldCheck, Loader2 } from 'lucide-vue-next'
+import { Check, AlertCircle, ShieldCheck } from 'lucide-vue-next'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { setForgeToken, deleteForgeToken, verifyForgeToken, ForgeApiError } from '@/utils/forgeApi'
 import { appLog } from '@/utils/appLog'
 
@@ -295,14 +296,11 @@ onMounted(loadHosts)
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* The verify button's in-flight spinner is the shared LoadingIndicator. Its arc
+   follows the button's text colour (the SVG it replaced used currentColor), so
+   the pill keeps its neutral tint instead of picking up the global accent. */
 .forge-spin {
-  animation: forge-spin 1s linear infinite;
-}
-@keyframes forge-spin {
-  to { transform: rotate(360deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .forge-spin { animation: none; }
+  --li-color: currentColor;
 }
 /* "Configured" badge — tinted pill, theme-aware. */
 .forge-cred-badge {
@@ -328,7 +326,8 @@ onMounted(loadHosts)
   flex: 1;
   min-width: 130px;
   box-sizing: border-box;
-  padding:7px var(--space-6);
+  height: 30px;
+  padding: 0 var(--space-6);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);

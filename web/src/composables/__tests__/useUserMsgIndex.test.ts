@@ -593,3 +593,50 @@ describe('useUserMsgIndex — jumpToAdjacentMessage', () => {
     expect(ok).toBe(false)
   })
 })
+
+// ── /btw marker derivation ──
+// The index exposes `hasBtw(msg)` so the drawer can mark rows. It must read the
+// SAME anchor map and id rule the chat area uses, so the two never disagree.
+describe('useUserMsgIndex — hasBtw lookup', () => {
+  it('flags a message whose id carries an anchor', () => {
+    const { vm } = createComposable({ getBtwAnchors: () => ({ 1: [{ id: 9 }] }) })
+    expect(vm.hasBtw({ id: 1 })).toBe(true)
+    expect(vm.hasBtw({ id: 2 })).toBe(false)
+    expect(vm.hasBtw({ id: 3 })).toBe(false)
+  })
+
+  it('does not flag a placeholder id that only matches as a raw string', () => {
+    // A pending/optimistic id can never match a persisted anchor; the id rule
+    // lives in utils/btwAnchors and this pins that the lookup reuses it.
+    const { vm } = createComposable({ getBtwAnchors: () => ({ 'pending-1': [{ id: 9 }] }) })
+    expect(vm.hasBtw({ id: 'pending-1' })).toBe(false)
+    expect(vm.hasBtw({ id: 0 })).toBe(false)
+    expect(vm.hasBtw(null)).toBe(false)
+  })
+
+  it('flags nothing when the host supplies no anchors (share TOC)', () => {
+    const { vm } = createComposable()
+    expect(vm.hasBtw({ id: 1 })).toBe(false)
+  })
+
+  it('tracks anchors that arrive after the list was built', async () => {
+    // Anchors load independently of the index list, so the lookup must be
+    // reactive rather than a snapshot.
+    const anchors: Record<string, unknown[]> = {}
+    const { vm } = createComposable({ getBtwAnchors: () => anchors })
+    expect(vm.hasBtw({ id: 1 })).toBe(false)
+
+    anchors[1] = [{ id: 9 }]
+    await nextTick()
+    expect(vm.hasBtw({ id: 1 })).toBe(true)
+  })
+
+  it('keeps the index list a straight copy of the API payload', () => {
+    // The marker is a lookup, NOT an extra field: other consumers compare the
+    // list against the payload, so its shape must not change.
+    const { vm } = createComposable({ getBtwAnchors: () => ({ 1: [{ id: 9 }] }) })
+    for (const m of vm.userMsgIndexList) {
+      expect(m).not.toHaveProperty('hasBtw')
+    }
+  })
+})

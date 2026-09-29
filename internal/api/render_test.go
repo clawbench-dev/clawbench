@@ -130,7 +130,7 @@ func TestRenderCommand_SizeBudget(t *testing.T) {
 		// still sits far below the full spec, so a switch back to tag-based
 		// selection would blow past it.
 		CommandChatSearch: 2600,
-		// The task body grew when the pre-AI custom-script fields (script,
+		// The task body grew when the gating-script fields (script,
 		// script_timeout) joined it; the headroom is deliberate, not drift.
 		CommandTask:  8000,
 		CommandUsage: 2000,
@@ -222,6 +222,29 @@ func TestRenderCommand_TaskDocumentsEventSemantics(t *testing.T) {
 		"the anti-recursion suppression must be documented")
 	assert.Contains(t, out, "本地时区",
 		"the cron timezone must be documented")
+}
+
+// TestRenderCommand_TaskDocumentsGatingScript pins the gating-script contract
+// that is not derivable from the field names alone: the gate condition (exit 0
+// runs the agent, anything else skips the run) and the four prompt template
+// variables the script's result is substituted into. A regression here would
+// leave the AI creating scripts whose output never reaches the prompt.
+func TestRenderCommand_TaskDocumentsGatingScript(t *testing.T) {
+	out, err := RenderCommand(CommandTask)
+	require.NoError(t, err)
+
+	assert.Contains(t, out, "退出码 0",
+		"the gate condition must be stated")
+	assert.Contains(t, out, "跳过本次 AI",
+		"the closed-gate outcome must be stated")
+	assert.Contains(t, out, "不建会话",
+		"the no-session consequence must be stated")
+
+	// The variables must be spelled literally so the model copies the exact
+	// syntax into the prompt instead of paraphrasing it into dead text.
+	for _, tok := range []string{"{{code}}", "{{stdout}}", "{{stderr}}", "{{output}}"} {
+		assert.Containsf(t, out, tok, "the %s prompt variable must be documented", tok)
+	}
 }
 
 // TestRenderCommand_MarksRepeatableArrayParams guards a real failure seen in

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"clawbench/internal/model"
@@ -28,8 +29,14 @@ import (
 
 // QueuedRow is one row of the queued_messages table.
 type QueuedRow struct {
-	ID          int64
-	SessionID   string
+	ID        int64
+	SessionID string
+	// ProjectID is the stored key; ProjectPath is the same project resolved back
+	// to a path for callers that speak paths (the wire type, AI request builders,
+	// ownership checks). Both are carried so materializing a claimed row never
+	// has to look the project up — that lookup writes on a cache miss, and the
+	// claim/materialize path runs inside a transaction holding the write mutex.
+	ProjectID   int64
 	ProjectPath string
 	Backend     string
 	QueueID     string
@@ -107,9 +114,13 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 		filesJSON = string(data)
 	}
 
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return 0, idErr
+	}
 	res, err := WriteExec(
-		"INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files) VALUES (?, ?, ?, ?, ?, ?)",
-		sessionID, projectPath, backend, queueID, content, filesJSON,
+		"INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content, files) VALUES (?, ?, ?, ?, ?, ?)",
+		sessionID, projectID, backend, queueID, content, filesJSON,
 	)
 	if err != nil {
 		return 0, err
@@ -150,18 +161,24 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 // Returns ok=false when nothing matched (queue empty, or the row was already
 // claimed). A real DB error is returned as err.
 func claimQueuedRowTx(tx *sql.Tx, sessionID string, where string, args ...any) (QueuedRow, bool, error) {
-	query := "SELECT id, session_id, project_path, backend, queue_id, content, files, created_at FROM queued_messages WHERE session_id = ?"
+	query := `SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
+		FROM queued_messages q
+		LEFT JOIN projects p ON p.id = q.project_id
+		WHERE q.session_id = ?`
 	qargs := []any{sessionID}
 	if where != "" {
+		// The predicate must be qualified with the queued_messages alias: the
+		// join brings in `projects`, which also has an `id` column, so an
+		// unqualified `id = ?` is ambiguous and the claim fails.
 		query += " AND " + where
 		qargs = append(qargs, args...)
 	}
-	query += " ORDER BY id ASC LIMIT 1"
+	query += " ORDER BY q.id ASC LIMIT 1"
 
 	var row QueuedRow
 	var filesJSON sql.NullString
 	err := tx.QueryRowContext(context.Background(), query, qargs...).Scan(
-		&row.ID, &row.SessionID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt,
+		&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return QueuedRow{}, false, nil
@@ -195,7 +212,7 @@ func materializeQueuedRowTx(tx *sql.Tx, row QueuedRow) (int64, error) {
 	// once title_source is 'auto', so passing "" here cannot blank the title.
 	// The AI rename was likewise already scheduled at enqueue — its `titled`
 	// result is discarded here on purpose.
-	msgID, _, err := insertChatMessageTx(tx, row.ProjectPath, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "")
+	msgID, _, err := insertChatMessageTx(tx, row.ProjectID, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "")
 	return msgID, err
 }
 
@@ -213,14 +230,14 @@ func ClaimNextAndMaterialize(sessionID string) (QueuedRow, int64, bool, error) {
 // ClaimByIDAndMaterialize claims a specific queued_messages row by its table id.
 // Used when the caller already knows which row it inserted (idle-path enqueue).
 func ClaimByIDAndMaterialize(sessionID string, queueRowID int64) (QueuedRow, int64, bool, error) {
-	return claimAndMaterialize(sessionID, "id = ?", []any{queueRowID})
+	return claimAndMaterialize(sessionID, "q.id = ?", []any{queueRowID})
 }
 
 // ClaimByQueueIDAndMaterialize claims a queued message by its client-generated
 // queue id. Used by mid-turn injection, which is addressed by the id the UI
 // holds.
 func ClaimByQueueIDAndMaterialize(sessionID, queueID string) (QueuedRow, int64, bool, error) {
-	return claimAndMaterialize(sessionID, "queue_id = ?", []any{queueID})
+	return claimAndMaterialize(sessionID, "q.queue_id = ?", []any{queueID})
 }
 
 func claimAndMaterialize(sessionID, where string, args []any) (QueuedRow, int64, bool, error) {
@@ -280,8 +297,8 @@ func RequeueMaterialized(row QueuedRow, msgID int64) error {
 		filesJSON = string(data)
 	}
 	if _, err := tx.ExecContext(context.Background(),
-		"INSERT INTO queued_messages (session_id, project_path, backend, queue_id, content, files, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-		row.SessionID, row.ProjectPath, row.Backend, row.QueueID, row.Content, filesJSON, row.CreatedAt,
+		"INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content, files, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		row.SessionID, row.ProjectID, row.Backend, row.QueueID, row.Content, filesJSON, row.CreatedAt,
 	); err != nil {
 		return err
 	}
@@ -333,7 +350,10 @@ func GetQueuedCount(sessionID string) int {
 // GetQueuedMessages returns the queued messages of a session, oldest first.
 func GetQueuedMessages(sessionID string) ([]model.QueuedMessage, error) {
 	rows, err := dbRead.QueryContext(context.Background(),
-		"SELECT id, session_id, project_path, backend, queue_id, content, files, created_at FROM queued_messages WHERE session_id = ? ORDER BY id ASC",
+		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
+		   FROM queued_messages q
+		   LEFT JOIN projects p ON p.id = q.project_id
+		  WHERE q.session_id = ? ORDER BY q.id ASC`,
 		sessionID,
 	)
 	if err != nil {
@@ -344,7 +364,7 @@ func GetQueuedMessages(sessionID string) ([]model.QueuedMessage, error) {
 	for rows.Next() {
 		var row QueuedRow
 		var filesJSON sql.NullString
-		if err := rows.Scan(&row.ID, &row.SessionID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt); err != nil {
+		if err := rows.Scan(&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt); err != nil {
 			return nil, err
 		}
 		if filesJSON.Valid && filesJSON.String != "" {
@@ -360,6 +380,183 @@ func GetQueuedMessages(sessionID string) ([]model.QueuedMessage, error) {
 func CancelQueuedMessage(sessionID, queueID string) error {
 	_, err := WriteExec("DELETE FROM queued_messages WHERE session_id = ? AND queue_id = ?", sessionID, queueID)
 	return err
+}
+
+// fileEntryKey is the dedupe identity of a FileEntry, mirroring the frontend's
+// entryKey (web/src/utils/fileAttachmentUtils.ts): URLs key on their address,
+// quotes on their stable id plus content (two quotes of the same range with
+// different text are genuinely different attachments), plain files on
+// path + line range.
+func fileEntryKey(f model.FileEntry) string {
+	switch {
+	case f.IsURL():
+		return "url|" + f.URL
+	case f.IsQuote():
+		return fmt.Sprintf("quote|%s|%s|%d|%d|%s", f.ID, f.Path, f.StartLine, f.EndLine, f.Text)
+	default:
+		return fmt.Sprintf("%s|%d|%d", f.Path, f.StartLine, f.EndLine)
+	}
+}
+
+// loadQueuedParts reads every queued message of a session in queue (DB-id)
+// order. The caller must already hold the write mutex/transaction so no drain
+// can claim a row between this read and the delete that follows the merge.
+func loadQueuedParts(tx *sql.Tx, sessionID string) ([]QueuedRow, error) {
+	rows, err := tx.QueryContext(context.Background(),
+		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
+		   FROM queued_messages q
+		   LEFT JOIN projects p ON p.id = q.project_id
+		  WHERE q.session_id = ? ORDER BY q.id ASC`,
+		sessionID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var parts []QueuedRow
+	for rows.Next() {
+		var row QueuedRow
+		var filesJSON sql.NullString
+		if scanErr := rows.Scan(&row.ID, &row.SessionID, &row.ProjectID, &row.ProjectPath, &row.Backend, &row.QueueID, &row.Content, &filesJSON, &row.CreatedAt); scanErr != nil {
+			return nil, scanErr
+		}
+		if filesJSON.Valid && filesJSON.String != "" {
+			row.Files = unmarshalFilesJSON(filesJSON.String)
+		}
+		parts = append(parts, row)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, rowsErr
+	}
+	return parts, nil
+}
+
+// mergeQueuedFiles concatenates the attachments of the merged rows in queue
+// order, keeping the first occurrence of each identity (same order the
+// frontend's dedupeFiles uses).
+func mergeQueuedFiles(parts []QueuedRow) []model.FileEntry {
+	var merged []model.FileEntry
+	seen := make(map[string]bool)
+	for _, r := range parts {
+		for _, f := range r.Files {
+			key := fileEntryKey(f)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			merged = append(merged, f)
+		}
+	}
+	return merged
+}
+
+// MergeQueuedMessages collapses every queued message of a session into ONE
+// queued message: the old rows are deleted and a single row carrying all the
+// text and attachments is inserted, in one transaction under the write mutex.
+//
+// Atomicity is the whole point. Doing this as "insert merged + delete each old
+// row" from the client leaves windows where a crash (or a concurrent enqueue)
+// produces duplicates or loses a message. Here the old rows are only gone if
+// the merged row committed.
+//
+// Content is the rows' text joined in DB-id order (which is queue order) with a
+// blank line between parts; empty parts (attachment-only entries) are skipped so
+// a file-only message does not inject stray blank lines. Attachments are
+// concatenated in the same order and deduped by fileEntryKey.
+//
+// Returns ok=false when the session has fewer than two queued messages (there is
+// nothing to merge) — that is not an error. On success the returned row's
+// QueueID is the (newly minted or supplied) merged id, and oldQueueIDs lists the
+// ids that were removed so the caller can broadcast queue_cancel for them.
+func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueIDs []string, ok bool, err error) { //nolint:gocyclo // single transaction: validate, read, join text, merge files, insert, delete originals, commit — each step has its own error branch
+	if sessionID == "" {
+		return QueuedRow{}, nil, false, fmt.Errorf("merge: empty session id")
+	}
+	if queueID == "" {
+		queueID = newQueueID()
+	}
+
+	tx, err := WriteBegin()
+	if err != nil {
+		return QueuedRow{}, nil, false, err
+	}
+	defer writeMu.Unlock()
+	defer func() { _ = tx.Rollback() }()
+
+	// Read the whole queue inside the transaction: the write mutex is held, so
+	// no drain can claim a row between this SELECT and the DELETE below.
+	parts, err := loadQueuedParts(tx, sessionID)
+	if err != nil {
+		return QueuedRow{}, nil, false, err
+	}
+
+	if len(parts) < 2 {
+		return QueuedRow{}, nil, false, nil
+	}
+
+	// Join non-empty text in queue order with a blank line between parts.
+	var texts []string
+	for _, r := range parts {
+		if strings.TrimSpace(r.Content) != "" {
+			texts = append(texts, r.Content)
+		}
+	}
+	mergedContent := strings.Join(texts, "\n\n")
+
+	mergedFiles := mergeQueuedFiles(parts)
+
+	head := parts[0]
+	var filesJSON string
+	if len(mergedFiles) > 0 {
+		data, mErr := json.Marshal(mergedFiles)
+		if mErr != nil {
+			return QueuedRow{}, nil, false, mErr
+		}
+		filesJSON = string(data)
+	}
+
+	res, err := tx.ExecContext(context.Background(),
+		"INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content, files) VALUES (?, ?, ?, ?, ?, ?)",
+		sessionID, head.ProjectID, head.Backend, queueID, mergedContent, filesJSON,
+	)
+	if err != nil {
+		return QueuedRow{}, nil, false, err
+	}
+	newRowID, err := res.LastInsertId()
+	if err != nil {
+		return QueuedRow{}, nil, false, err
+	}
+
+	// Delete exactly the rows we read. A `WHERE session_id = ?` would also sweep
+	// a row inserted by a concurrent enqueue — but the write mutex is held, so
+	// no insert can interleave; matching by id keeps the intent explicit and
+	// cannot touch a row this transaction did not account for.
+	oldQueueIDs = make([]string, 0, len(parts))
+	for _, r := range parts {
+		if r.QueueID != "" {
+			oldQueueIDs = append(oldQueueIDs, r.QueueID)
+		}
+		if _, delErr := tx.ExecContext(context.Background(), "DELETE FROM queued_messages WHERE id = ?", r.ID); delErr != nil {
+			return QueuedRow{}, nil, false, delErr
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return QueuedRow{}, nil, false, err
+	}
+
+	return QueuedRow{
+		ID:          newRowID,
+		SessionID:   sessionID,
+		ProjectID:   head.ProjectID,
+		ProjectPath: head.ProjectPath,
+		Backend:     head.Backend,
+		QueueID:     queueID,
+		Content:     mergedContent,
+		Files:       mergedFiles,
+		CreatedAt:   time.Now(),
+	}, oldQueueIDs, true, nil
 }
 
 // UpdateQueuedMessageQuoteNote rewrites the files JSON of a still-queued message,

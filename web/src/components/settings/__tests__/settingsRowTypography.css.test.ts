@@ -108,11 +108,11 @@ const LABEL_RULES: Array<[file: string, cls: string]> = [
 ]
 
 describe('settings row labels use the shared body size', () => {
-  it.each(LABEL_RULES)('%s .%s is --font-size-lg, not --font-size-xl', (file, cls) => {
+  it.each(LABEL_RULES)('%s .%s is --font-size-md, not --font-size-xl', (file, cls) => {
     const decls = baseRule(readWebFile(`${SETTINGS_DIR}/${file}`), cls)
     expect(decls, `${file} .${cls} rule must exist`).not.toBeNull()
-    expect(decls, `${file} .${cls} must use --font-size-lg`).toMatch(
-      /font-size:\s*var\(--font-size-lg\)/,
+    expect(decls, `${file} .${cls} must use --font-size-md`).toMatch(
+      /font-size:\s*var\(--font-size-md\)/,
     )
     expect(decls, `${file} .${cls} must not use --font-size-xl`).not.toMatch(
       /font-size:\s*var\(--font-size-xl\)/,
@@ -133,10 +133,10 @@ describe('settings row labels use the shared body size', () => {
     expect(forgeText![1]).toMatch(/font-size:\s*var\(--font-size-lg\)/)
   })
 
-  it('keeps a clear primary/secondary step (14px label over 12px desc)', () => {
+  it('keeps a clear primary/secondary step (13px label over 12px desc)', () => {
     const label = baseRule(readWebFile(`${SETTINGS_DIR}/SettingsItem.vue`), 'settings-item__label')
     const desc = baseRule(readWebFile(`${SETTINGS_DIR}/SettingsItem.vue`), 'settings-item__desc')
-    expect(label).toMatch(/font-size:\s*var\(--font-size-lg\)/)
+    expect(label).toMatch(/font-size:\s*var\(--font-size-md\)/)
     expect(desc).toMatch(/font-size:\s*var\(--font-size-sm\)/)
   })
 })

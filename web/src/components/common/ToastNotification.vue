@@ -2,7 +2,8 @@
   <Teleport to="body">
     <Transition name="toast">
       <div v-if="toast.visible.value" :class="['toast', `toast-${toast.type.value}`]" @click="toast.onClick.value ? (toast.onClick.value(), toast.dismiss()) : toast.dismiss()">
-        <span v-if="toast.icon.value" class="toast-icon">{{ toast.icon.value }}</span>
+        <LoadingIndicator v-if="toast.type.value === 'loading'" class="toast-spinner" size="sm" inline />
+        <span v-else-if="toast.icon.value" class="toast-icon">{{ toast.icon.value }}</span>
         <span class="toast-text">{{ toast.message.value }}</span>
       </div>
     </Transition>
@@ -10,6 +11,8 @@
 </template>
 
 <script setup>
+import LoadingIndicator from './LoadingIndicator.vue'
+
 defineProps({
     toast: {
         type: Object,
@@ -68,6 +71,21 @@ defineProps({
     background: color-mix(in srgb, var(--color-info, var(--accent-color)) 78%, var(--bg-tertiary));
 }
 
+/* Loading: an in-progress action, not a result. Same accent recipe as info,
+   but the caller pairs it with duration: 0 so it stays until the action ends
+   and a success/error toast replaces it. */
+.toast-loading {
+    background: color-mix(in srgb, var(--color-info, var(--accent-color)) 78%, var(--bg-tertiary));
+}
+
+.toast-spinner {
+    flex-shrink: 0;
+    /* The default ring uses --border-color gray, which is invisible on the
+       saturated accent backdrop; override both halves so the ring reads. */
+    --li-track-color: color-mix(in srgb, #fff 35%, transparent);
+    --li-color: #fff;
+}
+
 [data-theme-base="dark"] .toast-info {
     background: color-mix(in srgb, var(--color-info, var(--accent-color)) 55%, var(--bg-tertiary));
 }
@@ -76,6 +94,14 @@ defineProps({
     background: color-mix(in srgb, var(--accent-color) 40%, var(--bg-tertiary));
     color: var(--text-primary);
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+}
+
+/* On dark themes the toast backdrop is a muted accent mix with --text-primary
+   text, so a white ring would wash out on light accents — follow the text
+   colour instead. */
+[data-theme-base="dark"] .toast-spinner {
+    --li-track-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+    --li-color: var(--text-primary);
 }
 
 .toast:active {

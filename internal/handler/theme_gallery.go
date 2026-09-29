@@ -422,6 +422,87 @@ func SetTriggerBingSyncFunc(fn func()) {
 	triggerBingSync = fn
 }
 
+// saveToGalleryResponse is the body of POST /api/theme/bing/save-to-gallery.
+// Unlike the multipart upload there is exactly one source image, so there is no
+// per-file error list — a failure is reported through the HTTP status instead.
+type saveToGalleryResponse struct {
+	Item galleryItemView `json:"item"`
+}
+
+// ServeThemeBingSaveToGallery handles POST /api/theme/bing/save-to-gallery —
+// copies the currently cached Bing wallpaper into the local gallery so the user
+// can keep it even if the daily image rotates. The Bing file is read verbatim
+// (it was already validated/processed at fetch time) and stored with a new
+// generated name under <DataDir>/theme/local.
+func ServeThemeBingSaveToGallery(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	configMutex.RLock()
+	b := model.ConfigInstance.Appearance.Bing
+	configMutex.RUnlock()
+
+	if b.File == "" {
+		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+		return
+	}
+
+	bingAbs, ok := wallpaper.FilePath(b.File)
+	if !ok {
+		writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+		return
+	}
+
+	data, err := os.ReadFile(bingAbs)
+	if err != nil {
+		// The cached image can vanish between the config read and here if the
+		// daily Bing sync rotates it away — that is a 404, not a server fault.
+		if errors.Is(err, os.ErrNotExist) {
+			writeLocalizedError(w, r, model.NotFound(nil, "FileNotFoundShort"))
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "ReadFailed", map[string]any{"Error": err.Error()})
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(b.File))
+	processed := &wallpaper.Processed{Data: data, Ext: ext}
+
+	name := newGalleryFileName(processed.Ext)
+	if writeErr := wallpaper.WriteAtomic(wallpaper.LocalDir(), name, processed.Data); writeErr != nil {
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": writeErr.Error()})
+		return
+	}
+
+	// Prefer the fetch date in the display name; fall back to a bare "Bing" so an
+	// item saved before a successful date was recorded never renders as "Bing .jpg".
+	displayName := "Bing"
+	if b.LastSuccessDate != "" {
+		displayName = "Bing " + b.LastSuccessDate
+	}
+
+	item := galleryItemView{
+		File:       name,
+		Name:       displayName + ext,
+		UploadedAt: time.Now().Unix(),
+		Size:       int64(len(processed.Data)),
+	}
+
+	added, err := appendGalleryItems([]galleryItemView{item})
+	if err != nil {
+		// The gallery row was never written; drop the orphan file we just made.
+		wallpaper.RemoveFile(name)
+		if errors.Is(err, errGalleryFull) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return
+		}
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "WriteFailed", map[string]any{"Error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, saveToGalleryResponse{Item: added[0]})
+}
+
 // PersistBingWallpaperState records the Bing fetch worker's outcome in config.
 // It is injected into the worker via service.SetPersistBingStateFn so the
 // service package never has to import this one.

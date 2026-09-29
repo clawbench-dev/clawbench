@@ -73,4 +73,29 @@ describe('ToastNotification', () => {
     })
     expect(wrapper.find('.toast').exists()).toBe(false)
   })
+
+  // ── loading type ──
+  it('renders a spinner instead of the icon for the loading type', () => {
+    const toast = makeToast({ type: ref('loading'), icon: ref('🔄'), message: ref('Forking session… 2s') })
+    const wrapper = mount(ToastNotification, {
+      props: { toast },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    expect(wrapper.find('.toast').classes()).toContain('toast-loading')
+    expect(wrapper.find('.toast-spinner').exists()).toBe(true)
+    // The icon slot must not also render — a spinner AND an emoji reads as two
+    // conflicting signals.
+    expect(wrapper.find('.toast-icon').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Forking session… 2s')
+  })
+
+  it('still renders the icon for non-loading types', () => {
+    const toast = makeToast({ type: ref('info'), icon: ref('🔄') })
+    const wrapper = mount(ToastNotification, {
+      props: { toast },
+      global: { stubs: { Teleport: { template: '<div><slot/></div>' } } },
+    })
+    expect(wrapper.find('.toast-spinner').exists()).toBe(false)
+    expect(wrapper.find('.toast-icon').exists()).toBe(true)
+  })
 })

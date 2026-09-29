@@ -36,6 +36,17 @@
         <User v-else :size="12" />
       </span>
       <span class="msg-text" :class="{ 'msg-text--muted': isPlaceholder }" v-html="rowHighlight"></span>
+      <!-- Marks a message that has a /btw side question anchored to it. An
+           icon rather than text, so the row stays one line and scannable; the
+           meaning lives in title/aria-label like the role chip above. -->
+      <span
+        v-if="hasBtw"
+        class="msg-btw-mark"
+        :title="btwLabel"
+        :aria-label="btwLabel"
+      >
+        <MessageCircleQuestion :size="12" />
+      </span>
       <span v-if="showTime && msg.createdAt" class="msg-time">{{ formatRelativeTime(msg.createdAt) }}</span>
     </div>
   </div>
@@ -44,7 +55,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Bot, User } from 'lucide-vue-next'
+import { Bot, User, MessageCircleQuestion } from 'lucide-vue-next'
 import { assistantIndexText, formatIndexMsg } from '@/utils/userMsgIndexUtils.ts'
 import { highlightText } from '@/utils/searchUtils'
 import { formatRelativeTime } from '@/utils/format.ts'
@@ -71,11 +82,18 @@ const props = withDefaults(defineProps<{
   searchQuery?: string
   /** Hide the timestamp column (used where rows are narrower, e.g. the share TOC). */
   showTime?: boolean
+  /**
+   * Whether a /btw side question is anchored to this message. The host decides
+   * (it owns the anchors); the share TOC has no such data and leaves it false,
+   * so no marker renders there.
+   */
+  hasBtw?: boolean
 }>(), {
   active: false,
   navActive: false,
   searchQuery: '',
   showTime: true,
+  hasBtw: false,
 })
 
 defineEmits<{ select: [msg: IndexMsg] }>()
@@ -108,6 +126,9 @@ const roleLabel = computed(() =>
 const rowHighlight = computed(() =>
   highlightText(formatIndexMsg(props.msg, rowLabels.value), props.searchQuery),
 )
+
+/** Tooltip/label for the /btw marker (icon-only, so the text must live here). */
+const btwLabel = computed(() => t('chat.btw.anchorTitle'))
 </script>
 
 <style scoped>
@@ -290,6 +311,18 @@ const rowHighlight = computed(() =>
   color: inherit;
   border-radius: var(--radius-xs);
   padding: 0 1px;
+}
+
+/* /btw marker: sits between the preview and the timestamp. Colour follows the
+   accent (the same hue the chat-area anchor uses) so the two read as the same
+   feature; flex-shrink:0 keeps it from being squeezed when the preview is long. */
+.msg-btw-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--accent-color);
+  line-height: 1;
 }
 
 .msg-time {

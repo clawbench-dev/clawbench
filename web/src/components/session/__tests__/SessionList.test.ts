@@ -4,6 +4,7 @@ import { defineComponent, h, nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 import { RunningSweepDirective } from '@/directives/runningSweep'
 import { LongPressDirective } from '@/directives/longPress'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
@@ -225,10 +226,10 @@ describe('SessionList', () => {
   // The state indicator lives on the "Share conversation" menu item rather
   // than a row badge: the badge was decorative (no click target) and showed
   // state in a different place from the action. Mirrors the file header, whose
-  // "Share link" item highlights and relabels when a link exists.
+  // "Share link" item highlights and gains a trailing check when a link exists.
   //
   // The i18n mock in this file returns the RAW KEY, so assertions match on
-  // sessionShare.button / sessionShare.buttonActive rather than English text.
+  // sessionShare.button rather than English text.
   it('seeds the share set on mount so the menu state is right without opening the drawer', async () => {
     const { useSessionShare } = await import('@/composables/useSessionShare')
     const { resetSessionShareState, isSessionShared } = useSessionShare()
@@ -268,7 +269,7 @@ describe('SessionList', () => {
     resetSessionShareState()
   })
 
-  it('highlights and relabels the share menu item when the session is shared', async () => {
+  it('highlights the share menu item and adds a check when the session is shared', async () => {
     const { useSessionShare } = await import('@/composables/useSessionShare')
     const { resetSessionShareState, markShared } = useSessionShare()
     resetSessionShareState()
@@ -290,20 +291,24 @@ describe('SessionList', () => {
       return Array.from(menu.querySelectorAll('.context-menu-item')).find(i => (i.textContent || '').includes('sessionShare.')) as HTMLElement | undefined
     }
 
-    // Unshared: plain label, no active state.
+    // Unshared: plain label, no active state, no check.
     const before = findShareItem()
     expect(before).toBeTruthy()
     expect(before!.classList.contains('active')).toBe(false)
     expect(before!.textContent).toContain('sessionShare.button')
+    expect(before!.querySelector('.wrap-check')).toBeNull()
 
-    // Shared: highlighted and relabelled. The item is keyed off
+    // Shared: highlighted, with the trailing check. The label itself must NOT
+    // change — the check carries the state (same language as the file menu's
+    // word wrap / line numbers items). The item is keyed off
     // contextMenu.sessionId, so it reacts without being reopened.
     markShared(s1.id)
     await nextTick()
 
     const after = findShareItem()
     expect(after!.classList.contains('active')).toBe(true)
-    expect(after!.textContent).toContain('sessionShare.buttonActive')
+    expect(after!.textContent).toContain('sessionShare.button')
+    expect(after!.querySelector('.wrap-check')).not.toBeNull()
 
     resetSessionShareState()
     wrapper.unmount()
@@ -729,12 +734,27 @@ describe('SessionList', () => {
       expect(wrapper.findAll('.session-rows .session-group-header').length).toBe(0)
     })
 
-    it('labels each member with its generation', async () => {
+    it('shows the generation chip only from the second generation on', async () => {
+      // A direct fork (depth 1) is already fully described three times over by
+      // the indent, the tree rail and the anchor's "N forks" count; a "Gen 1"
+      // chip repeats the same fact in the row's most expensive space. Only the
+      // links the structure cannot express (a fork of a fork) keep the chip.
       const wrapper = await mountGrouped()
-      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').text()).toBe('session.forkGeneration')
-      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').text()).toBe('session.forkGeneration')
       // The anchor row carries no generation chip — it is generation 0.
       expect(wrapper.find('[data-session-id="root"] .session-fork-gen').exists()).toBe(false)
+    })
+
+    it('still labels a third-generation member, not just the second', async () => {
+      // Pins `depth > 1` rather than `depth === 2`: the chip must keep working
+      // for arbitrarily deep chains, not stop at the one depth the default
+      // fixture happens to contain.
+      const fork3 = { id: 'f3', title: '🔀 🔀 🔀 Topic', sourceSessionId: 'f2', createdAt: '2025-01-04', updatedAt: '2025-01-04', agentId: 'agent-1', backend: 'cli' }
+      const wrapper = await mountGrouped([root, fork1, fork2, fork3, other])
+      expect(wrapper.find('[data-session-id="f1"] .session-fork-gen').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="f2"] .session-fork-gen').exists()).toBe(true)
+      expect(wrapper.find('[data-session-id="f3"] .session-fork-gen').exists()).toBe(true)
     })
 
     it('collapses and expands the group from the anchor row toggle', async () => {
@@ -757,6 +777,25 @@ describe('SessionList', () => {
         .toEqual(['root', 'f1', 'f2', 'other'])
       expect(wrapper.find('.session-fork-toggle').classes()).not.toContain('collapsed')
       expect(wrapper.find('.session-fork-toggle').attributes('aria-expanded')).toBe('true')
+    })
+
+    it('uses the chat fork glyph (Split) for the group toggle, not a second icon language', async () => {
+      // The chat message's "fork from here" button draws lucide `Split`. The
+      // list's group toggle used `GitFork` — a git-branch glyph that reads as
+      // version control, not "fork this conversation", so the same action had
+      // two unrelated symbols across the app. Pin them to one glyph: a future
+      // "tidy up the icons" pass must not re-diverge them.
+      const src = readWebFile('src/components/session/SessionList.vue')
+      const chat = readWebFile('src/components/chat/ChatMessageItem.vue')
+      expect(chat, 'ChatMessageItem must keep using Split for its fork button').toMatch(
+        /<Split v-else :size="14" \/>/,
+      )
+      expect(src, 'the list toggle must draw the same glyph').toMatch(
+        /<Split :size="11" \/>/,
+      )
+      // GitFork is the git panel's glyph and must not appear here at all —
+      // neither in the template nor the lucide import list.
+      expect(src, 'the git-branch glyph must be gone').not.toMatch(/GitFork/)
     })
 
     it('does not select the session when the collapse control is clicked', async () => {

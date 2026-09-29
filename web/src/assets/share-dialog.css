@@ -134,12 +134,12 @@
   right: 38px;
 }
 .share-dialog-link-btn:disabled { opacity: var(--opacity-muted); cursor: default; }
+/* In-flight spinner for the regenerate button. It is the shared
+   LoadingIndicator, tinted with the button's own text colour (the icon it
+   replaced used currentColor). Global rather than scoped because both share
+   dialogs render it and share this chrome. */
 .share-dialog-spin {
-  animation: share-dialog-spin 0.8s linear infinite;
-}
-@keyframes share-dialog-spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  --li-color: currentColor;
 }
 @media (hover: hover) {
   .share-dialog-link-btn:hover { background: var(--bg-tertiary, #f0f0f0); color: var(--accent-color, #0066cc); }
