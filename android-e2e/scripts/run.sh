@@ -256,10 +256,45 @@ PY' | tr -d '\r\n' | grep -q '^200$'; then
   compose up -d --force-recreate runner
   local runner_cid
   runner_cid="$(compose ps -q runner)"
-  set +e
-  PHASE_RC="$(docker wait "$runner_cid")"
-  set -e
-  compose logs runner || true
+
+  # BOUNDED wait with live log streaming.
+  #
+  # `docker wait` on its own is a trap: if a spec wedges, the container never
+  # exits, the wait blocks until the *job's* 60-minute cap, and `compose logs`
+  # below never runs — so the failure produces ZERO runner output (measured: a
+  # Tier 2 phase hung 15:42→16:30 with no logs at all). This loop polls the
+  # container state, streams only the new lines every 30s (`docker logs --since`
+  # so nothing is duplicated), and on timeout dumps the full log and fails the
+  # phase at `E2E_PHASE_TIMEOUT` (default 20 min) instead of hanging the job.
+  local phase_timeout="${E2E_PHASE_TIMEOUT:-1200}"
+  local deadline=$(( $(date +%s) + phase_timeout ))
+  local since
+  since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  PHASE_RC=""
+  while :; do
+    if [[ "$(docker inspect -f '{{.State.Running}}' "$runner_cid" 2>/dev/null)" != "true" ]]; then
+      PHASE_RC="$(docker inspect -f '{{.State.ExitCode}}' "$runner_cid" 2>/dev/null || echo 1)"
+      break
+    fi
+    if (( $(date +%s) >= deadline )); then
+      echo "ERROR: runner did not finish within ${phase_timeout}s — dumping logs and failing the phase" >&2
+      PHASE_RC=124
+      break
+    fi
+    sleep 30
+    local new
+    new="$(docker logs --since "$since" "$runner_cid" 2>&1 || true)"
+    if [[ -n "$new" ]]; then
+      echo "--- runner log (new) ---"
+      printf '%s\n' "$new"
+    else
+      printf '.'
+    fi
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  done
+  echo
+  echo "--- runner log (full tail) ---"
+  compose logs --tail=250 runner || true
 
   # Copy artifacts out before the phase's containers go away.
   docker cp "$runner_cid:/e2e/artifacts/." "$ARTIFACTS/" >/dev/null 2>&1 || true
