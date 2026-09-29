@@ -238,15 +238,18 @@
           {{ t('common.setTags') }}
         </div>
         <!-- Doubles as the share-state indicator (mirrors the file header's
-             "Share link" item): highlighted and relabelled when this
-             conversation already has a live public link. -->
+             "Share link" item): highlighted, with a trailing check, when this
+             conversation already has a live public link. The label itself stays
+             plain — the check is the same "this option is on" language the file
+             menu uses for word wrap / line numbers. -->
         <div
           class="context-menu-item"
           :class="{ active: isSessionShared(contextMenu.sessionId) }"
           @click.stop="openShareDialogFromMenu(contextMenu.sessionId)"
         >
           <MessageSquareShare :size="14" />
-          {{ isSessionShared(contextMenu.sessionId) ? t('sessionShare.buttonActive') : t('sessionShare.button') }}
+          {{ t('sessionShare.button') }}
+          <span v-if="isSessionShared(contextMenu.sessionId)" class="wrap-check">✓</span>
         </div>
         <div class="context-menu-item" @click.stop="archiveFromMenu(contextMenu.sessionId)">
           <Archive :size="14" />

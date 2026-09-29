@@ -120,7 +120,8 @@
             </button>
             <button v-if="permanentMenuIds.includes('shareLink')" class="dropdown-item" :class="{ active: isShared }" @click="$emit('shareLink'); menuOpen = false">
               <ScreenShare :size="14" />
-              {{ isShared ? t('file.header.shareLinkActive') : t('file.header.shareLink') }}
+              {{ t('file.header.shareLink') }}
+              <span v-if="isShared" class="wrap-check">✓</span>
             </button>
             <button v-if="permanentMenuIds.includes('openAsText')" class="dropdown-item" @click="handleOpenAsText">
               <Code2 :size="14" />
@@ -741,13 +742,6 @@ onBeforeUnmount(() => {
         color: #fff;
     }
 }
-
-.wrap-check {
-    margin-left: auto;
-    color: var(--accent-color);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-bold);
-}
 </style>
 
 <!-- Unscoped styles for Teleported dropdown menu (rendered in body, outside scoped context) -->
@@ -810,11 +804,5 @@ onBeforeUnmount(() => {
     [data-theme-base="dark"] .file-header-dropdown-menu .dropdown-item.danger:hover {
         background: #2d1b1b;
     }
-}
-.file-header-dropdown-menu .wrap-check {
-    margin-left: auto;
-    color: var(--accent-color);
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-bold);
 }
 </style>

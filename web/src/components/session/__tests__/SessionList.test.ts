@@ -4,6 +4,7 @@ import { defineComponent, h, nextTick } from 'vue'
 import SessionList from '@/components/session/SessionList.vue'
 import { RunningSweepDirective } from '@/directives/runningSweep'
 import { LongPressDirective } from '@/directives/longPress'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 // UI zoom factor driving toFixedCSS()/getZoomedViewport() in the component's
 // clamp math. Defaults to 1 (no zoom); individual tests raise it to prove the
@@ -225,10 +226,10 @@ describe('SessionList', () => {
   // The state indicator lives on the "Share conversation" menu item rather
   // than a row badge: the badge was decorative (no click target) and showed
   // state in a different place from the action. Mirrors the file header, whose
-  // "Share link" item highlights and relabels when a link exists.
+  // "Share link" item highlights and gains a trailing check when a link exists.
   //
   // The i18n mock in this file returns the RAW KEY, so assertions match on
-  // sessionShare.button / sessionShare.buttonActive rather than English text.
+  // sessionShare.button rather than English text.
   it('seeds the share set on mount so the menu state is right without opening the drawer', async () => {
     const { useSessionShare } = await import('@/composables/useSessionShare')
     const { resetSessionShareState, isSessionShared } = useSessionShare()
@@ -268,7 +269,7 @@ describe('SessionList', () => {
     resetSessionShareState()
   })
 
-  it('highlights and relabels the share menu item when the session is shared', async () => {
+  it('highlights the share menu item and adds a check when the session is shared', async () => {
     const { useSessionShare } = await import('@/composables/useSessionShare')
     const { resetSessionShareState, markShared } = useSessionShare()
     resetSessionShareState()
@@ -290,20 +291,24 @@ describe('SessionList', () => {
       return Array.from(menu.querySelectorAll('.context-menu-item')).find(i => (i.textContent || '').includes('sessionShare.')) as HTMLElement | undefined
     }
 
-    // Unshared: plain label, no active state.
+    // Unshared: plain label, no active state, no check.
     const before = findShareItem()
     expect(before).toBeTruthy()
     expect(before!.classList.contains('active')).toBe(false)
     expect(before!.textContent).toContain('sessionShare.button')
+    expect(before!.querySelector('.wrap-check')).toBeNull()
 
-    // Shared: highlighted and relabelled. The item is keyed off
+    // Shared: highlighted, with the trailing check. The label itself must NOT
+    // change — the check carries the state (same language as the file menu's
+    // word wrap / line numbers items). The item is keyed off
     // contextMenu.sessionId, so it reacts without being reopened.
     markShared(s1.id)
     await nextTick()
 
     const after = findShareItem()
     expect(after!.classList.contains('active')).toBe(true)
-    expect(after!.textContent).toContain('sessionShare.buttonActive')
+    expect(after!.textContent).toContain('sessionShare.button')
+    expect(after!.querySelector('.wrap-check')).not.toBeNull()
 
     resetSessionShareState()
     wrapper.unmount()

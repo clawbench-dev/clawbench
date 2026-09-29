@@ -45,7 +45,6 @@ const i18n = createI18n({
           fileHistory: 'File history',
           shareExternal: 'Share',
           shareLink: 'Share link',
-          shareLinkActive: 'Share link (active)',
           exportHtml: 'Export HTML',
           edit: 'Edit',
           finishEditing: 'Finish editing',
@@ -866,9 +865,12 @@ describe('FileHeader', () => {
       vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({ path: '/tmp/readme.md' }) }))
       markShared('/tmp/readme.md')
       const wrapper = mountHeader({ file: { name: 'readme.md', path: '/tmp/readme.md', content: '# hi' }, viewMode: 'rendered', editing: false })
-      const button = await menuItemByText(wrapper, 'Share link (active)')
+      // The label stays plain; the "on" state is the trailing check, the same
+      // language word wrap / line numbers use in this menu.
+      const button = await menuItemByText(wrapper, 'Share link')
       expect(button).toBeTruthy()
       expect(button!.classes()).toContain('active')
+      expect(button!.find('.wrap-check').exists()).toBe(true)
       expect((wrapper.vm as any).$.setupState.isShared).toBe(true)
     })
 
@@ -880,6 +882,8 @@ describe('FileHeader', () => {
       markUnshared('/tmp/readme.md')
       await nextTick()
       expect((wrapper.vm as any).$.setupState.isShared).toBe(false)
+      const button = await menuItemByText(wrapper, 'Share link')
+      expect(button!.find('.wrap-check').exists()).toBe(false)
     })
 
     it('is not active for an unshared file', async () => {
@@ -887,6 +891,7 @@ describe('FileHeader', () => {
       const button = await menuItemByText(wrapper, 'Share link')
       expect(button).toBeTruthy()
       expect(button!.classes()).not.toContain('active')
+      expect(button!.find('.wrap-check').exists()).toBe(false)
       expect((wrapper.vm as any).$.setupState.isShared).toBe(false)
     })
   })

@@ -460,6 +460,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 |---|---|
 | `components/common/__tests__/designTokens.css.test.ts` | token 值、主题块完整性、未定义 token 引用、窗口控件对比度配方 |
 | `components/common/__tests__/countBadge.css.test.ts` | 角标几何全局唯一、scoped 未重加圆角 |
+| `components/common/__tests__/wrapCheck.css.test.ts` | 菜单「该项当前是开的」勾选 `.wrap-check` 全局唯一、两个菜单共用同一 class |
 | `components/common/__tests__/modalFooterBtn.theme.css.test.ts` | `.fbtn` 深色主题前景提亮 |
 | `components/common/__tests__/wallpaperSurfaceTransparency.css.test.ts` | 壁纸开启后各表面透明度不叠乘 |
 | `components/common/__tests__/wallpaperBlurCost.css.test.ts` | 壁纸模糊不留 `will-change` |
