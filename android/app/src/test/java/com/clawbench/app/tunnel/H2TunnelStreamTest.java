@@ -84,6 +84,22 @@ public class H2TunnelStreamTest {
         assertEquals(H2TunnelStream.HEADERS_TIMEOUT_MS, h2c.connectTimeoutMillis());
     }
 
+    @Test
+    public void client_enablesH2PingSoADeadConnectionIsObservable() {
+        // readTimeout is 0 by necessity, so a half-open connection (NAT rebind,
+        // server restart) leaves the control reader parked forever and no
+        // failure is ever raised. The interval PING is the only mechanism that
+        // turns that silence into a connection failure, which is what lets
+        // isConnected() go false and the reconnect monitor rebuild the session.
+        // 30s mirrors the SSH path's setServerAliveInterval(30000).
+        int expectedMs = H2TunnelStream.H2_PING_INTERVAL_SECONDS * 1000;
+        assertEquals("h2c client must ping", expectedMs,
+                tunnel.clientForTesting(TransportKind.H2C).pingIntervalMillis());
+        assertEquals("TLS client must ping", expectedMs,
+                tunnel.clientForTesting(TransportKind.TLS).pingIntervalMillis());
+        assertTrue("the interval must be finite", expectedMs > 0);
+    }
+
     // ==================================================================
     // Constraint: h2c uses H2_PRIOR_KNOWLEDGE; TLS uses HTTP_2
     // ==================================================================
@@ -354,6 +370,125 @@ public class H2TunnelStreamTest {
         // The real proof: a stream can be opened on the rebuilt session.
         try (TunnelConnection second = tunnel.openStream("127.0.0.1", 8080)) {
             assertNotNull(second);
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    // ==================================================================
+    // Session liveness (review blocker 1): a dead connection must be visible
+    // ==================================================================
+
+    @Test
+    public void controlStreamDeath_marksTheSessionDisconnected() throws Exception {
+        // The blocker: isConnected() only checked local fields, so after a NAT
+        // rebind / server restart the control stream died but the session still
+        // reported healthy and the monitor never reconnected — stranding every
+        // -R mapping. A control stream that ends for a non-local reason must
+        // turn isConnected() false.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        assertTrue(tunnel.isConnected());
+
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+        assertNotNull(stream);
+
+        // The server ends the response direction: the reader sees a clean EOF.
+        stream.endFromServer();
+
+        final CountDownLatch closed = new CountDownLatch(1);
+        control.onClose(closed::countDown);
+        assertTrue("the control stream must observe the loss",
+                closed.await(5, TimeUnit.SECONDS));
+
+        assertFalse("a lost control stream must make isConnected() false",
+                tunnel.isConnected());
+        assertNull("getKind() must agree", tunnel.getKind());
+    }
+
+    @Test
+    public void controlStreamDeath_isVisibleEvenWithoutWaitingForCloseHandlers() throws Exception {
+        // The reconnect monitor polls isConnected() every 15s; it must not
+        // depend on any subscriber having registered an onClose handler.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        stream.endFromServer();
+
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (tunnel.isConnected() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertFalse("no onClose subscriber is needed to observe the death",
+                tunnel.isConnected());
+        assertTrue(control.isClosed());
+    }
+
+    @Test
+    public void localClose_doesNotMarkTheSessionDead() throws Exception {
+        // close() is the client's own teardown (transport switch, screen-off
+        // suspend). It must not masquerade as a lost peer: the flag would then
+        // be indistinguishable from a real death on the next connect.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+
+        control.close();
+
+        assertTrue("a locally closed control stream is not a session loss",
+                tunnel.isConnected());
+    }
+
+    @Test
+    public void dataStreamConnectionFailure_marksTheSessionDisconnected() throws Exception {
+        // The -L half: a session with no control stream has no other failure to
+        // observe, so a connection-level failure on a data stream must also mark
+        // the session dead (this is the case the h2 PING surfaces).
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelConnection connection = tunnel.openStream("127.0.0.1", 8080);
+
+        // A reset/connection-shutdown on a stream the caller did not close is a
+        // connection-level failure.
+        server.lastStream().failFromServer();
+
+        InputStream in = connection.getInputStream();
+        try {
+            readFully(in, new byte[4]);
+            throw new AssertionError("expected the read to fail");
+        } catch (IOException expected) {
+            // The caller sees the failure...
+        }
+
+        assertFalse("a connection-level stream failure must mark the session dead",
+                tunnel.isConnected());
+        connection.close();
+    }
+
+    @Test
+    public void connect_revivesASessionMarkedDeadByTheControlStream() throws Exception {
+        // The full self-heal loop: the monitor sees isConnected()==false, calls
+        // ensureConnection() -> connect(), and the rebuilt session is usable so
+        // the -R replay can re-bind.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        server.lastStream().endFromServer();
+
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (tunnel.isConnected() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertFalse(tunnel.isConnected());
+
+        assertEquals(TransportKind.H2C, tunnel.connect(SERVER_URL, TransportKind.H2C));
+        assertTrue("connect() must revive the session", tunnel.isConnected());
+
+        try (TunnelConnection reopened = tunnel.openStream("127.0.0.1", 8080)) {
+            assertNotNull("a stream must open on the revived session", reopened);
         } catch (IOException e) {
             throw new AssertionError(e);
         }

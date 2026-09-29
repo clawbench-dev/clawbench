@@ -475,6 +475,52 @@ public class BackgroundServiceTransportTest {
     }
 
     // ==================================================================
+    // Session liveness -> reconnect -> -R replay (review blocker 1)
+    // ==================================================================
+
+    @Test
+    public void isSelectedTransportConnected_underH2_reflectsTheTunnel() throws Exception {
+        // This is the reconnect monitor's only gate (BackgroundService:1970).
+        // It must follow the tunnel's isConnected(), which now turns false when
+        // the session is marked dead — otherwise the monitor never reconnects.
+        enableH2Preference();
+        tunnel.connected = true;
+        assertTrue("a live tunnel must report connected",
+                (Boolean) invoke("isSelectedTransportConnected"));
+
+        tunnel.connected = false;
+        assertFalse("a dead tunnel must report disconnected so the monitor acts",
+                (Boolean) invoke("isSelectedTransportConnected"));
+    }
+
+    @Test
+    public void ensureConnection_afterTheTunnelReportsDisconnected_replaysReversePorts() throws Exception {
+        // The self-heal loop the blocker was about: the monitor observes
+        // isSelectedTransportConnected() == false, calls ensureConnection(),
+        // and every -R mapping is re-bound on the fresh session. Without the
+        // isConnected() fix the monitor never fires and the reverse forwards
+        // stay dead until a manual reconnect.
+        enableH2Preference();
+        setField("activeTransport", h2);
+        reversePorts().put(9000, new BackgroundService.PortInfo(3000, "", true));
+        h2.connected = true;
+
+        // The session dies (NAT rebind / server restart). isConnected() now
+        // reports it, unlike before the fix.
+        tunnel.connected = false;
+        assertFalse("the monitor must see the loss",
+                (Boolean) invoke("isSelectedTransportConnected"));
+
+        service.ensureConnection();
+
+        assertTrue("the session must be rebuilt", tunnel.connected);
+        assertEquals("the reverse mapping must be re-bound exactly once",
+                1, h2.addReverseCalls.get());
+        assertEquals(9000, h2.lastReverseServerPort);
+        assertEquals(3000, h2.lastReverseTargetPort);
+    }
+
+    // ==================================================================
     // disconnect / reconnect
     // ==================================================================
 

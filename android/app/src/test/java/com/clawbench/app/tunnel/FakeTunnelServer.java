@@ -364,5 +364,14 @@ final class FakeTunnelServer implements CallFactory {
         void endFromServer() throws IOException {
             fromServer.sink().close();
         }
+
+        /**
+         * Fail the response direction with an {@code IOException} on the next
+         * read, the way a reset connection surfaces to the transport. Unlike
+         * {@link #endFromServer} (a clean EOF) this is a transport failure.
+         */
+        void failFromServer() {
+            fromServer.cancel();
+        }
     }
 }

@@ -20,6 +20,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.X509TrustManager;
@@ -97,6 +98,15 @@ public final class H2TunnelStream implements TunnelStream {
     static final int PROBE_TIMEOUT_MS = 8_000;
 
     /**
+     * Interval for the h2 connection-level PING, in seconds. Matches the SSH
+     * path's {@code setServerAliveInterval(30000)} so both transports notice a
+     * dead peer on the same timescale. OkHttp only sends an interval PING when
+     * the connection has been otherwise idle, and fails the connection when the
+     * PONG does not arrive.
+     */
+    static final int H2_PING_INTERVAL_SECONDS = 30;
+
+    /**
      * Dedicated thread budget. Every open stream holds one thread for its whole
      * life, so this is simultaneously the maximum number of concurrent streams.
      * It sits below the server's 250-stream h2 limit on purpose: exceeding the
@@ -165,6 +175,25 @@ public final class H2TunnelStream implements TunnelStream {
     private volatile ServerTarget target;
     private volatile TransportKind kind;
     private volatile boolean closed = false;
+
+    /**
+     * Session-level liveness, distinct from {@link #closed} (a local teardown).
+     * Set when the control plane dies or a stream fails in a way that means the
+     * h2 connection itself is gone, so {@link #isConnected()} stops reporting a
+     * dead session as healthy — which is what let the reconnect monitor skip the
+     * session and strand every {@code -R} mapping forever. Cleared by the next
+     * {@link #connect}.
+     */
+    private volatile boolean dead = false;
+
+    /**
+     * Bumped on every teardown. A control stream or data stream captures it when
+     * created and only reports a session death while it still matches, so the
+     * {@code RST_STREAM}s {@link #closeInternal()} issues during a reconnect
+     * cannot mark the freshly established session dead.
+     */
+    private final AtomicLong generation = new AtomicLong();
+
     private volatile String lastError = "";
     private volatile TunnelErrorKind lastErrorKind = TunnelErrorKind.UNKNOWN;
 
@@ -239,6 +268,7 @@ public final class H2TunnelStream implements TunnelStream {
                 }
                 closeInternal();
                 closed = false;
+                dead = false;
                 target = serverTarget;
                 lastError = "";
                 lastErrorKind = TunnelErrorKind.UNKNOWN;
@@ -320,11 +350,46 @@ public final class H2TunnelStream implements TunnelStream {
         }
     }
 
+    /**
+     * True while the session is believed healthy.
+     *
+     * <p>This is the reconnect monitor's only signal ({@code
+     * BackgroundService.isSelectedTransportConnected}), so it must reflect a
+     * dead connection, not just local intent. {@link #dead} is set when the
+     * control plane ends or a stream fails as a connection-level error; before
+     * that, an h2 PING (see {@code buildClient}) actively probes the connection,
+     * which is what makes the death observable at all under the
+     * {@code readTimeout(0)} the tunnel requires.
+     */
     @Override
     public boolean isConnected() {
-        if (closed) return false;
+        if (closed || dead) return false;
         ServerTarget t = target;
         return t != null && kind != null;
+    }
+
+    /**
+     * Mark the session dead so {@link #isConnected()} turns false and the
+     * reconnect monitor rebuilds it.
+     *
+     * <p>Only a connection-level failure counts: a 502/403/401 is the server
+     * answering over a perfectly good h2 session, so marking it dead would
+     * reconnect on every refused target. The generation guard makes a late
+     * failure from a previous session harmless: {@link #closeInternal()} bumps
+     * it, so a stream torn down by a reconnect cannot kill the new session.
+     *
+     * <p>The session is deliberately left otherwise intact (no {@code close()}):
+     * the monitor's {@code ensureConnection()} calls {@code connect()}, which
+     * tears the old one down itself. Clearing {@code kind}/{@code target} here
+     * would also be a lie while the old streams are still winding down.
+     */
+    private void markSessionDead(long streamGeneration, TunnelErrorKind errorKind, @Nullable String message) {
+        synchronized (sessionLock) {
+            if (closed || dead || streamGeneration != generation.get()) return;
+            dead = true;
+            recordFailure(errorKind, message == null ? "session lost" : message);
+            log("w", "session marked dead: " + lastError);
+        }
     }
 
     @Override
@@ -342,6 +407,11 @@ public final class H2TunnelStream implements TunnelStream {
     }
 
     private void closeInternal() {
+        // Invalidate every in-flight stream's claim on the session before they
+        // are cancelled below: their cancellation surfaces as a connection-level
+        // IOException, and without this bump that failure would mark the
+        // *next* session dead the moment it is established.
+        generation.incrementAndGet();
         H2ControlStream control = controlStream;
         controlStream = null;
         if (control != null) {
@@ -520,6 +590,8 @@ public final class H2TunnelStream implements TunnelStream {
         private final HttpUrl url;
         private final String what;
         private final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        /** The session generation this stream belongs to (see {@link #generation}). */
+        private final long streamGeneration = generation.get();
 
         volatile TunnelConnection connection;
         volatile TunnelException failure;
@@ -576,9 +648,19 @@ public final class H2TunnelStream implements TunnelStream {
             } catch (TunnelException e) {
                 failure = e;
                 liveCalls.remove(call);
+                // A 401/403/502 is the server answering over a live h2 session,
+                // so it must not mark the session dead; a connection-level
+                // failure while opening means the connection is gone.
+                if (e.kind().isConnectionLevel()) {
+                    markSessionDead(streamGeneration, e.kind(), e.getMessage());
+                }
             } catch (IOException e) {
-                failure = asTunnelException(e, what + " failed");
+                TunnelException mapped = asTunnelException(e, what + " failed");
+                failure = mapped;
                 liveCalls.remove(call);
+                if (mapped.kind().isConnectionLevel()) {
+                    markSessionDead(streamGeneration, mapped.kind(), mapped.getMessage());
+                }
             } catch (RuntimeException e) {
                 failure = new TunnelException(TunnelErrorKind.UNKNOWN, what + " failed: " + e, e);
                 liveCalls.remove(call);
@@ -605,6 +687,8 @@ public final class H2TunnelStream implements TunnelStream {
         private final BufferedSource source;
         private final AtomicBoolean closedWrite = new AtomicBoolean(false);
         private final AtomicBoolean closed = new AtomicBoolean(false);
+        /** The session generation this stream belongs to (see {@link #generation}). */
+        private final long streamGeneration = generation.get();
 
         H2Connection(Call call, Response response, BufferedSink sink) {
             this.call = call;
@@ -626,7 +710,7 @@ public final class H2TunnelStream implements TunnelStream {
                     } catch (java.io.EOFException e) {
                         return -1;
                     } catch (IOException e) {
-                        throw translate(e);
+                        throw readFailure(e);
                     }
                 }
 
@@ -637,7 +721,7 @@ public final class H2TunnelStream implements TunnelStream {
                         int n = source.read(b, off, len);
                         return n;
                     } catch (IOException e) {
-                        throw translate(e);
+                        throw readFailure(e);
                     }
                 }
 
@@ -757,12 +841,30 @@ public final class H2TunnelStream implements TunnelStream {
         }
 
         private IOException translate(IOException e) {
-            TunnelErrorKind errorKind = TunnelErrorKind.of(e);
             if (e instanceof TunnelException) return e;
             // A locally-closed stream reports a cancelled/EOF IOException; the
             // caller asked for that, so it is not a transport failure.
             if (closed.get()) return new TunnelException(TunnelErrorKind.CLOSED, "stream closed");
+            TunnelErrorKind errorKind = TunnelErrorKind.of(e);
             return new TunnelException(errorKind, e.getMessage() == null ? errorKind.name() : e.getMessage(), e);
+        }
+
+        /**
+         * The response-direction read path: a failure here that the caller did
+         * not ask for means the h2 connection is gone, so the session must be
+         * marked dead. Kept out of {@link #translate} on purpose — the same
+         * translation serves the write/close paths, where a failure can also be
+         * an ordinary teardown race and must not reconnect the whole tunnel.
+         */
+        private IOException readFailure(IOException e) {
+            IOException translated = translate(e);
+            if (translated instanceof TunnelException) {
+                TunnelErrorKind errorKind = ((TunnelException) translated).kind();
+                if (errorKind.isConnectionLevel()) {
+                    markSessionDead(streamGeneration, errorKind, translated.getMessage());
+                }
+            }
+            return translated;
         }
     }
 
@@ -796,6 +898,15 @@ public final class H2TunnelStream implements TunnelStream {
         private final java.util.Queue<BindWaiter> bindWaiters = new java.util.concurrent.ConcurrentLinkedQueue<>();
 
         private final AtomicBoolean closed = new AtomicBoolean(false);
+        /**
+         * True once this stream is being closed by the client itself (session
+         * teardown, transport switch, a raced duplicate). A control stream that
+         * ends for any other reason has been lost to the peer or the network,
+         * which means the session must be rebuilt so {@code -R} re-binds.
+         */
+        private final AtomicBoolean localClose = new AtomicBoolean(false);
+        /** The session generation this stream belongs to (see {@link #generation}). */
+        private final long streamGeneration = generation.get();
         private final List<MessageHandler> messageHandlers = new java.util.concurrent.CopyOnWriteArrayList<>();
         private final List<Runnable> closeHandlers = new java.util.concurrent.CopyOnWriteArrayList<>();
 
@@ -931,6 +1042,22 @@ public final class H2TunnelStream implements TunnelStream {
             while ((waiter = bindWaiters.poll()) != null) {
                 waiter.settle(null);
             }
+            // A control stream that ended for any reason other than our own
+            // close means the session is gone: the server released every reverse
+            // listener when this stream died, so -R is broken until the monitor
+            // reconnects and replayReversePortsOnActiveTransport() re-binds. A
+            // locally initiated close (session teardown, transport switch, a
+            // raced duplicate) is not a loss, and neither is a non-2xx answer —
+            // that is the server answering over a live h2 session (see
+            // TunnelErrorKind.isConnectionLevel). The read/write failure that
+            // brings us here is what the h2 PING makes observable at all: with
+            // readTimeout(0) a half-open connection leaves this reader parked
+            // forever, so without the ping the death would never be seen.
+            boolean sessionLost = errorKind == null || errorKind.isConnectionLevel();
+            if (!localClose.get() && sessionLost) {
+                markSessionDead(streamGeneration, errorKind == null
+                        ? TunnelErrorKind.PROTOCOL : errorKind, message);
+            }
             for (Runnable handler : closeHandlers) {
                 try {
                     handler.run();
@@ -1003,6 +1130,10 @@ public final class H2TunnelStream implements TunnelStream {
 
         @Override
         public void close() {
+            // Local intent, not a lost peer: see end(). Must be set before the
+            // sink close/end so a concurrent failure cannot be misread as a
+            // session death.
+            localClose.set(true);
             if (!closed.get()) {
                 BufferedSink current = sink;
                 if (current != null) {
@@ -1117,10 +1248,22 @@ public final class H2TunnelStream implements TunnelStream {
                 .readTimeout(0, TimeUnit.MILLISECONDS)
                 .writeTimeout(0, TimeUnit.MILLISECONDS)
                 .connectTimeout(HEADERS_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                // No protocol-level ping: the tunnel has no keepalive
-                // requirement (h2 has connection-level PING and stream
-                // lifecycle), and an unexpected ping would only add traffic.
-                .pingInterval(0, TimeUnit.MILLISECONDS)
+                // Connection-level liveness. This is the only mechanism that can
+                // observe a half-open connection: readTimeout is 0 by necessity
+                // (see constraint 3), so a NAT rebind or a server restart leaves
+                // the control reader parked in read() forever and the control
+                // stream's onClose never fires. OkHttp's interval ping sends
+                // PING every interval and, when a PONG is missing (the peer is
+                // gone), fails the whole connection — which unblocks every
+                // stream and surfaces as a connection-level IOException that
+                // markSessionDead() turns into isConnected() == false.
+                //
+                // 30s mirrors the SSH path's setServerAliveInterval(30000), so
+                // both transports detect a dead peer on the same timescale (the
+                // monitor polls every 15s, so worst-case detection is ~45s).
+                // OkHttp skips the ping while the connection is actively
+                // carrying streams, so a busy tunnel pays no extra traffic.
+                .pingInterval(H2_PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
                 // The data streams carry opaque TCP payloads; the default
                 // cookie jar would be both useless and a cross-talk risk.
                 .cookieJar(okhttp3.CookieJar.NO_COOKIES)
