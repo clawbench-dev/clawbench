@@ -1879,50 +1879,41 @@ onUpdated(restoreAskStates)
 .tool-detail-header[data-category="permission"] { --tool-accent: #ef4444; }
 :root[data-theme-base="dark"] .tool-detail-header[data-category="permission"] { --tool-accent: #f87171; }
 
+/* Settled-permission status chip — same geometry + type tier as the
+   .permission-detail-label chip above it (11px / --radius-xs / 1px 6px) and
+   tinted from the theme palette so all 36 themes adapt. */
 .tool-detail-body .permission-result {
-  display: inline-block;
-  padding: var(--space-2) var(--space-6);
+  /* Child of the column-flex .permission-approval-view: without align-self it
+     inherits align-items: stretch, blockifies and becomes a full-width bar. */
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding:1px var(--space-3);
   border-radius: var(--radius-xs);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
+  border: 1px solid transparent;
   margin-top: var(--space-3);
 }
 
 .tool-detail-body .permission-result-approved {
-  background: #dcfce7;
-  color: #166534;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 
 .tool-detail-body .permission-result-denied {
-  background: #fee2e2;
-  color: #991b1b;
+  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
 }
 
-:root[data-theme-base="dark"] .tool-detail-body .permission-result-approved {
-  background: #166534;
-  color: #dcfce7;
-}
-
-:root[data-theme-base="dark"] .tool-detail-body .permission-result-denied {
-  background: #991b1b;
-  color: #fee2e2;
-}
-
+/* Auto-approved ≠ approved: nobody reviewed the request. Neutral tint keeps it
+   from reading as a user decision. */
 .tool-detail-body .permission-result-auto-approved {
-  display: inline-block;
-  padding: var(--space-2) var(--space-6);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  background: #dcfce7;
-  color: #15803d;
-  border: 1px solid #bbf7d0;
-}
-
-:root[data-theme-base="dark"] .tool-detail-body .permission-result-auto-approved {
-  background: #166534;
-  color: #dcfce7;
-  border-color: #15803d;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-secondary) 28%, transparent);
 }
 
 /* Tool output status badge (for Write/Edit etc. that return short status) */

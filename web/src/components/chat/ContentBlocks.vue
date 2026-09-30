@@ -3671,49 +3671,44 @@ onUnmounted(() => {
   color: #fca5a5;
 }
 
+/* Settled-permission status chip. Geometry + type tier match the
+   .permission-detail-label chip sitting in the same column (11px / --radius-xs /
+   1px 6px) instead of the 13px body tier, and the tint is mixed from the theme
+   palette so all 36 themes adapt — the old fixed Tailwind hexes did not. */
 .content-blocks .tool-detail .permission-result {
-  display: inline-block;
-  padding: var(--space-2) var(--space-6);
+  /* This is a child of the column-flex .permission-approval-view. Without
+     align-self it inherits align-items: stretch, the chip blockifies and
+     stretches into a FULL-WIDTH bar (measured 600px of a 602px card) instead of
+     hugging its label. */
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  padding:1px var(--space-3);
   border-radius: var(--radius-xs);
-  font-size: var(--font-size-md);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
+  border: 1px solid transparent;
   margin-top: var(--space-3);
 }
 
 .content-blocks .tool-detail .permission-result-approved {
-  background: #dcfce7;
-  color: #166534;
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 
 .content-blocks .tool-detail .permission-result-denied {
-  background: #fee2e2;
-  color: #991b1b;
+  color: var(--color-red);
+  background: color-mix(in srgb, var(--color-red) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
 }
 
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-result-approved {
-  background: #166534;
-  color: #dcfce7;
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-result-denied {
-  background: #991b1b;
-  color: #fee2e2;
-}
-
+/* Auto-approved is NOT the same event as approved: nobody looked at this
+   request. A neutral tint keeps it from reading as a user decision, and stops a
+   wall of auto-approvals from looking like a wall of green "Approved". */
 .content-blocks .tool-detail .permission-result-auto-approved {
-  display: inline-block;
-  padding: var(--space-2) var(--space-6);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-medium);
-  background: #dcfce7;
-  color: #15803d;
-  border: 1px solid #bbf7d0;
-}
-
-:root[data-theme-base="dark"] .content-blocks .tool-detail .permission-result-auto-approved {
-  background: #166534;
-  color: #dcfce7;
-  border-color: #15803d;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--text-secondary) 28%, transparent);
 }
 </style>
