@@ -153,14 +153,14 @@ per-host 令牌桶 + 全局并发上限，避免多 repo 同时打满限额；�
 
 | 表 | 用途 |
 |---|------|
-| `project_forges` | 项目 → 仓库绑定（`project_path` 归一化，`source` = auto/manual，含 opt-out 标记） |
+| `project_forges` | 项目 → 仓库绑定（按 `project_id` 归属，`source` = auto/manual，含 opt-out 标记） |
 | `forge_items` | 每个 issue/PR 的本地快照（状态、merged 标记、评论双键、`comments_baselined` 区分"零评论"与"从未拉取"） |
 | `forge_sync_state` | per-repo 的**两个**独立水位线（`issue_watermark` / `pr_watermark`）与同步状态；旧库升级时 `watermark` 重命名为 `issue_watermark`，`pr_watermark` 留 NULL（见"按 item 类型分离"） |
 | `forge_events` | 派生事件（`dedupe_key` 唯一、`item_key` 供未读按条目去重、`read_at` 已读标记、repo 索引） |
 | `forge_pipeline_runs` | 每个已处理 CI run 一行（`PRIMARY KEY (platform,host,owner,repo,run_id)`），去重与基线共用 |
 | `scheduled_tasks` | 增 `trigger_mode`（`cron`/`event`）与 `event_types`（逗号分隔订阅） |
 | `task_executions` | 增 `event_url` / `event_summary` 供执行记录溯源，`read_at` 逐条已读 |
-| `session_tags` / `session_tag_links` | 会话标签定义（`UNIQUE(name, project_path)`）与会话↔标签关联 |
+| `session_tags` / `session_tag_links` | 会话标签定义（`UNIQUE(name, project_id)`，全局标签用 `project_id=0` 哨兵）与会话↔标签关联 |
 
 ## API 端点
 

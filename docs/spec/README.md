@@ -10,7 +10,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → 唯一 turn 实现 → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、交互式提问卡（`<clawbench-ask-question>` → AskUserQuestion 工具调用，单选可取消，答案状态跨重渲染持久化）、/cb-* 内置命令注入（含 `conversationProjectsList` 跨项目定位）、请求构造唯一实现（直发与排队路径一致）、**异常终止自动续接**（分类器与消息构造唯一实现，取消优先）、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文按优先级压缩（保留全部用户消息）、thinking 惰性加载、子智能体内容分组（按 `_meta` 父工具调用 id 折叠进父 Agent 卡片）、工具调用耗时、消息元信息区在气泡外（用户消息同样支持复制/详情）、会话重置（卡死会话一键重启进程保留上下文）、消息回溯 Rewind（原址截断会话历史并重启 AI 会话，同时清空计划面板）、完成通知（后台事件时纯通知卡片，类别 chip + 事件类型 chip + 主体名称 + 最多 4 行摘要 + 跨项目整卡换色与区隔带 + 跳转顺带标记已读 + 关闭，5 秒自动关闭，覆盖会话/任务/仓库且与系统通知对齐，详见[应用内完成通知](features/completion-popup.md)）、未读自动清除、错误码透传与展示、取消耗时与 finalize 阶段计时、滚动保持机制、按项目恢复上次会话、输入草稿与会话快照恢复、独立表消息队列（`queued_messages` 出队才落库，drain loop 原子出队 + 出队熔断 + 兜底回收器；DB id 顺序即对话顺序）、流式块保序合并（mergeOrderedBlocks）、ACP `_meta` Token/成本明细（最新完整快照合并，供[用量统计](features/usage-stats.md)聚合）展示 |
+| [聊天流程](core/chat-flow.md) | 用户发消息到 AI 回复的完整链路：handler → 唯一 turn 实现 → AI 后端 → WebSocket StreamHub → 前端；含 ACP 权限审批、交互式提问卡（`<clawbench-ask-question>` → AskUserQuestion 工具调用，单选可取消，答案状态跨重渲染持久化）、/cb-* 内置命令注入（含 `conversationProjectsList` 跨项目定位）、`/btw` 旁路问答（摘要模型基于压缩快照作答，独立表 `btw_questions`、不进对话）、请求构造唯一实现（直发与排队路径一致）、**异常终止自动续接**（分类器与消息构造唯一实现，取消优先）、文件附件行范围、自动摘要（AI 失败降级结论文本）、分叉上下文按优先级压缩（保留全部用户消息）、thinking 惰性加载、子智能体内容分组（按 `_meta` 父工具调用 id 折叠进父 Agent 卡片）、工具调用耗时、消息元信息区在气泡外（用户消息同样支持复制/详情）、会话重置（卡死会话一键重启进程保留上下文）、消息回溯 Rewind（原址截断会话历史并重启 AI 会话，同时清空计划面板）、完成通知（后台事件时纯通知卡片，类别 chip + 事件类型 chip + 主体名称 + 最多 4 行摘要 + 跨项目整卡换色与区隔带 + 跳转顺带标记已读 + 关闭，5 秒自动关闭，覆盖会话/任务/仓库且与系统通知对齐，详见[应用内完成通知](features/completion-popup.md)）、未读自动清除、错误码透传与展示、取消耗时与 finalize 阶段计时、滚动保持机制、按项目恢复上次会话、输入草稿与会话快照恢复、独立表消息队列（`queued_messages` 出队才落库，drain loop 原子出队 + 出队熔断 + 兜底回收器；DB id 顺序即对话顺序）、流式块保序合并（mergeOrderedBlocks）、ACP `_meta` Token/成本明细（最新完整快照合并，供[用量统计](features/usage-stats.md)聚合）展示 |
 | [AI 后端抽象](core/ai-backend.md) | 双传输后端（CLI shell-out + ACP stdio）、流式事件累加（AccumulateBlock + 回放检测 + 连续 thinking 合并 + AskQuestion 转换）、ACP 状态提取（mode/thinking/model）、ACP 崩溃诊断、acpStdoutFilter 协议修复（含 SessionModelState 提取）、ACP context_state 持久化、ACP 会话恢复重试与 NewSessionFallback（Initialize 握手超时短路为类型化错误、不作断连重试）、thinking 惰性加载、CodeWhale 字段重映射、Grok Build 双传输（ACP + streaming-json CLI）、ZCode ACP 桥接（zcode-acp-server）、共享规则模板、连接管理（AgentID/BackendID 无锁防死锁、用户取消保护存活连接、ensureAliveWithSession 使用 ResumeSession）、LoadSession 异步回放、ListSessions 磁盘扫描回退、EnsureAlive、CodeBuddy MCP 配置注入、CodeBuddy Plugin Skills 竞态修复、客户端能力协商按 agent 定制（Terminal / fs.readTextFile 作为行为开关）、ACP `_meta` 扩展元信息解析（per-agent 归一化 → chat_metadata）、子智能体父工具调用归属（`_meta` parentToolCallId / parentToolUseId → ParentToolCallID）、压缩后系统提示重注入（compact_detect）、重放过滤按整轮 requestId 集合判定、无进度看门狗按模型进展判定（与连接活性双信号分离） |
 | [流式传输体系](core/streaming.md) | 单一 WebSocket StreamHub（含断线 ≤10s 缓冲重放、≤50 条上限、>120s 清理订阅）+ 旁注小 SSE/WS 通道；含前端重连状态同步、subscribeOnly 模式、replay_done 事件、投递可观测（`/api/ws/delivery-stats`）、关键事件等待/高频增量丢弃的双层分级、遥测类事件非缓冲投递、流式入库批量合并与 Finalize thinking 单事务重写、前端有界缓冲回放 |
 | [会话生命周期](core/session-lifecycle.md) | 聊天会话的创建、执行、排队、取消、归档（软删除）、物理删除（Destroy）、续接对话（标题时间戳前缀 + 锁定）、分叉（含 beforeMessageId、可选 Agent）、会话标题派生（transcript 双候选提取）、设置即时持久化、会话标签、异常终止自动续接（取消原因优先，与其他路径共用分类器）、过期归档自动清理、Codex 项目级历史会话发现（磁盘扫描 + ACP 合并）、单一 owner runner（运行态与可取消性同源）、唯一 turn 实现与队列兜底回收、优雅退出（WaitStreamsDrained + GracefulStopAll 等待流落库再回收进程） |
@@ -23,7 +23,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [首次访问欢迎面板](features/setup-wizard.md) | WelcomeOverlay 后端检测面板（非 5 步向导）；Agent 创建走自动发现 + AgentInstallDialog；15 个后端规格；检测期间显示加载指示器 |
 | [任务](features/scheduled-tasks.md) | cron 调度 → AI 执行 → 摘要推送，支持暂停/恢复/手动触发/续接对话，运行中流式状态展示，**异常终止自动重试**（与聊天路径共用分类器，跨轮保持 running），执行历史事件驱动（订阅 `task_update`，不再 3s 轮询），执行级逐条已读（不再切 tab 自动清零），**前置自定义脚本**（cron 可选，静默成功则跳过 AI 且不发通知，脚本阶段不计入「运行中」但可见可取消）；含事件触发任务（GitHub/GitLab 事件唤起，只读事件上下文注入（未选事件时上下文块整块隐藏），列表行与聊天预览卡均展示订阅事件而非空白 cron 字段，见 [Forge 集成](features/forge-integration.md)） |
 | [Forge 集成](features/forge-integration.md) | GitHub/GitLab Issue + PR/MR 只读浏览（仓库绑定 + 列表/详情/评论）、面板内「动态」页签（未读/已读/全部条目聚合）、后台轮询感知变化（水位线 + 快照 diff）、CI 完成事件（per-run 去重表 + 按 run 去重 debounce）、流水线 ↔ PR 双向跳转、按条目未读与通知、事件触发 AI 任务、URL 附件「引用到对话」、按 host 凭据隔离与自部署实例 http/https、下拉菜单「打开仓库」 |
-| [会话标签](features/session-tags.md) | 按项目隔离的标签定义（`UNIQUE(name, project_path)`）+ 会话关联、长按菜单打标签、会话行标签行、顶部过滤栏（仅列在用标签，可换行 + 高度封顶）、可读性校准的哈希配色、胶囊即选中控件、失败可见、PATCH 全量替换语义 |
+| [会话标签](features/session-tags.md) | 按项目隔离的标签定义（`UNIQUE(name, project_id)`，全局标签用 `project_id=0` 哨兵）+ 会话关联、长按菜单打标签、会话行标签行、顶部过滤栏（仅列在用标签，可换行 + 高度封顶）、可读性校准的哈希配色、胶囊即选中控件、失败可见、PATCH 全量替换语义 |
 | [语音合成](features/tts.md) | 多引擎 TTS（云/本地），文本清理，缓存策略 |
 | [语音输入](features/stt.md) | 双模式语音识别（流式 WS + 非流式 POST）、vLLM Whisper 引擎、增量识别 + 最终全量、安全上下文检测、快捷键触发 |
 | [推荐回复](features/chat-recommendation.md) | AI 回复完成后自动生成下一步建议、stable/rolling 分离支持 prompt caching、快捷指令感知、离线恢复、会话隔离 |
@@ -49,9 +49,9 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 | [国际化](infra/i18n.md) | go-i18n bundle、嵌入式 YAML 翻译、X-Locale/Cookie/Accept-Language 优先级链、推送通知独立 Localizer |
 | [SSH 隧道](infra/ssh-tunnel.md) | 双传输：SSH 通道（direct-tcpip 正向 + tcpip-forward/forwarded-tcpip 反向）与 HTTP/2 流隧道（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面，单端口 20000 多路复用，`-R` 靠控制流通知 + 单次 token 认领）、传输方式 `port_forward.transport` **已钉死为 `both`**（服务端在 `ApplyDefaults` 与 PATCH 路径均无条件归一，`ssh`/`h2` 不可达——该字段只剩 web 端健康检查门控一个消费者，两个原生客户端都不消费：Electron 写死 SSH、Android 用本地 SharedPreferences 开关 `tunnel_transport_h2_enabled`；故「服务端只准 ssh」不可执行，已移除可配置性；字段保留以免 web 读到 `undefined` 而误判 ssh-only）、半关闭与 SSH **有界近似**而非逐条等价、方向语义、反向映射仅绑 127.0.0.1 且禁绑保留端口、密码认证、自动 host key、暴力破解防护、端口白名单默认 1024-65535（ISS-186 修复）、端点按受众拆分（公开 `/api/ssh/info` 仅端口发现，`/api/ssh/info/full` 需鉴权） |
 | [FRP 隧道](infra/frp-tunnel.md) | 进程内 FRP 客户端、状态机生命周期、代理配置热重载 vs 通用配置重启、自动端口分配、WS 事件广播、双认证级别 API |
-| [Proxy 注册表](infra/proxy.md) | 方向感知（forward/reverse）、反向代理与 Host 头重写（仅正向）、服务器端口分配与保留端口、特权端口映射、健康检查（反向跳过拨号）、前端端口展示、CORS 代理（Swagger UI "Try it out"） |
-| [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现（启动同步加载 + 后台探测广播 `agents_updated`；含 Kimi 与 Codex 自定义模型发现函数）、ACP 运行时模型验证、多实例 Cookie 隔离、TLS 证书自动发现、Schema 迁移（列探针 + `schema_migrations` 数据迁移台账）、默认项目持久化、配置连通性测试、覆盖率门禁 |
-| [事件体系](infra/event-system.md) | ws.Manager 系统广播、StreamHub 会话扇出、断线缓冲重放、投递丢弃计数（`/api/ws/delivery-stats`）与关键事件可靠投递、摘要与权限事件推送 |
+| [Proxy 注册表](infra/proxy.md) | 方向感知（forward/reverse）、反向代理与 Host 头重写（仅正向）、服务器端口分配与保留端口、特权端口映射、健康检查（反向跳过拨号）、并行端口探测（有界并发 + 扫描错误可见）、前端端口展示、CORS 代理（Swagger UI "Try it out"） |
+| [配置与自动发现](infra/config-and-discovery.md) | 零配置启动、DB-backed Agent 存储、双传输选择、供应商注册表、Model 自动发现（启动同步加载 + 后台探测广播 `agents_updated`；含 Kimi 与 Codex 自定义模型发现函数）、ACP 运行时模型验证、多实例 Cookie 隔离、TLS 证书自动发现、Schema 迁移（列探针 + `schema_migrations` 数据迁移台账）、项目 id 化注册表（项目路径→`project_id`，改名即一条 UPDATE）、默认项目持久化、配置连通性测试、覆盖率门禁 |
+| [事件体系](infra/event-system.md) | ws.Manager 系统广播、StreamHub 会话扇出、断线缓冲重放、遥测非缓冲投递（`system_resources`）、投递丢弃计数（`/api/ws/delivery-stats`）与关键事件可靠投递、摘要与权限事件推送 |
 | [应用自升级](infra/self-upgrade.md) | 版本检查、安装目录可写预检、镜像 tarball URL 归一化、备份替换、进度推送、服务重启与断线轮询、容器内强制就地替换 |
 | [版本号策略](infra/versioning.md) | versionCode（`major*1e8+minor*1e5+patch*1e3+distance`，决定 Android 能否覆盖安装）与 versionName（仅展示）两套口径；CI 走 `--tag-only` 只拉 tag ref 不拉历史，本地走 `git describe` 含 distance；位宽防 `v0.100.0`/`v1.0.0` 撞码；release 带 `--assert` 防退化 |
 | [本地文件服务](infra/local-file-serving.md) | `/api/fs/raw/` 路径编码、媒体预览、下载与访问边界、目录树列表、批量文件存在检查、批量图片 Base64 |
@@ -64,7 +64,7 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 | 模块 | 说明 |
 |------|------|
-| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（158 路径 / 200 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
+| [OpenAPI 规格](../../internal/api/openapi.yaml) | 完整 OpenAPI 3.0 单文件（161 路径 / 204 操作）：所有 HTTP 端点、鉴权标注、统一错误体、请求/响应 schema；WebSocket 与 SSE 端点以说明形式收录。源文件已迁至 `internal/api/openapi.yaml` 以支持 `go:embed`（详见 [API 文档说明](api/README.md)） |
 
 ### client/ — 客户端
 
