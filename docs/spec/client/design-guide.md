@@ -311,6 +311,19 @@
 
 ---
 
+### 加载环（`.li-spinner`）
+
+**全站唯一实现**，声明在 `css/components.css`（**必须全局**——工具调用卡 / mermaid 是 `v-html`/`innerHTML` 注入、localhost 按钮曾是 `::after`，这些 DOM 无 `data-v-*`，scoped 规则永远匹配不到，见[红线 1](#红线-1v-html-注入的内容匹配不到-scoped-规则)）。
+
+- **两个入口**：组件 `<LoadingIndicator>`（渲染 `.li-spinner`，覆盖 72 个文件）或裸 `<span class="li-spinner">`（注入 HTML 用）。组件只拥有外壳布局（`.loading-indicator`），环的形状**不在** scoped 块里。
+- **尺寸**：组件档位 `size="sm|md|lg"` = 14 / 28 / 36px。**`size` 是字符串枚举**——传数字（`:size="13"`）会生成不存在的类名并**静默回退 28px**。非档位尺寸（20px / 10px / 8px）的调用方自己在环元素上设 `--li-size`。
+- **粗细由比例推导，全站只有一个比例**：`--li-border: calc(var(--li-size) / 6)`。**调用方只能设 `--li-size`，绝不要写死 `--li-border`**——写死会静默偏离比例，且不对比两个环根本看不出来。守卫 `sharedRingUnification.test.ts` 会走查全部源码，出现字面量 `--li-border` 即失败。
+- **颜色**：`--li-color`（转动的弧）/ `--li-track-color`（静止底环），都回退主题 token。原 SVG 是 `stroke="currentColor"` 的站点用 `--li-color: currentColor` 承接，外观零变化。
+- **速度**：默认 `--li-duration: 0.8s`；从旧实现迁移来的站点（mermaid / tool-call / url-btn）保留各自的 `0.6s`，**统一形状不等于统一节奏**。
+- 覆盖类规则**必须带祖先部分**（如 `.mermaid .mermaid-spinner`）：`.li-spinner` 是单类 (0,1,0)，写成单类会与之打平，胜负取决于打包 chunk 顺序 → 尺寸会随构建**静默回退 28px**。
+
+---
+
 ## 动效
 
 - **时长用 token**：`--duration-fast` / `--duration-base` / `--duration-slow`（含义见[设计 token](#动效时长)）。
@@ -469,6 +482,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
 | `components/file/__tests__/flashReducedMotion.css.test.ts` | 闪烁动效遵守 `prefers-reduced-motion` |
 | `components/common/__tests__/BusyBar.test.ts` | 长动作进度条存在且动画在、**无** reduced-motion opt-out（扫过即信息）、不吞指针事件 |
+| `components/common/__tests__/sharedRingUnification.test.ts` | 加载环全局唯一、调用方不得重述形状、**全仓只有一个 `--li-border` 比例**（走查源码）、覆盖类必须带祖先 |
+| `components/common/__tests__/spinnerUnification.test.ts` | 迁移到 LoadingIndicator 的 6 处保留各自 `--li-color`、不再自带 animation/keyframes、`size` 用档位而非数字 |
 | `components/chat/__tests__/chatPanelBusyWiring.test.ts` | `startBusy` 认领制（不抢占）、各自只释放自己的 kind、BusyBar 已挂载、卸载清 ticker |
 | `components/file/__tests__/dockedPaneStacking.css.test.ts` | 停靠预览窗格层级 |
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |

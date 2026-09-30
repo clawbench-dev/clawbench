@@ -204,7 +204,6 @@ a.chat-file-path-inert:hover,
    which stylesheet the bundler emits first. */
 .chat-url-open-btn .chat-url-open-btn-spinner {
   --li-size: 8px;
-  --li-border: 1.5px;
   /* Kept from the pre-unification ::after ring, which spun at 0.6s. */
   --li-duration: 0.6s;
   display: none;

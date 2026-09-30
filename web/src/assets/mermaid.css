@@ -12,7 +12,6 @@
    loading markup is injected via innerHTML from a util. */
 .mermaid .mermaid-spinner {
   --li-size: 20px;
-  --li-border: 2px;
   /* Kept from the pre-unification implementation, which spun at 0.6s. */
   --li-duration: 0.6s;
 }
