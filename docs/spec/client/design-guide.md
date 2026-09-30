@@ -221,6 +221,8 @@
 - 判定要点：`focusin/focusout` 认**任意可编辑元素**（不只聊天框/终端）+ 阈值（≥120px，排除浏览器地址栏）+ 轮询（部分 WebView 不发 resize 事件）。
 - 隐藏是 `display:none` 切换，Android WebView 可能不派发该转变的 ResizeObserver 回调，故必须保留键盘关闭后 `nextTick` 重测 dock 宽度的安全网（否则溢出布局按隐藏期的宽度算）。
 - `useChatKeyboard` / `useTerminalKeyboard` 仍在，但它们只负责**内容区**不被键盘遮住（`.chat-keyboard-open` / `.terminal-keyboard-open` 的 `bottom` 收缩），与 dock 可见性是两件事。
+- **三个键盘探测都必须有 ≥120px 阈值**（`useSoftKeyboard` / `useChatKeyboard` / `useTerminalViewport` 各自持有 `KEYBOARD_MIN_HEIGHT`）。原始差值 `innerHeight - visualViewport.height - offsetTop` **不是键盘专属**：桌面端经典横向滚动条就会让它变成 ~15px，浏览器工具栏同理。一旦少了阈值，这个值会被写成 `.chat-keyboard-open { bottom: 15px }`（或 terminal 那版），**收缩 `.app-container` → 动态壁纸画布被 resize → 清空一帧 → 闪一下**。这正是「只有聊天输入框聚焦会闪、文件管理器搜索框不会」的原因——只有聊天框会调 `useChatKeyboard`。
+  - 同理，`useTerminalViewport` 的 `setAdjustResize(resizeKeyboard > 0)` 也必须用同一阈值：滚动条造成的 15px 会被误判成 Android adjustResize，从而**抑制真正的键盘补偿**。
 
 ### 宽屏 vs 窄屏
 

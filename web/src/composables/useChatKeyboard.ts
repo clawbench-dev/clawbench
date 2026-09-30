@@ -56,13 +56,30 @@ function clearDeactivateTimer() {
   }
 }
 
+/**
+ * Minimum measured height (px) that counts as a keyboard.
+ *
+ * The raw difference is NOT keyboard-specific. On desktop it is normally 0, but
+ * a classic horizontal scrollbar makes it ~15px and a pinch-zoom makes it far
+ * larger. Without this gate the value is applied as `.chat-keyboard-open
+ * { bottom: <n>px }` on .app-container, which shrinks (and clears) the animated
+ * wallpaper canvas — reported as "the dynamic wallpaper flashes when I focus
+ * the chat input". The file-manager search input never flashed because only the
+ * chat input activates this composable.
+ *
+ * Mirrors useSoftKeyboard's KEYBOARD_MIN_HEIGHT: browser chrome and scrollbars
+ * are far shorter than a real keyboard.
+ */
+const KEYBOARD_MIN_HEIGHT = 120
+
 function updateKeyboardHeight() {
   const vv = window.visualViewport
   if (!vv) return
 
   // keyboardHeight = space taken by the keyboard relative to the layout viewport
   const height = window.innerHeight - vv.height - vv.offsetTop
-  chatKeyboardHeight.value = Math.max(height, 0)
+  const next = height >= KEYBOARD_MIN_HEIGHT ? height : 0
+  chatKeyboardHeight.value = next
 }
 
 function onVisualViewportResize() {
