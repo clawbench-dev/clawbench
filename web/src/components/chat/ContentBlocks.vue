@@ -3784,12 +3784,15 @@ onUnmounted(() => {
   border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
 }
 
-/* Auto-approved is NOT the same event as approved: nobody looked at this
-   request. A neutral tint keeps it from reading as a user decision, and stops a
-   wall of auto-approvals from looking like a wall of green "Approved". */
+/* Auto-approved renders IDENTICALLY to -approved. This reverses an earlier
+   deliberate choice (a neutral tint, so it would not read as a human decision):
+   the outcome is the same either way, and the distinct look read as a different
+   result rather than the same one. */
 .content-blocks .tool-detail .permission-result-auto-approved {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--text-secondary) 28%, transparent);
+  /* Same as -approved: the user asked for one consistent "allowed" look, and
+     the outcome is the same either way. */
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 </style>

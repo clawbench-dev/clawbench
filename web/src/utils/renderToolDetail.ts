@@ -805,8 +805,11 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
       html += `<div class="permission-result permission-result-denied">${PERMISSION_DENY_ICON_SVG}${escapeHtml(gt('tool.permission.denied'))}</div>`
     }
   } else if (isAutoApproved) {
-    // Auto-approved but SSE result not yet arrived — show auto-approved badge
-    html += `<div class="permission-result permission-result-auto-approved">${escapeHtml(gt('tool.permission.autoApproved'))}</div>`
+    // Auto-approved but SSE result not yet arrived. Deliberately identical to
+    // the approved badge (same tint, same glyph): the outcome the user sees is
+    // "this was allowed", and a distinct look for the auto case read as a
+    // different result rather than the same one.
+    html += `<div class="permission-result permission-result-auto-approved">${PERMISSION_OK_ICON_SVG}${escapeHtml(gt('tool.permission.autoApproved'))}</div>`
   } else if (options.length > 0) {
     // Integrated button group: one bordered container, equal-width cells and
     // 1px dividers — instead of N separate pills with gaps between them.

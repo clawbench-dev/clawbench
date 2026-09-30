@@ -205,15 +205,30 @@ describe('permission-result chip tints derive from the theme palette', () => {
   }
 })
 
-describe('auto-approved reads as "nobody decided", not as an approval', () => {
+describe('auto-approved matches the approved badge', () => {
+  // This INVERTS an earlier decision: auto-approved used to carry a neutral
+  // tint so it would not read as a human approval. The user asked for one
+  // consistent "allowed" look instead — the outcome is the same either way, and
+  // the distinct look read as a different result rather than the same one.
   for (const path of [INLINE, OVERLAY]) {
-    it(`${path}: neutral tint, not the success green`, () => {
-      const decls = declsOf(path, '-auto-approved')
-      expect(decls).toMatch(/color:\s*var\(--text-secondary\)/)
-      // Approved is green; auto-approved is an unreviewed decision and must not
-      // be visually identical to a human approval.
-      expect(decls, 'auto-approved must not reuse the success colour').not.toMatch(
-        /--color-success/,
+    it(`${path}: uses the same tint as -approved`, () => {
+      const auto = declsOf(path, '-auto-approved')
+      const approved = declsOf(path, '-approved')
+      const norm = (s: string) =>
+        s
+          .replace(/\/\*[\s\S]*?\*\//g, '')
+          .split(';')
+          .map((d) => d.replace(/\s+/g, ' ').trim())
+          .filter(Boolean)
+          .sort()
+      expect(
+        norm(auto),
+        'auto-approved must render identically to approved',
+      ).toEqual(norm(approved))
+      // And specifically: the success colour, not the old neutral grey.
+      expect(auto).toMatch(/--color-success/)
+      expect(auto, 'must no longer use the neutral tint').not.toMatch(
+        /--text-secondary/,
       )
     })
   }

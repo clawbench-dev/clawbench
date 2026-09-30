@@ -1701,12 +1701,19 @@ describe('PermissionApproval renderer', () => {
     expect(denied).toContain('d="m9 9 6 6"')
   })
 
-  it('leaves the auto-approved badge glyph-free (it is not a user decision)', () => {
-    const html = formatToolInput(
+  it('gives the auto-approved badge the same glyph as approved', () => {
+    // Inverts an earlier decision (it used to be glyph-free): auto-approved now
+    // renders identically to approved, so it carries the same check glyph.
+    const approved = formatToolInput(
+      { options: [] }, 'PermissionApproval',
+      { done: true, status: 'success', output: 'Approved' })
+    const auto = formatToolInput(
       { options: [], autoApproved: true }, 'PermissionApproval')
-    const m = html.match(/permission-result-auto-approved"[^>]*>([\s\S]*?)<\/div>/)
-    expect(m, 'auto-approved badge must render').not.toBeNull()
-    expect(m![1]).not.toContain('<svg')
+
+    const autoIcon = auto.match(/permission-result-auto-approved"[^>]*>(<svg[\s\S]*?<\/svg>)/)
+    expect(autoIcon, 'auto-approved badge must carry a glyph').not.toBeNull()
+    const approvedIcon = approved.match(/permission-result-approved"[^>]*>(<svg[\s\S]*?<\/svg>)/)![1]
+    expect(autoIcon![1], 'must be the SAME glyph as approved').toBe(approvedIcon)
   })
 
   it('shows buttons when blockCtx is absent (streaming/fresh)', () => {

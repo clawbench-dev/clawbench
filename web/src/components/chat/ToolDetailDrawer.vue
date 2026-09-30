@@ -1979,12 +1979,14 @@ onUpdated(restoreAskStates)
   border-color: color-mix(in srgb, var(--color-red) 35%, transparent);
 }
 
-/* Auto-approved ≠ approved: nobody reviewed the request. Neutral tint keeps it
-   from reading as a user decision. */
+/* Auto-approved renders IDENTICALLY to -approved — this reverses an earlier
+   deliberate neutral tint. See ContentBlocks.vue for why. */
 .tool-detail-body .permission-result-auto-approved {
-  color: var(--text-secondary);
-  background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
-  border-color: color-mix(in srgb, var(--text-secondary) 28%, transparent);
+  /* Same as -approved: the user asked for one consistent "allowed" look, and
+     the outcome is the same either way. */
+  color: var(--color-success);
+  background: color-mix(in srgb, var(--color-success) 12%, transparent);
+  border-color: color-mix(in srgb, var(--color-success) 35%, transparent);
 }
 
 /* Tool output status badge (for Write/Edit etc. that return short status) */
