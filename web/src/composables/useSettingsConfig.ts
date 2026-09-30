@@ -457,9 +457,11 @@ const localDefaults: Record<string, string | boolean | number | null> = {
   // daily fetch/cache — and never decides what this device displays. Two
   // devices on the same server can therefore show different wallpapers.
   //
-  // The wave is the factory default: a fresh device (or one whose storage was
-  // cleared) shows an animated background immediately, with no image needed.
-  wallpaperEnabled: true,
+  // The wallpaper is OFF by default: a fresh device (or one whose storage was
+  // cleared) starts on the plain theme background, with no image or animation.
+  // The mode stays 'wave' so that flipping the switch on shows the animated
+  // wave straight away, without also having to pick a source.
+  wallpaperEnabled: false,
   wallpaperMode: 'wave',
   // Which animated style the 'wave' mode renders. Kept as a separate preference
   // so the mode value stays a stable 4-way union and switching styles never
