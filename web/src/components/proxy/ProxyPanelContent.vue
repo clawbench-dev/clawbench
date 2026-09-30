@@ -121,24 +121,6 @@
         </div>
       </div>
 
-      <!-- SSH listener not enabled. Shown to the browser AND the Electron shell
-           (both depend on the server's SSH config, and when it is off
-           checkTunnelHealth() bails out early with status 'unknown', so this is
-           the only thing that explains why nothing works). Hidden on Android,
-           whose own native tunnel banners cover the same ground.
-           Keyed off availability, not the SSH listener alone: an h2-only
-           install (port_forward.enabled false, forwards carried over the stream
-           tunnel) has no SSH listener yet still forwards ports, so accusing it
-           of being disabled is wrong. Uses the shared `portForwardUnavailable`
-           predicate — the same expression behind the dock tab gate — so this
-           banner can only render on a panel the dock actually shows. -->
-      <div v-if="!isAndroidApp && portForwardUnavailable(sshInfo?.enabled, transportAllowsH2)" class="tunnel-banner warning">
-        <AlertTriangle :size="16" />
-        <div class="tunnel-banner-content">
-          <span class="tunnel-banner-detail">{{ t('proxy.tunnelNoSsh') }}</span>
-        </div>
-      </div>
-
       <!-- Registered ports list -->
       <div class="proxy-zones">
         <div class="proxy-zone-registered">
@@ -317,7 +299,7 @@ import { useAppMode } from '@/composables/useAppMode'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect.ts'
-import { sshInstallHint, portForwardUnavailable } from '@/utils/portForwardUtils.ts'
+import { sshInstallHint } from '@/utils/portForwardUtils.ts'
 
 const { t } = useI18n()
 
@@ -359,7 +341,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, transportAllowsH2, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 // `isAppMode` is true for BOTH native hosts (it is just isNativeApp()), so any
 // banner whose copy is Android-specific must additionally exclude the Electron
 // desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.

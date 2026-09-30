@@ -8,12 +8,9 @@ import { ref } from 'vue'
  *
  * Both native hosts report `isAppMode === true` (it is just `isNativeApp()`),
  * so the port-forward panel used to lump the Electron desktop shell in with the
- * Android WebView:
- *   - it showed the Android-only background-permission tip ("otherwise the SSH
- *     tunnel is killed when the app goes to background"), which does not apply
- *     to a desktop window; and
- *   - it hid the "SSH tunnel is not enabled on the server" warning, even though
- *     the desktop shell's tunnel depends on that same server-side setting.
+ * Android WebView: it showed the Android-only background-permission tip
+ * ("otherwise the SSH tunnel is killed when the app goes to background"), which
+ * does not apply to a desktop window.
  */
 
 const i18n = createI18n({
@@ -29,7 +26,6 @@ const i18n = createI18n({
         addPort: '添加端口',
         scanTitle: '端口扫描',
         backgroundTip: '后台权限提示（Android 专属）',
-        tunnelNoSsh: '服务端未启用 SSH 隧道',
         appRecommendation: '建议使用 ClawBench APP',
         tunnelGuide: '手动 SSH 隧道',
         tunnelDisconnected: 'SSH 隧道未连接',
@@ -107,13 +103,9 @@ vi.mock('@/composables/usePlatformDetect.ts', () => ({
   isLinuxDesktopUA: false,
 }))
 
-vi.mock('@/utils/portForwardUtils.ts', async () => {
-  // Keep the REAL portForwardUnavailable: the panel's banner gate now uses it,
-  // and the banner tests must exercise the shipped predicate rather than a
-  // stub that could silently disagree with it.
-  const actual = await vi.importActual<typeof import('@/utils/portForwardUtils.ts')>('@/utils/portForwardUtils.ts')
-  return { sshInstallHint: () => null, portForwardUnavailable: actual.portForwardUnavailable }
-})
+vi.mock('@/utils/portForwardUtils.ts', () => ({
+  sshInstallHint: () => null,
+}))
 
 vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, template: `<span class="${name}" />` })
@@ -175,33 +167,5 @@ describe('ProxyPanelContent tunnel banners by host', () => {
     setHost(true, true)
     const wrapper = mountPanel()
     expect(wrapper.text()).not.toContain('后台权限提示（Android 专属）')
-  })
-
-  it('warns the Electron desktop shell when SSH is disabled on the server', () => {
-    // The desktop tunnel authenticates over the same server-side SSH config, so
-    // "not enabled" is just as actionable here as in a browser.
-    setHost(true, true)
-    tunnel.sshInfo.value = { enabled: false }
-    tunnel.tunnelStatus.value = 'unknown'
-    const wrapper = mountPanel()
-    expect(wrapper.text()).toContain('服务端未启用 SSH 隧道')
-  })
-
-  it('does not warn the Android WebView shell about server-side SSH config', () => {
-    // Android has its own tunnel UI; the server-side config warning is aimed at
-    // the desktop/browser surfaces that configure the tunnel manually.
-    setHost(true, false)
-    tunnel.sshInfo.value = { enabled: false }
-    tunnel.tunnelStatus.value = 'unknown'
-    const wrapper = mountPanel()
-    expect(wrapper.text()).not.toContain('服务端未启用 SSH 隧道')
-  })
-
-  it('warns a plain browser when SSH is disabled on the server', () => {
-    setHost(false, false)
-    tunnel.sshInfo.value = { enabled: false }
-    tunnel.tunnelStatus.value = 'unknown'
-    const wrapper = mountPanel()
-    expect(wrapper.text()).toContain('服务端未启用 SSH 隧道')
   })
 })

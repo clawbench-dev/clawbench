@@ -1691,10 +1691,6 @@ export default {
     tunnelInstallMac: 'OpenSSH ships with macOS — no install needed',
     tunnelInstallLinux: 'Install OpenSSH:',
     tunnelNoCommand: 'Add mapped ports first, the SSH tunnel command will be generated automatically',
-    // Shown only when neither wire can carry the forwards (SSH listener off AND
-    // the transport config forbids h2), so the wording names the config gate
-    // rather than implying the SSH listener is the missing piece.
-    tunnelNoSsh: 'Port mapping is not enabled. Set port_forward.enabled: true in the server config.yaml',
     // Host-key fingerprint label in the manual SSH guide. SSH-specific wording
     // is correct here: the guide shows a real `ssh -N -L` command.
     fingerprintLabel: 'Fingerprint:',
