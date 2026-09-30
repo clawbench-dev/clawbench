@@ -230,6 +230,26 @@ func TestQueueHandler_Enqueue_WithFiles(t *testing.T) {
 	service.CancelSession(sessionID)
 }
 
+// enqueuedUserMessage returns the first user-role row from a session's history,
+// failing the test if none was persisted.
+//
+// The enqueue handler asynchronously starts a real AI backend execution
+// (LaunchSessionExecution → ExecuteStream). When the `claude` CLI is absent that
+// turn fails and persists an extra assistant row (reason=backend_exit) at an
+// arbitrary point relative to the test's history read. Asserting on the total
+// history length therefore races; the enqueued user message is the only row
+// these tests care about, so locate it by role instead.
+func enqueuedUserMessage(t *testing.T, messages []model.ChatMessage) model.ChatMessage {
+	t.Helper()
+	for _, m := range messages {
+		if m.Role == "user" {
+			return m
+		}
+	}
+	t.Fatalf("no user message persisted; history has %d message(s)", len(messages))
+	return model.ChatMessage{}
+}
+
 // TestQueueHandler_Enqueue_URLAttachment verifies a URL attachment survives the
 // queue endpoint.
 //
@@ -261,12 +281,15 @@ func TestQueueHandler_Enqueue_URLAttachment(t *testing.T) {
 	// marked as a URL (not turned into a resolved filesystem path).
 	//
 	// Assert on the persisted row rather than the live queue: the handler starts
-	// a drain goroutine that may consume the queue entry concurrently.
+	// a drain goroutine that may consume the queue entry concurrently. Locate
+	// the enqueued user row by role — a failed backend turn may append an
+	// assistant row concurrently, so the total length is not deterministic.
 	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
 	require.NoError(t, err)
-	require.Len(t, messages, 1, "the message must be persisted")
-	require.Len(t, messages[0].Files, 1, "the URL entry must survive validation")
-	got := messages[0].Files[0]
+	msg := enqueuedUserMessage(t, messages)
+	assert.Equal(t, "look at this", msg.Content)
+	require.Len(t, msg.Files, 1, "the URL entry must survive validation")
+	got := msg.Files[0]
 	assert.Equal(t, "url", got.Kind)
 	assert.Equal(t, "https://github.com/acme/widgets/issues/7", got.URL)
 	assert.Equal(t, "acme/widgets#7", got.Path, "the chip label must be preserved")
@@ -304,12 +327,15 @@ func TestQueueHandler_Enqueue_QuoteAttachment(t *testing.T) {
 	assertOK(t, w)
 
 	// Assert on the persisted row rather than the live queue: the handler starts
-	// a drain goroutine that may consume the queue entry concurrently.
+	// a drain goroutine that may consume the queue entry concurrently. Locate
+	// the enqueued user row by role — a failed backend turn may append an
+	// assistant row concurrently, so the total length is not deterministic.
 	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
 	require.NoError(t, err)
-	require.Len(t, messages, 1, "the message must be persisted")
-	require.Len(t, messages[0].Files, 1, "the quote entry must survive validation")
-	got := messages[0].Files[0]
+	msg := enqueuedUserMessage(t, messages)
+	assert.Equal(t, "解释一下", msg.Content)
+	require.Len(t, msg.Files, 1, "the quote entry must survive validation")
+	got := msg.Files[0]
 	assert.Equal(t, "quote", got.Kind)
 	assert.Equal(t, "quote-1", got.ID)
 	assert.Equal(t, "x := 1", got.Text)
@@ -342,11 +368,13 @@ func TestQueueHandler_Enqueue_QuoteAttachment_EmptyPath(t *testing.T) {
 	w := callHandler(QueueHandler, req)
 	assertOK(t, w) // a quote with no path is valid
 
+	// Locate the enqueued user row by role: the async backend turn may append an
+	// assistant row concurrently, so the total history length is not deterministic.
 	messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
 	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	require.Len(t, messages[0].Files, 1)
-	assert.Equal(t, "quoted chat text", messages[0].Files[0].Text)
+	msg := enqueuedUserMessage(t, messages)
+	require.Len(t, msg.Files, 1)
+	assert.Equal(t, "quoted chat text", msg.Files[0].Text)
 
 	service.CancelSession(sessionID)
 }
