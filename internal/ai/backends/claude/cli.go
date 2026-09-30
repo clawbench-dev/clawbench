@@ -20,6 +20,13 @@ func init() {
 			ACPLoadSession:       true,
 			InstallCmd:           "npm install -g @anthropic-ai/claude-code",
 			SortOrder:            1,
+			// Claude Code loads .claude/skills into context itself (verified in
+			// the shipped claude.exe: it references ".claude/skills" and
+			// "SKILL.md"), so ClawBench must not inject them again — they would
+			// appear twice. They still shadow same-named skills from other
+			// sources. Claude does NOT read the shared .agents/skills.
+			NativeSkillsDirs:      []string{".claude/skills"},
+			AutoLoadsNativeSkills: true,
 		},
 	})
 }

@@ -19,6 +19,12 @@ func init() {
 			AcpCommand:           "copilot --acp",
 			InstallCmd:           "npm install -g @github/copilot",
 			SortOrder:            11,
+			// Copilot loads its own skills (verified in the shipped CLI:
+			// ".copilot/skills", ".github/skills", ".agents/skills", plus
+			// "<available_skills>" injection and a builtin-skills bundle), so
+			// ClawBench must not inject them again.
+			NativeSkillsDirs:      []string{".copilot/skills", ".agents/skills"},
+			AutoLoadsNativeSkills: true,
 		},
 	})
 }

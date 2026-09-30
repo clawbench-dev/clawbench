@@ -478,10 +478,19 @@ const customCron = ref('')
 // from the content would collapse the editor the moment it is opened.
 //
 // Turning the switch off clears the script, so a disabled gate can never leave
-// a stale script behind to run on the next schedule.
+// a stale script behind to run on the next schedule. The cleared text is stashed
+// first and restored if the switch is turned back on: the toggle is a single
+// stray click away from the editor, and without the stash an accidental
+// off→on would destroy the script with no undo.
 const scriptEnabled = ref(false)
+const stashedScript = ref('')
 watch(scriptEnabled, (on) => {
-  if (!on) form.value.script = ''
+  if (on) {
+    if (!form.value.script && stashedScript.value) form.value.script = stashedScript.value
+    return
+  }
+  stashedScript.value = form.value.script
+  form.value.script = ''
 })
 
 // The prompt template variables. Tokens are built here rather than written in

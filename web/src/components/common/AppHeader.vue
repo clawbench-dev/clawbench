@@ -1344,10 +1344,12 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
 
 /* ── App-drawn window controls (frameless desktop shell) ──
    Reads as a tab hanging from the header's top edge: flush to the top, a small
-   margin at the bottom, and rounded only at the bottom. That is what
-   distinguishes it from the flat icon buttons to its left without a hard
-   divider, and it is why the block is pulled out of the header's own padding —
-   the header's right padding would otherwise leave a gap above it.
+   margin at the bottom, and rounded only at its inner (bottom-left) corner.
+   That is what distinguishes it from the flat icon buttons to its left without
+   a hard divider, and it is why the block is pulled out of the header's own
+   padding — the header's right padding would otherwise leave a gap above it.
+   The bottom-RIGHT corner stays square: the block is flush against the window
+   edge, so a radius there would only carve a notch out of the screen corner.
 
    `align-self: stretch` + a bottom margin makes the height follow the header
    (minus the margin) instead of a magic number, so it stays correct if the
@@ -1361,7 +1363,8 @@ useMenuKeyboard({ panelRef: branchDropdownPanelRef, isOpen: branchDropdownOpen }
     /* Cancels the header's right padding so the block sits flush against the
        window edge — the same edge the native controls occupied. */
     margin-right: calc(var(--space-3) * -1);
-    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    /* TL TR BR BL — square on the right because that edge is the window edge. */
+    border-radius: 0 0 0 var(--radius-sm);
     /* Derived from the header's own colour rather than a fixed token.
 
        `--bg-tertiary` was the obvious pick and is wrong: it is not a "one step

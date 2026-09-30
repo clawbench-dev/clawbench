@@ -358,6 +358,37 @@ describe('login page renders the version gate', () => {
     expect(Number(gateZ![1])).toBeGreaterThan(Number(splashZ![1]))
   })
 
+  it('keeps the decorative background layers before every interactive overlay', () => {
+    // Chromium resolves `-webkit-app-region` by DOM order, taking the LAST
+    // element whose box covers the point — not the topmost by paint order, and
+    // `pointer-events: none` does not exempt an element from that hit test.
+    //
+    // `<body>` is `drag` (the frameless window's only drag handle), so the two
+    // full-screen `.bg-*` layers inherit `drag`. Placed AFTER the splash/gate,
+    // they swallowed every click across the viewport: the gate's buttons and the
+    // splash's cancel button received no events at all while `elementsFromPoint`
+    // still reported the button on top. That reads as a frozen dialog.
+    //
+    // This is a source-order assertion because the bug is invisible to every
+    // other kind of test: the DOM looks correct, the CSS computes correctly, and
+    // only a real OS-level click reveals it (verified against Electron 44 under
+    // Xvfb + openbox: old order => zero events, new order => buttons fire and a
+    // drag on an empty area still moves the window).
+    const src = readRepoFile(LOGIN)
+    const body = src.slice(src.indexOf('<body>'))
+    const at = (needle: string) => {
+      const i = body.indexOf(needle)
+      expect(i, `${needle} not found in <body>`).toBeGreaterThan(-1)
+      return i
+    }
+    const gradientAt = at('class="bg-gradient"')
+    const gridAt = at('class="bg-grid"')
+    for (const overlay of ['id="splash"', 'id="versionGate"', 'id="windowClose"', 'class="content"']) {
+      expect(gradientAt, `.bg-gradient must precede ${overlay}`).toBeLessThan(at(overlay))
+      expect(gridAt, `.bg-grid must precede ${overlay}`).toBeLessThan(at(overlay))
+    }
+  })
+
   it('has both languages for every gate string', () => {
     const src = readRepoFile(LOGIN)
     const keys = [

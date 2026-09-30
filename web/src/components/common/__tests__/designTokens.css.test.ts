@@ -469,4 +469,21 @@ describe('window-control cluster contrast (all themes)', () => {
     expect(hover, '.window-control:hover must exist').not.toBeNull()
     expect(hover![1]).toContain('var(--bg-secondary)')
   })
+
+  it('squares off the bottom-right corner, which sits on the window edge', () => {
+    // The block is pulled flush to the window's right edge (negative right
+    // margin), so rounding the bottom-right corner carves a notch out of the
+    // screen corner instead of decorating an interior edge. Only the inner
+    // (bottom-left) corner may be rounded.
+    const rule = headerSrc.match(/\.window-controls(?![-\w])[^{]*\{([\s\S]*?)\}/)
+    expect(rule, '.window-controls rule must exist').not.toBeNull()
+    const radius = rule![1].match(/border-radius:\s*([^;]+);/)
+    expect(radius, '.window-controls must declare a border-radius').not.toBeNull()
+    // Shorthand order: TL TR BR BL.
+    const [tl, tr, br, bl] = radius![1].trim().split(/\s+/)
+    expect(tl, 'top-left must be square (flush to the header top edge)').toBe('0')
+    expect(tr, 'top-right must be square (flush to the window right edge)').toBe('0')
+    expect(br, 'bottom-right must be square (flush to the window right edge)').toBe('0')
+    expect(bl, 'bottom-left is the only interior corner and keeps its radius').not.toBe('0')
+  })
 })

@@ -142,6 +142,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'browse') return t('file.nav.back')
     if (surface === 'forge') return t('file.nav.backToForge')
     if (surface === 'terminal') return t('file.nav.backToTerminal')
+    if (surface === 'settings') return t('file.nav.backToSettings')
     return t('common.back')
   }
 
@@ -477,7 +478,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
         scrollTop: location?.scrollTop ?? getFileScroll(file.path) ?? 0,
         scrollEntry: location?.scrollEntry ?? getFileScrollEntry(file.path),
       }, store.state.currentDir)
-    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal') {
+    } else if (surface === 'chat' || surface === 'task' || surface === 'tasks' || surface === 'history' || surface === 'forge' || surface === 'terminal' || surface === 'settings') {
       const normSurface: NavigationSurface = surface === 'tasks' ? 'task' : (surface as NavigationSurface)
       beginExternalJump(normSurface, surfaceLabel(normSurface), normSurface === 'chat' ? { tab: 'chat' } : {})
     }

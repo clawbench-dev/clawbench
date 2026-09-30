@@ -943,7 +943,13 @@
    has a specific reason. */
 .li-spinner {
   --li-size: 28px; /* default md */
-  --li-border: calc(var(--li-size) / 9);
+  /* Border weight is derived from the size so every tier keeps the same
+     optical ratio — there is exactly ONE ratio in the codebase. Call sites set
+     only --li-size; a site that hard-codes --li-border drifts away from this
+     ratio (and the drift is invisible until you compare two rings side by
+     side). Divisor 6 (was 9) makes the ring read clearly at the small sizes
+     used in buttons, anchors and tool cards. */
+  --li-border: calc(var(--li-size) / 6);
   --li-duration: 0.8s;
   /* inline-block (not block) so a bare <span class="li-spinner"> works where a
      component cannot be rendered. Inside the component's flex wrapper it is a

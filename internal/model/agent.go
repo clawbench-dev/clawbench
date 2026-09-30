@@ -158,6 +158,42 @@ func ReplaceAgents(m map[string]*Agent, list []*Agent) {
 	AgentList = list
 }
 
+// UpdateAgent applies fn to a COPY of the agent with the given ID, publishes the
+// copy, and returns it (nil when the id is unknown).
+//
+// Copy-on-write is what makes this safe. The accessors hand out *Agent pointers
+// that callers then read WITHOUT holding agentsMu (that is their documented
+// contract: resolve through GetAgent at use time, do not cache). Mutating such a
+// pointer in place would therefore race every concurrent reader, and the
+// callers' own configMutex does not help — readers in internal/service and
+// internal/ai never take it. Instead the published object is never mutated:
+// readers holding the old pointer see a frozen snapshot, and new readers see the
+// replacement.
+//
+// fn must not call back into an accessor that takes agentsMu, or it will
+// deadlock on the non-reentrant lock.
+func UpdateAgent(id string, fn func(*Agent)) *Agent {
+	if id == "" {
+		return nil
+	}
+	agentsMu.Lock()
+	defer agentsMu.Unlock()
+	old, ok := Agents[id]
+	if !ok {
+		return nil
+	}
+	updated := *old
+	fn(&updated)
+	Agents[id] = &updated
+	for i, a := range AgentList {
+		if a.ID == id {
+			AgentList[i] = &updated
+			break
+		}
+	}
+	return &updated
+}
+
 // GetAgent returns the current in-memory agent for an ID, or nil.
 //
 // RefreshAgents replaces the whole Agents map with freshly loaded pointers, so a

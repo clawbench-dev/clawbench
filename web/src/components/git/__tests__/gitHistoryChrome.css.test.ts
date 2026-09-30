@@ -220,13 +220,73 @@ describe('the header title carries its glyph', () => {
   })
 })
 
+describe('the header search field is borderless and fills the free space', () => {
+  const src = readWebFile('src/components/git/GitCommitList.vue')
+
+  it('wraps SearchInput instead of passing the class through', () => {
+    // Regression: the field used to take `class="commit-search-input"` directly.
+    // A fallthrough class merges onto the child's ROOT element — which is
+    // .search-pill itself — so `.commit-search-input :deep(.search-pill)`
+    // compiled to a descendant selector (`.commit-search-input[data-v-x]
+    // .search-pill`) that can never match: the two classes are on one element.
+    // The override silently did nothing and the field kept its shared border.
+    // Every other call site in the repo wraps for this reason.
+    const at = src.indexOf('class="commit-search"')
+    expect(at, 'the .commit-search wrapper must exist').toBeGreaterThan(-1)
+    // The wrapper must contain the SearchInput, and its element must not be the
+    // SearchInput itself.
+    const wrapper = src.slice(at, src.indexOf('</div>', at))
+    expect(wrapper).toContain('<SearchInput')
+    // The class must NOT be passed through to the component itself.
+    expect(src).not.toMatch(/<SearchInput[^>]*class="commit-search-input"/)
+  })
+
+  it('drops the shared pill border and focus border', () => {
+    const base = src.match(/\.commit-search :deep\(\.search-pill\)\s*\{([^}]*)\}/)
+    expect(base, 'the borderless override must exist').not.toBeNull()
+    expect(base![1]).toMatch(/border:\s*none/)
+
+    const focused = src.match(/\.commit-search :deep\(\.search-pill\.focused\)\s*\{([^}]*)\}/)
+    expect(focused, 'the focused override must exist').not.toBeNull()
+    expect(focused![1]).toMatch(/border-color:\s*transparent/)
+    expect(focused![1]).toMatch(/box-shadow:/)
+  })
+
+  it('lets the field grow to fill the remaining header space', () => {
+    // The field must absorb the free space, and the title must stop growing so
+    // there is free space to absorb.
+    const wrapper = src.match(/\.commit-search\s*\{([^}]*)\}/)
+    expect(wrapper, 'the .commit-search rule must exist').not.toBeNull()
+    expect(wrapper![1]).toMatch(/flex:\s*1/)
+    expect(wrapper![1], 'a max-width would cap the fill').not.toMatch(/max-width/)
+
+    const title = src.match(/:deep\(\.drilldown-title\)\s*\{([^}]*)\}/)
+    expect(title, 'the title override must exist').not.toBeNull()
+    expect(title![1]).toMatch(/flex:\s*0 1 auto/)
+  })
+
+  it('tints the fill from --text-primary, not by jumping a background step', () => {
+    // Red line 4: across the 36 themes the secondary↔tertiary contrast drops to
+    // 1.06, so a --bg-tertiary fill can vanish. Mixing --text-primary into the
+    // background is the direction-guaranteed recipe.
+    const base = src.match(/\.commit-search :deep\(\.search-pill\)\s*\{([^}]*)\}/)!
+    expect(base[1]).toMatch(/background:\s*color-mix\(in srgb,\s*var\(--text-primary\)/)
+    expect(base[1], 'must not rely on a background step').not.toMatch(
+      /background:\s*var\(--bg-(tertiary|elevated)/,
+    )
+  })
+})
+
 describe('the manage button does not repeat the title glyph', () => {
   it('uses a different icon from the title', () => {
     // The title carries GitBranch. The manage button opens the branch/worktree/
     // tag panel, so it originally reused GitBranch too — which, once the title
-    // gained the same glyph, put two identical icons in one bar. It now uses
-    // GitFork. This pins that they stay distinct: a future "tidy up the icons"
-    // pass could otherwise silently collapse them again.
+    // gained the same glyph, put two identical icons in one bar. It moved to
+    // GitFork for that reason, and then to MoreVertical: the panel is a
+    // container for three lists rather than a branch itself, so a "more
+    // actions" glyph describes it better. This pins that the two stay
+    // distinct — a future "tidy up the icons" pass could otherwise silently
+    // collapse them again.
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
     expect(title, 'the title block must exist').not.toBeNull()
@@ -244,7 +304,7 @@ describe('the manage button does not repeat the title glyph', () => {
       manageIcon![1],
       'the manage button must not reuse the title icon',
     ).not.toBe(titleIcon![1])
-    expect(manageIcon![1]).toBe('GitFork')
+    expect(manageIcon![1]).toBe('MoreVertical')
   })
 
   it('imports the manage icon so the button is not empty', () => {
@@ -253,6 +313,6 @@ describe('the manage button does not repeat the title glyph', () => {
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
     expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('GitFork')
+    expect(imports![1]).toContain('MoreVertical')
   })
 })

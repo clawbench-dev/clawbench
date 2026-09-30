@@ -16,6 +16,7 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/model"
+	"clawbench/internal/skill"
 )
 
 // ---------------------------------------------------------------------------
@@ -865,26 +866,24 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 		}
 	}
 
-	// Pre-scan CodeBuddy skills so they are available in ACP mode just like TUI mode.
-	// CodeBuddy's ACP process does not auto-scan ~/.codebuddy/skills/, so we
-	// scan them here and inject a skills summary into the system prompt.
-	// Skills also appear in the slash command menu (/) via AvailableCommandsUpdate.
-	if isCodeBuddyBackend(c.agent) {
-		if skills := ScanCodeBuddySkills(); len(skills) > 0 {
-			c.skillsPrompt = buildSkillsSystemPrompt(skills)
-
-			// Register skills as slash commands so they appear in the / menu
-			skillCmds := SkillsToCommands(skills)
+	// Pre-scan this agent's own native skills and register them as slash
+	// commands, when the backend does NOT load its own skill directory.
+	//
+	// Only the agent's OWN skills are registered: a skill injected from another
+	// agent's directory (or a user/git source) is not executable by this
+	// agent's slash mechanism, so listing it in the / menu would be a dead
+	// entry. The system-prompt table — which carries every source — is built
+	// separately in service.AppendSkillsSection.
+	if spec := model.FindSpecByBackend(c.agent.Backend); spec != nil && !spec.AutoLoadsNativeSkills {
+		if own := skill.Global().OwnNative(c.agent.ID); len(own) > 0 {
 			agentID := c.agent.ID
+			skillCmds := skillCommands(own)
 			existing := GetAgentCapabilityRegistry().GetCommands(agentID)
 			merged := MergeCommands(existing, skillCmds)
 			GetAgentCapabilityRegistry().UpdateCommands(agentID, merged)
 			client.MergeCommandsFromScan(skillCmds)
-
-			slog.Info("acp: pre-scanned CodeBuddy skills",
-				"agent", agentID, "skill_count", len(skills), "command_count", len(skillCmds))
-		} else {
-			c.skillsPrompt = ""
+			slog.Info("acp: registered native skills as commands",
+				"agent", agentID, "skill_count", len(own), "command_count", len(skillCmds))
 		}
 	}
 

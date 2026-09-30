@@ -6,7 +6,7 @@ import "strings"
 // stripping a single leading "/". Command producers disagree on the slash
 // prefix: CodeBuddy's own AvailableCommandsUpdate strips it (skills arrive as
 // "mmx-cli"), while our pre-scan of ~/.codebuddy/skills/ prefixes it
-// (SkillsToCommands produces "/mmx-cli"). Comparing raw names makes the same
+// (skill commands produce "/mmx-cli"). Comparing raw names makes the same
 // skill appear twice in the slash menu (double "/" in the UI). The canonical
 // form is used only as a dedupe key; the original Name is kept for display and
 // execution.

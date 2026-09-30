@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1928,4 +1929,107 @@ func TestAgentGet_ClaudeTierAliasesAlignOntoConcreteModels(t *testing.T) {
 		return
 	}
 	t.Fatal("claude agent missing from response")
+}
+
+// TestAgentPatch_ResponseReflectsTheUpdate pins the response body to the
+// PUBLISHED agent. UpdateAgent publishes a copy, so echoing the pre-update
+// pointer would return stale field values to the client even though the DB and
+// the in-memory set were updated.
+func TestAgentPatch_ResponseReflectsTheUpdate(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	body := map[string]any{
+		"id":   "codebuddy",
+		"name": "Renamed By Patch",
+	}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "Renamed By Patch", resp["name"],
+		"the response must carry the updated name, not the pre-update snapshot")
+}
+
+// TestAgentRefreshModels_PersistsTheUpdatedList pins the DB write to the
+// published copy. Persisting the pointer read before the update would write the
+// OLD model list back to the database, so the refreshed models would appear in
+// memory but not survive a reload.
+func TestAgentRefreshModels_PersistsTheUpdatedList(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	origDiscover := model.DiscoverWithDetail
+	model.DiscoverWithDetail = func(backend string) ([]model.AgentModel, string) {
+		if backend == "codebuddy" {
+			return []model.AgentModel{{ID: "fresh-model", Name: "Fresh", Default: true}}, ""
+		}
+		return nil, ""
+	}
+	defer func() { model.DiscoverWithDetail = origDiscover }()
+
+	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgentRefreshModels, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	// The database row must hold the discovered model, not the pre-refresh list.
+	var modelsJSON string
+	err := service.UnsafeDBForTest().
+		QueryRow("SELECT models FROM agents WHERE id = ?", "codebuddy").Scan(&modelsJSON)
+	require.NoError(t, err)
+
+	var persisted []model.AgentModel
+	require.NoError(t, json.Unmarshal([]byte(modelsJSON), &persisted))
+	require.Len(t, persisted, 1)
+	assert.Equal(t, "fresh-model", persisted[0].ID,
+		"the refreshed list must be persisted, not the stale pre-update snapshot")
+}
+
+// TestAgentDuplicate_NoRaceWithConcurrentReaders reproduces the publish-then-
+// mutate hazard in serveAgentsDuplicate: AddAgent exposes the *Agent to readers
+// that read its fields without holding agentsMu, so assigning the runtime-only
+// fields AFTER AddAgent races them. Run with -race; the deterministic version
+// of this test cannot catch it (AddAgent stores the same pointer, so the final
+// state is correct either way — only the concurrent read observes the torn
+// state).
+func TestAgentDuplicate_NoRaceWithConcurrentReaders(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+
+	// Reader: mirror serveAgentsGet — take the handed-out pointer, release the
+	// lock, then read the fields (JSON marshaling does exactly this).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			for _, a := range model.GetAgentList() {
+				_ = a.SupportsCLI
+				_ = a.SupportsMidTurn
+				_ = a.CanRefreshModels
+				_ = len(a.ThinkingEffortLevels)
+			}
+		}
+	}()
+
+	// Writer: duplicate repeatedly so the population window is hit.
+	for range 20 {
+		body := map[string]any{"source_id": "claude", "name": "Clone"}
+		req := newRequest(t, http.MethodPost, "/api/agents", body)
+		withAuthCookie(req, model.SessionToken)
+		w := callHandler(ServeAgents, req)
+		require.Equal(t, http.StatusOK, w.Code)
+	}
+
+	close(stop)
+	wg.Wait()
 }

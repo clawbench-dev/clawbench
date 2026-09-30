@@ -2792,7 +2792,7 @@ paths:
         列出**当前项目**（请求 cookie 中的项目）的会话分享，最新在前。
         返回数组按 `shares` 包装，无分享时为空数组。
 
-        与 `/api/share/list`（文件）不同，这里**按项目隔离**：会话标题属于私有内容，
+        与 `/api/share/list`（文件）一样**按项目隔离**：会话标题属于私有内容，
         列出其他项目的分享会泄露它。
 
         `archived: true` 表示底层会话已归档。分享本身仍然有效（快照是冻结副本），
@@ -2840,17 +2840,32 @@ paths:
     get:
       tags: [Share]
       summary: 已分享文件抽屉数据
+      description: |
+        列出**当前项目**（请求 cookie 中的项目）的文件分享，最新在前。
+        返回数组按 `shares` 包装，无分享时为空数组。
+
+        与 `/api/share/session/list` 一样**按项目隔离**：分享路径指向私有文件，
+        列出其他项目的分享会同时泄露该文件的存在与其绝对路径。未携带项目 cookie
+        时无项目可归属，只返回无法归属的分享（不会退回列出全部）。
       operationId: shareListAll
       responses:
         "200":
           description: 分享列表
     delete:
       tags: [Share]
-      summary: 清空分享
+      summary: 撤销文件分享（单条或清空本项目）
+      description: |
+        请求体 `{token}` 撤销一条；`{token}` 也可用查询参数传入。
+        `{all: true}`（或查询参数 `all=1`）清空**本项目**的全部文件分享。
+
+        撤销前会校验 token 归属于请求项目；未知 token 与其他项目的 token 返回
+        **同一个 404**，两者都不暴露对方是否存在。
       operationId: shareClear
       responses:
         "200":
           description: 结果
+        "404":
+          $ref: "#/components/responses/Error"
 
   /api/share/:
     get:
@@ -2907,6 +2922,124 @@ paths:
                 type: string
 
   # ── Forge ─────────────────────────────────────────────────────────────────
+  /api/skills:
+    get:
+      tags: [Skills]
+      summary: 列出已发现的 Skill
+      operationId: skillsList
+      description: |
+        返回跨智能体 Skill 发现的当前状态：每个来源（各智能体原生目录、用户自定义目录、
+        克隆的 git 仓库）扫描到的 Skill 清单，以及 git 同步状态。
+
+        同一名字的 Skill 可能来自多个来源；清单按来源如实列出（`source_kind` 为
+        `own` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+
+        仓库令牌只写不读：`repos[].has_token` 只表示是否已配置。
+      responses:
+        "200":
+          description: Skill 清单与同步状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  dirs:
+                    type: array
+                    items:
+                      type: string
+                    description: 用户自定义 Skill 目录列表（已解析默认值；为空时回退 `<DataDir>/skills-user`）
+                  refresh_hours:
+                    type: integer
+                    description: 定时 git 拉取间隔；0 表示仅启动时拉取
+                  last_error:
+                    type: string
+                  last_sync_at:
+                    type: integer
+                    description: 上次同步完成时间（Unix 秒）
+                  repos:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                        slug:
+                          type: string
+                          description: 本地检出目录名（{DataDir}/skills/<slug>）
+                        has_token:
+                          type: boolean
+                        last_error:
+                          type: string
+                  skills:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                        path:
+                          type: string
+                          description: SKILL.md 的绝对路径
+                        source_kind:
+                          type: string
+                          enum: [own, user, git, other]
+                        source_label:
+                          type: string
+                        agent_id:
+                          type: string
+                          description: |
+                            该技能所属的智能体 ID（仅当它来自某个**其他智能体自己的**目录时有值）。
+                            **共享目录 `.agents/skills` 一律为空**——那类技能不属于任何单一智能体，
+                            返回「哪些后端读取了该目录」的名单会诱导前端把它渲染成罗列。
+                        shared:
+                          type: boolean
+                          description: |
+                            该技能来自跨工具共享目录 `.agents/skills`（`npx skills` 的安装位置）。
+                            这类技能不属于任何单一智能体——同一目录对读它的后端是「原生」、对不读它
+                            的是「其他智能体」，故 UI 统一标为「通用」而非某个智能体名。
+                        name_mismatch:
+                          type: boolean
+                          description: |
+                            frontmatter 的 `name` 与其目录名不一致（规范要求一致）。此类技能仍会注入
+                            系统提示词（注入表带显式路径），但**不会**出现在斜杠命令菜单中——智能体按
+                            目录解析技能，用 frontmatter 名做菜单项会是一个点不动的死项。
+
+  /api/skills/refresh:
+    post:
+      tags: [Skills]
+      summary: 立即同步 git Skill 仓库
+      operationId: skillsRefresh
+      description: |
+        立即对全部已配置的 git 仓库执行 clone/pull，然后重新扫描所有来源。
+
+        单个仓库失败不会让请求失败：错误按仓库 slug 在 `errors` 中逐个返回，其余仓库
+        照常同步（`ok` 为 `errors` 是否为空）。同步耗时较长时返回 202，表示已受理。
+
+        若已有同步在进行，本请求会等待该次同步完成，而不会并发启动第二次（并发 clone
+        同一目录会互相破坏检出）。
+      responses:
+        "200":
+          description: 同步结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  skill_count:
+                    type: integer
+                  errors:
+                    type: object
+                    additionalProperties:
+                      type: string
+        "202":
+          description: 同步耗时较长，已受理
+
   /api/forge/credentials:
     post:
       tags: [Forge]

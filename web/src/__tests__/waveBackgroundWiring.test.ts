@@ -98,9 +98,10 @@ describe('wave background wiring', () => {
     }
   })
 
-  it('paints the factory default immediately, without waiting for /api/config', () => {
-    // The default is the wave, which needs no server data — a non-immediate
-    // watcher would leave the layer blank until the config round-trip resolves.
+  it('paints immediately, without waiting for /api/config', () => {
+    // A device with the switch on and an animated style needs no server data,
+    // so a non-immediate watcher would leave the layer blank until the config
+    // round-trip resolves.
     const src = readWebFile(APP)
     const watcher = src.match(/watch\(\s*\(\)\s*=>\s*\[[\s\S]*?refreshWallpaper,\s*\{[^}]*immediate:\s*true/)
     expect(watcher).not.toBeNull()

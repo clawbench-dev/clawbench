@@ -49,6 +49,7 @@ import (
 	"clawbench/internal/push/feishu"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
+	"clawbench/internal/skill"
 	"clawbench/internal/speech"
 	"clawbench/internal/ssh"
 	"clawbench/internal/startup"
@@ -1302,6 +1303,13 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	service.SetPersistBingStateFn(handler.PersistBingWallpaperState)
 	handler.SetTriggerBingSyncFunc(service.TriggerBingSync)
 	service.StartBingWallpaperWorker()
+
+	// Cross-agent skill discovery: scan every agent's native skill directory
+	// (plus the user's own directory and cloned git repos) so a skill installed
+	// for one agent is visible to all of them. The handler owns the config
+	// mutex + YAML writer, so it persists the sync outcome.
+	skill.SetPersistSyncStateFn(handler.PersistSkillSyncState)
+	skill.StartGitSyncWorker()
 
 	// Protocols is assigned below, once `scheme` is known: it must enable
 	// HTTP/1.1 explicitly (the WebSocket endpoints need http.Hijacker, which

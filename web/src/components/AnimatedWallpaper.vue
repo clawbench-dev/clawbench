@@ -67,16 +67,28 @@ let time = 0
 let running = false
 let resizeObserver: ResizeObserver | null = null
 
-function resize() {
+/**
+ * Match the canvas backing store to its CSS box.
+ *
+ * Assigning width/height RESETS the backing store to transparent black even when
+ * the value is unchanged, so the assignment is guarded: a sub-pixel layout jitter
+ * that rounds to the same backing size must not clear the canvas. Returns whether
+ * the backing store was actually cleared, so the caller knows a repaint is due.
+ */
+function resize(): boolean {
   const el = canvasRef.value
-  if (!el || !ctx) return
+  if (!el || !ctx) return false
   const rect = el.getBoundingClientRect()
   cssW = Math.max(1, rect.width)
   cssH = Math.max(1, rect.height)
 
   scale = BACKING_SCALE
-  el.width = Math.max(1, Math.round(cssW * scale))
-  el.height = Math.max(1, Math.round(cssH * scale))
+  const nextW = Math.max(1, Math.round(cssW * scale))
+  const nextH = Math.max(1, Math.round(cssH * scale))
+  if (nextW === el.width && nextH === el.height) return false
+  el.width = nextW
+  el.height = nextH
+  return true
 }
 
 function draw() {
@@ -176,11 +188,17 @@ onMounted(() => {
 
   document.addEventListener('visibilitychange', onVisibilityChange)
   // A ResizeObserver (rather than a window listener) also covers layout changes
-  // that do not resize the window, e.g. the dock collapsing.
+  // that do not resize the window, e.g. the dock collapsing — and the soft
+  // keyboard opening, which shrinks .app-container (and therefore this canvas)
+  // when the chat input is focused.
+  //
+  // The repaint MUST be synchronous. resize() clears the backing store, and when
+  // the rAF loop is running the next paint is up to 33ms away (30fps cap) — a
+  // visible blank flash on every keyboard open/close. Drawing here keeps the
+  // cleared state from ever being presented; the loop then continues from it.
   if (typeof ResizeObserver !== 'undefined') {
     resizeObserver = new ResizeObserver(() => {
-      resize()
-      if (!running) draw()
+      if (resize()) draw()
     })
     resizeObserver.observe(el)
   }

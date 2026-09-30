@@ -139,7 +139,7 @@ describe('useSettingsConfig', () => {
     // imply the server owns them and sync them across devices.
     const { localConfig, getServerValueWithDefault } = useSettingsConfig()
 
-    expect(localConfig.wallpaperEnabled).toBe(true)
+    expect(localConfig.wallpaperEnabled).toBe(false)
     expect(localConfig.wallpaperMode).toBe('wave')
     expect(localConfig.wallpaperLocalSelected).toBe('')
 

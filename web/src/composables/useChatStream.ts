@@ -981,10 +981,29 @@ export function useChatStream(options: UseChatStreamOptions) {
           // removeQueued also releases the entry's in-flight guard.
           removeQueued(sessionId, userData.queueId!)
         } else {
-          // Direct send: this device already has the bubble (adopted from the
-          // POST response), so its echo is skipped.
+          // Direct send: this device already has the bubble, so the echo must
+          // not render a duplicate. But it DOES carry the authoritative DB id,
+          // and the backend emits it BEFORE it launches the run goroutine that
+          // emits stream_start — i.e. strictly earlier than the POST response
+          // that would otherwise be the first id signal. Adopt it here.
+          //
+          // Without this the question stays transient (string id → transient
+          // sort domain, after every DB-backed message) while stream_start has
+          // already given the reply placeholder its numeric DB id, so the reply
+          // sorts ABOVE its own question for one frame — the reported "assistant
+          // appears first, then the user message lands, order then corrects"
+          // flash. The POST response would fix it a moment later, but the echo
+          // closes the window entirely.
           const myClientId = localStorage.getItem('clawbench_client_id')
-          if (userData.senderClientId && userData.senderClientId === myClientId) break
+          if (userData.senderClientId && userData.senderClientId === myClientId) {
+            // Matched by the queueId the optimistic bubble was pushed with
+            // (sendMessageNow uses the same value as both id and queueId). A
+            // bubble that already adopted its id, or none at all, is a no-op.
+            if (userData.queueId && userData.messageId) {
+              dispatch({ type: 'optimistic_adopt_id', id: userData.queueId, dbId: userData.messageId })
+            }
+            break
+          }
         }
 
         // Strip senderClientId when we decided to render: the reducer has its

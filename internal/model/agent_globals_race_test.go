@@ -15,10 +15,12 @@ import (
 // Go runtime 会报 "concurrent map read and map write"（未定义行为）。
 // 本测试并发地跑「读者走访问器」与「写者走 ReplaceAgents」，-race 下必须干净。
 func TestAgentGlobalsConcurrentAccessIsRaceFree(t *testing.T) {
-	origList := GetAgentList()
-	restore := func() { ReplaceAgents(map[string]*Agent{}, nil) }
-	_ = origList
-	defer restore()
+	// Restore whatever was there before, rather than wiping the globals: other
+	// tests in this package assert against the set they install themselves, but
+	// leaving a clean hand-off is cheaper to reason about than a bare empty map.
+	origAgents := Agents
+	origList := AgentList
+	defer func() { ReplaceAgents(origAgents, origList) }()
 
 	build := func(n int) (map[string]*Agent, []*Agent) {
 		m := make(map[string]*Agent, n)
@@ -55,6 +57,65 @@ func TestAgentGlobalsConcurrentAccessIsRaceFree(t *testing.T) {
 				_ = HasAgent("a")
 				_ = AgentSetLoaded()
 				_ = GetDefaultAgentID()
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// TestAgentGlobalsConcurrentFieldEditIsRaceFree pins the other half of the
+// contract: the in-place field editor (UpdateAgent) must be safe against both
+// the accessor readers and a whole-set ReplaceAgents. The handler's own
+// configMutex does not cover readers in internal/service / internal/ai, so
+// agentsMu is what actually serializes these field writes.
+//
+//	go test ./internal/model/ -run TestAgentGlobalsConcurrentFieldEditIsRaceFree -race
+func TestAgentGlobalsConcurrentFieldEditIsRaceFree(t *testing.T) {
+	restore := func() { ReplaceAgents(map[string]*Agent{}, nil) }
+	defer restore()
+
+	m := map[string]*Agent{"a": {ID: "a"}}
+	ReplaceAgents(m, []*Agent{m["a"]})
+
+	const iterations = 200
+	var wg sync.WaitGroup
+
+	// Writer: in-place field edits (what the agent PATCH handler does).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range iterations {
+			UpdateAgent("a", func(a *Agent) {
+				a.Name = "n"
+				a.PreferredModel = "m"
+			})
+		}
+	}()
+
+	// Writer: whole-set replacement (what the async model discovery does).
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for range iterations {
+			a := &Agent{ID: "a"}
+			ReplaceAgents(map[string]*Agent{"a": a}, []*Agent{a})
+		}
+	}()
+
+	// Readers: read the fields off the pointer the accessors hand out.
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range iterations {
+				if a := GetAgent("a"); a != nil {
+					_ = a.Name
+					_ = a.PreferredModel
+				}
+				for _, a := range GetAgentList() {
+					_ = a.Name
+				}
 			}
 		}()
 	}

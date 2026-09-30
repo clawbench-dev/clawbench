@@ -558,6 +558,20 @@ describe('useAgents', () => {
       await flushPromises()
       expect(mockApiGet.mock.calls.length).toBe(callsBefore)
     })
+
+    it('reloads on clawbench-reconnect as a fallback for a lost subscription', async () => {
+      // If the dynamic import that registers the agents_updated handler fails
+      // (chunk load error, partial mock), the reload must not be lost forever.
+      // The reconnect signal re-syncs other stale state, so it also re-pulls
+      // the agents — one reconnect at worst instead of a manual rescan.
+      await loadAgents()
+      const callsBefore = mockApiGet.mock.calls.length
+
+      window.dispatchEvent(new CustomEvent('clawbench-reconnect'))
+
+      await flushPromises()
+      expect(mockApiGet.mock.calls.length).toBeGreaterThan(callsBefore)
+    })
   })
 
   // --- canRefreshModels ---

@@ -1409,11 +1409,12 @@ onUnmounted(() => {
 // loadConfig resolves) and project switches. The Bing file lives there.
 watch(() => serverConfig.value, refreshWallpaper, { deep: true })
 // Everything else that decides the wallpaper is local, so it repaints without a
-// server round-trip. `immediate` matters here: the factory default is an animated
-// style, which needs no server data, so it must paint on the first render rather
-// than waiting for /api/config. Speed and the style params only feed props; the
-// renderer reads them per frame, so changing either never rebuilds the canvas or
-// resets the phase (the params also matter for the reduced-motion static frame).
+// server round-trip. `immediate` matters here: a device that kept the switch on
+// with an animated style needs no server data, so it must paint on the first
+// render rather than waiting for /api/config. Speed and the style params only
+// feed props; the renderer reads them per frame, so changing either never
+// rebuilds the canvas or resets the phase (the params also matter for the
+// reduced-motion static frame).
 watch(
   () => [
     wallpaperEnabled.value,

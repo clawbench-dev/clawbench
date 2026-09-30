@@ -23,6 +23,14 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "npm install -g @tencent-ai/codebuddy-code",
 			SortOrder:      2,
+			// CodeBuddy's TUI loads ~/.codebuddy/skills, but its ACP process
+			// does NOT scan the directory — ClawBench has always had to inject
+			// these skills itself (see the removed ScanCodeBuddySkills wiring).
+			// AutoLoadsNativeSkills stays false so they keep being injected;
+			// they still shadow same-named skills from lower-priority sources.
+			//
+			// Its plugin-cache skills are a separate mechanism (issue #383).
+			NativeSkillsDirs: []string{".codebuddy/skills"},
 		},
 		// CodeBuddy can inject a message into the running turn via its private
 		// session/steer method, instead of queueing it for the next turn.

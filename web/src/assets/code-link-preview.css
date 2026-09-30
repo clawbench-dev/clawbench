@@ -243,15 +243,14 @@ body.code-preview-dragging * {
 
 /* Loading spinner. Shape/rotation come from the shared global .li-spinner
    (css/components.css) — only the size and colours are overridden here. The
-   larger border is set explicitly because 20px is not one of the component's
-   size tiers, so the derived `--li-border` ratio does not apply.
+   border weight is derived from --li-size by the shared ratio, so this site
+   sets only the size and cannot drift from the rest of the app.
 
    Scoped under the status container on purpose: a bare `.code-preview-spinner`
    would tie with the global `.li-spinner` (both 0,1,0), leaving the winner to
    whichever stylesheet the bundler emits last. */
 .code-preview-status .code-preview-spinner {
   --li-size: 20px;
-  --li-border: 2px;
   --li-track-color: rgba(0, 0, 0, 0.1);
 }
 
@@ -405,13 +404,12 @@ body.code-preview-dragging * {
   color: var(--text-muted, #8c8c8c);
 }
 
-/* Expand-bar spinner: the shared global .li-spinner at a smaller size, keeping
-   the lighter 1.5px border the 10px ring needs (the derived ratio would give
-   ~1.1px, which reads as a hairline at this size). Scoped under the expand
-   container for the same specificity reason as .code-preview-spinner above. */
+/* Expand-bar spinner: the shared global .li-spinner at a smaller size. The
+   border weight comes from the shared ratio, so this site cannot drift from
+   the rest of the app. Scoped under the expand container for the same
+   specificity reason as .code-preview-spinner above. */
 .code-preview-expand-loading .code-preview-expand-spinner {
   --li-size: 10px;
-  --li-border: 1.5px;
   --li-track-color: rgba(0, 0, 0, 0.12);
 }
 

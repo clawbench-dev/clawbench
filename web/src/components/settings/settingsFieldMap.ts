@@ -309,6 +309,20 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.securitySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
   ],
+  skills: [
+    // Cross-agent skill discovery, split into one card per concern. Each entry
+    // below carries no rendered row — it exists only to open a section (and
+    // therefore a card), which SettingsCategory fills with a dedicated
+    // component. They must be listed in PLACEHOLDER_ITEMS there.
+    //   skillsCard     → master switch (SkillsSetting)
+    //   skillsDirs     → local directories (SkillsDirsSetting)
+    //   skillsRepos    → git repositories + sync (SkillsReposSetting)
+    //   skillsDiscovered → the read-only result listing (SkillsDiscoveredSetting)
+    { type: 'item', spec: { labelKey: 'settings.items.skillsCard', descriptionKey: 'settings.items.skillsCardDesc', key: 'skillsCard', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsSection' } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsDirs', key: 'skillsDirs', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDirs' } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsRepos', key: 'skillsRepos', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsRepos' } },
+    { type: 'item', spec: { labelKey: 'settings.items.skillsDiscoveredSection', key: 'skillsDiscovered', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDiscoveredSection' } },
+  ],
   forgeIntegration: [
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).

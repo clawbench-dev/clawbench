@@ -428,7 +428,7 @@ describe('useTerminalViewport', () => {
 
     Object.defineProperty(window, 'visualViewport', {
       value: {
-        height: 700,
+        height: 600,
         offsetTop: 50,
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
@@ -444,8 +444,41 @@ describe('useTerminalViewport', () => {
 
     viewport.startWatching()
 
-    // vvKeyboard = 800 - 700 - 50 = 50
-    expect(viewport.keyboardHeight.value).toBe(50)
+    // vvKeyboard = 800 - 600 - 50 = 150 (a keyboard-sized value; the threshold
+    // deliberately rejects small differences like a desktop scrollbar).
+    expect(viewport.keyboardHeight.value).toBe(150)
+
+    viewport.stopWatching()
+  })
+
+  it('ignores a sub-threshold difference (desktop scrollbar, not a keyboard)', () => {
+    const terminal = ref(null)
+    const containerRef = ref<HTMLElement | null>(container)
+    const viewport = useTerminalViewport(terminal, containerRef)
+
+    // A classic horizontal scrollbar makes visualViewport.height 15px shorter
+    // than innerHeight. That must NOT be treated as a keyboard: it reaches
+    // `.terminal-keyboard-open { bottom: 15px }`, resizing (and clearing) the
+    // animated wallpaper canvas.
+    Object.defineProperty(window, 'visualViewport', {
+      value: {
+        height: 785,
+        offsetTop: 0,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      writable: true,
+      configurable: true,
+    })
+    Object.defineProperty(window, 'innerHeight', {
+      value: 800,
+      writable: true,
+      configurable: true,
+    })
+
+    viewport.startWatching()
+
+    expect(viewport.keyboardHeight.value).toBe(0)
 
     viewport.stopWatching()
   })

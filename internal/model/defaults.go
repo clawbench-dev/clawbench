@@ -451,6 +451,45 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	applyForgeNotifyDefaults(cfg, presence)
 	normalizeForgeCredentialKeys(cfg)
 
+	// --- Skills (cross-agent skill discovery) ---
+	// Enabled defaults to true: skills are read-only context, and an install
+	// with no skill directories simply injects nothing. Use the presence map so
+	// an explicit "enabled: false" is respected.
+	if !presence["skills.enabled"] {
+		cfg.Skills.Enabled = true
+	}
+	if len(cfg.Skills.Dirs) == 0 {
+		// Migrate the pre-list key. `dir` was the single user skill directory
+		// before `dirs` replaced it; a config written by an older build carries
+		// only `dir`, and ignoring it would silently drop the user's configured
+		// directory. Only used when the new key is absent — a config carrying
+		// both has already been migrated (or hand-edited), and the new key wins.
+		if cfg.Skills.LegacyDir != "" {
+			cfg.Skills.Dirs = []string{cfg.Skills.LegacyDir}
+		} else if def := DefaultSkillsDir(); def != "" {
+			cfg.Skills.Dirs = []string{def}
+		}
+	}
+	// The legacy key has served its purpose; clearing it keeps the next config
+	// write from emitting both forms.
+	cfg.Skills.LegacyDir = ""
+	// RefreshHours: 0 = startup-only is a meaningful choice, so it cannot use a
+	// `<= 0 → default` rewrite. Only an omitted field takes the 6h default;
+	// negative values (hand-edited yaml) clamp to 0.
+	if p, ok := presence["skills.refresh_hours"]; !ok || !p {
+		cfg.Skills.RefreshHours = 6
+	}
+	if cfg.Skills.RefreshHours < 0 {
+		cfg.Skills.RefreshHours = 0
+	}
+	// Fill in a slug for every repo so the checkout directory is stable even if
+	// the user never opens the settings page.
+	for i := range cfg.Skills.Repos {
+		if cfg.Skills.Repos[i].Slug == "" {
+			cfg.Skills.Repos[i].Slug = SkillSlug(cfg.Skills.Repos[i].URL)
+		}
+	}
+
 	return autoPassword
 }
 

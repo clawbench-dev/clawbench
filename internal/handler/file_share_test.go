@@ -888,3 +888,230 @@ func TestResolveShareRoot_FileOutsideProjectNarrowsToFileDir(t *testing.T) {
 	assert.Equal(t, outsideDir, got,
 		"a file outside the active project must be bounded by its own directory")
 }
+
+// ─── Project scoping ─────────────────────────────────────────────────────────
+
+// createShareInProject shares a file while presenting `projectPath` as the
+// active project, so the row is attributed to that project rather than to
+// env.ProjectDir.
+func createShareInProject(t *testing.T, absPath, projectPath string) string {
+	t.Helper()
+	req := newRequest(t, http.MethodPost, "/api/share", map[string]string{"path": absPath})
+	withProjectCookie(req, projectPath)
+	w := callHandler(ServeShareManage, req)
+	assertOK(t, w)
+
+	var resp shareResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Token)
+	return resp.Token
+}
+
+// listSharesForProject reads the shared-files drawer contents as seen from
+// projectPath.
+func listSharesForProject(t *testing.T, projectPath string) []shareListItem {
+	t.Helper()
+	req := newRequest(t, http.MethodGet, "/api/share/list", nil)
+	withProjectCookie(req, projectPath)
+	w := callHandler(ServeShareList, req)
+	assertOK(t, w)
+
+	var resp struct {
+		Shares []shareListItem `json:"shares"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp.Shares
+}
+
+// TestShareList_IsProjectScoped pins that the shared-files drawer only shows the
+// active project's shares. The list used to be global, which disclosed both the
+// existence and the absolute path of every other project's shared files.
+func TestShareList_IsProjectScoped(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A second project under the same root, so both are valid cookie values.
+	otherProject := filepath.Join(env.WatchDir, "project-b")
+	require.NoError(t, os.MkdirAll(otherProject, 0o755))
+
+	mine := createShareTestFile(t, env, "docs/mine.md", "x")
+	createShareViaAPI(t, env, mine) // env.ProjectDir
+
+	otherDir := filepath.Join(otherProject, "docs")
+	require.NoError(t, os.MkdirAll(otherDir, 0o755))
+	createTestFile(t, otherDir, "theirs.md", "y")
+	otherFile := filepath.Join(otherDir, "theirs.md")
+	createShareInProject(t, otherFile, otherProject)
+
+	// Each project sees exactly its own share.
+	mineList := listSharesForProject(t, env.ProjectDir)
+	require.Len(t, mineList, 1, "project A must see only its own share")
+	assert.Equal(t, "docs/mine.md", mineList[0].Path)
+
+	theirsList := listSharesForProject(t, otherProject)
+	require.Len(t, theirsList, 1, "project B must see only its own share")
+	assert.NotEqual(t, mineList[0].Token, theirsList[0].Token)
+}
+
+// TestShareList_NoProjectCookieDoesNotLeak pins the fail-closed direction: with
+// no project cookie there is no project to scope to, so the response must not
+// fall back to listing everything.
+func TestShareList_NoProjectCookieDoesNotLeak(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	absPath := createShareTestFile(t, env, "docs/secret.md", "x")
+	createShareViaAPI(t, env, absPath)
+
+	// No cookie at all.
+	req := newRequest(t, http.MethodGet, "/api/share/list", nil)
+	w := callHandler(ServeShareList, req)
+	assertOK(t, w)
+
+	var resp struct {
+		Shares []shareListItem `json:"shares"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Empty(t, resp.Shares, "an unscoped request must not disclose project shares")
+}
+
+// TestShareList_DeleteAllIsProjectScoped pins that the one-click clear only
+// revokes the active project's links. It used to run an unqualified
+// "DELETE FROM file_shares", silently breaking every other project's public URLs.
+func TestShareList_DeleteAllIsProjectScoped(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	otherProject := filepath.Join(env.WatchDir, "project-b")
+	require.NoError(t, os.MkdirAll(otherProject, 0o755))
+
+	mine := createShareTestFile(t, env, "docs/mine.md", "x")
+	myToken := createShareViaAPI(t, env, mine)
+
+	otherDir := filepath.Join(otherProject, "docs")
+	require.NoError(t, os.MkdirAll(otherDir, 0o755))
+	createTestFile(t, otherDir, "theirs.md", "y")
+	otherToken := createShareInProject(t, filepath.Join(otherDir, "theirs.md"), otherProject)
+
+	// Clear from project A.
+	clearReq := newRequest(t, http.MethodDelete, "/api/share/list", map[string]any{"all": true})
+	withProjectCookie(clearReq, env.ProjectDir)
+	w := callHandler(ServeShareList, clearReq)
+	assertOK(t, w)
+
+	// A's link is gone; B's must still work.
+	_, _, _, ok, err := service.GetFileShareByToken(myToken)
+	require.NoError(t, err)
+	assert.False(t, ok, "the active project's share must be revoked")
+
+	_, _, _, ok, err = service.GetFileShareByToken(otherToken)
+	require.NoError(t, err)
+	assert.True(t, ok, "another project's share must survive the clear")
+}
+
+// TestShareList_RevokeByTokenRejectsForeignProject pins the ownership check: a
+// token belonging to another project must not be revocable from this one. The
+// response is the same 404 an unknown token gets, so neither case discloses
+// whether the other exists.
+func TestShareList_RevokeByTokenRejectsForeignProject(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	otherProject := filepath.Join(env.WatchDir, "project-b")
+	require.NoError(t, os.MkdirAll(otherProject, 0o755))
+
+	otherDir := filepath.Join(otherProject, "docs")
+	require.NoError(t, os.MkdirAll(otherDir, 0o755))
+	createTestFile(t, otherDir, "theirs.md", "y")
+	otherToken := createShareInProject(t, filepath.Join(otherDir, "theirs.md"), otherProject)
+
+	// Try to revoke it from project A.
+	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]string{"token": otherToken})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	assertStatus(t, w, http.StatusNotFound)
+
+	// The share must be untouched.
+	_, _, _, ok, err := service.GetFileShareByToken(otherToken)
+	require.NoError(t, err)
+	assert.True(t, ok, "a foreign project's share must not be revoked")
+}
+
+// TestShareList_RevokeUnknownTokenIsNotFound pins that an unknown token gets the
+// same 404 as a foreign one (no existence disclosure), and — unlike the
+// pre-scoping behavior — is no longer silently "revoked" with a 200.
+func TestShareList_RevokeUnknownTokenIsNotFound(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodDelete, "/api/share/list",
+		map[string]string{"token": "deadbeefdeadbeefdeadbeefdeadbeef"})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	assertStatus(t, w, http.StatusNotFound)
+}
+
+// TestShareList_RevokeByToken_OwnershipLookupError pins the first failure
+// branch of the revoke: when the ownership lookup itself errors (read handle
+// down), the handler reports 500 rather than silently revoking or 404ing.
+func TestShareList_RevokeByToken_OwnershipLookupError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A read handle that is already closed makes GetFileShareProjectByToken fail.
+	closed, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closed)
+	defer cleanup()
+
+	req := newRequest(t, http.MethodDelete, "/api/share/list",
+		map[string]string{"token": "anytoken"})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+// TestShareList_RevokeByToken_DeleteError pins the second failure branch: the
+// ownership check passes but the DELETE fails (write handle down), which must
+// surface as 500 rather than a false 200.
+func TestShareList_RevokeByToken_DeleteError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	token := createShareViaAPI(t, env, createShareTestFile(t, env, "docs/del.md", "x"))
+
+	// Keep a healthy read handle (so the ownership lookup succeeds) but break
+	// the write handle so DeleteFileShareByToken fails.
+	closed, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := service.SetDBForTest(closed, service.UnsafeDBForTest())
+	defer cleanup()
+
+	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]string{"token": token})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+// TestShareList_DeleteAll_Error pins the one-click clear failure branch: a
+// write error must surface as 500, not a silent success that leaves the links
+// live.
+func TestShareList_DeleteAll_Error(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createShareViaAPI(t, env, createShareTestFile(t, env, "docs/a.md", "x"))
+
+	closed, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := service.SetDBForTest(closed, service.UnsafeDBForTest())
+	defer cleanup()
+
+	clearReq := newRequest(t, http.MethodDelete, "/api/share/list", map[string]any{"all": true})
+	withProjectCookie(clearReq, env.ProjectDir)
+	w := callHandler(ServeShareList, clearReq)
+	assertStatus(t, w, http.StatusInternalServerError)
+}

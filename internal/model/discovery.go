@@ -23,6 +23,25 @@ type BackendSpec struct {
 	ACPLoadSession       bool     // whether the ACP agent truly supports LoadSession (overrides ACP Initialize report)
 	InstallCmd           string   // npm/pip install command, e.g. "npm install -g @anthropic-ai/claude-code"; empty = not installable
 	SortOrder            int      // display/registration order for deterministic BackendRegistry ordering
+	// NativeSkillsDirs are this backend's own skill directories, relative to
+	// the user's home (e.g. ".codebuddy/skills"). A backend can have several:
+	// most read only their own dot-directory, but several also read the
+	// cross-tool shared ".agents/skills" (where `npx skills` installs).
+	// Empty means the backend has no native skill directory. Every agent's
+	// native directories are scanned and their skills become visible to all
+	// agents (see internal/skill).
+	NativeSkillsDirs []string
+	// AutoLoadsNativeSkills is true when the backend itself loads
+	// NativeSkillsDirs into the model's context. Such a backend's own skills
+	// are NOT injected by ClawBench (that would duplicate them), but they still
+	// shadow same-named skills from lower-priority sources.
+	//
+	// Getting this wrong in the TRUE direction is the dangerous one: a backend
+	// that does not actually load its directory would then receive no skills at
+	// all. Verify against the real CLI before setting it — grep the installed
+	// binary/package for "SKILL.md" or "available_skills", and confirm the
+	// transport ClawBench uses (CLI vs ACP) shares that code path.
+	AutoLoadsNativeSkills bool
 }
 
 // LoadBackendSpecs is set by the backends package at init time to provide

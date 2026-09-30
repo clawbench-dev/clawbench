@@ -225,10 +225,11 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add to in-memory maps for immediate reflection
-	model.AddAgent(clone)
-
-	// Populate runtime-only fields
+	// Populate runtime-only fields BEFORE publishing. AddAgent hands the pointer
+	// to every later GetAgent/GetAgentList caller, and those readers read these
+	// fields without holding agentsMu (serveAgentsGet marshals the handed-out
+	// pointers after releasing configMutex), so assigning them afterwards would
+	// be the same publish-then-mutate race this file was fixed for elsewhere.
 	if spec := model.FindSpecByBackend(clone.Backend); spec != nil {
 		if model.CanDiscoverModels(*spec) {
 			clone.CanRefreshModels = true
@@ -239,6 +240,9 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	}
 	clone.SupportsCLI = model.BackendSupportsCLI(clone.Backend)
 	clone.SupportsMidTurn = model.BackendSupportsMidTurn(clone.Backend)
+
+	// Add to in-memory maps for immediate reflection — last, fully formed.
+	model.AddAgent(clone)
 
 	writeJSON(w, http.StatusOK, clone)
 }
@@ -386,6 +390,11 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		return
 	}
 
+	// Set when the transport is being switched from ACP to CLI. The connections
+	// are closed only after the new transport is published, so no concurrent
+	// turn can observe acp-stdio and spawn a replacement.
+	closeACPConns := false
+
 	ap := service.AgentPatch{}
 
 	// Validate and apply preferred_mode
@@ -454,22 +463,26 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		hasACP := spec != nil && spec.AcpCommand != ""
 		hasCLI := agent.SupportsCLI
 		oldTransport := agent.Transport
+		// Resolve the new value locally and let the UpdateAgent block below
+		// apply it. Writing agent.Transport here would be a field mutation
+		// outside agentsMu, racing the accessor readers.
+		var newTransport string
 		switch {
 		case transport == "cli" && hasCLI:
-			agent.Transport = "cli"
+			newTransport = "cli"
 		case transport == "acp-stdio" && hasACP:
-			agent.Transport = "acp-stdio"
+			newTransport = "acp-stdio"
 		default:
 			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidTransport")
 			return
 		}
-		ap.Transport = &agent.Transport
-		// When switching from ACP to CLI, close all ACP connections for this agent
-		if oldTransport == "acp-stdio" && agent.Transport == "cli" {
-			mgr := ai.GetACPConnManager()
-			mgr.CloseConnsByAgentID(agentID)
-			slog.Info("closed ACP connections after transport switch to CLI", "agent", agentID)
-		}
+		ap.Transport = &newTransport
+		// Closing the ACP connections must happen AFTER the new transport is
+		// published (see the UpdateAgent call below). Closing first would leave
+		// a window where the in-memory agent still reports acp-stdio: a turn
+		// starting in it spawns a fresh ACP process for an agent the user just
+		// switched to CLI, and nothing re-closes it.
+		closeACPConns = oldTransport == "acp-stdio" && newTransport == "cli"
 	}
 
 	// Validate and apply name
@@ -545,40 +558,63 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		return
 	}
 
-	// Update in-memory agent for immediate reflection
-	if ap.PreferredMode != nil {
-		agent.PreferredMode = *ap.PreferredMode
-	}
-	if ap.PreferredModel != nil {
-		agent.PreferredModel = *ap.PreferredModel
-	}
-	if ap.PreferredThinkingEffort != nil {
-		agent.PreferredThinkingEffort = *ap.PreferredThinkingEffort
-	}
-	if ap.Transport != nil {
-		agent.Transport = *ap.Transport
-	}
-	if ap.Name != nil {
-		agent.Name = *ap.Name
-	}
-	if ap.Specialty != nil {
-		agent.Specialty = *ap.Specialty
-	}
-	if ap.CustomSystemPrompt != nil {
-		agent.CustomSystemPrompt = *ap.CustomSystemPrompt
-		// Keep the in-memory runtime prompt in step with the new text. The
-		// stored value is CustomSystemPrompt; this composition is derived and
-		// is redone from scratch on the next load.
-		agent.RuntimeSystemPrompt = model.ComposeSystemPrompt(agent.CustomSystemPrompt)
-	}
-	if ap.SortOrder != nil {
-		agent.SortOrder = *ap.SortOrder
-	}
-	if ap.AutoApprove != nil {
-		agent.AutoApprove = *ap.AutoApprove
+	// Update in-memory agent for immediate reflection. Routed through
+	// model.UpdateAgent so the edit is published copy-on-write: readers hold the
+	// previous *Agent and read its fields without the lock, so mutating that
+	// object in place would race them (configMutex does not cover readers in
+	// internal/service / internal/ai). The returned copy is the published one,
+	// so echo it rather than the now-stale pointer read before the update.
+	updated := model.UpdateAgent(agentID, func(agent *model.Agent) {
+		if ap.PreferredMode != nil {
+			agent.PreferredMode = *ap.PreferredMode
+		}
+		if ap.PreferredModel != nil {
+			agent.PreferredModel = *ap.PreferredModel
+		}
+		if ap.PreferredThinkingEffort != nil {
+			agent.PreferredThinkingEffort = *ap.PreferredThinkingEffort
+		}
+		if ap.Transport != nil {
+			agent.Transport = *ap.Transport
+		}
+		if ap.Name != nil {
+			agent.Name = *ap.Name
+		}
+		if ap.Specialty != nil {
+			agent.Specialty = *ap.Specialty
+		}
+		if ap.CustomSystemPrompt != nil {
+			agent.CustomSystemPrompt = *ap.CustomSystemPrompt
+			// Keep the in-memory runtime prompt in step with the new text. The
+			// stored value is CustomSystemPrompt; this composition is derived and
+			// is redone from scratch on the next load.
+			agent.RuntimeSystemPrompt = model.ComposeSystemPrompt(agent.CustomSystemPrompt)
+		}
+		if ap.SortOrder != nil {
+			agent.SortOrder = *ap.SortOrder
+		}
+		if ap.AutoApprove != nil {
+			agent.AutoApprove = *ap.AutoApprove
+		}
+	})
+
+	if updated == nil {
+		// Defensive, and believed unreachable: every mutator takes configMutex,
+		// which this handler holds for its whole body, so the agent cannot be
+		// deleted between the read above and this update. Kept as a guard for
+		// the day that stops being true.
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
+		return
 	}
 
-	writeJSON(w, http.StatusOK, agent)
+	// The transport is now published, so closing the old ACP connections cannot
+	// race a turn into spawning a replacement.
+	if closeACPConns {
+		ai.GetACPConnManager().CloseConnsByAgentID(agentID)
+		slog.Info("closed ACP connections after transport switch to CLI", "agent", agentID)
+	}
+
+	writeJSON(w, http.StatusOK, updated)
 }
 
 // containsPromptOverride checks for common prompt injection patterns that attempt
@@ -672,9 +708,19 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update in-memory agent (regardless of ModelsAutoDetected — manual refresh always overrides)
-	agent.Models = models
-	agent.ModelsAutoDetected = true
+	// Update in-memory agent (regardless of ModelsAutoDetected — manual refresh
+	// always overrides). UpdateAgent publishes a copy, so persist THAT one: the
+	// `agent` pointer read earlier is the pre-update snapshot and saving it
+	// would write the old model list back to the database.
+	updated := model.UpdateAgent(agentID, func(a *model.Agent) {
+		a.Models = models
+		a.ModelsAutoDetected = true
+	})
+	if updated == nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
+		return
+	}
+	agent = updated
 
 	// Update database
 	if err := service.SaveAgent(service.WriteDB(), agent); err != nil {

@@ -2,7 +2,6 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   applyWallpaper,
   applyWallpaperScrim,
-  resolveWallpaperState,
   resolvePanelOpacity,
   resolveWallpaperUrl,
   resetWallpaperUrlCache,
@@ -38,37 +37,6 @@ describe('themeBackground', () => {
     invalidateGalleryImageUrls()
   })
 
-  describe('resolveWallpaperState', () => {
-    it('is unset when the device turned the wallpaper off', () => {
-      expect(resolveWallpaperState('local', false, 'local-1-a.png', true)).toBe('unset')
-      expect(resolveWallpaperState('wave', false, '', true)).toBe('unset')
-    })
-
-    it('is unset for the wave, which is a background but not an image', () => {
-      expect(resolveWallpaperState('wave', true, '', true)).toBe('unset')
-    })
-
-    it('is set for a local image once one is selected', () => {
-      expect(resolveWallpaperState('local', true, 'local-1-a.png', true)).toBe('set')
-    })
-
-    it('is unset for the local source with nothing selected', () => {
-      expect(resolveWallpaperState('local', true, '', true)).toBe('unset')
-    })
-
-    it('is unknown for Bing only until the server config loads', () => {
-      // The Bing file is the one asynchronous input: before /api/config
-      // resolves we cannot know whether an image is cached.
-      expect(resolveWallpaperState('bing', true, '', false)).toBe('unknown')
-      expect(resolveWallpaperState('bing', true, '', true)).toBe('unset')
-      expect(resolveWallpaperState('bing', true, 'bing-1.jpg', true)).toBe('set')
-    })
-
-    it('is unset for the none mode', () => {
-      expect(resolveWallpaperState('none', true, '', true)).toBe('unset')
-    })
-  })
-
   describe('resolveWallpaperMode', () => {
     it('maps a stored local value', () => {
       expect(resolveWallpaperMode('local')).toBe('local')
@@ -97,9 +65,7 @@ describe('themeBackground', () => {
     })
 
     it('does not depend on a file, which the wave does not have', () => {
-      // The wave has no file, so resolveWallpaperState reports 'unset' for it.
-      // Detecting the wave therefore cannot go through the active file.
-      expect(resolveWallpaperState('wave', true, '', true)).toBe('unset')
+      // The wave has no file, so detecting it cannot go through the active file.
       expect(isWaveActive('wave', true)).toBe(true)
     })
   })

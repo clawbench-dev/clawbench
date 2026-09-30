@@ -138,6 +138,7 @@ type Config struct {
 	PushMode    string            `yaml:"push_mode"`    // Push notification mode: "native" (default), "dingtalk", "feishu", "disabled"
 	FileSearch  FileSearchConfig  `yaml:"file_search"`  // File search configuration
 	Forge       ForgeConfig       `yaml:"forge"`        // GitHub / GitLab integration (read-only issue & PR browsing)
+	Skills      SkillsConfig      `yaml:"skills"`       // Cross-agent skill discovery (native dirs + custom dirs + git repos)
 }
 
 // ForgeConfig holds the GitHub/GitLab integration settings.

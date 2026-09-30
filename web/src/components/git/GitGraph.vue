@@ -124,7 +124,7 @@
 <script setup>
 import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { computeGraphData, refLabelText } from '@/utils/gitGraph'
+import { computeGraphData, computeGraphColumnWidth, refLabelText } from '@/utils/gitGraph'
 import { getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
 const { t } = useI18n()
 
@@ -180,11 +180,129 @@ const svgHeight = computed(() => {
   return hasFade ? base + props.rowHeight : base
 })
 
-// SVG width: only lanes, no ref labels (refs shown via tooltip)
+// ── Visible row window ──
+// Which commit rows are on screen right now, tracked from the shared scroll
+// container. A ResizeObserver is also needed because the container can be
+// resized without scrolling (window resize, dock layout switch, tab switch).
+const visibleRowCount = ref(0)
+const visibleLaneCount = ref(1)
+
+const ROW_MARGIN = 2 // a partially visible row at either edge still counts
+
+// SVG width: only lanes, no ref labels (refs shown via tooltip).
+//
+// Sized from the lanes visible in the current scroll window rather than from
+// the whole graph — see computeGraphColumnWidth. The graph is a sibling of the
+// commit list inside the same scroll container (.drilldown-body), so it has no
+// scroll position of its own; the visible row window comes from that container.
 const svgWidth = computed(() => {
   if (props.collapsed) return 20
-  return graphData.value.graphWidth || 40
+  return computeGraphColumnWidth({
+    fullWidth: graphData.value.graphWidth || 40,
+    laneCount: graphData.value.laneCount || 1,
+    visibleLaneCount: visibleLaneCount.value,
+    visibleRowCount: visibleRowCount.value,
+    commitCount: props.commits.length,
+  })
 })
+
+function measureViewport() {
+  const container = scrollRef.value?.closest('.drilldown-body')
+  if (!container || !props.commits.length || props.collapsed) {
+    // Nothing measurable (collapsed, or not mounted into a scroller yet).
+    // Report "everything fits" so the column falls back to the full width
+    // instead of collapsing to one lane.
+    visibleRowCount.value = 0
+    visibleLaneCount.value = graphData.value.laneCount || 1
+    return
+  }
+
+  const containerRect = container.getBoundingClientRect()
+  const scrollTop = container.scrollTop
+  const clientHeight = container.clientHeight
+
+  // The graph's top edge in the container's scroll coordinate space. The graph
+  // is the container's first child and spans the full list height, so this is
+  // normally 0 — computing it rather than assuming keeps the window correct if
+  // the list is ever given a header or padding.
+  const graphTop = scrollRef.value
+    ? scrollRef.value.getBoundingClientRect().top - containerRect.top + scrollTop
+    : scrollTop
+
+  const firstRow = Math.max(
+    0,
+    Math.floor((scrollTop - graphTop) / props.rowHeight) - ROW_MARGIN,
+  )
+  const lastRow = Math.min(
+    props.commits.length - 1,
+    Math.ceil((scrollTop + clientHeight - graphTop) / props.rowHeight) + ROW_MARGIN,
+  )
+
+  if (lastRow < firstRow) {
+    visibleRowCount.value = 0
+    visibleLaneCount.value = 1
+    return
+  }
+
+  visibleRowCount.value = Math.floor(clientHeight / props.rowHeight) + ROW_MARGIN * 2
+
+  let maxLane = 0
+  for (const node of nodes.value) {
+    if (node.row >= firstRow && node.row <= lastRow && node.lane > maxLane) {
+      maxLane = node.lane
+    }
+  }
+  visibleLaneCount.value = maxLane + 1
+}
+
+let viewportRaf = 0
+function scheduleViewportMeasure() {
+  if (viewportRaf) return
+  viewportRaf = requestAnimationFrame(() => {
+    viewportRaf = 0
+    measureViewport()
+  })
+}
+
+let viewportObserver = null
+
+function onContainerScroll() {
+  dismissTooltip()
+  scheduleViewportMeasure()
+}
+
+onMounted(() => {
+  const container = scrollRef.value?.closest('.drilldown-body')
+  container?.addEventListener('scroll', onContainerScroll, { passive: true })
+  if (container && typeof ResizeObserver !== 'undefined') {
+    viewportObserver = new ResizeObserver(scheduleViewportMeasure)
+    viewportObserver.observe(container)
+  }
+  // Commit rows may not be laid out on the first frame.
+  scheduleViewportMeasure()
+})
+
+onUnmounted(() => {
+  const container = scrollRef.value?.closest('.drilldown-body')
+  container?.removeEventListener('scroll', onContainerScroll)
+  viewportObserver?.disconnect()
+  viewportObserver = null
+  if (viewportRaf) {
+    cancelAnimationFrame(viewportRaf)
+    viewportRaf = 0
+  }
+})
+
+// Re-measure when the row set changes (lazy load appends, search filters, a
+// refresh replaces the list) — the window's lane makeup changes with it.
+watch(() => props.commits, scheduleViewportMeasure, { flush: 'post' })
+watch(() => props.rowHeight, scheduleViewportMeasure, { flush: 'post' })
+watch(() => props.collapsed, scheduleViewportMeasure, { flush: 'post' })
+
+// Exposed for tests: jsdom does not lay out elements, so the visible-window
+// measurement cannot be triggered by real scrolling — tests drive it directly
+// after stubbing the container's geometry.
+defineExpose({ measureViewport, visibleRowCount, visibleLaneCount })
 
 // ── Tooltip positioning ──
 

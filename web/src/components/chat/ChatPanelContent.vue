@@ -2104,7 +2104,6 @@ onUnmounted(() => {
    code-preview / localhost callers. */
 .tool-call-loading .li-spinner {
   --li-size: 20px;
-  --li-border: 2px;
   /* Kept from the pre-unification implementation, which spun at 0.6s. */
   --li-duration: 0.6s;
 }

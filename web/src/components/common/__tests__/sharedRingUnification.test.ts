@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { resolve, join } from 'node:path'
 
 /**
  * Guards for the shared loading ring.
@@ -22,6 +24,55 @@ async function source(relPath: string): Promise<string> {
 }
 
 const GLOBAL_CSS = '../../../../css/components.css'
+
+/**
+ * Read a raw stylesheet / SFC from either cwd (a bare `vitest` run uses web/,
+ * scripts/vitest-run.sh uses the repo root).
+ */
+function readRaw(relPath: string): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, relPath), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error(`${relPath} not found from cwd: ${process.cwd()}`)
+}
+
+/** Every .css / .vue / .ts under web/src and web/css (source only, no tests). */
+function walkSources(): string[] {
+  const roots = ['web/src', 'web/css', 'src', 'css']
+  const out: string[] = []
+  for (const root of roots) {
+    for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+      const abs = resolve(base, root)
+      try {
+        if (statSync(abs).isDirectory()) {
+          walk(abs, out)
+          break
+        }
+      } catch {
+        // try the next candidate
+      }
+    }
+  }
+  // Both candidate roots resolve to the same tree when cwd is web/, so dedupe.
+  return [...new Set(out)]
+}
+
+function walk(dir: string, out: string[]): void {
+  for (const name of readdirSync(dir)) {
+    if (name === 'node_modules' || name === '__tests__') continue
+    const p = join(dir, name)
+    const st = statSync(p)
+    if (st.isDirectory()) {
+      walk(p, out)
+    } else if (/\.(css|vue|ts)$/.test(name) && !name.endsWith('.test.ts')) {
+      out.push(p)
+    }
+  }
+}
 
 describe('shared loading ring', () => {
   it('is declared globally, with its keyframes', async () => {
@@ -138,6 +189,38 @@ describe('shared loading ring', () => {
     // The tool-call override is already compound (.tool-call-loading .li-spinner).
     const cpc = await source('@/components/chat/ChatPanelContent.vue')
     expect(cpc).toMatch(/\.tool-call-loading \.li-spinner\s*\{/)
+  })
+
+  it('defines exactly ONE border ratio in the whole codebase', async () => {
+    // The weight is derived from --li-size by a single ratio, so every ring in
+    // the app keeps the same optical thickness. A call site that hard-codes
+    // --li-border silently forks that ratio, and the drift is invisible until
+    // two rings sit side by side. This walks the sources rather than listing
+    // known sites, so a NEW hard-coded site fails here too.
+    const css = await source(GLOBAL_CSS)
+    const base = css.match(/\.li-spinner\s*\{([\s\S]*?)\}/)
+    expect(base, 'the global .li-spinner rule must exist').not.toBeNull()
+    expect(
+      base![1],
+      'the ring must derive its border from --li-size',
+    ).toMatch(/--li-border:\s*calc\(var\(--li-size\)\s*\/\s*\d+\)/)
+
+    const offenders: string[] = []
+    for (const file of walkSources()) {
+      const text = readFileSync(file, 'utf8')
+      // A literal weight (px / rem / em) forks the ratio; a calc() re-derivation
+      // does not. The value is captured and tested in JS rather than with a
+      // negative lookahead, because `\s*` backtracks and lands the lookahead on
+      // the whitespace instead of on `calc(`.
+      const m = text.match(/--li-border\s*:\s*([^;]+);/)
+      if (m && !/^calc\(/.test(m[1].trim())) {
+        offenders.push(`${file.replace(process.cwd() + '/', '')} → --li-border: ${m[1].trim()}`)
+      }
+    }
+    expect(
+      offenders,
+      'no call site may hard-code --li-border — set only --li-size and let the shared ratio derive the weight',
+    ).toEqual([])
   })
 
   it('keeps each site at the speed it shipped with', async () => {

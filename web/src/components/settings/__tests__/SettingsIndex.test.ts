@@ -63,11 +63,11 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 16 category rows', () => {
+  it('renders 17 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(16)
+    expect(rows.length).toBe(17)
   })
 
   it('renders category labels', () => {
@@ -100,8 +100,8 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    expect(perCard).toEqual([2, 6, 4, 2, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(16)
+    expect(perCard).toEqual([2, 7, 4, 2, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(17)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -119,7 +119,7 @@ describe('SettingsIndex', () => {
 
     const expectedIds = [
       'appearance', 'projectFiles',
-      'chat', 'agents', 'aiSummary', 'rag', 'tts', 'stt',
+      'chat', 'agents', 'skills', 'aiSummary', 'rag', 'tts', 'stt',
       'terminal', 'portForward', 'frp', 'forgeIntegration',
       'notification', 'security',
       'debug', 'about',

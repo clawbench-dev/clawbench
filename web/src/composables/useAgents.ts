@@ -212,6 +212,21 @@ void import('@/composables/useGlobalEvents')
         appLog.e(TAG, 'Failed to register agents_updated listener:', err)
     })
 
+// Fallback for the broadcast above: the dynamic import (or a partial
+// useGlobalEvents mock) can fail, and the reload must not depend on a single
+// subscription. The same signal that re-syncs other stale state — a WS
+// reconnect — also re-pulls the agent list, so a missed `agents_updated` costs
+// one reconnect at worst instead of a manual rescan. A plain `focus` is
+// deliberately NOT used: it fires constantly and `loadAgents` has no staleness
+// check of its own, so it would re-fetch on every window focus.
+//
+// Registered at module scope (the app-lifetime singleton pattern used by
+// usePwaInstall): no teardown, and it also runs in the share.html bundle, where
+// nothing dispatches the event — harmless, just not app-only.
+window.addEventListener('clawbench-reconnect', () => {
+    void loadAgents(true)
+})
+
 function getAgentBackend(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.backend || ''

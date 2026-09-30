@@ -255,6 +255,20 @@ describe('SettingsPage — deep link from theme picker (more appearance options)
     wrapper.unmount()
   })
 
+  it('replaces the trail instead of nesting under the currently open category', async () => {
+    // Logo → About while 外观 is open must read 设置 › 关于, not
+    // 设置 › 外观 › 关于: a deep-link from outside the settings tab is a fresh
+    // navigation, so the stack is truncated to the root before pushing.
+    const wrapper = mountPage({ active: true }, { navStack: ['appearance'], currentCategory: 'appearance' })
+    pendingSettingsCategory.value = 'about'
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+    expect(truncateNav).toHaveBeenCalledWith(0)
+    expect(pushNav).toHaveBeenCalledWith('about')
+    expect(mockNavStack.value).toEqual(['about'])
+    wrapper.unmount()
+  })
+
   it('does not duplicate a category that is already open', async () => {
     const wrapper = mountPage({ active: true }, { navStack: ['appearance'], currentCategory: 'appearance' })
     pendingSettingsCategory.value = 'appearance'

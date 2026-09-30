@@ -35,7 +35,9 @@ const localConfig = reactive<Record<string, any>>({
   uiScale: 1,
   notificationSound: true,
   headerShortcutTips: true,
-  // Per-device wallpaper choice (localStorage-backed).
+  // Per-device wallpaper choice (localStorage-backed). Scaffolded to an
+  // enabled wave so the panel renders its active state; the real factory
+  // default (off) is asserted in useSettingsConfig.test.ts.
   wallpaperEnabled: true,
   wallpaperMode: 'wave',
   wallpaperLocalSelected: '',
@@ -430,6 +432,10 @@ describe('SettingsCategory', () => {
     mockAutoFitUIScale.mockReset()
     mockAutoFitUIScale.mockReturnValue(1.5)
     mockDialogConfirm.mockResolvedValue(false)
+    // Scaffold the wallpaper as enabled; the off-by-default case flips it and
+    // must not leak into later cases (the fixture is module-level reactive).
+    localConfig.wallpaperEnabled = true
+    localConfig.wallpaperMode = 'wave'
     mockGetServerValueWithDefault.mockImplementation((key: string) => {
       // Simple flat-dot-path resolver against serverConfig
       const parts = key.split('.')
@@ -633,9 +639,10 @@ describe('SettingsCategory', () => {
       expect(wrapper.findAllComponents({ name: 'WallpaperSetting' })).toHaveLength(1)
     })
 
-    it('enables the panel-opacity slider for the factory wave default', async () => {
-      // The default (wave + enabled) is resolvable on first paint with no server
-      // data, so the slider must not sit disabled waiting for /api/config.
+    it('enables the panel-opacity slider once the device turns the wallpaper on', async () => {
+      // The choice is per-device local state, so an enabled wallpaper is
+      // resolvable on first paint with no server data — the slider must not sit
+      // disabled waiting for /api/config.
       localConfig.wallpaperEnabled = true
       localConfig.wallpaperMode = 'wave'
       const wrapper = mountCategory('appearance')
@@ -645,17 +652,15 @@ describe('SettingsCategory', () => {
       expect(slider.attributes('disabled')).toBeUndefined()
     })
 
-    it('disables the panel-opacity slider when this device turned the wallpaper off', async () => {
+    it('disables the panel-opacity slider on a fresh device, where the wallpaper is off by default', async () => {
+      // localDefaults.wallpaperEnabled is false, so a device that never touched
+      // the setting has no background and nothing to tune.
       localConfig.wallpaperEnabled = false
-      try {
-        const wrapper = mountCategory('appearance')
-        await wrapper.vm.$nextTick()
-        const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
-        const slider = wallpaper.find('input[type="range"]')
-        expect(slider.attributes('disabled')).toBeDefined()
-      } finally {
-        localConfig.wallpaperEnabled = true
-      }
+      const wrapper = mountCategory('appearance')
+      await wrapper.vm.$nextTick()
+      const wallpaper = wrapper.findAllComponents({ name: 'WallpaperSetting' })[0]
+      const slider = wallpaper.find('input[type="range"]')
+      expect(slider.attributes('disabled')).toBeDefined()
     })
 
     it('renders the gallery thumbnail for a locally selected image', async () => {

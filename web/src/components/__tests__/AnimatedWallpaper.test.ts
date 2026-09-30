@@ -67,6 +67,68 @@ describe('AnimatedWallpaper', () => {
     wrapper.unmount()
   })
 
+  describe('resize repaint', () => {
+    // Assigning canvas.width/height resets the backing store to transparent, so
+    // a resize that does NOT repaint presents a blank frame until the next rAF
+    // tick (up to 33ms at the 30fps cap). This is the "wallpaper flashes when I
+    // focus an input" bug: focusing the chat input opens the soft keyboard,
+    // which shrinks .app-container and therefore the canvas box.
+    let roCallbacks: ResizeObserverCallback[]
+    let rect: DOMRect
+    let rectSpy: ReturnType<typeof vi.spyOn>
+
+    beforeEach(() => {
+      roCallbacks = []
+      vi.stubGlobal('ResizeObserver', class {
+        constructor(cb: ResizeObserverCallback) { roCallbacks.push(cb) }
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      })
+      // jsdom returns a zero rect, which would collapse the canvas to 1x1 and
+      // make "unchanged size" impossible to express. Drive a mutable box instead.
+      rect = { width: 100, height: 50, top: 0, left: 0, right: 100, bottom: 50, x: 0, y: 0, toJSON: () => ({}) } as DOMRect
+      rectSpy = vi.spyOn(HTMLCanvasElement.prototype, 'getBoundingClientRect').mockImplementation(() => rect)
+    })
+
+    afterEach(() => {
+      rectSpy.mockRestore()
+      vi.unstubAllGlobals()
+    })
+
+    it('repaints synchronously when a box change clears the canvas, even with the loop running', () => {
+      const wrapper = mount(AnimatedWallpaper)
+      // The rAF mock never invokes its callback, so `running` stays true and the
+      // frame loop cannot repaint on its own — only the observer can.
+      const before = drawCalls
+      expect(roCallbacks.length).toBe(1)
+      // The soft keyboard shrinking .app-container: a real box change.
+      rect = { ...rect, height: 40, bottom: 40 } as DOMRect
+      roCallbacks[0]([], {} as ResizeObserver)
+      expect(drawCalls).toBeGreaterThan(before)
+      wrapper.unmount()
+    })
+
+    it('does not clear or repaint when the rounded backing size is unchanged', () => {
+      // A sub-pixel layout jitter can round to the same backing size; clearing
+      // the canvas for it would flash for nothing.
+      const wrapper = mount(AnimatedWallpaper)
+      const el = wrapper.find('canvas').element as HTMLCanvasElement
+      const realW = el.width
+      let sets = 0
+      Object.defineProperty(el, 'width', {
+        get: () => realW,
+        set: () => { sets++ },
+        configurable: true,
+      })
+      const before = drawCalls
+      roCallbacks[0]([], {} as ResizeObserver)
+      expect(sets).toBe(0)
+      expect(drawCalls).toBe(before)
+      wrapper.unmount()
+    })
+  })
+
   it('starts a rAF loop on mount', () => {
     const wrapper = mount(AnimatedWallpaper)
     expect(rafSpy).toHaveBeenCalled()

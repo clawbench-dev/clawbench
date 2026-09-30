@@ -2,6 +2,8 @@
 
 const LANE_WIDTH = 20
 const GRAPH_LEFT_PADDING = 10
+/** Floor for the graph column, wide enough for the main lane plus padding. */
+const MIN_GRAPH_WIDTH = 40
 const LANE_COLORS = [
   '#4a90d9', // blue
   '#e67e22', // orange
@@ -548,8 +550,49 @@ export function computeGraphData(commits: GitCommit[], rowHeight: number, previo
     laneBranchName.set(lane, [...names][0])
   }
 
-  const graphWidth = Math.max(40, (maxLane + 1) * LANE_WIDTH + GRAPH_LEFT_PADDING * 2)
+  const graphWidth = Math.max(MIN_GRAPH_WIDTH, (maxLane + 1) * LANE_WIDTH + GRAPH_LEFT_PADDING * 2)
   return { nodes, lines, laneCount: maxLane + 1, graphWidth, shaToLane, laneBranchName }
+}
+
+/**
+ * How much of the graph column to actually take up.
+ *
+ * The graph is drawn for the whole commit list, so its width reflects every
+ * branch in the entire history. Only the handful of commits inside the
+ * viewport are visible at any moment, though — a long-lived repo can show 8+
+ * lanes somewhere in its history while the visible rows use 1 or 2. Sizing the
+ * column from the full graph therefore reserves width for branches the user
+ * cannot see, squeezing the commit messages beside it.
+ *
+ * So the column is sized from the lanes actually present in the visible row
+ * window: lanes belonging to off-screen rows still exist and are still drawn
+ * (they scroll into view later), they just do not claim horizontal space yet.
+ *
+ * `visibleLaneCount` is the highest lane index among visible rows, plus one.
+ * Lane 0 is always kept even when it has no node in the window, so the column
+ * never collapses below the mainline's own track — without it the first
+ * off-screen lane change would make the graph jump.
+ *
+ * `visibleRowCount` is how many rows the window can hold. When every loaded
+ * commit fits on screen there is nothing hidden to reveal, so the full graph
+ * width is used: the column is stable and the scrollbar that a narrower column
+ * would otherwise produce is avoided.
+ */
+export function computeGraphColumnWidth(opts: {
+  fullWidth: number
+  laneCount: number
+  visibleLaneCount: number
+  visibleRowCount: number
+  commitCount: number
+}): number {
+  const { fullWidth, laneCount, visibleLaneCount, visibleRowCount, commitCount } = opts
+  const full = Math.max(MIN_GRAPH_WIDTH, fullWidth)
+
+  // Everything fits: no hidden lanes to reveal, so no reason to reserve less.
+  if (visibleRowCount <= 0 || commitCount <= visibleRowCount) return full
+
+  const lanes = Math.max(1, Math.min(visibleLaneCount, laneCount))
+  return Math.max(MIN_GRAPH_WIDTH, lanes * LANE_WIDTH + GRAPH_LEFT_PADDING * 2)
 }
 
 // ─── Ref label helpers ─────────────────────────────────────────────────────

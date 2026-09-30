@@ -21,6 +21,16 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
   const viewportHeight = ref(0)
   const keyboardHeight = ref(0)
 
+  /**
+   * Minimum measured height (px) that counts as a keyboard, matching
+   * useSoftKeyboard / useChatKeyboard. The raw differences below are NOT
+   * keyboard-specific: a classic horizontal scrollbar makes them ~15px on
+   * desktop, and browser chrome is similarly short. Ungated, the value reaches
+   * `.terminal-keyboard-open { bottom: <n>px }` on .app-container, which resizes
+   * (and clears) the animated wallpaper canvas.
+   */
+  const KEYBOARD_MIN_HEIGHT = 120
+
   let fitTimer: ReturnType<typeof setTimeout> | null = null
   const FIT_DEBOUNCE_MS = 100
   // Track the last shared keyboard height so we only schedule fit() when it
@@ -67,10 +77,17 @@ export function useTerminalViewport(terminal: Ref<Terminal | null>, containerRef
       // Detect adjustResize: if innerHeight actually shrunk, the browser
       // is in adjustResize mode (Android native WebView). In this mode
       // position:fixed containers auto-adjust, so no CSS compensation needed.
-      setAdjustResize(resizeKeyboard > 0)
+      setAdjustResize(resizeKeyboard >= KEYBOARD_MIN_HEIGHT)
 
-      // Use whichever gives a larger value — covers both scenarios
-      keyboardHeight.value = Math.max(vvKeyboard, resizeKeyboard, 0)
+      // Use whichever gives a larger value — covers both scenarios.
+      // The raw differences are NOT keyboard-specific: a classic horizontal
+      // scrollbar makes vvKeyboard ~15px on desktop, and browser chrome is
+      // similarly short. Without this gate the value is applied as
+      // `.terminal-keyboard-open { bottom: <n>px }` on .app-container, which
+      // resizes (and clears) the animated wallpaper canvas. Same invariant as
+      // useChatKeyboard / useSoftKeyboard.
+      const raw = Math.max(vvKeyboard, resizeKeyboard)
+      keyboardHeight.value = raw >= KEYBOARD_MIN_HEIGHT ? raw : 0
       viewportHeight.value = vv.height
     } else {
       viewportHeight.value = containerRef.value.clientHeight

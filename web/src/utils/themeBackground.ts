@@ -25,8 +25,6 @@ import { buildLocalFileUrl } from '@/utils/download'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
 import { DEFAULT_ANIMATED_STYLE, isKnownAnimatedStyle } from '@/utils/animatedWallpapers'
 
-export type WallpaperState = 'unknown' | 'set' | 'unset'
-
 // Last applied wallpaper file name + image URL. The URL embeds a version query
 // so re-uploads (same file name, new bytes) bypass the immutable cache — but we
 // must NOT regenerate it on every call: applyWallpaper is invoked on each
@@ -210,31 +208,6 @@ export function applyWallpaperScrim(dark: boolean): void {
   if (el.classList.contains('wallpaper-active')) {
     el.style.setProperty('--wallpaper-scrim', wallpaperScrim(dark))
   }
-}
-
-/**
- * Whether an *image* wallpaper is displayed on this device.
- *
- * Careful with the name: `'unset'` means "no image file", NOT "no background".
- * The animated wave has no file, so it reports `'unset'` here while still being
- * a live background — check the mode for that.
- *
- * All three inputs are per-device (mode and enabled from localStorage, the
- * Bing file from the server's cache), so unlike before this is not a question
- * the server answers. The one asynchronous input left is the Bing cache: until
- * /api/config has been read we cannot know whether the Bing image exists yet,
- * which is what `'unknown'` now means.
- */
-export function resolveWallpaperState(
-  mode: WallpaperMode,
-  enabled: boolean,
-  activeFile: string,
-  configLoaded: boolean,
-): WallpaperState {
-  if (!enabled) return 'unset'
-  if (mode === 'wave') return 'unset' // a live background, but not an image
-  if (mode === 'bing' && !configLoaded) return 'unknown'
-  return activeFile ? 'set' : 'unset'
 }
 
 /** Wallpaper source currently in effect. */

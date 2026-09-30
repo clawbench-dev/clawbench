@@ -33,6 +33,11 @@ func init() {
 			ThinkingEffortLevels: []string{"off", "low", "high", "max"},
 			InstallCmd:           "npm install -g @deepseek-ai/dsh",
 			SortOrder:            16,
+			// dsh loads its own skills (verified in the shipped package:
+			// ".dsh/skills" and ".agents/skills", with "Loading skill" and a
+			// skill tool), so ClawBench must not inject them again.
+			NativeSkillsDirs:      []string{".dsh/skills", ".agents/skills"},
+			AutoLoadsNativeSkills: true,
 		},
 	})
 }

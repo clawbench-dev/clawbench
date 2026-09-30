@@ -86,7 +86,7 @@ func TestMergeCommands_MultipleOverlaps(t *testing.T) {
 
 func TestMergeCommands_SlashInconsistencyDedupes(t *testing.T) {
 	// CodeBuddy's own AvailableCommandsUpdate strips the leading slash from
-	// skill commands ("mmx-cli"), while our pre-scan (SkillsToCommands) emits
+	// skill commands ("mmx-cli"), while our pre-scan (skillCommands) emits
 	// "/mmx-cli". The merge must treat them as the same command so the slash
 	// menu does not show a double-slash duplicate.
 	acp := []AvailableCommandInfo{

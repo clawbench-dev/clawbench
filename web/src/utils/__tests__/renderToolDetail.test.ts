@@ -1657,6 +1657,65 @@ describe('PermissionApproval renderer', () => {
     expect(html).not.toContain('permission-options')
   })
 
+  it('puts a glyph in the approved / denied badges so the state is not hue-only', () => {
+    // The two tints are close and theme-dependent; the glyph is the channel a
+    // colour-vision-deficient reader can actually use.
+    const approved = formatToolInput(
+      { options: [] }, 'PermissionApproval',
+      { done: true, status: 'success', output: 'Approved' })
+    const denied = formatToolInput(
+      { options: [] }, 'PermissionApproval',
+      { done: true, status: 'error', output: 'Cancelled' })
+
+    for (const [name, html] of [['approved', approved], ['denied', denied]] as const) {
+      const m = html.match(/permission-result-\w+"[^>]*>(<svg[\s\S]*?<\/svg>)/)
+      expect(m, `${name} badge must contain an inline <svg> before its label`).not.toBeNull()
+      expect(m![1]).toContain('stroke="currentColor"')
+      // 14px, matching the CheckCircle2 / XCircle the Vue components render.
+      expect(m![1]).toContain('width="14"')
+    }
+
+    // The two glyphs must differ, or they would not distinguish anything.
+    const ok = approved.match(/permission-result-approved"[^>]*>(<svg[\s\S]*?<\/svg>)/)![1]
+    const no = denied.match(/permission-result-denied"[^>]*>(<svg[\s\S]*?<\/svg>)/)![1]
+    expect(ok).not.toBe(no)
+  })
+
+  it('uses the real lucide CircleCheck / CircleX geometry, not hand-drawn paths', () => {
+    // The user's complaint was a hand-drawn glyph that did not match the rest of
+    // the app. These paths are copied from lucide's own source; assert the exact
+    // `d` strings so a future edit cannot quietly substitute a custom drawing.
+    const approved = formatToolInput(
+      { options: [] }, 'PermissionApproval',
+      { done: true, status: 'success', output: 'Approved' })
+    const denied = formatToolInput(
+      { options: [] }, 'PermissionApproval',
+      { done: true, status: 'error', output: 'Cancelled' })
+
+    // CircleCheck: circle + "m9 12 2 2 4-4"
+    expect(approved).toContain('<circle cx="12" cy="12" r="10"/>')
+    expect(approved).toContain('d="m9 12 2 2 4-4"')
+    // CircleX: circle + the two crossing strokes
+    expect(denied).toContain('<circle cx="12" cy="12" r="10"/>')
+    expect(denied).toContain('d="m15 9-6 6"')
+    expect(denied).toContain('d="m9 9 6 6"')
+  })
+
+  it('gives the auto-approved badge the same glyph as approved', () => {
+    // Inverts an earlier decision (it used to be glyph-free): auto-approved now
+    // renders identically to approved, so it carries the same check glyph.
+    const approved = formatToolInput(
+      { options: [] }, 'PermissionApproval',
+      { done: true, status: 'success', output: 'Approved' })
+    const auto = formatToolInput(
+      { options: [], autoApproved: true }, 'PermissionApproval')
+
+    const autoIcon = auto.match(/permission-result-auto-approved"[^>]*>(<svg[\s\S]*?<\/svg>)/)
+    expect(autoIcon, 'auto-approved badge must carry a glyph').not.toBeNull()
+    const approvedIcon = approved.match(/permission-result-approved"[^>]*>(<svg[\s\S]*?<\/svg>)/)![1]
+    expect(autoIcon![1], 'must be the SAME glyph as approved').toBe(approvedIcon)
+  })
+
   it('shows buttons when blockCtx is absent (streaming/fresh)', () => {
     const html = formatToolInput({
       toolName: 'Bash',

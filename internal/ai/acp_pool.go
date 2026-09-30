@@ -1150,11 +1150,6 @@ type ACPConn struct {
 	// always describes exactly one turn and never becomes a rolling value.
 	turnRequestIDs map[string]struct{}
 
-	// skillsPrompt is the pre-built system prompt section for CodeBuddy skills,
-	// injected into each prompt so CodeBuddy can auto-load skills. Populated
-	// during spawn for CodeBuddy backend. Empty if no skills found.
-	skillsPrompt string
-
 	// compactReported is set once this connection has emitted its
 	// compact_detected signal for the current compaction. CodeBuddy stamps the
 	// compaction flag onto EVERY session update emitted while it compacts, so

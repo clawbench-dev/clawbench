@@ -221,6 +221,8 @@
 - 判定要点：`focusin/focusout` 认**任意可编辑元素**（不只聊天框/终端）+ 阈值（≥120px，排除浏览器地址栏）+ 轮询（部分 WebView 不发 resize 事件）。
 - 隐藏是 `display:none` 切换，Android WebView 可能不派发该转变的 ResizeObserver 回调，故必须保留键盘关闭后 `nextTick` 重测 dock 宽度的安全网（否则溢出布局按隐藏期的宽度算）。
 - `useChatKeyboard` / `useTerminalKeyboard` 仍在，但它们只负责**内容区**不被键盘遮住（`.chat-keyboard-open` / `.terminal-keyboard-open` 的 `bottom` 收缩），与 dock 可见性是两件事。
+- **三个键盘探测都必须有 ≥120px 阈值**（`useSoftKeyboard` / `useChatKeyboard` / `useTerminalViewport` 各自持有 `KEYBOARD_MIN_HEIGHT`）。原始差值 `innerHeight - visualViewport.height - offsetTop` **不是键盘专属**：桌面端经典横向滚动条就会让它变成 ~15px，浏览器工具栏同理。一旦少了阈值，这个值会被写成 `.chat-keyboard-open { bottom: 15px }`（或 terminal 那版），**收缩 `.app-container` → 动态壁纸画布被 resize → 清空一帧 → 闪一下**。这正是「只有聊天输入框聚焦会闪、文件管理器搜索框不会」的原因——只有聊天框会调 `useChatKeyboard`。
+  - 同理，`useTerminalViewport` 的 `setAdjustResize(resizeKeyboard > 0)` 也必须用同一阈值：滚动条造成的 15px 会被误判成 Android adjustResize，从而**抑制真正的键盘补偿**。
 
 ### 宽屏 vs 窄屏
 
@@ -270,6 +272,14 @@
   `.settings-item__switch` / `-input` / `-track` 三个类，只在自己的 scoped 块里加
   行布局（`.script-switch-row`），不复制几何。需要开关时照此办理，别再写第四份。
 
+### 自定义卡片块的横向内边距（不要和 `SettingsItem` 叠一层）
+
+设置卡片里混排「`SettingsItem` 行」与「自定义块」时，**容器不要再加横向内边距**：
+`SettingsItem` 自带 `padding: 12px 16px`，卡片行都对齐在这 16px 上；容器若再加一层
+（例如 `padding: 0 16px`），开关/文本行的文字就变成 32px，比相邻普通行明显更深
+（技能设置页的「启用技能注入」实测如此）。正解：容器 `padding: <纵> 0`，由各自定义块
+自己写 `padding: 0 var(--space-7)` 对齐到同一 16px。`WallpaperSetting` 是同一范式。
+
 ### 行内重置按钮（`.settings-item__slider-reset`）
 
 滑块行右侧的 ↺ 重置按钮**常驻显示**，不用 `v-if` 按「当前值 ≠ 默认值」开关。
@@ -306,6 +316,19 @@
 - 实测最常用的尺寸：**14（311 处）**、16（144）、12（114）、13（66）。**新图标默认用 14**，除非所在位置的邻居都是别的尺寸。
 - 共享类里的图标尺寸写在 CSS 里：`.chat-action-btn svg { width:14px; height:14px }`、`.fbtn svg { flex-shrink: 0 }`。
 - 自定义品牌图标走 `AgentIcon.vue` / `ProviderIcon.vue`；单色图标配色在 `mono-icon-colors.css`，深浅主题各一套。
+
+---
+
+### 加载环（`.li-spinner`）
+
+**全站唯一实现**，声明在 `css/components.css`（**必须全局**——工具调用卡 / mermaid 是 `v-html`/`innerHTML` 注入、localhost 按钮曾是 `::after`，这些 DOM 无 `data-v-*`，scoped 规则永远匹配不到，见[红线 1](#红线-1v-html-注入的内容匹配不到-scoped-规则)）。
+
+- **两个入口**：组件 `<LoadingIndicator>`（渲染 `.li-spinner`，覆盖 72 个文件）或裸 `<span class="li-spinner">`（注入 HTML 用）。组件只拥有外壳布局（`.loading-indicator`），环的形状**不在** scoped 块里。
+- **尺寸**：组件档位 `size="sm|md|lg"` = 14 / 28 / 36px。**`size` 是字符串枚举**——传数字（`:size="13"`）会生成不存在的类名并**静默回退 28px**。非档位尺寸（20px / 10px / 8px）的调用方自己在环元素上设 `--li-size`。
+- **粗细由比例推导，全站只有一个比例**：`--li-border: calc(var(--li-size) / 6)`。**调用方只能设 `--li-size`，绝不要写死 `--li-border`**——写死会静默偏离比例，且不对比两个环根本看不出来。守卫 `sharedRingUnification.test.ts` 会走查全部源码，出现字面量 `--li-border` 即失败。
+- **颜色**：`--li-color`（转动的弧）/ `--li-track-color`（静止底环），都回退主题 token。原 SVG 是 `stroke="currentColor"` 的站点用 `--li-color: currentColor` 承接，外观零变化。
+- **速度**：默认 `--li-duration: 0.8s`；从旧实现迁移来的站点（mermaid / tool-call / url-btn）保留各自的 `0.6s`，**统一形状不等于统一节奏**。
+- 覆盖类规则**必须带祖先部分**（如 `.mermaid .mermaid-spinner`）：`.li-spinner` 是单类 (0,1,0)，写成单类会与之打平，胜负取决于打包 chunk 顺序 → 尺寸会随构建**静默回退 28px**。
 
 ---
 
@@ -467,6 +490,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/common/__tests__/resizeDivider.css.test.ts` | 拖拽分隔条外观 |
 | `components/file/__tests__/flashReducedMotion.css.test.ts` | 闪烁动效遵守 `prefers-reduced-motion` |
 | `components/common/__tests__/BusyBar.test.ts` | 长动作进度条存在且动画在、**无** reduced-motion opt-out（扫过即信息）、不吞指针事件 |
+| `components/common/__tests__/sharedRingUnification.test.ts` | 加载环全局唯一、调用方不得重述形状、**全仓只有一个 `--li-border` 比例**（走查源码）、覆盖类必须带祖先 |
+| `components/common/__tests__/spinnerUnification.test.ts` | 迁移到 LoadingIndicator 的 6 处保留各自 `--li-color`、不再自带 animation/keyframes、`size` 用档位而非数字 |
 | `components/chat/__tests__/chatPanelBusyWiring.test.ts` | `startBusy` 认领制（不抢占）、各自只释放自己的 kind、BusyBar 已挂载、卸载清 ticker |
 | `components/file/__tests__/dockedPaneStacking.css.test.ts` | 停靠预览窗格层级 |
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |

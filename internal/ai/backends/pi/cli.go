@@ -54,6 +54,14 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "npm install -g @earendil-works/pi-coding-agent",
 			SortOrder:      8,
+			// Pi loads its own skills: its docs state it "Supports Claude Code
+			// (~/.claude/skills/*/SKILL.md), Codex CLI (~/.codex/skills/), and
+			// Pi-native formats (~/.pi/agent/skills/, .pi/skills/)" and it emits
+			// an <available_skills> block. Only its own directory is declared
+			// here; .claude/skills and .codex/skills are covered by those
+			// backends' declarations, and Pi does NOT read .agents/skills.
+			NativeSkillsDirs:      []string{".pi/agent/skills"},
+			AutoLoadsNativeSkills: true,
 		},
 		ACP: &backends.ACPPlugin{
 			InputRemaps: PiACPInputRemaps,
