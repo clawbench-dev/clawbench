@@ -84,7 +84,10 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	trigger_type TEXT NOT NULL DEFAULT 'auto',
 	status TEXT NOT NULL DEFAULT 'running',
 	read_at DATETIME,
-	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+	-- Mirrors the production column (database.go); the gate-failure streak
+	-- query reads it, so the fixture must carry it.
+	script_exit_code INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
@@ -754,5 +757,111 @@ func TestScheduler_ExecuteTask_NoAutoContinueWhenDisabled(t *testing.T) {
 	}
 	if status != "failed" {
 		t.Errorf("execution status = %q, want %q", status, "failed")
+	}
+}
+
+// ── Gate-failure streak (WARN-902) ───────────────────────────────────────
+//
+// A gating script that keeps exiting non-zero closes the gate on every tick:
+// the task advances its schedule and increments run_count while producing no
+// session and no notification. The streak helper backs the slog.Warn that makes
+// that state observable, so its boundaries are pinned here.
+
+func insertSkippedScriptRun(t *testing.T, taskID int64, exitCode sql.NullInt64) {
+	t.Helper()
+	if _, err := db.Exec(
+		`INSERT INTO task_executions (task_id, session_id, trigger_type, status, script_exit_code)
+		 VALUES (?, '', 'auto', 'skipped', ?)`,
+		taskID, exitCode,
+	); err != nil {
+		t.Fatalf("insert skipped run: %v", err)
+	}
+}
+
+func TestCountConsecutiveScriptGateFailures_CountsBackwards(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	for _, code := range []int64{127, 1, 2} {
+		insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: code, Valid: true})
+	}
+
+	if n := countConsecutiveScriptGateFailures(1); n != 3 {
+		t.Fatalf("expected a streak of 3, got %d", n)
+	}
+}
+
+func TestCountConsecutiveScriptGateFailures_SuccessResetsStreak(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	// A run whose gate passed: exit 0, and (unlike a skipped run) it reached the
+	// AI, so its status is 'completed'. It must still reset the streak — which
+	// is why the query filters on the exit code, not on status='skipped'.
+	if _, err := db.Exec(
+		`INSERT INTO task_executions (task_id, session_id, trigger_type, status, script_exit_code)
+		 VALUES (1, 's', 'auto', 'completed', 0)`,
+	); err != nil {
+		t.Fatalf("insert completed run: %v", err)
+	}
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+
+	// Only the newest failure counts; the passing run ends the streak.
+	if n := countConsecutiveScriptGateFailures(1); n != 1 {
+		t.Fatalf("a passing gate must reset the streak, got %d", n)
+	}
+}
+
+func TestCountConsecutiveScriptGateFailures_ZeroExitBreaksStreak(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	// Insert order is oldest → newest (id ascending).
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 0, Valid: true})
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+
+	// Counting backwards from the newest row: one failure, then exit 0 ends the
+	// count. The older failure must NOT be reached (that would give 2).
+	if n := countConsecutiveScriptGateFailures(1); n != 1 {
+		t.Fatalf("an exit-0 row must end the streak, expected 1, got %d", n)
+	}
+}
+
+func TestCountConsecutiveScriptGateFailures_MissingExitCodeBreaksStreak(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	// A legacy skipped row predating the script_exit_code column.
+	insertSkippedScriptRun(t, 1, sql.NullInt64{})
+
+	if n := countConsecutiveScriptGateFailures(1); n != 0 {
+		t.Fatalf("an unknown exit code must not count as a failure, got %d", n)
+	}
+}
+
+func TestCountConsecutiveScriptGateFailures_ScopedToTask(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	insertSkippedScriptRun(t, 2, sql.NullInt64{Int64: 127, Valid: true})
+	insertSkippedScriptRun(t, 2, sql.NullInt64{Int64: 127, Valid: true})
+
+	if n := countConsecutiveScriptGateFailures(1); n != 1 {
+		t.Fatalf("streak must be per task, got %d for task 1", n)
+	}
+	if n := countConsecutiveScriptGateFailures(2); n != 2 {
+		t.Fatalf("streak must be per task, got %d for task 2", n)
+	}
+}
+
+func TestScriptGateFailureWarnThreshold_IsReachedByStreak(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	for range scriptGateFailureWarnThreshold {
+		insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	}
+
+	if n := countConsecutiveScriptGateFailures(1); n < scriptGateFailureWarnThreshold {
+		t.Fatalf("threshold %d must be reachable, got streak %d", scriptGateFailureWarnThreshold, n)
 	}
 }

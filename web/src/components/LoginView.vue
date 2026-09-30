@@ -160,7 +160,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppMode } from '@/composables/useAppMode'
 import { usePwaInstall } from '@/composables/usePwaInstall'
-import { useServerList } from '@/composables/useServerList'
+import { useServerList, findNameConflict } from '@/composables/useServerList'
 import { useDialog } from '@/composables/useDialog'
 import { Server, X, Plus, Tag, MonitorSmartphone, Smartphone, ChevronRight } from 'lucide-vue-next'
 import IosInstallDrawer from './common/IosInstallDrawer.vue'
@@ -174,7 +174,7 @@ const dialog = useDialog()
 const pwaInstall = usePwaInstall()
 const emit = defineEmits(['loginSuccess'])
 
-const { servers, load: loadServers, save: saveServer, remove: removeServer, getPassword, getLabel, findNameConflict } = useServerList()
+const { servers, load: loadServers, save: saveServer, remove: removeServer, getPassword, getLabel } = useServerList()
 
 const password = ref('')
 const loading = ref(false)

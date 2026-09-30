@@ -59,8 +59,6 @@ export interface SplashController {
   showVersionMismatch(info: GateOverlayInfo): void
   /** Dismiss the gate because the user chose to continue on the current version. */
   continueGate(): void
-  /** Whether the blocking version gate is up. */
-  isGated(): boolean
 }
 
 /** The version details the gate overlay renders. */
@@ -423,10 +421,6 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
       // down even though the app's own dismiss was deferred while it was up.
       if (isAlive()) fadeOut()
       else { visible = false }
-    },
-
-    isGated(): boolean {
-      return mode === 'gate'
     },
   }
 }

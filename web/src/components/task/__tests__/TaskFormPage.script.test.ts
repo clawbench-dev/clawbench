@@ -154,6 +154,48 @@ describe('TaskFormPage gating script section', () => {
     expect(formRef.value.script).toBe('')
   })
 
+  it('restores the script when the switch is turned back on (accidental toggle)', async () => {
+    // The switch sits one stray click away from the editor. Off→on must give
+    // the text back rather than silently destroying it (WARN-901).
+    // `init` is mocked out here, so seed the field the way a real edit does.
+    formRef.value.script = 'echo hi'
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
+    await wrapper.vm.$nextTick()
+    const toggle = switchRow(wrapper).find('input[type="checkbox"]')
+
+    await toggle.setValue(false)
+    expect(formRef.value.script).toBe('')
+
+    await toggle.setValue(true)
+    expect(formRef.value.script, 'the stashed script must come back').toBe('echo hi')
+  })
+
+  it('does not clobber text typed after the toggle while restoring', async () => {
+    // Restore only fills an empty field, so it can never overwrite an edit the
+    // user made between the two toggles.
+    formRef.value.script = 'echo hi'
+    const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
+    await wrapper.vm.$nextTick()
+    const toggle = switchRow(wrapper).find('input[type="checkbox"]')
+
+    await toggle.setValue(false)
+    formRef.value.script = 'new content'
+    await toggle.setValue(true)
+
+    expect(formRef.value.script).toBe('new content')
+  })
+
+  it('stashes the empty string when the switch is off with nothing to lose', async () => {
+    // No prior script: toggling off then on must leave the field empty rather
+    // than resurrect stale text from an earlier edit.
+    const wrapper = mountForm()
+    const toggle = switchRow(wrapper).find('input[type="checkbox"]')
+    await toggle.setValue(true)
+    await toggle.setValue(false)
+    await toggle.setValue(true)
+    expect(formRef.value.script).toBe('')
+  })
+
   it('hides the script field for an event task', async () => {
     // A script is a cron-task precondition: an event task's prompt comes from
     // the injected event context, so the field would be inert.

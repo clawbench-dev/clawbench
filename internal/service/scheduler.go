@@ -899,6 +899,26 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 				slog.Warn("failed to persist script result",
 					slog.Int64("execution_id", execID), slog.String("err", err.Error()))
 			}
+			// A script that keeps failing closes the gate on every tick: the
+			// task advances its schedule and increments run_count while doing
+			// nothing visible (a skipped run is a deliberate no-op and emits no
+			// event). Without this warning that failure mode is silent, so log
+			// a distinct signal once the streak reaches the threshold.
+			//
+			// Gated on ScriptFailed so a timeout (a different problem: the
+			// script never finished) is not folded into "your script keeps
+			// failing". A spawn failure (exit_code == -1) is also a genuine
+			// "cannot run this script" and counts here.
+			if res.Outcome == ScriptFailed {
+				if n := countConsecutiveScriptGateFailures(task.ID); n >= scriptGateFailureWarnThreshold {
+					slog.Warn("gating script keeps failing; task is running without doing anything",
+						slog.Int64("task_id", task.ID),
+						slog.String("task_name", task.Name),
+						slog.Int("consecutive_failures", n),
+						slog.Int("exit_code", res.ExitCode),
+					)
+				}
+			}
 			s.finishScriptOnlyRun(task, status)
 			if status == "cancelled" {
 				// When the row was not written, execID is 0: emitting "0" would
@@ -1415,6 +1435,51 @@ const scriptOutputCap = 64 * 1024
 // scriptTruncationMarker is appended in place of the dropped tail when a
 // stream is cut, so the model knows the output it sees is incomplete.
 const scriptTruncationMarker = "\n…[output truncated]"
+
+// scriptGateFailureWarnThreshold is how many consecutive non-zero script exits
+// it takes before a gate-closed task is reported as silently stuck. One failure
+// is an ordinary "condition not met"; a streak means the script itself is
+// broken (a bad command exits 127 forever) and the task will never do anything.
+const scriptGateFailureWarnThreshold = 3
+
+// countConsecutiveScriptGateFailures returns the length of the current streak of
+// script-phase runs that closed the gate with a non-zero exit.
+//
+// It scans backwards over the task's most recent executions and stops at the
+// first row that is NOT such a failure, so a passing gate resets the streak.
+// The filter is on the exit code rather than on `status = 'skipped'`: a run
+// whose gate passed becomes `completed`, and excluding those would let a
+// successful run sit invisibly between two failures and keep the streak alive.
+// A row with no recorded exit code (a task without a script, or a legacy row)
+// ends the streak too. The window is bounded so a long-lived task does not scan
+// its whole history on every tick.
+func countConsecutiveScriptGateFailures(taskID int64) int {
+	rows, err := dbRead.Query(`
+		SELECT script_exit_code
+		FROM task_executions
+		WHERE task_id = ?
+		ORDER BY id DESC
+		LIMIT 50`, taskID)
+	if err != nil {
+		return 0
+	}
+	defer func() { _ = rows.Close() }()
+
+	streak := 0
+	for rows.Next() {
+		var exitCode sql.NullInt64
+		if err := rows.Scan(&exitCode); err != nil {
+			return streak
+		}
+		// No recorded exit code (task without a script) or a clean exit ends
+		// the streak — neither is a gate failure.
+		if !exitCode.Valid || exitCode.Int64 == 0 {
+			return streak
+		}
+		streak++
+	}
+	return streak
+}
 
 // finishScriptOnlyRun applies the bookkeeping for a run that ended in the
 // script phase and never reached the AI.
