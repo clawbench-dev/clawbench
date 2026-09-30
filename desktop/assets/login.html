@@ -1542,6 +1542,29 @@
 </style>
 </head>
 <body>
+  <!-- Decorative background. MUST stay FIRST in the body.
+
+       Chromium decides the `-webkit-app-region` of a point by walking the DOM,
+       and the LAST element in DOM order whose box covers the point wins — NOT
+       the topmost by paint order, and `pointer-events: none` does NOT exempt an
+       element from this hit test. The page sets `-webkit-app-region: drag` on
+       <body> (the frameless window's only drag handle), so these two full-screen
+       layers inherit `drag` and, when they come last, swallow every click over
+       the whole viewport: the splash's cancel button and the version gate's
+       buttons all went dead while `elementsFromPoint` still reported the button
+       on top. Elements AFTER them (`.window-close`, the login form) kept working,
+       which is what made the failure look like a frozen dialog rather than a
+       layout problem.
+
+       Keeping them first means every interactive overlay that follows wins the
+       hit test, while empty areas still resolve to a `drag` region so the window
+       remains movable. Verified against a real Electron 44 runtime under Xvfb +
+       a window manager: with the old order the gate buttons receive zero events;
+       with this order they fire, and a drag on an empty area still moves the
+       window. -->
+  <div class="bg-gradient"></div>
+  <div class="bg-grid"></div>
+
   <!-- Splash overlay (?splash=1). Rendered by the main process as a native
        WebContentsView floating above the app while it connects and boots; see
        desktop/src/main/splash.ts. Hidden unless the query flag is present. -->
@@ -1570,9 +1593,6 @@
       </div>
     </div>
   </div>
-
-  <div class="bg-gradient"></div>
-  <div class="bg-grid"></div>
 
   <!-- Window close, for the frameless Windows/Linux shell.
        This document has no AppHeader, so it is the ONLY way to close the window
