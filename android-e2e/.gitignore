@@ -1,0 +1,6 @@
+# Staged build inputs (recreated by scripts/prepare-assets.sh).
+assets/
+# Test output (screenshots, page sources) from failed runs.
+artifacts/
+node_modules/
+*.log

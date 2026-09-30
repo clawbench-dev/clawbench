@@ -638,6 +638,7 @@ import { setPendingCommitNavigation } from './composables/useCommitNavigation.ts
 import { getFileType } from './utils/fileType.ts'
 import { fileSupportsToc } from './utils/tocSupport.ts'
 import { formatBadgeCount } from './utils/format.ts'
+import { portForwardUnavailable } from './utils/portForwardUtils.ts'
 import { useChatContext } from './composables/useChatContext.ts'
 import { useForgeUnread } from './composables/useForgeUnread.ts'
 import { useForgeBinding, forgeDockIconKind } from './composables/useForgeBinding.ts'
@@ -1467,9 +1468,18 @@ async function restoreProjectWorkspace() {
 }
 
 const { isAppMode } = useAppMode()
-const { syncToNative, sshInfo, loadSSHInfo } = usePortForward()
+const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward()
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
-const isSSHDisabled = computed(() => sshInfo.value?.enabled === false)
+// Port forwarding is unusable only when NEITHER wire can carry it: the SSH
+// listener is off AND the configured transport cannot use h2. Keying off the
+// SSH listener alone (`sshInfo.enabled === false`) hid the port-mapping tab —
+// and the whole h2-only scenario this PR targets — on installs with
+// `port_forward.enabled: false` + `transport: h2|both`, which forward ports over
+// the stream tunnel. Shared predicate so the dock, the watcher and the
+// localhost-URL guards cannot drift apart again.
+const isPortForwardUnavailable = computed(() =>
+  portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value),
+)
 // Platform unsupported: PTY cannot run on this OS (e.g. Windows lacks ConPTY).
 // The terminal tab is still shown so users see a clear "unsupported" empty state.
 const isPlatformUnsupported = computed(() => platformSupported.value === false)
@@ -1478,7 +1488,7 @@ const isPlatformUnsupported = computed(() => platformSupported.value === false)
 // the terminal manager actually exists.  `null` means "not yet loaded" → treat as
 // disabled to avoid a flash of the terminal button on first mount.
 const isTerminalDisabled = computed(() => terminalRuntimeEnabled.value !== true)
-watch(isSSHDisabled, (disabled) => {
+watch(isPortForwardUnavailable, (disabled) => {
   if (disabled && panelIsActive('proxy')) {
     switchTab(isWideScreen.value ? 'browse' : 'chat')
   }
@@ -2516,7 +2526,7 @@ const overflowBtnRef = ref<HTMLElement | null>(null)
 const overflowTabs = computed(() =>
   secondaryDockTabs({
     terminalDisabled: isTerminalDisabled.value,
-    sshDisabled: isSSHDisabled.value,
+    portForwardUnavailable: isPortForwardUnavailable.value,
   }),
 )
 
@@ -2948,7 +2958,7 @@ watch(() => store.state.portForwardEnabledCount, (n, o) => {
 
 const overflowBadgeCount = computed(() => {
   let count = forgeUnreadCount.value + store.state.taskUnreadCount
-  if (!isSSHDisabled.value) count += store.state.portForwardEnabledCount
+  if (!isPortForwardUnavailable.value) count += store.state.portForwardEnabledCount
   if (!isTerminalDisabled.value) count += store.state.terminalSessionCount
   // Subtract counts for ALL inline overflow tabs, so the aggregate badge only
   // reflects what is hidden behind the overflow button.

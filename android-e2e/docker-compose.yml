@@ -1,0 +1,154 @@
+# Android E2E harness.
+#
+# Tier 1 (default): native shell + WebView login smoke test against the
+#   dependency-free mock server.
+# Tier 2 (--tier2): the h2 stream tunnel, `-L` and `-R`, against a REAL
+#   clawbench server built from this worktree.
+#
+# NOTE ON BIND MOUNTS: in this environment the docker CLI talks to a *host*
+# daemon, so `-v ./local:/container` resolves the path on the host filesystem and
+# mounts an empty directory. Every artifact is therefore delivered via
+# `docker build` (the context is streamed from the client) or `docker cp`, never
+# via a compose `volumes:` bind. That is why `mock`, `server`, `target` and
+# `runner` are built from small Dockerfiles instead of mounting their sources.
+#
+# Network design
+# --------------
+# The Android emulator reaches its host through the alias 10.0.2.2. The `mock`
+# (Tier 1) and `server` + `target` (Tier 2) services use
+# `network_mode: "service:emulator"` so they share the emulator's network
+# namespace and bind on that namespace's loopback; 10.0.2.2 is SLIRP's alias for
+# the host loopback of exactly that namespace, so the app can reach them without
+# compose DNS or host port publishing. (Verified end-to-end for both tiers.)
+#
+# Tier 2 puts the real server AND the tunnel target in that one namespace on
+# purpose: the h2 `-L` handler dials the target from the SERVER's namespace, so
+# the target must be reachable from there. Hosting both here is what makes
+# `127.0.0.1:18080` a valid tunnel target.
+#
+# The `runner` service sits on the compose bridge and reaches Appium by service
+# name (http://emulator:4723) and the Tier 2 control server at
+# http://emulator:18081, so no host port is needed either.
+#
+# The published ports on `emulator` are for manual debugging only; the automated
+# path never uses them.
+
+services:
+  emulator:
+    build:
+      context: .
+      dockerfile: Dockerfile.emulator
+    image: clawbench-android-e2e-emulator:local
+    devices:
+      - /dev/kvm
+    ports:
+      - "14723:4723"   # Appium (manual debugging)
+      - "16080:6080"   # noVNC (unused headless)
+    environment:
+      APPIUM: "true"
+      EMULATOR_HEADLESS: "true"
+      USER_BEHAVIOR_ANALYTICS: "false"
+      EMULATOR_ADDITIONAL_ARGS: "-no-window -no-audio -no-boot-anim"
+    # No compose healthcheck: the budtmo image ships neither curl nor nc, and
+    # Appium answers /status before the device has finished booting anyway.
+    # run.sh waits explicitly on sys.boot_completed + the Appium /status probe.
+
+  mock:
+    build:
+      context: .
+      dockerfile: Dockerfile.mock
+    image: clawbench-android-e2e-mock:local
+    # Share the emulator's netns so the app's 10.0.2.2 alias reaches :20000.
+    network_mode: "service:emulator"
+    depends_on:
+      - emulator
+    environment:
+      MOCK_PORT: "20000"
+      MOCK_HOST: "0.0.0.0"
+      # Defaulted (not `:?`) so `docker compose down -v` — the teardown hint
+      # run.sh prints under --keep-up — can interpolate the file without a value
+      # in the environment. Defaulting to the *empty string* (not a placeholder
+      # like "unknown") deliberately keeps the mock server's loud runtime guard:
+      # `resolveVersion()` throws when CLAWBENCH_VERSION is falsy, so a real run
+      # that forgot to set it still fails loudly instead of silently advertising
+      # a bogus version. scripts/run.sh exports the APK's versionName.
+      CLAWBENCH_VERSION: "${CLAWBENCH_VERSION:-}"
+    restart: "no"
+
+  # --- Tier 2 -----------------------------------------------------------------
+  # The real server. `enabled: false` + `transport: h2` in its config is the
+  # combination that must still create the ProxyRegistry, so /api/tunnel/*
+  # answers 401 (unauthenticated) rather than 503 (no registry). It binds :20000
+  # in the emulator's netns, i.e. the same address the app already uses.
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+      args:
+        # Which server-config/*.yaml is baked in. Explicit (not defaulted) so a
+        # reader can see at a glance which config the app is tested against.
+        SERVER_CONFIG: "config.yaml"
+    image: clawbench-android-e2e-server:local
+    network_mode: "service:emulator"
+    depends_on:
+      - emulator
+    # The version is pinned at BUILD time (prepare-assets.sh compiles the binary
+    # with the APK's versionName), not here: the server's /api/health version is
+    # what the native version gate compares against the APK, and a mismatch is a
+    # BLOCKING dialog. Baking it into the binary makes that agreement structural.
+    restart: "no"
+
+  # Tunnel target + test-control server. Lives in the same netns as `server` so
+  # the h2 `-L` handler can dial it at 127.0.0.1:18080. Its control port 18081
+  # is also reachable by the runner at http://emulator:18081.
+  target:
+    build:
+      context: .
+      dockerfile: Dockerfile.target
+    image: clawbench-android-e2e-target:local
+    network_mode: "service:emulator"
+    depends_on:
+      - emulator
+    environment:
+      TARGET_PORT: "18080"
+      CONTROL_PORT: "18081"
+      TARGET_HOST: "127.0.0.1"
+      CONTROL_HOST: "0.0.0.0"
+    restart: "no"
+
+  runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.runner
+    image: clawbench-android-e2e-runner:local
+    # Deliberately NO depends_on for mock/server/target: both tiers bind :20000
+    # in the emulator's netns (the Tier 1 mock and the Tier 2 real server), so
+    # starting both at once is an address conflict. run.sh starts exactly the
+    # services for the selected tier and only then brings the runner up, which
+    # (with no tier deps) starts the runner alone.
+    depends_on:
+      - emulator
+    environment:
+      E2E_APPIUM_HOST: emulator
+      E2E_APPIUM_PORT: "4723"
+      E2E_MOCK_HOST: "10.0.2.2"
+      E2E_MOCK_PORT: "20000"
+      E2E_APK_PATH: /apk/clawbench-android-debug.apk
+      E2E_APP_PACKAGE: com.clawbench.app.debug
+      E2E_APP_ACTIVITY: com.clawbench.app.MainActivity
+      E2E_ARTIFACTS_DIR: /e2e/artifacts
+      # Tier 2 knobs. The server and target are in the emulator's netns, so the
+      # app reaches the server at 10.0.2.2:20000 (same as the Tier 1 mock) and
+      # the runner reaches the target's control API by compose service name.
+      E2E_SERVER_HOST: "10.0.2.2"
+      E2E_SERVER_PORT: "20000"
+      E2E_TARGET_CONTROL: "http://emulator:18081"
+      E2E_TARGET_PORT: "18080"
+      E2E_PASSWORD: "e2e-test-password"
+      # The APK's versionName, exported by run.sh. Tier 2 asserts that the real
+      # server's /api/health reports exactly this, which is the same agreement the
+      # native version gate requires (a mismatch is a BLOCKING dialog).
+      CLAWBENCH_VERSION: "${CLAWBENCH_VERSION:-}"
+      # Which spec(s) the runner executes; run.sh sets this per tier.
+      E2E_TIER: "${E2E_TIER:-1}"
+    command: ["npx", "wdio", "run", "wdio.conf.mjs"]

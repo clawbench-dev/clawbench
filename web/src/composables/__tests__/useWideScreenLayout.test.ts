@@ -22,6 +22,7 @@ import {
   wideDockTabOrder,
 } from '@/composables/useWideScreenLayout'
 import { DOCK_TABS, DOCK_TAB_IDS, isDockTabId, secondaryDockTabs } from '@/composables/dockTabs'
+import { portForwardUnavailable } from '@/utils/portForwardUtils'
 import { DEFAULT_RATIO } from '@/utils/splitRatio'
 import enMessages from '@/i18n/locales/en'
 import zhMessages from '@/i18n/locales/zh'
@@ -437,11 +438,11 @@ describe('wide dock tab reachability (regression)', () => {
     // switchable. This is the case the old registry-vs-registry test could not
     // see, because the gates live outside the registry.
     for (const terminalDisabled of [false, true]) {
-      for (const sshDisabled of [false, true]) {
-        const rendered = wideDockTabOrder(secondaryDockTabs({ terminalDisabled, sshDisabled }))
+      for (const portForwardUnavailable of [false, true]) {
+        const rendered = wideDockTabOrder(secondaryDockTabs({ terminalDisabled, portForwardUnavailable }))
         expect(
           rendered.filter((tab) => !WIDE_SCREEN_DOCK_TABS.includes(tab)),
-          `gate combination terminalDisabled=${terminalDisabled} sshDisabled=${sshDisabled}`,
+          `gate combination terminalDisabled=${terminalDisabled} portForwardUnavailable=${portForwardUnavailable}`,
         ).toEqual([])
       }
     }
@@ -453,14 +454,31 @@ describe('wide dock tab reachability (regression)', () => {
     expect(all).toContain('proxy')
     expect(secondaryDockTabs({ terminalDisabled: true })).not.toContain('terminal')
     expect(secondaryDockTabs({ terminalDisabled: true })).toContain('proxy')
-    expect(secondaryDockTabs({ sshDisabled: true })).not.toContain('proxy')
-    expect(secondaryDockTabs({ sshDisabled: true })).toContain('terminal')
-    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).not.toContain('terminal')
-    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).not.toContain('proxy')
+    expect(secondaryDockTabs({ portForwardUnavailable: true })).not.toContain('proxy')
+    expect(secondaryDockTabs({ portForwardUnavailable: true })).toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).not.toContain('terminal')
+    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).not.toContain('proxy')
     // Order is registry order with the gated ones removed, never reordered.
-    expect(secondaryDockTabs({ terminalDisabled: true, sshDisabled: true })).toEqual(
+    expect(secondaryDockTabs({ terminalDisabled: true, portForwardUnavailable: true })).toEqual(
       all.filter((t) => t !== 'terminal' && t !== 'proxy'),
     )
+  })
+
+  it('keeps the proxy tab on an h2-only install (SSH off, h2 allowed)', () => {
+    // Regression: the dock gate used to be driven by the SSH listener alone, so
+    // `port_forward.enabled: false` + `transport: h2|both` — the exact scenario
+    // this feature targets — filtered the port-mapping tab out of the dock and
+    // made its "port mapping unavailable" banner unreachable. The gate now
+    // consumes the shared predicate, which reads such an install as AVAILABLE.
+    expect(portForwardUnavailable(false, true)).toBe(false)
+    expect(secondaryDockTabs({ portForwardUnavailable: portForwardUnavailable(false, true) })).toContain('proxy')
+  })
+
+  it('still hides the proxy tab when neither SSH nor h2 can carry the tunnel', () => {
+    // The old, correct behaviour must survive: SSH off with no h2 path really is
+    // "unavailable", so the tab stays hidden.
+    expect(portForwardUnavailable(false, false)).toBe(true)
+    expect(secondaryDockTabs({ portForwardUnavailable: portForwardUnavailable(false, false) })).not.toContain('proxy')
   })
 
   it('forge is switchable', () => {

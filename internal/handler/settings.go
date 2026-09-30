@@ -119,10 +119,14 @@ var hotReloadFields = map[string]bool{
 	"frp.auto_port":       true,
 	"frp.remote_port":     true,
 	"frp.ssh_remote_port": true,
-	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded
+	// Port Forward — SSH tunnel; enabled and port can be hot-reloaded.
+	// port_forward.transport is accepted but has no effect: it is pinned to
+	// "both" (see applyConfigPatch), so listing it here only avoids reporting a
+	// restart for a field that did not change.
 	"port_forward.enabled":       true,
 	"port_forward.port":          true,
 	"port_forward.allowed_ports": true,
+	"port_forward.transport":     true,
 	// RAG — reconfigure embedder, indexer, cleanup worker
 	"rag.vector_enabled":        true,
 	"rag.base_url":              true,
@@ -341,8 +345,9 @@ type configRAG struct {
 }
 
 type configPortForward struct {
-	Enabled bool `json:"enabled"`
-	Port    int  `json:"port"`
+	Enabled   bool   `json:"enabled"`
+	Port      int    `json:"port"`
+	Transport string `json:"transport"`
 }
 
 type configFRP struct {
@@ -620,6 +625,7 @@ var PatchableConfigPaths = map[string]bool{
 	"port_forward.enabled":              true,
 	"port_forward.port":                 true,
 	"port_forward.allowed_ports":        true,
+	"port_forward.transport":            true, // accepted but ignored: pinned to "both" in applyConfigPatch
 	"frp.enabled":                       true,
 	"frp.server_addr":                   true,
 	"frp.server_port":                   true,
@@ -772,6 +778,13 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		PortForward: configPortForward{
 			Enabled: cfg.PortForward.Enabled,
 			Port:    cfg.PortForward.Port,
+			// Pinned rather than echoed: the field is no longer configurable
+			// (see ApplyDefaults / applyConfigPatch), and the read point is the
+			// last place a stale value could leak to the web client's
+			// tunnelTransportAllowsH2() — which treats anything but h2/both as
+			// ssh-only and would hide the h2 panel. Always report the pinned
+			// constant.
+			Transport: model.DefaultPortForwardTransport,
 		},
 		FRP: configFRP{
 			Enabled:       cfg.FRP.Enabled,
@@ -1248,6 +1261,23 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 	}
 
+	// port_forward.transport — accepted for API compatibility, then ignored.
+	// The field is pinned to "both" (see applyConfigPatch), so a caller that
+	// still sends ssh/h2/both gets a 200 and reads "both" back. An unrecognized
+	// value is still a 400: it is a caller bug, and silently storing it would
+	// put garbage in config.yaml for the next load to converge.
+	if pf, ok := patch["port_forward"].(map[string]any); ok {
+		if raw, present := pf["transport"]; present {
+			v, ok := raw.(string)
+			if !ok {
+				return fmt.Errorf("port_forward.transport must be a string")
+			}
+			if !model.IsValidPortForwardTransport(v) {
+				return fmt.Errorf("port_forward.transport must be one of: ssh,h2,both")
+			}
+		}
+	}
+
 	// FRP: when enabled, server_addr must be non-empty (skip when just switching enabled on —
 	// user hasn't had a chance to fill in the address yet, frontend auto-saves one field at a time).
 
@@ -1529,6 +1559,14 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 		if v, ok := pf["allowed_ports"].(string); ok {
 			cfg.PortForward.AllowedPorts = v
 		}
+		// The transport is pinned, whether or not the patch carried it: any
+		// port_forward PATCH leaves the runtime at "both". The value the caller
+		// sent is deliberately not applied (that is the whole point — the state
+		// "the server says ssh-only" must not be expressible), and an omitted
+		// field must not leave a stale value behind either. Dropping it here
+		// rather than rejecting it in the validator keeps `ssh` a 200 while GET
+		// keeps answering "both".
+		cfg.PortForward.Transport = model.DefaultPortForwardTransport
 	}
 
 	if frp, ok := patch["frp"].(map[string]any); ok {

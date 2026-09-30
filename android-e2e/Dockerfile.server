@@ -1,0 +1,54 @@
+# Tier 2 real-server image.
+#
+# The config is selected at BUILD time by SERVER_CONFIG (see
+# docker-compose.yml's `server` service), so `docker compose build server` bakes
+# in exactly one config file: config.yaml (`enabled: false`, the SSH listener
+# off; the h2 tunnel rides the always-on main HTTP server).
+#
+# There is deliberately only ONE config now. `model.ApplyDefaults` pins
+# `port_forward.transport` to "both" on every load (internal/model/defaults.go),
+# so `shouldCreateProxyRegistry` (cmd/server/proxy_registry_gate.go) is
+# unconditionally true and no config can leave the ProxyRegistry nil — the
+# 503 "PortForwardUnavailable" branch is unreachable by configuration (it is
+# covered by Go unit tests instead; see tests/tunnel.server.mjs). The former
+# `config.no-h2.yaml` + `server-no-h2` control service existed only to pin that
+# branch from E2E and has been removed.
+#
+# Why a real server and not the Tier 1 mock: MockWebServer / the dependency-free
+# mock are HALF-DUPLEX — they consume the whole request body before writing a
+# response. The tunnel is full-duplex by construction (request body carries
+# client->server bytes while the response body carries server->client bytes on
+# the same stream), so only a real server can exercise it. See
+# docs/plans/2026-09-25-h2-tunnel-implementation.md, T14.
+#
+# The binary is built by scripts/prepare-assets.sh and staged into
+# android-e2e/assets/ because bind mounts do not resolve against this
+# environment's host docker daemon — `docker build` streams the context from the
+# client instead.
+#
+# It is a CGO_ENABLED=0 static build so it runs on a minimal base. The base is
+# node:20-alpine only because that image is already loaded locally (Docker Hub is
+# unreachable here); the Go binary itself needs no runtime.
+FROM node:20-alpine
+
+# Which server-config/*.yaml to bake in.
+ARG SERVER_CONFIG=config.yaml
+
+WORKDIR /app
+
+# The real server + its config. config/config.yaml is resolved by
+# platform.FindConfigPath: <data-dir>/config/config.yaml first, then the
+# CWD-relative config/config.yaml — both are satisfied here.
+COPY assets/clawbench-server /app/clawbench
+COPY server-config/${SERVER_CONFIG} /app/config/config.yaml
+
+# data-dir holds the SQLite DB and logs. It is a plain directory inside the
+# container: the harness tears the container down each run, so a fresh data dir
+# is exactly the first-launch state the login path expects.
+RUN chmod 0755 /app/clawbench && mkdir -p /data
+
+EXPOSE 20000
+
+# --data-dir must match the config search path above. The port comes from
+# server-config/config.yaml (20000), so no --port flag is passed.
+CMD ["/app/clawbench", "--data-dir", "/data"]

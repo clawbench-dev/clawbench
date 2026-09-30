@@ -99,6 +99,10 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   isTunnelConnected: () => invoke('native:is-tunnel-connected'),
   getTunnelError: () => invoke('native:get-tunnel-error'),
   getTunnelErrorType: () => invoke('native:get-tunnel-error-type'),
+  /** The preference the main process is currently using. */
+  getTunnelTransport: () => invoke('native:get-tunnel-transport'),
+  /** 'ssh' | 'h2' — the transport that carried the last successful connect. */
+  getActiveTunnelTransport: () => invoke('native:get-active-tunnel-transport'),
   getPendingNavigation: () => invoke('native:get-pending-navigation'),
 
   // async writes

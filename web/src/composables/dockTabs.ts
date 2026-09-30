@@ -110,12 +110,20 @@ export function isDockTabId(tab: string): tab is DockTabId {
  *
  * `terminal`/`proxy` are hidden when their feature is unavailable at runtime
  * (terminal: the PTY manager is not up yet or the platform cannot run it; proxy:
- * SSH is config-disabled). Both are still declared in DOCK_TABS — this function
- * is where the runtime gate is applied.
+ * port forwarding is genuinely unusable — the SSH listener is off AND the
+ * configured transport cannot carry forwards over h2). Both are still declared
+ * in DOCK_TABS — this function is where the runtime gate is applied.
+ *
+ * The proxy flag is `portForwardUnavailable`, not `sshDisabled`: an h2-only
+ * install (`port_forward.enabled: false`, `transport: h2|both`) has no SSH
+ * listener yet forwards ports over the stream tunnel, so keying the dock off
+ * SSH alone hid the whole tab there. Callers compute it with
+ * `portForwardUnavailable()` from utils/portForwardUtils — this module stays
+ * import-free on purpose (see the header), so it takes the resulting boolean.
  */
-export function secondaryDockTabs(opts: { terminalDisabled?: boolean; sshDisabled?: boolean } = {}): DockTabId[] {
+export function secondaryDockTabs(opts: { terminalDisabled?: boolean; portForwardUnavailable?: boolean } = {}): DockTabId[] {
   return DOCK_TABS.filter((t) => !t.primary)
     .filter((t) => !(t.id === 'terminal' && opts.terminalDisabled))
-    .filter((t) => !(t.id === 'proxy' && opts.sshDisabled))
+    .filter((t) => !(t.id === 'proxy' && opts.portForwardUnavailable))
     .map((t) => t.id)
 }

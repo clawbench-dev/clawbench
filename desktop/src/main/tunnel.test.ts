@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import net from 'node:net'
-import { PassThrough } from 'node:stream'
+import { PassThrough, Duplex } from 'node:stream'
 
 // Test-only knob: delays the `listen` callback so the rebuild window (the span
 // between the desired-set snapshot and an actual bind) is observable. Real
@@ -29,8 +29,13 @@ vi.mock('node:net', async (importOriginal) => {
     // test emit('error') on the REAL server-side socket tunnel.ts wired its
     // handlers onto; emitting on the test's own client socket would prove
     // nothing, since that socket is not the module's.
-    const wrapped = args.map((a, i) =>
-      i === 0 && typeof a === 'function'
+    //
+    // The callback is detected by TYPE, not position: the module now calls
+    // `net.createServer({ allowHalfOpen: true }, cb)`, so a hardcoded index 0
+    // would silently stop observing and make the two "dying socket" tests below
+    // fail on an empty `acceptedSockets` (not on their assertions).
+    const wrapped = args.map((a) =>
+      typeof a === 'function'
         ? (socket: import('node:net').Socket) => {
             acceptedSockets.push(socket)
             ;(a as (s: unknown) => void)(socket)
@@ -157,7 +162,7 @@ const { FakeClient } = vi.hoisted(() => {
      * emit('error') on one to simulate the SSH channel dying mid-transfer —
      * the case that used to crash the main process.
      */
-    streams: import('node:stream').PassThrough[] = []
+    streams: import('node:stream').Duplex[] = []
 
     constructor() { FakeClientImpl.instances.push(this) }
 
@@ -178,9 +183,19 @@ const { FakeClient } = vi.hoisted(() => {
     ): void {
       this.forwardedTo.push(dstPort)
       // A real Duplex so the module's `socket.pipe(stream).pipe(socket)` wiring
-      // is structurally valid; the tests only assert on listener reachability,
-      // not on bytes flowing through.
-      const stream = new PassThrough()
+      // is structurally valid. It is NOT a PassThrough: a PassThrough echoes
+      // whatever is written to it straight back out its readable side, which a
+      // real SSH channel does not do — the echo would masquerade as the
+      // target's reply in the half-close test.
+      //
+      // allowHalfOpen mirrors the REAL ssh2 channel (`Channel.js` defaults it to
+      // true), so the half-close test can end the local side and still push the
+      // target's trailing reply.
+      const stream = new Duplex({
+        allowHalfOpen: true,
+        read() { /* the test pushes explicitly */ },
+        write(_chunk, _enc, cb) { cb() },
+      })
       this.streams.push(stream)
       cb(undefined, stream)
     }
@@ -613,6 +628,63 @@ describe('tunnel: a dying forwarded socket must not crash the process', () => {
     })
 
     expect(escaped.map((e) => e.message)).toEqual([])
+    client.destroy()
+  })
+})
+
+describe('tunnel: local listener preserves TCP half-close (SSH transport)', () => {
+  it('delivers the target response after the local socket half-closes', async () => {
+    // Same defect as the h2 suite covers, but through the SSH path: the local
+    // listener used to default to allowHalfOpen:false, so a local FIN destroyed
+    // the socket and the channel's trailing reply was lost. Both transports
+    // share the listener wiring, so this guards the SSH half of it.
+    await connectOnce()
+    await addForwardedPort(PORT_A, 20000, '')
+
+    const client = net.connect({ host: '127.0.0.1', port: PORT_A, allowHalfOpen: true })
+    await new Promise<void>((r) => client.on('connect', () => r()))
+    const chunks: Buffer[] = []
+    let ended = false
+    client.on('data', (c: Buffer) => chunks.push(c))
+    client.on('end', () => { ended = true })
+
+    await vi.waitFor(() => expect(FakeClient.last().streams.length).toBe(1))
+    const stream = FakeClient.last().streams[0]
+
+    client.write('request-body')
+    client.end()
+    // The local half-close must reach the channel as stream.end(), not a
+    // socket teardown.
+    await vi.waitFor(() => expect(stream.writableEnded).toBe(true))
+
+    // The target's reply arrives after our FIN and must still be delivered.
+    stream.push(Buffer.from('TRAILER:request-body'))
+    stream.push(null)
+
+    await vi.waitFor(() => expect(ended).toBe(true))
+    expect(chunks.map((b) => b.toString()).join('')).toBe('TRAILER:request-body')
+    client.destroy()
+  })
+
+  it('reclaims the accepted socket once both directions end', async () => {
+    await connectOnce()
+    await addForwardedPort(PORT_A, 20000, '')
+
+    const client = net.connect({ host: '127.0.0.1', port: PORT_A, allowHalfOpen: true })
+    await new Promise<void>((r) => client.on('connect', () => r()))
+    await vi.waitFor(() => expect(acceptedSockets.length).toBe(1))
+    await vi.waitFor(() => expect(FakeClient.last().streams.length).toBe(1))
+    const stream = FakeClient.last().streams[0]
+
+    client.write('ping')
+    client.end()
+    await vi.waitFor(() => expect(stream.writableEnded).toBe(true))
+    stream.push(Buffer.from('pong'))
+    stream.push(null)
+
+    // allowHalfOpen:true moves reclamation onto us; without the explicit
+    // close/error handlers in spliceDuplex this socket would stay open.
+    await vi.waitFor(() => expect(acceptedSockets[0].destroyed).toBe(true))
     client.destroy()
   })
 })

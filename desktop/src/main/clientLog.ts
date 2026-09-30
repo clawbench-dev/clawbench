@@ -84,8 +84,12 @@ function writeLocal(level: LogLevel, tag: string, msg: string): void {
  * cookie jar. The name is port-scoped on the server (`cb<port>_clawbench_session`
  * unless the port is 20000, where it is the bare name), so match by suffix
  * rather than hardcoding one form.
+ *
+ * Exported because the h2 tunnel authenticates with the same cookie as a plain
+ * header (desktop/src/main/h2Transport.ts) — duplicating the suffix match
+ * would let the two drift apart on the port-scoped name form.
  */
-async function getSessionCookie(): Promise<string | null> {
+export async function getSessionCookie(): Promise<string | null> {
   try {
     const cookies = await session.defaultSession.cookies.get({})
     const hit = cookies.find((c) => c.name === 'clawbench_session' || c.name.endsWith('_clawbench_session'))

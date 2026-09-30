@@ -2932,6 +2932,59 @@ public class MainActivity extends AppCompatActivity {
         }
 
         /**
+         * Enable or disable the local h2 port-forward transport.
+         *
+         * <p>Backed by the {@code tunnel_transport_h2_enabled} SharedPreferences
+         * value ({@link BackgroundService#setTunnelTransportH2Enabled}), which is
+         * the single source of truth for the transport. Only the preference is
+         * written; an already-connected tunnel keeps running until the next
+         * reconnect, which is the same "takes effect on reconnect" behaviour the
+         * desktop client has.
+         */
+        @JavascriptInterface
+        public void setTunnelTransportH2Enabled(boolean enabled) {
+            AppLog.i(TAG, "JSBridge: setTunnelTransportH2Enabled=" + enabled);
+            BackgroundService.setTunnelTransportH2Enabled(activity, enabled);
+        }
+
+        /**
+         * Read the persisted local h2 port-forward transport toggle.
+         *
+         * <p>Reads the same {@code tunnel_transport_h2_enabled} SharedPreferences
+         * value the setter writes ({@link BackgroundService#isTunnelTransportH2Enabled}),
+         * defaulting to false (SSH) on an untouched install. The settings row
+         * uses this to seed its switch; its presence is also what tells the
+         * frontend the host is new enough to persist the toggle at all.
+         */
+        @JavascriptInterface
+        public boolean getTunnelTransportH2Enabled() {
+            boolean enabled = BackgroundService.isTunnelTransportH2Enabled(activity);
+            AppLog.i(TAG, "JSBridge: getTunnelTransportH2Enabled=" + enabled);
+            return enabled;
+        }
+
+        /**
+         * The transport preference currently in effect, derived from the local
+         * toggle: {@code "h2"} when enabled, {@code "ssh"} otherwise.
+         */
+        @JavascriptInterface
+        public String getTunnelTransport() {
+            return BackgroundService.isTunnelTransportH2Enabled(activity) ? "h2" : "ssh";
+        }
+
+        /**
+         * The transport family of the live h2 session ({@code "h2"}), or
+         * {@code ""} when there is no live h2 session — an empty value is what
+         * lets the frontend fall back to {@link #getTunnelTransport()}. The
+         * value is the family name, not the wire kind ({@code "tls"} /
+         * {@code "h2c"}), matching the desktop client's {@code getActiveTransport()}.
+         */
+        @JavascriptInterface
+        public String getActiveTunnelTransport() {
+            return BackgroundService.getActiveTunnelTransport();
+        }
+
+        /**
          * Add a port to be forwarded via SSH tunnel.
          * The BackgroundService creates a local port forward: localhost:{port} → server:{port}
          * WebView can then access http://localhost:{port} directly.

@@ -92,11 +92,13 @@
     <string name="apk_download_failed">APK 下载失败，请检查网络后重试。</string>
     <string name="apk_install_failed">已下载的 APK 无法打开安装器。</string>
     <!-- Background service notifications -->
-    <string name="ssh_notification_reconnecting">SSH 隧道断开，正在重连…</string>
+    <string name="ssh_notification_reconnecting">隧道断开，正在重连…</string>
     <string name="ssh_notification_recovering">SSH 隧道已恢复</string>
-    <string name="notif_ssh_reconnecting_attempt">SSH 隧道断开，第 %1$d 次重连…</string>
+    <!-- 恢复通知触发时传输已连接，可区分 h2 与 SSH。 -->
+    <string name="h2_notification_recovering">HTTP/2 隧道已恢复</string>
+    <string name="notif_ssh_reconnecting_attempt">隧道断开，第 %1$d 次重连…</string>
     <string name="notif_channel_bg_service">后台连接服务</string>
-    <string name="notif_channel_bg_service_desc">SSH 端口映射与后台事件监听</string>
+    <string name="notif_channel_bg_service_desc">端口映射与后台事件监听</string>
     <string name="notif_channel_ai_events">AI 事件通知</string>
     <string name="notif_channel_ai_events_desc">AI会话和任务完成通知</string>
     <string name="notif_channel_live_update">会话状态</string>

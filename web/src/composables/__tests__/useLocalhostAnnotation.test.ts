@@ -4,6 +4,7 @@ import { ref } from 'vue'
 // Mock composables before importing the module
 const mockIsAppMode = ref(false)
 const mockSshInfo = ref<any>(null)
+const mockTransportAllowsH2 = ref(false)
 const mockEnsurePortRegistered = vi.fn().mockResolvedValue(3000)
 const mockOpenPort = vi.fn()
 const mockToastShow = vi.fn()
@@ -15,6 +16,7 @@ vi.mock('@/composables/useAppMode', () => ({
 vi.mock('@/composables/usePortForward', () => ({
   usePortForward: () => ({
     sshInfo: mockSshInfo,
+    transportAllowsH2: mockTransportAllowsH2,
     ensurePortRegistered: mockEnsurePortRegistered,
     openPort: mockOpenPort,
   }),
@@ -154,6 +156,7 @@ describe('useLocalhostAnnotation', () => {
     beforeEach(() => {
       mockIsAppMode.value = false
       mockSshInfo.value = null
+      mockTransportAllowsH2.value = false
     })
 
     it('returns empty string unchanged', () => {
@@ -171,6 +174,18 @@ describe('useLocalhostAnnotation', () => {
       mockSshInfo.value = { enabled: false }
       const html = '<p>Visit http://localhost:3000</p>'
       expect(annotateLocalhostUrls(html)).toBe(html)
+    })
+
+    it('annotates when SSH is off but h2 carries the tunnel (h2-only install)', () => {
+      // Regression: keying off the SSH listener alone skipped annotation on an
+      // h2-only install, whose localhost URLs would render as dead plain text.
+      mockIsAppMode.value = true
+      mockSshInfo.value = { enabled: false }
+      mockTransportAllowsH2.value = true
+      const html = '<p>Visit http://localhost:3000</p>'
+      const result = annotateLocalhostUrls(html)
+      expect(result).toContain('chat-url-open-btn')
+      expect(result).toContain('data-port="3000"')
     })
 
     it('annotates bare localhost URLs when SSH enabled and app mode', () => {
@@ -255,6 +270,7 @@ describe('useLocalhostAnnotation', () => {
     beforeEach(() => {
       mockIsAppMode.value = true
       mockSshInfo.value = { enabled: true }
+      mockTransportAllowsH2.value = false
       mockEnsurePortRegistered.mockReset().mockResolvedValue(3000)
       mockOpenPort.mockReset()
       mockToastShow.mockReset()
@@ -375,6 +391,26 @@ describe('useLocalhostAnnotation', () => {
       })
     })
 
+    it('forwards (not falls back) on an h2-only install despite SSH being off', async () => {
+      // SSH listener off, but the h2 path carries the forward: the click must
+      // register and open the port instead of falling through to the browser,
+      // and must NOT show the "port mapping is not enabled" toast.
+      mockSshInfo.value = { enabled: false }
+      mockTransportAllowsH2.value = true
+      const anchor = document.createElement('a')
+      anchor.setAttribute('href', 'http://localhost:5173')
+      anchor.textContent = 'link'
+      const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
+      const event = createClickEvent(anchor)
+      handleLocalhostUrlClick(event)
+      await vi.waitFor(() => {
+        expect(mockEnsurePortRegistered).toHaveBeenCalledWith(5173, 'http')
+      })
+      expect(openSpy).not.toHaveBeenCalled()
+      expect(mockToastShow).not.toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
+      openSpy.mockRestore()
+    })
+
     it('returns false for non-localhost anchor click', () => {
       const anchor = document.createElement('a')
       anchor.setAttribute('href', 'https://example.com')
@@ -413,6 +449,19 @@ describe('useLocalhostAnnotation', () => {
       const result = await openLocalhostUrl(btn, 3000, 'http')
       expect(result).toBe(false)
       expect(mockToastShow).toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
+    })
+
+    it('openLocalhostUrl opens on an h2-only install (SSH off, h2 allowed)', async () => {
+      // Regression: the guard refused whenever the SSH listener was off, so an
+      // h2-only install could never open a forwarded localhost URL.
+      mockSshInfo.value = { enabled: false }
+      mockTransportAllowsH2.value = true
+      const btn = document.createElement('button')
+      const result = await openLocalhostUrl(btn, 3000, 'http')
+      expect(result).toBe(true)
+      expect(mockEnsurePortRegistered).toHaveBeenCalledWith(3000, 'http')
+      expect(mockOpenPort).toHaveBeenCalledWith(3000, 'http', undefined, undefined)
+      expect(mockToastShow).not.toHaveBeenCalledWith('chat.localhost.sshDisabled', { icon: 'ℹ️', type: 'info' })
     })
 
     it('openLocalhostUrl shows error toast on failure', async () => {

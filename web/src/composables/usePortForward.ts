@@ -1,12 +1,14 @@
-import { ref, watch } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { apiGet, apiPost, apiPut, apiDelete } from '@/utils/api'
 import { useAppMode } from './useAppMode.ts'
 import { gt } from '@/composables/useLocale'
 import { useToast } from '@/composables/useToast.ts'
 import { tunnelStatusFromPorts as tunnelStatusFromPortsUtil, buildPortUrl, isReversePort } from '@/utils/portForwardUtils.ts'
 import type { PortDirection } from '@/utils/portForwardUtils.ts'
+import { transportLabelKey } from '@/utils/tunnelTransport.ts'
 import { store } from '@/stores/app'
 import { useSessionIdentity } from './useSessionIdentity'
+import { useSettingsConfig } from './useSettingsConfig'
 import { getNative, reconnectTunnel as nativeReconnectTunnel } from '@/utils/clawbenchNative'
 import type { ClawBenchNative } from '@/utils/clawbenchNative'
 
@@ -49,6 +51,17 @@ export type TunnelStatus = 'unknown' | 'ok' | 'disconnected' | 'degraded'
 
 export type TunnelErrorType = 'auth' | 'network' | 'hostkey' | 'unknown' | ''
 
+/**
+ * Tunnel transport: the configured preference (`port_forward.transport`), the
+ * concrete wire that actually carried the last connect, or `''` when unknown.
+ *
+ * `'both'` is only ever a preference — the active transport resolves to 'ssh'
+ * or 'h2'. Kept as one type so the panel can label either without branching.
+ */
+export type TunnelTransport = 'ssh' | 'h2' | 'both' | ''
+
+const TRANSPORTS: readonly string[] = ['ssh', 'h2', 'both']
+
 // Module-level shared state
 const ports = ref<ForwardedPort[]>([])
 const detectedPorts = ref<DetectedPort[]>([])
@@ -59,6 +72,12 @@ const tunnelMessage = ref('')
 const tunnelChecking = ref(false)
 const tunnelError = ref('')
 const tunnelErrorType = ref<TunnelErrorType>('')
+
+// The transport that actually carried the tunnel ('ssh' | 'h2'), or '' when it
+// cannot be determined (web mode, or a host that predates the bridge methods).
+// Read from the native layer rather than the server config because only the
+// native tunnel knows which wire won a 'both' preference.
+const activeTransport = ref<TunnelTransport>('')
 
 // Ports that are newly registered and waiting for SSH tunnel to become reachable.
 // These show a yellow blinking dot instead of green/grey.
@@ -177,6 +196,13 @@ function tunnelStatusFromPorts(_hasPorts: boolean): 'ok' | 'degraded' {
  */
 export function usePortForward() {
   const { currentSessionId } = useSessionIdentity()
+  // Reads `port_forward.transport` from `/api/config` for the web health gate
+  // (`tunnelTransportAllowsH2()`): the server config is the only place that
+  // says whether an h2 path exists when the SSH listener is off. The native
+  // clients no longer consume this value — Android decides via its local
+  // switch and Electron is pinned to SSH — so nothing here is pushed to the
+  // bridge any more.
+  const { getServerValue } = useSettingsConfig()
 
   // Set up the callback for native port-forward-result events.
   // This needs to be inside usePortForward() because it calls loadPorts()
@@ -477,6 +503,90 @@ export function usePortForward() {
     }
   }
 
+  /**
+   * Whether the configured transport can carry traffic over h2, i.e. the tunnel
+   * does NOT depend on the SSH listener.
+   *
+   * Only 'h2' and 'both' qualify. Anything else — including a missing value
+   * before `/api/config` resolves, and a value from a newer build this client
+   * cannot interpret — is treated as ssh-only: assuming h2 would probe a
+   * transport the operator never enabled. The gate is an OR with SSH, so a
+   * conservative false only skips the check when SSH is off too.
+   */
+  function tunnelTransportAllowsH2(): boolean {
+    let raw: unknown
+    try {
+      raw = getServerValue('port_forward.transport')
+    } catch {
+      return false
+    }
+    return raw === 'h2' || raw === 'both'
+  }
+
+  /**
+   * Refresh `activeTransport` from the native tunnel.
+   *
+   * Prefers `getActiveTunnelTransport()` (the wire that actually won a 'both'
+   * preference) and falls back to the configured preference when nothing has
+   * connected yet. Both bridge methods are optional, so an older host or
+   * Android build simply leaves the value unknown — never throws, never
+   * invents a transport.
+   */
+  async function refreshActiveTransport(): Promise<void> {
+    if (!isAppMode.value) {
+      activeTransport.value = ''
+      return
+    }
+    const native = getNative()
+    if (!native) {
+      activeTransport.value = ''
+      return
+    }
+    // Bound with .call(native) like the other bridge reads above: Android's
+    // @JavascriptInterface methods are host objects, and extracting them
+    // unbound would drop the receiver.
+    const read = async (method?: unknown): Promise<TunnelTransport> => {
+      if (typeof method !== 'function') return ''
+      try {
+        const value = await (method as () => unknown).call(native)
+        return typeof value === 'string' && TRANSPORTS.includes(value)
+          ? (value as TunnelTransport)
+          : ''
+      } catch {
+        return ''
+      }
+    }
+    const active = await read(native.getActiveTunnelTransport)
+    activeTransport.value = active || await read(native.getTunnelTransport)
+  }
+
+  /**
+   * Parenthesized transport annotation for status copy, or `''` when no single
+   * wire is known.
+   *
+   * Only a concrete `'ssh'` / `'h2'` yields a label; `''` (unknown) and
+   * `'both'` (a preference, not a wire) stay empty so the caller renders the
+   * neutral wording rather than guessing. The bracket style lives in the
+   * `proxy.transportAnnotation` message so zh gets full-width brackets and en
+   * half-width ones without a locale branch here.
+   */
+  function transportAnnotation(): string {
+    const key = transportLabelKey(activeTransport.value)
+    return key ? gt('proxy.transportAnnotation', { transport: gt(key) }) : ''
+  }
+
+  /**
+   * Reactive view of `tunnelTransportAllowsH2()` for the UI.
+   *
+   * Reads through `getServerValue`, whose `serverConfig` ref is a real
+   * dependency, so this recomputes when `/api/config` resolves — the same
+   * reason the health gate can call the raw function synchronously inside an
+   * async check. Used by the panel's "port forwarding unavailable" banner:
+   * an h2-capable install forwards ports even with no SSH listener, so the
+   * banner must not key off SSH alone.
+   */
+  const transportAllowsH2 = computed(() => tunnelTransportAllowsH2())
+
   /** Check SSH tunnel health and determine status */
   async function checkTunnelHealth() {
     tunnelChecking.value = true
@@ -485,11 +595,15 @@ export function usePortForward() {
     tunnelError.value = ''
     tunnelErrorType.value = ''
 
-    await Promise.all([loadPorts(), loadSSHInfo()])
+    await Promise.all([loadPorts(), loadSSHInfo(), refreshActiveTransport()])
 
     const info = sshInfo.value
-    // No SSH configured — skip tunnel check (web mode without SSH)
-    if (!info?.enabled) {
+    // SSH not configured does NOT mean the tunnel is unavailable: an h2-only
+    // install carries the same forwards over the main HTTP server without any
+    // SSH listener. Skip only when neither wire can be used — otherwise the
+    // whole health check (and with it the status banner and 5s recovery poll)
+    // would be silently skipped on h2 installs.
+    if (!info?.enabled && !tunnelTransportAllowsH2()) {
       tunnelChecking.value = false
       return
     }
@@ -503,7 +617,7 @@ export function usePortForward() {
         const status = tunnelStatusFromPorts(hasPorts)
         if (status === 'degraded') {
           tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded')
+          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
           tunnelChecking.value = false
           startTunnelPoll()
           return
@@ -517,15 +631,18 @@ export function usePortForward() {
         tunnelError.value = await getNativeTunnelError()
         tunnelErrorType.value = await getNativeTunnelErrorType()
         tunnelStatus.value = 'disconnected'
-        tunnelMessage.value = gt('portForward.tunnelDisconnected')
+        tunnelMessage.value = gt('portForward.tunnelDisconnected', { transport: transportAnnotation() })
         tunnelChecking.value = false
         startTunnelPoll()
         return
       }
     }
 
-    // Native status unavailable — fall back to server-side connection stats
-    const stats = info.connectionStats
+    // Native status unavailable — fall back to server-side connection stats.
+    // `info` can be null here (the SSH info fetch failed) while h2 still lets
+    // the check proceed: those stats are SSH-only, so their absence is the
+    // same as "no stats" below, not a reason to skip the h2 path above.
+    const stats = info?.connectionStats
     if (!stats) {
       tunnelChecking.value = false
       return
@@ -541,7 +658,7 @@ export function usePortForward() {
         return
       }
       tunnelStatus.value = 'disconnected'
-      tunnelMessage.value = gt('portForward.tunnelDisconnected')
+      tunnelMessage.value = gt('portForward.tunnelDisconnected', { transport: transportAnnotation() })
       tunnelChecking.value = false
       startTunnelPoll()
       return
@@ -551,7 +668,7 @@ export function usePortForward() {
     const hasPorts = ports.value.length > 0
     if (tunnelStatusFromPorts(hasPorts) === 'degraded') {
       tunnelStatus.value = 'degraded'
-      tunnelMessage.value = gt('portForward.tunnelDegraded')
+      tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
       tunnelChecking.value = false
       startTunnelPoll()
       return
@@ -628,7 +745,7 @@ export function usePortForward() {
           stopTunnelPoll()
         } else {
           tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded')
+          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
         }
         return
       }
@@ -658,7 +775,7 @@ export function usePortForward() {
           stopTunnelPoll()
         } else {
           tunnelStatus.value = 'degraded'
-          tunnelMessage.value = gt('portForward.tunnelDegraded')
+          tunnelMessage.value = gt('portForward.tunnelDegraded', { transport: transportAnnotation() })
         }
       } else {
         // Server says disconnected — still check if ports are actually active
@@ -738,7 +855,7 @@ export function usePortForward() {
       const reconnected = await nativeReconnectTunnel()
       const toast = useToast()
       if (reconnected && (await native.testPortReachable(localPort))) {
-        toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
         doOpen(native, localPort, protocol, hostArg, path)
         return
       }
@@ -767,7 +884,7 @@ export function usePortForward() {
       // Step 1: Test if the port is already reachable
       const reachable = await native.testPortReachable(localPort)
       if (reachable) {
-        toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+        toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
         await loadPorts(true)
         return
       }
@@ -778,7 +895,7 @@ export function usePortForward() {
       if (reconnected) {
         const reachableAfter = await native.testPortReachable(localPort)
         if (reachableAfter) {
-          toast.show(gt('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
+          toast.show(gt('portForward.tunnelReconnected', { transport: transportAnnotation() }), { icon: '🔗', type: 'success' })
         } else {
           toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
         }
@@ -842,6 +959,8 @@ export function usePortForward() {
     tunnelChecking,
     tunnelError,
     tunnelErrorType,
+    activeTransport,
+    transportAllowsH2,
     connectingPorts,
     localReachable,
     scanDrawerOpen,
@@ -860,6 +979,8 @@ export function usePortForward() {
     syncToNative,
     loadSSHInfo,
     checkTunnelHealth,
+    refreshActiveTransport,
+    transportAnnotation,
     openPort,
     openPortWithCheck,
     openInExternalBrowser,

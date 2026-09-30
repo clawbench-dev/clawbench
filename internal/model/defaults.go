@@ -272,6 +272,25 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	if cfg.PortForward.HostKey == "" {
 		cfg.PortForward.HostKey = filepath.Join(DataDir, "ssh_host_key")
 	}
+	// Transport is pinned to "both" unconditionally — whatever the file says.
+	//
+	// It is no longer a choice. Once the client-side consumers were removed
+	// (Electron clamps to "ssh" at its IPC boundary, Android uses its own
+	// SharedPreferences switch), the field had exactly two server-side readers
+	// left — the registry gate and the web health-check gate — and both are
+	// satisfied by "both". Pinning it here means the state "the server says
+	// ssh-only" cannot exist, so a client can no longer bypass an operator's
+	// `transport: ssh` by going straight to h2: there is nothing to bypass.
+	//
+	// The field and its three values are KEPT (not deleted) because the web
+	// client's tunnelTransportAllowsH2() reads `port_forward.transport` from
+	// /api/config and only `'h2' | 'both'` are truthy — an absent value would
+	// read as ssh-only and hide the proxy dock tab on an h2-capable server.
+	//
+	// This is the single repair point for hand-edited config.yaml: a value from
+	// a build that knew more transports (or a typo) is overwritten here, since
+	// there is no standalone validator on the load path.
+	cfg.PortForward.Transport = DefaultPortForwardTransport
 
 	// --- FRP ---
 	// FRP is disabled by default; users must explicitly enable it.

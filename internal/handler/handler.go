@@ -499,6 +499,22 @@ func RegisterRoutes(mux *http.ServeMux) {
 	registerPublic("/api/ssh/info", ServeSSHInfo)
 	register("/api/ssh/info/full", ServeSSHInfoFull)
 
+	// HTTP/2 stream tunnel (-L data plane). One h2 stream per forwarded TCP
+	// connection: request body = client->server bytes, response body =
+	// server->client bytes, both streaming at once. This is what lets a client
+	// forward ports with only the main port open (no 20001, no extra listener).
+	// The port whitelist is enforced inside the handler, identically to the SSH
+	// direct-tcpip path.
+	register("/api/tunnel/stream", TunnelStream)
+
+	// HTTP/2 stream tunnel (-R control plane). A long-lived duplex stream
+	// carrying newline-delimited JSON commands; HTTP/2 cannot open a stream
+	// from the server side, so the server parks an accepted reverse connection
+	// and offers it to the client with a single-use token, which the client
+	// redeems by opening /api/tunnel/stream?claim=<token>. The reserved-port /
+	// allowed-range guard mirrors the SSH reverse path.
+	register("/api/tunnel/control", TunnelControl)
+
 	// FRP tunnel status
 	register("/api/frp/info", ServeFRPInfo)           // Full status, requires auth (exposes public IP)
 	registerPublic("/api/frp/status", ServeFRPStatus) // Minimal status, no auth (only enabled+running)

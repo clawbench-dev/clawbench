@@ -1,0 +1,278 @@
+/**
+ * Tier 2 / Stage 2a — the real server is wired in and the h2 endpoints are live.
+ *
+ * This spec is the foundation the other two depend on, and it asserts the one
+ * thing the Tier 1 mock could never prove:
+ *
+ *   With `port_forward.enabled: false`, the server MUST still create its
+ *   ProxyRegistry, so the h2 tunnel endpoints are served rather than answered
+ *   with 503 "PortForwardUnavailable".
+ *
+ * `shouldCreateProxyRegistry` (cmd/server/proxy_registry_gate.go) is the gate,
+ * and it is now **unconditionally true**: `model.ApplyDefaults` pins
+ * `cfg.PortForward.Transport` to `"both"` on every load (internal/model/defaults.go),
+ * so the registry is always created. This server is configured `enabled: false`
+ * (SSH listener off) and still answers — that is what the probes below check.
+ *
+ * ## Why the probes are AUTHENTICATED (this used to be a vacuous test)
+ *
+ * The endpoints are registered via `register` (internal/handler/handler.go),
+ * which wraps the handler in `middleware.Auth`. With a password configured —
+ * the harness sets one — `Auth` returns **401 before the handler runs** for any
+ * request without a valid session cookie (internal/middleware/auth.go). The
+ * tunnel handlers' 503 branch lives INSIDE the handler
+ * (internal/handler/tunnel_stream.go / tunnel_control.go, the
+ * `service.ProxyService == nil` guard), so on an unauthenticated request it is
+ * **unreachable**: the 401 is produced by the middleware regardless of the
+ * registry's state.
+ *
+ * An earlier revision of this spec probed unauthenticated and asserted
+ * `status !== 503`, with a comment claiming "a 503 here is the exact regression
+ * this spec exists to catch". That assertion could not fail: no registry state
+ * can make an unauthenticated request answer anything but 401. The probes below
+ * therefore carry a real session cookie (`authFetch`), which is the only way
+ * the handler — and its nil-registry guard — is actually reached.
+ *
+ * ## The 503 branch is dead code by configuration (the old positive control is gone)
+ *
+ * This spec used to pin the 503 branch with a POSITIVE CONTROL: a second
+ * `server-no-h2` compose service (`enabled: false` + `transport: ssh`) that was
+ * asserted to answer 503. That control is now **removed**, because the
+ * combination it relied on can no longer exist:
+ *
+ *   - `model.ApplyDefaults` pins `cfg.PortForward.Transport` to `"both"` on
+ *     every load (internal/model/defaults.go), so `shouldCreateProxyRegistry`
+ *     (cmd/server/proxy_registry_gate.go) is **unconditionally true** and the
+ *     registry is always created. No config file can make it nil.
+ *   - Therefore the `service.ProxyService == nil` → 503 guard
+ *     (internal/handler/tunnel_stream.go:59, tunnel_control.go:432) is pure
+ *     defence: it is unreachable by configuration.
+ *
+ * The branch is NOT left uncovered, though — it has direct Go unit tests, which
+ * is what makes deleting the E2E control safe:
+ *
+ *   - TestTunnelStream_NilProxyServiceIsUnavailable  (tunnel_stream_test.go)
+ *   - TestTunnelControl_NilProxyServiceIsUnavailable (tunnel_control_test.go)
+ *   - TestProxyHandlers_NilRegistryReturns503        (proxy_test.go)
+ *
+ * each nil-ing `service.ProxyService` and asserting 503. An E2E server that can
+ * no longer reach the branch proved nothing about it, so the probes here now
+ * assert the concrete, reachable behaviour instead: 401 without a cookie, and
+ * (with one) the handler actually running.
+ *
+ * The session-cookie read on this image is a separate, image-specific WebView
+ * defect (Chrome 69's `CookieManager.getCookie()` omits SameSite cookies — see
+ * the README and `helpers/tunnel.mjs`). It is NOT asserted here: a test that
+ * goes red when the product improves is a fix-inhibitor, not a guard. The
+ * fixture the tunnel specs use is validated positively inside
+ * `installReadableSessionCookie()` instead.
+ */
+import assert from 'node:assert/strict';
+import {
+  SERVER_FROM_RUNNER,
+  SERVER_URL,
+  nativeLogin,
+  bridge,
+  enterWebView,
+  getActiveTunnelTransport,
+  resetAppToLoginPage,
+  installReadableSessionCookie,
+  authFetch,
+} from './helpers/tunnel.mjs';
+
+describe('Tier 2 — real server + h2 endpoint liveness', () => {
+  it('reports the APK version from /api/health (no blocking mismatch dialog)', async () => {
+    // Read the version the app itself saw. The native gate compares this with
+    // the APK's versionName; agreement is what let login proceed at all. If the
+    // versions disagreed the app would be showing a modal dialog and the next
+    // spec (which reaches the home page) could not run.
+    const res = await fetch(`${SERVER_FROM_RUNNER}/api/health`);
+    assert.equal(res.status, 200, `GET /api/health returned ${res.status}`);
+    const body = await res.json();
+    assert.equal(body.app, 'clawbench', `unexpected /api/health payload: ${JSON.stringify(body)}`);
+    assert.ok(body.version, '/api/health did not report a version');
+
+    // The APK version the harness built must match the server's reported
+    // version exactly — that is the structural guarantee prepare-assets.sh makes
+    // by compiling the server with the APK's own versionName. Print both so a
+    // drift is visible in the run log.
+    const apkVersion = process.env.CLAWBENCH_VERSION || '';
+    console.log(`[tier2] server /api/health version = ${body.version} (APK = ${apkVersion || 'n/a'})`);
+    if (apkVersion) {
+      assert.equal(
+        body.version,
+        apkVersion,
+        `server version ${body.version} != APK versionName ${apkVersion}; the version gate compares these`,
+      );
+    } else {
+      // The assertion above is silently skipped when the variable is absent, so
+      // say so loudly. run.sh always exports it; a direct `wdio` invocation does
+      // not, and a skipped version check is exactly how a blocking mismatch
+      // dialog would slip through.
+      console.warn(
+        '[tier2] CLAWBENCH_VERSION is unset — the APK/server version equality was NOT checked ' +
+          '(run via scripts/run.sh, which exports it from output-metadata.json)',
+      );
+    }
+  });
+
+  it('answers /api/tunnel/stream with 401 when UNAUTHENTICATED (auth runs before the handler)', async () => {
+    // No cookie: middleware.Auth must reject this before the handler. This is a
+    // statement about the AUTH layer, not about the registry — see the header.
+    // The registry assertion is the authenticated probe below.
+    const res = await fetch(`${SERVER_FROM_RUNNER}/api/tunnel/stream?host=127.0.0.1&port=18080`, {
+      method: 'POST',
+      body: 'x',
+    });
+    const text = await res.text();
+    console.log(`[tier2] POST /api/tunnel/stream (unauthenticated) -> ${res.status} ${text.slice(0, 120)}`);
+    assert.equal(res.status, 401, `expected 401 (auth required) but got ${res.status}: ${text}`);
+  });
+
+  it('answers /api/tunnel/control with 401 when UNAUTHENTICATED', async () => {
+    const res = await fetch(`${SERVER_FROM_RUNNER}/api/tunnel/control`, { method: 'POST', body: '' });
+    const text = await res.text();
+    console.log(`[tier2] POST /api/tunnel/control (unauthenticated) -> ${res.status} ${text.slice(0, 120)}`);
+    assert.equal(res.status, 401, `expected 401 but got ${res.status}: ${text}`);
+  });
+
+  it('serves /api/tunnel/stream to an AUTHENTICATED request (registry exists for enabled:false + h2)', async () => {
+    // THE registry assertion. The handler is now actually entered, so its nil
+    // guard is reachable. The probe targets an UNLISTENED loopback port so the
+    // handler's own dial fails deterministically: the expected status is 502
+    // (TunnelTargetUnreachable), which proves the handler ran, passed the port
+    // whitelist and reached the dial — i.e. the registry existed. A 401 would
+    // mean the cookie did not authenticate.
+    const port = 18099; // nothing listens here; see the topology in the README
+    const res = await authFetch(
+      `${SERVER_FROM_RUNNER}/api/tunnel/stream?host=127.0.0.1&port=${port}`,
+      { method: 'POST', body: 'x' },
+    );
+    const text = await res.text();
+    console.log(`[tier2] POST /api/tunnel/stream (authenticated, dead target) -> ${res.status} ${text.slice(0, 160)}`);
+    // The exact status IS the registry assertion: 502 means the handler ran past
+    // the (nil) registry guard, past the port whitelist, and reached its dial.
+    assert.equal(
+      res.status,
+      502,
+      `expected 502 (handler reached its dial and the target was unreachable), got ${res.status}: ${text}`,
+    );
+  });
+
+  it('serves /api/tunnel/control to an AUTHENTICATED request (registry exists for enabled:false)', async () => {
+    // Same reasoning as the stream probe: the nil guard is inside the handler,
+    // so only an authenticated request can reach it.
+    //
+    // The expected status is 426 (Upgrade Required), NOT 200: `-R` needs HTTP/2,
+    // and the handler rejects HTTP/1.1 up front (tunnel_control.go ProtoMajor
+    // guard, added in 427b9923) rather than letting the client discover it as a
+    // bare 403 at claim time. Node's `fetch` is HTTP/1.1, so 426 is the correct
+    // outcome and — crucially — it is a HANDLER-produced status, which is the
+    // positive evidence this test wants: the handler ran past the nil-registry
+    // guard (a 503 would mean the registry was missing).
+    const res = await authFetch(`${SERVER_FROM_RUNNER}/api/tunnel/control`, {
+      method: 'POST',
+      body: '',
+    });
+    const text = await res.text();
+    console.log(`[tier2] POST /api/tunnel/control (authenticated, h1) -> ${res.status} ${text.slice(0, 160)}`);
+    assert.equal(
+      res.status,
+      426,
+      `expected 426 (handler reached its HTTP/2 guard) but got ${res.status} — a live registry must serve this`,
+    );
+  });
+
+  it('logs the app into the real server through the native flow and reaches the home page', async () => {
+    // The REAL login path: MainActivity.authenticateAndNavigate does
+    // POST /login -> GET /api/health -> gateVersionMismatchAndProceed ->
+    // webView.loadUrl. This is what must not hang on the version dialog.
+    await resetAppToLoginPage();
+    await nativeLogin();
+
+    const href = await browser.execute(() => location.href);
+    console.log(`[tier2] WebView location = ${href}`);
+    assert.ok(
+      typeof href === 'string' && href.startsWith(SERVER_URL),
+      `WebView did not navigate to the server root; location=${href}`,
+    );
+
+    // The page really is the server's SPA shell, and the JS bridge is injected
+    // and callable.
+    //
+    // NOTE — the Vue SPA does NOT mount on this emulator, and that is a
+    // pre-existing property of the API-28 image, not a tunnel regression. The
+    // frozen WebView is Chrome 69.0.3497.100, and the production bundle uses
+    // ES2020 syntax it cannot parse (logcat: `Uncaught SyntaxError: Unexpected
+    // token ?` in main-*.js). Chrome 69 predates `??`/`?.` (Chrome 80).
+    // Tier 2 is unaffected: the tunnel is driven entirely through
+    // `window.ClawBenchNative`, which `addJavascriptInterface` injects into the
+    // page context regardless of whether Vue ever mounts.
+    const shell = await browser.execute(() => ({
+      hasAppRoot: !!document.getElementById('app'),
+      hasBridge: !!window.ClawBenchNative,
+      ua: navigator.userAgent,
+    }));
+    console.log(`[tier2] page shell = ${JSON.stringify(shell)}`);
+    assert.equal(shell.hasAppRoot, true, 'the served page has no #app root — not the SPA shell');
+    assert.equal(shell.hasBridge, true, 'window.ClawBenchNative was not injected');
+    assert.equal(await bridge('isNativeApp'), true, 'isNativeApp() did not return true');
+  });
+
+  it('selects the h2 transport through the JS bridge and reports it back', async () => {
+    await enterWebView();
+
+    // The bridge exposes the transport as a BOOLEAN toggle now
+    // (`setTunnelTransportH2Enabled`, persisted in SharedPreferences), not the
+    // old string preference. This is the exact call the Vue settings flow makes.
+    await bridge('setTunnelTransportH2Enabled', true);
+
+    assert.equal(await bridge('getTunnelTransportH2Enabled'), true, 'the h2 toggle did not stick');
+    const pref = await bridge('getTunnelTransport');
+    console.log(`[tier2] getTunnelTransport() = ${pref}`);
+    assert.equal(pref, 'h2', `transport preference did not stick: ${pref}`);
+
+    // No session is live yet, so the active family must be empty — not stale
+    // from a previous connection.
+    const activeBefore = await getActiveTunnelTransport();
+    console.log(`[tier2] getActiveTunnelTransport() before connecting = "${activeBefore}"`);
+    assert.equal(activeBefore, '', `expected no active transport before connecting, got "${activeBefore}"`);
+  });
+
+  it('maps the h2 toggle to the transport preference, and "" active before any connect', async () => {
+    // P0 transport-preference matrix. The boolean toggle is the single source of
+    // truth, and `getTunnelTransport()` is derived from it ("h2" on / "ssh"
+    // off); the round-trip must not be normalized or dropped. `getActive` stays
+    // empty for every value because nothing has connected.
+    await enterWebView();
+    for (const enabled of [true, false, true]) {
+      await bridge('setTunnelTransportH2Enabled', enabled);
+      const gotToggle = await bridge('getTunnelTransportH2Enabled');
+      const got = await bridge('getTunnelTransport');
+      console.log(
+        `[tier2] setTunnelTransportH2Enabled(${enabled}) -> toggle=${gotToggle} transport=${got}`,
+      );
+      assert.equal(gotToggle, enabled, `toggle did not round-trip (got ${gotToggle})`);
+      assert.equal(
+        got,
+        enabled ? 'h2' : 'ssh',
+        `transport preference did not derive from the toggle (got ${got})`,
+      );
+      const active = await getActiveTunnelTransport();
+      assert.equal(active, '', `getActiveTunnelTransport() must be "" before any connect, got "${active}"`);
+    }
+    // Restore the h2 preference for the specs that follow.
+    await bridge('setTunnelTransportH2Enabled', true);
+    assert.equal(await bridge('getTunnelTransport'), 'h2');
+  });
+
+  it('installs a readable cookie fixture so the tunnel specs can authenticate', async () => {
+    // The fixture every byte-transfer assertion depends on. It must leave the
+    // app able to read a session cookie, or the later specs would be vacuous —
+    // and `installReadableSessionCookie` now proves that POSITIVELY (a non-401
+    // server status for an authenticated request), so this cannot pass on an
+    // empty logcat or a `shareFile` early-return.
+    const info = await installReadableSessionCookie();
+    console.log(`[tier2] cookie fixture installed (token length ${info.tokenLength})`);
+  });
+});

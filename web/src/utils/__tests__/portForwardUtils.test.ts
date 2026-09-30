@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { hasActivePort, tunnelStatusFromPorts, buildPortUrl, buildServerAddress, isReversePort, enabledPorts, sshInstallHint } from '@/utils/portForwardUtils'
+import { hasActivePort, tunnelStatusFromPorts, buildPortUrl, buildServerAddress, isReversePort, enabledPorts, sshInstallHint, portForwardUnavailable } from '@/utils/portForwardUtils'
 import type { ForwardedPort } from '@/utils/portForwardUtils'
 
 describe('portForwardUtils', () => {
@@ -221,5 +221,33 @@ describe('isReversePort', () => {
 
   it('treats a missing direction as forward (older backends)', () => {
     expect(isReversePort(base)).toBe(false)
+  })
+})
+
+describe('portForwardUnavailable', () => {
+  // The single gate behind the dock tab, the force-switch watcher, the
+  // localhost-URL guards and the panel banner. "Unavailable" must mean NEITHER
+  // wire can carry the forward — SSH off AND no h2 path — otherwise an h2-only
+  // install loses the whole feature.
+  it('is true only when SSH is explicitly off and h2 is not allowed', () => {
+    expect(portForwardUnavailable(false, false)).toBe(true)
+  })
+
+  it('is false on an h2-only install (SSH off, h2 allowed)', () => {
+    // The scenario this PR targets: port_forward.enabled=false + transport=h2.
+    expect(portForwardUnavailable(false, true)).toBe(false)
+  })
+
+  it('is false whenever SSH is enabled, regardless of transport', () => {
+    expect(portForwardUnavailable(true, false)).toBe(false)
+    expect(portForwardUnavailable(true, true)).toBe(false)
+  })
+
+  it('does not treat a not-yet-loaded sshInfo (null/undefined) as disabled', () => {
+    // /api/ssh/info has not resolved: an explicit false is required, otherwise
+    // the dock would flash the tab away on every load.
+    expect(portForwardUnavailable(null, false)).toBe(false)
+    expect(portForwardUnavailable(undefined, false)).toBe(false)
+    expect(portForwardUnavailable(null, true)).toBe(false)
   })
 })

@@ -52,6 +52,32 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
 }
 
 /**
+ * True when port forwarding is genuinely unusable: the SSH listener is off AND
+ * the configured transport cannot carry the forwards over h2.
+ *
+ * This is the ONE expression behind every "port mapping is unavailable" gate in
+ * the UI — the dock tab filter, the force-switch watcher, the localhost-URL
+ * annotation/click guards and the panel's warning banner. It lives here, not in
+ * each call site, precisely so those gates cannot drift apart again: they all
+ * used to key off the SSH listener alone, which hid the entire feature on an
+ * h2-only install (`port_forward.enabled: false` + `transport: h2|both`) that
+ * forwards ports perfectly well over the stream tunnel.
+ *
+ * `sshEnabled` is the tri-state from `/api/ssh/info`. `undefined`/`null` means
+ * "not loaded yet" and must NOT read as disabled — only an explicit `false`
+ * counts, otherwise the gate would flash on every load.
+ *
+ * `transportAllowsH2` is the caller's read of the server's
+ * `port_forward.transport` (see usePortForward's `transportAllowsH2`).
+ */
+export function portForwardUnavailable(
+  sshEnabled: boolean | null | undefined,
+  transportAllowsH2: boolean,
+): boolean {
+  return sshEnabled === false && !transportAllowsH2
+}
+
+/**
  * Build the URL for opening a forwarded port.
  * Uses localhost since it's the local listening address.
  * Omits the port number when it's the default for the protocol (80 for http, 443 for https).

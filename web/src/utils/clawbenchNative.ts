@@ -29,12 +29,8 @@ export interface ClawBenchNative {
   setNativePushEnabled(enabled: boolean): void
   /** Enable/disable the floating session status window (Android; no-op on desktop). */
   setFloatingWindowEnabled(enabled: boolean): void
-  /** Read the persisted floating status window state (Android; no-op on desktop). */
-  getFloatingWindowEnabled(): boolean
   /** Enable/disable the Android 16 Live Updates status chip (Android; no-op on desktop). */
   setLiveUpdateEnabled(enabled: boolean): void
-  /** Read the persisted Live Updates chip state (Android; no-op on desktop). */
-  getLiveUpdateEnabled(): boolean
   /** Whether the system can currently promote Live Updates for this app (Android; false on desktop). */
   canPostPromotedNotifications?(): boolean
   /** Open the system screen to enable Live Updates for this app (Android; no-op on desktop). */
@@ -74,6 +70,29 @@ export interface ClawBenchNative {
   isTunnelConnected(): Promise<boolean>
   getTunnelError(): Promise<string>
   getTunnelErrorType(): Promise<string>
+  /** The transport preference the native layer is currently using. */
+  getTunnelTransport?(): Promise<string> | string
+  /**
+   * 'ssh' | 'h2' — the transport that carried the last successful connect.
+   * Distinct from the configured preference (a 'both' client reports whichever
+   * one actually won), which is what a status display wants to show.
+   */
+  getActiveTunnelTransport?(): Promise<string> | string
+  /**
+   * The Android local h2 tunnel toggle's persisted state.
+   *
+   * The truth source is Android SharedPreferences (key
+   * `tunnel_transport_h2_enabled`), NOT the server's `port_forward.transport`:
+   * the toggle is Android-only and this is how the settings row reads its
+   * initial value.
+   *
+   * Optional: a host that predates the toggle lacks the method entirely (there
+   * is no older, non-persisting setter to fall back to), and the caller must
+   * then HIDE the settings row rather than show a false "off".
+   */
+  getTunnelTransportH2Enabled?(): Promise<boolean> | boolean
+  /** Write the Android local h2 tunnel toggle (SharedPreferences). */
+  setTunnelTransportH2Enabled?(enabled: boolean): Promise<void> | void
   getPendingNavigation(): Promise<string>
 
   // Async writes / actions

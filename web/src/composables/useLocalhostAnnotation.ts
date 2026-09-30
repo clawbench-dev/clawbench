@@ -4,6 +4,7 @@ import { useAppMode } from '@/composables/useAppMode.ts'
 import { usePortForward } from '@/composables/usePortForward.ts'
 import { useToast } from '@/composables/useToast.ts'
 import { gt } from '@/composables/useLocale'
+import { portForwardUnavailable } from '@/utils/portForwardUtils.ts'
 import { appLog } from '@/utils/appLog'
 
 /**
@@ -111,9 +112,12 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
     const { isAppMode } = useAppMode()
     if (!isAppMode.value) return false
 
-    // Skip annotation when SSH is disabled (no port forwarding available)
-    const { sshInfo } = usePortForward()
-    if (sshInfo.value?.enabled === false) return false
+    // Skip annotation only when port forwarding is genuinely unusable (SSH off
+    // AND no h2 path). Keying off the SSH listener alone skipped the whole
+    // annotation step on an h2-only install, which forwards localhost ports
+    // over the stream tunnel — its URLs would render as dead plain text.
+    const { sshInfo, transportAllowsH2 } = usePortForward()
+    if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) return false
 
     // ── Step 1: <a href> tags with localhost hrefs → append icon button ──
     for (const a of doc.querySelectorAll('a[href]')) {
@@ -245,7 +249,7 @@ export function annotateLocalhostUrlsIn(doc: Document): boolean {
  */
 export function useLocalhostUrlClickHandler() {
     const { isAppMode } = useAppMode()
-    const { ensurePortRegistered, openPort, sshInfo } = usePortForward()
+    const { ensurePortRegistered, openPort, sshInfo, transportAllowsH2 } = usePortForward()
     const toast = useToast()
 
     // Module-level guard to prevent double-clicks
@@ -257,7 +261,9 @@ export function useLocalhostUrlClickHandler() {
      */
     async function openLocalhostUrl(element: Element, port: number, protocol: string, path?: string): Promise<boolean> {
         if (urlOpening.value) return true
-        if (sshInfo.value?.enabled === false) {
+        // Refuse only when neither wire can carry the forward. An h2-only
+        // install has no SSH listener but still forwards, so it must open.
+        if (portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value)) {
             toast.show(gt('chat.localhost.sshDisabled'), { icon: 'ℹ️', type: 'info' })
             return false
         }

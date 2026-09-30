@@ -9,7 +9,9 @@ import {
   migratePasswords, getServersForRenderer, saveServerName,
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
-  getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel } from './tunnel'
+  getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
+  getTransportPreference, getActiveTransport } from './tunnel'
+import type { TransportPreference } from './transport'
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
   showSplashFor, dismissSplash, cancelSplash,
@@ -121,6 +123,10 @@ export function registerBridge(): void {
   ipcMain.handle('native:is-tunnel-connected', () => isTunnelConnected())
   ipcMain.handle('native:get-tunnel-error', () => getTunnelError())
   ipcMain.handle('native:get-tunnel-error-type', () => getTunnelErrorType())
+  ipcMain.handle('native:get-tunnel-transport', () => getTransportPreference())
+  // Which transport actually carried the last successful connect — distinct
+  // from the configured preference, and what the panel shows to the user.
+  ipcMain.handle('native:get-active-tunnel-transport', () => getActiveTransport())
   ipcMain.handle('native:add-forwarded-port', (_e, l: number, t: number, h: string) => addForwardedPort(l, t, h))
   ipcMain.handle('native:remove-forwarded-port', (_e, l: number) => rmFwd(l))
   ipcMain.handle('native:add-reverse-forwarded-port', (_e, s: number, t: number, h: string) => addReverseForwardedPort(s, t, h))

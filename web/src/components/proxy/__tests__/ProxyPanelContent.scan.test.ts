@@ -52,6 +52,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     tunnelChecking: ref(false),
     tunnelError: ref(''),
     tunnelErrorType: ref(''),
+    activeTransport: ref(''),
     connectingPorts: ref(new Set()),
     localReachable: ref(new Map()),
     scanning: scanState.scanning,
@@ -84,9 +85,13 @@ vi.mock('@/composables/usePlatformDetect.ts', () => ({
   isLinuxDesktopUA: false,
 }))
 
-vi.mock('@/utils/portForwardUtils.ts', () => ({
-  sshInstallHint: () => null,
-}))
+vi.mock('@/utils/portForwardUtils.ts', async () => {
+  // Keep the REAL portForwardUnavailable: the panel's banner gate now uses it,
+  // and the banner tests must exercise the shipped predicate rather than a
+  // stub that could silently disagree with it.
+  const actual = await vi.importActual<typeof import('@/utils/portForwardUtils.ts')>('@/utils/portForwardUtils.ts')
+  return { sshInstallHint: () => null, portForwardUnavailable: actual.portForwardUnavailable }
+})
 
 vi.mock('lucide-vue-next', () => {
   const stub = (name: string) => ({ name, template: `<span class="${name}" />` })

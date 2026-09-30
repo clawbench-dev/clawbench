@@ -17,10 +17,17 @@
     <div class="proxy-panel">
       <!-- App mode: tunnel status banners -->
       <template v-if="isAppMode">
+        <!-- Current transport (ssh / h2 / auto). Hidden when the host cannot
+             report one (older Android/Electron bridge) rather than guessing. -->
+        <div v-if="transportLabel" class="tunnel-transport">
+          <span class="tunnel-transport-key">{{ t('proxy.transportLabel') }}</span>
+          <span class="tunnel-transport-value">{{ transportLabel }}</span>
+        </div>
+
         <div v-if="tunnelStatus === 'disconnected'" class="tunnel-banner error">
           <XCircle :size="16" />
           <div class="tunnel-banner-content">
-            <span class="tunnel-banner-title">{{ t('proxy.tunnelDisconnected') }}</span>
+            <span class="tunnel-banner-title">{{ t('proxy.tunnelDisconnected', { transport: transportSuffix }) }}</span>
             <span class="tunnel-banner-detail">{{ tunnelErrorDetail }}</span>
           </div>
           <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
@@ -29,7 +36,7 @@
           <AlertTriangle :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-title">{{ t('proxy.portsNoResponse') }}</span>
-            <span class="tunnel-banner-detail">{{ t('proxy.tunnelConnectedButNoResponse') }}</span>
+            <span class="tunnel-banner-detail">{{ t('proxy.tunnelConnectedButNoResponse', { transport: transportSuffix }) }}</span>
           </div>
           <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
@@ -41,7 +48,7 @@
         <div v-if="isAndroidApp && tunnelStatus === 'ok'" class="tunnel-banner tip">
           <Info :size="16" />
           <div class="tunnel-banner-content">
-            <span class="tunnel-banner-detail">{{ t('proxy.backgroundTip') }}</span>
+            <span class="tunnel-banner-detail">{{ t('proxy.backgroundTip', { transport: transportSuffix }) }}</span>
           </div>
         </div>
       </template>
@@ -106,23 +113,11 @@
               />
             </div>
             <div v-if="sshInfo.fingerprint" class="tunnel-guide-fingerprint">
-              <span class="fingerprint-label">Fingerprint:</span>
+              <span class="fingerprint-label">{{ t('proxy.fingerprintLabel') }}</span>
               <span class="fingerprint-value">{{ sshInfo.fingerprint }}</span>
             </div>
           </template>
           <div v-else class="tunnel-guide-intro">{{ t('proxy.tunnelNoCommand') }}</div>
-        </div>
-      </div>
-
-      <!-- Server-side SSH not enabled. Shown to the browser AND the Electron
-           shell (both depend on the server's SSH config, and when it is off
-           checkTunnelHealth() bails out early with status 'unknown', so this is
-           the only thing that explains why nothing works). Hidden on Android,
-           whose own native tunnel banners cover the same ground. -->
-      <div v-if="!isAndroidApp && sshInfo && !sshInfo.enabled" class="tunnel-banner warning">
-        <AlertTriangle :size="16" />
-        <div class="tunnel-banner-content">
-          <span class="tunnel-banner-detail">{{ t('proxy.tunnelNoSsh') }}</span>
         </div>
       </div>
 
@@ -346,13 +341,32 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 // `isAppMode` is true for BOTH native hosts (it is just isNativeApp()), so any
 // banner whose copy is Android-specific must additionally exclude the Electron
 // desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.
 const { isDesktopApp } = useAppMode()
 const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 const toast = useToast()
+
+// Human label for the transport currently carrying the tunnel. '' when the
+// host cannot report it (optional bridge methods absent on Android / older
+// Electron), so the row is hidden instead of showing a made-up value.
+const transportLabel = computed(() => {
+  switch (activeTransport.value) {
+    case 'ssh': return t('proxy.transportSsh')
+    case 'h2': return t('proxy.transportH2')
+    case 'both': return t('proxy.transportAuto')
+    default: return ''
+  }
+})
+
+// Parenthesized annotation appended to the status banners/toasts once a single
+// wire is known (e.g. `隧道未连接（SSH）`). '' when unknown or 'both', so the
+// wording stays neutral rather than guessing. Wrapped in a computed so the
+// locale is tracked reactively — the composable's function reads the global
+// translator and would not re-run on a language switch.
+const transportSuffix = computed(() => transportAnnotation())
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
 const scanDrawer = useTabDrawer('proxy')
@@ -492,11 +506,11 @@ async function handleRetryTunnel() {
     return
   }
   if (tunnelStatus.value === 'ok') {
-    toast.show(t('proxy.toast.tunnelRecovered'), { icon: '🔗', type: 'success' })
+    toast.show(t('proxy.toast.tunnelRecovered', { transport: transportSuffix.value }), { icon: '🔗', type: 'success' })
   } else if (tunnelStatus.value === 'degraded' && prevStatus === 'disconnected') {
-    toast.show(t('proxy.toast.tunnelConnectedNoResponse'), { icon: 'ℹ️', type: 'info' })
+    toast.show(t('proxy.toast.tunnelConnectedNoResponse', { transport: transportSuffix.value }), { icon: 'ℹ️', type: 'info' })
   } else if (tunnelStatus.value === 'disconnected') {
-    toast.show(t('proxy.toast.tunnelStillDisconnected'), { icon: '🚫', type: 'error' })
+    toast.show(t('proxy.toast.tunnelStillDisconnected', { transport: transportSuffix.value }), { icon: '🚫', type: 'error' })
   } else if (tunnelStatus.value === 'degraded') {
     toast.show(t('proxy.toast.portsStillNoResponse'), { icon: '🚫', type: 'error' })
   }
@@ -612,6 +626,24 @@ async function handleRetryTunnel() {
 
 .create-btn:active {
   transform: scale(0.9);
+}
+
+/* Current-transport row (app mode) */
+.tunnel-transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+}
+
+.tunnel-transport-key {
+  color: var(--text-muted, #999);
+}
+
+.tunnel-transport-value {
+  color: var(--text-secondary, #666);
+  font-weight: var(--font-weight-semibold);
 }
 
 /* Tunnel status banner */

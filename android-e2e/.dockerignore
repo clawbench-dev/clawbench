@@ -1,0 +1,10 @@
+# .dockerignore for the android-e2e build context.
+# Keeps the (large) emulator image build from re-uploading junk, and keeps the
+# staged assets directory meaningful (it is created by prepare-assets.sh).
+node_modules
+artifacts
+*.log
+.git
+# Keep assets/ and scripts/ — both are COPYed into images.
+!assets
+!scripts

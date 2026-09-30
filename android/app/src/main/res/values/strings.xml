@@ -92,11 +92,13 @@
     <string name="apk_download_failed">APK download failed. Check your network and try again.</string>
     <string name="apk_install_failed">Downloaded APK could not be opened for installation.</string>
     <!-- Background service notifications -->
-    <string name="ssh_notification_reconnecting">SSH tunnel disconnected, reconnecting…</string>
+    <string name="ssh_notification_reconnecting">Tunnel disconnected, reconnecting…</string>
     <string name="ssh_notification_recovering">SSH tunnel reconnected</string>
-    <string name="notif_ssh_reconnecting_attempt">SSH tunnel disconnected, reconnecting (attempt %1$d)…</string>
+    <!-- Fires while the transport is live, so the kind is known: h2 vs SSH. -->
+    <string name="h2_notification_recovering">HTTP/2 tunnel reconnected</string>
+    <string name="notif_ssh_reconnecting_attempt">Tunnel disconnected, reconnecting (attempt %1$d)…</string>
     <string name="notif_channel_bg_service">Background connection service</string>
-    <string name="notif_channel_bg_service_desc">SSH port forwarding and background event listening</string>
+    <string name="notif_channel_bg_service_desc">Port forwarding and background event listening</string>
     <string name="notif_channel_ai_events">AI event notifications</string>
     <string name="notif_channel_ai_events_desc">AI session and task completion notifications</string>
     <string name="notif_channel_live_update">Session status</string>

@@ -1,6 +1,6 @@
 # Android 集成
 
-Android 集成让 ClawBench 在手机上像一个原生 App 一样运行——WebView 承载前端界面，原生层提供后台服务、SSH 端口映射、JS Bridge 和统一日志通道。App 进入后台时通过 BackgroundService 维持 WebSocket 连接和 SSH 隧道活跃，必要时回退到 WorkManager 拉取错过的事件。
+Android 集成让 ClawBench 在手机上像一个原生 App 一样运行——WebView 承载前端界面，原生层提供后台服务、端口映射（SSH 隧道或 h2 流隧道）、JS Bridge 和统一日志通道。App 进入后台时通过 BackgroundService 维持 WebSocket 连接和端口映射隧道活跃，必要时回退到 WorkManager 拉取错过的事件。
 
 ## 流程图
 
@@ -11,7 +11,7 @@ flowchart TD
     A[MainActivity WebView] --> B[前端 Vue App]
     B <--> C[JS Bridge<br/>AndroidNative AndroidBridge]
     C <--> D[原生层]
-    D --> E[BackgroundService<br/>WS + SSH 维持]
+    D --> E[BackgroundService<br/>WS + 端口映射维持]
     D --> F[PendingEventsWorker<br/>WS 不可达时回退]
     D --> G[BootCompletedReceiver<br/>开机自启]
     D --> I[硬件返回键<br/>统一返回状态机]
@@ -90,7 +90,7 @@ flowchart LR
 - **WebView 容器**：Android WebView 承载前端 Vue App，通过 `AndroidNative` JS Bridge 暴露原生能力。Web 和原生之间通过 Bridge 双向通信
 - **启动 splash 兜底**：启动 splash 的正常关闭路径是 JS 侧初始化完成后调 `dismissSplash()`，但"JS 初始化失败"恰恰会让这一步永不发生——原生若只等回调，用户就永久停在启动页（issue #449）。因此原生侧在 `onPageFinished` 时同时布防一个 15 秒 fail-safe 定时器：无论 JS 是否活着，超时即撤掉 splash 露出 WebView（此时页面可能报错，但至少可交互、可看日志）。JS 侧初始化统一走 `guardStartupWithSplash()` 包裹——单出口 try/catch/finally，异常不向上抛（避免变成未处理的 rejection 再阻断后续初始化），先置就绪再关 splash
 - **统一日志 AppLog**：所有 Android Java/Kotlin 代码**必须**使用 `AppLog.d/i/w/e()` 替代原始 `android.util.Log`（仅 `AppLog.java` 自身和测试代码允许裸 `android.util.Log`）。`AppLog` 同时写入 logcat 并 POST `/api/client-log`，服务端汇入统一 `client.log`（`[android]` 标记）；Web 前端同样使用 `/api/client-log`（`[js]` 标记）
-- **BackgroundService（后台服务）**：管理 SSH 端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知
+- **BackgroundService（后台服务）**：管理端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知。端口映射有两条传输：**SSH 隧道**（默认）与 **h2 流隧道**（实验性，走主端口 20000），由**本地开关** `tunnel_transport_h2_enabled` 选择——Android **不消费服务端 `port_forward.transport` 配置**（该配置已被服务端钉死为 `both`，仅剩 web 端健康检查门控一个消费者）
   - 关键 API：`setNativePushEnabled(boolean)`（总开关）、`getTrustAllSSLContext()`（给 PendingEventsWorker 共享 TLS）、`postEventNotificationFromWorker(ctx, eventType, data)`（跨进程触发通知）
 - **PendingEventsWorker**：WS 不可达时由 WorkManager 周期调度，通过 HTTP `GET /api/ai/events/pending?after=...` 拉取漏发事件，作为离线通知回退
 - **BootCompletedReceiver**：设备开机后恢复 BackgroundService + 调度 PendingEventsWorker
@@ -98,7 +98,7 @@ flowchart LR
 - **SharedCacheUtils**：跨进程共享缓存
 - **ClawBenchApp**：Application 类，初始化全局状态
 - **BrowserActivity**：运行在独立进程中的浏览器 WebView，提供 URL 栏浏览能力，与承载 ClawBench 主界面的 `MainActivity` 分离
-- **SSH 端口映射**：原生层建立 SSH 连接并维持端口映射，前端通过 `usePortForward` composable 控制
+- **端口映射**：原生层建立隧道连接并维持端口映射，前端通过 `usePortForward` composable 控制。传输有 SSH 隧道（默认）与 h2 流隧道两种，由本地开关选择，不消费服务端 `port_forward.transport`
 - **硬件返回键代理**：Android `onBackPressed` 通过 `evaluateJavascript` 派发 `clawbench-back-press` 事件并**同步**读回 `window.__clawbenchBackHandled`——JS 层判定「是否消费此按」须在同一 tick 内完成（`useAndroidBackPress` 桥接），导航本身异步执行。状态机裁决见[统一返回与跨界面导航](unified-back-navigation.md)。无人消费时按双击退出协议放行：第一按提示"再按一次退出"（`__clawbenchBackHandled=true` 防退出），2 秒窗口内第二按放行原生退出。全屏视频、登录页与 WebView 断连场景在原生侧直接处理，不走 JS 委托
 - **前台/恢复信号桥**：`onPause` 调 `window.__setAppForeground(false)`、`onResume` 调 `window.__clawbenchAppResume()`（均为 `evaluateJavascript` 注入的全局函数，非 `@JavascriptInterface` 方法；前端 `useAppForeground` **无条件**安装它们）。两者语义不同且都必须有：`__setAppForeground` 只报告前台**状态**，在状态未跳变时是 no-op；`__clawbenchAppResume` 是**无条件**的恢复信号，驱动当前会话重同步。之所以不能只靠状态跳变——WebView 在暂停期间被冻结，`onPause` 的 JS 调用可能整个丢失，此时状态仍是 `true`、跳变永不发生，重同步会被静默跳过（「恢复不刷新、切走再切回才好」的根因）。这两个全局**必须由前端创建**：宿主只负责调用（且调用侧也带 `typeof === 'function'` 守卫），若前端也只在"已存在时才安装"，双方互等即形成死锁、桥永远不生效
 - **自动登录**：Android 通过 `AndroidNative.getPassword()` Bridge 获取密码自动登录，配合 `setSSHPassword(savedPwd)` 设置 SSH 密码
@@ -125,6 +125,10 @@ flowchart LR
 | `getPendingNavigation()` | 获取挂起导航（启动恢复） |
 | `downloadBlob(name, base64)` | 保存 Blob 到本地 |
 | `getServerList()` / `saveServer()` / `removeServer()` | 持久化多服务器列表与凭据 |
+| `getTunnelTransportH2Enabled()` | 读取本地 h2 开关偏好（`tunnel_transport_h2_enabled`，默认 false=SSH）；旧宿主缺此方法时前端隐藏该设置项 |
+| `setTunnelTransportH2Enabled(enabled)` | 写入本地 h2 开关偏好（仅写偏好，下次重连生效） |
+| `getTunnelTransport()` | 返回当前传输偏好：开关开启为 `h2`，否则 `ssh`（展示回退值） |
+| `getActiveTunnelTransport()` | 返回**当前生效**的传输：有 live h2 会话时为 `h2`，否则为空串（前端据此回退到 `getTunnelTransport()`） |
 | `setKeepScreenOn(boolean)` | 配合 Web Wake Lock 控制原生屏幕常亮 |
 | `getTheme()` / `setTheme(themeId)` | 读取/设置完整主题 ID（如 `nord`、`github-dark`），持久化到 SharedPreferences；`applyThemeColors()` 将各主题映射到原生状态栏、导航栏和 splash 覆盖层颜色 |
 
@@ -134,7 +138,7 @@ flowchart LR
 |----|------|
 | `MainActivity` | WebView 容器 + `@JavascriptInterface` 全部 Bridge 方法注册 |
 | `BrowserActivity` | 独立进程浏览器 WebView + URL 栏 |
-| `BackgroundService` | 后台保活 + SSH 隧道 + WS 心跳 + 调度 PendingEventsWorker |
+| `BackgroundService` | 后台保活 + 端口映射（SSH 隧道或 h2 流隧道，由本地开关选择，默认 SSH）+ WS 心跳 + 调度 PendingEventsWorker |
 | `PendingEventsWorker` | WorkManager fallback，HTTP 拉 `/api/ai/events/pending` |
 | `BootCompletedReceiver` | 开机自启恢复 |
 | `AppLog` | `d/i/w/e()` 统一日志（logcat + `/api/client-log`，服务端汇入 `client.log` 标 `[android]`） |
@@ -150,7 +154,7 @@ flowchart LR
 ### 设计要点
 
 - **启动 splash 必须原生兜底，不能只等 JS**：splash 的关闭权在 JS 手上，而它要遮住的恰恰是"JS 起不来"这种情形——只依赖回调等于让故障本身成为永久遮挡。原生侧独立布防超时是最小代价的解法：正常路径下 JS 先关、定时器取消；异常路径下超时接管。JS 侧则用单出口的 guard 包裹初始化，保证任何异常都走同一条"就绪 + 关 splash"路径，而不是抛出去变成第二轮故障
-- **后台服务是端口映射的前提**：没有 BackgroundService，Android 杀进程后 SSH 端口映射断开，已映射的端口全部不可达。后台服务保持 SSH 心跳，维持隧道活跃
+- **后台服务是端口映射的前提**：没有 BackgroundService，Android 杀进程后端口映射断开，已映射的端口全部不可达。后台服务保持隧道心跳，维持映射活跃。传输由本地开关选择（默认 SSH；开启 h2 后走主端口 20000 的 HTTP/2 流隧道），**不消费服务端 `port_forward.transport` 配置**
 - **悬浮窗与 Live Updates 共享事件通道与解析器**：悬浮窗不建立新连接，直接消费 BackgroundService 原生 WS 的 `session_update` / `chat_stream` 事件；Live Update 同样复用同一份 overview 快照，并委托给同一个 `computeStats` 解析器——省电、与 App 内状态天然一致，且两处展示永不出现数字打架。胶囊本身保持轻量（只做展示 + 展开面板），交互集中在展开后的会话面板上：按项目分组浏览各会话状态、一眼看到未读、点击行直达目标会话。overview 拉取有最小间隔节流（2s），避免展开时高频刷新
 - **空闲时隐藏而非常驻**：悬浮窗无任务、无未读时直接隐藏——空闲状态没有任何值得展示的信息，常驻一个空胶囊只会干扰桌面且让人误以为有内容。Live Updates 同样在无会话时移除状态栏通知，保持系统通知栏干净（两者在「无内容即不显示」上口径一致）
 - **Live Updates 是独立开关但共享数据**：Live Updates 不依赖悬浮窗开关——任一消费者存活就拉取 overview，各自的开关控制各自的通知生命周期。设置里独立开关（默认开），Bridge 提供权限检测与跳转，系统不支持实时更新时自动回退为普通常驻通知

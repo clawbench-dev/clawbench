@@ -26,6 +26,13 @@ import androidx.core.app.NotificationCompat;
 import com.jcraft.jsch.JSch;
 import com.jcraft.jsch.Session;
 
+import com.clawbench.app.tunnel.H2PortForwardTransport;
+import com.clawbench.app.tunnel.PortForwardTransport;
+import com.clawbench.app.tunnel.SshPortForwardTransport;
+import com.clawbench.app.tunnel.TransportKind;
+import com.clawbench.app.tunnel.TunnelStream;
+import com.clawbench.app.tunnel.TunnelStreams;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
 
@@ -100,6 +107,12 @@ public class BackgroundService extends Service {
     private static final String KEY_NATIVE_PUSH_ENABLED = "native_push_enabled";
     private static final String KEY_FLOATING_WINDOW_ENABLED = "floating_window_enabled";
     private static final String KEY_LIVE_UPDATE_ENABLED = "live_update_enabled";
+    /**
+     * Local opt-in for the experimental h2 port-forward transport. Default
+     * false = SSH, so an install that never opts in behaves exactly as it did
+     * before the h2 tunnel existed.
+     */
+    private static final String KEY_TUNNEL_TRANSPORT_H2 = "tunnel_transport_h2_enabled";
 
     // Reconnect parameters: exponential backoff delays in milliseconds
     private static final int[] RECONNECT_DELAYS_MS = {5000, 10000, 30000, 60000, 120000};
@@ -192,6 +205,34 @@ public class BackgroundService extends Service {
 
     // Background thread for all network I/O (SSH connect, HTTP fetch, port forward)
     private final ExecutorService networkExecutor = Executors.newSingleThreadExecutor();
+
+    // --- Port-forward transport selection (h2 tunnel, design doc §8) ---
+
+    /**
+     * The transport that owns the live forwards. {@code null} until a connect
+     * succeeds; under SSH the JSch session remains the source of truth, and this
+     * reference is only the adapter the port operations route through.
+     */
+    private volatile PortForwardTransport activeTransport;
+
+    /** Lazily built; wraps {@code sshSession} without owning it. */
+    private volatile PortForwardTransport sshTransport;
+
+    /** Lazily built; {@code null} unless the h2 transport has been selected. */
+    private volatile H2PortForwardTransport h2PortForwardTransport;
+
+    /** Test seam for {@link #tunnelStream()}; {@code null} in production. */
+    private volatile TunnelStream tunnelStreamOverride;
+
+    /** Test seam for {@link #h2PortForwardTransport()}; {@code null} in production. */
+    private volatile PortForwardTransport h2TransportOverride;
+
+    /**
+     * The h2 wire kind (TLS vs h2c) that worked last, remembered so a plaintext
+     * deployment does not pay a TLS rejection on every reconnect. Process state,
+     * not persisted.
+     */
+    private volatile TransportKind lastH2Kind;
 
     // Lazily initialized SSL context that trusts all certs (for self-signed ClawBench servers)
     private static SSLContext trustAllSSLContext;
@@ -389,6 +430,40 @@ public class BackgroundService extends Service {
     }
 
     /**
+     * Check whether the experimental h2 port-forward transport is enabled.
+     *
+     * <p>This is the single source of truth for the transport: the value is
+     * persisted, so a cold start / {@code START_STICKY} restart keeps it, and
+     * {@link #ensureConnection()} reads it at use time. Defaults to false
+     * (SSH) — an install that never opts in is byte-for-byte the pre-tunnel
+     * behaviour.
+     */
+    public static boolean isTunnelTransportH2Enabled(Context context) {
+        if (context == null) return false;
+        SharedPreferences prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE);
+        // A stubbed/misbehaving context can hand back null; the safe answer is
+        // the pre-tunnel default (SSH), never a crash on a hot connect path.
+        if (prefs == null) return false;
+        return prefs.getBoolean(KEY_TUNNEL_TRANSPORT_H2, false);
+    }
+
+    /**
+     * Persist the h2 transport toggle.
+     *
+     * <p>Only writes the preference; the switch takes effect on the next
+     * reconnect ({@code forceReconnectAsync}), mirroring the desktop client's
+     * "takes effect on reconnect" behaviour. Deliberately does NOT tear down
+     * the live transport.
+     */
+    public static void setTunnelTransportH2Enabled(Context context, boolean enabled) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(KEY_TUNNEL_TRANSPORT_H2, enabled)
+                .apply();
+        AppLog.i(TAG, "Tunnel: h2 transport enabled=" + enabled);
+    }
+
+    /**
      * Check whether the Android 16 Live Updates (promoted ongoing notification)
      * feature is enabled. Defaults to true — it is a core background status
      * surface, unlike the opt-in floating window.
@@ -512,8 +587,7 @@ public class BackgroundService extends Service {
         // a health-check ping — worst case we return a stale value that gets
         // corrected on the next poll.
         if (!isRunning || instance == null) return false;
-        Session session = instance.sshSession; // volatile read — single reference
-        boolean connected = session != null && session.isConnected();
+        boolean connected = instance.isSelectedTransportConnected();
         if (connected) {
             lastError = null;
         }
@@ -782,21 +856,23 @@ public class BackgroundService extends Service {
                     if (nativeWsActive) {
                         startWsPingLoop();
                     }
-                    // Resume SSH: reconnect if suspended and ports need forwarding.
-                    // Guard check runs inside networkExecutor to avoid reading
-                    // sshScreenSuspended from the main thread (review C1).
+                    // Resume the tunnel: reconnect if suspended and ports need
+                    // forwarding. The transport is picked by ensureConnection()
+                    // from the current preference, so this path serves SSH and
+                    // h2 alike. Guard check runs inside networkExecutor to avoid
+                    // reading sshScreenSuspended from the main thread (review C1).
                     if (!hasNoPorts() && !intentionalDisconnect) {
-                        AppLog.i(TAG, "SSH: screen on, scheduling SSH resume (ports=" + forwardedPorts.keySet() + ")");
+                        AppLog.i(TAG, "Tunnel: screen on, scheduling resume (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
                             if (sshScreenSuspended && !intentionalDisconnect) {
                                 sshScreenSuspended = false;
                                 try {
-                                    AppLog.i(TAG, "SSH: screen on, resuming SSH tunnel");
+                                    AppLog.i(TAG, "Tunnel: screen on, resuming tunnel");
                                     ensureConnection();
                                     updateNotification(forwardedPorts.size(), null);
                                 } catch (Exception e) {
                                     lastError = e.getMessage();
-                                    AppLog.w(TAG, "SSH: failed to resume on screen on: " + e.getMessage());
+                                    AppLog.w(TAG, "Tunnel: failed to resume on screen on: " + e.getMessage());
                                 }
                             }
                         });
@@ -808,23 +884,21 @@ public class BackgroundService extends Service {
                     screenOffTime = System.currentTimeMillis();
                     // Schedule ramp-up steps to increase ping interval gradually
                     schedulePingRampUp();
-                    // Suspend SSH: disconnect tunnel to save battery.
+                    // Suspend the tunnel: disconnect to save battery.
                     // Guard check and disconnect run on networkExecutor for thread safety.
                     // Don't suspend if user intentionally disconnected (review I3).
+                    //
+                    // Both transports are suspended, exactly as SSH always was.
+                    // h2c is the same kind of long-lived TCP session over the same
+                    // radio, so leaving it connected would keep the WiFi/CPU
+                    // awake and defeat the policy. `sshScreenSuspended` gates the
+                    // reconnect monitor for whichever transport is selected (see
+                    // the monitor loop), so one flag still suffices.
                     if (!hasNoPorts() && !intentionalDisconnect) {
-                        AppLog.i(TAG, "SSH: screen off, scheduling SSH suspend (ports=" + forwardedPorts.keySet() + ")");
+                        AppLog.i(TAG, "Tunnel: screen off, scheduling suspend (ports=" + forwardedPorts.keySet() + ")");
                         networkExecutor.execute(() -> {
-                            if (sshSession != null && sshSession.isConnected() && !intentionalDisconnect) {
-                                sshScreenSuspended = true;
-                                AppLog.i(TAG, "SSH: screen off, suspending SSH tunnel to save battery");
-                                stopConnectionMonitor();
-                                disconnectInternal();
-                                // NOTE: must call maybeRelease* AFTER disconnectInternal() because
-                                // it nulls sshSession, which makes maybeRelease* correctly
-                                // evaluate sshActive=false.
-                                maybeReleaseWifiLock();
-                                maybeReleaseWakeLock();
-                                updateNotification(forwardedPorts.size(), null);
+                            if (isTunnelTransportActive() && !intentionalDisconnect) {
+                                suspendTunnelForScreenOff();
                             }
                         });
                     }
@@ -859,6 +933,32 @@ public class BackgroundService extends Service {
         // mid-flight with InterruptedIOException.
         // Instead, onStartCommand will stopSelf(startId) to cancel any pending
         // stop, and addPortForward will stopSelf() if it fails with no ports left.
+    }
+
+    /**
+     * Suspend the tunnel because the screen turned off.
+     *
+     * <p>Both transports are suspended, exactly as SSH always was: h2c is the
+     * same kind of long-lived TCP session over the same radio, so leaving it
+     * connected would keep the WiFi/CPU awake and defeat the battery policy.
+     * {@code sshScreenSuspended} gates the reconnect monitor for whichever
+     * transport is selected, so one flag still suffices.
+     *
+     * <p>MUST run on {@code networkExecutor} (it performs network teardown).
+     */
+    void suspendTunnelForScreenOff() {
+        sshScreenSuspended = true;
+        AppLog.i(TAG, "Tunnel: screen off, suspending tunnel to save battery");
+        stopConnectionMonitor();
+        // Closes every local listener, cancels the h2 control stream and drops
+        // the in-flight streams, as well as the SSH session.
+        disconnectInternal();
+        // NOTE: must call maybeRelease* AFTER disconnectInternal() because it
+        // tears the session down, which makes maybeRelease* correctly evaluate
+        // the transport as inactive.
+        maybeReleaseWifiLock();
+        maybeReleaseWakeLock();
+        updateNotification(forwardedPorts.size(), null);
     }
 
     @Override
@@ -1246,8 +1346,11 @@ public class BackgroundService extends Service {
                 // Skip reconnect while SSH is suspended (screen off)
                 if (sshScreenSuspended) continue;
 
-                // Check if session is dead
-                if (sshSession == null || !sshSession.isConnected()) {
+                // Check if the selected transport's session is dead. The
+                // preference is read per iteration because it can change while
+                // the monitor runs; under h2 `sshSession` is always null, so
+                // testing it alone would reconnect forever.
+                if (!isSelectedTransportConnected()) {
                     if (hasNoPorts()) {
                         // No ports to maintain — don't bother reconnecting
                         AppLog.d(TAG, "SSH: session disconnected but no ports to forward, skipping reconnect");
@@ -1287,7 +1390,7 @@ public class BackgroundService extends Service {
                             isReconnecting = false;
                             reconnectAttempt = 0;
                             updateNotification(forwardedPorts.size(),
-                                    getString(R.string.ssh_notification_recovering));
+                                    getString(recoveringNotificationResId()));
                             // Clear the "recovered" status after 3 seconds
                             try {
                                 Thread.sleep(3000);
@@ -1370,17 +1473,45 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Ensure SSH connection is established. Connects if not already connected.
-     * On successful connection, starts the connection monitor and acquires WifiLock.
-     * MUST be called from a background thread (network I/O).
+     * Ensure the selected port-forward transport is established, and replay the
+     * desired forwards onto it. MUST be called from a background thread.
+     *
+     * <p>The selection is the local {@code tunnel_transport_h2_enabled}
+     * preference ({@link #isTunnelTransportH2Enabled}), defaulting to SSH so an
+     * install that never opted in keeps its old behavior. The preference is read
+     * here rather than cached in a field, so a cold start / restart naturally
+     * picks up the persisted value.
      */
-    private synchronized void ensureConnection() throws Exception {
+    synchronized void ensureConnection() throws Exception {
+        // The preference change takes effect on the next (re)connect, and that
+        // reconnect must not leave the *previous* transport's session/listeners
+        // alive: both would then forward the same ports at once. This is the
+        // monitor's auto-reconnect path (it calls ensureConnection() directly,
+        // without disconnectInternal()), so the teardown has to live here too —
+        // forceReconnectAsync() is safe only because it happens to call
+        // disconnectInternal() first.
+        if (isTunnelTransportH2Enabled(this)) {
+            teardownSshIfAny();
+            ensureH2Connection();
+            return;
+        }
+        teardownH2IfAny();
+        ensureSshConnection();
+    }
+
+    /**
+     * Establish (or reuse) the SSH session and replay the forwards. Split out of
+     * {@link #ensureConnection} so the transport dispatcher above can choose it;
+     * the body is the pre-tunnel implementation, unchanged.
+     */
+    private void ensureSshConnection() throws Exception {
         // Clear suspended flag — if something is explicitly requesting a connection
         // (addPortForward, screen-on resume), the tunnel is needed.
         sshScreenSuspended = false;
 
         if (sshSession != null && sshSession.isConnected()) {
             AppLog.d(TAG, "SSH: ensureConnection: session already alive, skipping");
+            activeTransport = sshTransport();
             return;
         }
 
@@ -1432,6 +1563,9 @@ public class BackgroundService extends Service {
 
         // Connection succeeded — clear any previous error
         lastError = null;
+        // Route the port operations through the SSH adapter from here on. The
+        // session itself stays owned by this class (see SshPortForwardTransport).
+        activeTransport = sshTransport();
 
         AppLog.i(TAG, "SSH: connected to " + serverHost + ":" + sshPort);
 
@@ -1466,16 +1600,9 @@ public class BackgroundService extends Service {
                 sshTargetPort = info.targetPort;
             }
             try {
-                sshSession.setPortForwardingL("127.0.0.1", localPort, sshTargetHost, sshTargetPort);
+                activeTransport.addLocal(localPort, sshTargetPort, sshTargetHost);
                 reEstablished++;
                 AppLog.i(TAG, "SSH: re-established port forward " + localPort + " -> " + sshTargetHost + ":" + sshTargetPort);
-            } catch (com.jcraft.jsch.JSchException e) {
-                if (e.getMessage() != null && e.getMessage().contains("already registered")) {
-                    AppLog.d(TAG, "SSH: port forward " + localPort + " already registered, skipping");
-                    reEstablished++;
-                } else {
-                    AppLog.e(TAG, "SSH: failed to re-establish port forward " + localPort, e);
-                }
             } catch (Exception e) {
                 AppLog.e(TAG, "SSH: failed to re-establish port forward " + localPort, e);
             }
@@ -1492,16 +1619,9 @@ public class BackgroundService extends Service {
             PortInfo info = entry.getValue();
             String targetHost = info.host.isEmpty() ? "127.0.0.1" : info.host;
             try {
-                sshSession.setPortForwardingR("127.0.0.1", serverPort, targetHost, info.targetPort);
+                activeTransport.addReverse(serverPort, info.targetPort, targetHost);
                 reverseReEstablished++;
                 AppLog.i(TAG, "SSH: re-established reverse forward " + serverPort + " -> " + targetHost + ":" + info.targetPort);
-            } catch (com.jcraft.jsch.JSchException e) {
-                if (e.getMessage() != null && e.getMessage().contains("already registered")) {
-                    AppLog.d(TAG, "SSH: reverse forward " + serverPort + " already registered, skipping");
-                    reverseReEstablished++;
-                } else {
-                    AppLog.e(TAG, "SSH: failed to re-establish reverse forward " + serverPort, e);
-                }
             } catch (Exception e) {
                 AppLog.e(TAG, "SSH: failed to re-establish reverse forward " + serverPort, e);
             }
@@ -1514,6 +1634,344 @@ public class BackgroundService extends Service {
 
         // Start connection monitor to detect future disconnects
         startConnectionMonitor();
+    }
+
+    /**
+     * Tear down a live JSch session, if any, so switching to h2 cannot leave
+     * both transports forwarding at once.
+     *
+     * <p>Idempotent and scoped: it touches only the SSH half (unlike
+     * {@link #disconnectInternal()}, which closes h2 too). A no-op when no
+     * session exists, so it is safe to call unconditionally before
+     * {@code ensureH2Connection()}.
+     */
+    private void teardownSshIfAny() {
+        if (sshSession == null) return;
+        // Drop the -L/-R registrations before disconnecting: JSch's session
+        // teardown does not always remove the server-side forwardings, and a
+        // lingering setPortForwardingL listener on the server is exactly the
+        // "two tunnels alive" bug this method exists to prevent.
+        try {
+            for (int port : new HashSet<>(forwardedPorts.keySet())) {
+                try {
+                    sshSession.delPortForwardingL(port);
+                } catch (Exception ignored) {}
+            }
+            for (int serverPort : new HashSet<>(reversePorts.keySet())) {
+                try {
+                    sshSession.delPortForwardingR(serverPort);
+                } catch (Exception ignored) {}
+            }
+            sshSession.disconnect();
+            AppLog.i(TAG, "SSH: torn down on transport switch (forwarded=" + forwardedPorts.keySet()
+                    + ", reverse=" + reversePorts.keySet() + ")");
+        } catch (Exception e) {
+            AppLog.e(TAG, "SSH: error tearing down session on transport switch", e);
+        }
+        sshSession = null;
+        // The SSH adapter wraps sshSession and holds no resources of its own, so
+        // it is only dropped when it was the live transport.
+        //
+        // Comparing the field (rather than `instanceof SshPortForwardTransport`)
+        // is exact here: `sshTransport` is write-once — assigned only inside
+        // sshTransport() and never reset — and activeTransport is only ever set
+        // to that same instance, so "identity" and "is the SSH family" agree in
+        // every reachable state. The lone degenerate case, both fields null,
+        // re-nulls a null and is a no-op. The family check would add no safety
+        // while coupling this to the concrete adapter class.
+        if (activeTransport == sshTransport) {
+            activeTransport = null;
+        }
+    }
+
+    /**
+     * Close the h2 transport, if one was ever built, so switching to SSH cannot
+     * leave its local {@code ServerSocket} listeners bound.
+     *
+     * <p>Idempotent and scoped to the h2 half. A lingering h2 listener would
+     * make the SSH side's {@code setPortForwardingL} fail to bind the same
+     * port, so the mapping would be dropped from {@code forwardedPorts} while
+     * the h2 listener kept forwarding it — the UI would claim the port was
+     * removed.
+     */
+    private void teardownH2IfAny() {
+        H2PortForwardTransport h2 = h2PortForwardTransport;
+        if (h2 == null) return;
+        // Mirror teardownSshIfAny: the close is best-effort and the field
+        // cleanup below must run even when it throws. Leaving the transport
+        // referenced (and activeTransport pointing at it) would strand the
+        // caller in a half-torn state: ensureConnection() would propagate the
+        // throw instead of reaching ensureSshConnection(), so the switch to SSH
+        // silently never happens. Today's H2PortForwardTransport.close() does
+        // not throw, but the SSH half already guarantees this, and the two
+        // helpers should be symmetric.
+        try {
+            h2.close();
+        } catch (Exception e) {
+            AppLog.e(TAG, "H2: error closing transport on transport switch", e);
+        }
+        h2PortForwardTransport = null;
+        if (activeTransport == h2) {
+            activeTransport = null;
+        }
+        AppLog.i(TAG, "H2: torn down on transport switch");
+    }
+
+    /**
+     * Establish (or reuse) the h2 tunnel session and replay the forwards onto
+     * it. MUST be called from a background thread.
+     *
+     * <p>h2 owns the local listeners, so unlike SSH a reconnect does not need
+     * the -L forwards re-requested from the server: {@code addLocal} re-binds
+     * any listener the previous session lost. A listener that survived (it is
+     * independent of the h2 connection) is reused, which is why {@code addLocal}
+     * is idempotent.
+     *
+     * <p>Reverse forwards are re-bound on the control stream: the previous
+     * session's server-side listeners died with it, so every desired mapping
+     * has to be re-requested.
+     */
+    private void ensureH2Connection() throws Exception {
+        sshScreenSuspended = false;
+
+        TunnelStream tunnel = tunnelStream();
+        if (tunnel.isConnected()) {
+            AppLog.d(TAG, "H2: ensureConnection: session already alive, skipping");
+            activeTransport = h2Transport();
+            replayForwardedPortsOnActiveTransport();
+            replayReversePortsOnActiveTransport();
+            return;
+        }
+
+        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+        String serverUrl = prefs.getString(KEY_SERVER_URL, "");
+        if (serverUrl.isEmpty()) {
+            throw new Exception("Server URL not configured");
+        }
+
+        AppLog.i(TAG, "H2: ensureConnection: connecting to " + serverUrl);
+        TransportKind kind = tunnel.connect(serverUrl, lastH2Kind);
+        if (kind == null) {
+            String reason = tunnel.getLastError();
+            throw new Exception(reason == null || reason.isEmpty()
+                    ? "Failed to establish h2 tunnel" : reason);
+        }
+        lastH2Kind = kind;
+        lastError = null;
+        AppLog.i(TAG, "H2: connected via " + kind.wireName() + " to " + serverUrl);
+
+        acquireWifiLock();
+        acquireWakeLock();
+
+        activeTransport = h2Transport();
+        replayForwardedPortsOnActiveTransport();
+        replayReversePortsOnActiveTransport();
+
+        updateNotification(forwardedPorts.size() + reversePorts.size(), null);
+        startConnectionMonitor();
+    }
+
+    /**
+     * Re-bind every desired reverse forward on {@link #activeTransport}.
+     *
+     * <p>Mirrors the SSH replay: a reconnect drops the previous session's
+     * server-side listeners, so each mapping is requested again. Failures are
+     * logged, not fatal — one refused port must not cost the others, and the
+     * mapping stays in {@code reversePorts} so the next reconnect retries it.
+     */
+    private void replayReversePortsOnActiveTransport() {
+        int reEstablished = 0;
+        for (Map.Entry<Integer, PortInfo> entry : reversePorts.entrySet()) {
+            int serverPort = entry.getKey();
+            PortInfo info = entry.getValue();
+            String targetHost = info.host.isEmpty() ? "127.0.0.1" : info.host;
+            try {
+                activeTransport.addReverse(serverPort, info.targetPort, targetHost);
+                reEstablished++;
+                AppLog.i(TAG, "Tunnel: re-established reverse forward " + serverPort
+                        + " -> " + targetHost + ":" + info.targetPort);
+            } catch (Exception e) {
+                AppLog.e(TAG, "Tunnel: failed to re-establish reverse forward " + serverPort, e);
+            }
+        }
+        if (!reversePorts.isEmpty()) {
+            AppLog.i(TAG, "Tunnel: re-established " + reEstablished + "/" + reversePorts.size()
+                    + " reverse forwards");
+        }
+    }
+
+    /**
+     * Re-bind every desired local forward on {@link #activeTransport}. Shared by
+     * the SSH and h2 connect paths so the target-resolution rule (non-localhost
+     * targets route through the server-side reverse proxy) lives in exactly one
+     * place.
+     */
+    private void replayForwardedPortsOnActiveTransport() {
+        int reEstablished = 0;
+        for (Map.Entry<Integer, PortInfo> entry : forwardedPorts.entrySet()) {
+            int localPort = entry.getKey();
+            PortInfo info = entry.getValue();
+            try {
+                activeTransport.addLocal(localPort, resolveForwardTargetPort(localPort, info),
+                        resolveForwardTargetHost(info));
+                reEstablished++;
+            } catch (Exception e) {
+                AppLog.e(TAG, "Tunnel: failed to re-establish port forward " + localPort, e);
+            }
+        }
+        if (!forwardedPorts.isEmpty()) {
+            AppLog.i(TAG, "Tunnel: re-established " + reEstablished + "/" + forwardedPorts.size() + " port forwards");
+        }
+    }
+
+    /**
+     * Resolve a forward's server-side target host.
+     *
+     * <p>A non-localhost target is reached through the server-side reverse proxy
+     * listening on {@code 127.0.0.1:{localPort}}, which rewrites the Host header
+     * — the tunnel is TCP-level and cannot. Localhost targets go straight to
+     * {@code host}.
+     */
+    private String resolveForwardTargetHost(PortInfo info) {
+        if (info.isNonLocalhost()) return "127.0.0.1";
+        return info.host.isEmpty() ? "127.0.0.1" : info.host;
+    }
+
+    /** The port paired with {@link #resolveForwardTargetHost}. */
+    private int resolveForwardTargetPort(int localPort, PortInfo info) {
+        if (info.isNonLocalhost()) return localPort;
+        return info.targetPort;
+    }
+
+    /** The SSH adapter, wrapping the session this class owns. */
+    private PortForwardTransport sshTransport() {
+        PortForwardTransport current = sshTransport;
+        if (current == null) {
+            current = new SshPortForwardTransport(
+                    () -> sshSession,
+                    this::testLocalPort);
+            sshTransport = current;
+        }
+        return current;
+    }
+
+    /** The h2 adapter, holding the local listeners and their stream pumps. */
+    private H2PortForwardTransport h2PortForwardTransport() {
+        H2PortForwardTransport current = h2PortForwardTransport;
+        if (current == null) {
+            current = new H2PortForwardTransport(this::tunnelStream);
+            h2PortForwardTransport = current;
+        }
+        return current;
+    }
+
+    /**
+     * The h2 port-forward transport as the port operations see it.
+     *
+     * <p>Production returns the real adapter ({@link #h2PortForwardTransport()});
+     * a unit test can substitute a fake so the routing is observable without
+     * opening a real local {@code ServerSocket}.
+     */
+    private PortForwardTransport h2Transport() {
+        PortForwardTransport override = h2TransportOverride;
+        return override != null ? override : h2PortForwardTransport();
+    }
+
+    /**
+     * The {@link TunnelStream} the h2 adapter and the health checks use.
+     *
+     * <p>Delegates to the process-wide {@link TunnelStreams} singleton in
+     * production; overridable so a unit test can drive the h2 transport without
+     * a real h2 session (and without the shared client the singleton would
+     * build).
+     */
+    TunnelStream tunnelStream() {
+        TunnelStream override = tunnelStreamOverride;
+        return override != null ? override : TunnelStreams.get();
+    }
+
+    /**
+     * The transport the port operations should route through, creating the
+     * session if needed. Kept separate from {@link #ensureConnection} because
+     * {@code removePortForward} must NOT trigger a reconnect just to delete a
+     * mapping.
+     */
+    private PortForwardTransport transportForPortOps() {
+        PortForwardTransport current = activeTransport;
+        if (current != null) return current;
+        // No session is live yet. Which transport a port operation should be
+        // issued against is decided by the local preference, NOT by "SSH is the
+        // only one that can be live without activeTransport": under h2 the
+        // adapter still has to release listeners and unbind after a disconnect,
+        // and routing those through JSch would silently skip them.
+        return isTunnelTransportH2Enabled(this) ? h2Transport() : sshTransport();
+    }
+
+    /**
+     * The transport <em>family</em> carrying the live tunnel ({@code "h2"}), or
+     * {@code ""} when there is none.
+     *
+     * <p>This is deliberately not the wire kind. {@link TransportKind} only
+     * distinguishes {@code "tls"} from {@code "h2c"}, but both are h2, and the
+     * frontend's whitelist is {@code ['ssh', 'h2', 'both']} — reporting a raw
+     * wire name makes it fall back to the preference, so h2 could never be
+     * displayed. Normalising here keeps Android's value domain aligned with the
+     * desktop client's {@code getActiveTransport()} ({@code 'ssh' | 'h2'}).
+     *
+     * <p>An empty string means "no live tunnel", which the frontend relies on to
+     * fall back to {@link #getTunnelTransport()}; SSH never reaches this method
+     * with a live session because there is no SSH {@link TransportKind}.
+     *
+     * <p>Reads {@link TunnelStreams#peek()} rather than {@code get()} so a
+     * status query on an SSH install does not build an unused h2 transport.
+     */
+    public static String getActiveTunnelTransport() {
+        // Prefer the live instance's view (which may carry a test override),
+        // then fall back to the shared singleton without building it.
+        BackgroundService current = instance;
+        TunnelStream tunnel = current != null && current.tunnelStreamOverride != null
+                ? current.tunnelStreamOverride
+                : TunnelStreams.peek();
+        if (tunnel == null || !tunnel.isConnected()) return "";
+        TransportKind kind = tunnel.getKind();
+        if (kind == null) return "";
+        // TransportKind has no SSH value: TLS("tls") and H2C("h2c") are both h2
+        // wires, so the transport family is always "h2" here.
+        return "h2";
+    }
+
+    /**
+     * The "tunnel reconnected" notification string for the transport that just
+     * came back up.
+     *
+     * <p>Unlike the reconnect-progress strings, this one fires only after
+     * {@link #ensureConnection()} succeeded, so {@link #getActiveTunnelTransport()}
+     * can name the kind: a non-empty value is h2, an empty one is SSH (SSH has no
+     * wire {@link TransportKind}, so it never reports one). Extracted from the
+     * reconnect loop so the selection is unit-testable by resource id — the loop
+     * itself can only be exercised by driving the whole monitor.
+     */
+    @androidx.annotation.VisibleForTesting
+    static int recoveringNotificationResId() {
+        return getActiveTunnelTransport().isEmpty()
+                ? R.string.ssh_notification_recovering
+                : R.string.h2_notification_recovering;
+    }
+
+    /**
+     * True when the transport selected by the local
+     * {@code tunnel_transport_h2_enabled} preference has a live session.
+     *
+     * <p>The preference decides what "connected" means: under h2 there is no
+     * JSch session at all, so testing {@code sshSession} alone would report the
+     * tunnel down forever. Uses {@link TunnelStreams#peek()} so an SSH install
+     * never builds an unused h2 transport just to answer a health check.
+     */
+    private boolean isSelectedTransportConnected() {
+        if (isTunnelTransportH2Enabled(this)) {
+            return tunnelStream().isConnected();
+        }
+        return sshSession != null && sshSession.isConnected();
     }
 
     /**
@@ -1539,6 +1997,17 @@ public class BackgroundService extends Service {
             AppLog.w(TAG, "SSH: addPortForward skipped, service shutting down");
             return;
         }
+        // Validate before touching any state or the transport, mirroring
+        // addReversePortForward. Port 0 is rejected explicitly: the h2 path's
+        // ServerSocket.bind(0) *succeeds* on a random port, so the forward would
+        // report success while nobody knows which port it landed on and the
+        // listener would leak for the life of the process. Out-of-range values
+        // would otherwise reach bind() as an unchecked IllegalArgumentException.
+        if (localPort <= 0 || localPort > 65535 || targetPort <= 0 || targetPort > 65535) {
+            AppLog.w(TAG, "SSH: addPortForward invalid ports: local=" + localPort + ", target=" + targetPort);
+            notifyPortForwardResult(localPort, false);
+            return;
+        }
 
         boolean alreadyInSet = forwardedPorts.containsKey(localPort);
 
@@ -1549,10 +2018,10 @@ public class BackgroundService extends Service {
                 + ", forwardedPorts=" + forwardedPorts.keySet());
         AppLog.logMemory(this, TAG, "addPortForward");
 
-        if (alreadyInSet && sshSession != null && sshSession.isConnected()) {
-            // Port is tracked and SSH session is alive — verify the port is actually
-            // reachable before reporting success.
-            boolean reachable = testLocalPort(localPort);
+        if (alreadyInSet && transportForPortOps().isConnected()) {
+            // Port is tracked and the transport is alive — verify the port is
+            // actually reachable before reporting success.
+            boolean reachable = transportForPortOps().isLocalReachable(localPort);
             AppLog.i(TAG, "SSH: addPortForward fast-path: port " + localPort + " alreadyInSet, sessionAlive, reachable=" + reachable);
             if (reachable) {
                 notifyPortForwardResult(localPort, true);
@@ -1561,7 +2030,7 @@ public class BackgroundService extends Service {
             // Port not reachable — fall through to re-register.
             AppLog.w(TAG, "SSH: port " + localPort + " in set and session alive but NOT reachable, re-registering");
             try {
-                sshSession.delPortForwardingL(localPort);
+                transportForPortOps().removeLocal(localPort);
             } catch (Exception e) {
                 AppLog.d(TAG, "SSH: delPortForwardingL for " + localPort + " failed: " + e.getMessage());
             }
@@ -1580,7 +2049,7 @@ public class BackgroundService extends Service {
         try {
             ensureConnection();
 
-            // Determine SSH tunnel routing: for non-localhost targets, route through
+            // Determine tunnel routing: for non-localhost targets, route through
             // the server-side reverse proxy (which rewrites the Host header) instead
             // of connecting directly to the remote host.
             PortInfo info = forwardedPorts.get(localPort);
@@ -1594,22 +2063,15 @@ public class BackgroundService extends Service {
                 sshTargetPort = targetPort;
             }
 
-            // Always try setPortForwardingL. If ensureConnection just reconnected,
-            // the port was already set up in the re-establish loop and this will
-            // throw "already registered" — which we catch and treat as success.
-            try {
-                sshSession.setPortForwardingL("127.0.0.1", localPort, sshTargetHost, sshTargetPort);
-                AppLog.i(TAG, "SSH: setPortForwardingL succeeded for localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
-            } catch (com.jcraft.jsch.JSchException e) {
-                if (e.getMessage() != null && e.getMessage().contains("already registered")) {
-                    AppLog.d(TAG, "SSH: port " + localPort + " already registered in JSch, treating as success");
-                } else {
-                    throw e; // re-throw unexpected JSch errors
-                }
-            }
+            // Always try to add. If ensureConnection just reconnected, the port
+            // was already set up in the re-establish loop and this is a no-op
+            // (the SSH adapter treats "already registered" as success).
+            PortForwardTransport transport = transportForPortOps();
+            transport.addLocal(localPort, sshTargetPort, sshTargetHost);
+            AppLog.i(TAG, "SSH: setPortForwardingL succeeded for localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
 
             // Verify the port is actually reachable before reporting success.
-            boolean reachable = testLocalPort(localPort);
+            boolean reachable = transport.isLocalReachable(localPort);
             AppLog.i(TAG, "SSH: addPortForward testLocalPort(" + localPort + ") = " + reachable);
             if (reachable) {
                 AppLog.i(TAG, "SSH: port forward ready and verified: localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
@@ -1619,7 +2081,7 @@ public class BackgroundService extends Service {
                 AppLog.w(TAG, "SSH: port " + localPort + " registered but not immediately reachable, waiting...");
                 for (int i = 0; i < 10; i++) {
                     try { Thread.sleep(200); } catch (InterruptedException ie) { break; }
-                    if (testLocalPort(localPort)) {
+                    if (transport.isLocalReachable(localPort)) {
                         AppLog.i(TAG, "SSH: port forward ready after " + ((i+1)*200) + "ms: localhost:" + localPort);
                         success = true;
                         break;
@@ -1748,13 +2210,12 @@ public class BackgroundService extends Service {
                 + ", remainingPortsBefore=" + (forwardedPorts.size() - 1));
 
         try {
-            if (sshSession != null && sshSession.isConnected()) {
-                sshSession.delPortForwardingL(port);
-                AppLog.i(TAG, "SSH: port forward removed: " + port);
-            } else {
-                AppLog.i(TAG, "SSH: removePortForward skipping delPortForwardingL (session "
-                        + (sshSession == null ? "null" : "disconnected") + ") for port " + port);
-            }
+            // Unconditional: under h2 the listener must be released even when the
+            // tunnel is down (the listener outlives the session), and the SSH
+            // adapter already skips a dead session with the same log line the
+            // pre-tunnel code used.
+            transportForPortOps().removeLocal(port);
+            AppLog.i(TAG, "SSH: port forward removed: " + port);
         } catch (Exception e) {
             AppLog.e(TAG, "SSH: failed to remove port forward for " + port, e);
         }
@@ -1811,7 +2272,7 @@ public class BackgroundService extends Service {
             return;
         }
 
-        if (sshSession == null || !sshSession.isConnected()) {
+        if (!transportForPortOps().isConnected()) {
             AppLog.e(TAG, "SSH: addReversePortForward no live session for serverPort=" + serverPort);
             reversePorts.remove(serverPort);
             saveReversePorts();
@@ -1820,21 +2281,9 @@ public class BackgroundService extends Service {
         }
 
         try {
-            sshSession.setPortForwardingR("127.0.0.1", serverPort, targetHost, targetPort);
+            transportForPortOps().addReverse(serverPort, targetPort, targetHost);
             AppLog.i(TAG, "SSH: reverse forward added " + serverPort + " -> " + targetHost + ":" + targetPort);
             notifyPortForwardResult(serverPort, true);
-        } catch (com.jcraft.jsch.JSchException e) {
-            if (e.getMessage() != null && e.getMessage().contains("already registered")) {
-                // ensureConnection's replay already set this one up.
-                AppLog.d(TAG, "SSH: reverse forward " + serverPort + " already registered");
-                notifyPortForwardResult(serverPort, true);
-            } else {
-                lastError = e.getMessage();
-                AppLog.e(TAG, "SSH: failed to add reverse forward " + serverPort, e);
-                reversePorts.remove(serverPort);
-                saveReversePorts();
-                notifyPortForwardResult(serverPort, false);
-            }
         } catch (Exception e) {
             lastError = e.getMessage();
             AppLog.e(TAG, "SSH: failed to add reverse forward " + serverPort, e);
@@ -1858,13 +2307,8 @@ public class BackgroundService extends Service {
                 + ", sessionAlive=" + (sshSession != null && sshSession.isConnected()));
 
         try {
-            if (sshSession != null && sshSession.isConnected()) {
-                sshSession.delPortForwardingR(serverPort);
-                AppLog.i(TAG, "SSH: reverse forward removed: " + serverPort);
-            } else {
-                AppLog.i(TAG, "SSH: removeReversePortForward skipping delPortForwardingR (session "
-                        + (sshSession == null ? "null" : "disconnected") + ") for port " + serverPort);
-            }
+            transportForPortOps().removeReverse(serverPort);
+            AppLog.i(TAG, "SSH: reverse forward removed: " + serverPort);
         } catch (Exception e) {
             AppLog.e(TAG, "SSH: failed to remove reverse forward for " + serverPort, e);
         }
@@ -2004,11 +2448,21 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Internal disconnect: tears down SSH session but does NOT affect monitor/wifi lock.
+     * Internal disconnect: tears down the transport but does NOT affect
+     * monitor/wifi lock.
      * Used by ensureConnection retry logic (disconnect old session before reconnecting).
      * Note: does NOT clear forwardedPorts — we want to preserve them for reconnect.
      */
     private synchronized void disconnectInternal() {
+        // The h2 transport owns local listeners and in-flight streams that the
+        // JSch branch below knows nothing about. Dropping them here is what
+        // makes a reconnect rebuild cleanly (the desired set in forwardedPorts
+        // is deliberately kept).
+        H2PortForwardTransport h2 = h2PortForwardTransport;
+        if (h2 != null) {
+            h2.close();
+        }
+        activeTransport = null;
         if (sshSession != null) {
             try {
                 // Remove all port forwards before disconnecting
@@ -2156,6 +2610,13 @@ public class BackgroundService extends Service {
         if (hasNoPorts()) return;
         int stale = totalPortCount();
         AppLog.i(TAG, "SSH: cleaning up " + stale + " stale port entries (SSH disconnected, no reconnect possible)");
+        // Release the h2 listeners too: a stale entry with a live listener would
+        // keep the local port bound while the UI claims nothing is forwarded.
+        H2PortForwardTransport h2 = h2PortForwardTransport;
+        if (h2 != null) {
+            h2.close();
+        }
+        activeTransport = null;
         forwardedPorts.clear();
         reversePorts.clear();
         saveForwardedPorts();
@@ -2371,23 +2832,46 @@ public class BackgroundService extends Service {
     }
 
     /**
-     * Release WakeLock only if neither SSH session nor native WebSocket is active.
-     * Called from disconnect paths where one subsystem may disconnect but the other
-     * still needs the CPU to stay awake.
+     * True while a live tunnel session (SSH or h2) is carrying port forwards.
+     *
+     * <p>The two transports are mutually exclusive at any moment, but which one
+     * is live decides whether the power locks may be released: under h2
+     * {@code sshSession} is always null, so testing it alone would release the
+     * WifiLock out from under a running tunnel. Uses {@link TunnelStreams#peek()}
+     * so an SSH-only install never builds an unused h2 transport just to answer
+     * this.
+     */
+    private boolean isTunnelTransportActive() {
+        if (sshSession != null && sshSession.isConnected()) return true;
+        TunnelStream tunnel = tunnelStreamOverride;
+        if (tunnel != null) return tunnel.isConnected();
+        // peek(), not get(): an SSH install must not build an unused h2
+        // transport (and its OkHttp client) just to answer a lock question.
+        TunnelStream shared = TunnelStreams.peek();
+        return shared != null && shared.isConnected();
+    }
+
+    /**
+     * Release WakeLock only if no tunnel session and no native WebSocket is
+     * active. Called from disconnect paths where one subsystem may disconnect
+     * but the other still needs the CPU to stay awake.
      */
     private void maybeReleaseWakeLock() {
-        boolean sshActive = sshSession != null && sshSession.isConnected();
-        if (!sshActive && !nativeWsActive) {
+        if (!isTunnelTransportActive() && !nativeWsActive) {
             releaseWakeLock();
         }
     }
 
     /**
-     * Release WifiLock only if neither SSH session nor native WebSocket is active.
+     * Release WifiLock only if no tunnel session and no native WebSocket is
+     * active.
+     *
+     * <p>Both tunnel transports need the lock: h2c is plain TCP over the same
+     * radio as SSH, so it is subject to the same WiFi power-save behaviour. The
+     * native WS deliberately does not hold it (see {@code NativeEventListener.onOpen}).
      */
     private void maybeReleaseWifiLock() {
-        boolean sshActive = sshSession != null && sshSession.isConnected();
-        if (!sshActive && !nativeWsActive) {
+        if (!isTunnelTransportActive() && !nativeWsActive) {
             releaseWifiLock();
         }
     }
@@ -2755,7 +3239,8 @@ public class BackgroundService extends Service {
         AppLog.i(TAG, "NativeWS: reconnecting in " + delay + "ms (attempt " + displayAttempt + ")");
 
         // Release WakeLock during reconnect backoff — re-acquired before connect attempt
-        // WifiLock not released here — WS never acquires it (only SSH does)
+        // WifiLock not released here — the WS never acquires it (the tunnel
+        // transports do), and the tunnel's own state decides that lock.
         maybeReleaseWakeLock();
 
         // Use Handler to schedule on main thread, then post to network executor
@@ -2779,10 +3264,11 @@ public class BackgroundService extends Service {
             nativeWsActive = true;
             nativeWsReconnectAttempt = 0;
             AppLog.i(TAG, "NativeWS: connected");
-            // WifiLock not acquired for WS — only SSH needs it to prevent WiFi
-            // radio sleep. WS is a low-frequency notification channel (ping ≤300s);
-            // WiFi DTIM power-save (~100-300ms wake interval) delivers frames fine.
-            // This saves ~10mA/h when screen is off and SSH is suspended.
+            // WifiLock not acquired for WS — the tunnel transports hold it to
+            // prevent WiFi radio sleep, and the WS does not need it. WS is a
+            // low-frequency notification channel (ping ≤300s); WiFi DTIM
+            // power-save (~100-300ms wake interval) delivers frames fine.
+            // This saves ~10mA/h when screen is off and the tunnel is suspended.
             startWsPingLoop();
             // Cancel WorkManager polling — WS is more efficient
             cancelPendingEventsWs();
@@ -2923,7 +3409,8 @@ public class BackgroundService extends Service {
                 }
             }
             maybeReleaseWakeLock();
-            // WifiLock not released here — WS never acquires it (only SSH does)
+            // WifiLock not released here — the WS never acquires it (the tunnel
+            // transports do), and the tunnel state decides that lock
             // Schedule WorkManager fallback since WS is down
             schedulePendingEventsWs();
         }
@@ -2941,7 +3428,8 @@ public class BackgroundService extends Service {
                 }
             }
             maybeReleaseWakeLock();
-            // WifiLock not released here — WS never acquires it (only SSH does)
+            // WifiLock not released here — the WS never acquires it (the tunnel
+            // transports do), and the tunnel state decides that lock
             // Schedule WorkManager fallback since WS failed
             schedulePendingEventsWs();
         }

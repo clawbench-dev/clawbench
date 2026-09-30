@@ -13,8 +13,30 @@ func ServeProxyPorts(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return
 	}
+	if !requireProxyRegistry(w, r) {
+		return
+	}
 	ports := service.ProxyService.ListPorts()
 	writeJSON(w, http.StatusOK, map[string]any{"ports": ports})
+}
+
+// requireProxyRegistry writes a 503 and reports false when no registry exists.
+//
+// The registry is created whenever a transport could carry traffic (see
+// cmd/server/proxy_registry_gate.go), so nil is only reachable with
+// `port_forward.transport: ssh` and `enabled: false` — the configuration where
+// port forwarding is provably off. Every handler on this surface used to
+// dereference service.ProxyService directly, which was safe only while the
+// registry was created for every non-SSH-disabled install; now that a
+// configuration exists where it is absent, each entry point must answer with a
+// refusal instead of a panic (the panic would be a 500 recovered by middleware,
+// not a crash, but "port forwarding unavailable" is the honest answer).
+func requireProxyRegistry(w http.ResponseWriter, r *http.Request) bool {
+	if service.ProxyService == nil {
+		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "PortForwardUnavailable")
+		return false
+	}
+	return true
 }
 
 // ServeProxyPortAction handles GET (list), POST (register), PUT (update) and DELETE (unregister)
@@ -51,6 +73,10 @@ func registerPort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !requireProxyRegistry(w, r) {
+		return
+	}
+
 	localPort, err := service.ProxyService.RegisterPort(req.Port, req.Host, req.Name, req.Protocol, req.Direction)
 	if err != nil {
 		writeLocalizedError(w, r, model.Forbidden(err, "AccessDenied"))
@@ -78,6 +104,10 @@ func updatePort(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !requireProxyRegistry(w, r) {
+		return
+	}
+
 	if err := service.ProxyService.UpdatePort(req.LocalPort, req.Port, req.Host, req.Name, req.Protocol, req.Direction); err != nil {
 		writeLocalizedError(w, r, model.Forbidden(err, "AccessDenied"))
 		return
@@ -91,6 +121,10 @@ func unregisterPortByQuery(w http.ResponseWriter, r *http.Request) {
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port <= 0 || port > 65535 {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortInQuery")
+		return
+	}
+
+	if !requireProxyRegistry(w, r) {
 		return
 	}
 
@@ -119,6 +153,9 @@ func ServeProxySetPortEnabled(w http.ResponseWriter, r *http.Request) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{"Port": req.LocalPort})
 		return
 	}
+	if !requireProxyRegistry(w, r) {
+		return
+	}
 	if err := service.ProxyService.SetPortEnabled(req.LocalPort, req.Enabled); err != nil {
 		writeLocalizedError(w, r, model.NotFound(err, "FileNotFoundShort"))
 		return
@@ -129,6 +166,9 @@ func ServeProxySetPortEnabled(w http.ResponseWriter, r *http.Request) {
 // ServeProxyDetect returns auto-detected listening ports on the server.
 func ServeProxyDetect(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	if !requireProxyRegistry(w, r) {
 		return
 	}
 	ports := service.ProxyService.DetectListeningPorts()

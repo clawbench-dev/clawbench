@@ -546,18 +546,39 @@ func textEvent(text string) *larkim.P2MessageReceiveV1 {
 	}
 }
 
+// setCallRecorder records the session IDs the handler wrote as the sticky
+// target. A media message's handler runs on a detached goroutine (see
+// onMessageReceive), so its writes and the test's reads must be synchronized.
+type setCallRecorder struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (r *setCallRecorder) record(sessionID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, sessionID)
+}
+
+// snapshot returns a copy of the recorded session IDs.
+func (r *setCallRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.calls...)
+}
+
 // stickyTestEnv wires a mock DB with a recorded target and a capturing messenger.
-func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (*Manager, *[]string) {
+func stickyTestEnv(t *testing.T, sticky string, sessions []common.SessionInfo) (*Manager, *setCallRecorder) {
 	t.Helper()
 
-	setCalls := new([]string)
+	setCalls := new(setCallRecorder)
 	origDB := db
 	t.Cleanup(func() { db = origDB })
 	db = &mockDBWithCallback{
 		upsertFn:  func(_, _, _, _ string) error { return nil },
 		getLastFn: func(string) (string, error) { return sticky, nil },
 		setLastFn: func(_, sessionID string) error {
-			*setCalls = append(*setCalls, sessionID)
+			setCalls.record(sessionID)
 			return nil
 		},
 	}
@@ -609,8 +630,9 @@ func TestOnMessageReceive_ExplicitTargetOverridesAndUpdatesSticky(t *testing.T) 
 	if sentID != "deadbeef-2222-2222-2222-222222222222" {
 		t.Errorf("sent to %q, want the explicitly named session", sentID)
 	}
-	if len(*setCalls) != 1 || (*setCalls)[0] != "deadbeef-2222-2222-2222-222222222222" {
-		t.Errorf("sticky target updates = %v, want one write of the explicit session", *setCalls)
+	calls := setCalls.snapshot()
+	if len(calls) != 1 || calls[0] != "deadbeef-2222-2222-2222-222222222222" {
+		t.Errorf("sticky target updates = %v, want one write of the explicit session", calls)
 	}
 }
 
@@ -624,8 +646,9 @@ func TestOnMessageReceive_FailedSendDoesNotUpdateSticky(t *testing.T) {
 
 	_ = mgr.onMessageReceive(context.TODO(), textEvent("@deadbeef hi"))
 
-	if len(*setCalls) != 0 {
-		t.Errorf("sticky target must not move on a failed send, got %v", *setCalls)
+	calls := setCalls.snapshot()
+	if len(calls) != 0 {
+		t.Errorf("sticky target must not move on a failed send, got %v", calls)
 	}
 }
 
@@ -633,6 +656,7 @@ func TestOnMessageReceive_FailedSendDoesNotUpdateSticky(t *testing.T) {
 // to the sticky session.
 func TestOnMessageReceive_FileGoesToStickySessionAsAttachment(t *testing.T) {
 	mediaTestServer(t, "attachment-bytes")
+	reply := replyCapture(t)
 
 	project := t.TempDir()
 	sessions := []common.SessionInfo{
@@ -695,12 +719,18 @@ func TestOnMessageReceive_FileGoesToStickySessionAsAttachment(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for the attachment to be sent")
 	}
+
+	// sentCh fires at SendMessageToSession, before the handler's rememberSession
+	// write to the global db; awaiting the terminal reply ensures the detached
+	// goroutine is done before this test returns and cleanup restores db.
+	waitForReplyText(t, reply)
 }
 
 // An image message is downloaded with the image resource type and sent as an
 // attachment to the sticky session.
 func TestOnMessageReceive_ImageGoesToStickySessionAsAttachment(t *testing.T) {
 	mediaTestServer(t, "png-bytes")
+	reply := replyCapture(t)
 
 	project := t.TempDir()
 	sessions := []common.SessionInfo{
@@ -749,12 +779,20 @@ func TestOnMessageReceive_ImageGoesToStickySessionAsAttachment(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for the image to be sent")
 	}
+
+	// Await the terminal reply so the detached handler has finished writing to
+	// the global db before cleanup restores it (see the file-attachment test).
+	waitForReplyText(t, reply)
 }
 
 // A file message with no sticky target must not be downloaded or sent.
 func TestOnMessageReceive_FileWithNoStickyTarget(t *testing.T) {
 	mediaTestServer(t, "x")
+	reply := replyCapture(t)
 	mgr, _ := stickyTestEnv(t, "", nil)
+	// A cached token lets the no-target reply reach the stub without a refresh.
+	mgr.cachedToken = "test-tenant-token"
+	mgr.cachedExp = time.Now().Add(2 * time.Hour)
 
 	sent := false
 	sessionMessenger.(*mockSessionMessenger).SendFn = func(string, string, []model.FileEntry) error {
@@ -782,8 +820,13 @@ func TestOnMessageReceive_FileWithNoStickyTarget(t *testing.T) {
 
 	_ = mgr.onMessageReceive(context.TODO(), event)
 
-	// Give the (should-be-absent) goroutine a chance to run.
-	time.Sleep(100 * time.Millisecond)
+	// RouteNoTarget replies with the /ls hint; awaiting it deterministically
+	// waits out the detached handler (which also reads the global db) instead of
+	// racing cleanup on a fixed sleep.
+	got := waitForReplyText(t, reply)
+	if !strings.Contains(got, "/ls") {
+		t.Errorf("reply should point at /ls, got %s", got)
+	}
 	if sent {
 		t.Error("a file with no target session must not be sent")
 	}
@@ -996,8 +1039,9 @@ func TestOnMessageReceive_FileSendFailure(t *testing.T) {
 	if !strings.Contains(got, "发送文件失败") {
 		t.Errorf("reply should report the send failure, got %s", got)
 	}
-	if len(*setCalls) != 0 {
-		t.Errorf("a failed send must not update the sticky target, got %v", *setCalls)
+	calls := setCalls.snapshot()
+	if len(calls) != 0 {
+		t.Errorf("a failed send must not update the sticky target, got %v", calls)
 	}
 }
 
@@ -1169,6 +1213,7 @@ func postEvent(content string) *larkim.P2MessageReceiveV1 {
 // message. Before the fix the text was delivered but the image was dropped.
 func TestOnMessageReceive_PostWithImageDownloadsAndSends(t *testing.T) {
 	mediaTestServer(t, "image-bytes")
+	reply := replyCapture(t)
 	project := t.TempDir()
 	sessions := []common.SessionInfo{
 		{ID: "abc12345-1111-1111-1111-111111111111", Title: "Sticky Session", ProjectPath: project},
@@ -1208,6 +1253,11 @@ func TestOnMessageReceive_PostWithImageDownloadsAndSends(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out: the post was never delivered")
 	}
+
+	// The media handler runs on a detached goroutine and sends its reply only
+	// after rememberSession, so awaiting it guarantees the handler has finished
+	// touching the global db before this test returns and cleanup restores it.
+	waitForReplyText(t, reply)
 }
 
 // A titled post whose body names a session must still resolve that session: the
@@ -1258,8 +1308,9 @@ func TestOnMessageReceive_PostTitledBodyRoutesExplicitTarget(t *testing.T) {
 		t.Fatal("timed out waiting for the post to be delivered")
 	}
 
-	if len(*setCalls) != 1 || (*setCalls)[0] != named {
-		t.Errorf("sticky target updates = %v, want one write of the named session", *setCalls)
+	calls := setCalls.snapshot()
+	if len(calls) != 1 || calls[0] != named {
+		t.Errorf("sticky target updates = %v, want one write of the named session", calls)
 	}
 }
 

@@ -1,0 +1,15 @@
+# Tier 2 tunnel target + test-control server (dependency-free node:net/node:http).
+#
+# Built rather than mounted because bind mounts do not resolve against this
+# environment's host docker daemon.
+FROM node:20-alpine
+
+WORKDIR /target-server
+COPY target-server/server.mjs ./
+
+ENV TARGET_PORT=18080 \
+    CONTROL_PORT=18081 \
+    TARGET_HOST=127.0.0.1 \
+    CONTROL_HOST=0.0.0.0
+
+CMD ["node", "/target-server/server.mjs"]
