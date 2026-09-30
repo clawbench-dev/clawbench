@@ -2,6 +2,7 @@ package model
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,73 @@ func TestSkillSlug(t *testing.T) {
 	}
 	assert.Equal(t, a, SkillSlug("https://github.com/org/skills.git"), "must be deterministic")
 	assert.Equal(t, a, SkillSlug("https://github.com/org/skills"), "trailing slash / .git must not matter")
+}
+
+// TestSkillSlug_SanitizesUnsafeCharacters pins that every character outside
+// [a-z0-9._-] is replaced (not dropped) and that a name with nothing usable
+// still yields a valid "repo-<hash>" slug rather than an empty prefix.
+func TestSkillSlug_SanitizesUnsafeCharacters(t *testing.T) {
+	// Uppercase, spaces and unicode all collapse to '-'.
+	got := SkillSlug("https://example.com/My Skills/Ünïcode Repo")
+	assert.NotContains(t, got, " ")
+	assert.NotContains(t, got, "/")
+	assert.NotContains(t, got, "Ü")
+	assert.Contains(t, got, "repo", "the readable prefix must survive sanitization")
+
+	// A name that sanitizes to nothing falls back to "repo".
+	empty := SkillSlug("https://example.com/！！！")
+	assert.Contains(t, empty, "repo", "an unusable name must fall back to the 'repo' prefix")
+	assert.NotContains(t, empty, "！")
+}
+
+// TestSkillSlug_TruncatesLongName pins the length bound: the readable prefix is
+// capped at maxSkillSlugLen, and the hash suffix (the collision guard) is
+// appended AFTER truncation so it always survives.
+func TestSkillSlug_TruncatesLongName(t *testing.T) {
+	long := strings.Repeat("a", maxSkillSlugLen+50)
+	got := SkillSlug("https://example.com/" + long)
+	// prefix (<=64) + "-" + 8 hex chars.
+	assert.LessOrEqual(t, len(got), maxSkillSlugLen+1+8)
+	assert.NotEqual(t, SkillSlug("https://example.com/"+long+"x"), got,
+		"the hash must still distinguish names that truncate to the same prefix")
+}
+
+// TestResolveSkillsDirs pins the resolution order: configured entries win,
+// blank entries are dropped (an empty string would otherwise resolve to the
+// scan root), and an all-blank/empty list falls back to the default dir.
+func TestResolveSkillsDirs(t *testing.T) {
+	origDataDir := DataDir
+	t.Cleanup(func() { DataDir = origDataDir })
+	DataDir = t.TempDir()
+	defaultDir := filepath.Join(DataDir, "skills-user")
+
+	t.Run("configured dirs are returned in order", func(t *testing.T) {
+		cfg := Config{Skills: SkillsConfig{Dirs: []string{"/a", "/b"}}}
+		assert.Equal(t, []string{"/a", "/b"}, cfg.ResolveSkillsDirs())
+	})
+
+	t.Run("blank entries are dropped", func(t *testing.T) {
+		cfg := Config{Skills: SkillsConfig{Dirs: []string{"/a", "", "/b"}}}
+		assert.Equal(t, []string{"/a", "/b"}, cfg.ResolveSkillsDirs())
+	})
+
+	t.Run("only blanks falls back to the default", func(t *testing.T) {
+		cfg := Config{Skills: SkillsConfig{Dirs: []string{"", ""}}}
+		assert.Equal(t, []string{defaultDir}, cfg.ResolveSkillsDirs())
+	})
+
+	t.Run("empty list falls back to the default", func(t *testing.T) {
+		cfg := Config{}
+		assert.Equal(t, []string{defaultDir}, cfg.ResolveSkillsDirs())
+	})
+
+	t.Run("no default available returns empty", func(t *testing.T) {
+		saved := DataDir
+		DataDir = ""
+		defer func() { DataDir = saved }()
+		cfg := Config{}
+		assert.Empty(t, cfg.ResolveSkillsDirs())
+	})
 }
 
 // TestApplyDefaults_SkillsMigratesLegacyDir pins the migration from the

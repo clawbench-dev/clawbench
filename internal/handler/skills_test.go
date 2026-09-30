@@ -149,6 +149,121 @@ func TestServeSkillsRefresh_NoReposSucceeds(t *testing.T) {
 	assert.Empty(t, resp.Errors)
 }
 
+func TestServeSkillsRefresh_MethodNotAllowed(t *testing.T) {
+	setupSkillsEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills/refresh", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkillsRefresh, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestServeSkills_ListSortsByNameThenPath pins the deterministic ordering the
+// UI relies on: primary by name, tie-broken by path so two skills sharing a
+// name (one per source) do not shuffle between requests.
+func TestServeSkills_ListSortsByNameThenPath(t *testing.T) {
+	root := t.TempDir()
+	isolateSkillGlobals(t)
+	model.DataDir = root
+	t.Setenv("HOME", t.TempDir())
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+
+	// Two sources, each with a "zeta" skill; plus one "alpha". Different dirs
+	// give the same-name entries distinct paths.
+	dirA := filepath.Join(root, "a")
+	dirB := filepath.Join(root, "b")
+	writeSkillMD(t, filepath.Join(dirA, "zeta"), "zeta")
+	writeSkillMD(t, filepath.Join(dirB, "zeta"), "zeta")
+	writeSkillMD(t, filepath.Join(dirA, "alpha"), "alpha")
+
+	model.GetBackendRegistry()
+	model.BackendRegistry = []model.BackendSpec{
+		{ID: "a1", Backend: "a1", NativeSkillsDirs: []string{dirA, dirB}},
+	}
+	agent := &model.Agent{ID: "a1", Backend: "a1"}
+	model.ReplaceAgents(map[string]*model.Agent{"a1": agent}, []*model.Agent{agent})
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Skills, 3)
+
+	// alpha first; the two zetas are adjacent and ordered by path.
+	assert.Equal(t, "alpha", resp.Skills[0].Name)
+	assert.Equal(t, "zeta", resp.Skills[1].Name)
+	assert.Equal(t, "zeta", resp.Skills[2].Name)
+	assert.Less(t, resp.Skills[1].Path, resp.Skills[2].Path,
+		"same-name skills must be ordered by path so the list is stable")
+}
+
+// --- PersistSkillSyncState ---
+
+// TestPersistSkillSyncState_WritesOutcome pins the happy path: the worker's
+// result is mirrored into config.yaml (last_error, last_sync_at and the
+// per-repo last_error), so the settings page shows it across restarts.
+func TestPersistSkillSyncState_WritesOutcome(t *testing.T) {
+	isolateSkillGlobals(t)
+
+	model.DataDir = t.TempDir()
+	model.ConfigInstance = model.Config{
+		Skills: model.SkillsConfig{
+			Enabled: true,
+			Repos: []model.SkillRepo{
+				{URL: "https://example.com/a.git", Slug: "a", LastError: "old"},
+				{URL: "https://example.com/b.git", Slug: "b"},
+			},
+		},
+	}
+
+	// recordSyncResult populates the in-memory config before persisting, so
+	// emulate that by setting the fields the writer reads.
+	model.ConfigInstance.Skills.LastError = "boom"
+	model.ConfigInstance.Skills.LastSyncAt = 1234
+	model.ConfigInstance.Skills.Repos[0].LastError = "boom"
+
+	require.NoError(t, PersistSkillSyncState(skill.SyncResult{SkillCount: 1}))
+
+	// The YAML on disk must carry the sync state.
+	data, err := os.ReadFile(filepath.Join(model.DataDir, "config", "config.yaml"))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "last_sync_at")
+	assert.Contains(t, string(data), "boom")
+}
+
+// TestPersistSkillSyncState_RestoresConfigOnWriteFailure pins the rollback
+// branch: when the YAML write fails, the function returns the error AND leaves
+// the in-memory config exactly as it was at entry (the snapshot restore), so a
+// failed persist never leaves a half-updated view behind.
+func TestPersistSkillSyncState_RestoresConfigOnWriteFailure(t *testing.T) {
+	isolateSkillGlobals(t)
+
+	// Point DataDir at a path that cannot be created (a file where a directory
+	// is expected) so writeConfigYAML fails.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	require.NoError(t, os.WriteFile(blocker, []byte("x"), 0o644))
+	model.DataDir = blocker
+
+	model.ConfigInstance = model.Config{
+		Skills: model.SkillsConfig{
+			Enabled:    true,
+			LastError:  "at-entry",
+			LastSyncAt: 7,
+		},
+	}
+
+	err := PersistSkillSyncState(skill.SyncResult{})
+	require.Error(t, err, "a failed write must surface")
+	// The snapshot is taken at entry, so the config must be unchanged.
+	assert.Equal(t, "at-entry", model.ConfigInstance.Skills.LastError)
+	assert.Equal(t, int64(7), model.ConfigInstance.Skills.LastSyncAt)
+}
+
 // --- PATCH /api/config validation ---
 
 func TestServeConfig_Patch_SkillsApplied(t *testing.T) {

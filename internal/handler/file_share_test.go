@@ -1050,3 +1050,68 @@ func TestShareList_RevokeUnknownTokenIsNotFound(t *testing.T) {
 	w := callHandler(ServeShareList, req)
 	assertStatus(t, w, http.StatusNotFound)
 }
+
+// TestShareList_RevokeByToken_OwnershipLookupError pins the first failure
+// branch of the revoke: when the ownership lookup itself errors (read handle
+// down), the handler reports 500 rather than silently revoking or 404ing.
+func TestShareList_RevokeByToken_OwnershipLookupError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// A read handle that is already closed makes GetFileShareProjectByToken fail.
+	closed, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closed)
+	defer cleanup()
+
+	req := newRequest(t, http.MethodDelete, "/api/share/list",
+		map[string]string{"token": "anytoken"})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+// TestShareList_RevokeByToken_DeleteError pins the second failure branch: the
+// ownership check passes but the DELETE fails (write handle down), which must
+// surface as 500 rather than a false 200.
+func TestShareList_RevokeByToken_DeleteError(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	token := createShareViaAPI(t, env, createShareTestFile(t, env, "docs/del.md", "x"))
+
+	// Keep a healthy read handle (so the ownership lookup succeeds) but break
+	// the write handle so DeleteFileShareByToken fails.
+	closed, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := service.SetDBForTest(closed, service.UnsafeDBForTest())
+	defer cleanup()
+
+	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]string{"token": token})
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeShareList, req)
+	assertStatus(t, w, http.StatusInternalServerError)
+}
+
+// TestShareList_DeleteAll_Error pins the one-click clear failure branch: a
+// write error must surface as 500, not a silent success that leaves the links
+// live.
+func TestShareList_DeleteAll_Error(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	createShareViaAPI(t, env, createShareTestFile(t, env, "docs/a.md", "x"))
+
+	closed, err := service.InitInMemoryDB()
+	require.NoError(t, err)
+	require.NoError(t, closed.Close())
+	cleanup := service.SetDBForTest(closed, service.UnsafeDBForTest())
+	defer cleanup()
+
+	clearReq := newRequest(t, http.MethodDelete, "/api/share/list", map[string]any{"all": true})
+	withProjectCookie(clearReq, env.ProjectDir)
+	w := callHandler(ServeShareList, clearReq)
+	assertStatus(t, w, http.StatusInternalServerError)
+}

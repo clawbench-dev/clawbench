@@ -526,3 +526,165 @@ func TestFileSharesDDL_HasRootColumn(t *testing.T) {
 		"SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='root'").Scan(&hasRoot))
 	assert.Equal(t, 1, hasRoot, "file_shares must define the root column")
 }
+
+// ─── project ownership lookup (GetFileShareProjectByToken) ───────────────────
+
+func TestGetFileShareProjectByToken_ResolvesOwningProject(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	token, _, err := service.UpsertFileShare("/tmp/owned.md", "owned.md", "/tmp", testProject)
+	require.NoError(t, err)
+
+	owner, ok, err := service.GetFileShareProjectByToken(token)
+	require.NoError(t, err)
+	assert.True(t, ok, "an existing token must resolve")
+	assert.Equal(t, service.NormalizeProjectPath(testProject), owner)
+}
+
+func TestGetFileShareProjectByToken_UnknownToken(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	owner, ok, err := service.GetFileShareProjectByToken("deadbeefdeadbeefdeadbeefdeadbeef")
+	require.NoError(t, err)
+	assert.False(t, ok, "an unknown token must not resolve to a project")
+	assert.Empty(t, owner)
+}
+
+func TestGetFileShareProjectByToken_EmptyTokenIsNoOp(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	owner, ok, err := service.GetFileShareProjectByToken("")
+	require.NoError(t, err)
+	assert.False(t, ok)
+	assert.Empty(t, owner)
+}
+
+func TestGetFileShareProjectByToken_QueryError(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	cleanup := service.SetDBForTest(db, closedSQLite(t))
+	defer cleanup()
+
+	_, _, err := service.GetFileShareProjectByToken("anytoken")
+	assert.Error(t, err, "query on a closed read DB must error")
+}
+
+// TestGetFileShareProjectByToken_GlobalScopeRow pins the LEFT JOIN direction: a
+// share left on the global-scope sentinel (project_id = 0, which has no
+// projects row) must resolve to an EMPTY path rather than erroring. An empty
+// path then never equals a real project path, so the revoke stays fail-closed.
+func TestGetFileShareProjectByToken_GlobalScopeRow(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := service.WriteExec(
+		"INSERT INTO file_shares (token, path, name, root, project_id) VALUES (?, ?, ?, ?, ?)",
+		"globaltoken", "/tmp/global.md", "global.md", "/tmp", service.GlobalScopeProjectID)
+	require.NoError(t, err)
+
+	owner, ok, err := service.GetFileShareProjectByToken("globaltoken")
+	require.NoError(t, err)
+	assert.True(t, ok, "the row exists, so it must resolve (to an empty owner)")
+	assert.Empty(t, owner, "a global-scope row has no projects entry; the join must yield ''")
+}
+
+// TestListFileShares_ScopedToProject pins the isolation contract: a share
+// created from one project must not appear in another project's list, and each
+// project sees only its own.
+func TestListFileShares_ScopedToProject(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	const otherProject = "/tmp/other-project"
+
+	_, _, err := service.UpsertFileShare("/tmp/mine.md", "mine.md", "/tmp", testProject)
+	require.NoError(t, err)
+	_, _, err = service.UpsertFileShare("/tmp/other-project/theirs.md", "theirs.md", otherProject, otherProject)
+	require.NoError(t, err)
+
+	mine, err := service.ListFileShares(testProject)
+	require.NoError(t, err)
+	require.Len(t, mine, 1, "project A must see only its own share")
+	assert.Equal(t, "/tmp/mine.md", mine[0].Path)
+
+	theirs, err := service.ListFileShares(otherProject)
+	require.NoError(t, err)
+	require.Len(t, theirs, 1, "project B must see only its own share")
+	assert.Equal(t, "theirs.md", theirs[0].Name)
+}
+
+// TestDeleteAllFileShares_IsProjectScoped pins that the one-click clear only
+// revokes the active project's links, leaving other projects' public URLs
+// intact. A bare "DELETE FROM file_shares" silently broke every other project.
+func TestDeleteAllFileShares_IsProjectScoped(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	const otherProject = "/tmp/other-project"
+
+	mineToken, _, err := service.UpsertFileShare("/tmp/mine.md", "mine.md", "/tmp", testProject)
+	require.NoError(t, err)
+	otherToken, _, err := service.UpsertFileShare("/tmp/other-project/theirs.md", "theirs.md", otherProject, otherProject)
+	require.NoError(t, err)
+
+	require.NoError(t, service.DeleteAllFileShares(testProject))
+
+	// A's link is gone.
+	_, _, _, ok, err := service.GetFileShareByToken(mineToken)
+	require.NoError(t, err)
+	assert.False(t, ok, "the active project's share must be revoked")
+
+	// B's link survives.
+	_, _, _, ok, err = service.GetFileShareByToken(otherToken)
+	require.NoError(t, err)
+	assert.True(t, ok, "another project's share must survive the clear")
+}
+
+// TestUpsertFileShare_ProjectIDResolutionError pins the new first step: if the
+// project id cannot be resolved (write handle down), the upsert fails rather
+// than inserting a row with a bogus project_id.
+func TestUpsertFileShare_ProjectIDResolutionError(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	// Clear the path→id cache so ProjectIDForPath actually hits the DB, then
+	// break the write handle it uses.
+	service.ResetProjectIDCacheForTest()
+	cleanup := service.SetDBForTest(closedSQLite(t), closedSQLite(t))
+	defer cleanup()
+
+	_, _, err := service.UpsertFileShare("/tmp/x.md", "x.md", "/tmp", testProject)
+	assert.Error(t, err, "a failed project-id resolution must surface")
+}
+
+// TestListFileShares_ProjectIDResolutionError is the read-side twin: a closed
+// write handle makes ProjectIDForPath fail, so the list errors instead of
+// silently returning every share.
+func TestListFileShares_ProjectIDResolutionError(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	service.ResetProjectIDCacheForTest()
+	cleanup := service.SetDBForTest(closedSQLite(t), closedSQLite(t))
+	defer cleanup()
+
+	_, err := service.ListFileShares(testProject)
+	assert.Error(t, err)
+}
+
+// TestDeleteAllFileShares_ProjectIDResolutionError pins the same guard on the
+// clear path.
+func TestDeleteAllFileShares_ProjectIDResolutionError(t *testing.T) {
+	db := setupTestDBForFileShares(t)
+	defer func() { _ = db.Close() }()
+
+	service.ResetProjectIDCacheForTest()
+	cleanup := service.SetDBForTest(closedSQLite(t), closedSQLite(t))
+	defer cleanup()
+
+	assert.Error(t, service.DeleteAllFileShares(testProject))
+}
