@@ -2991,7 +2991,10 @@ paths:
                           type: string
                         agent_id:
                           type: string
-                          description: 声明该目录的智能体 ID（多个用逗号分隔）；共享目录且无人声明时为空
+                          description: |
+                            该技能所属的智能体 ID（仅当它来自某个**其他智能体自己的**目录时有值）。
+                            **共享目录 `.agents/skills` 一律为空**——那类技能不属于任何单一智能体，
+                            返回「哪些后端读取了该目录」的名单会诱导前端把它渲染成罗列。
                         shared:
                           type: boolean
                           description: |

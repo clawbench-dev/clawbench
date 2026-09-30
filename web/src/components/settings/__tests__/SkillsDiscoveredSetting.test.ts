@@ -113,6 +113,20 @@ describe('SkillsDiscoveredSetting', () => {
     expect(wrapper.text()).not.toContain('opencode native')
   })
 
+  // The server omits agent_id for shared skills; even if one slipped through,
+  // the label must stay "Generic" rather than rendering a roster.
+  it('never renders an agent roster for a shared skill', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => skillsResponse([
+      row({ shared: true, agent_id: 'codex,copilot,dsh,mimo,opencode,qoder', source_label: 'codex+copilot+dsh+mimo+opencode+qoder native' }),
+    ])))
+    const wrapper = mountCard()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Generic')
+    expect(wrapper.text()).not.toContain('codex,copilot')
+    expect(wrapper.text()).not.toContain('codex+copilot')
+  })
+
   it('still labels a genuinely agent-owned skill by its agent', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => skillsResponse([row()])))
     const wrapper = mountCard()

@@ -797,17 +797,24 @@ describe('AI summary model jump rows', () => {
     }
   })
 
-  it('gives the discovered skills their own section (and therefore card)', () => {
-    // The listing must NOT share a section with the configuration rows: a
-    // shared section renders into ONE card, which is what made the read-only
-    // listing look glued to the switch/directory/repo controls.
+  it('gives each skill concern its own section (and therefore card)', () => {
+    // One card per concern: master switch / local directories / git repos /
+    // discovered listing. A shared section renders into ONE card, which is what
+    // made the read-only listing and the two configuration lists look glued
+    // together.
     const entries = categoryItems['skills']
     const sections = entries
       .map((e) => (e.type === 'item' ? e.spec.sectionHeader : undefined))
       .filter(Boolean)
-    expect(sections).toContain('settings.items.skillsSection')
-    expect(sections).toContain('settings.items.skillsDiscoveredSection')
-    expect(new Set(sections).size).toBe(2)
+    for (const s of [
+      'settings.items.skillsSection',
+      'settings.items.skillsDirs',
+      'settings.items.skillsRepos',
+      'settings.items.skillsDiscoveredSection',
+    ]) {
+      expect(sections).toContain(s)
+    }
+    expect(new Set(sections).size).toBe(4)
   })
 
 })
@@ -840,7 +847,7 @@ describe('placeholder items (section openers)', () => {
     const m = src.match(/const PLACEHOLDER_ITEMS = new Set\(\[([^\]]*)\]\)/)
     expect(m, 'PLACEHOLDER_ITEMS must exist in SettingsCategory.vue').toBeTruthy()
     const listed = m![1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
-    for (const key of ['panelOpacity', 'skillsCard', 'skillsDiscovered']) {
+    for (const key of ['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered']) {
       expect(listed).toContain(key)
     }
   })

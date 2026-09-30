@@ -251,3 +251,83 @@ func TestServeConfig_Get_SkillsNeverLeaksToken(t *testing.T) {
 	assert.True(t, resp.Skills.Repos[0].HasToken)
 	assert.Equal(t, "b-1234", resp.Skills.Repos[0].Slug)
 }
+
+// TestServeSkills_SharedOmitsAgentID pins that a shared (.agents/skills) skill
+// reports no agent id.
+//
+// The directory is read by several backends, so the id would be the roster of
+// whoever declares the path — not the owner. Emitting it is what let the UI
+// render shared skills as "Agent codex,copilot,dsh,…".
+func TestServeSkills_SharedOmitsAgentID(t *testing.T) {
+	root := t.TempDir()
+	model.DataDir = root
+	// The shared directory resolves against $HOME, so isolate it and create the
+	// real .agents/skills layout.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	model.ConfigInstance = model.Config{
+		Skills: model.SkillsConfig{Enabled: true, Dirs: []string{filepath.Join(root, "user")}},
+	}
+
+	sharedRoot := filepath.Join(home, skill.SharedSkillsDir)
+	writeSkillMD(t, filepath.Join(sharedRoot, "shared-skill"), "shared-skill")
+	// A genuine other-agent directory, which MUST still report its agent.
+	otherDir := filepath.Join(root, "other-native")
+	writeSkillMD(t, filepath.Join(otherDir, "other-skill"), "other-skill")
+
+	model.GetBackendRegistry()
+	model.BackendRegistry = []model.BackendSpec{
+		// a1 reads the shared dir; a2 reads it too plus its own other-agent dir.
+		{ID: "a1", Backend: "a1", NativeSkillsDirs: []string{skill.SharedSkillsDir}},
+		{ID: "a2", Backend: "a2", NativeSkillsDirs: []string{skill.SharedSkillsDir, otherDir}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{
+		"a1": {ID: "a1", Backend: "a1"},
+		"a2": {ID: "a2", Backend: "a2"},
+	}, []*model.Agent{{ID: "a1", Backend: "a1"}, {ID: "a2", Backend: "a2"}})
+	skill.ResetForTest()
+	// ServeSkills reads the registry; it does not scan. Trigger the scan the way
+	// the startup path does.
+	skill.Global().ScanAll()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp struct {
+		Skills []struct {
+			Name    string `json:"name"`
+			Shared  bool   `json:"shared"`
+			AgentID string `json:"agent_id"`
+		} `json:"skills"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	type row struct {
+		shared  bool
+		agentID string
+	}
+	byName := map[string]row{}
+	for _, s := range resp.Skills {
+		byName[s.Name] = row{s.Shared, s.AgentID}
+	}
+
+	require.Contains(t, byName, "shared-skill")
+	assert.True(t, byName["shared-skill"].shared)
+	assert.Empty(t, byName["shared-skill"].agentID,
+		"a shared skill must not name the backends that read the directory")
+
+	// The other agent's own directory still identifies its agent.
+	require.Contains(t, byName, "other-skill")
+	assert.False(t, byName["other-skill"].shared)
+	assert.Equal(t, "a2", byName["other-skill"].agentID)
+}
+
+// writeSkillMD creates dir/SKILL.md with the given skill name.
+func writeSkillMD(t *testing.T, dir, name string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: "+name+"\ndescription: d\n---\n"), 0o644))
+}

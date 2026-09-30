@@ -31,9 +31,7 @@ type skillsListResponse struct {
 	Skills       []skillInfoJSON   `json:"skills"`
 }
 
-// skillInfoJSON is one discovered skill. Source describes where it came from;
-// AgentID lists the agent(s) whose spec declares the directory (empty for the
-// shared .agents/skills when no installed agent reads it).
+// skillInfoJSON is one discovered skill. Source describes where it came from.
 type skillInfoJSON struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -43,7 +41,12 @@ type skillInfoJSON struct {
 	// Shared marks the cross-tool shared directory (.agents/skills). The UI
 	// labels these "generic" instead of naming an agent, because the directory
 	// is shared and its skills are not owned by any single backend.
-	Shared  bool   `json:"shared,omitempty"`
+	Shared bool `json:"shared,omitempty"`
+	// AgentID names the agent a skill belongs to, for a genuinely other agent's
+	// own directory. It is deliberately EMPTY for the shared directory: those
+	// skills belong to no single agent, and emitting the list of every backend
+	// that happens to read the directory invited the UI to render exactly that
+	// roster (the bug that made shared skills show as "Agent codex,copilot,…").
 	AgentID string `json:"agent_id,omitempty"`
 	// NameMismatch is true when the frontmatter name disagrees with the skill's
 	// directory name. The Agent Skills spec requires them to match, and an agent
@@ -51,6 +54,19 @@ type skillInfoJSON struct {
 	// carries an explicit path) but is NOT offered as a slash command. The UI
 	// flags it so the user can fix the skill.
 	NameMismatch bool `json:"name_mismatch,omitempty"`
+}
+
+// agentIDFor returns the agent id to report for a source.
+//
+// A shared (.agents/skills) source names no agent: the directory is read by
+// several backends, so reporting "codex,copilot,dsh,…" describes who declares
+// the path rather than who owns the skill. The UI labels those "generic" and
+// must not receive a roster it could render by mistake.
+func agentIDFor(src skill.Source) string {
+	if src.Shared {
+		return ""
+	}
+	return src.AgentID
 }
 
 // ServeSkills handles GET /api/skills.
@@ -72,7 +88,7 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 			Path:         s.Path,
 			SourceKind:   s.Source.Kind.String(),
 			SourceLabel:  s.Source.Label,
-			AgentID:      s.Source.AgentID,
+			AgentID:      agentIDFor(s.Source),
 			Shared:       s.Source.Shared,
 			NameMismatch: s.NameMismatch,
 		})

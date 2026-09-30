@@ -48,10 +48,13 @@
           v-if="card.title === t('settings.items.skillsSection')"
           :description="t('settings.items.skillsCardDesc')"
         />
-        <!-- Discovered skills live in their OWN card (a second section header
-             in settingsFieldMap), directly below the configuration card: the
-             listing is read-only output, so gluing it to the switch/directory/
-             repo controls made the two read as one undifferentiated blob. -->
+        <!-- Local directories and git repositories are separate cards: they
+             differ in what they hold (paths vs cloned remotes with sync state),
+             so a single blob made the two read as one. -->
+        <SkillsDirsSetting v-if="card.title === t('settings.items.skillsDirs')" />
+        <SkillsReposSetting v-if="card.title === t('settings.items.skillsRepos')" />
+        <!-- The discovered listing is read-only output, so it gets its own card
+             rather than being glued to the configuration controls. -->
         <SkillsDiscoveredSetting
           v-if="card.title === t('settings.items.skillsDiscoveredSection')"
         />
@@ -113,6 +116,8 @@ import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
 import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
+import SkillsDirsSetting from './SkillsDirsSetting.vue'
+import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
@@ -301,7 +306,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDiscovered'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
