@@ -289,7 +289,9 @@ func (s *Server) ListenAndServe() error {
 	if err != nil {
 		return fmt.Errorf("ssh: failed to listen on %s: %w", s.addr, err)
 	}
+	s.mu.Lock()
 	s.listener = listener
+	s.mu.Unlock()
 
 	// Periodically cleanup expired auth records
 	go func() {
@@ -331,8 +333,11 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		close(s.done)
-		if s.listener != nil {
-			_ = s.listener.Close()
+		s.mu.Lock()
+		listener := s.listener
+		s.mu.Unlock()
+		if listener != nil {
+			_ = listener.Close()
 		}
 		// Release every reverse-forward listener. These live on client
 		// connections, not on s.listener, so closing the accept loop above does
@@ -365,7 +370,13 @@ func (s *Server) releaseReversePorts(ports []int) {
 
 // Fingerprint returns the SSH host key fingerprint.
 // Returns empty string if the server has not been started yet.
+//
+// The read is guarded by s.mu because InitHostKey writes the field from the
+// startup goroutine (ListenAndServe) while an HTTP handler may call this at any
+// moment once the server reference has been published.
 func (s *Server) Fingerprint() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.fingerprint
 }
 
@@ -377,8 +388,10 @@ func (s *Server) InitHostKey() error {
 	if err != nil {
 		return fmt.Errorf("ssh: failed to setup host key: %w", err)
 	}
+	s.mu.Lock()
 	s.hostKey = signer
 	s.fingerprint = gossh.FingerprintSHA256(signer.PublicKey())
+	s.mu.Unlock()
 	return nil
 }
 
