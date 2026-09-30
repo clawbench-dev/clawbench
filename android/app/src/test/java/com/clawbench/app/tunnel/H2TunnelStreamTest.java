@@ -444,6 +444,80 @@ public class H2TunnelStreamTest {
     }
 
     @Test
+    public void dataStreamLocalClose_doesNotMarkTheSessionDead() throws Exception {
+        // A reverse (-R) relay parks a reader in pumpTunnelToLocal() ->
+        // connection.getInputStream().read(). removeReverse() tears that relay
+        // down with relay.closeBoth() -> H2Connection.close(), which is exactly
+        // the close() under test here.
+        //
+        // H2Connection.close() sets closed=true and then call.cancel()s, so the
+        // parked read wakes with an IOException. translate() maps any failure
+        // on a closed stream to CLOSED("stream closed"), and CLOSED is
+        // connection-level, so readFailure() would call markSessionDead() --
+        // killing the whole session (and every sibling -R forward) merely
+        // because the client closed one stream it owns.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelConnection connection = tunnel.openStream("127.0.0.1", 8080);
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+        assertNotNull(stream);
+
+        // Model the reverse relay's parked pump: block in read() until the
+        // stream is closed. There is no seam that reports "the reader is inside
+        // read()", so a latch before the call plus a short settle is the only
+        // deterministic-enough option available.
+        final CountDownLatch parked = new CountDownLatch(1);
+        Thread pump = new Thread(() -> {
+            parked.countDown();
+            try {
+                readFully(connection.getInputStream(), new byte[4]);
+            } catch (IOException expected) {
+                // The close is what unblocks us; that is the point.
+            }
+        }, "parked-pump");
+        pump.setDaemon(true);
+        pump.start();
+        assertTrue(parked.await(5, TimeUnit.SECONDS));
+        // Let the reader actually enter the blocking read before we close.
+        Thread.sleep(100);
+
+        connection.close();
+
+        pump.join(5_000);
+        assertFalse("the parked pump must be unblocked by the close", pump.isAlive());
+
+        assertTrue("closing one data stream we own is not a session loss",
+                tunnel.isConnected());
+        assertFalse("a locally closed data stream must not mark the session dead",
+                tunnel.isSessionDeadForTesting());
+        // The stream itself must still be torn down (cancelled), or the relay
+        // would leak a live h2 stream.
+        assertTrue("the closed stream must be cancelled (RST_STREAM)",
+                stream.isCanceled());
+        assertTrue(connection.isClosed());
+
+        // The user-facing invariant: a sibling reverse forward must still work
+        // after this one is removed. Open a second stream on the same session
+        // and prove it actually relays.
+        try (TunnelConnection sibling = tunnel.openStream("127.0.0.1", 9090)) {
+            FakeTunnelServer.FakeStream siblingStream = server.lastStream();
+            assertNotNull(siblingStream);
+            assertNotSame("the sibling must be a distinct h2 stream", stream, siblingStream);
+
+            sibling.getOutputStream().write("ping".getBytes("UTF-8"));
+            sibling.getOutputStream().flush();
+            assertEquals("ping", siblingStream.readToServer(64));
+
+            siblingStream.writeFromServer("pong");
+            byte[] buffer = new byte[4];
+            assertEquals(4, readFully(sibling.getInputStream(), buffer));
+            assertEquals("pong", new String(buffer, "UTF-8"));
+        } catch (IOException e) {
+            throw new AssertionError("a sibling stream must still work", e);
+        }
+    }
+
+    @Test
     public void dataStreamConnectionFailure_marksTheSessionDisconnected() throws Exception {
         // The -L half: a session with no control stream has no other failure to
         // observe, so a connection-level failure on a data stream must also mark

@@ -439,6 +439,54 @@ func TestTunnelControl_UnbindReleasesPort(t *testing.T) {
 	waitPortFree(t, port)
 }
 
+// TestTunnelControl_UnbindOnePortLeavesSessionAndSiblingAlive pins the
+// server-side invariant behind the Android h2 client's removeReverse(): tearing
+// down one reverse port must not end the control session or disturb a sibling
+// reverse port. The registry-layer tests only check the released port's Active
+// flag; this drives the real control stream and proves (a) the stream is still
+// usable after an unbind (ping/pong), and (b) a sibling bound port still
+// accepts and parks a connection that can be claimed.
+func TestTunnelControl_UnbindOnePortLeavesSessionAndSiblingAlive(t *testing.T) {
+	base, cleanup := setupTunnelControlTest(t)
+	defer cleanup()
+
+	client := h2cTunnelClient()
+	portA := freeLoopbackPort(t)
+	portB := freeLoopbackPort(t)
+
+	pw, rd, resp := openControlStream(t, client, base)
+	defer resp.Body.Close()
+	defer func() { _ = pw.Close() }()
+
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portA).Type)
+	require.Equal(t, tunnel.MsgBound, bindAndExpect(t, pw, rd, portB).Type)
+
+	// Unbind only portA.
+	sendControl(t, pw, tunnel.ControlMessage{Type: tunnel.MsgUnbind, Port: portA})
+	reply := readControl(t, rd)
+	require.Equal(t, tunnel.MsgUnbound, reply.Type)
+	assert.Equal(t, portA, reply.Port)
+	waitPortFree(t, portA)
+
+	// The control stream must still be alive: a ping still gets a pong. If the
+	// unbind had ended the session, this read would time out or fail.
+	sendControl(t, pw, tunnel.ControlMessage{Type: tunnel.MsgPing})
+	assert.Equal(t, tunnel.MsgPong, readControl(t, rd).Type,
+		"unbinding one port must not end the control session")
+
+	// The sibling port must still be bound and still serve: a connection is
+	// accepted, parks, and its incoming token can be claimed.
+	assert.True(t, tunnelBinds.IsBound(portB), "the sibling port must stay bound")
+	visitor, incoming := dialBoundPort(t, rd, portB)
+	defer visitor.Close()
+
+	cpw, cresp := openClaimStream(t, client, base, incoming.Token)
+	defer cresp.Body.Close()
+	defer func() { _ = cpw.Close() }()
+	assert.Equal(t, http.StatusOK, cresp.StatusCode,
+		"a sibling reverse port must still be claimable after the other was unbound")
+}
+
 func TestTunnelControl_UnbindUnknownPortStillAnswers(t *testing.T) {
 	base, cleanup := setupTunnelControlTest(t)
 	defer cleanup()

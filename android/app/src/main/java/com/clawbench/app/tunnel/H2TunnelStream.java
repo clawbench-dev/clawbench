@@ -972,9 +972,26 @@ public final class H2TunnelStream implements TunnelStream {
          * marked dead. Kept out of {@link #translate} on purpose — the same
          * translation serves the write/close paths, where a failure can also be
          * an ordinary teardown race and must not reconnect the whole tunnel.
+         *
+         * <p>A failure on a stream <em>we</em> closed is our own teardown, not
+         * a transport fault, and must not mark the session dead. {@link #close()}
+         * sets {@code closed} and then {@code call.cancel()}s, so a parked
+         * reader (a reverse relay's {@code pumpTunnelToLocal}) wakes with the
+         * cancel's IOException; {@link #translate} maps that to {@code CLOSED},
+         * which is connection-level. Without this guard, {@code removeReverse()}
+         * -> {@code relay.closeBoth()} -> {@code H2Connection.close()} would
+         * kill the whole session — and every sibling reverse forward — merely
+         * because the client tore down one relay it owns.
+         *
+         * <p>{@code closed} is only ever set by a local close ({@link #close()}
+         * or {@link #markClosedBySession()}), so it is exactly the "we did
+         * this" signal. A peer-initiated failure (RST_STREAM / GOAWAY /
+         * connection shutdown) leaves it false and still marks the session
+         * dead, so genuine failure detection is untouched.
          */
         private IOException readFailure(IOException e) {
             IOException translated = translate(e);
+            if (closed.get()) return translated;
             if (translated instanceof TunnelException) {
                 TunnelErrorKind errorKind = ((TunnelException) translated).kind();
                 if (errorKind.isConnectionLevel()) {

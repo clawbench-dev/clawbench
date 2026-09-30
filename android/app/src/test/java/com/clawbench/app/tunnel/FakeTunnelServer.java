@@ -188,6 +188,12 @@ final class FakeTunnelServer implements CallFactory {
         private volatile boolean canceled = false;
         private volatile boolean executed = false;
         private final Timeout timeout = new Timeout();
+        /**
+         * The duplex stream this call handed out, or {@code null} before
+         * {@link #duplexResponse()} ran (e.g. a call still parked in
+         * {@link Mode#HANG}). Set by the {@link FakeStream} constructor.
+         */
+        private volatile FakeStream stream;
 
         FakeCall(Request request) {
             this.request = request;
@@ -270,6 +276,16 @@ final class FakeTunnelServer implements CallFactory {
         public void cancel() {
             canceled = true;
             cancels.incrementAndGet();
+            // Real OkHttp answers cancel() with an RST_STREAM scoped to this
+            // stream, which fails the response-direction read of a caller
+            // parked in read() — that is the whole point of cancel() for the
+            // tunnel (it is what unblocks a parked pump). Model it: without
+            // this the fake leaves the reader parked forever and a test cannot
+            // observe the failure the production path raises.
+            FakeStream current = stream;
+            if (current != null) {
+                current.failFromServer();
+            }
         }
 
         @Override
@@ -324,6 +340,9 @@ final class FakeTunnelServer implements CallFactory {
 
         FakeStream(FakeCall call) {
             this.call = call;
+            // Let Call.cancel() reach this stream's response pipe, the way an
+            // RST_STREAM does in real OkHttp.
+            call.stream = this;
             BufferedSource source = Okio.buffer(fromServer.source());
             ResponseBody body = ResponseBody.create(source, OCTET, -1L);
             this.response = new Response.Builder()
