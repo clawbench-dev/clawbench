@@ -3577,19 +3577,30 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-tool-detail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  /* No gap: the label is a TAB sitting directly on top of the command box.
+     A gap here would detach it from the box's top border. */
+  gap: 0;
   min-width: 0;
 }
 
-/* The label lives on its own line ABOVE the content, so a long / multi-line
-   command no longer forces the label (and the row baseline) to span the full
-   content height. */
+/* The label is a TAB, not a free-floating chip: it sits directly on top of the
+   command box, flush with its left edge, rounded on top and SQUARE on the
+   bottom. It deliberately has NO bottom border — the command box's own top
+   border is its bottom edge, so all four sides of the box stay intact and the
+   label's left border lines up with the box's as one continuous line.
+   The background must be an OPAQUE mix against the surface behind the label
+   (--bg-primary is the inline card's background) — `transparent` would let the
+   card show through and break the "attached" read. */
 .content-blocks .tool-detail .permission-detail-label {
   align-self: flex-start;
   font-size: var(--font-size-2xs);
   padding:1px var(--space-3);
-  border-radius: var(--radius-xs);
-  background: color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--bg-secondary));
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  /* Must match the command box's border exactly (same mix) so the two left
+     borders read as one line. */
+  border: 1px solid color-mix(in srgb, var(--tool-accent, #eab308) 14%, var(--border-color));
+  border-bottom: none;
+  background: color-mix(in srgb, var(--tool-accent, #eab308) 16%, var(--bg-primary));
   color: #b45309;
   font-weight: var(--font-weight-semibold);
   letter-spacing: 0.4px;
@@ -3598,7 +3609,7 @@ onUnmounted(() => {
 }
 
 :root[data-theme-base="dark"] .content-blocks .tool-detail .permission-detail-label {
-  background: color-mix(in srgb, #fbbf24 16%, var(--bg-secondary));
+  background: color-mix(in srgb, #fbbf24 18%, var(--bg-primary));
   color: #fbbf24;
 }
 
@@ -3630,6 +3641,68 @@ onUnmounted(() => {
 .content-blocks .tool-detail .permission-options .permission-btn {
   padding: 0 14px;
   border-radius: var(--radius-sm);
+}
+
+/* ── Integrated button group (opt-in via .permission-btn-group) ──
+   The default .permission-options above stays as-is for any other caller; the
+   renderer adds .permission-btn-group for the permission card. One container
+   owns the frame and the outer radius; the cells own nothing, so the only lines
+   inside are the 1px dividers. The group hugs its labels (inline-flex, cells
+   sized to content) and only truncates once it would exceed the card.
+
+   MUST stay AFTER the base .permission-options .permission-btn rule above:
+   that rule sets padding + border-radius at the SAME specificity (0,4,0), so
+   only source order decides — placed earlier, the cells would silently keep a
+   6px radius and 14px padding and the group would not read as one control. */
+.content-blocks .tool-detail .permission-btn-group {
+  display: inline-flex;
+  /* Same trap as .permission-result: this is a child of the column-flex
+     .permission-approval-view, so without align-self it inherits
+     align-items: stretch, blockifies and spans the full card width — the
+     cells stay content-sized but the frame around them does not hug. */
+  align-self: flex-start;
+  /* Natural width: each cell sizes to its own label, so a short row of short
+     labels does not stretch across the whole card. `max-width: 100%` is the
+     ceiling — past it the cells shrink and truncate instead of overflowing. */
+  max-width: 100%;
+  gap: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 40%, transparent);
+}
+
+/* Cells: no border, no radius, no background of their own — the container and
+   the .fbtn-* colour rules supply all three. */
+.content-blocks .tool-detail .permission-btn-group .permission-btn {
+  /* Size to the label, but allow shrinking (and therefore truncating) when the
+     row would exceed the container. `min-width: 0` is MANDATORY: a flex item
+     defaults to `min-width: auto`, which refuses to shrink below its content —
+     without it text-overflow never triggers and the group overflows the card. */
+  flex: 0 1 auto;
+  min-width: 0;
+  /* `display: block` (not inline-flex) + line-height is what lets
+     text-overflow: ellipsis actually apply to the label. */
+  display: block;
+  height: 30px;
+  line-height: 30px;
+  padding: 0 var(--space-5);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Smaller than the .fbtn default (--font-size-md): three labels share one
+     row here, so the row reads better a step down. */
+  font-size: var(--font-size-sm);
+  border: none;
+  border-radius: 0;
+}
+
+/* 1px divider drawn with box-shadow rather than border-left: a real border
+   would take layout space, so each cell's share of the row would differ by 1px
+   and the cells would no longer be visually even. */
+.content-blocks .tool-detail .permission-btn-group > * + * {
+  box-shadow: -1px 0 0 0 color-mix(in srgb, var(--text-secondary) 28%, transparent);
 }
 
 /* Buttons keep their normal shape; disabled buttons get the shared .fbtn
@@ -3671,10 +3744,9 @@ onUnmounted(() => {
   color: #fca5a5;
 }
 
-/* Settled-permission status chip. Geometry + type tier match the
-   .permission-detail-label chip sitting in the same column (11px / --radius-xs /
-   1px 6px) instead of the 13px body tier, and the tint is mixed from the theme
-   palette so all 36 themes adapt — the old fixed Tailwind hexes did not. */
+/* Settled-permission status chip. Sized to MATCH the option buttons above it —
+   same 30px height, same --font-size-md / --font-weight-medium as .fbtn — so the
+   settled state reads as the same control family rather than a small badge. */
 .content-blocks .tool-detail .permission-result {
   /* This is a child of the column-flex .permission-approval-view. Without
      align-self it inherits align-items: stretch, the chip blockifies and
@@ -3682,13 +3754,22 @@ onUnmounted(() => {
      hugging its label. */
   align-self: flex-start;
   display: inline-flex;
+  /* The glyph and the label are two children, so they need an explicit gap. */
   align-items: center;
-  padding:1px var(--space-3);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  gap: var(--space-4);
+  height: 30px;
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-sm);
+  /* Same step down as the option cells above (they use --font-size-sm too), so
+     the settled chip and the buttons it replaced stay on one type scale. */
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   border: 1px solid transparent;
-  margin-top: var(--space-3);
+}
+
+/* The icon must not shrink or the label would squash it. */
+.content-blocks .tool-detail .permission-result svg {
+  flex-shrink: 0;
 }
 
 .content-blocks .tool-detail .permission-result-approved {

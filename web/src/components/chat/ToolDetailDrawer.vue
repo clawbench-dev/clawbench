@@ -1799,14 +1799,26 @@ onUpdated(restoreAskStates)
 .tool-detail-body .permission-tool-detail {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  /* No gap: the label is a TAB sitting directly on top of the command box. */
+  gap: 0;
   min-width: 0;
 }
+/* The label is a TAB, not a free-floating chip: flush with the box's left edge,
+   rounded on top, SQUARE on the bottom, and with NO bottom border — the command
+   box's own top border is its bottom edge, so all four sides of the box stay
+   intact. The background is an opaque mix against the sheet surface
+   (--bg-secondary) so the "attached" read survives; `transparent` would not. */
 .tool-detail-body .permission-detail-label {
   align-self: flex-start;
   font-size: var(--font-size-2xs);
   padding:1px var(--space-3);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-xs) var(--radius-xs) 0 0;
+  /* Literal red, not var(--tool-accent): the accent is set on
+     .tool-detail-header, which is a separate slot and does NOT inherit into the
+     body. Must match the command box's border exactly so the two left borders
+     read as one continuous line. */
+  border: 1px solid color-mix(in srgb, #ef4444 14%, var(--border-color));
+  border-bottom: none;
   background: color-mix(in srgb, #ef4444 12%, var(--bg-secondary));
   color: #dc2626;
   font-weight: var(--font-weight-semibold);
@@ -1826,7 +1838,7 @@ onUpdated(restoreAskStates)
   line-height: var(--line-height-normal);
   color: var(--text-primary);
   background: var(--bg-tertiary);
-  border: 1px solid var(--border-color);
+  border: 1px solid color-mix(in srgb, var(--tool-accent, #ef4444) 14%, var(--border-color));
   /* Sharp, hard corners — terminal-like command block. */
   border-radius: 0;
   padding:5px var(--space-4);
@@ -1844,6 +1856,57 @@ onUpdated(restoreAskStates)
 .tool-detail-body .permission-options .permission-btn {
   padding: 0 14px;
   border-radius: var(--radius-sm);
+}
+
+/* ── Integrated button group (opt-in via .permission-btn-group) ──
+   MUST stay AFTER the base .permission-options .permission-btn rule above:
+   that rule sets padding + border-radius at the SAME specificity (0,3,0), so
+   only source order decides. One container owns the frame and the outer
+   radius; the cells own nothing, so the only lines inside are the dividers. */
+.tool-detail-body .permission-btn-group {
+  display: inline-flex;
+  /* Same trap as .permission-result: this is a child of the column-flex
+     .permission-approval-view, so without align-self it inherits
+     align-items: stretch, blockifies and spans the full card width — the
+     cells stay content-sized but the frame around them does not hug. */
+  align-self: flex-start;
+  /* Natural width: each cell sizes to its own label. `max-width: 100%` is the
+     ceiling — past it the cells shrink and truncate instead of overflowing. */
+  max-width: 100%;
+  gap: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 40%, transparent);
+}
+.tool-detail-body .permission-btn-group .permission-btn {
+  /* Size to the label, but allow shrinking (and therefore truncating) when the
+     row would exceed the container. `min-width: 0` is MANDATORY: a flex item
+     defaults to `min-width: auto`, which refuses to shrink below its content —
+     without it text-overflow never triggers and the group overflows the panel. */
+  flex: 0 1 auto;
+  min-width: 0;
+  /* `display: block` (not inline-flex) + line-height is what lets
+     text-overflow: ellipsis actually apply to the label. */
+  display: block;
+  height: 30px;
+  line-height: 30px;
+  padding: 0 var(--space-5);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* Smaller than the .fbtn default (--font-size-md): three labels share one
+     row here, so the row reads better a step down. */
+  font-size: var(--font-size-sm);
+  border: none;
+  border-radius: 0;
+}
+/* 1px divider via box-shadow rather than border-left: a real border would take
+   layout space, so each cell's share of the row would differ by 1px and the
+   cells would no longer be visually even. */
+.tool-detail-body .permission-btn-group > * + * {
+  box-shadow: -1px 0 0 0 color-mix(in srgb, var(--text-secondary) 28%, transparent);
 }
 .tool-detail-body .permission-options .fbtn:disabled {
   opacity: var(--opacity-muted);
@@ -1879,21 +1942,29 @@ onUpdated(restoreAskStates)
 .tool-detail-header[data-category="permission"] { --tool-accent: #ef4444; }
 :root[data-theme-base="dark"] .tool-detail-header[data-category="permission"] { --tool-accent: #f87171; }
 
-/* Settled-permission status chip — same geometry + type tier as the
-   .permission-detail-label chip above it (11px / --radius-xs / 1px 6px) and
-   tinted from the theme palette so all 36 themes adapt. */
+/* Settled-permission status chip. Sized to MATCH the option buttons above it —
+   same 30px height, same --font-size-md / --font-weight-medium as .fbtn. */
 .tool-detail-body .permission-result {
   /* Child of the column-flex .permission-approval-view: without align-self it
      inherits align-items: stretch, blockifies and becomes a full-width bar. */
   align-self: flex-start;
   display: inline-flex;
+  /* The glyph and the label are two children, so they need an explicit gap. */
   align-items: center;
-  padding:1px var(--space-3);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  gap: var(--space-4);
+  height: 30px;
+  padding: 0 var(--space-6);
+  border-radius: var(--radius-sm);
+  /* Same step down as the option cells above (they use --font-size-sm too), so
+     the settled chip and the buttons it replaced stay on one type scale. */
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
   border: 1px solid transparent;
-  margin-top: var(--space-3);
+}
+
+/* The icon must not shrink or the label would squash it. */
+.tool-detail-body .permission-result svg {
+  flex-shrink: 0;
 }
 
 .tool-detail-body .permission-result-approved {

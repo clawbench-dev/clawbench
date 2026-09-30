@@ -29,8 +29,17 @@ import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 
 const WRAP_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M3 6h18"/><path d="M3 12h15a3 3 0 1 1 0 6h-3"/><path d="M18 15l-3 3 3 3"/><path d="M3 18h7"/></svg>'
 
+// Settled-permission result glyphs. These are the REAL lucide icons the Vue
+// components already use for the same two states (ContentBlocks/ToolDetailDrawer
+// render CheckCircle2 / XCircle at :size="14"), inlined here because this module
+// builds an HTML string and cannot render a component. Paths copied verbatim
+// from node_modules/lucide-vue-next/dist/esm/icons/circle-check.js and
+// circle-x.js — do NOT hand-draw replacements, or the two surfaces drift apart.
+const PERMISSION_OK_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>'
+const PERMISSION_DENY_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>'
+
 // Exported for reuse by ToolDetailDrawer.vue (avoid duplicating SVG constants)
-export { COPY_ICON_SVG, WRAP_ICON_SVG }
+export { COPY_ICON_SVG, WRAP_ICON_SVG, PERMISSION_OK_ICON_SVG, PERMISSION_DENY_ICON_SVG }
 
 // ────────────────────────────────────────────────────────────
 // Type helpers for tool input
@@ -787,17 +796,21 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
   // (.fbtn + fbtn-success / fbtn-danger); the .permission-btn class is kept so
   // the click-action handler still matches and guards against double responses.
   if (hasRealResult) {
-    // Already responded — show result badge instead of buttons
+    // Already responded — show result badge instead of buttons. The glyph is
+    // what carries approved-vs-denied for a reader who cannot use hue (the two
+    // tints are close, and the palette is theme-dependent).
     if (isApproved) {
-      html += `<div class="permission-result permission-result-approved">${escapeHtml(gt('tool.permission.approved'))}</div>`
+      html += `<div class="permission-result permission-result-approved">${PERMISSION_OK_ICON_SVG}${escapeHtml(gt('tool.permission.approved'))}</div>`
     } else {
-      html += `<div class="permission-result permission-result-denied">${escapeHtml(gt('tool.permission.denied'))}</div>`
+      html += `<div class="permission-result permission-result-denied">${PERMISSION_DENY_ICON_SVG}${escapeHtml(gt('tool.permission.denied'))}</div>`
     }
   } else if (isAutoApproved) {
     // Auto-approved but SSE result not yet arrived — show auto-approved badge
     html += `<div class="permission-result permission-result-auto-approved">${escapeHtml(gt('tool.permission.autoApproved'))}</div>`
   } else if (options.length > 0) {
-    html += '<div class="permission-options">'
+    // Integrated button group: one bordered container, equal-width cells and
+    // 1px dividers — instead of N separate pills with gaps between them.
+    html += '<div class="permission-options permission-btn-group">'
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]
       const label = str(opt.name)

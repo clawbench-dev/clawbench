@@ -82,6 +82,34 @@ function scopedOf(path: string, variant: string): boolean {
   return rule(readWebFile(path), selector)!.scoped
 }
 
+/** Every rule across all style blocks, with its source offset. */
+function allRules(path: string) {
+  const src = readWebFile(path)
+  const out: Array<{ selector: string; decls: string; at: number }> = []
+  const blockRe = /<style([^>]*)>([\s\S]*?)<\/style>/g
+  let b: RegExpExecArray | null
+  while ((b = blockRe.exec(src)) !== null) {
+    const body = b[2].replace(/\/\*[\s\S]*?\*\//g, '')
+    const ruleRe = /([^{}]+)\{([^{}]*)\}/g
+    let m: RegExpExecArray | null
+    while ((m = ruleRe.exec(body)) !== null) {
+      out.push({ selector: m[1].trim(), decls: m[2], at: b.index + m.index })
+    }
+  }
+  return out
+}
+
+/** The single rule whose selector is exactly `exact`. */
+function ruleFor(path: string, exact: string) {
+  const found = allRules(path).filter((r) => r.selector === exact)
+  expect(found.length, `${path}: expected exactly one "${exact}"`).toBe(1)
+  return found[0]
+}
+
+/** Per-file selector prefix. */
+const P = (path: string) =>
+  path === INLINE ? '.content-blocks .tool-detail' : '.tool-detail-body'
+
 describe('permission-result chip: guards the guard', () => {
   it('parses both files and finds all four variants', () => {
     for (const path of [INLINE, OVERLAY]) {
@@ -121,19 +149,33 @@ describe('permission-result chip hugs its label instead of stretching', () => {
   }
 })
 
-describe('permission-result chip uses the status-chip type tier', () => {
+describe('permission-result chip matches the option buttons', () => {
   for (const path of [INLINE, OVERLAY]) {
-    it(`${path}: 11px tier, not the 13px body tier`, () => {
+    it(`${path}: same type tier and weight as the option cells`, () => {
       const decls = declsOf(path, '')
-      expect(decls).toMatch(/font-size:\s*var\(--font-size-xs\)/)
-      // The regression was --font-size-md (13px), the default body tier.
-      expect(decls).not.toMatch(/font-size:\s*var\(--font-size-md\)/)
+      // The settled chip replaces the buttons, so it must stay on the SAME type
+      // scale they use. Both are --font-size-sm now; the chip was previously an
+      // 11px badge, which read as a different component next to a 30px row.
+      expect(decls).toMatch(/font-size:\s*var\(--font-size-sm\)/)
+      expect(decls).toMatch(/font-weight:\s*var\(--font-weight-medium\)/)
+      expect(decls, 'must not fall back to the small badge tier').not.toMatch(
+        /font-size:\s*var\(--font-size-xs\)/,
+      )
+
+      // Pin the two to the same token rather than duplicating the value: if the
+      // cells move to another tier, this fails instead of drifting silently.
+      const cell = ruleFor(path, `${P(path)} .permission-btn-group .permission-btn`)
+      const sizeOf = (d: string) => d.match(/font-size:\s*(var\([^)]+\))/)?.[1]
+      expect(
+        sizeOf(decls),
+        'the chip and the option cells must use the same font-size token',
+      ).toBe(sizeOf(cell.decls))
     })
 
-    it(`${path}: shares the geometry of .permission-detail-label`, () => {
+    it(`${path}: same 30px height and radius family as a button`, () => {
       const decls = declsOf(path, '')
-      expect(decls).toMatch(/border-radius:\s*var\(--radius-xs\)/)
-      expect(decls).toMatch(/font-weight:\s*var\(--font-weight-semibold\)/)
+      expect(decls, 'must match the 30px control height').toMatch(/height:\s*30px/)
+      expect(decls).toMatch(/border-radius:\s*var\(--radius-sm\)/)
     })
   }
 })
@@ -194,5 +236,95 @@ describe('the two copies do not drift', () => {
         `ContentBlocks.vue and ToolDetailDrawer.vue disagree on .permission-result${v}`,
       ).toEqual(norm(declsOf(INLINE, v)))
     }
+  })
+})
+
+/**
+ * The permission card's option buttons render as ONE integrated group: a single
+ * bordered container, equal-width cells and 1px dividers — not N separate pills.
+ *
+ * Two things here fail silently and so are pinned:
+ *
+ *   1. `min-width: 0` on the cells. A flex item defaults to `min-width: auto`,
+ *      which refuses to shrink below its content: without it `text-overflow:
+ *      ellipsis` NEVER triggers and the group pushes wider than the card
+ *      instead of truncating. Nothing errors — it just overflows.
+ *   2. Source ORDER. The base `.permission-options .permission-btn` rule sets
+ *      padding + border-radius at the same specificity as the group's cell
+ *      rule, so whichever comes LAST wins. Declared before it, the cells keep a
+ *      6px radius and 14px padding and the group silently stops reading as one
+ *      control. A pure "does the rule exist" assertion cannot catch this.
+ */
+describe('permission option buttons form one integrated group', () => {
+  for (const path of [INLINE, OVERLAY]) {
+    it(`${path}: the container owns the frame, the cells own nothing`, () => {
+      const group = ruleFor(path, `${P(path)} .permission-btn-group`)
+      // Natural width, not a full-bleed bar: inline-flex + content-sized cells
+      // so a short row of short labels does not stretch across the card.
+      expect(group.decls).toMatch(/display:\s*inline-flex/)
+      // `display: inline-flex` alone does NOT hug: as a child of the column-flex
+      // .permission-approval-view it inherits align-items: stretch, blockifies
+      // and spans the full card (measured 738px of a 738px card). align-self is
+      // what actually makes the frame hug its content.
+      expect(
+        group.decls,
+        'without align-self the group stretches to the full card width',
+      ).toMatch(/align-self:\s*flex-start/)
+      expect(group.decls, 'must be capped so a long row cannot span the card').toMatch(
+        /max-width:\s*100%/,
+      )
+      // Anchored so it cannot match the `100%` inside `max-width: 100%`.
+      expect(group.decls, 'the old full-width behaviour must be gone').not.toMatch(
+        /(?:^|;)\s*width:\s*100%/,
+      )
+      expect(group.decls).toMatch(/gap:\s*0/)
+      expect(group.decls).toMatch(/border-radius:\s*var\(--radius-sm\)/)
+      expect(group.decls).toMatch(/border:\s*1px solid/)
+    })
+
+    it(`${path}: cells size to their label but can still truncate`, () => {
+      const cell = ruleFor(path, `${P(path)} .permission-btn-group .permission-btn`)
+      // flex: 0 1 auto = "content width, may shrink" — the shrink half is what
+      // lets the ellipsis engage once the row exceeds max-width.
+      expect(cell.decls, 'must size to content and be allowed to shrink').toMatch(
+        /flex:\s*0 1 auto/,
+      )
+      expect(cell.decls, 'must be able to shrink').toMatch(/min-width:\s*0/)
+      expect(cell.decls).toMatch(/text-overflow:\s*ellipsis/)
+      expect(cell.decls).toMatch(/overflow:\s*hidden/)
+      expect(cell.decls).toMatch(/white-space:\s*nowrap/)
+      // inline-flex would ignore text-overflow entirely.
+      expect(cell.decls).toMatch(/display:\s*block/)
+      // A step down from the .fbtn default (--font-size-md).
+      expect(cell.decls).toMatch(/font-size:\s*var\(--font-size-sm\)/)
+      // The container draws the frame; a per-cell border would double it.
+      expect(cell.decls).toMatch(/border:\s*none/)
+      expect(cell.decls).toMatch(/border-radius:\s*0/)
+    })
+
+    it(`${path}: dividers are box-shadow, not layout-affecting borders`, () => {
+      const div = ruleFor(path, `${P(path)} .permission-btn-group > * + *`)
+      expect(div.decls).toMatch(/box-shadow:\s*-1px 0 0 0/)
+      expect(div.decls, 'a real border would shift the cell widths').not.toMatch(
+        /border-(left|right):/,
+      )
+    })
+
+    it(`${path}: the group cell rule comes AFTER the base button rule`, () => {
+      // Same specificity => source order decides. Declared earlier, the base
+      // rule's 6px radius + 14px padding silently win.
+      const base = ruleFor(path, `${P(path)} .permission-options .permission-btn`)
+      const cell = ruleFor(path, `${P(path)} .permission-btn-group .permission-btn`)
+      expect(
+        cell.at,
+        'the group rule must come after the base rule or it loses the cascade',
+      ).toBeGreaterThan(base.at)
+    })
+  }
+
+  it('the renderer opts the permission card into the group', () => {
+    const src = readWebFile('src/utils/renderToolDetail.ts')
+    // The group only applies when the renderer emits the extra class.
+    expect(src).toContain('permission-options permission-btn-group')
   })
 })
