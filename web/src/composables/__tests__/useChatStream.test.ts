@@ -1775,15 +1775,15 @@ describe('useChatStream', () => {
     })
 
     it('a non-queued self-echo is skipped (directly-sent bubble already exists)', () => {
-      // sendMessageNow already pushed the optimistic bubble and adopted the DB
-      // id from the POST response, so the echo must be skipped — rendering it
-      // would duplicate the user's own message.
+      // sendMessageNow already pushed the optimistic bubble, so the echo must
+      // not render a duplicate. The echo also ADOPTS the DB id (see the race
+      // test below) — here the bubble already carries a numeric id, so the
+      // adoption is a no-op and the bubble is left untouched.
       const options = createOptions()
       const { connectStream } = useChatStream(options)
       localStorage.setItem('clawbench_client_id', 'my-device-123')
       options.dispatch({ type: 'optimistic_push', msg: {
-        role: 'user', id: 'pending-1', content: '1', blocks: [{ type: 'text', text: '1' }],
-        seq: 10,
+        role: 'user', id: 7, content: '1', blocks: [{ type: 'text', text: '1' }],
       } })
       connectStream('test-session-1')
 
@@ -1791,9 +1791,51 @@ describe('useChatStream', () => {
 
       const userMsgs = options.messages.value.filter((m: any) => m.role === 'user')
       expect(userMsgs).toHaveLength(1)
-      // The existing optimistic bubble is untouched (the POST response is the
-      // adoption path for a direct send).
-      expect(userMsgs[0].id).toBe('pending-1')
+      // Already adopted: the echo's adoption finds no string-id match → no-op.
+      expect(userMsgs[0].id).toBe(7)
+      localStorage.removeItem('clawbench_client_id')
+    })
+
+    it('a direct-send self-echo adopts the DB id so the reply cannot flash above its question', () => {
+      // Reported symptom: for a moment the assistant bubble appears ABOVE the
+      // just-sent user message, then the order corrects itself.
+      //
+      // The backend emits user_message (carrying queueId + messageId) BEFORE it
+      // launches the run goroutine that emits stream_start (handler/chat.go).
+      // The optimistic bubble pushed by sendMessageNow is still TRANSIENT (string
+      // id) until the POST response resolves, so it sorts after every DB-backed
+      // message. When stream_start gives the placeholder its numeric DB id, the
+      // reply sorts ABOVE the still-transient question. The POST response later
+      // adopts the question's id and the order self-corrects — the flash.
+      //
+      // Adopting the id from the echo (the earliest authoritative id signal,
+      // emitted before stream_start) closes the window.
+      const options = createOptions()
+      localStorage.setItem('clawbench_client_id', 'my-device-123')
+      useChatStream(options)
+
+      // Optimistic direct-send bubble: transient string id, POST still pending.
+      options.dispatch({ type: 'optimistic_push', msg: {
+        role: 'user', id: 'pending-1', queueId: 'pending-1', content: 'q',
+        blocks: [{ type: 'text', text: 'q' }], seq: 10,
+      } })
+
+      // The self-echo arrives first (the backend emits it before the run).
+      simulateWsEvent('user_message', {
+        messageId: 200, content: 'q', queueId: 'pending-1', senderClientId: 'my-device-123',
+      })
+
+      const users = options.messages.value.filter((m: any) => m.role === 'user')
+      expect(users).toHaveLength(1, 'the echo must not duplicate the optimistic bubble')
+      expect(users[0].id).toBe(200)
+
+      // stream_start then gives the reply placeholder its own DB id (202).
+      simulateWsEvent('stream_start', { message_id: 202 })
+
+      const order = options.messages.value.map((m: any) =>
+        m.role === 'user' ? `u:${m.content}` : `a:${m.id}`
+      )
+      expect(order).toEqual(['u:q', 'a:202'])
       localStorage.removeItem('clawbench_client_id')
     })
 
