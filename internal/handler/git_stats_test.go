@@ -200,10 +200,15 @@ func TestServeGitStats_ValidResponse(t *testing.T) {
 	createTestFile(t, env.ProjectDir, "two.go", "package y\n// c\n")
 	gitCommitAll(t, env.ProjectDir, "add two.go")
 
-	// Wide-but-legal window (≤370d) centered around "now" so all commits made
-	// by initGitRepo + gitCommitAll fall inside.
+	// Window derived from the wall-clock commit time (initGitRepo +
+	// gitCommitAll commit at "now"), with a ±24h margin so the fixtures are
+	// always inside. A hardcoded absolute window silently expires: once the
+	// clock passes it, every commit falls outside and CommitCnt drops to 0.
+	now := time.Now().UTC()
+	start := now.Add(-24 * time.Hour).Format(time.RFC3339)
+	end := now.Add(24 * time.Hour).Format(time.RFC3339)
 	req := withProjectCookie(newRequest(t, http.MethodGet,
-		"/api/git/stats?start=2026-08-01T00:00:00Z&end=2026-09-30T00:00:00Z&trend=1", nil), env.ProjectDir)
+		"/api/git/stats?start="+start+"&end="+end+"&trend=1", nil), env.ProjectDir)
 	w := callHandler(ServeGitStats, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 
