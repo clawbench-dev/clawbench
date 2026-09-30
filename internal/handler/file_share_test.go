@@ -894,7 +894,7 @@ func TestResolveShareRoot_FileOutsideProjectNarrowsToFileDir(t *testing.T) {
 // createShareInProject shares a file while presenting `projectPath` as the
 // active project, so the row is attributed to that project rather than to
 // env.ProjectDir.
-func createShareInProject(t *testing.T, env *testEnv, absPath, projectPath string) string {
+func createShareInProject(t *testing.T, absPath, projectPath string) string {
 	t.Helper()
 	req := newRequest(t, http.MethodPost, "/api/share", map[string]string{"path": absPath})
 	withProjectCookie(req, projectPath)
@@ -909,7 +909,7 @@ func createShareInProject(t *testing.T, env *testEnv, absPath, projectPath strin
 
 // listSharesForProject reads the shared-files drawer contents as seen from
 // projectPath.
-func listSharesForProject(t *testing.T, env *testEnv, projectPath string) []shareListItem {
+func listSharesForProject(t *testing.T, projectPath string) []shareListItem {
 	t.Helper()
 	req := newRequest(t, http.MethodGet, "/api/share/list", nil)
 	withProjectCookie(req, projectPath)
@@ -941,14 +941,14 @@ func TestShareList_IsProjectScoped(t *testing.T) {
 	require.NoError(t, os.MkdirAll(otherDir, 0o755))
 	createTestFile(t, otherDir, "theirs.md", "y")
 	otherFile := filepath.Join(otherDir, "theirs.md")
-	createShareInProject(t, env, otherFile, otherProject)
+	createShareInProject(t, otherFile, otherProject)
 
 	// Each project sees exactly its own share.
-	mineList := listSharesForProject(t, env, env.ProjectDir)
+	mineList := listSharesForProject(t, env.ProjectDir)
 	require.Len(t, mineList, 1, "project A must see only its own share")
 	assert.Equal(t, "docs/mine.md", mineList[0].Path)
 
-	theirsList := listSharesForProject(t, env, otherProject)
+	theirsList := listSharesForProject(t, otherProject)
 	require.Len(t, theirsList, 1, "project B must see only its own share")
 	assert.NotEqual(t, mineList[0].Token, theirsList[0].Token)
 }
@@ -991,7 +991,7 @@ func TestShareList_DeleteAllIsProjectScoped(t *testing.T) {
 	otherDir := filepath.Join(otherProject, "docs")
 	require.NoError(t, os.MkdirAll(otherDir, 0o755))
 	createTestFile(t, otherDir, "theirs.md", "y")
-	otherToken := createShareInProject(t, env, filepath.Join(otherDir, "theirs.md"), otherProject)
+	otherToken := createShareInProject(t, filepath.Join(otherDir, "theirs.md"), otherProject)
 
 	// Clear from project A.
 	clearReq := newRequest(t, http.MethodDelete, "/api/share/list", map[string]any{"all": true})
@@ -1023,7 +1023,7 @@ func TestShareList_RevokeByTokenRejectsForeignProject(t *testing.T) {
 	otherDir := filepath.Join(otherProject, "docs")
 	require.NoError(t, os.MkdirAll(otherDir, 0o755))
 	createTestFile(t, otherDir, "theirs.md", "y")
-	otherToken := createShareInProject(t, env, filepath.Join(otherDir, "theirs.md"), otherProject)
+	otherToken := createShareInProject(t, filepath.Join(otherDir, "theirs.md"), otherProject)
 
 	// Try to revoke it from project A.
 	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]string{"token": otherToken})
@@ -1039,7 +1039,7 @@ func TestShareList_RevokeByTokenRejectsForeignProject(t *testing.T) {
 
 // TestShareList_RevokeUnknownTokenIsNotFound pins that an unknown token gets the
 // same 404 as a foreign one (no existence disclosure), and — unlike the
-// pre-scoping behaviour — is no longer silently "revoked" with a 200.
+// pre-scoping behavior — is no longer silently "revoked" with a 200.
 func TestShareList_RevokeUnknownTokenIsNotFound(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
