@@ -1,0 +1,253 @@
+package handler
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
+	"clawbench/internal/skill"
+)
+
+// setupSkillsEnv isolates the skill globals and gives one agent a native dir
+// with a skill, so the endpoints have something to report.
+func setupSkillsEnv(t *testing.T) {
+	t.Helper()
+
+	origCfg := model.ConfigInstance
+	origDataDir := model.DataDir
+	origSpecs := model.GetBackendRegistry()
+	origAgents := model.GetAgentList()
+	t.Cleanup(func() {
+		model.ConfigInstance = origCfg
+		model.DataDir = origDataDir
+		model.BackendRegistry = origSpecs
+		model.ReplaceAgents(nil, origAgents)
+		skill.ResetForTest()
+	})
+
+	root := t.TempDir()
+	model.DataDir = root
+	// Isolate the home directory: the registry always scans the shared
+	// ~/.agents/skills, so without this the test would see the developer's own
+	// installed skills.
+	t.Setenv("HOME", t.TempDir())
+	model.ConfigInstance = model.Config{
+		Skills: model.SkillsConfig{Enabled: true, Dirs: []string{filepath.Join(root, "user")}, RefreshHours: 6},
+	}
+
+	native := filepath.Join(root, "native")
+	dir := filepath.Join(native, "demo")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: demo\ndescription: A demo skill\n---\n"), 0o644))
+
+	model.GetBackendRegistry()
+	model.BackendRegistry = []model.BackendSpec{
+		{ID: "a1", Backend: "a1", NativeSkillsDirs: []string{native}},
+	}
+	agent := &model.Agent{ID: "a1", Backend: "a1"}
+	model.ReplaceAgents(map[string]*model.Agent{"a1": agent}, []*model.Agent{agent})
+
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+}
+
+func TestServeSkills_List(t *testing.T) {
+	setupSkillsEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.Enabled)
+	assert.Equal(t, 6, resp.RefreshHours)
+	require.Len(t, resp.Skills, 1)
+	assert.Equal(t, "demo", resp.Skills[0].Name)
+	// The listing has no agent in scope, so a native directory is reported as
+	// "other" (relative to whom is what InjectedFor decides).
+	assert.Equal(t, "other", resp.Skills[0].SourceKind)
+	assert.Equal(t, "a1", resp.Skills[0].AgentID)
+	assert.Contains(t, resp.Skills[0].Path, "SKILL.md")
+}
+
+func TestServeSkills_MethodNotAllowed(t *testing.T) {
+	setupSkillsEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestServeSkillsRefresh_PerRepoFailureIsNot5xx pins the contract that one
+// unreachable repository does not fail the whole request: the other repos still
+// synced, and the caller needs the per-repo reason inline.
+func TestServeSkillsRefresh_PerRepoFailureIsNot5xx(t *testing.T) {
+	setupSkillsEnv(t)
+
+	// A slug pointing at a path that cannot be a git remote makes the sync fail
+	// without needing network access.
+	model.ConfigInstance.Skills.Repos = []model.SkillRepo{
+		{URL: "file:///nonexistent/repo.git", Slug: "broken-repo"},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/refresh", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkillsRefresh, req)
+
+	require.Equal(t, http.StatusOK, w.Code, "a single repo failure must not be a server error")
+
+	var resp skillsRefreshResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp.OK, "ok must reflect that something failed")
+	assert.Contains(t, resp.Errors, "broken-repo")
+	// The previously discovered skill is still reported: a failed sync must not
+	// drop what was already found.
+	assert.GreaterOrEqual(t, resp.SkillCount, 1)
+}
+
+func TestServeSkillsRefresh_NoReposSucceeds(t *testing.T) {
+	setupSkillsEnv(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/refresh", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkillsRefresh, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp skillsRefreshResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.OK)
+	assert.Empty(t, resp.Errors)
+}
+
+// --- PATCH /api/config validation ---
+
+func TestServeConfig_Patch_SkillsApplied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.DataDir = t.TempDir()
+
+	body := `{"skills":{"enabled":true,"dirs":["/tmp/skills","/tmp/more-skills"],"refresh_hours":3,"repos":[{"url":"https://github.com/org/skills.git"}]}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.True(t, model.ConfigInstance.Skills.Enabled)
+	assert.Equal(t, []string{"/tmp/skills", "/tmp/more-skills"}, model.ConfigInstance.Skills.Dirs)
+	assert.Equal(t, 3, model.ConfigInstance.Skills.RefreshHours)
+	require.Len(t, model.ConfigInstance.Skills.Repos, 1)
+	assert.Equal(t, "https://github.com/org/skills.git", model.ConfigInstance.Skills.Repos[0].URL)
+	// A slug is derived so the checkout directory is stable.
+	assert.NotEmpty(t, model.ConfigInstance.Skills.Repos[0].Slug)
+
+	// All four fields are hot-reloadable — no restart dialog.
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.False(t, resp["needs_restart"].(bool))
+}
+
+func TestServeConfig_Patch_SkillsRejectsBadInput(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"relative dir", `{"skills":{"dirs":["relative/path"]}}`},
+		{"empty dir entry", `{"skills":{"dirs":[""]}}`},
+		{"empty repo url", `{"skills":{"repos":[{"url":""}]}}`},
+		{"malformed repo url", `{"skills":{"repos":[{"url":"::not a url::"}]}}`},
+		{"negative refresh hours", `{"skills":{"refresh_hours":-1}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, teardown := setupTestEnv(t)
+			defer teardown()
+
+			model.ConfigInstance = model.Config{}
+			model.DataDir = t.TempDir()
+
+			req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeConfig, req)
+
+			assert.Equal(t, http.StatusBadRequest, w.Code, "body: %s", tc.body)
+		})
+	}
+}
+
+// TestServeConfig_Patch_RepoTokenIsWriteOnly pins the write-only contract: the
+// client never receives a token, so an entry without one must keep the stored
+// token rather than silently clearing the credential.
+func TestServeConfig_Patch_RepoTokenIsWriteOnly(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+	model.DataDir = t.TempDir()
+
+	// First PATCH stores a token.
+	body := `{"skills":{"repos":[{"url":"https://github.com/org/skills.git","token":"s3cret"}]}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	require.Equal(t, http.StatusOK, callHandler(ServeConfig, req).Code)
+	require.Len(t, model.ConfigInstance.Skills.Repos, 1)
+	require.Equal(t, "s3cret", model.ConfigInstance.Skills.Repos[0].Token)
+
+	// A later PATCH of the same URL without a token must preserve it.
+	body = `{"skills":{"repos":[{"url":"https://github.com/org/skills.git"}]}}`
+	req = httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	require.Equal(t, http.StatusOK, callHandler(ServeConfig, req).Code)
+
+	require.Len(t, model.ConfigInstance.Skills.Repos, 1)
+	assert.Equal(t, "s3cret", model.ConfigInstance.Skills.Repos[0].Token,
+		"an entry without a token must inherit the stored one, not clear it")
+}
+
+// TestServeConfig_Get_SkillsNeverLeaksToken pins that GET /api/config reports
+// only whether a token exists.
+func TestServeConfig_Get_SkillsNeverLeaksToken(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.DataDir = t.TempDir()
+	model.ConfigInstance = model.Config{
+		Skills: model.SkillsConfig{
+			Enabled: true,
+			Dirs:    []string{"/tmp/skills"},
+			Repos:   []model.SkillRepo{{URL: "https://github.com/a/b.git", Slug: "b-1234", Token: "top-secret"}},
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	assert.NotContains(t, w.Body.String(), "top-secret")
+
+	var resp configResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Skills.Repos, 1)
+	assert.True(t, resp.Skills.Repos[0].HasToken)
+	assert.Equal(t, "b-1234", resp.Skills.Repos[0].Slug)
+}

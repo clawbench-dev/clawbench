@@ -2922,6 +2922,115 @@ paths:
                 type: string
 
   # ── Forge ─────────────────────────────────────────────────────────────────
+  /api/skills:
+    get:
+      tags: [Skills]
+      summary: 列出已发现的 Skill
+      operationId: skillsList
+      description: |
+        返回跨智能体 Skill 发现的当前状态：每个来源（各智能体原生目录、用户自定义目录、
+        克隆的 git 仓库）扫描到的 Skill 清单，以及 git 同步状态。
+
+        同一名字的 Skill 可能来自多个来源；清单按来源如实列出（`source_kind` 为
+        `own` / `user` / `git` / `other`），注入系统提示词时再按优先级去重。
+
+        仓库令牌只写不读：`repos[].has_token` 只表示是否已配置。
+      responses:
+        "200":
+          description: Skill 清单与同步状态
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  dirs:
+                    type: array
+                    items:
+                      type: string
+                    description: 用户自定义 Skill 目录列表（已解析默认值；为空时回退 `<DataDir>/skills-user`）
+                  refresh_hours:
+                    type: integer
+                    description: 定时 git 拉取间隔；0 表示仅启动时拉取
+                  last_error:
+                    type: string
+                  last_sync_at:
+                    type: integer
+                    description: 上次同步完成时间（Unix 秒）
+                  repos:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        url:
+                          type: string
+                        slug:
+                          type: string
+                          description: 本地检出目录名（{DataDir}/skills/<slug>）
+                        has_token:
+                          type: boolean
+                        last_error:
+                          type: string
+                  skills:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                        path:
+                          type: string
+                          description: SKILL.md 的绝对路径
+                        source_kind:
+                          type: string
+                          enum: [own, user, git, other]
+                        source_label:
+                          type: string
+                        agent_id:
+                          type: string
+                          description: 声明该目录的智能体 ID（多个用逗号分隔）；共享目录且无人声明时为空
+                        name_mismatch:
+                          type: boolean
+                          description: |
+                            frontmatter 的 `name` 与其目录名不一致（规范要求一致）。此类技能仍会注入
+                            系统提示词（注入表带显式路径），但**不会**出现在斜杠命令菜单中——智能体按
+                            目录解析技能，用 frontmatter 名做菜单项会是一个点不动的死项。
+
+  /api/skills/refresh:
+    post:
+      tags: [Skills]
+      summary: 立即同步 git Skill 仓库
+      operationId: skillsRefresh
+      description: |
+        立即对全部已配置的 git 仓库执行 clone/pull，然后重新扫描所有来源。
+
+        单个仓库失败不会让请求失败：错误按仓库 slug 在 `errors` 中逐个返回，其余仓库
+        照常同步（`ok` 为 `errors` 是否为空）。同步耗时较长时返回 202，表示已受理。
+
+        若已有同步在进行，本请求会等待该次同步完成，而不会并发启动第二次（并发 clone
+        同一目录会互相破坏检出）。
+      responses:
+        "200":
+          description: 同步结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  skill_count:
+                    type: integer
+                  errors:
+                    type: object
+                    additionalProperties:
+                      type: string
+        "202":
+          description: 同步耗时较长，已受理
+
   /api/forge/credentials:
     post:
       tags: [Forge]

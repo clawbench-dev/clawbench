@@ -370,6 +370,12 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/forge/unread-items", ServeForgeUnreadItems)
 	register("/api/forge/read", ServeForgeMarkRead)
 
+	// Cross-agent skill discovery: what was found across every agent's native
+	// directory, the user's own directory and cloned git repositories, plus a
+	// manual git sync trigger. The settings themselves live in /api/config.
+	register("/api/skills", ServeSkills)
+	register("/api/skills/refresh", ServeSkillsRefresh)
+
 	// Public file-share links. Management endpoints are auth-protected; the
 	// public data endpoints (/api/share/{token}/...) and the share SPA page
 	// (/share/{token}) are intentionally unauthenticated — the capability token

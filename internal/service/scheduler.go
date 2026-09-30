@@ -1028,6 +1028,10 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 	// is still set below, but it only controls backend session handling (pi's
 	// --no-session) — it is NOT a handler-level guard.
 	systemPrompt := agent.RuntimeSystemPrompt
+	// Scheduled tasks build the request directly instead of going through
+	// BuildChatRequest, so the cross-agent skill table must be appended here
+	// too — otherwise a task would run without the skills a chat turn sees.
+	systemPrompt = AppendSkillsSection(systemPrompt, task.AgentID)
 	// Replace {{PROJECT_PATH}} per-request with the actual project path for this task
 	if projectPath != "" {
 		systemPrompt = strings.ReplaceAll(systemPrompt, "{{PROJECT_PATH}}", projectPath)

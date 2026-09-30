@@ -14,10 +14,16 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "mimo", Backend: "mimo", DefaultCmd: "mimo", Name: "MiMo-Code", Specialty: "小米 MiMo 编码助手",
 			ThinkingEffortLevels: []string{"minimal", "high", "max"},
-			AcpCommand:           "mimo acp",
-			ACPLoadSession:       true,
-			InstallCmd:           "npm install -g @mimo-ai/cli",
-			SortOrder:            12,
+			// MiMo-Code is an OpenCode fork and inherits its skills subsystem
+			// (verified in the shipped binary: ".mimocode/skills",
+			// ".opencode/skill", the shared ".agents/skills"), so ClawBench must
+			// not inject them again.
+			NativeSkillsDirs:      []string{".mimocode/skills", ".agents/skills"},
+			AutoLoadsNativeSkills: true,
+			AcpCommand:            "mimo acp",
+			ACPLoadSession:        true,
+			InstallCmd:            "npm install -g @mimo-ai/cli",
+			SortOrder:             12,
 		},
 		ACP: &backends.ACPPlugin{
 			InputRemaps: opencode.OpenCodeACPInputRemaps,

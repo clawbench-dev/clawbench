@@ -42,6 +42,12 @@
           v-if="card.title === t('settings.items.forgeSection')"
           :description="t('settings.items.forgeCredentialsDesc')"
         />
+        <!-- Cross-agent skill discovery: directory + git repo lists with
+             write-only tokens, plus the live discovered-skill listing. -->
+        <SkillsSetting
+          v-if="card.title === t('settings.items.skillsSection')"
+          :description="t('settings.items.skillsCardDesc')"
+        />
         <SettingsItem
           v-for="item in card.items"
           :key="item.key"
@@ -99,6 +105,7 @@ import SettingsCard from './SettingsCard.vue'
 import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
 import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
+import SkillsSetting from './SkillsSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'

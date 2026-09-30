@@ -20,6 +20,12 @@ func init() {
 			ACPLoadSession: true,
 			InstallCmd:     "curl -fsSL https://qoder.com/install | bash",
 			SortOrder:      5,
+			// Qoder loads its own skills (verified in the shipped CLI: it
+			// references ".qoder/skills", ".agents/skills" and "SKILL.md", and
+			// has an "Agent skills reloaded successfully." path), so ClawBench
+			// must not inject them again.
+			NativeSkillsDirs:      []string{".qoder/skills", ".agents/skills"},
+			AutoLoadsNativeSkills: true,
 		},
 	})
 }

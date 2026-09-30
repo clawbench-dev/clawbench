@@ -41,10 +41,16 @@ func init() {
 		Spec: model.BackendSpec{
 			ID: "opencode", Backend: "opencode", DefaultCmd: "opencode", Name: "OpenCode", Specialty: "终端编码工具",
 			ThinkingEffortLevels: []string{"minimal", "high", "max"},
-			AcpCommand:           "opencode acp",
-			ACPLoadSession:       true,
-			InstallCmd:           "npm install -g opencode-ai",
-			SortOrder:            3,
+			// OpenCode loads its own skills (verified in the shipped binary:
+			// ".config/opencode/skill", ".opencode/skills", the shared
+			// ".agents/skills", and an "<available_skills>" prompt section), so
+			// ClawBench must not inject them again.
+			NativeSkillsDirs:      []string{".config/opencode/skill", ".opencode/skills", ".agents/skills"},
+			AutoLoadsNativeSkills: true,
+			AcpCommand:            "opencode acp",
+			ACPLoadSession:        true,
+			InstallCmd:            "npm install -g opencode-ai",
+			SortOrder:             3,
 		},
 		ACP: &backends.ACPPlugin{
 			InputRemaps: OpenCodeACPInputRemaps,

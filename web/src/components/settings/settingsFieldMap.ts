@@ -309,6 +309,12 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     { type: 'item', spec: { labelKey: 'settings.items.tlsCertDir', descriptionKey: 'settings.items.tlsCertDirDesc', key: 'tls.cert_dir', type: 'text', source: 'server', needsRestart: true, sectionHeader: 'settings.items.securitySection' } },
     { type: 'item', spec: { labelKey: 'settings.items.changePassword', descriptionKey: 'settings.items.changePasswordDesc', key: 'changePassword', type: 'action', source: 'local', sectionHeader: 'settings.items.securitySection' } },
   ],
+  skills: [
+    // Cross-agent skill discovery. The whole section is one dedicated
+    // component: the directory list, the git repo list (with write-only tokens)
+    // and the discovered-skill listing cannot be expressed as scalar items.
+    { type: 'item', spec: { labelKey: 'settings.items.skillsCard', descriptionKey: 'settings.items.skillsCardDesc', key: 'skillsCard', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsSection' } },
+  ],
   forgeIntegration: [
     // Credentials row is a dedicated component (tokens are write-only; the
     // server never returns them, so a plain text field cannot round-trip).

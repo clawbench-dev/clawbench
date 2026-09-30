@@ -25,6 +25,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
+	"clawbench/internal/skill"
 	"clawbench/internal/speech"
 	"clawbench/internal/version"
 	"clawbench/internal/wallpaper"
@@ -159,6 +160,11 @@ var hotReloadFields = map[string]bool{
 	"file_search.display_limit": true,
 	// Fonts — custom font directory, read at request time by the fonts handlers
 	"fonts.dir": true,
+	// Skills — hot: the registry is invalidated and rescanned on PATCH
+	"skills.enabled":       true,
+	"skills.dirs":          true,
+	"skills.refresh_hours": true,
+	"skills.repos":         true,
 }
 
 // restartGracePeriod is the delay before shutting down the server after a restart
@@ -244,6 +250,7 @@ type configResponse struct {
 	FileSearch     configFileSearch     `json:"file_search"`
 	TLS            configTLS            `json:"tls"`
 	Fonts          configFonts          `json:"fonts"`
+	Skills         configSkills         `json:"skills"`
 	Appearance     configAppearance     `json:"appearance"`
 	Forge          configForge          `json:"forge"`
 	// FirstRun is true on a brand-new install. The frontend uses it to apply
@@ -430,6 +437,48 @@ type configFonts struct {
 	Dir string `json:"dir"` // Resolved custom font directory (defaults to <DataDir>/fonts)
 }
 
+// configSkills exposes the cross-agent skill discovery settings.
+//
+// Repo tokens are never included: the field is write-only, like the forge
+// credential tokens. The UI shows whether a token is set by other means.
+type configSkills struct {
+	Enabled      bool              `json:"enabled"`
+	Dirs         []string          `json:"dirs"`          // Resolved user skill directories
+	RefreshHours int               `json:"refresh_hours"` // 0 = startup only
+	Repos        []configSkillRepo `json:"repos"`
+	LastError    string            `json:"last_error"`
+	LastSyncAt   int64             `json:"last_sync_at"`
+}
+
+// configSkillRepo is one remote git skill source as sent to the client.
+type configSkillRepo struct {
+	URL       string `json:"url"`
+	Slug      string `json:"slug"`
+	HasToken  bool   `json:"has_token"` // whether a token is stored; the value itself is never sent
+	LastError string `json:"last_error,omitempty"`
+}
+
+// buildConfigSkills renders the skills section of GET /api/config.
+func buildConfigSkills(cfg model.Config) configSkills {
+	repos := make([]configSkillRepo, 0, len(cfg.Skills.Repos))
+	for _, r := range cfg.Skills.Repos {
+		repos = append(repos, configSkillRepo{
+			URL:       r.URL,
+			Slug:      r.Slug,
+			HasToken:  r.Token != "",
+			LastError: r.LastError,
+		})
+	}
+	return configSkills{
+		Enabled:      cfg.Skills.Enabled,
+		Dirs:         cfg.ResolveSkillsDirs(),
+		RefreshHours: cfg.Skills.RefreshHours,
+		Repos:        repos,
+		LastError:    cfg.Skills.LastError,
+		LastSyncAt:   cfg.Skills.LastSyncAt,
+	}
+}
+
 // configAppearance exposes the shared wallpaper resources to the settings panel.
 //
 // Which wallpaper a device displays is NOT here: the source, the on/off switch
@@ -547,6 +596,59 @@ func buildConfigForge(cfg model.Config) configForge {
 	}
 }
 
+// parseSkillDirs converts the PATCH payload's skills.dirs array into a typed
+// list, dropping non-string and blank entries. A blank entry would otherwise
+// resolve to the scan root itself and treat a whole tree as skills.
+func parseSkillDirs(raw []any) []string {
+	dirs := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if d, ok := item.(string); ok && d != "" {
+			dirs = append(dirs, d)
+		}
+	}
+	return dirs
+}
+
+// parseSkillRepos converts the PATCH payload's skills.repos array into typed
+// entries.
+//
+// Repo tokens are write-only: the client never receives them (see
+// buildConfigSkills), so an entry without a token inherits the one already
+// stored for the same URL. Clearing a token therefore requires removing and
+// re-adding the repository — the alternative, treating "absent" as "clear",
+// would silently wipe a credential every time the user edits an unrelated
+// field of that row.
+func parseSkillRepos(raw []any) []model.SkillRepo {
+	existing := make(map[string]model.SkillRepo, len(model.ConfigInstance.Skills.Repos))
+	for _, r := range model.ConfigInstance.Skills.Repos {
+		existing[r.URL] = r
+	}
+
+	repos := make([]model.SkillRepo, 0, len(raw))
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		u, _ := m["url"].(string)
+		if strings.TrimSpace(u) == "" {
+			continue
+		}
+		slug, _ := m["slug"].(string)
+		if slug == "" {
+			slug = model.SkillSlug(u)
+		}
+		token, _ := m["token"].(string)
+		if token == "" {
+			if prev, ok := existing[u]; ok {
+				token = prev.Token
+			}
+		}
+		repos = append(repos, model.SkillRepo{URL: u, Slug: slug, Token: token})
+	}
+	return repos
+}
+
 // absWallpaperPath resolves a bare wallpaper file name to its absolute path,
 // returning "" when the name is empty or cannot be resolved. Callers use it to
 // hand a path to GET /api/fs/thumb (which returns a small JPEG rather than
@@ -659,6 +761,10 @@ var PatchableConfigPaths = map[string]bool{
 	"file_search.display_limit":         true,
 	"tls.cert_dir":                      true,
 	"fonts.dir":                         true,
+	"skills.enabled":                    true,
+	"skills.dirs":                       true,
+	"skills.refresh_hours":              true,
+	"skills.repos":                      true,
 }
 
 // validTTSEngines is the set of valid TTS engine values.
@@ -826,6 +932,7 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 		Fonts: configFonts{
 			Dir: cfg.ResolveFontsDir(),
 		},
+		Skills:     buildConfigSkills(cfg),
 		Appearance: buildConfigAppearance(cfg),
 		Forge:      buildConfigForge(cfg),
 	}
@@ -1054,6 +1161,38 @@ func validatePatchValues(patch map[string]any) error { //nolint:gocognit,gocyclo
 		}
 		if v, ok := sttVal["shortcut_key"].(string); ok && v == "" {
 			return fmt.Errorf("stt.shortcut_key must not be empty")
+		}
+	}
+
+	if skills, ok := patch["skills"].(map[string]any); ok {
+		if v, ok := skills["refresh_hours"].(float64); ok && v < 0 {
+			return fmt.Errorf("skills.refresh_hours must be non-negative")
+		}
+		if dirs, ok := skills["dirs"].([]any); ok {
+			for i, raw := range dirs {
+				d, _ := raw.(string)
+				if d == "" {
+					return fmt.Errorf("skills.dirs[%d] must not be empty", i)
+				}
+				if !filepath.IsAbs(d) {
+					return fmt.Errorf("skills.dirs[%d] must be an absolute path", i)
+				}
+			}
+		}
+		if repos, ok := skills["repos"].([]any); ok {
+			for i, raw := range repos {
+				repo, ok := raw.(map[string]any)
+				if !ok {
+					return fmt.Errorf("skills.repos[%d] must be an object", i)
+				}
+				u, _ := repo["url"].(string)
+				if strings.TrimSpace(u) == "" {
+					return fmt.Errorf("skills.repos[%d].url must not be empty", i)
+				}
+				if _, err := url.ParseRequestURI(u); err != nil {
+					return fmt.Errorf("skills.repos[%d].url must be a valid URL", i)
+				}
+			}
 		}
 	}
 
@@ -1360,6 +1499,37 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	if fontsMap, ok := patch["fonts"].(map[string]any); ok {
 		if v, ok := fontsMap["dir"].(string); ok {
 			cfg.Fonts.Dir = v
+		}
+	}
+
+	if skillsMap, ok := patch["skills"].(map[string]any); ok {
+		skillsChanged := false
+		if v, ok := skillsMap["enabled"].(bool); ok {
+			cfg.Skills.Enabled = v
+			skillsChanged = true
+		}
+		if v, ok := skillsMap["dirs"].([]any); ok {
+			cfg.Skills.Dirs = parseSkillDirs(v)
+			skillsChanged = true
+		}
+		if v, ok := skillsMap["refresh_hours"].(float64); ok {
+			cfg.Skills.RefreshHours = int(v)
+		}
+		if v, ok := skillsMap["repos"].([]any); ok {
+			cfg.Skills.Repos = parseSkillRepos(v)
+			skillsChanged = true
+		}
+		if skillsChanged {
+			// The scan result is now stale. Invalidate + rescan so a newly
+			// configured local directory shows up immediately.
+			//
+			// No git sync is started here on purpose: syncing is driven by
+			// exactly three triggers (startup, the periodic worker, and the
+			// manual POST /api/skills/refresh). Kicking one off from a config
+			// PATCH would do network IO behind the write lock and would make
+			// every config edit depend on a remote being reachable.
+			skill.Global().Invalidate()
+			skill.Global().ScanAll()
 		}
 	}
 
