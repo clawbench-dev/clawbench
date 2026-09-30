@@ -272,6 +272,14 @@
   `.settings-item__switch` / `-input` / `-track` 三个类，只在自己的 scoped 块里加
   行布局（`.script-switch-row`），不复制几何。需要开关时照此办理，别再写第四份。
 
+### 自定义卡片块的横向内边距（不要和 `SettingsItem` 叠一层）
+
+设置卡片里混排「`SettingsItem` 行」与「自定义块」时，**容器不要再加横向内边距**：
+`SettingsItem` 自带 `padding: 12px 16px`，卡片行都对齐在这 16px 上；容器若再加一层
+（例如 `padding: 0 16px`），开关/文本行的文字就变成 32px，比相邻普通行明显更深
+（技能设置页的「启用技能注入」实测如此）。正解：容器 `padding: <纵> 0`，由各自定义块
+自己写 `padding: 0 var(--space-7)` 对齐到同一 16px。`WallpaperSetting` 是同一范式。
+
 ### 行内重置按钮（`.settings-item__slider-reset`）
 
 滑块行右侧的 ↺ 重置按钮**常驻显示**，不用 `v-if` 按「当前值 ≠ 默认值」开关。

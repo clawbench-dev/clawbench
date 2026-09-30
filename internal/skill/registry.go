@@ -74,8 +74,9 @@ func scanNativeDirs(next map[string][]Skill) map[string][]Skill {
 	// installs, so it must be discovered even on an install whose agents all
 	// happen to be ones that do not read it (Claude, Pi).
 	declaredBy := map[string][]string{}
-	if dir := ResolveNativeSkillsDir(SharedSkillsDir); dir != "" {
-		declaredBy[dir] = nil
+	sharedDir := ResolveNativeSkillsDir(SharedSkillsDir)
+	if sharedDir != "" {
+		declaredBy[sharedDir] = nil
 	}
 	for _, agent := range model.GetAgentList() {
 		if agent == nil {
@@ -103,7 +104,13 @@ func scanNativeDirs(next map[string][]Skill) map[string][]Skill {
 		if len(agents) > 0 {
 			label = strings.Join(agents, "+") + " native"
 		}
-		src := Source{Kind: SourceOtherNative, AgentID: strings.Join(agents, ","), Label: label, Dir: dir}
+		src := Source{
+			Kind:    SourceOtherNative,
+			AgentID: strings.Join(agents, ","),
+			Label:   label,
+			Dir:     dir,
+			Shared:  dir == sharedDir,
+		}
 		if skills := ScanDir(dir, src); len(skills) > 0 {
 			next[src.Key()] = skills
 		}

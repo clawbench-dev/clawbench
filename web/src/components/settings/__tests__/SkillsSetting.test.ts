@@ -87,39 +87,21 @@ describe('SkillsSetting', () => {
     vi.stubGlobal('fetch', vi.fn(async () => skillsResponse()))
   })
 
-  it('renders configured repos and discovered skills', async () => {
+  it('renders configured repos', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => skillsResponse(
       [{ url: 'https://github.com/org/skills.git', slug: 'skills-1234', has_token: true }],
-      [{ name: 'demo', description: 'A demo', path: '/x/demo/SKILL.md', source_kind: 'git', source_label: 'skills-1234' }],
+      [],
       1700000000,
     )))
     const wrapper = mountSetting()
     await flushPromises()
 
     expect(wrapper.text()).toContain('https://github.com/org/skills.git')
-    expect(wrapper.text()).toContain('demo')
-    expect(wrapper.text()).toContain('Repository skills-1234')
+    expect(wrapper.text()).toContain('Last synced')
     // has_token renders a badge but never a value.
     expect(wrapper.find('.skills-repo-badge').exists()).toBe(true)
-  })
-
-  it('flags a skill whose name disagrees with its directory', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => skillsResponse([], [
-      { name: 'good', description: 'ok', path: '/x/good/SKILL.md', source_kind: 'own', source_label: 'a1 native' },
-      { name: 'wrong', description: 'bad', path: '/x/wrong-dir/SKILL.md', source_kind: 'own', source_label: 'a1 native', name_mismatch: true },
-    ])))
-    const wrapper = mountSetting()
-    await flushPromises()
-
-    const warns = wrapper.findAll('.skills-item-warn')
-    expect(warns).toHaveLength(1)
-    expect(wrapper.text()).toContain('Name mismatch')
-  })
-
-  it('shows the empty state when nothing was discovered', async () => {
-    const wrapper = mountSetting()
-    await flushPromises()
-    expect(wrapper.text()).toContain('No skills discovered yet.')
+    // The discovered listing lives in its own component/card now.
+    expect(wrapper.find('.skills-item').exists()).toBe(false)
   })
 
   it('adds a repo by patching the whole array', async () => {

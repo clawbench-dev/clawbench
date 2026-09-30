@@ -475,3 +475,40 @@ func setSpecsNestedAutoLoad(root string) {
 		{ID: "them", Backend: "them", NativeSkillsDirs: []string{filepath.Join(os.Getenv("HOME"), "unused")}},
 	}
 }
+
+// TestSharedDirIsFlagged pins that the shared directory is marked on the Source.
+// The flag is what lets the UI label those skills "generic" instead of naming
+// whichever backend happens to read the directory — the own/other kind is
+// observer-dependent, but "shared" is not.
+func TestSharedDirIsFlagged(t *testing.T) {
+	_, _, reg := setupRegistry(t)
+
+	home := os.Getenv("HOME")
+	shared := filepath.Join(home, SharedSkillsDir)
+	ownDir := filepath.Join(home, "own")
+
+	writeSkill(t, shared, "shared-skill", "---\nname: shared-skill\ndescription: s\n---\n")
+	writeSkill(t, ownDir, "own-skill", "---\nname: own-skill\ndescription: o\n---\n")
+
+	model.GetBackendRegistry()
+	model.BackendRegistry = []model.BackendSpec{
+		{ID: "me", Backend: "me", NativeSkillsDirs: []string{ownDir}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{"me": {ID: "me", Backend: "me"}}, []*model.Agent{{ID: "me", Backend: "me"}})
+	ResetForTest()
+	reg.ScanAll()
+
+	byName := map[string]skill2Source{}
+	for _, s := range reg.All() {
+		byName[s.Name] = skill2Source{shared: s.Source.Shared, kind: s.Source.Kind}
+	}
+
+	require.Contains(t, byName, "shared-skill")
+	assert.True(t, byName["shared-skill"].shared, "the shared directory must be flagged")
+	assert.False(t, byName["own-skill"].shared, "an ordinary native dir must not be flagged")
+}
+
+type skill2Source struct {
+	shared bool
+	kind   SourceKind
+}

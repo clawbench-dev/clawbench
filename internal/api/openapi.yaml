@@ -2992,6 +2992,12 @@ paths:
                         agent_id:
                           type: string
                           description: 声明该目录的智能体 ID（多个用逗号分隔）；共享目录且无人声明时为空
+                        shared:
+                          type: boolean
+                          description: |
+                            该技能来自跨工具共享目录 `.agents/skills`（`npx skills` 的安装位置）。
+                            这类技能不属于任何单一智能体——同一目录对读它的后端是「原生」、对不读它
+                            的是「其他智能体」，故 UI 统一标为「通用」而非某个智能体名。
                         name_mismatch:
                           type: boolean
                           description: |

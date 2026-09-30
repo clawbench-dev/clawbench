@@ -48,6 +48,13 @@
           v-if="card.title === t('settings.items.skillsSection')"
           :description="t('settings.items.skillsCardDesc')"
         />
+        <!-- Discovered skills live in their OWN card (a second section header
+             in settingsFieldMap), directly below the configuration card: the
+             listing is read-only output, so gluing it to the switch/directory/
+             repo controls made the two read as one undifferentiated blob. -->
+        <SkillsDiscoveredSetting
+          v-if="card.title === t('settings.items.skillsDiscoveredSection')"
+        />
         <SettingsItem
           v-for="item in card.items"
           :key="item.key"
@@ -106,6 +113,7 @@ import SettingsAboutBrand from './SettingsAboutBrand.vue'
 import WallpaperSetting from './WallpaperSetting.vue'
 import ForgeCredentialsRow from './ForgeCredentialsRow.vue'
 import SkillsSetting from './SkillsSetting.vue'
+import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
@@ -284,9 +292,17 @@ const cards = computed<RenderCard[]>(() => {
           flush()
           cur = { type: 'group', title: header, items: [] }
         }
-        // The wallpaper panel-opacity slider is rendered inside the dedicated
-        // WallpaperSetting component, not as a generic SettingsItem row.
-        if (entry.spec.key !== 'panelOpacity') {
+        // Some section headers exist only to open a card that a dedicated
+        // component fills. Their placeholder item must NOT also render as a
+        // generic row: it has no control, and because the generic loop runs
+        // after the custom components it would appear at the BOTTOM of the card
+        // (the skills page showed a stray "cross-agent skills" row carrying a
+        // duplicate of the description paragraph).
+        //   - panelOpacity   → rendered inside WallpaperSetting
+        //   - skillsCard     → supplies the description, rendered by SkillsSetting
+        //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDiscovered'])
+        if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
       } else {

@@ -314,6 +314,10 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
     // component: the directory list, the git repo list (with write-only tokens)
     // and the discovered-skill listing cannot be expressed as scalar items.
     { type: 'item', spec: { labelKey: 'settings.items.skillsCard', descriptionKey: 'settings.items.skillsCardDesc', key: 'skillsCard', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsSection' } },
+    // Discovered skills get their OWN section (and therefore their own card).
+    // The spec carries no rendered row — it exists to open the section, which
+    // SettingsCategory fills with SkillsDiscoveredSetting.
+    { type: 'item', spec: { labelKey: 'settings.items.skillsDiscoveredSection', key: 'skillsDiscovered', type: 'info', source: 'server', sectionHeader: 'settings.items.skillsDiscoveredSection' } },
   ],
   forgeIntegration: [
     // Credentials row is a dedicated component (tokens are write-only; the

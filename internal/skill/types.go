@@ -67,6 +67,12 @@ type Source struct {
 	Label string
 	// Dir is the absolute directory that was scanned.
 	Dir string
+	// Shared marks the cross-tool shared directory (".agents/skills"). It is a
+	// property of the DIRECTORY, not of the observer: the same skills are "own"
+	// for a backend that reads that directory and "other" for one that does not,
+	// but they are always generic/shared skills. Consumers use this to label
+	// them by what they are rather than by which agent happened to declare it.
+	Shared bool
 }
 
 // Key returns the registry map key for this source. It is stable across scans

@@ -107,75 +107,29 @@
       <AlertCircle :size="13" />
       <span>{{ error }}</span>
     </div>
-
-    <!-- Discovered skills, grouped by source. -->
-    <div v-if="skills.length" class="skills-block">
-      <div class="skills-block-title">
-        {{ t('settings.items.skillsDiscovered', { count: skills.length }) }}
-      </div>
-      <div v-for="s in skills" :key="s.path" class="skills-item">
-        <div class="skills-item-head">
-          <span class="skills-item-name">{{ s.name }}</span>
-          <span class="skills-item-source">{{ sourceLabel(s) }}</span>
-          <!-- The spec requires the frontmatter name to match the directory
-               name; an agent resolves a skill by directory, so a mismatch means
-               this skill cannot be offered as a slash command. -->
-          <span v-if="s.name_mismatch" class="skills-item-warn" :title="t('settings.items.skillsNameMismatchDesc')">
-            <AlertTriangle :size="12" />
-            {{ t('settings.items.skillsNameMismatch') }}
-          </span>
-        </div>
-        <div class="skills-item-desc">{{ s.description }}</div>
-        <div class="skills-item-path">{{ s.path }}</div>
-      </div>
-    </div>
-    <div v-else class="skills-empty">{{ t('settings.items.skillsEmpty') }}</div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, AlertTriangle, KeyRound, RefreshCw, Trash2 } from 'lucide-vue-next'
+import { AlertCircle, KeyRound, RefreshCw, Trash2 } from 'lucide-vue-next'
 import SettingsItem from './SettingsItem.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
-import { appLog } from '@/utils/appLog'
+import { useSkillsState, loadSkills, refreshSkills, type RepoRow } from '@/composables/useSkillsState'
 
 defineProps<{ description?: string }>()
 
-const TAG = 'SkillsSetting'
 const { t } = useI18n()
 const { getServerValueWithDefault, setServerValue } = useSettingsConfig()
 
-interface RepoRow {
-  url: string
-  slug: string
-  has_token: boolean
-  last_error?: string
-}
+// Shared with SkillsDiscoveredSetting (the sibling card) so both read one
+// GET /api/skills response and a sync here updates the list there.
+const { enabled, dirs, repos, lastSyncAt, refreshing, saving, error } = useSkillsState()
 
-interface SkillRow {
-  name: string
-  description: string
-  path: string
-  source_kind: 'own' | 'user' | 'git' | 'other'
-  source_label: string
-  agent_id?: string
-  /** Frontmatter name disagrees with the directory name (spec violation). */
-  name_mismatch?: boolean
-}
-
-const enabled = ref(true)
-const dirs = ref<string[]>([])
 const newDir = ref('')
-const repos = ref<RepoRow[]>([])
 const repoTokens = ref<Record<number, string>>({})
-const skills = ref<SkillRow[]>([])
-const lastSyncAt = ref(0)
-const refreshing = ref(false)
-const saving = ref(false)
-const error = ref('')
 const newRepoUrl = ref('')
 const newRepoToken = ref('')
 
@@ -185,40 +139,9 @@ const lastSyncText = computed(() => {
   return t('settings.items.skillsLastSync', { time: d.toLocaleString() })
 })
 
-/** Human-readable origin for a discovered skill. */
-function sourceLabel(s: SkillRow): string {
-  switch (s.source_kind) {
-    case 'own':
-      return t('settings.items.skillsSourceOwn')
-    case 'user':
-      return t('settings.items.skillsSourceUser')
-    case 'git':
-      return t('settings.items.skillsSourceGit', { name: s.source_label })
-    case 'other':
-      return t('settings.items.skillsSourceOther', { agent: s.agent_id || s.source_label })
-    default:
-      return s.source_label
-  }
-}
-
-async function load() {
-  try {
-    // enabled comes from the config store so a PATCH elsewhere is reflected
-    // here; the dirs + repo list + discovered skills come from GET /api/skills,
-    // which reports the RESOLVED directories (including the default fallback).
-    enabled.value = getServerValueWithDefault('skills.enabled') !== false
-
-    const res = await fetch('/api/skills')
-    if (!res.ok) return
-    const data = await res.json()
-    dirs.value = Array.isArray(data?.dirs) ? data.dirs : []
-    repos.value = Array.isArray(data?.repos) ? data.repos : []
-    skills.value = Array.isArray(data?.skills) ? data.skills : []
-    lastSyncAt.value = Number(data?.last_sync_at) || 0
-    repoTokens.value = {}
-  } catch (err) {
-    appLog.w(TAG, 'load failed', err)
-  }
+function load() {
+  repoTokens.value = {}
+  return loadSkills(getServerValueWithDefault('skills.enabled') !== false)
 }
 
 async function onToggleEnabled(v: unknown) {
@@ -314,25 +237,10 @@ async function removeRepo(idx: number) {
 }
 
 async function refresh() {
-  refreshing.value = true
-  error.value = ''
-  try {
-    const res = await fetch('/api/skills/refresh', { method: 'POST' })
-    if (!res.ok) {
-      error.value = `HTTP ${res.status}`
-      return
-    }
-    const data = await res.json()
-    const errs = data?.errors && typeof data.errors === 'object' ? Object.values(data.errors) : []
-    if (errs.length) {
-      error.value = errs.map(String).join('; ')
-    }
-    await load()
-  } catch (err) {
-    error.value = err instanceof Error ? err.message : String(err)
-  } finally {
-    refreshing.value = false
-  }
+  await refreshSkills()
+  // Reload even on a per-repo failure: a partial sync still updated whatever
+  // remotes did succeed, and the list card must show that.
+  await load()
 }
 
 onMounted(load)
@@ -340,17 +248,26 @@ onMounted(load)
 
 <style scoped>
 .skills-setting {
-  padding: var(--space-6) var(--space-7);
+  /* No horizontal padding: the switch row is a SettingsItem, which already
+     carries `padding: 12px 16px`, and the card's rows align on that 16px inset.
+     Adding a second inset here pushed the switch label to 32px — visibly deeper
+     than every neighbouring row. The custom blocks below pad their own text
+     (see .skills-desc / .skills-block) so they line up on the same 16px. */
+  padding: var(--space-6) 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
 }
 .skills-desc {
+  /* Align with the SettingsItem rows above/below (their 16px inset). */
+  padding: 0 var(--space-7);
   color: var(--text-muted);
   font-size: var(--font-size-md);
   line-height: var(--line-height-normal);
 }
 .skills-block {
+  /* Same 16px inset as the rows, so the section reads as part of the card. */
+  padding: 0 var(--space-7);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
@@ -440,6 +357,7 @@ onMounted(load)
   box-shadow: 0 0 0 2px var(--focus-ring);
 }
 .skills-sync {
+  padding: 0 var(--space-7);
   display: flex;
   align-items: center;
   gap: var(--space-5);
@@ -505,6 +423,7 @@ onMounted(load)
   font-size: var(--font-size-md);
 }
 .skills-error {
+  padding: 0 var(--space-7);
   display: flex;
   align-items: center;
   gap: var(--space-3);

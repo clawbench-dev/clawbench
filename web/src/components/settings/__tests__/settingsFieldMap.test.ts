@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP } from '@/utils/uiScale'
 
@@ -792,6 +794,54 @@ describe('AI summary model jump rows', () => {
   it('all opt into the shared-model config status pill', () => {
     for (const [category, key] of JUMP_ROWS) {
       expect(findSpec(category, key).showSummaryModelStatus).toBe(true)
+    }
+  })
+
+  it('gives the discovered skills their own section (and therefore card)', () => {
+    // The listing must NOT share a section with the configuration rows: a
+    // shared section renders into ONE card, which is what made the read-only
+    // listing look glued to the switch/directory/repo controls.
+    const entries = categoryItems['skills']
+    const sections = entries
+      .map((e) => (e.type === 'item' ? e.spec.sectionHeader : undefined))
+      .filter(Boolean)
+    expect(sections).toContain('settings.items.skillsSection')
+    expect(sections).toContain('settings.items.skillsDiscoveredSection')
+    expect(new Set(sections).size).toBe(2)
+  })
+
+})
+
+describe('placeholder items (section openers)', () => {
+  // A section header may exist only to open a card that a dedicated component
+  // fills. Such an entry must carry NO rendered row: SettingsCategory renders
+  // the generic rows AFTER the custom components, so a leftover placeholder
+  // shows up at the bottom of the card with no control and (for skillsCard) a
+  // second copy of the description paragraph.
+  it('renders no generic row for the skills placeholders', async () => {
+    const entries = categoryItems['skills'].filter((e) => e.type === 'item')
+    const keys = entries.map((e) => (e.type === 'item' ? e.spec.key : ''))
+    // Both placeholders must exist (they open the two cards)...
+    expect(keys).toContain('skillsCard')
+    expect(keys).toContain('skillsDiscovered')
+    // ...and SettingsCategory must skip them when building the row list. The
+    // skip set is the contract; assert it by name so a rename cannot silently
+    // re-introduce the row.
+    // cwd differs between a bare `vitest` run (web/) and scripts/vitest-run.sh
+    // (repo root), so probe both roots (same convention as the CSS guards).
+    let src = ''
+    for (const base of [process.cwd(), join(process.cwd(), 'web')]) {
+      try {
+        src = readFileSync(join(base, 'src/components/settings/SettingsCategory.vue'), 'utf8')
+        break
+      } catch { /* try the next root */ }
+    }
+    expect(src, 'SettingsCategory.vue must be readable').not.toBe('')
+    const m = src.match(/const PLACEHOLDER_ITEMS = new Set\(\[([^\]]*)\]\)/)
+    expect(m, 'PLACEHOLDER_ITEMS must exist in SettingsCategory.vue').toBeTruthy()
+    const listed = m![1].split(',').map((s) => s.trim().replace(/^'|'$/g, '')).filter(Boolean)
+    for (const key of ['panelOpacity', 'skillsCard', 'skillsDiscovered']) {
+      expect(listed).toContain(key)
     }
   })
 })

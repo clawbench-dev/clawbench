@@ -40,7 +40,11 @@ type skillInfoJSON struct {
 	Path        string `json:"path"`
 	SourceKind  string `json:"source_kind"`
 	SourceLabel string `json:"source_label"`
-	AgentID     string `json:"agent_id,omitempty"`
+	// Shared marks the cross-tool shared directory (.agents/skills). The UI
+	// labels these "generic" instead of naming an agent, because the directory
+	// is shared and its skills are not owned by any single backend.
+	Shared  bool   `json:"shared,omitempty"`
+	AgentID string `json:"agent_id,omitempty"`
 	// NameMismatch is true when the frontmatter name disagrees with the skill's
 	// directory name. The Agent Skills spec requires them to match, and an agent
 	// resolves a skill by directory — so such a skill is injected (the table
@@ -69,6 +73,7 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 			SourceKind:   s.Source.Kind.String(),
 			SourceLabel:  s.Source.Label,
 			AgentID:      s.Source.AgentID,
+			Shared:       s.Source.Shared,
 			NameMismatch: s.NameMismatch,
 		})
 	}
