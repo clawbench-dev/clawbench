@@ -479,24 +479,26 @@ jobs:
   # --------------------------------------------------------------------------
   # Android E2E harness (android-e2e/) — emulator + Appium + a real runtime.
   #
-  # Gated exactly like the Playwright `e2e` job above: it is expensive (a 9.1 GB
-  # emulator image plus a ~6 min boot and suite) and must not run on every push.
+  # Runs on EVERY `pull_request` (and manual dispatch), unlike the Playwright
+  # `e2e` job above, which stays behind the `run-e2e` label. This harness is the
+  # only automated coverage of the Android h2 tunnel, so it is worth the cost on
+  # each PR. It is skipped on `push`: the same commit is already covered by the
+  # `pull_request` event, and running both would double a ~25 min, 9.1 GB job.
   #
-  # DELIBERATELY `continue-on-error: true`, again matching `e2e`: the harness is
-  # new to CI, so it reports red without blocking merges until it has proven
-  # stable here. Flip this to `false` once it has a green streak — that is a
-  # one-line change, and until then the job's result is advisory.
+  # DELIBERATELY `continue-on-error: true`: the harness is new to CI and its
+  # Tier 2 reverse-forward suite is still being stabilised, so it reports red
+  # without blocking merges. Flip this to `false` once it has a green streak —
+  # that is a one-line change, and until then the job's result is advisory.
   #
   # Why a job in this file rather than a separate workflow: it reuses the same
-  # trigger block (`push`/`pull_request` with paths-ignore + `workflow_dispatch`),
-  # the same checkout/java/go action versions, and the same `run-e2e` label gate
-  # as the Playwright job. A second file would duplicate that surface and need
-  # its own `paths-ignore` tuning to avoid running on docs-only pushes.
+  # trigger block (`push`/`pull_request` with paths-ignore + `workflow_dispatch`)
+  # and the same checkout/java/go action versions. A second file would duplicate
+  # that surface and need its own `paths-ignore` tuning.
   # --------------------------------------------------------------------------
   android-e2e:
     name: E2E Tests (Android emulator)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     continue-on-error: true
     # A hang must fail rather than burn the 6-hour default. Budget from the
     # harness's own measured costs: image pull ~6 min (2.65 GB compressed),
