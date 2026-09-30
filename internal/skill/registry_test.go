@@ -390,7 +390,10 @@ func TestInjectedFor_SharedSkillsDirAlwaysScanned(t *testing.T) {
 
 	require.Len(t, got, 1)
 	assert.Equal(t, "shared-skill", got[0].Name)
-	assert.Contains(t, got[0].Path, SharedSkillsDir)
+	// Compare the path against the resolved shared dir, not the literal
+	// ".agents/skills": on Windows filepath.Join uses backslashes, so a
+	// slash-literal Contains would fail even though the path is correct.
+	assert.Equal(t, filepath.Join(home, SharedSkillsDir, "shared-skill", skillFileName), got[0].Path)
 }
 
 // TestInjectedFor_SharedDirScannedOnceForManyAgents pins that a directory
