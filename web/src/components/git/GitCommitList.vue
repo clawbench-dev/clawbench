@@ -15,7 +15,13 @@
         <span v-else-if="!isGit" class="drilldown-count count-badge">{{ t('git.commitList.notInitialized') }}</span>
         <span v-else-if="!untracked" class="drilldown-count count-badge">{{ t('git.commitList.loading') }}</span>
       </div>
-      <SearchInput v-if="commits.length > 0" v-model="commitSearch" :placeholder="searchPlaceholder || t('git.commitList.searchPlaceholder')" class="commit-search-input" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
+      <!-- Wrapper is required: a fallthrough `class` on SearchInput merges onto
+           its root element, which IS .search-pill — so `.commit-search-input
+           :deep(.search-pill)` would compile to a descendant selector that can
+           never match. All other call sites wrap for the same reason. -->
+      <div v-if="commits.length > 0" class="commit-search">
+        <SearchInput v-model="commitSearch" :placeholder="searchPlaceholder || t('git.commitList.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
+      </div>
       <RefreshButton
         v-if="commits.length > 0"
         class="drilldown-refresh-btn"
@@ -340,10 +346,18 @@ defineExpose({ observeList, unobserveList, commitSearch })
    history panel chrome") because three components render them — see that
    section's header for why. Only what is specific to this list lives here. */
 
-.commit-search-input {
+/* The field takes the width left over between the title and the header
+   buttons. No max-width: filling the remaining space is the point. */
+.commit-search {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The title sizes to its content instead of growing, so the field — not the
+   title — absorbs the free space. It still shrinks (its own overflow rules
+   ellipsize) when the header is narrow. */
+:deep(.drilldown-title) {
   flex: 0 1 auto;
-  max-width: 160px;
-  min-width: 80px;
 }
 
 /* Borderless field: SearchInput's shared defaults (--bg-primary fill + 1px
@@ -352,14 +366,14 @@ defineExpose({ observeList, unobserveList, commitSearch })
    transparent on the page's --bg-primary, and across the 36 themes
    secondary↔tertiary contrast can be as low as 1.06, which would make the
    field disappear (design-guide red line 4). */
-.commit-search-input :deep(.search-pill) {
+.commit-search :deep(.search-pill) {
   border: none;
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
 }
 
 /* Focus is carried by the ring alone — the shared rule would also tint the
    border, which no longer exists here. */
-.commit-search-input :deep(.search-pill.focused) {
+.commit-search :deep(.search-pill.focused) {
   border-color: transparent;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent);
 }

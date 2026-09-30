@@ -220,30 +220,56 @@ describe('the header title carries its glyph', () => {
   })
 })
 
-describe('the header search field is borderless', () => {
+describe('the header search field is borderless and fills the free space', () => {
   const src = readWebFile('src/components/git/GitCommitList.vue')
 
+  it('wraps SearchInput instead of passing the class through', () => {
+    // Regression: the field used to take `class="commit-search-input"` directly.
+    // A fallthrough class merges onto the child's ROOT element — which is
+    // .search-pill itself — so `.commit-search-input :deep(.search-pill)`
+    // compiled to a descendant selector (`.commit-search-input[data-v-x]
+    // .search-pill`) that can never match: the two classes are on one element.
+    // The override silently did nothing and the field kept its shared border.
+    // Every other call site in the repo wraps for this reason.
+    const at = src.indexOf('class="commit-search"')
+    expect(at, 'the .commit-search wrapper must exist').toBeGreaterThan(-1)
+    // The wrapper must contain the SearchInput, and its element must not be the
+    // SearchInput itself.
+    const wrapper = src.slice(at, src.indexOf('</div>', at))
+    expect(wrapper).toContain('<SearchInput')
+    // The class must NOT be passed through to the component itself.
+    expect(src).not.toMatch(/<SearchInput[^>]*class="commit-search-input"/)
+  })
+
   it('drops the shared pill border and focus border', () => {
-    // SearchInput's shared defaults are a --bg-primary fill plus a 1px
-    // --border-color outline. On the transparent header bar that reads as a
-    // nested box, so this call site opts out of both. The focus rule must be
-    // overridden too: it sets border-color, which would have no border to
-    // colour and would leave the ring as the only visible focus cue anyway.
-    const base = src.match(/\.commit-search-input :deep\(\.search-pill\)\s*\{([^}]*)\}/)
+    const base = src.match(/\.commit-search :deep\(\.search-pill\)\s*\{([^}]*)\}/)
     expect(base, 'the borderless override must exist').not.toBeNull()
     expect(base![1]).toMatch(/border:\s*none/)
 
-    const focused = src.match(/\.commit-search-input :deep\(\.search-pill\.focused\)\s*\{([^}]*)\}/)
+    const focused = src.match(/\.commit-search :deep\(\.search-pill\.focused\)\s*\{([^}]*)\}/)
     expect(focused, 'the focused override must exist').not.toBeNull()
     expect(focused![1]).toMatch(/border-color:\s*transparent/)
     expect(focused![1]).toMatch(/box-shadow:/)
+  })
+
+  it('lets the field grow to fill the remaining header space', () => {
+    // The field must absorb the free space, and the title must stop growing so
+    // there is free space to absorb.
+    const wrapper = src.match(/\.commit-search\s*\{([^}]*)\}/)
+    expect(wrapper, 'the .commit-search rule must exist').not.toBeNull()
+    expect(wrapper![1]).toMatch(/flex:\s*1/)
+    expect(wrapper![1], 'a max-width would cap the fill').not.toMatch(/max-width/)
+
+    const title = src.match(/:deep\(\.drilldown-title\)\s*\{([^}]*)\}/)
+    expect(title, 'the title override must exist').not.toBeNull()
+    expect(title![1]).toMatch(/flex:\s*0 1 auto/)
   })
 
   it('tints the fill from --text-primary, not by jumping a background step', () => {
     // Red line 4: across the 36 themes the secondary↔tertiary contrast drops to
     // 1.06, so a --bg-tertiary fill can vanish. Mixing --text-primary into the
     // background is the direction-guaranteed recipe.
-    const base = src.match(/\.commit-search-input :deep\(\.search-pill\)\s*\{([^}]*)\}/)!
+    const base = src.match(/\.commit-search :deep\(\.search-pill\)\s*\{([^}]*)\}/)!
     expect(base[1]).toMatch(/background:\s*color-mix\(in srgb,\s*var\(--text-primary\)/)
     expect(base[1], 'must not rely on a background step').not.toMatch(
       /background:\s*var\(--bg-(tertiary|elevated)/,
