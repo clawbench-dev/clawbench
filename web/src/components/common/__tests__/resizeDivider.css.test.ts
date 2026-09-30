@@ -95,9 +95,10 @@ function expectIdenticalDecls(...selectors: string[]): string {
 
 describe('resize-divider.css — resting line', () => {
   it('fills its host so the line thickness is the host width', () => {
-    // Centring a 1px line inside a wider host (3px for SplitDivider under
-    // `pointer: coarse`, 6px for TocDock) leaves an uneven gap either side that
-    // reads as stray padding. The thin axis is an explicit `100%` (not
+    // Centring a 1px line inside a wider host leaves an uneven gap either side
+    // that reads as stray padding. Both consumers now use a 1px host (3px for
+    // SplitDivider under `pointer: coarse`); TocDock used to be 6px, which
+    // painted a 6x-too-thick grey bar. The thin axis is an explicit `100%` (not
     // `inset: 0`) so it can take part in the release transition — `auto` is not
     // interpolatable, which is what produced the release flash.
     const base = declsOf('.resize-divider__line')
@@ -115,6 +116,25 @@ describe('resize-divider.css — resting line', () => {
       expect(resting[0], `${orientation} must not use inset:0 on the thin axis`)
         .not.toMatch(new RegExp(`${axis}:\\s*auto`))
     }
+  })
+
+  it('keeps both hosts at a 1px resting width', () => {
+    // The rendered line IS the host width, so a host wider than 1px paints a
+    // proportionally thick separator. TocDock shipped at 6px and read as a
+    // 6px-thick bar next to the 1px `--border-color` separators everywhere else
+    // (FileHeader, dock header, SplitDivider). Guard the number at the source:
+    // widening either host is the regression, not a styling detail.
+    const tocdock = readFromRepo('src/components/file/TocDock.vue')
+    const scoped = tocdock.slice(tocdock.indexOf('<style scoped>'))
+    const rule = scoped.match(/\.toc-dock-divider\s*\{([^}]*)\}/)
+    expect(rule, '.toc-dock-divider rule must exist').not.toBeNull()
+    expect(rule![1], 'TocDock host must be 1px at rest').toMatch(/width:\s*1px/)
+    expect(rule![1], 'TocDock host must not be widened back').not.toMatch(/width:\s*[2-9]\d*px/)
+
+    const split = readFromRepo('src/components/common/SplitDivider.vue')
+    const splitStyle = split.slice(split.indexOf('<style scoped>'))
+    expect(splitStyle, 'SplitDivider keeps the shared 1px gutter token')
+      .toMatch(/\.split-view__divider--horizontal\s*\{[^}]*width:\s*var\(--split-gutter,\s*1px\)/)
   })
 
   it('transitions the line geometry, not just its colour', () => {

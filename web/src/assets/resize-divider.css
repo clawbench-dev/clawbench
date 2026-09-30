@@ -17,12 +17,11 @@
  *
  * WHAT IS *NOT* HERE (intentionally — host geometry genuinely differs, sharing
  * it would be a lie):
- *   - resting size/placement: SplitDivider is a 1px flex item; TocDock is a 6px
+ *   - resting size/placement: SplitDivider is a 1px flex item; TocDock is a 1px
  *     absolutely positioned box hanging off the dock's edge, with left/right
  *     dock variants.
  *   - how the band expands: SplitDivider offsets both sides
- *     (`margin: 0 -5.5px`); TocDock only shifts one side so it stays centred on
- *     the dock edge.
+ *     (`margin: 0 -5.5px`); TocDock shifts the one side facing the dock edge.
  *   - the band's translucent tint, because it must win or lose against the
  *     host's own `width`/`margin` declaration in the same rule block.
  *   - `::before` hit-area width, `z-index`, `cursor`, and the `(pointer: coarse)`
@@ -42,10 +41,11 @@
  * touch (see SplitDivider.vue).
  */
 
-/* The line fills its host at rest, so its thickness IS the host's: 1px on
-   desktop, 3px for SplitDivider under `pointer: coarse`, 6px for TocDock.
-   Centring a 1px line inside a wider box leaves an uneven gap either side that
-   reads as stray padding.
+/* The line fills its host at rest, so its thickness IS the host's: 1px for both
+   consumers (3px for SplitDivider under `pointer: coarse`). Centring a 1px line
+   inside a wider box leaves an uneven gap either side that reads as stray
+   padding — and a wide host paints a proportionally thick bar, which is why
+   TocDock's box is 1px rather than 6px.
 
    The resting thickness is written as an explicit `100%` rather than `inset: 0`
    so that it can take part in a transition — `auto` (what `inset: 0` resolves

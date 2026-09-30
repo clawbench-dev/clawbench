@@ -274,6 +274,34 @@ describe('TocDock — drag highlight survives touch', () => {
     expect(style).toMatch(/\.toc-dock--left \.toc-dock-divider\.resize-divider--expanded/)
   })
 
+  it('must not clip the divider band (overflow: visible, not hidden)', () => {
+    // Regression: `.toc-dock` was `overflow: hidden`, so the hover/drag band —
+    // which straddles the dock's edge — had its content-side half clipped away
+    // and painted as a one-sided strip. The panel cannot leak content anyway:
+    // `.toc-list` scrolls internally and every label ellipsizes.
+    const src = readSource('file/TocDock.vue')
+    const scoped = src.slice(src.indexOf('<style scoped>'))
+    const dock = scoped.match(/\.toc-dock\s*\{([^}]*)\}/)
+    expect(dock, '.toc-dock rule must exist').not.toBeNull()
+    expect(dock![1], 'the dock must not clip its own divider band')
+      .toMatch(/overflow:\s*visible/)
+    expect(dock![1], 'overflow:hidden would re-clip the band')
+      .not.toMatch(/overflow:\s*hidden/)
+  })
+
+  it('sizes the divider host to the 1px resting line, not a 6px bar', () => {
+    // The rendered line IS the host width. The old 6px host painted a
+    // 6x-too-thick grey separator next to the 1px `--border-color` used by every
+    // other divider (FileHeader, dock header, SplitDivider). The grab area is
+    // the `::before` band, so the extra pixels bought nothing.
+    const src = readSource('file/TocDock.vue')
+    const scoped = src.slice(src.indexOf('<style scoped>'))
+    const rule = scoped.match(/\.toc-dock-divider\s*\{([^}]*)\}/)
+    expect(rule, '.toc-dock-divider rule must exist').not.toBeNull()
+    expect(rule![1]).toMatch(/width:\s*1px/)
+    expect(rule![1], 'the divider host must stay 1px at rest').not.toMatch(/width:\s*[2-9]\d*px/)
+  })
+
   it('consumes the shared line element instead of its own', () => {
     // The inner line moved to assets/resize-divider.css so both dividers share
     // one definition. A leftover local class would silently reintroduce the

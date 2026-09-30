@@ -129,28 +129,40 @@ onBeforeUnmount(() => {
   max-width: 400px;
   flex-shrink: 0;
   background: var(--bg-secondary);
-  /* No border-left: the drag divider's gutter-line (centered on this edge)
-     already provides the separator — combining both would render a thick
-     double line between the content area and the dock.
-     No border-top: the FileHeader's bottom border already separates it. */
-  overflow: hidden;
+  /* No border-left: the drag divider's line (on this edge) already provides the
+     separator — combining both would render a thick double line between the
+     content area and the dock.
+     No border-top: the FileHeader's bottom border already separates it.
+
+     `overflow: visible`, NOT `hidden`: the divider's hover/drag band straddles
+     this edge, so a clipping dock hid the half hanging over the content and the
+     highlight painted as a one-sided strip. The panel content cannot leak
+     anyway — `.toc-list` scrolls internally and every label ellipsizes. */
+  overflow: visible;
 }
 
-/* Divider (mirrors SplitDivider): a single 1px line by default; on hover/drag
-   it expands (via negative margins so layout does NOT shift) into a grab-able
-   gap with an accent highlight. Sits on the dock's LEFT edge when docked
+/* Divider (mirrors SplitDivider): a single 1px line at rest; on hover/drag it
+   expands (via a negative margin so layout does NOT shift) into a grab-able
+   band with an accent highlight. Sits on the dock's LEFT edge when docked
    right; moves to the RIGHT edge when docked left.
 
    The line itself (resting thickness, the expanded 2px centre stripe, the
    accent colour and its hover/drag triggers) lives in the shared
    `assets/resize-divider.css` — the same file SplitDivider.vue consumes. Only
-   the host geometry stays here, because it differs per consumer. */
+   the host geometry stays here, because it differs per consumer.
+
+   RESTING WIDTH IS 1px, not 6px: the line fills its host, so the host's width
+   IS the rendered line. A 6px host painted a 6px-thick grey bar between the
+   content and the dock — six times the 1px `--border-color` used by every other
+   separator (FileHeader, dock header, SplitDivider), which is what read as
+   "不对劲". The extra pixels bought nothing: the grab area is the `::before`
+   band below, and `width` is the axis the shared file animates. */
 .toc-dock-divider {
   position: absolute;
-  left: -3px;
+  left: 0;
   top: 0;
   bottom: 0;
-  width: 6px;
+  width: 1px;
   cursor: col-resize;
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
@@ -159,21 +171,27 @@ onBeforeUnmount(() => {
 }
 .toc-dock--left .toc-dock-divider {
   left: auto;
-  right: -3px;
+  right: 0;
 }
-/* invisible wider hit area so hover/touch can catch the thin line */
+/* invisible wider hit area so hover/touch can catch the thin line (mirrors
+   SplitDivider's ±6px band) */
 .toc-dock-divider::before {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -4px;
-  right: -4px;
+  left: -6px;
+  right: -6px;
 }
 /* Expanded highlight. `:active` covers mouse press; `--expanded` covers the
    whole pointer session, which is what touch needs (see the `dragging` ref).
    This block must stay in lockstep with the `(hover: hover)` block below —
    both are host geometry, the line's own rules are shared.
+
+   `margin-left: -6px` widens the 1px host symmetrically about the dock edge:
+   (12 - 1) / 2 = 5.5, rounded to 6 so the band lands on whole pixels and does
+   not clip the 1px content-side strip away (see the right-docked measurement
+   note in the tests). Same formula SplitDivider uses on its 1px flex item.
 
    The tint mixes into the PANEL colour, not into `transparent`: a translucent
    band composites with whatever is behind it, and the content it straddles can
@@ -183,22 +201,23 @@ onBeforeUnmount(() => {
 .toc-dock-divider:active,
 .toc-dock-divider.resize-divider--expanded {
   width: 12px;
-  margin-left: -3px;
+  margin-left: -6px;
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
 }
 @media (hover: hover) {
   .toc-dock-divider:hover {
     width: 12px;
-    margin-left: -3px;
+    margin-left: -6px;
     background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, var(--bg-primary, #ffffff));
   }
 }
 /* Left-docked: the divider hangs off the RIGHT edge, so the hover/drag
-   expansion must shift RIGHT (margin-left: 3px) to stay centered on it. */
+   expansion must shift RIGHT to stay centered on it. */
 .toc-dock--left .toc-dock-divider:active,
 .toc-dock--left .toc-dock-divider.resize-divider--expanded,
 .toc-dock--left .toc-dock-divider:hover {
-  margin-left: 3px;
+  margin-left: 0;
+  margin-right: -6px;
 }
 
 .toc-dock-header {
