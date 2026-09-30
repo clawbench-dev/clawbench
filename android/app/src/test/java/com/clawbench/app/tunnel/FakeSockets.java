@@ -33,6 +33,12 @@ public final class FakeSockets {
         public final List<FakeServerSocket> created =
                 Collections.synchronizedList(new ArrayList<>());
         public volatile boolean failNextBind = false;
+        /**
+         * When set, the next socket's first {@code accept()} throws this and the
+         * flag is cleared. Set before {@code addLocal} so the accept loop's very
+         * first call fails deterministically (no race with the loop starting).
+         */
+        public volatile IOException nextAcceptFailure = null;
         /** Dials the reverse ({@code -R}) targets; shared with the transport. */
         public final FakeDialer dialer = new FakeDialer();
 
@@ -133,6 +139,11 @@ public final class FakeSockets {
         @Override
         public Socket accept() throws IOException {
             acceptThread = Thread.currentThread();
+            IOException injected = factory.nextAcceptFailure;
+            if (injected != null) {
+                factory.nextAcceptFailure = null;
+                throw injected;
+            }
             // Poll rather than block forever so close() is observed promptly.
             long deadline = System.currentTimeMillis() + FakeTunnelStream.WAIT_MS;
             while (true) {

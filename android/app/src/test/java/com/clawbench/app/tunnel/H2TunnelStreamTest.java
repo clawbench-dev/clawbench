@@ -27,6 +27,7 @@ import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -806,6 +807,76 @@ public class H2TunnelStreamTest {
                 elapsed < H2TunnelStream.STREAM_SLOT_WAIT_MS + 5000);
     }
 
+    @Test
+    public void openStream_timeoutCancelsTheLeakedCallAndRegistersNothing() throws Exception {
+        // M1: the caller gives up after the slot wait (10s in production) but
+        // the call's own budget is HEADERS_TIMEOUT_MS (20s). Without
+        // cancelling, a run() that succeeds later registers an h2 stream
+        // nobody holds a reference to — its liveCalls/liveConnections/
+        // connection entries leak forever.
+        server.mode = FakeTunnelServer.Mode.HANG;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        tunnel.setStreamSlotWaitMsForTesting(300);
+        server.mode = FakeTunnelServer.Mode.HANG;
+        server.armHang();
+
+        int cancelsBefore = server.cancelCount();
+        try {
+            tunnel.openStream("127.0.0.1", 8080);
+            throw new AssertionError("expected a timeout");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.TIMEOUT, e.kind());
+        }
+        assertTrue("the abandoned call must be cancelled (RST_STREAM)",
+                server.cancelCount() > cancelsBefore);
+
+        // Now let the worker finish: the cancelled call must not register a
+        // connection.
+        server.releaseHang();
+        long deadline = System.currentTimeMillis() + 5000;
+        while (tunnel.liveCallCountForTesting() != 0 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals("a timed-out stream must leave no live call", 0, tunnel.liveCallCountForTesting());
+        assertEquals("a timed-out stream must leave no live connection",
+                0, tunnel.liveConnectionCountForTesting());
+        assertEquals(0, tunnel.activeStreamCount());
+        assertTrue("a caller-initiated cancel must not mark the session dead",
+                tunnel.isConnected());
+    }
+
+    @Test
+    public void openStream_cancelBeforeTheCallExistsStillRegistersNothing() throws Exception {
+        // The cancel-before-create race: cancel() runs while newCall() is still
+        // in flight, so it sees call == null. run() must re-check after
+        // publishing the call, or the stream is registered despite the cancel.
+        // The worker is forced to reach execute() before the caller's wait
+        // expires, so the cancel genuinely lands while the call exists; the
+        // end state must still be clean.
+        server.mode = FakeTunnelServer.Mode.HANG;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        tunnel.setStreamSlotWaitMsForTesting(300);
+        server.mode = FakeTunnelServer.Mode.HANG;
+        server.armHang();
+
+        Thread worker = new Thread(() -> {
+            try {
+                tunnel.openStream("127.0.0.1", 8080);
+            } catch (TunnelException ignored) {
+                // Expected: the wait expires and cancels.
+            }
+        });
+        worker.start();
+        assertTrue("the worker must reach execute() before the gate opens",
+                server.awaitHangs(1, 10_000));
+        worker.join(10_000);
+        server.releaseHang();
+
+        assertEquals(0, tunnel.liveCallCountForTesting());
+        assertEquals(0, tunnel.liveConnectionCountForTesting());
+        assertEquals(0, tunnel.activeStreamCount());
+    }
+
     // ==================================================================
     // Constraint: stream pool is bounded
     // ==================================================================
@@ -1215,7 +1286,11 @@ public class H2TunnelStreamTest {
     }
 
     @Test
-    public void bind_returnsNullOnBindErr() throws Exception {
+    public void bind_surfacesBindErrWithItsCodeAndMessage() throws Exception {
+        // A server refusal must reach the caller as a typed failure, not a bare
+        // null: the code (reserved/taken) is what distinguishes "someone else
+        // has the port" from "you may not bind it at all", and the message is
+        // the server's own. The old code flattened every bind_err to null.
         server.mode = FakeTunnelServer.Mode.DUPLEX;
         tunnel.connect(SERVER_URL, TransportKind.H2C);
         TunnelControlStream control = tunnel.openControlStream();
@@ -1232,7 +1307,74 @@ public class H2TunnelStreamTest {
         });
         responder.start();
 
-        assertNull(tunnel.bind(80));
+        try {
+            tunnel.bind(80);
+            throw new AssertionError("expected a bind_err to throw");
+        } catch (TunnelException e) {
+            assertEquals("code 3 (reserved/taken) maps to UNAVAILABLE",
+                    TunnelErrorKind.UNAVAILABLE, e.kind());
+            assertEquals("the server's message must be retained", "taken", e.getMessage());
+        }
+        responder.join(5000);
+        control.close();
+    }
+
+    @Test
+    public void bind_notAllowed_mapsToAuth() throws Exception {
+        // Code 2 (not allowed) is an authorization verdict, not a capacity one.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        Thread responder = new Thread(() -> {
+            try {
+                assertNotNull(stream.readToServer(256));
+                stream.writeFromServer(
+                        "{\"type\":\"bind_err\",\"port\":22,\"code\":2,\"msg\":\"port not allowed\"}\n");
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        responder.start();
+
+        try {
+            tunnel.bind(22);
+            throw new AssertionError("expected a bind_err to throw");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.AUTH, e.kind());
+            assertEquals("port not allowed", e.getMessage());
+        }
+        responder.join(5000);
+        control.close();
+    }
+
+    @Test
+    public void bind_listenFailed_mapsToNetwork() throws Exception {
+        // Code 4 (listen failed) is a transient local condition on the server.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        Thread responder = new Thread(() -> {
+            try {
+                assertNotNull(stream.readToServer(256));
+                stream.writeFromServer(
+                        "{\"type\":\"bind_err\",\"port\":9000,\"code\":4,\"msg\":\"listen failed\"}\n");
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        responder.start();
+
+        try {
+            tunnel.bind(9000);
+            throw new AssertionError("expected a bind_err to throw");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.NETWORK, e.kind());
+            assertEquals("listen failed", e.getMessage());
+        }
         responder.join(5000);
         control.close();
     }
@@ -1336,6 +1478,113 @@ public class H2TunnelStreamTest {
         } catch (TunnelException e) {
             assertEquals(TunnelErrorKind.HTTP_ERROR, e.kind());
             assertEquals(500, e.status());
+        }
+    }
+
+    @Test
+    public void openControlStream_constructionTimeoutCancelsTheOrphanCall() throws Exception {
+        // M2: on a header timeout the constructor threw without cancelling the
+        // Call or registering the stream. runControl() could still succeed and
+        // park in readLines() forever, and since controlStream is only assigned
+        // after the constructor returns, a later openControlStream() would build
+        // a SECOND control stream — two competing sets of bind bookkeeping.
+        server.mode = FakeTunnelServer.Mode.HANG;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        tunnel.setControlHeaderWaitMsForTesting(300);
+        server.mode = FakeTunnelServer.Mode.HANG;
+        server.armHang();
+
+        int cancelsBefore = server.cancelCount();
+        try {
+            tunnel.openControlStream();
+            throw new AssertionError("expected a control-stream timeout");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.TIMEOUT, e.kind());
+        } finally {
+            server.releaseHang();
+        }
+
+        assertTrue("the orphaned control call must be cancelled (RST_STREAM)",
+                server.cancelCount() > cancelsBefore);
+        long deadline = System.currentTimeMillis() + 5000;
+        while (tunnel.liveCallCountForTesting() != 0 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals("a timed-out control construction must leave no live call",
+                0, tunnel.liveCallCountForTesting());
+        assertTrue("a slow header is not a session loss", tunnel.isConnected());
+
+        // A subsequent open must build exactly one stream and retain it.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        int requestsBefore = server.requestsFor("/api/tunnel/control").size();
+        TunnelControlStream control = tunnel.openControlStream();
+        assertNotNull(control);
+        assertEquals("exactly one new control request", requestsBefore + 1,
+                server.requestsFor("/api/tunnel/control").size());
+        assertSame("the new stream must be retained, not rebuilt",
+                control, tunnel.openControlStream());
+        control.close();
+    }
+
+    // ==================================================================
+    // Client teardown (M3)
+    // ==================================================================
+
+    @Test
+    public void close_shutsDownTheClientDispatchersAndClearsThePool() {
+        // M3: closeInternal() iterated clients.values() and then cleared the
+        // map with no lock, so a concurrent client() put between the snapshot
+        // and the clear was dropped without evictAll()/shutdown() — leaking
+        // its connection pool and dispatcher thread. The observable contract
+        // is that every client close() saw is torn down, and the map is empty
+        // so the next client() builds fresh rather than returning a dead one.
+        OkHttpClient client = tunnel.clientForTesting(TransportKind.H2C);
+        assertNotNull(client);
+        assertFalse("a live client's dispatcher must be running",
+                client.dispatcher().executorService().isShutdown());
+
+        tunnel.close();
+
+        assertTrue("close() must shut the dispatcher down",
+                client.dispatcher().executorService().isShutdown());
+        OkHttpClient rebuilt = tunnel.clientForTesting(TransportKind.H2C);
+        assertNotSame("the pool must have been cleared, not reused", client, rebuilt);
+        assertFalse("the rebuilt client must be live",
+                rebuilt.dispatcher().executorService().isShutdown());
+    }
+
+    @Test
+    public void close_concurrentClientCreationIsNeverDroppedUnshutdown() throws Exception {
+        // The M3 invariant under concurrency: after close() returns, any client
+        // that is no longer reachable through the map must have been shut
+        // down. A client dropped between snapshot and clear would violate it.
+        final java.util.List<OkHttpClient> seen =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        final CountDownLatch firstCreated = new CountDownLatch(1);
+        final java.util.concurrent.atomic.AtomicBoolean stop =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread creator = new Thread(() -> {
+            while (!stop.get()) {
+                seen.add(tunnel.clientForTesting(TransportKind.H2C));
+                firstCreated.countDown();
+                Thread.yield();
+            }
+        });
+        creator.start();
+        assertTrue("a client must be created before close", firstCreated.await(5, TimeUnit.SECONDS));
+
+        tunnel.close();
+        stop.set(true);
+        creator.join(5000);
+
+        // After close(), client() returns the single client retained past the
+        // clear (if any); every other client the creator observed was in the
+        // snapshot and must be shut down.
+        OkHttpClient retained = tunnel.clientForTesting(TransportKind.H2C);
+        for (OkHttpClient client : new java.util.ArrayList<>(seen)) {
+            boolean shutdown = client.dispatcher().executorService().isShutdown();
+            assertTrue("a client absent from the map must be shut down, not leaked",
+                    shutdown || client == retained);
         }
     }
 

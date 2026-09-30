@@ -78,10 +78,16 @@ public interface TunnelStream {
      * reply.
      *
      * @return the actual bound port (differs from the request when
-     *         {@code serverPort == 0}), or {@code null} on {@code bind_err} or
-     *         when the control stream dies first.
+     *         {@code serverPort == 0}), or {@code null} when the control stream
+     *         died before answering.
+     * @throws TunnelException when the server answered {@code bind_err}; the
+     *         kind is mapped from the refusal code (not allowed → {@code AUTH},
+     *         reserved/taken → {@code UNAVAILABLE}, listen failed → {@code
+     *         NETWORK}, internal → {@code UNKNOWN}) and the message is the
+     *         server's own. The caller can therefore tell "you may not" from
+     *         "someone else has it" instead of seeing one generic failure.
      */
-    Integer bind(int serverPort);
+    Integer bind(int serverPort) throws TunnelException;
 
     /**
      * {@code -R}: release a server-side bind. Best-effort and fire-and-forget,

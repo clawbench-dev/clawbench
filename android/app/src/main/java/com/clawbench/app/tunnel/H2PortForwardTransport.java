@@ -2,6 +2,8 @@ package com.clawbench.app.tunnel;
 
 import com.clawbench.app.AppLog;
 
+import androidx.annotation.Nullable;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -110,6 +112,19 @@ public final class H2PortForwardTransport implements PortForwardTransport {
     private final Object executorLock = new Object();
     private ExecutorService executor;
     private final AtomicInteger threadSeq = new AtomicInteger();
+
+    /**
+     * Test seam: run when the accept loop deregisters a listener after an
+     * {@code accept()} failure. Null in production. Lets a test await that
+     * teardown deterministically instead of sleeping.
+     */
+    @Nullable
+    private volatile Runnable onListenerClosedForTesting;
+
+    /** Test seam; see {@link #onListenerClosedForTesting}. */
+    void setOnListenerClosedForTesting(@Nullable Runnable hook) {
+        this.onListenerClosedForTesting = hook;
+    }
 
     public H2PortForwardTransport(TunnelStreamProvider tunnels) {
         this(tunnels, ServerSocketFactory.DEFAULT, LocalDialer.DEFAULT);
@@ -231,6 +246,9 @@ public final class H2PortForwardTransport implements PortForwardTransport {
 
         Integer bound = tunnel.bind(serverPort);
         if (bound == null) {
+            // The control stream died before answering (no server verdict to
+            // report). A server refusal throws instead, carrying its code and
+            // message, and propagates to the caller unchanged.
             throw new TunnelException(TunnelErrorKind.UNAVAILABLE,
                     "server refused to bind port " + serverPort);
         }
@@ -444,6 +462,21 @@ public final class H2PortForwardTransport implements PortForwardTransport {
             } catch (IOException e) {
                 if (!server.isClosed()) {
                     AppLog.w(TAG, "H2: accept on " + localPort + " failed: " + e.getMessage());
+                }
+                // The loop is dead, so the listener must stop being advertised:
+                // isLocalReachable() answers from this map, and leaving a
+                // non-closed socket behind would report a port that can no
+                // longer accept. Conditional remove so a concurrent rebind on
+                // the same port is not evicted.
+                listeners.remove(localPort, server);
+                closeQuietly(server);
+                Runnable hook = onListenerClosedForTesting;
+                if (hook != null) {
+                    try {
+                        hook.run();
+                    } catch (RuntimeException ignored) {
+                        // Test hook only.
+                    }
                 }
                 break;
             }

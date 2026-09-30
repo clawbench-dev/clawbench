@@ -81,6 +81,8 @@ final class FakeTunnelServer implements CallFactory {
 
     private final AtomicInteger executions = new AtomicInteger();
     private final AtomicInteger enqueues = new AtomicInteger();
+    /** Number of {@code Call.cancel()} invocations across every fake call. */
+    private final AtomicInteger cancels = new AtomicInteger();
 
     /** Gate for {@link Mode#HANG}: released by {@link #releaseHang()}. */
     private volatile java.util.concurrent.CountDownLatch hangGate = new java.util.concurrent.CountDownLatch(0);
@@ -140,6 +142,11 @@ final class FakeTunnelServer implements CallFactory {
 
     int executionCount() {
         return executions.get();
+    }
+
+    /** Total {@code cancel()} calls; lets a test prove a leaked call was closed. */
+    int cancelCount() {
+        return cancels.get();
     }
 
     /** Any use of {@code enqueue()} is a bug: it caps at maxRequestsPerHost=5. */
@@ -212,6 +219,7 @@ final class FakeTunnelServer implements CallFactory {
 
             if (mode == Mode.HANG) {
                 enterHang("interrupted while hanging");
+                if (canceled) throw new IOException("Canceled");
                 return duplexResponse();
             }
 
@@ -261,6 +269,7 @@ final class FakeTunnelServer implements CallFactory {
         @Override
         public void cancel() {
             canceled = true;
+            cancels.incrementAndGet();
         }
 
         @Override

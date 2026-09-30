@@ -100,9 +100,10 @@ public final class H2TunnelStream implements TunnelStream {
     /**
      * Interval for the h2 connection-level PING, in seconds. Matches the SSH
      * path's {@code setServerAliveInterval(30000)} so both transports notice a
-     * dead peer on the same timescale. OkHttp only sends an interval PING when
-     * the connection has been otherwise idle, and fails the connection when the
-     * PONG does not arrive.
+     * dead peer on the same timescale. OkHttp's {@code Http2Connection} runs
+     * its interval task on a fixed cadence and pings unconditionally — there is
+     * no stream-activity gate in OkHttp 4.12 — so a busy tunnel still pays one
+     * PING per interval; a missing PONG fails the whole connection.
      */
     static final int H2_PING_INTERVAL_SECONDS = 30;
 
@@ -199,6 +200,20 @@ public final class H2TunnelStream implements TunnelStream {
 
     @Nullable
     private volatile H2ControlStream controlStream;
+
+    /**
+     * How long a control-stream construction waits for its response headers.
+     * {@link #HEADERS_TIMEOUT_MS} in production; a test seam so the timeout
+     * path is reachable without a 20-second test.
+     */
+    private volatile int controlHeaderWaitMs = HEADERS_TIMEOUT_MS;
+
+    /**
+     * How long {@link #openConnection} waits for a pool slot and headers.
+     * {@link #STREAM_SLOT_WAIT_MS} in production; a test seam so the timeout
+     * path is reachable without a 10-second test.
+     */
+    private volatile int streamSlotWaitMs = STREAM_SLOT_WAIT_MS;
 
     public H2TunnelStream(TunnelPlatform platform) {
         this(platform, null);
@@ -435,7 +450,20 @@ public final class H2TunnelStream implements TunnelStream {
             connection.markClosedBySession();
         }
         liveConnections.clear();
-        for (OkHttpClient client : clients.values()) {
+        // Snapshot and clear under the same monitor client() uses for its put:
+        // a concurrent client() that landed between a lock-free snapshot and a
+        // lock-free clear would be dropped without evictAll()/shutdown(), and
+        // its connection pool and dispatcher thread would leak forever. Taking
+        // the monitor makes the put and the clear mutually exclusive, so every
+        // created client is either torn down here or visible to the next
+        // connect (which will tear it down then). No path holds the clients
+        // monitor and then takes sessionLock, so this cannot deadlock.
+        List<OkHttpClient> staleClients;
+        synchronized (clients) {
+            staleClients = new ArrayList<>(clients.values());
+            clients.clear();
+        }
+        for (OkHttpClient client : staleClients) {
             try {
                 client.connectionPool().evictAll();
             } catch (RuntimeException ignored) {
@@ -447,7 +475,6 @@ public final class H2TunnelStream implements TunnelStream {
                 // Best-effort.
             }
         }
-        clients.clear();
         kind = null;
         target = null;
     }
@@ -528,7 +555,7 @@ public final class H2TunnelStream implements TunnelStream {
     }
 
     @Override
-    public Integer bind(int serverPort) {
+    public Integer bind(int serverPort) throws TunnelException {
         H2ControlStream control;
         try {
             control = (H2ControlStream) openControlStream();
@@ -536,7 +563,14 @@ public final class H2TunnelStream implements TunnelStream {
             recordFailure(e.kind(), e.getMessage());
             return null;
         }
-        return control.bind(serverPort);
+        try {
+            return control.bind(serverPort);
+        } catch (TunnelException e) {
+            // Surface the server's refusal to the caller with its own kind and
+            // message, and remember it as the session's last error.
+            recordFailure(e.kind(), e.getMessage());
+            throw e;
+        }
     }
 
     @Override
@@ -575,6 +609,11 @@ public final class H2TunnelStream implements TunnelStream {
                     "stream pool saturated (" + streamPoolSize + " streams)", e);
         }
         if (!streamCall.await()) {
+            // The worker is still running: cancel it before giving up. Without
+            // this, a call that succeeds after the caller timed out registers an
+            // h2 stream (plus its liveCalls/liveConnections/connection entries)
+            // that nobody holds a reference to, so it can never be closed.
+            streamCall.cancel();
             throw new TunnelException(TunnelErrorKind.TIMEOUT,
                     what + " timed out after " + STREAM_SLOT_WAIT_MS + "ms");
         }
@@ -593,6 +632,16 @@ public final class H2TunnelStream implements TunnelStream {
         /** The session generation this stream belongs to (see {@link #generation}). */
         private final long streamGeneration = generation.get();
 
+        /** The OkHttp call, published once {@link #run()} creates it. */
+        private volatile Call call;
+        /**
+         * Set by {@link #cancel()}. {@link #run()} checks it right after
+         * creating the call, so a cancel that lands before the call exists
+         * (the caller timed out while the worker was still starting) still
+         * prevents the call from being registered or its connection leaked.
+         */
+        private volatile boolean cancelled;
+
         volatile TunnelConnection connection;
         volatile TunnelException failure;
 
@@ -603,10 +652,49 @@ public final class H2TunnelStream implements TunnelStream {
 
         boolean await() {
             try {
-                return done.await(STREAM_SLOT_WAIT_MS, TimeUnit.MILLISECONDS);
+                return done.await(streamSlotWaitMs, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return false;
+            }
+        }
+
+        /**
+         * Abandon this stream attempt. The caller uses this after its wait
+         * expires; the RST_STREAM that {@code call.cancel()} issues closes the
+         * h2 stream even if {@link #run()} has already created it. Idempotent.
+         *
+         * <p>Runs a handshake with {@link #run()} on this monitor: whichever of
+         * the two observes the other first is responsible for the connection.
+         * If {@code run()} registered a connection before the cancel, the cancel
+         * tears it down here; if the cancel won, {@code run()} refuses to
+         * register. Either way the caller's abandoned stream cannot leak.
+         */
+        void cancel() {
+            TunnelConnection opened;
+            Call current;
+            synchronized (this) {
+                cancelled = true;
+                current = call;
+                opened = connection;
+            }
+            if (current != null) {
+                try {
+                    current.cancel();
+                } catch (RuntimeException ignored) {
+                    // Already finished.
+                }
+                liveCalls.remove(current);
+            }
+            if (opened != null) {
+                // run() published a connection just as we cancelled: the caller
+                // already gave up, so tear it down instead of leaking it.
+                try {
+                    opened.close();
+                } catch (RuntimeException ignored) {
+                    // Already gone.
+                }
+                liveConnections.remove(opened);
             }
         }
 
@@ -620,8 +708,23 @@ public final class H2TunnelStream implements TunnelStream {
                 failure = e;
                 return; // the finally block releases the latch
             }
-            call.timeout().timeout(HEADERS_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            // Close the cancel-before-create race: cancel() may have run while
+            // newCall() was in flight, in which case it saw call == null and did
+            // nothing. Publish the call and register it under the same monitor
+            // cancel() uses, then re-check: a cancelled attempt never leaks a
+            // liveCalls entry or a connection.
+            this.call = call;
             liveCalls.add(call);
+            synchronized (this) {
+                if (cancelled) {
+                    call.cancel();
+                    liveCalls.remove(call);
+                    failure = new TunnelException(TunnelErrorKind.CLOSED, what + " cancelled");
+                    done.countDown();
+                    return;
+                }
+            }
+            call.timeout().timeout(HEADERS_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             try {
                 Response response = call.execute();
                 int code = response.code();
@@ -642,23 +745,37 @@ public final class H2TunnelStream implements TunnelStream {
                     throw new TunnelException(TunnelErrorKind.PROTOCOL,
                             what + ": request body never received its sink");
                 }
-                H2Connection opened = new H2Connection(call, response, sink);
-                liveConnections.add(opened);
-                connection = opened;
+                // Publish the connection under the cancel monitor: a cancel that
+                // lands while execute() was returning must either see the
+                // connection here (and close it) or be observed by the check
+                // below — it can never slip between the two and leak.
+                synchronized (this) {
+                    if (cancelled) {
+                        response.close();
+                        call.cancel();
+                        liveCalls.remove(call);
+                        failure = new TunnelException(TunnelErrorKind.CLOSED, what + " cancelled");
+                        return; // the finally block releases the latch
+                    }
+                    H2Connection opened = new H2Connection(call, response, sink);
+                    liveConnections.add(opened);
+                    connection = opened;
+                }
             } catch (TunnelException e) {
                 failure = e;
                 liveCalls.remove(call);
                 // A 401/403/502 is the server answering over a live h2 session,
                 // so it must not mark the session dead; a connection-level
-                // failure while opening means the connection is gone.
-                if (e.kind().isConnectionLevel()) {
+                // failure while opening means the connection is gone. A failure
+                // caused by our own cancel() is not a session loss either.
+                if (!cancelled && e.kind().isConnectionLevel()) {
                     markSessionDead(streamGeneration, e.kind(), e.getMessage());
                 }
             } catch (IOException e) {
                 TunnelException mapped = asTunnelException(e, what + " failed");
                 failure = mapped;
                 liveCalls.remove(call);
-                if (mapped.kind().isConnectionLevel()) {
+                if (!cancelled && mapped.kind().isConnectionLevel()) {
                     markSessionDead(streamGeneration, mapped.kind(), mapped.getMessage());
                 }
             } catch (RuntimeException e) {
@@ -932,17 +1049,42 @@ public final class H2TunnelStream implements TunnelStream {
             // Wait for the response headers (or the failure) before returning:
             // a control stream that never opened must not look usable.
             try {
-                if (!ready.await(HEADERS_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+                if (!ready.await(controlHeaderWaitMs, TimeUnit.MILLISECONDS)) {
+                    abortConstruction(call);
                     throw new TunnelException(TunnelErrorKind.TIMEOUT, "control stream timed out");
                 }
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                abortConstruction(call);
                 throw new TunnelException(TunnelErrorKind.TIMEOUT, "control stream interrupted", e);
             }
             if (failure != null) throw failure;
             if (sink == null) {
                 throw new TunnelException(TunnelErrorKind.PROTOCOL, "control stream has no sink");
             }
+        }
+
+        /**
+         * Release a control stream whose construction failed.
+         *
+         * <p>Cancelling the call is an RST_STREAM, which unblocks
+         * {@link #readLines} if {@code runControl} succeeded late and parked
+         * there — otherwise that orphan would live forever and a subsequent
+         * {@link #openControlStream()} would build a second control stream
+         * (two competing sets of bind bookkeeping, which the design forbids).
+         *
+         * <p>{@code localClose} is set first so the cancellation's
+         * connection-level IOException does not mark the session dead: a slow
+         * header is not a session loss, and the caller only wants a retry.
+         */
+        private void abortConstruction(Call call) {
+            localClose.set(true);
+            try {
+                call.cancel();
+            } catch (RuntimeException ignored) {
+                // Already finished.
+            }
+            liveCalls.remove(call);
         }
 
         private void runControl(Call call, DuplexRequestBody body) {
@@ -1006,7 +1148,11 @@ public final class H2TunnelStream implements TunnelStream {
                 if (ControlMessage.BOUND.equals(msg.type)) {
                     settleBind(msg.hasPort() ? Integer.valueOf(msg.port) : null);
                 } else if (ControlMessage.BIND_ERR.equals(msg.type)) {
-                    settleBind(null);
+                    // Preserve the server's reason: the code is the machine-
+                    // readable half (mapped to a TunnelErrorKind) and msg the
+                    // human one. Discarding them made every refusal look like
+                    // a generic "unavailable".
+                    settleBindErr(bindError(msg.code, msg.msg));
                 }
                 for (MessageHandler handler : messageHandlers) {
                     try {
@@ -1028,6 +1174,47 @@ public final class H2TunnelStream implements TunnelStream {
         private void settleBind(@Nullable Integer port) {
             BindWaiter waiter = bindWaiters.poll();
             if (waiter != null) waiter.settle(port);
+        }
+
+        /** Complete the oldest pending bind with a server refusal. */
+        private void settleBindErr(TunnelException error) {
+            BindWaiter waiter = bindWaiters.poll();
+            if (waiter != null) waiter.settleError(error);
+        }
+
+        /**
+         * Map a {@code bind_err} code to the closest {@link TunnelErrorKind},
+         * keeping the server's message.
+         *
+         * <p>The codes are the ones {@code ControlMessage} and the server's
+         * {@code internal/tunnel} share: 2 = not allowed, 3 = reserved/taken,
+         * 4 = listen failed, 6 = internal. The mapping reuses the vocabulary
+         * the UI already understands rather than inventing new kinds; the
+         * server's own text rides along as the message.
+         */
+        private TunnelException bindError(int code, @Nullable String message) {
+            TunnelErrorKind kind;
+            switch (code) {
+                case ControlMessage.BIND_ERR_NOT_ALLOWED:
+                    kind = TunnelErrorKind.AUTH;
+                    break;
+                case ControlMessage.BIND_ERR_RESERVED_OR_TAKEN:
+                    kind = TunnelErrorKind.UNAVAILABLE;
+                    break;
+                case ControlMessage.BIND_ERR_LISTEN_FAILED:
+                    kind = TunnelErrorKind.NETWORK;
+                    break;
+                case ControlMessage.BIND_ERR_INTERNAL:
+                default:
+                    kind = TunnelErrorKind.UNKNOWN;
+                    break;
+            }
+            String detail = message == null || message.isEmpty()
+                    ? "server refused the bind (code " + code + ")"
+                    : message;
+            // status 0: a bind_err is an application verdict on a live h2
+            // session, not an HTTP status.
+            return new TunnelException(kind, detail, 0, null);
         }
 
         private void end(@Nullable TunnelErrorKind errorKind, @Nullable String message) {
@@ -1097,8 +1284,12 @@ public final class H2TunnelStream implements TunnelStream {
          * server into a spurious failure.
          *
          * <p>Blocks the caller's own thread (never a pool thread).
+         *
+         * @throws TunnelException when the server answered {@code bind_err};
+         *                         the kind is mapped from its code and the
+         *                         message is the server's.
          */
-        Integer bind(int serverPort) {
+        Integer bind(int serverPort) throws TunnelException {
             BindWaiter waiter = new BindWaiter();
             bindWaiters.add(waiter);
             if (!send(ControlMessage.bind(serverPort))) {
@@ -1174,20 +1365,30 @@ public final class H2TunnelStream implements TunnelStream {
     private static final class BindWaiter {
         private final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
         private volatile Integer port;
+        /** Non-null when the server refused the bind (see {@link #settleError}). */
+        private volatile TunnelException error;
 
         void settle(@Nullable Integer result) {
             port = result;
             done.countDown();
         }
 
+        /** Settle with a server refusal, so {@link #await()} can rethrow it. */
+        void settleError(TunnelException failure) {
+            error = failure;
+            done.countDown();
+        }
+
         @Nullable
-        Integer await() {
+        Integer await() throws TunnelException {
             try {
                 done.await();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return null;
             }
+            TunnelException failure = error;
+            if (failure != null) throw failure;
             return port;
         }
     }
@@ -1227,6 +1428,31 @@ public final class H2TunnelStream implements TunnelStream {
         return client(transportKind);
     }
 
+    /** Test seam: shrink the control-stream header wait (see {@link #controlHeaderWaitMs}). */
+    void setControlHeaderWaitMsForTesting(int millis) {
+        this.controlHeaderWaitMs = millis;
+    }
+
+    /** Test seam: shrink the stream slot wait (see {@link #streamSlotWaitMs}). */
+    void setStreamSlotWaitMsForTesting(int millis) {
+        this.streamSlotWaitMs = millis;
+    }
+
+    /** Test seam: number of live data-stream calls still registered. */
+    int liveCallCountForTesting() {
+        return liveCalls.size();
+    }
+
+    /** Test seam: number of live connections still registered. */
+    int liveConnectionCountForTesting() {
+        return liveConnections.size();
+    }
+
+    /** Test seam: whether the session is currently marked dead. */
+    boolean isSessionDeadForTesting() {
+        return dead;
+    }
+
     private OkHttpClient client(TransportKind transportKind) {
         OkHttpClient existing = clients.get(transportKind);
         if (existing != null) return existing;
@@ -1261,8 +1487,11 @@ public final class H2TunnelStream implements TunnelStream {
                 // 30s mirrors the SSH path's setServerAliveInterval(30000), so
                 // both transports detect a dead peer on the same timescale (the
                 // monitor polls every 15s, so worst-case detection is ~45s).
-                // OkHttp skips the ping while the connection is actively
-                // carrying streams, so a busy tunnel pays no extra traffic.
+                // OkHttp 4.12 sends an interval PING on a fixed cadence
+                // regardless of how many streams are open — there is no
+                // stream-activity gate — so a busy tunnel does pay periodic
+                // ping traffic; the mechanism is still the valid half-open
+                // detector the readTimeout(0) design needs.
                 .pingInterval(H2_PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
                 // The data streams carry opaque TCP payloads; the default
                 // cookie jar would be both useless and a cross-talk risk.

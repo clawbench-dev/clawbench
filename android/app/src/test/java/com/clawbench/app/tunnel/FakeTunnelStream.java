@@ -69,6 +69,11 @@ public final class FakeTunnelStream implements TunnelStream {
     public final FakeControlStream control = new FakeControlStream();
     /** Number of times {@link #openControlStream} was called. */
     public final AtomicInteger controlOpens = new AtomicInteger();
+    /**
+     * When set, the next {@link #bind} throws this (a typed server refusal)
+     * instead of returning. Cleared after one use.
+     */
+    public volatile TunnelException nextBindError = null;
     /** When set, the next claim stream returns this instead of a fresh one. */
     public volatile FakeConnection queuedClaimConnection = null;
 
@@ -178,11 +183,18 @@ public final class FakeTunnelStream implements TunnelStream {
     }
 
     @Override
-    public Integer bind(int serverPort) {
+    public Integer bind(int serverPort) throws TunnelException {
         boundPorts.add(serverPort);
+        TunnelException typed = nextBindError;
+        if (typed != null) {
+            nextBindError = null;
+            throw typed;
+        }
         if (failNextBind) {
             failNextBind = false;
-            return null;
+            // Model the real transport: a bind_err surfaces as a typed
+            // TunnelException, not a bare null.
+            throw new TunnelException(TunnelErrorKind.UNAVAILABLE, "bind refused by fake");
         }
         Integer override = nextBoundPort;
         nextBoundPort = null;

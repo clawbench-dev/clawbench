@@ -119,6 +119,29 @@ public class H2PortForwardTransportTest {
     }
 
     @Test
+    public void acceptLoopFailure_deregistersTheListenerSoItStopsBeingReachable() throws Exception {
+        // A non-close IOException from accept() breaks the loop without the
+        // listener being closed. isLocalReachable() answers from the listeners
+        // map, so leaving the entry behind reports a port that can no longer
+        // accept. The failure is armed before addLocal so the loop's first
+        // accept() fails deterministically.
+        final java.util.concurrent.CountDownLatch deregistered =
+                new java.util.concurrent.CountDownLatch(1);
+        transport.setOnListenerClosedForTesting(deregistered::countDown);
+        sockets.nextAcceptFailure = new IOException("accept failed");
+
+        transport.addLocal(3080, 80, "127.0.0.1");
+        assertTrue("the accept loop must observe the failure",
+                deregistered.await(5, java.util.concurrent.TimeUnit.SECONDS));
+
+        assertFalse("a listener whose accept loop died must not report reachable",
+                transport.isLocalReachable(3080));
+        assertEquals("the dead listener must be dropped from the map",
+                0, transport.listenerCount());
+        assertTrue("the dead listener must be closed", sockets.created.get(0).closed.get());
+    }
+
+    @Test
     public void removeLocal_closesTheListenerAndIsIdempotent() throws Exception {
         transport.addLocal(3080, 80, "127.0.0.1");
         FakeServerSocket server = sockets.created.get(0);
@@ -429,6 +452,26 @@ public class H2PortForwardTransportTest {
             // The service drops the mapping and reports failure.
         }
         assertEquals(0, transport.reverseForwardCount());
+    }
+
+    @Test
+    public void addReverse_propagatesTheTypedBindErrorFromTheServer() {
+        // A bind_err carries a code and message; the transport must surface
+        // them unchanged instead of flattening every refusal into one generic
+        // UNAVAILABLE. Here the server said "port taken" (code 3).
+        tunnel.nextBindError = new TunnelException(
+                TunnelErrorKind.AUTH, "port not allowed", 0, null);
+        try {
+            transport.addReverse(22, 3000, "127.0.0.1");
+            org.junit.Assert.fail("the typed refusal must reach the caller");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.AUTH, e.kind());
+            assertEquals("the server's message must be preserved",
+                    "port not allowed", e.getMessage());
+        } catch (Exception other) {
+            org.junit.Assert.fail("expected a TunnelException, got " + other);
+        }
+        assertEquals("a refused bind must register nothing", 0, transport.reverseForwardCount());
     }
 
     @Test
