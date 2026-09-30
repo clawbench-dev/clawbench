@@ -94,6 +94,7 @@ flowchart LR
 - **自定义字体（代码/界面双通道）**：`--font-ui`/`--font-mono` CSS 变量在 `variables.css` `:root` 定义（顺带修复全库 `var(--font-mono)` 引用从未定义的问题），全站约 100 处硬编码字体栈改用 var() 引用。`fontConfig.ts` 提供开源字体候选表/字体栈构建/localStorage 读写/`applyFontConfig`。选择"默认"以外的字体时插入栈首位、设备未安装自动回退默认栈——纯系统字体栈切换，零体积零打包。主字体缺字时（如英文代码字体不含中文）可用备选字体通道补齐。`index.html` 首帧同步注入字体变量防 FOUC；xterm/CodeMirror/Mermaid 三个不吃 CSS 的 JS 渲染器单独接线。Markdown HTML 导出把所选字体变量携带到导出文档 :root
 - **外观设置深链**：Header 主题下拉底部固定"更多外观选项"按钮点击深链到 Settings → 外观分类——`useSettingsNavigation` 维护 module-level pending 分类状态（跨组件协调），SettingsPage 在组件 mount、被激活（v-show 切回）和已在设置页时三处消费该状态并滚动定位到外观分类。解决主题下拉只提供色板、字体/界面缩放等其余外观项无入口的问题
 - **Logo 深链到「关于」**：Header 的 logo 本身是一个按钮，点击深链到 Settings → 关于分类，与"更多外观选项"走同一条 pending 分类路径。把"版本号、项目信息"这类只在需要时才找的信息收进设置，同时给用户一个符合直觉的入口——点 logo 看"这是什么/什么版本"，无需先猜它在哪个分类下
+- **深链是「重新导航」而非「从当前层下钻」**：外部入口（logo → 关于、主题下拉 → 外观、Agent 抽屉 → 某 agent）触发时，SettingsPage 先 `truncateNav(0)` 把导航栈清回根再 `pushNav(target)`，因此面包屑读作「设置 › 关于」而不是「设置 › 外观 › 关于」。外观/关于是**同级**分类，把其中一个挂在另一个下面会谎报层级关系；且这条栈会随 session 残留（切走再切回设置页仍在），用户从外观页点 logo 就会看到那个错误面包屑。判断依据是**请求来自设置页之外**（模块级 pending 通道），与设置页内部的卡片下钻（真·父子层级，保留栈）是两条不同语义的路径
 - **终端主题切换**：`terminalThemes` 提供 157 个 xterm-theme 主题选择（懒加载），`auto` 模式跟随 App 深色/浅色主题自动切换（Catppuccin Mocha/Latte 为默认值）。主题选择持久化到 localStorage。入口包括终端工具栏主题按钮（带实时配色预览）和 Settings → 终端面板下拉
 - **终端帮助抽屉**：`TerminalHelpDrawer` 展示手势操作、快捷键和符号输入的完整说明，按分类组织（手势、快捷键、修饰键、符号），触摸设备仅显示手势相关条目
 - **语音输入**：`useVoiceInput` 实现麦克风录音→ASR 识别→文字填入输入框的状态机（idle → recording → transcribing → done），支持流式（WebSocket 增量识别）和非流式（POST 完整识别）双模式

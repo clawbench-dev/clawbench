@@ -156,17 +156,21 @@ const breadcrumbs = computed<BreadcrumbCrumb[]>(() => {
 const serverVersion = computed(() => serverConfig.value?.version ?? '')
 
 // ── Deep-link into a category from OUTSIDE the settings tab ──
-// (AppHeader theme picker → "more appearance options"). The request is stored
-// at module level by the caller; when a category is currently open the
-// deep-link is pushed on top so the back button returns to it. The request is
-// consumed up front so a rejected deep-link (user cancels the unsaved-changes
-// confirm) is dropped instead of lingering for the next activation.
+// (AppHeader logo → 关于, theme picker → "more appearance options", agent
+// drawer → agent detail). The request is stored at module level by the caller.
+// A deep-link is a fresh navigation to that category, NOT a descent from
+// whatever happened to be open: the trail is replaced (truncate to the root,
+// then push) so the breadcrumb reads 设置 › 关于 rather than
+// 设置 › 外观 › 关于. The request is consumed up front so a rejected deep-link
+// (user cancels the unsaved-changes confirm) is dropped instead of lingering
+// for the next activation.
 async function openPendingDeepLink() {
   const categoryId = consumePendingSettingsCategory()
   if (!categoryId) return
   if (navStack.value[navStack.value.length - 1] === categoryId) return
   // Leaving a category with unsaved panel edits must confirm first (same as back).
   if (!(await confirmDiscardIfDirty())) return
+  truncateNav(0)
   pushNav(categoryId)
 }
 
