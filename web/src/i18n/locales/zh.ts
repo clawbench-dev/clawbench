@@ -1882,7 +1882,7 @@ export default {
       countUnit: '条',
       notInitialized: '未初始化',
       loading: '加载中…',
-      searchPlaceholder: '搜索提交信息…',
+      searchPlaceholder: '搜索提交信息或 Commit ID…',
       commitRecords: '提交记录',
       notGitRepo: '尚未初始化 Git 仓库',
       notGitRepoDesc: '此项目尚未纳入版本控制',

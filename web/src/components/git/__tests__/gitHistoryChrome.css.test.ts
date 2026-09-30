@@ -220,13 +220,47 @@ describe('the header title carries its glyph', () => {
   })
 })
 
+describe('the header search field is borderless', () => {
+  const src = readWebFile('src/components/git/GitCommitList.vue')
+
+  it('drops the shared pill border and focus border', () => {
+    // SearchInput's shared defaults are a --bg-primary fill plus a 1px
+    // --border-color outline. On the transparent header bar that reads as a
+    // nested box, so this call site opts out of both. The focus rule must be
+    // overridden too: it sets border-color, which would have no border to
+    // colour and would leave the ring as the only visible focus cue anyway.
+    const base = src.match(/\.commit-search-input :deep\(\.search-pill\)\s*\{([^}]*)\}/)
+    expect(base, 'the borderless override must exist').not.toBeNull()
+    expect(base![1]).toMatch(/border:\s*none/)
+
+    const focused = src.match(/\.commit-search-input :deep\(\.search-pill\.focused\)\s*\{([^}]*)\}/)
+    expect(focused, 'the focused override must exist').not.toBeNull()
+    expect(focused![1]).toMatch(/border-color:\s*transparent/)
+    expect(focused![1]).toMatch(/box-shadow:/)
+  })
+
+  it('tints the fill from --text-primary, not by jumping a background step', () => {
+    // Red line 4: across the 36 themes the secondary↔tertiary contrast drops to
+    // 1.06, so a --bg-tertiary fill can vanish. Mixing --text-primary into the
+    // background is the direction-guaranteed recipe.
+    const base = src.match(/\.commit-search-input :deep\(\.search-pill\)\s*\{([^}]*)\}/)!
+    expect(base[1]).toMatch(/background:\s*color-mix\(in srgb,\s*var\(--text-primary\)/)
+    expect(base[1], 'must not rely on a background step').not.toMatch(
+      /background:\s*var\(--bg-(tertiary|elevated)/,
+    )
+  })
+})
+
 describe('the manage button does not repeat the title glyph', () => {
   it('uses a different icon from the title', () => {
     // The title carries GitBranch. The manage button opens the branch/worktree/
     // tag panel, so it originally reused GitBranch too — which, once the title
-    // gained the same glyph, put two identical icons in one bar. It now uses
-    // GitFork. This pins that they stay distinct: a future "tidy up the icons"
-    // pass could otherwise silently collapse them again.
+    // gained the same glyph, put two identical icons in one bar. It moved to
+    // GitFork for that reason, and then to MoreVertical: the panel is a
+    // container for three lists rather than a branch itself, so a "more
+    // actions" glyph describes it better. This pins that the two stay
+    // distinct — a future "tidy up the icons" pass could otherwise silently
+    // collapse them again.
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const title = src.match(/<div class="drilldown-title">([\s\S]*?)<\/div>/)
     expect(title, 'the title block must exist').not.toBeNull()
@@ -244,7 +278,7 @@ describe('the manage button does not repeat the title glyph', () => {
       manageIcon![1],
       'the manage button must not reuse the title icon',
     ).not.toBe(titleIcon![1])
-    expect(manageIcon![1]).toBe('GitFork')
+    expect(manageIcon![1]).toBe('MoreVertical')
   })
 
   it('imports the manage icon so the button is not empty', () => {
@@ -253,6 +287,6 @@ describe('the manage button does not repeat the title glyph', () => {
     const src = readWebFile('src/components/git/GitCommitList.vue')
     const imports = src.match(/import\s*\{([^}]*)\}\s*from\s*'lucide-vue-next'/)
     expect(imports, 'a lucide import must exist').not.toBeNull()
-    expect(imports![1]).toContain('GitFork')
+    expect(imports![1]).toContain('MoreVertical')
   })
 })

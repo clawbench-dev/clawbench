@@ -35,6 +35,7 @@ vi.mock('lucide-vue-next', () => ({
   RotateCcw: { template: '<svg />' },
   GitBranch: { template: '<svg />' },
   GitFork: { template: '<svg />' },
+  MoreVertical: { template: '<svg />' },
   LoaderCircle: { template: '<svg />' },
 }))
 
@@ -395,6 +396,75 @@ describe('GitCommitList', () => {
       const wrapper = mountList()
       wrapper.vm.commitSearch = '   '
       expect(wrapper.vm.commitSearch).toBe('   ')
+    })
+  })
+
+  describe('commit-id search', () => {
+    // Real hex shas: the fixture builder above uses "sha0…", which is not a
+    // commit id, so an id test built on it would pass for the wrong reason.
+    const SHA_A = 'deadbeef' + '0'.repeat(32)
+    const SHA_B = 'c0ffee12' + '0'.repeat(32)
+    const hexCommits = [
+      { sha: SHA_A, msg: 'fix parser', date: '2025-01-01', author: 'A', refs: [] },
+      { sha: SHA_B, msg: 'add tests', date: '2025-01-01', author: 'B', refs: [] },
+    ]
+
+    it('finds a commit by sha prefix', async () => {
+      const wrapper = mountList({ commits: hexCommits })
+      wrapper.vm.commitSearch = 'deadbe'
+      await nextTick()
+      const items = wrapper.findAll('.drilldown-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].text()).toContain('fix parser')
+    })
+
+    it('finds a commit by its full sha', async () => {
+      const wrapper = mountList({ commits: hexCommits })
+      wrapper.vm.commitSearch = SHA_B
+      await nextTick()
+      const items = wrapper.findAll('.drilldown-item')
+      expect(items).toHaveLength(1)
+      expect(items[0].text()).toContain('add tests')
+    })
+
+    it('is case-insensitive for the sha', async () => {
+      const wrapper = mountList({ commits: hexCommits })
+      wrapper.vm.commitSearch = 'DEADBE'
+      await nextTick()
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(1)
+    })
+
+    it('does not id-match a hex query shorter than 4 chars', async () => {
+      // 'dea' is valid hex but too short to be an abbreviation — treating it as
+      // an id would make short queries look like they match everything.
+      const wrapper = mountList({ commits: hexCommits })
+      wrapper.vm.commitSearch = 'dea'
+      await nextTick()
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(0)
+    })
+
+    it('still searches messages for a word that is also hex', async () => {
+      // "dead" parses as hex, so the id channel is active — but the message
+      // channel must run too, or a message containing it would be shadowed.
+      const wrapper = mountList({
+        commits: [
+          { sha: SHA_B, msg: 'remove dead code', date: '2025-01-01', author: 'B', refs: [] },
+          { sha: SHA_A, msg: 'unrelated', date: '2025-01-01', author: 'A', refs: [] },
+        ],
+      })
+      wrapper.vm.commitSearch = 'dead'
+      await nextTick()
+      const items = wrapper.findAll('.drilldown-item')
+      expect(items).toHaveLength(2)
+      expect(items[0].text()).toContain('remove dead code')
+      expect(items[1].text()).toContain('unrelated')
+    })
+
+    it('matches neither channel for a non-hex query that is not in any message', async () => {
+      const wrapper = mountList({ commits: hexCommits })
+      wrapper.vm.commitSearch = 'zzzz'
+      await nextTick()
+      expect(wrapper.findAll('.drilldown-item')).toHaveLength(0)
     })
   })
 

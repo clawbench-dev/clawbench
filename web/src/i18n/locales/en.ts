@@ -1884,7 +1884,7 @@ export default {
       countUnit: 'items',
       notInitialized: 'Not initialized',
       loading: 'Loading…',
-      searchPlaceholder: 'Search commits…',
+      searchPlaceholder: 'Search messages or commit ID…',
       commitRecords: 'Commits',
       notGitRepo: 'Git repository not initialized',
       notGitRepoDesc: 'This project is not under version control',

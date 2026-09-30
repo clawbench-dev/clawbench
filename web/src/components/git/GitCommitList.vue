@@ -15,7 +15,7 @@
         <span v-else-if="!isGit" class="drilldown-count count-badge">{{ t('git.commitList.notInitialized') }}</span>
         <span v-else-if="!untracked" class="drilldown-count count-badge">{{ t('git.commitList.loading') }}</span>
       </div>
-      <SearchInput v-if="commits.length > 0" v-model="commitSearch" :placeholder="searchPlaceholder" class="commit-search-input" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
+      <SearchInput v-if="commits.length > 0" v-model="commitSearch" :placeholder="searchPlaceholder || t('git.commitList.searchPlaceholder')" class="commit-search-input" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" />
       <RefreshButton
         v-if="commits.length > 0"
         class="drilldown-refresh-btn"
@@ -25,13 +25,16 @@
         :title="t('git.commitList.refresh')"
         @click.stop="handleRefresh"
       />
+      <!-- "More" affordance: opens the branch/tag/worktree manage panel. The
+           panel is a container for those three lists rather than a branch
+           itself, so a MoreVertical glyph reads more accurately than a fork. -->
       <button
         v-if="isGit && mode !== 'file'"
         class="drilldown-refresh-btn"
         :title="t('git.manage.title')"
         @click.stop="$emit('manage')"
       >
-        <GitFork :size="14" />
+        <MoreVertical :size="14" />
       </button>
     </div>
     <div class="drilldown-body" ref="bodyRef">
@@ -116,7 +119,7 @@
 </template>
 
 <script setup>
-import { FileText, Info, GitBranch, GitFork } from 'lucide-vue-next'
+import { FileText, Info, GitBranch, MoreVertical } from 'lucide-vue-next'
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import GitGraph from './GitGraph.vue'
@@ -246,10 +249,35 @@ function scrollActiveIntoView(index) {
   }
 }
 
+/**
+ * Shortest commit-id prefix that is treated as an id search.
+ *
+ * 4 hex chars is the shortest abbreviation git itself accepts; below that a
+ * query like "a" or "ab" would match a large share of any history and read as
+ * "search is broken". Shorter hex queries still search commit messages, so
+ * nothing is lost — and a word that happens to be hex ("dead", "added") is
+ * matched on both channels, so message search is never shadowed by the id path.
+ */
+const SHA_MIN_PREFIX = 4
+
+/**
+ * Whether a commit row matches the query. Matches the commit message (substring,
+ * as before) or, when the query looks like a commit id, the sha prefix — so
+ * pasting an id from a chat link finds the commit without needing the full 40
+ * characters.
+ */
+function matchesQuery(c, q) {
+  if (c.msg.toLowerCase().includes(q)) return true
+  if (q.length >= SHA_MIN_PREFIX && c.sha && /^[0-9a-f]+$/.test(q)) {
+    return c.sha.toLowerCase().startsWith(q)
+  }
+  return false
+}
+
 const filteredCommits = computed(() => {
   const q = commitSearch.value.trim().toLowerCase()
   if (!q) return props.commits
-  return props.commits.filter(c => c.msg.toLowerCase().includes(q))
+  return props.commits.filter(c => matchesQuery(c, q))
 })
 
 watch(filteredCommits, () => listNav.reset())
@@ -316,6 +344,24 @@ defineExpose({ observeList, unobserveList, commitSearch })
   flex: 0 1 auto;
   max-width: 160px;
   min-width: 80px;
+}
+
+/* Borderless field: SearchInput's shared defaults (--bg-primary fill + 1px
+   --border-color outline) read as a nested box on the header bar. The fill is
+   mixed from --text-primary instead of jumping to --bg-tertiary: the header is
+   transparent on the page's --bg-primary, and across the 36 themes
+   secondary↔tertiary contrast can be as low as 1.06, which would make the
+   field disappear (design-guide red line 4). */
+.commit-search-input :deep(.search-pill) {
+  border: none;
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+/* Focus is carried by the ring alone — the shared rule would also tint the
+   border, which no longer exists here. */
+.commit-search-input :deep(.search-pill.focused) {
+  border-color: transparent;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-color) 35%, transparent);
 }
 
 .commit-list-container {

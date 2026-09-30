@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { computeGraphData, refLabelText, refLabelWidth, refLabelBg } from '@/utils/gitGraph'
+import { computeGraphData, computeGraphColumnWidth, refLabelText, refLabelWidth, refLabelBg } from '@/utils/gitGraph'
 
 const ROW_HEIGHT = 64
 
@@ -1128,5 +1128,81 @@ describe('ref label background color', () => {
   it('branch refs get blue background', () => {
     expect(refLabelBg('main')).toBe('#4a90d9')
     expect(refLabelBg('feature')).toBe('#4a90d9')
+  })
+})
+
+// ─── Viewport-driven column width ──────────────────────────────────────────
+//
+// The graph is drawn for the whole history, so its width reflects every branch
+// in the repo. Only the rows inside the viewport are visible, so the column is
+// sized from the lanes present in that window — otherwise a repo whose history
+// somewhere reaches 8 lanes reserves that width even while the visible rows use
+// one, squeezing the commit messages beside it.
+describe('computeGraphColumnWidth', () => {
+  // graphWidth for an N-lane graph: N * 20 + 20, floored at 40.
+  const fullWidthFor = (lanes: number) => Math.max(40, lanes * 20 + 20)
+
+  function width(opts: Partial<Parameters<typeof computeGraphColumnWidth>[0]> = {}) {
+    return computeGraphColumnWidth({
+      fullWidth: fullWidthFor(8),
+      laneCount: 8,
+      visibleLaneCount: 1,
+      visibleRowCount: 10,
+      commitCount: 500,
+      ...opts,
+    })
+  }
+
+  it('shrinks to the visible lane count when the list overflows the viewport', () => {
+    // 1 visible lane → 1 * 20 + 20 = 40 (also the floor).
+    expect(width({ visibleLaneCount: 1 })).toBe(40)
+    expect(width({ visibleLaneCount: 2 })).toBe(60)
+    expect(width({ visibleLaneCount: 3 })).toBe(80)
+  })
+
+  it('uses the full width when every loaded commit fits on screen', () => {
+    // Nothing is hidden, so there is no lane left to reveal — reserving less
+    // would only introduce a horizontal scrollbar for no benefit.
+    expect(width({ commitCount: 8, visibleRowCount: 10 })).toBe(fullWidthFor(8))
+  })
+
+  it('uses the full width when the loaded commit count equals the visible rows', () => {
+    expect(width({ commitCount: 10, visibleRowCount: 10 })).toBe(fullWidthFor(8))
+  })
+
+  it('never exceeds the full graph width', () => {
+    // A stale/over-large visible count (e.g. measured before a filter applied)
+    // must not widen the column past the real graph.
+    expect(width({ visibleLaneCount: 99 })).toBe(fullWidthFor(8))
+  })
+
+  it('never collapses below one lane', () => {
+    // Lane 0 always exists, so the column keeps the mainline's own track even
+    // when the window reports no lanes at all.
+    expect(width({ visibleLaneCount: 0 })).toBe(40)
+  })
+
+  it('keeps a floor of 40px even for a single lane', () => {
+    expect(width({ fullWidth: 10, laneCount: 1, visibleLaneCount: 1 })).toBe(40)
+  })
+
+  it('falls back to the full width when the viewport is not measured yet', () => {
+    // visibleRowCount 0 means "no measurement" — the component reports that
+    // before its first measurement and when there is no scroller.
+    expect(width({ visibleRowCount: 0 })).toBe(fullWidthFor(8))
+  })
+
+  it('agrees with the full graph width when the visible window holds every lane', () => {
+    // Sanity: the formula is the same one computeGraphData uses for graphWidth.
+    const { graphWidth, laneCount } = computeGraphData(MULTI_BRANCH, ROW_HEIGHT, undefined)
+    expect(
+      computeGraphColumnWidth({
+        fullWidth: graphWidth,
+        laneCount,
+        visibleLaneCount: laneCount,
+        visibleRowCount: 5,
+        commitCount: MULTI_BRANCH.length,
+      }),
+    ).toBe(graphWidth)
   })
 })
