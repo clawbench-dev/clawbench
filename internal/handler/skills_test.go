@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -43,6 +44,16 @@ func isolateSkillGlobals(t *testing.T) {
 	})
 }
 
+// setSkillTestHome isolates the home directory the skill scanner resolves
+// against. Both variables are set because os.UserHomeDir reads $HOME on POSIX
+// but $USERPROFILE on Windows; setting only HOME leaves the real profile in
+// play on Windows and the shared-directory tests fail there.
+func setSkillTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 // setupSkillsEnv isolates the skill globals and gives one agent a native dir
 // with a skill, so the endpoints have something to report.
 func setupSkillsEnv(t *testing.T) {
@@ -55,7 +66,7 @@ func setupSkillsEnv(t *testing.T) {
 	// Isolate the home directory: the registry always scans the shared
 	// ~/.agents/skills, so without this the test would see the developer's own
 	// installed skills.
-	t.Setenv("HOME", t.TempDir())
+	setSkillTestHome(t, t.TempDir())
 	model.ConfigInstance = model.Config{
 		Skills: model.SkillsConfig{Enabled: true, Dirs: []string{filepath.Join(root, "user")}, RefreshHours: 6},
 	}
@@ -165,7 +176,7 @@ func TestServeSkills_ListSortsByNameThenPath(t *testing.T) {
 	root := t.TempDir()
 	isolateSkillGlobals(t)
 	model.DataDir = root
-	t.Setenv("HOME", t.TempDir())
+	setSkillTestHome(t, t.TempDir())
 	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
 
 	// Two sources, each with a "zeta" skill; plus one "alpha". Different dirs
@@ -274,7 +285,16 @@ func TestServeConfig_Patch_SkillsApplied(t *testing.T) {
 	model.ConfigInstance = model.Config{}
 	model.DataDir = t.TempDir()
 
-	body := `{"skills":{"enabled":true,"dirs":["/tmp/skills","/tmp/more-skills"],"refresh_hours":3,"repos":[{"url":"https://github.com/org/skills.git"}]}}`
+	// The PATCH validator requires ABSOLUTE dirs, and a POSIX literal like
+	// "/tmp/skills" is not absolute on Windows. Build the fixture with the host
+	// separator so the request is valid everywhere.
+	dirA := filepath.Join(t.TempDir(), "skills")
+	dirB := filepath.Join(t.TempDir(), "more-skills")
+	dirsJSON, err := json.Marshal([]string{dirA, dirB})
+	require.NoError(t, err)
+	body := fmt.Sprintf(
+		`{"skills":{"enabled":true,"dirs":%s,"refresh_hours":3,"repos":[{"url":"https://github.com/org/skills.git"}]}}`,
+		dirsJSON)
 	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	withAuthCookie(req, model.SessionToken)
@@ -283,7 +303,7 @@ func TestServeConfig_Patch_SkillsApplied(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 
 	assert.True(t, model.ConfigInstance.Skills.Enabled)
-	assert.Equal(t, []string{"/tmp/skills", "/tmp/more-skills"}, model.ConfigInstance.Skills.Dirs)
+	assert.Equal(t, []string{dirA, dirB}, model.ConfigInstance.Skills.Dirs)
 	assert.Equal(t, 3, model.ConfigInstance.Skills.RefreshHours)
 	require.Len(t, model.ConfigInstance.Skills.Repos, 1)
 	assert.Equal(t, "https://github.com/org/skills.git", model.ConfigInstance.Skills.Repos[0].URL)
@@ -402,7 +422,7 @@ func TestServeSkills_SharedOmitsAgentID(t *testing.T) {
 	// The shared directory resolves against $HOME, so isolate it and create the
 	// real .agents/skills layout.
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setSkillTestHome(t, home)
 	model.ConfigInstance = model.Config{
 		Skills: model.SkillsConfig{Enabled: true, Dirs: []string{filepath.Join(root, "user")}},
 	}

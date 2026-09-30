@@ -29,7 +29,7 @@ func setupWorkerEnv(t *testing.T) {
 
 	root := t.TempDir()
 	model.DataDir = root
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	model.ConfigInstance = model.Config{
 		Skills: model.SkillsConfig{Enabled: true},
 	}

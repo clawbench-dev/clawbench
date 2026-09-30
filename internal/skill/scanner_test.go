@@ -419,7 +419,12 @@ func TestResolveNativeSkillsDir(t *testing.T) {
 	})
 
 	t.Run("absolute is returned as-is", func(t *testing.T) {
-		assert.Equal(t, "/opt/skills", ResolveNativeSkillsDir("/opt/skills"))
+		// Build the absolute path with the host separator: a POSIX literal
+		// like "/opt/skills" is NOT absolute on Windows, so filepath.IsAbs
+		// would be false and the value would be joined onto home instead.
+		abs := filepath.Join(t.TempDir(), "skills")
+		require.True(t, filepath.IsAbs(abs), "fixture path must be absolute on this host")
+		assert.Equal(t, abs, ResolveNativeSkillsDir(abs))
 	})
 
 	t.Run("relative is joined onto home", func(t *testing.T) {

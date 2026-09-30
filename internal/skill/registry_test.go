@@ -11,6 +11,18 @@ import (
 	"clawbench/internal/model"
 )
 
+// setTestHome isolates the home directory the skill scanner resolves against.
+//
+// Both variables are set: os.UserHomeDir reads $HOME on POSIX but $USERPROFILE
+// on Windows, so setting only HOME leaves the real profile in play on Windows
+// and the shared-directory assertions fail there (and worse, a developer's own
+// ~/.agents/skills leaks into the scan).
+func setTestHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
+
 // setupRegistry installs a fresh registry plus two agents whose native dirs
 // point at temp directories, and restores the globals afterwards.
 //
@@ -40,7 +52,7 @@ func setupRegistry(t *testing.T) (ownDir, otherDir string, reg *Registry) {
 	// Isolate the home directory: scanSources always scans the shared
 	// ~/.agents/skills, so without this the tests would pick up whatever the
 	// developer happens to have installed there.
-	t.Setenv("HOME", t.TempDir())
+	setTestHome(t, t.TempDir())
 	// Enabled must be set explicitly: a zero-value SkillsConfig has
 	// Enabled=false (the field's default is applied by ApplyDefaults, which
 	// tests do not run).
