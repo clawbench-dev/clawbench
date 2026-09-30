@@ -157,7 +157,11 @@ func serveShareCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	name := filepath.Base(absPath)
 
-	token, _, err := service.UpsertFileShare(absPath, name, resolveShareRoot(r, absPath))
+	// The project cookie scopes the management list, so capture it at creation
+	// alongside the confinement root. Empty (no cookie) parks the share on the 0
+	// sentinel, which no project's list matches — the fail-closed direction: it
+	// stays reachable by its own link but is not disclosed in any drawer.
+	token, _, err := service.UpsertFileShare(absPath, name, resolveShareRoot(r, absPath), middleware.GetProjectFromCookie(r))
 	if err != nil {
 		slog.Error("share: upsert failed", "path", absPath, "err", err)
 		model.WriteError(w, model.Internal(err))
@@ -237,16 +241,19 @@ func ServeShareList(w http.ResponseWriter, r *http.Request) {
 }
 
 func serveShareList(w http.ResponseWriter, r *http.Request) {
-	shares, err := service.ListFileShares()
+	// Project-scoped, like the conversation-share list: without the cookie there
+	// is no project to scope to, and an unscoped list would disclose every
+	// project's shared paths. An empty cookie therefore resolves to the 0
+	// sentinel and matches only unattributable shares.
+	projectPath := middleware.GetProjectFromCookie(r)
+
+	shares, err := service.ListFileShares(projectPath)
 	if err != nil {
 		slog.Error("share: list failed", "err", err)
 		model.WriteError(w, model.Internal(err))
 		return
 	}
 
-	// Project path for display-path relativization; may be empty when no
-	// project cookie is set (still list everything, paths stay absolute).
-	projectPath := middleware.GetProjectFromCookie(r)
 	projectAbs, _ := filepath.Abs(projectPath)
 
 	items := make([]shareListItem, 0, len(shares))
@@ -289,22 +296,47 @@ func serveShareRevokeByToken(w http.ResponseWriter, r *http.Request) {
 	}
 	req.All = req.All || r.URL.Query().Get("all") == "1"
 
+	projectPath := middleware.GetProjectFromCookie(r)
+
 	switch {
 	case req.All:
-		// One-click clear: revoke every share link at once.
-		if err := service.DeleteAllFileShares(); err != nil {
+		// One-click clear: revoke every share link of THIS project only.
+		if err := service.DeleteAllFileShares(projectPath); err != nil {
 			slog.Error("share: delete-all failed", "err", err)
 			model.WriteError(w, model.Internal(err))
 			return
 		}
 	case req.Token != "":
-		if err := service.DeleteFileShareByToken(req.Token); err != nil {
-			slog.Error("share: revoke-by-token failed", "token", req.Token, "err", err)
-			model.WriteError(w, model.Internal(err))
-			return
-		}
+		serveShareRevokeOneByToken(w, r, projectPath, req.Token)
+		return
 	default:
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "MissingToken")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// serveShareRevokeOneByToken revokes a single share after confirming it belongs
+// to the caller's project.
+//
+// The ownership check matters even though the token is unguessable: without it a
+// caller could revoke another project's link, and the two failure modes must be
+// indistinguishable. An unknown token and a foreign token therefore get the SAME
+// 404, so neither discloses whether the other exists.
+func serveShareRevokeOneByToken(w http.ResponseWriter, r *http.Request, projectPath, token string) {
+	owner, found, err := service.GetFileShareProjectByToken(token)
+	if err != nil {
+		slog.Error("share: ownership lookup failed", "token", token, "err", err)
+		model.WriteError(w, model.Internal(err))
+		return
+	}
+	if !found || owner != projectPath {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "ShareNotFound")
+		return
+	}
+	if err := service.DeleteFileShareByToken(token); err != nil {
+		slog.Error("share: revoke-by-token failed", "token", token, "err", err)
+		model.WriteError(w, model.Internal(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})

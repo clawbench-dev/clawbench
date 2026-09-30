@@ -49,7 +49,17 @@ func GenerateShareToken() (string, error) {
 // root is the directory the public read endpoints confine this share to. The
 // caller must supply it because only the (authenticated) creation request can
 // determine the project boundary; see FileSharesDDL.
-func UpsertFileShare(path, name, root string) (token string, created bool, err error) {
+//
+// projectPath is the project the share is created FROM (the active project
+// cookie). It scopes the management list, so it must be captured here for the
+// same reason root is: the list is project-scoped and a row left on the 0
+// sentinel would be invisible in every project.
+func UpsertFileShare(path, name, root, projectPath string) (token string, created bool, err error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return "", false, idErr
+	}
+
 	_, _, existing, getErr := GetFileShareByPath(path)
 	if getErr != nil {
 		return "", false, getErr
@@ -66,7 +76,10 @@ func UpsertFileShare(path, name, root string) (token string, created bool, err e
 			return "", false, fmt.Errorf("delete stale share: %w", err)
 		}
 	}
-	if _, err := WriteExec("INSERT INTO file_shares (token, path, name, root) VALUES (?, ?, ?, ?)", token, path, name, root); err != nil {
+	if _, err := WriteExec(
+		"INSERT INTO file_shares (token, path, name, root, project_id) VALUES (?, ?, ?, ?, ?)",
+		token, path, name, root, projectID,
+	); err != nil {
 		return "", false, fmt.Errorf("insert share: %w", err)
 	}
 	return token, !existing, nil
@@ -88,6 +101,29 @@ func GetFileShareByToken(token string) (path, name, root string, ok bool, err er
 		return "", "", "", false, fmt.Errorf("query share by token: %w", err)
 	}
 	return path, name, root, true, nil
+}
+
+// GetFileShareProjectByToken returns the path of the project a share belongs to,
+// so a revoke can confirm ownership before deleting. Returns ok=false when no
+// such token exists. Mirrors GetSessionShareProjectByToken.
+func GetFileShareProjectByToken(token string) (projectPath string, ok bool, err error) {
+	if token == "" {
+		return "", false, nil
+	}
+	row := ReadDB().QueryRow(
+		`SELECT COALESCE(p.path, '')
+		   FROM file_shares fs
+		   LEFT JOIN projects p ON p.id = fs.project_id
+		  WHERE fs.token = ?`,
+		token,
+	)
+	if err := row.Scan(&projectPath); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("query file share project by token: %w", err)
+	}
+	return projectPath, true, nil
 }
 
 // GetFileShareByPath returns the active token (and stored name) for a file path.
@@ -179,10 +215,18 @@ func DeleteFileShareByPaths(paths []string) error {
 	return nil
 }
 
-// DeleteAllFileShares revokes every active share link.
-func DeleteAllFileShares() error {
-	if _, err := WriteExec("DELETE FROM file_shares"); err != nil {
-		return fmt.Errorf("delete all file shares: %w", err)
+// DeleteAllFileShares revokes every share link of ONE project.
+//
+// Deliberately scoped, unlike a bare "DELETE FROM file_shares": the clear-all
+// action is offered from a project's shared-files drawer, so revoking other
+// projects' links would silently break their public URLs.
+func DeleteAllFileShares(projectPath string) error {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return idErr
+	}
+	if _, err := WriteExec("DELETE FROM file_shares WHERE project_id = ?", projectID); err != nil {
+		return fmt.Errorf("delete project file shares: %w", err)
 	}
 	return nil
 }
@@ -195,10 +239,21 @@ type FileShare struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-// ListFileShares returns every active share, newest first.
+// ListFileShares returns the active shares created from projectPath, newest
+// first. Scoped like ListSessionShares: a share path can name a private file, so
+// listing every project's shares in every project would disclose both the
+// existence and the absolute path of files the caller is not browsing.
+//
 // Returns an empty (non-nil) slice when there are no shares so JSON encodes as [].
-func ListFileShares() ([]FileShare, error) {
-	rows, err := ReadDB().Query("SELECT token, path, name, created_at FROM file_shares ORDER BY rowid DESC")
+func ListFileShares(projectPath string) ([]FileShare, error) {
+	projectID, idErr := ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return nil, idErr
+	}
+	rows, err := ReadDB().Query(
+		"SELECT token, path, name, created_at FROM file_shares WHERE project_id = ? ORDER BY rowid DESC",
+		projectID,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("list file shares: %w", err)
 	}

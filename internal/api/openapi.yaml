@@ -2792,7 +2792,7 @@ paths:
         列出**当前项目**（请求 cookie 中的项目）的会话分享，最新在前。
         返回数组按 `shares` 包装，无分享时为空数组。
 
-        与 `/api/share/list`（文件）不同，这里**按项目隔离**：会话标题属于私有内容，
+        与 `/api/share/list`（文件）一样**按项目隔离**：会话标题属于私有内容，
         列出其他项目的分享会泄露它。
 
         `archived: true` 表示底层会话已归档。分享本身仍然有效（快照是冻结副本），
@@ -2840,17 +2840,32 @@ paths:
     get:
       tags: [Share]
       summary: 已分享文件抽屉数据
+      description: |
+        列出**当前项目**（请求 cookie 中的项目）的文件分享，最新在前。
+        返回数组按 `shares` 包装，无分享时为空数组。
+
+        与 `/api/share/session/list` 一样**按项目隔离**：分享路径指向私有文件，
+        列出其他项目的分享会同时泄露该文件的存在与其绝对路径。未携带项目 cookie
+        时无项目可归属，只返回无法归属的分享（不会退回列出全部）。
       operationId: shareListAll
       responses:
         "200":
           description: 分享列表
     delete:
       tags: [Share]
-      summary: 清空分享
+      summary: 撤销文件分享（单条或清空本项目）
+      description: |
+        请求体 `{token}` 撤销一条；`{token}` 也可用查询参数传入。
+        `{all: true}`（或查询参数 `all=1`）清空**本项目**的全部文件分享。
+
+        撤销前会校验 token 归属于请求项目；未知 token 与其他项目的 token 返回
+        **同一个 404**，两者都不暴露对方是否存在。
       operationId: shareClear
       responses:
         "200":
           description: 结果
+        "404":
+          $ref: "#/components/responses/Error"
 
   /api/share/:
     get:
