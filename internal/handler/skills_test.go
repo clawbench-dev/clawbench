@@ -16,9 +16,18 @@ import (
 	"clawbench/internal/skill"
 )
 
-// setupSkillsEnv isolates the skill globals and gives one agent a native dir
-// with a skill, so the endpoints have something to report.
-func setupSkillsEnv(t *testing.T) {
+// isolateSkillGlobals saves the process-global state the skill endpoints read
+// (data dir, config, backend registry, agent roster) and restores it on
+// cleanup.
+//
+// This is not optional hygiene: model.DataDir is process-global, and several
+// tests below point it at a t.TempDir(). Without a restore the last such test
+// leaves it dangling after Go removes the directory, and a LATER test in the
+// same package that resolves the data dir — notably the disk sampler in
+// system_resources_test.go — then samples a path that no longer exists and
+// reports disk.total = 0. Tests run in file order, so skills_test.go runs
+// before system_resources_test.go and the leak is deterministic, not flaky.
+func isolateSkillGlobals(t *testing.T) {
 	t.Helper()
 
 	origCfg := model.ConfigInstance
@@ -32,6 +41,14 @@ func setupSkillsEnv(t *testing.T) {
 		model.ReplaceAgents(nil, origAgents)
 		skill.ResetForTest()
 	})
+}
+
+// setupSkillsEnv isolates the skill globals and gives one agent a native dir
+// with a skill, so the endpoints have something to report.
+func setupSkillsEnv(t *testing.T) {
+	t.Helper()
+
+	isolateSkillGlobals(t)
 
 	root := t.TempDir()
 	model.DataDir = root
@@ -137,6 +154,7 @@ func TestServeSkillsRefresh_NoReposSucceeds(t *testing.T) {
 func TestServeConfig_Patch_SkillsApplied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+	isolateSkillGlobals(t)
 
 	model.ConfigInstance = model.Config{}
 	model.DataDir = t.TempDir()
@@ -178,6 +196,7 @@ func TestServeConfig_Patch_SkillsRejectsBadInput(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, teardown := setupTestEnv(t)
 			defer teardown()
+			isolateSkillGlobals(t)
 
 			model.ConfigInstance = model.Config{}
 			model.DataDir = t.TempDir()
@@ -198,6 +217,7 @@ func TestServeConfig_Patch_SkillsRejectsBadInput(t *testing.T) {
 func TestServeConfig_Patch_RepoTokenIsWriteOnly(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+	isolateSkillGlobals(t)
 
 	model.ConfigInstance = model.Config{}
 	model.DataDir = t.TempDir()
@@ -228,6 +248,7 @@ func TestServeConfig_Patch_RepoTokenIsWriteOnly(t *testing.T) {
 func TestServeConfig_Get_SkillsNeverLeaksToken(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
+	isolateSkillGlobals(t)
 
 	model.DataDir = t.TempDir()
 	model.ConfigInstance = model.Config{
@@ -259,6 +280,8 @@ func TestServeConfig_Get_SkillsNeverLeaksToken(t *testing.T) {
 // whoever declares the path — not the owner. Emitting it is what let the UI
 // render shared skills as "Agent codex,copilot,dsh,…".
 func TestServeSkills_SharedOmitsAgentID(t *testing.T) {
+	isolateSkillGlobals(t)
+
 	root := t.TempDir()
 	model.DataDir = root
 	// The shared directory resolves against $HOME, so isolate it and create the

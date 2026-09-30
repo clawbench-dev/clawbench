@@ -169,6 +169,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			event_url TEXT NOT NULL DEFAULT '',
 			event_summary TEXT NOT NULL DEFAULT '',
 			script_exit_code INTEGER,
+			script_outcome TEXT NOT NULL DEFAULT '',
 			script_stdout TEXT NOT NULL DEFAULT '',
 			script_stderr TEXT NOT NULL DEFAULT '',
 			script_duration_ms INTEGER NOT NULL DEFAULT 0,
