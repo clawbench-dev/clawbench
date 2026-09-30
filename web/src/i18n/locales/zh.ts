@@ -455,7 +455,7 @@ export default {
       placeholder: '输入消息...',
       placeholderQueue: '输入消息加入队列...',
       placeholderOptional: '添加描述（可选）...',
-      placeholderQuickSend: '点击⚡快捷发送消息 →',
+      placeholderQuickSend: '点击右侧按钮，快捷发送预置指令 →',
       placeholderCommand: "输入 {'/'} 执行命令",
       placeholderFileRef: "输入 {'@'} 引用文件",
       placeholderSwipeHistory: '左右滑动切换历史输入',

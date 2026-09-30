@@ -452,7 +452,7 @@ export default {
       placeholder: 'Type a message...',
       placeholderQueue: 'Type a message to enqueue...',
       placeholderOptional: 'Add description (optional)...',
-      placeholderQuickSend: 'Tap ⚡ to quick send message →',
+      placeholderQuickSend: 'Tap the button on the right to send a preset command →',
       placeholderCommand: "Type {'/'} for commands",
       placeholderFileRef: "Type {'@'} to reference a file",
       placeholderSwipeHistory: 'Swipe left/right to browse history input',
