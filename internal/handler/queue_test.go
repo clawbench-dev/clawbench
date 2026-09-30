@@ -197,9 +197,9 @@ func TestQueueHandler_Enqueue_WithFilePaths(t *testing.T) {
 	} else {
 		messages, err := service.GetChatHistory(env.ProjectDir, "claude", sessionID)
 		require.NoError(t, err)
-		require.Len(t, messages, 1, "the message must be persisted")
-		require.Len(t, messages[0].Files, 2, "both file paths must be attached")
-		assert.Equal(t, "check this file", messages[0].Content)
+		msg := enqueuedUserMessage(t, messages)
+		require.Len(t, msg.Files, 2, "both file paths must be attached")
+		assert.Equal(t, "check this file", msg.Content)
 	}
 
 	service.CancelSession(sessionID)
