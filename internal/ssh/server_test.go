@@ -52,6 +52,27 @@ func testServerHelper(t *testing.T, password string, portReg *service.ProxyRegis
 	return srv
 }
 
+// waitForFingerprint polls until the server's host key fingerprint is
+// non-empty, or fails the test after a bounded deadline.
+//
+// InitHostKey runs on the ListenAndServe goroutine, so the fingerprint becomes
+// visible asynchronously. A fixed sleep is inherently racy under load (the
+// 100ms window could expire before the key was loaded, yielding an empty
+// fingerprint and a spurious mismatch); polling on the actual condition is
+// deterministic regardless of scheduling.
+func waitForFingerprint(t *testing.T, srv *Server) string {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if fp := srv.Fingerprint(); fp != "" {
+			return fp
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("timed out waiting for host key fingerprint to be initialized")
+	return ""
+}
+
 // testSSHClient connects to an SSH server with the given credentials.
 func testSSHClient(t *testing.T, addr, user, password string) *gossh.Client { //nolint:unparam // user param kept for API clarity
 	t.Helper()
@@ -448,9 +469,7 @@ func TestSSHServer_HostKeyPersistence(t *testing.T) {
 	srv1.addr = fmt.Sprintf("127.0.0.1:%d", port)
 
 	go srv1.ListenAndServe()
-	time.Sleep(100 * time.Millisecond)
-
-	fingerprint1 := srv1.Fingerprint()
+	fingerprint1 := waitForFingerprint(t, srv1)
 	srv1.Close()
 
 	// Verify key file was created
@@ -468,9 +487,7 @@ func TestSSHServer_HostKeyPersistence(t *testing.T) {
 	srv2.addr = fmt.Sprintf("127.0.0.1:%d", port)
 
 	go srv2.ListenAndServe()
-	time.Sleep(100 * time.Millisecond)
-
-	fingerprint2 := srv2.Fingerprint()
+	fingerprint2 := waitForFingerprint(t, srv2)
 	srv2.Close()
 
 	// Fingerprints should match (same host key)
@@ -493,9 +510,7 @@ func TestSSHServer_EphemeralKeyChangesOnRestart(t *testing.T) {
 	srv1.addr = fmt.Sprintf("127.0.0.1:%d", port)
 
 	go srv1.ListenAndServe()
-	time.Sleep(100 * time.Millisecond)
-
-	fp1 := srv1.Fingerprint()
+	fp1 := waitForFingerprint(t, srv1)
 	srv1.Close()
 
 	// Second server with ephemeral key (should be different)
@@ -508,9 +523,7 @@ func TestSSHServer_EphemeralKeyChangesOnRestart(t *testing.T) {
 	srv2.addr = fmt.Sprintf("127.0.0.1:%d", port)
 
 	go srv2.ListenAndServe()
-	time.Sleep(100 * time.Millisecond)
-
-	fp2 := srv2.Fingerprint()
+	fp2 := waitForFingerprint(t, srv2)
 	srv2.Close()
 
 	// Ephemeral keys should be different across restarts
