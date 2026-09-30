@@ -2647,7 +2647,7 @@ export default {
       frpSSHRemotePort: 'SSH Port',
       frpSSHRemotePortDesc: 'Remote port for port mapping',
       forgeSection: 'Credentials',
-      skillsSection: 'Skills',
+      skillsSection: 'Skill Scanning',
       skillsCard: 'Cross-agent skills',
       skillsCardDesc: 'A skill is a directory containing SKILL.md — extra instructions that teach an AI a specific workflow. This page collects skills from every source, so one installed for a single agent also works in the others. When the same name appears twice, only the highest-priority copy is used, so nothing is injected twice.',
       skillsEnabled: 'Enable skill injection',

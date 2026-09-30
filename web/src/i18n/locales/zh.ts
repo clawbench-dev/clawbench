@@ -2644,7 +2644,7 @@ export default {
       frpSSHRemotePort: 'SSH 端口',
       frpSSHRemotePortDesc: '用于端口映射的远程端口',
       forgeSection: '凭据',
-      skillsSection: '技能',
+      skillsSection: '技能扫描',
       skillsCard: '跨智能体技能',
       skillsCardDesc: '技能（skill）是含 SKILL.md 的目录，用来给 AI 补充专门的流程和知识。这里汇总所有来源的技能，让装在某个智能体下的技能也能被其他智能体用上。同名技能只保留优先级最高的一个，不会重复注入。',
       skillsEnabled: '启用技能注入',
