@@ -1350,8 +1350,12 @@ public class H2TunnelStreamTest {
     }
 
     @Test
-    public void bind_listenFailed_mapsToNetwork() throws Exception {
-        // Code 4 (listen failed) is a transient local condition on the server.
+    public void bind_listenFailed_mapsToUnavailable() throws Exception {
+        // Code 4 (listen failed) is a per-port listen failure on a healthy
+        // control stream, not a client connectivity fault. It must map to a
+        // non-connection-level kind: NETWORK would report isConnectionLevel()
+        // as true and would misreport a per-request refusal as a session fault
+        // via recordFailure/lastErrorKind.
         server.mode = FakeTunnelServer.Mode.DUPLEX;
         tunnel.connect(SERVER_URL, TransportKind.H2C);
         TunnelControlStream control = tunnel.openControlStream();
@@ -1372,9 +1376,63 @@ public class H2TunnelStreamTest {
             tunnel.bind(9000);
             throw new AssertionError("expected a bind_err to throw");
         } catch (TunnelException e) {
-            assertEquals(TunnelErrorKind.NETWORK, e.kind());
+            assertEquals(TunnelErrorKind.UNAVAILABLE, e.kind());
+            assertFalse("UNAVAILABLE must not be connection-level",
+                    e.kind().isConnectionLevel());
             assertEquals("listen failed", e.getMessage());
         }
+        responder.join(5000);
+        control.close();
+    }
+
+    @Test
+    public void bindErr_doesNotKillTheSession() throws Exception {
+        // A bind_err is the server's verdict on a per-port request over a live
+        // h2 control stream; it must never be routed through end()/fail()/
+        // markSessionDead. Injecting markSessionDead into settleBindErr made
+        // the whole bind_err test class pass, so this is the invariant that
+        // was previously unguarded: after a refusal the session must still be
+        // connected and every other forward still alive.
+        server.mode = FakeTunnelServer.Mode.DUPLEX;
+        tunnel.connect(SERVER_URL, TransportKind.H2C);
+        TunnelControlStream control = tunnel.openControlStream();
+        FakeTunnelServer.FakeStream stream = server.lastStream();
+
+        Thread responder = new Thread(() -> {
+            try {
+                // code 4: listen failed (the latent NETWORK trap).
+                assertNotNull(stream.readToServer(256));
+                stream.writeFromServer(
+                        "{\"type\":\"bind_err\",\"port\":9000,\"code\":4,\"msg\":\"listen failed\"}\n");
+                // code 3: reserved/taken, on the same still-live session.
+                assertNotNull(stream.readToServer(256));
+                stream.writeFromServer(
+                        "{\"type\":\"bind_err\",\"port\":80,\"code\":3,\"msg\":\"taken\"}\n");
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        });
+        responder.start();
+
+        try {
+            tunnel.bind(9000);
+            throw new AssertionError("expected a bind_err to throw");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.UNAVAILABLE, e.kind());
+            assertEquals("listen failed", e.getMessage());
+        }
+        assertTrue("a bind_err must not kill the session", tunnel.isConnected());
+
+        try {
+            tunnel.bind(80);
+            throw new AssertionError("expected a bind_err to throw");
+        } catch (TunnelException e) {
+            assertEquals(TunnelErrorKind.UNAVAILABLE, e.kind());
+            assertEquals("taken", e.getMessage());
+        }
+        assertTrue("a second bind_err must still leave the session connected",
+                tunnel.isConnected());
+
         responder.join(5000);
         control.close();
     }

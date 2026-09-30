@@ -61,15 +61,15 @@ let transport: TunnelTransport | null = null
 let sshTransport: TunnelTransport | null = null
 
 /**
- * Which transport to use. Electron is hard-wired to SSH: `bridge.ts` only
- * forwards the literal 'ssh' to `setTransportPreference()`, so the server's
+ * Which transport to use. Electron is hard-wired to SSH: there is no live
+ * caller of `setTransportPreference()` in production, so the server's
  * `port_forward.transport` value ('h2'/'both') is deliberately never consumed
  * here. The SSH default keeps today's behavior (and the existing test suite)
  * byte-for-byte identical.
  *
- * The setter stays live — `bridge.ts` calls it, and `tunnel.h2.test.ts` drives
- * the h2 dispatch tests through it directly — and the h2 path below is kept so
- * the transport can be enabled later without rewriting it.
+ * The setter is retained — `tunnel.h2.test.ts` drives the h2 dispatch tests
+ * through it directly — and the h2 path below is kept so the transport can be
+ * enabled later without rewriting it.
  */
 let transportPreference: TransportPreference = 'ssh'
 

@@ -1191,6 +1191,18 @@ public final class H2TunnelStream implements TunnelStream {
          * 4 = listen failed, 6 = internal. The mapping reuses the vocabulary
          * the UI already understands rather than inventing new kinds; the
          * server's own text rides along as the message.
+         *
+         * <p>Every code maps to a non-connection-level kind: a {@code bind_err}
+         * is the server's verdict on a per-port request over a live h2 control
+         * stream, so it must never be mistaken for a fault of the session
+         * itself. Code 4 (listen failed) in particular is a per-port listen
+         * failure on a healthy control stream — mapping it to {@link
+         * TunnelErrorKind#NETWORK} (which {@code isConnectionLevel()} reports as
+         * true) would be a latent trap: any future routing of this exception
+         * through {@code end()}/{@code fail()} would spuriously tear down the
+         * session and every other forward. It is also recorded as the session's
+         * {@code lastErrorKind}, so a NETWORK mapping would misreport a
+         * per-request refusal as a connectivity fault.
          */
         private TunnelException bindError(int code, @Nullable String message) {
             TunnelErrorKind kind;
@@ -1202,7 +1214,7 @@ public final class H2TunnelStream implements TunnelStream {
                     kind = TunnelErrorKind.UNAVAILABLE;
                     break;
                 case ControlMessage.BIND_ERR_LISTEN_FAILED:
-                    kind = TunnelErrorKind.NETWORK;
+                    kind = TunnelErrorKind.UNAVAILABLE;
                     break;
                 case ControlMessage.BIND_ERR_INTERNAL:
                 default:

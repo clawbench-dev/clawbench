@@ -615,8 +615,7 @@ onMounted(async () => {
   if (!isAndroidApp.value || props.config.panelId !== 'portForward') return
   const native = getNative()
   // Legacy host: no persisted toggle exists, so there is nothing truthful to
-  // render. Keep it hidden (never fall back to the non-persisting
-  // setTunnelTransport).
+  // render. Keep it hidden rather than fall back to a non-persisting setter.
   if (!native?.getTunnelTransportH2Enabled) {
     h2ToggleUnsupported.value = true
     return

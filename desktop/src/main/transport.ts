@@ -29,9 +29,8 @@ export type { ControlMessage, ControlStream, H2TransportKind } from './h2Transpo
  * Which transport the tunnel prefers. The three values are kept for the
  * `both` fallback (`['h2', 'ssh']`, design doc §2.3) and for the tests that
  * exercise it; in production, however, Electron is hard-wired to SSH —
- * `bridge.ts` only lets the literal `'ssh'` through to
- * `setTransportPreference()`, so the server's `port_forward.transport` value is
- * no longer consumed here.
+ * nothing calls `setTransportPreference()` at runtime (only the tests do), so
+ * the server's `port_forward.transport` value is no longer consumed here.
  */
 export type TransportPreference = 'ssh' | 'h2' | 'both'
 
