@@ -225,10 +225,11 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add to in-memory maps for immediate reflection
-	model.AddAgent(clone)
-
-	// Populate runtime-only fields
+	// Populate runtime-only fields BEFORE publishing. AddAgent hands the pointer
+	// to every later GetAgent/GetAgentList caller, and those readers read these
+	// fields without holding agentsMu (serveAgentsGet marshals the handed-out
+	// pointers after releasing configMutex), so assigning them afterwards would
+	// be the same publish-then-mutate race this file was fixed for elsewhere.
 	if spec := model.FindSpecByBackend(clone.Backend); spec != nil {
 		if model.CanDiscoverModels(*spec) {
 			clone.CanRefreshModels = true
@@ -239,6 +240,9 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	}
 	clone.SupportsCLI = model.BackendSupportsCLI(clone.Backend)
 	clone.SupportsMidTurn = model.BackendSupportsMidTurn(clone.Backend)
+
+	// Add to in-memory maps for immediate reflection — last, fully formed.
+	model.AddAgent(clone)
 
 	writeJSON(w, http.StatusOK, clone)
 }
@@ -386,6 +390,11 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 		return
 	}
 
+	// Set when the transport is being switched from ACP to CLI. The connections
+	// are closed only after the new transport is published, so no concurrent
+	// turn can observe acp-stdio and spawn a replacement.
+	closeACPConns := false
+
 	ap := service.AgentPatch{}
 
 	// Validate and apply preferred_mode
@@ -468,12 +477,12 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 			return
 		}
 		ap.Transport = &newTransport
-		// When switching from ACP to CLI, close all ACP connections for this agent
-		if oldTransport == "acp-stdio" && newTransport == "cli" {
-			mgr := ai.GetACPConnManager()
-			mgr.CloseConnsByAgentID(agentID)
-			slog.Info("closed ACP connections after transport switch to CLI", "agent", agentID)
-		}
+		// Closing the ACP connections must happen AFTER the new transport is
+		// published (see the UpdateAgent call below). Closing first would leave
+		// a window where the in-memory agent still reports acp-stdio: a turn
+		// starting in it spawns a fresh ACP process for an agent the user just
+		// switched to CLI, and nothing re-closes it.
+		closeACPConns = oldTransport == "acp-stdio" && newTransport == "cli"
 	}
 
 	// Validate and apply name
@@ -590,10 +599,19 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	})
 
 	if updated == nil {
-		// The agent was deleted between the read above and the update; the DB
-		// patch already succeeded, so report the row as it now stands.
+		// Defensive, and believed unreachable: every mutator takes configMutex,
+		// which this handler holds for its whole body, so the agent cannot be
+		// deleted between the read above and this update. Kept as a guard for
+		// the day that stops being true.
 		writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 		return
+	}
+
+	// The transport is now published, so closing the old ACP connections cannot
+	// race a turn into spawning a replacement.
+	if closeACPConns {
+		ai.GetACPConnManager().CloseConnsByAgentID(agentID)
+		slog.Info("closed ACP connections after transport switch to CLI", "agent", agentID)
 	}
 
 	writeJSON(w, http.StatusOK, updated)

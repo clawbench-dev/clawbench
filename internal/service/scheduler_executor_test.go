@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -85,9 +86,10 @@ CREATE TABLE IF NOT EXISTS task_executions (
 	status TEXT NOT NULL DEFAULT 'running',
 	read_at DATETIME,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-	-- Mirrors the production column (database.go); the gate-failure streak
-	-- query reads it, so the fixture must carry it.
-	script_exit_code INTEGER
+	-- Mirrors the production columns (database.go); the gate-failure streak
+	-- query reads these, so the fixture must carry them.
+	script_exit_code INTEGER,
+	script_outcome TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_executions_task ON task_executions(task_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_history_session ON chat_history(project_id, backend, session_id, created_at);
@@ -767,23 +769,31 @@ func TestScheduler_ExecuteTask_NoAutoContinueWhenDisabled(t *testing.T) {
 // session and no notification. The streak helper backs the slog.Warn that makes
 // that state observable, so its boundaries are pinned here.
 
-func insertSkippedScriptRun(t *testing.T, taskID int64, exitCode sql.NullInt64) {
+// insertScriptRun records a script-phase execution with its outcome. The
+// outcome is what the streak query filters on, so tests must set it — the
+// exit code alone cannot distinguish a failure from a cancel (both are -1).
+func insertScriptRun(t *testing.T, taskID int64, status, outcome string, exitCode sql.NullInt64) {
 	t.Helper()
 	if _, err := db.Exec(
-		`INSERT INTO task_executions (task_id, session_id, trigger_type, status, script_exit_code)
-		 VALUES (?, '', 'auto', 'skipped', ?)`,
-		taskID, exitCode,
+		`INSERT INTO task_executions (task_id, session_id, trigger_type, status, script_exit_code, script_outcome)
+		 VALUES (?, '', 'auto', ?, ?, ?)`,
+		taskID, status, exitCode, outcome,
 	); err != nil {
-		t.Fatalf("insert skipped run: %v", err)
+		t.Fatalf("insert script run: %v", err)
 	}
+}
+
+func insertFailedGateRun(t *testing.T, taskID int64) {
+	t.Helper()
+	insertScriptRun(t, taskID, "skipped", scriptOutcomeName(ScriptFailed), sql.NullInt64{Int64: 127, Valid: true})
 }
 
 func TestCountConsecutiveScriptGateFailures_CountsBackwards(t *testing.T) {
 	setupSchedulerExecDB(t)
 
-	for _, code := range []int64{127, 1, 2} {
-		insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: code, Valid: true})
-	}
+	insertFailedGateRun(t, 1)
+	insertFailedGateRun(t, 1)
+	insertFailedGateRun(t, 1)
 
 	if n := countConsecutiveScriptGateFailures(1); n != 3 {
 		t.Fatalf("expected a streak of 3, got %d", n)
@@ -793,58 +803,61 @@ func TestCountConsecutiveScriptGateFailures_CountsBackwards(t *testing.T) {
 func TestCountConsecutiveScriptGateFailures_SuccessResetsStreak(t *testing.T) {
 	setupSchedulerExecDB(t)
 
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
-	// A run whose gate passed: exit 0, and (unlike a skipped run) it reached the
-	// AI, so its status is 'completed'. It must still reset the streak — which
-	// is why the query filters on the exit code, not on status='skipped'.
-	if _, err := db.Exec(
-		`INSERT INTO task_executions (task_id, session_id, trigger_type, status, script_exit_code)
-		 VALUES (1, 's', 'auto', 'completed', 0)`,
-	); err != nil {
-		t.Fatalf("insert completed run: %v", err)
-	}
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	insertFailedGateRun(t, 1)
+	insertFailedGateRun(t, 1)
+	// A run whose gate passed reaches the AI, so its status is 'completed' and
+	// its outcome is 'succeeded'. It must reset the streak.
+	insertScriptRun(t, 1, "completed", scriptOutcomeName(ScriptSucceeded), sql.NullInt64{Int64: 0, Valid: true})
+	insertFailedGateRun(t, 1)
 
-	// Only the newest failure counts; the passing run ends the streak.
 	if n := countConsecutiveScriptGateFailures(1); n != 1 {
 		t.Fatalf("a passing gate must reset the streak, got %d", n)
 	}
 }
 
-func TestCountConsecutiveScriptGateFailures_ZeroExitBreaksStreak(t *testing.T) {
+func TestCountConsecutiveScriptGateFailures_CancelIsNotAFailure(t *testing.T) {
 	setupSchedulerExecDB(t)
 
-	// Insert order is oldest → newest (id ascending).
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 0, Valid: true})
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+	// A cancel persists exit_code = -1, exactly like a spawn failure. Counting
+	// it as a gate failure would make "the user cancelled 3 times" look like
+	// "the script keeps failing", so the outcome must be what decides.
+	insertFailedGateRun(t, 1)
+	insertScriptRun(t, 1, "cancelled", scriptOutcomeName(ScriptCanceled), sql.NullInt64{Int64: -1, Valid: true})
 
-	// Counting backwards from the newest row: one failure, then exit 0 ends the
-	// count. The older failure must NOT be reached (that would give 2).
-	if n := countConsecutiveScriptGateFailures(1); n != 1 {
-		t.Fatalf("an exit-0 row must end the streak, expected 1, got %d", n)
+	if n := countConsecutiveScriptGateFailures(1); n != 0 {
+		t.Fatalf("a cancellation must not count as a gate failure, got %d", n)
 	}
 }
 
-func TestCountConsecutiveScriptGateFailures_MissingExitCodeBreaksStreak(t *testing.T) {
+func TestCountConsecutiveScriptGateFailures_TimeoutIsNotAFailure(t *testing.T) {
 	setupSchedulerExecDB(t)
 
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
-	// A legacy skipped row predating the script_exit_code column.
-	insertSkippedScriptRun(t, 1, sql.NullInt64{})
+	insertFailedGateRun(t, 1)
+	insertScriptRun(t, 1, "skipped", scriptOutcomeName(ScriptTimedOut), sql.NullInt64{Int64: -1, Valid: true})
 
 	if n := countConsecutiveScriptGateFailures(1); n != 0 {
-		t.Fatalf("an unknown exit code must not count as a failure, got %d", n)
+		t.Fatalf("a timeout must not count as a gate failure, got %d", n)
+	}
+}
+
+func TestCountConsecutiveScriptGateFailures_LegacyRowBreaksStreak(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	insertFailedGateRun(t, 1)
+	// A row written before script_outcome existed: no outcome recorded.
+	insertScriptRun(t, 1, "skipped", "", sql.NullInt64{Int64: 127, Valid: true})
+
+	if n := countConsecutiveScriptGateFailures(1); n != 0 {
+		t.Fatalf("an unrecorded outcome must not count as a failure, got %d", n)
 	}
 }
 
 func TestCountConsecutiveScriptGateFailures_ScopedToTask(t *testing.T) {
 	setupSchedulerExecDB(t)
 
-	insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
-	insertSkippedScriptRun(t, 2, sql.NullInt64{Int64: 127, Valid: true})
-	insertSkippedScriptRun(t, 2, sql.NullInt64{Int64: 127, Valid: true})
+	insertFailedGateRun(t, 1)
+	insertFailedGateRun(t, 2)
+	insertFailedGateRun(t, 2)
 
 	if n := countConsecutiveScriptGateFailures(1); n != 1 {
 		t.Fatalf("streak must be per task, got %d for task 1", n)
@@ -858,10 +871,93 @@ func TestScriptGateFailureWarnThreshold_IsReachedByStreak(t *testing.T) {
 	setupSchedulerExecDB(t)
 
 	for range scriptGateFailureWarnThreshold {
-		insertSkippedScriptRun(t, 1, sql.NullInt64{Int64: 127, Valid: true})
+		insertFailedGateRun(t, 1)
 	}
 
 	if n := countConsecutiveScriptGateFailures(1); n < scriptGateFailureWarnThreshold {
 		t.Fatalf("threshold %d must be reachable, got streak %d", scriptGateFailureWarnThreshold, n)
+	}
+}
+
+// ── Persistent gate-failure warning ──────────────────────────────────────
+
+// captureWarnHandler records WARN-level records so a test can assert the
+// warning fires (or does not) without depending on log output.
+type captureWarnHandler struct {
+	mu      sync.Mutex
+	records []string
+}
+
+func (h *captureWarnHandler) Enabled(_ context.Context, l slog.Level) bool {
+	return l >= slog.LevelWarn
+}
+
+func (h *captureWarnHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r.Message)
+	return nil
+}
+func (h *captureWarnHandler) WithAttrs(_ []slog.Attr) slog.Handler { return h }
+func (h *captureWarnHandler) WithGroup(_ string) slog.Handler      { return h }
+
+func (h *captureWarnHandler) count(msg string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, r := range h.records {
+		if r == msg {
+			n++
+		}
+	}
+	return n
+}
+
+const persistentGateWarnMsg = "gating script keeps failing; task is running without doing anything"
+
+func TestMaybeWarnPersistentScriptGateFailure_FiresAtThreshold(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	h := &captureWarnHandler{}
+	orig := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	// One short of the threshold: no warning.
+	for range scriptGateFailureWarnThreshold - 1 {
+		insertFailedGateRun(t, 1)
+	}
+	maybeWarnPersistentScriptGateFailure(&model.ScheduledTask{ID: 1, Name: "t"}, ScriptResult{Outcome: ScriptFailed, ExitCode: 127})
+	if n := h.count(persistentGateWarnMsg); n != 0 {
+		t.Fatalf("must stay quiet below the threshold, got %d warnings", n)
+	}
+
+	// Reaching the threshold fires exactly one warning.
+	insertFailedGateRun(t, 1)
+	maybeWarnPersistentScriptGateFailure(&model.ScheduledTask{ID: 1, Name: "t"}, ScriptResult{Outcome: ScriptFailed, ExitCode: 127})
+	if n := h.count(persistentGateWarnMsg); n != 1 {
+		t.Fatalf("the threshold must produce exactly one warning, got %d", n)
+	}
+}
+
+func TestMaybeWarnPersistentScriptGateFailure_SilentForNonFailures(t *testing.T) {
+	setupSchedulerExecDB(t)
+
+	h := &captureWarnHandler{}
+	orig := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+
+	// A long streak of real failures already exists...
+	for range scriptGateFailureWarnThreshold + 2 {
+		insertFailedGateRun(t, 1)
+	}
+	// ...but a timeout/cancel outcome must not trigger the "script keeps
+	// failing" warning, because it is a different problem.
+	for _, outcome := range []ScriptOutcome{ScriptTimedOut, ScriptCanceled} {
+		maybeWarnPersistentScriptGateFailure(&model.ScheduledTask{ID: 1, Name: "t"}, ScriptResult{Outcome: outcome, ExitCode: -1})
+	}
+	if n := h.count(persistentGateWarnMsg); n != 0 {
+		t.Fatalf("timeouts/cancels must not be reported as script failures, got %d", n)
 	}
 }

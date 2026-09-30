@@ -173,6 +173,12 @@ describe('TaskFormPage gating script section', () => {
   it('does not clobber text typed after the toggle while restoring', async () => {
     // Restore only fills an empty field, so it can never overwrite an edit the
     // user made between the two toggles.
+    //
+    // Note this writes form.script directly rather than typing into the editor:
+    // the editor is behind `v-if="scriptEnabled"`, so "typed while the switch is
+    // off" is not reachable through the UI. The guard is still worth pinning —
+    // it is what makes the restore safe against any future caller — but don't
+    // read this as a user-reachable flow.
     formRef.value.script = 'echo hi'
     const wrapper = mountForm({ mode: 'edit', task: { script: 'echo hi', cronExpr: '0 9 * * *' } })
     await wrapper.vm.$nextTick()

@@ -15,10 +15,12 @@ import (
 // Go runtime 会报 "concurrent map read and map write"（未定义行为）。
 // 本测试并发地跑「读者走访问器」与「写者走 ReplaceAgents」，-race 下必须干净。
 func TestAgentGlobalsConcurrentAccessIsRaceFree(t *testing.T) {
-	origList := GetAgentList()
-	restore := func() { ReplaceAgents(map[string]*Agent{}, nil) }
-	_ = origList
-	defer restore()
+	// Restore whatever was there before, rather than wiping the globals: other
+	// tests in this package assert against the set they install themselves, but
+	// leaving a clean hand-off is cheaper to reason about than a bare empty map.
+	origAgents := Agents
+	origList := AgentList
+	defer func() { ReplaceAgents(origAgents, origList) }()
 
 	build := func(n int) (map[string]*Agent, []*Agent) {
 		m := make(map[string]*Agent, n)

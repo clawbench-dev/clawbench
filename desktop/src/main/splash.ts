@@ -407,10 +407,6 @@ export function createSplashController(win: BrowserWindow, opts: SplashOptions):
       try { view.webContents.close() } catch { /* already gone */ }
     },
 
-    isVisible(): boolean {
-      return visible
-    },
-
     showVersionMismatch,
 
     continueGate(): void {

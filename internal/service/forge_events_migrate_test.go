@@ -155,7 +155,7 @@ VALUES (1, 's-legacy', 'auto', 'completed');`)
 
 	require.NoError(t, InitDB())
 
-	for _, col := range []string{"script_exit_code", "script_stdout", "script_stderr", "script_duration_ms"} {
+	for _, col := range []string{"script_exit_code", "script_outcome", "script_stdout", "script_stderr", "script_duration_ms"} {
 		var n int
 		require.NoError(t, db.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?`, col).Scan(&n))

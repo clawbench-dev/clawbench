@@ -219,6 +219,10 @@ void import('@/composables/useGlobalEvents')
 // one reconnect at worst instead of a manual rescan. A plain `focus` is
 // deliberately NOT used: it fires constantly and `loadAgents` has no staleness
 // check of its own, so it would re-fetch on every window focus.
+//
+// Registered at module scope (the app-lifetime singleton pattern used by
+// usePwaInstall): no teardown, and it also runs in the share.html bundle, where
+// nothing dispatches the event — harmless, just not app-only.
 window.addEventListener('clawbench-reconnect', () => {
     void loadAgents(true)
 })

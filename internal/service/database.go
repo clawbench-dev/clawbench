@@ -1214,6 +1214,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"event_url", "ALTER TABLE task_executions ADD COLUMN event_url TEXT NOT NULL DEFAULT ''"},
 		{"event_summary", "ALTER TABLE task_executions ADD COLUMN event_summary TEXT NOT NULL DEFAULT ''"},
 		{"script_exit_code", "ALTER TABLE task_executions ADD COLUMN script_exit_code INTEGER"},
+		{"script_outcome", "ALTER TABLE task_executions ADD COLUMN script_outcome TEXT NOT NULL DEFAULT ''"},
 		{"script_stdout", "ALTER TABLE task_executions ADD COLUMN script_stdout TEXT NOT NULL DEFAULT ''"},
 		{"script_stderr", "ALTER TABLE task_executions ADD COLUMN script_stderr TEXT NOT NULL DEFAULT ''"},
 		{"script_duration_ms", "ALTER TABLE task_executions ADD COLUMN script_duration_ms INTEGER NOT NULL DEFAULT 0"},

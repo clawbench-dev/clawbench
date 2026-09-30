@@ -904,21 +904,7 @@ func (s *Scheduler) executeTask(task *model.ScheduledTask, projectPath string, t
 			// nothing visible (a skipped run is a deliberate no-op and emits no
 			// event). Without this warning that failure mode is silent, so log
 			// a distinct signal once the streak reaches the threshold.
-			//
-			// Gated on ScriptFailed so a timeout (a different problem: the
-			// script never finished) is not folded into "your script keeps
-			// failing". A spawn failure (exit_code == -1) is also a genuine
-			// "cannot run this script" and counts here.
-			if res.Outcome == ScriptFailed {
-				if n := countConsecutiveScriptGateFailures(task.ID); n >= scriptGateFailureWarnThreshold {
-					slog.Warn("gating script keeps failing; task is running without doing anything",
-						slog.Int64("task_id", task.ID),
-						slog.String("task_name", task.Name),
-						slog.Int("consecutive_failures", n),
-						slog.Int("exit_code", res.ExitCode),
-					)
-				}
-			}
+			maybeWarnPersistentScriptGateFailure(task, res)
 			s.finishScriptOnlyRun(task, status)
 			if status == "cancelled" {
 				// When the row was not written, execID is 0: emitting "0" would
@@ -1442,20 +1428,53 @@ const scriptTruncationMarker = "\n…[output truncated]"
 // broken (a bad command exits 127 forever) and the task will never do anything.
 const scriptGateFailureWarnThreshold = 3
 
+// maybeWarnPersistentScriptGateFailure emits the observability signal for a
+// gating script that keeps closing the gate. A skipped run is deliberately
+// silent (no session, no notification), so without this a broken script — one
+// that always exits non-zero, e.g. a command that does not exist — leaves the
+// task ticking forever with nothing to show for it.
+//
+// Gated on ScriptFailed so a timeout or a cancel (a different problem: the
+// script never finished, or the user stopped it) is not folded into "your
+// script keeps failing". A spawn failure (exit_code == -1) IS a genuine
+// "cannot run this script" and counts.
+func maybeWarnPersistentScriptGateFailure(task *model.ScheduledTask, res ScriptResult) {
+	if res.Outcome != ScriptFailed {
+		return
+	}
+	n := countConsecutiveScriptGateFailures(task.ID)
+	if n < scriptGateFailureWarnThreshold {
+		return
+	}
+	slog.Warn("gating script keeps failing; task is running without doing anything",
+		slog.Int64("task_id", task.ID),
+		slog.String("task_name", task.Name),
+		slog.Int("consecutive_failures", n),
+		slog.Int("exit_code", res.ExitCode),
+	)
+}
+
 // countConsecutiveScriptGateFailures returns the length of the current streak of
-// script-phase runs that closed the gate with a non-zero exit.
+// script-phase runs that closed the gate with a genuine non-zero exit.
 //
 // It scans backwards over the task's most recent executions and stops at the
 // first row that is NOT such a failure, so a passing gate resets the streak.
-// The filter is on the exit code rather than on `status = 'skipped'`: a run
-// whose gate passed becomes `completed`, and excluding those would let a
-// successful run sit invisibly between two failures and keep the streak alive.
-// A row with no recorded exit code (a task without a script, or a legacy row)
-// ends the streak too. The window is bounded so a long-lived task does not scan
-// its whole history on every tick.
+// Two deliberate choices:
+//
+//   - The filter is on the recorded OUTCOME, not on `script_exit_code != 0`. A
+//     cancellation and a timeout both persist exit_code = -1 (RunTaskScript
+//     initializes it to -1 and only overwrites it for a real *exec.ExitError),
+//     so an exit-code-only test would count "the user cancelled 3 times" as
+//     "the script keeps failing" and mis-attribute the warning. Only
+//     script_outcome = 'failed' counts.
+//   - The window is bounded (LIMIT 50) so a long-lived task does not scan its
+//     whole history on every tick. A ≥50 streak still reports ≥3.
 func countConsecutiveScriptGateFailures(taskID int64) int {
+	if dbRead == nil {
+		return 0
+	}
 	rows, err := dbRead.Query(`
-		SELECT script_exit_code
+		SELECT script_outcome
 		FROM task_executions
 		WHERE task_id = ?
 		ORDER BY id DESC
@@ -1467,13 +1486,13 @@ func countConsecutiveScriptGateFailures(taskID int64) int {
 
 	streak := 0
 	for rows.Next() {
-		var exitCode sql.NullInt64
-		if err := rows.Scan(&exitCode); err != nil {
+		var outcome sql.NullString
+		if err := rows.Scan(&outcome); err != nil {
 			return streak
 		}
-		// No recorded exit code (task without a script) or a clean exit ends
-		// the streak — neither is a gate failure.
-		if !exitCode.Valid || exitCode.Int64 == 0 {
+		// Anything that is not a genuine failure — a pass, a cancel, a timeout,
+		// or a legacy row written before this column existed — ends the streak.
+		if !outcome.Valid || outcome.String != scriptOutcomeName(ScriptFailed) {
 			return streak
 		}
 		streak++
@@ -1754,9 +1773,9 @@ func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary stri
 func SetTaskExecutionScriptResult(executionID int64, res ScriptResult) error {
 	_, err := WriteExec(
 		`UPDATE task_executions
-		 SET script_exit_code = ?, script_stdout = ?, script_stderr = ?, script_duration_ms = ?
+		 SET script_exit_code = ?, script_outcome = ?, script_stdout = ?, script_stderr = ?, script_duration_ms = ?
 		 WHERE id = ?`,
-		res.ExitCode, res.Stdout, res.Stderr, res.Duration.Milliseconds(), executionID,
+		res.ExitCode, scriptOutcomeName(res.Outcome), res.Stdout, res.Stderr, res.Duration.Milliseconds(), executionID,
 	)
 	return err
 }
