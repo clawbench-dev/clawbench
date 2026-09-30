@@ -11,7 +11,7 @@
         :value="dir"
         @change="onDirChange(idx, ($event.target as HTMLInputElement).value)"
       />
-      <button class="sbtn" @click="removeDir(idx)">
+      <button class="fbtn" @click="removeDir(idx)">
         <Trash2 :size="13" />
         {{ t('settings.items.skillsRepoRemove') }}
       </button>
@@ -23,7 +23,7 @@
         class="skills-input"
         :placeholder="t('settings.items.skillsDirPlaceholder')"
       />
-      <button class="sbtn sbtn-primary" :disabled="!newDir.trim() || dirsSaving" @click="addDir">
+      <button class="fbtn fbtn-primary" :disabled="!newDir.trim() || dirsSaving" @click="addDir">
         {{ t('settings.items.skillsRepoAdd') }}
       </button>
     </div>
@@ -39,6 +39,7 @@
 import { ref, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, Trash2 } from 'lucide-vue-next'
+import '@/assets/modal-footer-btn.css'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import { useSkillsState, loadSkills } from '@/composables/useSkillsState'
 
@@ -109,6 +110,25 @@ onMounted(load)
   gap: var(--space-4);
   align-items: center;
   flex-wrap: wrap;
+}
+/* Input geometry follows the settings-panel convention (30px control height,
+   same as .fbtn / the switch row), matching ForgeCredentialsRow's field. */
+.skills-input {
+  flex: 1;
+  min-width: 150px;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+.skills-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--focus-ring);
 }
 .skills-error {
   display: flex;

@@ -98,7 +98,7 @@ describe('SkillsDirsSetting', () => {
     await flushPromises()
 
     await wrapper.find('.skills-dir-add input').setValue('/tmp/more')
-    await wrapper.find('.skills-dir-add .sbtn-primary').trigger('click')
+    await wrapper.find('.skills-dir-add .fbtn-primary').trigger('click')
     await flushPromises()
 
     expect(setServerValue).toHaveBeenCalledWith('skills.dirs', ['/tmp/skills', '/tmp/more'])
@@ -108,7 +108,7 @@ describe('SkillsDirsSetting', () => {
     const wrapper = mountSetting()
     await flushPromises()
 
-    await wrapper.find('.skills-dir .sbtn').trigger('click')
+    await wrapper.find('.skills-dir .fbtn').trigger('click')
     await flushPromises()
 
     // Removing the only entry sends an empty array; the server then falls back
@@ -137,7 +137,7 @@ describe('SkillsDirsSetting', () => {
     await flushPromises()
 
     await wrapper.find('.skills-dir-add input').setValue('relative/path')
-    await wrapper.find('.skills-dir-add .sbtn-primary').trigger('click')
+    await wrapper.find('.skills-dir-add .fbtn-primary').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('.skills-error').exists()).toBe(true)

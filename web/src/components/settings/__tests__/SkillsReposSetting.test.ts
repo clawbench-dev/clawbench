@@ -109,7 +109,7 @@ describe('SkillsReposSetting', () => {
     await flushPromises()
 
     await wrapper.find('.skills-repo-add input').setValue('https://github.com/b/two.git')
-    await wrapper.find('.skills-repo-add .sbtn-primary').trigger('click')
+    await wrapper.find('.skills-repo-add .fbtn-primary').trigger('click')
     await flushPromises()
 
     expect(setServerValue).toHaveBeenCalledWith('skills.repos', [
@@ -126,7 +126,7 @@ describe('SkillsReposSetting', () => {
     const wrapper = mountSetting()
     await flushPromises()
 
-    await wrapper.findAll('.skills-repo .sbtn')[0].trigger('click')
+    await wrapper.findAll('.skills-repo .fbtn')[0].trigger('click')
     await flushPromises()
 
     expect(setServerValue).toHaveBeenCalledWith('skills.repos', [
@@ -155,7 +155,7 @@ describe('SkillsReposSetting', () => {
 
     await wrapper.find('.skills-repo .skills-input').setValue('new-token')
     await wrapper.find('.skills-repo-add input').setValue('https://github.com/b/two.git')
-    await wrapper.find('.skills-repo-add .sbtn-primary').trigger('click')
+    await wrapper.find('.skills-repo-add .fbtn-primary').trigger('click')
     await flushPromises()
 
     const call = setServerValue.mock.calls.find(c => c[0] === 'skills.repos')
@@ -176,7 +176,7 @@ describe('SkillsReposSetting', () => {
     const wrapper = mountSetting()
     await flushPromises()
 
-    const refreshBtn = wrapper.findAll('.skills-sync .sbtn')[0]
+    const refreshBtn = wrapper.findAll('.skills-sync .fbtn')[0]
     await refreshBtn.trigger('click')
     await flushPromises()
 

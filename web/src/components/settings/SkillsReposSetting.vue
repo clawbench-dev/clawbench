@@ -10,7 +10,7 @@
           <KeyRound :size="12" />
           {{ t('settings.items.skillsRepoTokenSet') }}
         </span>
-        <button class="sbtn" @click="removeRepo(idx)">
+        <button class="fbtn" @click="removeRepo(idx)">
           <Trash2 :size="13" />
           {{ t('settings.items.skillsRepoRemove') }}
         </button>
@@ -43,7 +43,7 @@
         autocomplete="off"
         :placeholder="t('settings.items.skillsRepoTokenPlaceholder')"
       />
-      <button class="sbtn sbtn-primary" :disabled="!newRepoUrl.trim() || reposSaving" @click="addRepo">
+      <button class="fbtn fbtn-primary" :disabled="!newRepoUrl.trim() || reposSaving" @click="addRepo">
         {{ t('settings.items.skillsRepoAdd') }}
       </button>
     </div>
@@ -51,7 +51,7 @@
     <!-- Manual sync + status. The button belongs to THIS card: it only pulls
          the git remotes (local directories need no syncing). -->
     <div class="skills-sync">
-      <button class="sbtn" :disabled="refreshing" @click="refresh">
+      <button class="fbtn" :disabled="refreshing" @click="refresh">
         <LoadingIndicator v-if="refreshing" size="sm" inline class="skills-spin" />
         <RefreshCw v-else :size="13" />
         {{ refreshing ? t('settings.items.skillsRefreshing') : t('settings.items.skillsRefresh') }}
@@ -75,6 +75,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, KeyRound, RefreshCw, Trash2 } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import '@/assets/modal-footer-btn.css'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
 import {
   useSkillsState,
@@ -195,6 +196,28 @@ onMounted(load)
   color: var(--color-success);
   background: color-mix(in srgb, var(--color-success) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-success) 35%, transparent);
+}
+/* Same field geometry as the directory card (see SkillsDirsSetting). */
+.skills-input {
+  flex: 1;
+  min-width: 150px;
+  box-sizing: border-box;
+  height: 30px;
+  padding: 0 var(--space-6);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
+}
+.skills-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+/* Keep the inline spinner the button's own colour. */
+.skills-spin {
+  --li-color: currentColor;
 }
 .skills-repo-error,
 .skills-error {
