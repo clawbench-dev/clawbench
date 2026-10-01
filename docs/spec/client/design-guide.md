@@ -393,6 +393,8 @@ Vue 的 scoped 属性只加在**组件模板渲染出的**元素上。`v-html` �
 
 判断方法：加之前问「**它会不会吃掉剩余空间**」。`flex:1` / `inset:0` 都危险。需要豁免时**下沉到内部的收缩元素**（`.stt-viewport` 是 `width: fit-content`）。
 
+**`app-region` 命中取 DOM 顺序最后一个，与绘制顺序/z-index/`pointer-events` 无关。** Chromium 对某点求 `-webkit-app-region` 时取 DOM 顺序中**最后**覆盖该点的元素。桌面登录页的真实事故：`<body>` 是 `drag`，两个全屏装饰层 `.bg-gradient` / `.bg-grid` 继承 `drag` 且原本排在 `.splash` / `#versionGate` **之后**，于是吃掉整个视口的点击——版本 gate 的「仍然继续」「下载」与 splash 的「取消连接」全部无响应，而 `elementsFromPoint` 仍报告命中的是按钮本身（骗人）。**`z-index` 与 `pointer-events:none` 都不豁免**。症状不对称是判据：排在装饰层之后的 `.window-close`、登录表单正常。修法是把装饰层排到最前，交互浮层一律排其后（像素 diff = 0）。验证必须真实 OS 点击（Xvfb + openbox + XTEST），`elementFromPoint` 会误报。
+
 ### 红线 4：对比度不能靠「固定跳一档背景」
 
 **不要**假设 `--bg-tertiary` 或 `--bg-elevated` 在每套主题里都"明显不同于 `--bg-secondary`"。实测 36 套主题里 **15 套**的 secondary↔tertiary 对比度低于 1.12，ayu-dark 只有 **1.062**——方块直接消失。
@@ -502,6 +504,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |
 | `components/git/__tests__/gitHistoryChrome.css.test.ts` | git 历史 chrome 全局 |
 | `components/settings/__tests__/settingsRowTypography.css.test.ts` | 设置行字号层级 |
+| `components/settings/__tests__/skillsCardsStyles.css.test.ts` | 技能设置页两张卡的 chrome 全局唯一（scoped 不得重复） |
+| `components/chat/__tests__/permissionResultChip.css.test.ts` | 权限审批卡片：label 吸附命令框、按钮一体化、结果芯片（自动批准徽标与「已批准」同规格） |
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
 | `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
 | `components/settings/__tests__/settingsControls.css.test.ts` | 设置控件形状全局唯一（开关/滑块/重置）、尺寸对齐 30px、scoped 不得重加几何、按钮复用 `.fbtn` |

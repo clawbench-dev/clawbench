@@ -23,7 +23,7 @@ sequenceDiagram
     runTurn-->>前端: WS 流式推送 + 落库
 ```
 
-用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；`runTurn` 负责编排单个 AI 回合，内部的 `SessionExecutor` 持有会话运行时状态并把执行委托给 AI 后端。**"用户消息 → ai.ChatRequest"只有一份实现**：直发路径（HTTP handler）与排队路径（队列 drain、钉钉/飞书）曾各写一份并漂移成 5 处不一致——resume 守卫、会话持久化的 model 与 transport、fork 上下文格式、非 block 内容解包——导致同一条消息在"直接发送"与"排队发送"下行为不同（排队路径会把 CLI 从未见过的会话 ID 传下去造成上下文失忆）。现在两者共用同一实现，并有一条对比测试锁住两条路径对同一会话的构造结果一致。
+用户点击发送后，请求进入 handler，由 handler 解析出目标 Agent 和后端类型（CLI 或 ACP）；`runTurn` 负责编排单个 AI 回合，内部的 `SessionExecutor` 持有会话运行时状态并把执行委托给 AI 后端。**"用户消息 → ai.ChatRequest"只有一份实现**：直发路径（HTTP handler）与排队路径（队列 drain、钉钉/飞书）曾各写一份并漂移成 7 处不一致——resume 守卫、会话持久化的 model 与 transport、**会话持久化的 mode 与 thinkingEffort**、fork 上下文格式、非 block 内容解包——导致同一条消息在"直接发送"与"排队发送"下行为不同（排队路径会把 CLI 从未见过的会话 ID 传下去造成上下文失忆，或把用户选好的模型/模式/思考档位悄悄回退成 agent 默认值）。现在两者共用同一实现（`applySessionOverrides` 统一补齐空 override，优先级为**显式选择 > 会话持久值 > agent 默认**），并有一条对比测试锁住两条路径对同一会话的构造结果一致。注意 mode/thinkingEffort 没有独立列，只存在于 `chat_sessions.context_state`（由 `PATCH /api/ai/session/update` 写入），因此 drain 路径必须显式读回该状态——agent 侧 `EffectiveModeID()` 只返回 PreferredMode，不记得会话当前的 mode。
 
 ### 唯一 turn 实现：三入口共用
 
@@ -160,6 +160,7 @@ sequenceDiagram
 ### 设计要点
 
 - **排队消息持久化到独立表**：排队消息在入队时写入 `queued_messages`（不落 `chat_history`），由 drain loop 原子出队——写锁事务下 `DELETE` 队列行 + `INSERT` 历史行。相比"入队即写 `chat_history`（`queued=1` 标记）"的旧形态，独立表让历史行的 DB id 顺序恒等于对话顺序，前端不再需要回复锚定机制（`parentQueueId` 解父链、`anchorRepliesToQuestions` 等已整体删除，前端净减数百行）。取消/回溯是对队列行的真 `DELETE`；注入被拒时 `RequeueMaterialized` 在同一事务内原子回插。drain 循环与前端不会出现"消息已发但队列不知情"的分歧
+- **Agent 解析必须在所有建后端入口收敛**：`ResolveAgentID(sessionID, requested)` 是唯一解析点，优先级为**显式指定 > 会话持久化的 agent_id > 默认 Agent**。排队/drain 回合不带显式 agent，必须回落到会话自身的 agent——否则传空 ID 会让 `NewBackendForAgentWithTransport` 整个跳过 ACP 分支，纯 ACP 后端（如 Antigravity，无 CLI factory）直接以"unsupported backend type"失败。此前各调用点各写一份，只修了 queue 路径，其余入口仍在传空 ID
 - **归档保留 RAG 可搜索性**：归档的会话和消息标记 `archived=1` 而非物理删除，RAG 索引仍可检索到，用户可通过会话搜索恢复归档的会话——历史知识不应因用户整理而丢失
 - **单 WS 通道统一推送**：聊天内容（`content/thinking/tool_use` 等 `ChatStreamData` 子事件）和系统事件（`session_update`/`task_update`/`summary_update`/`permission_pending`）共用 `/api/ai/events/ws`，由 `StreamHub`（`internal/ws/stream_hub.go`）做会话级扇出。同一 session 可被多客户端同时订阅；客户端通过 `subscribe` 消息加入，`unsubscribe` 退出
 - **前端 Block 合并**：连续的 text/thinking 事件在 `AccumulateBlock` 中向后搜索同类型块进行合并，tool_use 作为自然边界——减少 DOM 更新频率，提升渲染性能。ACP 子代理完整重放产生的重复文本块通过前缀匹配去重，避免子代理回放时在 UI 中出现重复内容。父工具调用 id 是合并的硬边界：子 thinking 不并入父、连续 thinking 合并不跨父——否则子智能体的思考会被缝进父的思考块，分组信息丢失。**向后扫描遇到外来 parent 的块要"跳过"而不是"放弃"**：并发子智能体 A/B 的 delta 会交错到达，若 A 的下一个 delta 撞到 B 的块就另起一块，一段连续推理会被切成 N 段、每段之间夹着 B 的工具调用（全库实测 16 万次拆分，按 parent 归并后 thinking 块减少约 82%）。前后端是同源镜像（Go `accumulate.go` / TS `chatStreamUtils.ts`），必须同改
