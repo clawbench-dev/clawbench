@@ -6,7 +6,7 @@ import {
   clearAllBaselines,
   baselineCount,
   MAX_BASELINE_ENTRIES,
-  MAX_BASELINE_BYTES,
+  MAX_BASELINE_CHARS,
 } from '@/composables/useFileChangeBaseline.ts'
 
 describe('useFileChangeBaseline', () => {
@@ -61,10 +61,17 @@ describe('useFileChangeBaseline', () => {
   })
 
   it('refuses to store an oversized baseline', () => {
-    const huge = 'x'.repeat(MAX_BASELINE_BYTES + 1)
+    const huge = 'x'.repeat(MAX_BASELINE_CHARS + 1)
     recordBaseline('huge.md', huge)
     expect(getBaseline('huge.md')).toBeNull()
     expect(baselineCount()).toBe(0)
+  })
+
+  it('stores a baseline of exactly the cap (guard is inclusive)', () => {
+    const atCap = 'x'.repeat(MAX_BASELINE_CHARS)
+    recordBaseline('atcap.md', atCap)
+    expect(getBaseline('atcap.md')).toBe(atCap)
+    expect(baselineCount()).toBe(1)
   })
 
   it('clearAllBaselines empties the map', () => {
@@ -72,5 +79,7 @@ describe('useFileChangeBaseline', () => {
     recordBaseline('b.md', 'v2')
     clearAllBaselines()
     expect(baselineCount()).toBe(0)
+    expect(getBaseline('a.md')).toBeNull()
+    expect(getBaseline('b.md')).toBeNull()
   })
 })

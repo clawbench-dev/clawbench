@@ -10,15 +10,19 @@
  * source of truth.
  *
  * Memory bounds: LRU cap of MAX_BASELINE_ENTRIES; a single entry over
- * MAX_BASELINE_BYTES is not stored (baselines are large strings in a long
+ * MAX_BASELINE_CHARS is not stored (baselines are large strings in a long
  * session and would otherwise pile up).
  */
 
 /** LRU cap. The least-recently-read entry is evicted past this. */
 export const MAX_BASELINE_ENTRIES = 20
 
-/** Per-entry byte cap (counted in UTF-16 code units). Over this, no baseline. */
-export const MAX_BASELINE_BYTES = 2 * 1024 * 1024
+/**
+ * Per-entry cap in UTF-16 code units (i.e. `content.length`), NOT bytes — for
+ * CJK text a stored entry can be roughly 2× this many bytes. Over this, no
+ * baseline.
+ */
+export const MAX_BASELINE_CHARS = 2 * 1024 * 1024
 
 // Map insertion order IS the LRU order: delete-then-set moves an entry to the
 // "most recently used" end.
@@ -37,7 +41,7 @@ export function recordBaseline(path: string, content: string): void {
     if (existing === content) baselines.delete(path)
     return
   }
-  if (content.length > MAX_BASELINE_BYTES) return
+  if (content.length > MAX_BASELINE_CHARS) return
   baselines.set(path, content)
   if (baselines.size > MAX_BASELINE_ENTRIES) {
     const oldest = baselines.keys().next().value
