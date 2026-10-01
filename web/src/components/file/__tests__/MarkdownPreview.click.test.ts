@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { createI18n } from 'vue-i18n'
 
 // The component tree now renders FileChangeNav, which resolves its labels via
@@ -85,6 +85,18 @@ vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   extractBlockElements: vi.fn().mockReturnValue([]),
 }))
 
+// Change-navigation wiring: keep the real modules but make the two calls the
+// nav depends on observable (restore-on-switch + clear-button baseline drop).
+vi.mock('@/composables/useFileRefresh.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFileRefresh.ts')>()
+  return { ...actual, syncMarkersFor: vi.fn() }
+})
+
+vi.mock('@/composables/useFileChangeBaseline.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFileChangeBaseline.ts')>()
+  return { ...actual, clearBaseline: vi.fn() }
+})
+
 vi.mock('@/composables/useDiffMarkerClick.ts', () => ({
   handleDiffMarkerClick: vi.fn().mockReturnValue(false),
 }))
@@ -108,6 +120,9 @@ vi.mock('@/share/shareLinks', async (importOriginal) => {
 
 import MarkdownPreview from '../MarkdownPreview.vue'
 import { SHARE_OPEN_FILE_EVENT, SHARE_PATH_ATTR } from '@/share/shareLinks'
+import { diffMarkers, extractBlockElements } from '@/composables/useMarkdownDiff.ts'
+import { syncMarkersFor } from '@/composables/useFileRefresh.ts'
+import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
 
 describe('MarkdownPreview path clicks', () => {
   beforeEach(() => {
@@ -241,5 +256,110 @@ describe('MarkdownPreview path clicks', () => {
 
     expect(opened).toEqual(['/repo/docs/guide.md'])
     expect(openFilePath).not.toHaveBeenCalled()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Change-navigation wiring. The primitive (useChangeNav) and the pill
+// (FileChangeNav) have their own tests; these pin the component ↔ composable
+// wiring added at HEAD a9be58a1c so a regression in the glue is caught.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('MarkdownPreview — change navigation wiring', () => {
+  const scrollToMock = vi.fn()
+
+  // Positioned markers are derived from live DOM via extractBlockElements; a
+  // controllable stand-in lets us publish markers with chosen tops.
+  function blockEl(top: number) {
+    const el = document.createElement('div')
+    Object.defineProperty(el, 'offsetTop', { configurable: true, value: top })
+    Object.defineProperty(el, 'offsetHeight', { configurable: true, value: 10 })
+    return el
+  }
+
+  const markdownMarker = (id: string) => ({
+    id, type: 'modified', label: 'M', blockSelector: '', charDiff: null, ariaLabel: `m${id}`,
+  })
+
+  function mountPreview(props: Record<string, unknown> = {}) {
+    return mount(MarkdownPreview, {
+      props: { file: { path: '/project/README.md', content: '# Title' }, viewMode: 'rendered', ...props },
+      global: {
+        plugins: [i18n],
+        stubs: { TableRowModal: true, MarkdownSearchBar: true, CodeLinkPreview: true },
+      },
+    })
+  }
+
+  beforeEach(() => {
+    openFilePath.mockReset()
+    closePreview.mockReset()
+    handleDblClick.mockReset()
+    pipelineHtml.value = ''
+    syncMarkersFor.mockClear()
+    clearBaseline.mockClear()
+    diffMarkers.value = []
+    ;(extractBlockElements as any).mockReturnValue([])
+    scrollToMock.mockClear()
+    // jsdom does not implement scrollTo on elements; the nav's callback calls it.
+    Object.defineProperty(HTMLElement.prototype, 'scrollTo', {
+      configurable: true, writable: true, value: scrollToMock,
+    })
+  })
+
+  it('re-derives markers via syncMarkersFor(path, "markdown", content) on mount and on file switch', async () => {
+    const wrapper = mountPreview({ file: { path: '/project/a.md', content: '# A' } })
+    await nextTick()
+    expect(syncMarkersFor).toHaveBeenCalledWith('/project/a.md', 'markdown', '# A')
+
+    syncMarkersFor.mockClear()
+    await wrapper.setProps({ file: { path: '/project/b.md', content: '# B' } })
+    await nextTick()
+    expect(syncMarkersFor).toHaveBeenCalledWith('/project/b.md', 'markdown', '# B')
+  })
+
+  it('does not derive markers when the file has no content yet', async () => {
+    mountPreview({ file: { path: '/project/a.md', content: '' } })
+    await nextTick()
+    expect(syncMarkersFor).not.toHaveBeenCalled()
+  })
+
+  it('feeds marker tops to the nav and scrolls the body to the selected marker', async () => {
+    // positionedMarkers is the nav's target list; next() must scroll the
+    // .markdown-body container to that marker's top (16px of headroom).
+    ;(extractBlockElements as any).mockReturnValue([
+      { el: blockEl(0), tag: 'p', index: 0 },
+      { el: blockEl(100), tag: 'p', index: 1 },
+      { el: blockEl(200), tag: 'p', index: 2 },
+    ])
+    diffMarkers.value = [
+      markdownMarker('modified-0-p'),
+      markdownMarker('modified-1-p'),
+      markdownMarker('modified-2-p'),
+    ] as any
+    const wrapper = mountPreview()
+    await nextTick()
+    await nextTick()
+    expect(wrapper.find('.file-change-nav').text()).toContain('1/3')
+
+    await wrapper.find('.fcn-btn-next').trigger('click')
+    await nextTick()
+
+    // index 1 → top 100; minus 16px headroom = 84.
+    expect(scrollToMock).toHaveBeenCalledWith({ top: 84, behavior: 'auto' })
+  })
+
+  it('clear button drops the current file baseline and clears positioned markers', async () => {
+    ;(extractBlockElements as any).mockReturnValue([{ el: blockEl(0), tag: 'p', index: 0 }])
+    diffMarkers.value = [markdownMarker('modified-0-p')] as any
+    const wrapper = mountPreview({ file: { path: '/project/a.md', content: '# A' } })
+    await nextTick()
+    await nextTick()
+    expect(wrapper.findAll('.diff-marker-inline').length).toBe(1)
+
+    await wrapper.find('.fcn-btn-clear').trigger('click')
+    await nextTick()
+
+    expect(clearBaseline).toHaveBeenCalledWith('/project/a.md')
+    expect(wrapper.findAll('.diff-marker-inline').length).toBe(0)
   })
 })

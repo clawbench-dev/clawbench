@@ -125,14 +125,25 @@ const positionedMarkers = ref<PositionedMarker[]>([])
 
 // ─── Change navigation (prev/next over the markers) ───
 // Targets are the markers' top offsets; the composable owns the index and
-// scroll-derived highlighting so both preview surfaces behave identically.
+// scroll-derived highlighting.
 const markerTops = computed(() => positionedMarkers.value.map(m => m.top))
+// A programmatic scroll to a target must not be read back as a user scroll:
+// when the target is near the document end the browser clamps scrollTop, so
+// `scrollTop + HEADROOM` would land short of the target and syncIndexFromScroll
+// would snap the pill back to an earlier change (e.g. 3/3 → 2/3). Skip the
+// scroll-sync for the event our own scrollTo produces.
+let suppressScrollSync = false
+const NAV_HEADROOM = 16
 const changeNav = useChangeNav(markerTops, (i) => {
     const el = bodyRef.value
     const target = positionedMarkers.value[i]
     if (!el || !target) return
+    suppressScrollSync = true
     // 16px of headroom so the rail is not flush against the viewport top.
-    el.scrollTo({ top: Math.max(0, target.top - 16), behavior: 'auto' })
+    el.scrollTo({ top: Math.max(0, target.top - NAV_HEADROOM), behavior: 'auto' })
+    // The scroll event (if any) fires before the next frame; release the guard
+    // after it so a subsequent user scroll is tracked again.
+    requestAnimationFrame(() => { suppressScrollSync = false })
 })
 
 /** Drop this file's baseline and its published markers. */
@@ -493,7 +504,11 @@ watch(diffMarkers, () => {
 // rather than attaching once in onMounted.
 let scrollEl: HTMLElement | null = null
 function onBodyScroll() {
-    if (scrollEl) changeNav.syncIndexFromScroll(scrollEl.scrollTop + 16)
+    // Ignore the scroll our own navigation just produced (see suppressScrollSync
+    // above): reading it back can snap the index to an earlier change when the
+    // target was clamped at the document end.
+    if (suppressScrollSync) return
+    if (scrollEl) changeNav.syncIndexFromScroll(scrollEl.scrollTop + NAV_HEADROOM)
 }
 watch(bodyRef, (el, old) => {
     if (old) old.removeEventListener('scroll', onBodyScroll)

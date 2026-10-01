@@ -11,8 +11,18 @@ const i18n = createI18n({
 
 const quoteMocks = vi.hoisted(() => ({ showBar: vi.fn(), hideBar: vi.fn(), isPointerPressed: vi.fn(() => false) }))
 
-vi.mock('@/composables/useMarkdownDiff.ts', () => ({ diffMarkers: ref([]), openDiffDrawer: vi.fn() }))
-vi.mock('@/composables/useFileRefresh.ts', () => ({ flashRanges: ref([]), flashType: ref('add') }))
+vi.mock('@/composables/useMarkdownDiff.ts', () => ({ diffMarkers: ref([]), openDiffDrawer: vi.fn(), clearDiffMarkers: vi.fn() }))
+// Keep the real flash state, but make the baseline re-derivation observable so
+// the change-navigation wiring (restore-on-switch) is pinned.
+vi.mock('@/composables/useFileRefresh.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFileRefresh.ts')>()
+  return { ...actual, syncMarkersFor: vi.fn() }
+})
+// Keep the real baseline store, but observe clearBaseline (nav clear button).
+vi.mock('@/composables/useFileChangeBaseline.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFileChangeBaseline.ts')>()
+  return { ...actual, clearBaseline: vi.fn() }
+})
 vi.mock('@/stores/app.ts', () => ({ store: { state: { projectRoot: '/p', homeDir: '/home' } } }))
 vi.mock('@/composables/useQuoteQuestion.ts', () => ({ useQuoteQuestion: () => quoteMocks, isPointerPressed: quoteMocks.isPointerPressed }))
 const dialogMocks = vi.hoisted(() => ({ confirm: vi.fn() }))
@@ -21,8 +31,16 @@ const fetchSymbolsMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/useCodeSymbols.ts', () => ({ fetchCodeSymbols: (...a: unknown[]) => fetchSymbolsMock(...a) }))
 
 import CodeMirrorViewer from '../CodeMirrorViewer.vue'
+import { diffMarkers } from '@/composables/useMarkdownDiff.ts'
+import { syncMarkersFor } from '@/composables/useFileRefresh.ts'
+import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
+
+/** A code diff marker with a given first line (the nav target). */
+const codeMarker = (id: string, line: number) => ({
+  id, type: 'modified', label: 'M', blockSelector: '', lineNumbers: [line], charDiff: null, ariaLabel: `m${id}`,
+})
 
 function gutterClasses() {
   return [...document.querySelectorAll('.cm-gutter')].map(g => (g.className || ''))
@@ -667,5 +685,96 @@ describe('CodeMirrorViewer — viewport line event (for TOC scroll-follow)', () 
 
     window.removeEventListener('cm-editor-viewport-line', listener)
     wrapper.unmount()
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Change-navigation wiring. The primitive (useChangeNav) and the pill
+// (FileChangeNav) have their own tests; these pin the component ↔ composable
+// wiring added at HEAD a9be58a1c so a regression in the glue is caught.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('CodeMirrorViewer — change navigation wiring', () => {
+  const CONTENT = Array.from({ length: 60 }, (_, i) => `L${i + 1}`).join('\n') + '\n'
+
+  beforeEach(() => {
+    document.body.innerHTML = ''
+    quoteMocks.showBar.mockClear()
+    quoteMocks.hideBar.mockClear()
+    dialogMocks.confirm.mockReset()
+    fetchSymbolsMock.mockReset()
+    fetchSymbolsMock.mockResolvedValue(null)
+    syncMarkersFor.mockClear()
+    clearBaseline.mockClear()
+    diffMarkers.value = []
+  })
+
+  function mountNav(props = {}) {
+    return mount(CodeMirrorViewer, {
+      props: { content: CONTENT, language: 'plaintext', ...props },
+      global: { plugins: [i18n] },
+      attachTo: document.body,
+    })
+  }
+
+  /** Text of the single line currently carrying the jump-flash decoration. */
+  function flashedLineText(): string {
+    const el = document.querySelector('.cm-line.line-flash')
+    return el?.textContent ?? ''
+  }
+
+  it('sorts marker targets ascending so next() follows document order (not arrival order)', async () => {
+    // Markers arrive grouped per change, not in document order. Targets are the
+    // markers' first line numbers; without the `.sort(...)` the nav would step
+    // to line 10 first. next() from index 0 must land on the middle target.
+    diffMarkers.value = [codeMarker('a', 50), codeMarker('b', 10), codeMarker('c', 30)] as any
+    const wrapper = mountNav()
+    await sleep(80)
+
+    const nav = wrapper.find('.file-change-nav')
+    expect(nav.exists()).toBe(true)
+    expect(nav.text()).toContain('1/3')
+
+    await wrapper.find('.fcn-btn-next').trigger('click')
+    await nextTick()
+    await sleep(30)
+
+    // Sorted targets are [10, 30, 50] → index 1 is line 30. If the sort were
+    // removed the order is [50, 10, 30] → index 1 is line 10.
+    expect(flashedLineText()).toBe('L30')
+  })
+
+  it('re-derives markers via syncMarkersFor(path, "code", content) on mount and on file switch', async () => {
+    const wrapper = mountNav({ file: { path: '/a.ts', content: 'aaa\n' } })
+    await sleep(80)
+    expect(syncMarkersFor).toHaveBeenCalledWith('/a.ts', 'code', 'aaa\n')
+
+    syncMarkersFor.mockClear()
+    await wrapper.setProps({ file: { path: '/b.ts', content: 'bbb\n' } })
+    await sleep(80)
+    expect(syncMarkersFor).toHaveBeenCalledWith('/b.ts', 'code', 'bbb\n')
+  })
+
+  it('does not derive markers when the file has no content yet', async () => {
+    mountNav({ file: { path: '/a.ts', content: '' } })
+    await sleep(80)
+    expect(syncMarkersFor).not.toHaveBeenCalled()
+  })
+
+  it('clear button drops the current file baseline and published markers', async () => {
+    diffMarkers.value = [codeMarker('a', 5)] as any
+    const wrapper = mountNav({ file: { path: '/a.ts', content: 'aaa\n' } })
+    await sleep(80)
+
+    await wrapper.find('.fcn-btn-clear').trigger('click')
+    await nextTick()
+
+    expect(clearBaseline).toHaveBeenCalledWith('/a.ts')
+  })
+
+  it('hides the pill in editable mode (the toolbar owns the surface)', async () => {
+    diffMarkers.value = [codeMarker('a', 5)] as any
+    const wrapper = mountNav({ editable: true })
+    await sleep(80)
+    expect(wrapper.find('.file-change-nav').exists()).toBe(false)
   })
 })
