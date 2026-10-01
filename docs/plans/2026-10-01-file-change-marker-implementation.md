@@ -437,7 +437,7 @@ describe('diff marker rail', () => {
   const markerCss = readFileSync(resolve(__dirname, '../../../assets/diff-marker.css'), 'utf8')
   const viewerCss = readFileSync(resolve(__dirname, '../../../assets/code-viewer.css'), 'utf8')
 
-  it('draws the marker from theme tokens, not hard-coded rgba colours', () => {
+  it('draws the rail from theme tokens, not hard-coded rgba colours', () => {
     expect(markerCss).not.toMatch(/rgba\(\s*255\s*,\s*165\s*,\s*0/)
     expect(markerCss).not.toMatch(/rgba\(\s*255\s*,\s*80\s*,\s*80/)
     expect(markerCss).not.toMatch(/rgba\(\s*80\s*,\s*200\s*,\s*80/)
@@ -446,11 +446,18 @@ describe('diff marker rail', () => {
     expect(markerCss).toContain('var(--diff-add-accent)')
   })
 
-  it('is a 3px rail, not a 20px block', () => {
+  it('draws the rail 3px wide', () => {
+    const rail = markerCss.match(/\.diff-marker::before\s*\{[\s\S]*?\}/)
+    expect(rail).toBeTruthy()
+    expect(rail![0]).toContain('width: 3px')
+  })
+
+  it('keeps a tappable hit area wider than the rail', () => {
+    // The button is the hit area; the rail is drawn at its right edge. A 3px
+    // hit target would be unhittable, so the element stays 20px.
     const rule = viewerCss.match(/\.diff-marker-inline\s*\{[\s\S]*?\}/)
     expect(rule).toBeTruthy()
-    expect(rule![0]).toContain('width: 3px')
-    expect(rule![0]).not.toContain('width: 20px')
+    expect(rule![0]).toContain('width: 20px')
   })
 
   it('has no entry keyframes (a rail appearing is not an event to animate)', () => {
@@ -462,7 +469,7 @@ describe('diff marker rail', () => {
 **Step 2: 跑测试确认失败**
 
 Run: `npx vitest run web/src/components/file/__tests__/diffMarkerRail.css.test.ts`
-Expected: FAIL — 仍含 `rgba(255, 165, 0` 且宽度仍是 20px。
+Expected: FAIL — 仍含 `rgba(255, 165, 0`、`@keyframes` 仍在，且尚无 `.diff-marker::before` 的 `width: 3px`。
 
 **Step 3: 实现**
 
@@ -506,7 +513,10 @@ Expected: FAIL — 仍含 `rgba(255, 165, 0` 且宽度仍是 20px。
 .diff-marker::before {
   content: '';
   position: absolute;
-  inset: 0;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 3px;
   border-radius: var(--radius-full);
   background: currentColor;
 }
@@ -565,32 +575,28 @@ Expected: FAIL — 仍含 `rgba(255, 165, 0` 且宽度仍是 20px。
 }
 ```
 
-把 `web/src/assets/code-viewer.css:88-95` 的 `.diff-marker-inline` 块改为：
+把 `web/src/assets/code-viewer.css:88-95` 的 `.diff-marker-inline` 块改为（**宽度保持 20px**——它是**命中区**；细轨由 `diff-marker.css` 的 `::before` 画在它的右缘）：
 
 ```css
 /* Diff marker inline structural positioning (visual styles in diff-marker.css).
-   The rail is 3px wide; the button keeps a 20px hit area so a thin rail is
-   still comfortably tappable, with the rail drawn at its right edge (the
-   reading column's right edge). */
+   The element is the HIT AREA, kept 20px wide so a thin rail stays comfortably
+   tappable; the visible 3px rail is drawn by .diff-marker::before at this
+   element's right edge (the reading column's right edge). Do NOT shrink this to
+   3px — that would make the marker nearly unhittable. */
 .diff-marker-inline {
     position: absolute;
     right: 0;
-    width: 3px;
+    width: 20px;
     height: 100%;
     z-index: 2;
 }
-.diff-marker-inline::before {
-    /* Hit area extends left over the text; the rail stays at the right edge. */
-    inset: 0 0 0 -17px;
-    border-radius: var(--radius-full);
-}
 ```
 
-**Step 4: 更新既有的宽度断言**
+**Step 4: 更新 `MarkdownPreview.vue` 的覆盖**
 
-`web/src/components/file/__tests__/MarkdownPreviewWideLayout.css.test.ts` 的第三个用例（`positions diff markers at the reading column right edge`）只断言 `right:`，不受影响。但 `MarkdownPreview.vue` 的 `<style>`（非 scoped）块里还有一条 `.markdown-preview .markdown-body .diff-marker-inline { width: 20px; }` 覆盖，需同步改为 `width: 3px`：
+`web/src/components/file/__tests__/MarkdownPreviewWideLayout.css.test.ts` 的第三个用例（`positions diff markers at the reading column right edge`）只断言 `right:`，不受影响。
 
-修改 `web/src/components/file/MarkdownPreview.vue` 的全局 `<style>` 块：
+`MarkdownPreview.vue` 的全局 `<style>`（非 scoped）块里有一条 `.markdown-preview .markdown-body .diff-marker-inline { width: 20px; }`——**宽度保持 20px 不变**（它是命中区，见上），只需把注释里的「height:100% from CodePreview」说明更新为反映新结构（细轨在 `::before`）。该块改为：
 
 ```css
 .markdown-preview .markdown-body .diff-marker-inline {
@@ -599,9 +605,12 @@ Expected: FAIL — 仍含 `rgba(255, 165, 0` 且宽度仍是 20px。
        .markdown-body used to be centered with `margin: 0 auto`, so a marker at
        right:0 sat at the element border — i.e. half the slack (W−900)/2 in from
        the screen edge. Now the element is full-width (padding-based cap), so the
-       same visual spot is `right: max(0px, (100% − 900px)/2)`. */
+       same visual spot is `right: max(0px, (100% − 900px)/2)`.
+
+       Width stays 20px: this element is the HIT AREA. The visible 3px rail is
+       drawn by .diff-marker::before at its right edge. */
     right: max(0px, (100% - 900px) / 2);
-    width: 3px;
+    width: 20px;
     height: auto;
     z-index: 2;
 }
