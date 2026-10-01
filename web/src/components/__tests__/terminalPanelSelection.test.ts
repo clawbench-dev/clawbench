@@ -212,6 +212,14 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('getFallbackDir: () => activeTab.value?.cwd')
     // Reuse the shared overlay + progress bar rather than bespoke markup.
     expect(source).toContain('<DropOverlay :visible="terminalFileDrop.dropActive.value"')
+    // The label must be the terminal's own ("Drop to upload"), not the file
+    // manager's `file.dropToUpload` ("Drop to upload to current folder"). The
+    // file manager drops into the browsed directory; this drops into the
+    // shell's live cwd, which the terminal never displays — so naming a
+    // "current folder" is misleading. Both keys exist, so the literal-keys
+    // guard cannot catch this swap; only an explicit assertion can.
+    expect(source).toContain("t('chat.attach.dropToUpload')")
+    expect(source).not.toContain("t('file.dropToUpload')")
     expect(source).toContain('<UploadProgressBar')
     expect(source).toContain('@cancel="cancelDirUpload"')
   })

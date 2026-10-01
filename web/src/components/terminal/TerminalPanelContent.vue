@@ -115,8 +115,13 @@
       </div>
 
       <!-- Drop-to-upload overlay. Inside the viewport (not the panel) so it
-           covers the terminal area only, and only exists when a tab is open. -->
-      <DropOverlay :visible="terminalFileDrop.dropActive.value" :label="t('file.dropToUpload')" />
+           covers the terminal area only, and only exists when a tab is open.
+           Uses `chat.attach.dropToUpload` ("Drop to upload"), NOT the file
+           manager's `file.dropToUpload` ("Drop to upload to current folder"):
+           the file manager drops into the browsed directory, while this one
+           drops into the shell's live cwd — a target the user cannot see in the
+           terminal, so naming a "current folder" would be misleading. -->
+      <DropOverlay :visible="terminalFileDrop.dropActive.value" :label="t('chat.attach.dropToUpload')" />
     </div>
 
     <!-- Virtual key toolbar -->
