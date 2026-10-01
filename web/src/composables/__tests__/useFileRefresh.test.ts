@@ -42,17 +42,43 @@ afterEach(() => {
 
 // Mock dependencies before importing
 const closeCurrentFileMock = vi.hoisted(() => vi.fn())
-vi.mock('@/stores/app.ts', () => ({
-  store: {
-    state: {
-      currentFile: null as any,
-      currentDir: undefined as string | undefined,
-    },
-    loadFiles: vi.fn(),
-    selectFile: vi.fn().mockResolvedValue(true),
-    closeCurrentFile: closeCurrentFileMock,
+// The store mock mirrors the real selectFile contract: it replaces the open
+// file's content with what it fetched. Tests drive content through
+// globalThis.fetch, so selectFile reads the same source. Without this, the
+// refresh path would observe stale content and derive no markers.
+const storeMock = vi.hoisted(() => ({
+  state: {
+    currentFile: null as any,
+    currentDir: undefined as string | undefined,
   },
+  loadFiles: vi.fn(),
+  selectFile: vi.fn(),
+  closeCurrentFile: closeCurrentFileMock,
 }))
+vi.mock('@/stores/app.ts', () => ({ store: storeMock }))
+
+/** Faithful stand-in for the real store.selectFile: fetch + apply content. */
+function faithfulSelectFile(path: string): Promise<boolean> {
+  return (globalThis.fetch as typeof fetch)(`/api/fs/file/${encodeURIComponent(path)}`)
+    .then(async (resp) => {
+      if (!resp || !resp.ok) return false
+      const data = await resp.json()
+      if (storeMock.state.currentFile?.path === path) Object.assign(storeMock.state.currentFile, data)
+      else storeMock.state.currentFile = data
+      return true
+    })
+}
+
+/** Restore the faithful selectFile behavior (overrides leak across tests). */
+function resetStoreMock(): void {
+  storeMock.selectFile.mockImplementation(faithfulSelectFile as any)
+}
+
+// Mock implementations set via mockResolvedValue/mockImplementation survive
+// clearAllMocks, so restore the faithful default before every test.
+beforeEach(() => {
+  resetStoreMock()
+})
 
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   computeMarkdownDiff: vi.fn(),
@@ -108,7 +134,16 @@ vi.mock('@/composables/useDialog.ts', () => ({
   }),
 }))
 
-import { refreshCurrentFile, isRefreshing, flashRanges, flashType, markFileSaved, wasRecentlySaved } from '../useFileRefresh.ts'
+import {
+  refreshCurrentFile,
+  isRefreshing,
+  flashRanges,
+  flashType,
+  markFileSaved,
+  wasRecentlySaved,
+  syncMarkersFor,
+} from '../useFileRefresh.ts'
+import { clearAllBaselines, getBaseline, recordBaseline } from '@/composables/useFileChangeBaseline.ts'
 import { store } from '@/stores/app.ts'
 import { computeDiff } from '@/utils/diffUtils.ts'
 import { computeCodeDiffMarkers, diffMarkers, diffOldContent } from '@/composables/useMarkdownDiff.ts'
@@ -231,6 +266,45 @@ describe('useFileRefresh deduplication', () => {
     await refreshCurrentFile()
 
     expect(store.selectFile).not.toHaveBeenCalled()
+  })
+
+  describe('syncMarkersFor (accumulated baseline)', () => {
+    beforeEach(() => {
+      clearAllBaselines()
+      vi.clearAllMocks()
+      diffMarkers.value = []
+    })
+
+    it('derives code markers from the baseline, not the last refresh', () => {
+      recordBaseline('a.go', 'line1\nline2\n')
+      // computeCodeDiffMarkers is mocked to return [] by the module mock; assert
+      // it was called with the BASELINE as oldContent.
+      syncMarkersFor('a.go', 'code', 'line1\nCHANGED\n')
+      expect(computeCodeDiffMarkers).toHaveBeenCalledWith(
+        expect.anything(),
+        'line1\nline2\n',
+        'line1\nCHANGED\n',
+      )
+    })
+
+    it('produces no markers and records no baseline when none exists', () => {
+      // syncMarkersFor only DERIVES. Recording the baseline is the refresh path's
+      // job (it alone knows the pre-change content); a bare sync must not seed a
+      // baseline, or merely opening a file would create one.
+      syncMarkersFor('b.go', 'code', 'fresh\n')
+      expect(getBaseline('b.go')).toBeNull()
+      expect(diffMarkers.value).toEqual([])
+    })
+
+    it('restores markers when re-syncing the same path later', () => {
+      recordBaseline('c.go', 'v1\n')
+      syncMarkersFor('c.go', 'code', 'v2\n')
+      const first = diffMarkers.value
+      // Simulate navigating away then back: markers cleared, then re-synced.
+      diffMarkers.value = []
+      syncMarkersFor('c.go', 'code', 'v2\n')
+      expect(diffMarkers.value).toEqual(first)
+    })
   })
 })
 
