@@ -748,6 +748,101 @@ func TestQueueHandler_Enqueue_ValidAgentID(t *testing.T) {
 	service.CancelSession(sessionID)
 }
 
+// TestQueueHandler_Enqueue_OmittedAgentID_InheritsSessionAgentID verifies that
+// when POST /api/ai/queue omits agentId, the turn is launched with the SESSION's
+// configured agentId — not an empty string and not the default agent.
+//
+// This is the behavior the fix exists for: an empty agentId reaches
+// NewBackendForAgentWithTransport, skips the ACP branch, and fails outright for
+// a pure-ACP backend. Asserting only `ok:true` would not catch that, because the
+// failure happens asynchronously after the HTTP response. We therefore observe
+// the resolved LaunchConfig directly.
+func TestQueueHandler_Enqueue_OmittedAgentID_InheritsSessionAgentID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents["inherited-agent"] = &model.Agent{ID: "inherited-agent", Backend: "claude"}
+	t.Cleanup(func() { delete(model.Agents, "inherited-agent") })
+
+	// Capture what the enqueue path hands to the executor instead of starting a
+	// real AI backend. EnqueueAndMaybeStart calls this synchronously when the
+	// session is idle, so no goroutine/timing is involved.
+	var launched []service.LaunchConfig
+	restore := service.SetLaunchSessionExecutionForTest(func(cfg service.LaunchConfig) {
+		launched = append(launched, cfg)
+	})
+	t.Cleanup(func() { service.SetLaunchSessionExecutionForTest(restore) })
+
+	sessionID := "q-enqueue-inherit-agent"
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 'Queue Session', 'inherited-agent')`,
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+	)
+	assert.NoError(t, err)
+	defer service.ClearQueuedMessages(sessionID)
+	defer service.FinishSessionRun(sessionID)
+
+	body := map[string]any{
+		"message": "hello without agent id",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	assert.Equal(t, true, result["ok"])
+
+	require.Len(t, launched, 1, "idle session must launch exactly one execution")
+	assert.Equal(t, "inherited-agent", launched[0].AgentID,
+		"an omitted agentId must inherit the session's agent, not fall back to empty/default")
+}
+
+// TestQueueHandler_Enqueue_ExplicitAgentID_NotOverridden pins the other half of
+// the resolution order: an explicit agentId in the request always wins over the
+// session's stored agent.
+func TestQueueHandler_Enqueue_ExplicitAgentID_NotOverridden(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents["session-agent"] = &model.Agent{ID: "session-agent", Backend: "claude"}
+	model.Agents["request-agent"] = &model.Agent{ID: "request-agent", Backend: "claude"}
+	t.Cleanup(func() {
+		delete(model.Agents, "session-agent")
+		delete(model.Agents, "request-agent")
+	})
+
+	var launched []service.LaunchConfig
+	restore := service.SetLaunchSessionExecutionForTest(func(cfg service.LaunchConfig) {
+		launched = append(launched, cfg)
+	})
+	t.Cleanup(func() { service.SetLaunchSessionExecutionForTest(restore) })
+
+	sessionID := "q-enqueue-explicit-agent"
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 'Queue Session', 'session-agent')`,
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+	)
+	assert.NoError(t, err)
+	defer service.ClearQueuedMessages(sessionID)
+	defer service.FinishSessionRun(sessionID)
+
+	body := map[string]any{
+		"message": "hello with explicit agent",
+		"agentId": "request-agent",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+
+	require.Len(t, launched, 1)
+	assert.Equal(t, "request-agent", launched[0].AgentID,
+		"an explicit request agentId must win over the session's stored agent")
+}
+
 func TestQueueHandler_Get_MissingProjectCookie(t *testing.T) {
 	sessionID := "q-no-cookie-get"
 

@@ -312,3 +312,88 @@ func TestNewBackendForAgentWithTransport_ACPOverrideOnCLIAgent_FallsBack(t *test
 	_, ok = backend.(*ACPBackend)
 	assert.False(t, ok, "should NOT be ACPBackend when agent transport is cli")
 }
+
+func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *testing.T) {
+	setupTestBackends()
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"antigravity": {
+			ID:         "antigravity",
+			Backend:    "antigravity",
+			Transport:  "acp-stdio",
+			AcpCommand: "npx -y agy-acp@latest",
+		},
+	}
+
+	// When agentID is empty, it should resolve to model.GetAgent("antigravity")
+	// and create an ACPBackend instead of failing with no CLI implementation.
+	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "antigravity", backend.Name())
+
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok, "should resolve to ACPBackend for ACP-only agent when agentID is empty")
+}
+
+// TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly
+// pins the boundary of the empty-agentID recovery: it resolves an agent only
+// when the backend type matches one. It must NOT fall back to the default agent
+// — the default agent may belong to a different backend, and handing back an
+// ACPBackend for it would silently run the wrong agent/command. With no match,
+// the CLI factory runs and fails loudly for an ACP-only backend, which is the
+// signal callers should see (and what the queue fix prevents from happening).
+func TestNewBackendForAgentWithTransport_EmptyAgentID_UnknownBackend_FailsLoudly(t *testing.T) {
+	setupTestBackends()
+	origAgents := model.Agents
+	origDefault := model.DefaultAgentID
+	t.Cleanup(func() {
+		model.Agents = origAgents
+		model.DefaultAgentID = origDefault
+	})
+
+	model.Agents = map[string]*model.Agent{
+		"default-acp": {
+			ID:         "default-acp",
+			Backend:    "antigravity",
+			Transport:  "acp-stdio",
+			AcpCommand: "npx -y agy-acp@latest",
+		},
+	}
+	model.DefaultAgentID = "default-acp"
+
+	// backendType matches no agent, and agentID is empty. The default agent is
+	// ACP-only and unrelated to "unknown-backend" — it must NOT be used.
+	backend, err := NewBackendForAgentWithTransport("unknown-backend", "", "acp-stdio")
+	assert.Error(t, err, "an unknown backend with no matching agent must fail, not run the default agent")
+	assert.Nil(t, backend)
+	assert.Contains(t, err.Error(), "unsupported backend type")
+}
+
+// TestNewBackendForAgentWithTransport_EmptyAgentID_MatchesAgentByBackendType
+// covers the legitimate recovery: when agentID is empty but an agent's ID equals
+// the backend type, that agent is used (so ACP-only backends still work when a
+// caller passes only the backend name).
+func TestNewBackendForAgentWithTransport_EmptyAgentID_MatchesAgentByBackendType(t *testing.T) {
+	setupTestBackends()
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"antigravity": {
+			ID:         "antigravity",
+			Backend:    "antigravity",
+			Transport:  "acp-stdio",
+			AcpCommand: "npx -y agy-acp@latest",
+		},
+	}
+
+	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "antigravity", backend.Name())
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok)
+}

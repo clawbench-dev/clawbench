@@ -1660,6 +1660,11 @@ paths:
                     $ref: "#/components/schemas/FileEntry"
                 agentId:
                   type: string
+                  description: |
+                    本次排队消息使用的 Agent。省略时按「会话已保存的 agent → 默认 agent」解析，
+                    与 `POST /api/ai/chat` 一致。纯 ACP 后端（无 CLI 实现）的会话若省略此字段，
+                    必须能解析到会话自身的 agent，否则后端创建会退化为 CLI 工厂并报
+                    `unsupported backend type`。
                 modelId:
                   type: string
                 transport:

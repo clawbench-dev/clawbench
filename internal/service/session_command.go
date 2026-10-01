@@ -237,6 +237,25 @@ type LaunchConfig struct {
 	RunCtx context.Context
 }
 
+// launchSessionExecution is an indirection over LaunchSessionExecution so tests
+// can assert the enqueue path's resolved LaunchConfig (notably AgentID) without
+// starting a real AI backend. Mirrors launchConsumerExecution in queue_reaper.go.
+var launchSessionExecution = LaunchSessionExecution
+
+// SetLaunchSessionExecutionForTest swaps the enqueue-launch seam and returns the
+// previous one, so tests (including those in the external handler package) can
+// assert what EnqueueAndMaybeStart hands to the executor — e.g. that an omitted
+// agentId was resolved to the session's agent. Pass nil to restore the default.
+func SetLaunchSessionExecutionForTest(fn func(LaunchConfig)) func(LaunchConfig) {
+	prev := launchSessionExecution
+	if fn == nil {
+		launchSessionExecution = LaunchSessionExecution
+	} else {
+		launchSessionExecution = fn
+	}
+	return prev
+}
+
 // LaunchSessionExecution starts the AI execution goroutine for a session.
 // The caller must have already persisted the user message and called TrySetSessionRunning.
 func LaunchSessionExecution(cfg LaunchConfig) {
@@ -456,11 +475,11 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 
 		// Start execution now; the loop inside will consume the REST of the
 		// queue (any messages beyond the first).
-		LaunchSessionExecution(LaunchConfig{
+		launchSessionExecution(LaunchConfig{
 			SessionID:   cfg.SessionID,
 			ProjectPath: cfg.ProjectPath,
 			BackendName: cfg.BackendName,
-			AgentID:     cfg.AgentID,
+			AgentID:     ResolveAgentID(cfg.SessionID, cfg.AgentID),
 			Message:     cfg.Message,
 			Files:       cfg.Files,
 			RunCtx:      runCtx,
@@ -608,7 +627,9 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	parts := model.ClassifyAttachments(cfg.Files, nil)
 	prompt = model.ApplyAttachmentPrefixes(prompt, nil, nil, parts)
 
-	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
+	agentID := ResolveAgentID(cfg.SessionID, cfg.AgentID)
+
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.
@@ -618,7 +639,7 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		ProjectPath:     cfg.ProjectPath,
 		BackendName:     cfg.BackendName,
 		SessionID:       cfg.SessionID,
-		AgentID:         cfg.AgentID,
+		AgentID:         agentID,
 		ChatReq:         chatReq,
 		FileDir:         fileDir,
 		DrainOnFinalize: true,

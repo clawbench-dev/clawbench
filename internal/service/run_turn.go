@@ -231,16 +231,18 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	// cancelled. Callers release it via activeTurn.release().
 	at := &activeTurn{turnCtx: turnCtx, turnCancel: turnCancel, spec: spec}
 
+	agentID := ResolveAgentID(spec.SessionID, spec.AgentID)
+
 	sessionTransport := GetSessionTransport(spec.SessionID)
 	slog.Info("acp perf: executeStreamRun.start",
 		"session_id", spec.SessionID,
 		"backend", spec.BackendName,
-		"agent_id", spec.AgentID,
+		"agent_id", agentID,
 		"transport", sessionTransport,
 		"resume", spec.ChatReq.Resume,
 		"mode", int(spec.Mode))
 
-	backend, err := ai.NewBackendForAgentWithTransport(spec.BackendName, spec.AgentID, sessionTransport)
+	backend, err := ai.NewBackendForAgentWithTransport(spec.BackendName, agentID, sessionTransport)
 	if err != nil {
 		slog.Error("failed to create backend",
 			slog.String("backend", spec.BackendName), slog.String("err", err.Error()))
@@ -305,7 +307,7 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 		ProjectPath:        spec.ProjectPath,
 		BackendName:        spec.BackendName,
 		SessionID:          spec.SessionID,
-		AgentID:            spec.AgentID,
+		AgentID:            agentID,
 		ChatRequest:        spec.ChatReq,
 		FileDir:            spec.FileDir,
 		StreamingMessageID: streamingMsgID,

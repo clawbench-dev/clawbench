@@ -694,3 +694,58 @@ func TestRunTurnStart_OnStartedSkippedOnEarlyFailure(t *testing.T) {
 	assert.False(t, at.started(), "a stream-start failure means the turn never started")
 	assert.False(t, fired, "OnStarted must not fire for a turn that failed to start")
 }
+
+func TestRunTurnStart_EmptyAgentID_InheritsSessionOrFallback(t *testing.T) {
+	// Case 1: session has agent_id in DB -> inherits session agent
+	db, sessionID := setupRunTurnTest(t, []ai.StreamEvent{
+		{Type: "content", Content: "ok"},
+		{Type: "done"},
+	})
+	_, err := db.Exec("UPDATE chat_sessions SET agent_id = ? WHERE id = ?", "run-turn-agent", sessionID)
+	require.NoError(t, err)
+
+	at := runTurnStart(TurnSpec{
+		Ctx:         context.Background(),
+		Mode:        ModeInteractive,
+		ProjectPath: "/tmp",
+		BackendName: "run-turn-test",
+		SessionID:   sessionID,
+		AgentID:     "", // empty -> should inherit session agent
+		ChatReq:     ai.ChatRequest{Prompt: "hi"},
+		FileDir:     "/tmp",
+	})
+	defer at.release()
+	require.True(t, at.started())
+	_ = at.runTurnFinalize()
+
+	// Case 2: session has NO agent_id in DB -> falls back to model.GetDefaultAgentID()
+	db2, sessionID2 := setupRunTurnTest(t, []ai.StreamEvent{
+		{Type: "content", Content: "ok"},
+		{Type: "done"},
+	})
+	_, err = db2.Exec("UPDATE chat_sessions SET agent_id = '' WHERE id = ?", sessionID2)
+	require.NoError(t, err)
+	origAgents := model.Agents
+	origAgentList := model.AgentList
+	origDefaultID := model.DefaultAgentID
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origAgentList
+		model.DefaultAgentID = origDefaultID
+	}()
+	model.DefaultAgentID = "run-turn-agent"
+
+	at2 := runTurnStart(TurnSpec{
+		Ctx:         context.Background(),
+		Mode:        ModeInteractive,
+		ProjectPath: "/tmp",
+		BackendName: "run-turn-test",
+		SessionID:   sessionID2,
+		AgentID:     "", // empty and session agent empty -> fallback to default agent
+		ChatReq:     ai.ChatRequest{Prompt: "hi"},
+		FileDir:     "/tmp",
+	})
+	defer at2.release()
+	require.True(t, at2.started())
+	_ = at2.runTurnFinalize()
+}

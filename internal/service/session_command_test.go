@@ -799,6 +799,42 @@ func TestBuildChatRequest_EmptyAgentID_UsesDefault(t *testing.T) {
 	assert.Equal(t, "default-model", req.Model)
 }
 
+func TestBuildChatRequest_EmptyAgentID_InheritsSessionAgent(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	origAgentList := model.AgentList
+	origDefaultID := model.DefaultAgentID
+	model.Agents = map[string]*model.Agent{
+		"default-agent": {
+			ID: "default-agent",
+		},
+		"custom-agent": {
+			ID:                  "custom-agent",
+			RuntimeSystemPrompt: "custom prompt",
+			Models:              []model.AgentModel{{ID: "custom-model", Default: true}},
+		},
+	}
+	model.AgentList = []*model.Agent{{ID: "default-agent"}, {ID: "custom-agent"}}
+	model.DefaultAgentID = "default-agent"
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origAgentList
+		model.DefaultAgentID = origDefaultID
+	}()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'antigravity', 'Title', 'custom-agent')`,
+		"sess-custom-agent",
+	)
+	assert.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-custom-agent", "/proj", "antigravity", "", "", "", "", "", "/proj", false)
+	assert.Equal(t, "custom-agent", req.AgentID)
+	assert.Equal(t, "custom-model", req.Model)
+}
+
 func TestBuildChatRequest_WithAttachments(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
@@ -2352,6 +2388,72 @@ func TestExecuteStreamRunShared_BackendCreationFails_DirectCall(t *testing.T) {
 	assert.Contains(t, result.err, "create backend", "should fail at backend creation")
 }
 
+func TestExecuteStreamRunShared_EmptyAgentID_InheritsSession(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	origAgentList := model.AgentList
+	origDefaultID := model.DefaultAgentID
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origAgentList
+		model.DefaultAgentID = origDefaultID
+	}()
+	model.Agents = map[string]*model.Agent{
+		"default-agent": {ID: "default-agent"},
+		"session-agent": {ID: "session-agent"},
+	}
+	model.AgentList = []*model.Agent{{ID: "default-agent"}, {ID: "session-agent"}}
+	model.DefaultAgentID = "default-agent"
+
+	// Case 1: Session has agent_id in DB
+	sessionID := "direct-empty-agent-sess"
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'nonexistent-backend', 'Title', 'session-agent')`,
+		sessionID,
+	)
+	require.NoError(t, err)
+
+	_, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	RegisterSessionCancel(sessionID, cancel)
+	defer UnregisterSessionCancel(sessionID)
+
+	cfg := LaunchConfig{
+		SessionID:   sessionID,
+		ProjectPath: "/tmp",
+		BackendName: "nonexistent-backend",
+		AgentID:     "", // empty -> inherits session-agent
+		Message:     "test",
+	}
+
+	result := executeStreamRunShared(context.Background(), cfg)
+	assert.Contains(t, result.err, "create backend")
+
+	// Case 2: Session has no agent_id -> falls back to model.GetDefaultAgentID()
+	sessionID2 := "direct-empty-agent-sess2"
+	_, err = db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'nonexistent-backend', 'Title', '')`,
+		sessionID2,
+	)
+	require.NoError(t, err)
+
+	RegisterSessionCancel(sessionID2, cancel)
+	defer UnregisterSessionCancel(sessionID2)
+
+	cfg2 := LaunchConfig{
+		SessionID:   sessionID2,
+		ProjectPath: "/tmp",
+		BackendName: "nonexistent-backend",
+		AgentID:     "", // empty -> falls back to default-agent
+		Message:     "test",
+	}
+
+	result2 := executeStreamRunShared(context.Background(), cfg2)
+	assert.Contains(t, result2.err, "create backend")
+}
+
 // mockStreamErrBackend is a minimal AIBackend that returns an error from ExecuteStream.
 type mockStreamErrBackend struct{}
 
@@ -2844,4 +2946,65 @@ func TestNewPushQueueID_UniqueWithinSecond(t *testing.T) {
 		}
 		seen[id] = true
 	}
+}
+
+// TestSetLaunchSessionExecutionForTest_RestoresDefault pins the test seam's
+// contract (both branches) and — via the real enqueue path — asserts that an
+// omitted agentId is resolved to the session's agent before it reaches the
+// executor. This lives in package service so the seam body itself is covered by
+// this package's own test run (cross-package calls from internal/handler do not
+// count toward internal/service coverage).
+func TestSetLaunchSessionExecutionForTest_RestoresDefault(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	origList := model.AgentList
+	origDefault := model.DefaultAgentID
+	model.Agents = map[string]*model.Agent{
+		"seam-session-agent": {ID: "seam-session-agent", Backend: "claude"},
+		"seam-default-agent": {ID: "seam-default-agent", Backend: "claude"},
+	}
+	model.AgentList = []*model.Agent{{ID: "seam-session-agent"}, {ID: "seam-default-agent"}}
+	model.DefaultAgentID = "seam-default-agent"
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origList
+		model.DefaultAgentID = origDefault
+	}()
+
+	sid := "seam-inherit-agent"
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'claude', 'T', 'seam-session-agent')",
+		sid,
+	)
+	require.NoError(t, err)
+
+	// Substitute the launch seam so no real AI backend starts.
+	var launched []LaunchConfig
+	restore := SetLaunchSessionExecutionForTest(func(cfg LaunchConfig) {
+		launched = append(launched, cfg)
+	})
+	defer SetLaunchSessionExecutionForTest(restore)
+	defer ClearQueuedMessages(sid)
+	defer FinishSessionRun(sid)
+
+	started, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/test",
+		BackendName: "claude",
+		// AgentID intentionally omitted: it must be inherited from the session.
+		Message: "hello",
+		QueueID: "seam-pending-1",
+	})
+	require.NoError(t, err)
+	require.True(t, started)
+
+	require.Len(t, launched, 1, "idle session must launch exactly one execution")
+	assert.Equal(t, "seam-session-agent", launched[0].AgentID,
+		"an omitted agentId must be resolved to the session's agent before launch")
+
+	// Passing nil must restore the real implementation (not leave the stub).
+	assert.NotNil(t, SetLaunchSessionExecutionForTest(nil), "restoring must return the previous seam")
+	assert.NotNil(t, launchSessionExecution, "the seam must never be left nil")
 }

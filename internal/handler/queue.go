@@ -350,11 +350,17 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	// session was idle (the message is a real chat_history row now) or
 	// queue_added when a runner is live. Centralizing it there keeps this
 	// handler and the /api/ai/chat busy path from drifting.
+	//
+	// AgentID resolution (empty request → session's agent → default) is shared
+	// with every other turn entry point; see service.ResolveAgentID. A pure-ACP
+	// session enqueued without an explicit agentId must inherit the session's
+	// agent, or backend creation would fall back to the CLI factory and fail
+	// with "unsupported backend type".
 	started, _, err := service.EnqueueAndMaybeStart(service.EnqueueStartConfig{
 		SessionID:      sessionID,
 		ProjectPath:    info.ProjectPath,
 		BackendName:    info.Backend,
-		AgentID:        req.AgentID,
+		AgentID:        service.ResolveAgentID(sessionID, req.AgentID),
 		Message:        req.Message,
 		Files:          validatedFiles,
 		QueueID:        req.QueueID,
