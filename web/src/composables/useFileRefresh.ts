@@ -201,10 +201,17 @@ function isMarkdownRenderedMode(): boolean {
 watch(() => store.state.currentFile?.path, (newPath, oldPath) => {
     if (newPath !== oldPath) {
         clearFlash()
-        // Clear only the published markers, NOT the baseline — the baseline must
-        // survive so switching away and back restores the markers. The consuming
-        // component re-derives via syncMarkersFor on mount.
-        diffMarkers.value = []
+        // Reset the published markers AND the diff-drawer side effects
+        // (diffOldContent / diffOldFilePath / closeDiffDrawer). Clearing only
+        // diffMarkers left the drawer open on the previous file's diff with a
+        // dead Undo (its path guard rejects) — markdown happened to call this
+        // from its own watcher, code files had no other closer.
+        //
+        // This does NOT touch the accumulated baseline, which is what actually
+        // persists: the baseline must survive so switching away and back
+        // restores the markers. The consuming component re-derives via
+        // syncMarkersFor on mount.
+        clearDiffMarkers()
     }
 })
 
