@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { computed, ref } from 'vue'
+import { createI18n } from 'vue-i18n'
+
+// The component tree now renders FileChangeNav, which resolves its labels via
+// vue-i18n — the app always installs it, so the test must too (matches the
+// sibling MarkdownPreview tests).
+const i18n = createI18n({ legacy: false, locale: 'en', messages: { en: {} } })
 
 const { openFilePath, closePreview, handleDblClick, pipelineHtml } = vi.hoisted(() => ({
   openFilePath: vi.fn(),
@@ -118,6 +124,7 @@ describe('MarkdownPreview path clicks', () => {
         viewMode: 'rendered',
       },
       global: {
+        plugins: [i18n],
         stubs: {
           TableRowModal: true,
           MarkdownSearchBar: true,
@@ -141,6 +148,7 @@ describe('MarkdownPreview path clicks', () => {
         viewMode: 'rendered',
       },
       global: {
+        plugins: [i18n],
         stubs: {
           TableRowModal: true,
           MarkdownSearchBar: true,
@@ -178,6 +186,7 @@ describe('MarkdownPreview path clicks', () => {
         viewMode: 'rendered',
       },
       global: {
+        plugins: [i18n],
         stubs: {
           TableRowModal: true,
           MarkdownSearchBar: true,
@@ -216,6 +225,7 @@ describe('MarkdownPreview path clicks', () => {
         viewMode: 'rendered',
       },
       global: {
+        plugins: [i18n],
         stubs: { TableRowModal: true, MarkdownSearchBar: true, CodeLinkPreview: true },
       },
     })

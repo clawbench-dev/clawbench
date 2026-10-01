@@ -17,6 +17,16 @@
         :aria-label="pm.ariaLabel"
       ></button>
     </div>
+
+    <!-- Change navigation: prev/next over the diff markers, plus clear. Shown
+         only while markers exist. Positioned by its own scoped styles. -->
+    <FileChangeNav
+      :count="changeNav.count.value"
+      :index="changeNav.index.value"
+      @prev="changeNav.prev"
+      @next="changeNav.next"
+      @clear="clearChanges"
+    />
   </div>
 
   <!-- Table row expand modal -->
@@ -40,7 +50,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick, onBeforeUnmount } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
 import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
@@ -65,6 +75,10 @@ import { stampSvgFigures } from '@/utils/svgMediaFit.ts'
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import TableRowModal from '@/components/common/TableRowModal.vue'
 import MarkdownSearchBar from '@/components/file/MarkdownSearchBar.vue'
+import FileChangeNav from '@/components/file/FileChangeNav.vue'
+import { useChangeNav } from '@/composables/useChangeNav.ts'
+import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
+import { syncMarkersFor } from '@/composables/useFileRefresh.ts'
 import {
   diffMarkers,
   clearDiffMarkers,
@@ -108,6 +122,26 @@ interface PositionedMarker {
     height: number
 }
 const positionedMarkers = ref<PositionedMarker[]>([])
+
+// ─── Change navigation (prev/next over the markers) ───
+// Targets are the markers' top offsets; the composable owns the index and
+// scroll-derived highlighting so both preview surfaces behave identically.
+const markerTops = computed(() => positionedMarkers.value.map(m => m.top))
+const changeNav = useChangeNav(markerTops, (i) => {
+    const el = bodyRef.value
+    const target = positionedMarkers.value[i]
+    if (!el || !target) return
+    // 16px of headroom so the rail is not flush against the viewport top.
+    el.scrollTo({ top: Math.max(0, target.top - 16), behavior: 'auto' })
+})
+
+/** Drop this file's baseline and its published markers. */
+function clearChanges() {
+    const path = props.file?.path
+    if (path) clearBaseline(path)
+    clearDiffMarkers()
+    positionedMarkers.value = []
+}
 
 const quoteQuestion = useQuoteQuestion()
 const { tableRowModal, closeTableRowModal, tableRowPrev, tableRowNext, handleTableRowClick, onTableMouseDown, onTableTouchStart } = useTableRowExpand()
@@ -453,14 +487,42 @@ watch(diffMarkers, () => {
     nextTick(() => computeMarkerPositions())
 }, { deep: true, immediate: true })
 
+// ─── Change-navigation scroll tracking ───
+// The scroll container is the .markdown-body element (it is the overflow-y
+// scroller), and it is behind a v-if, so it appears after mount — track the ref
+// rather than attaching once in onMounted.
+let scrollEl: HTMLElement | null = null
+function onBodyScroll() {
+    if (scrollEl) changeNav.syncIndexFromScroll(scrollEl.scrollTop + 16)
+}
+watch(bodyRef, (el, old) => {
+    if (old) old.removeEventListener('scroll', onBodyScroll)
+    scrollEl = (el as HTMLElement | null) ?? null
+    scrollEl?.addEventListener('scroll', onBodyScroll, { passive: true })
+})
+
+/** Re-derive this file's markers from the accumulated baseline. */
+function restoreMarkers() {
+    const f = props.file
+    if (f?.path && f.content) syncMarkersFor(f.path, 'markdown', f.content)
+}
+
+onMounted(restoreMarkers)
+
 onBeforeUnmount(() => {
+    scrollEl?.removeEventListener('scroll', onBodyScroll)
+    scrollEl = null
+    // Clear the published markers and drawer state. The accumulated BASELINE is
+    // deliberately left intact so this file's markers come back on return.
     clearDiffMarkers()
 })
 
-// Clear markers when file changes
+// On file switch, re-derive from the baseline so the new file's markers appear
+// (a file with no baseline simply clears them). The baseline survives
+// navigation, which is what makes switch-away-and-back restore the markers.
 watch(() => props.file?.path, () => {
-    clearDiffMarkers()
     positionedMarkers.value = []
+    restoreMarkers()
 })
 
 // Clear markers when switching to raw mode

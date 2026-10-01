@@ -1,6 +1,17 @@
 <template>
   <div class="cm-viewer" :class="{ 'is-editable': editable, 'cm-readonly': !editable }">
     <div ref="editorHost" class="cm-host"></div>
+
+    <!-- Change navigation: prev/next over the diff markers, plus clear. Hidden
+         while editing (the toolbar owns the surface then). -->
+    <FileChangeNav
+      v-if="!editable"
+      :count="changeNav.count.value"
+      :index="changeNav.index.value"
+      @prev="changeNav.prev"
+      @next="changeNav.next"
+      @clear="clearChanges"
+    />
     <div v-if="editable" class="code-editor-actions">
       <span class="code-editor-status">
         <span class="dirty-dot" v-if="dirty"></span>
@@ -24,7 +35,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
@@ -34,8 +45,11 @@ import { searchPanel, searchPanelField, searchPanelToggle, openSearchPanelComman
 import { syntaxHighlighting } from '@codemirror/language'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
 import { codeHighlightStyle } from '@/utils/codeHighlightStyle'
-import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
-import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
+import { diffMarkers, openDiffDrawer, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
+import { flashRanges, flashType, syncMarkersFor } from '@/composables/useFileRefresh.ts'
+import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
+import { useChangeNav } from '@/composables/useChangeNav.ts'
+import FileChangeNav from '@/components/file/FileChangeNav.vue'
 import { parseLineRanges, flattenLineNumbers } from '@/utils/lineRanges.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
@@ -71,6 +85,25 @@ const editorHost = ref(null)
 // breaks the Undo/Redo buttons.
 const view = shallowRef(null)
 const diffLineMap = ref(new Map())
+
+// ─── Change navigation (prev/next over the markers) ───
+// One target per marker: its first line, sorted ascending (markers may arrive
+// grouped per change, not in document order). scrollToLine already flashes the
+// target line, so a jump is visible.
+const markerLines = computed(() =>
+    diffMarkers.value.map(m => m.lineNumbers?.[0] ?? 1).sort((a, b) => a - b)
+)
+const changeNav = useChangeNav(markerLines, (i) => {
+    const line = markerLines.value[i]
+    if (line) scrollToLine(line)
+})
+
+/** Drop this file's baseline and its published markers. */
+function clearChanges() {
+    const path = props.file?.path
+    if (path) clearBaseline(path)
+    clearDiffMarkers()
+}
 const quoteQuestion = useQuoteQuestion()
 const dialog = useDialog()
 const canUndo = ref(false)
@@ -540,6 +573,7 @@ onMounted(() => {
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
     document.addEventListener('pointerup', onDocPointerUp)
     attachViewportLineDispatch()
+    restoreMarkers()
 })
 
 onUnmounted(() => {
@@ -621,9 +655,19 @@ watch(() => props.content, (c) => {
 })
 
 // Re-init sticky scroll when switching to a different file (new symbol set).
+// Also re-derive the change markers from the accumulated baseline: this
+// component is NOT remounted on a file switch (it watches file.path), so the
+// baseline is what lets switch-away-and-back restore the markers.
 watch(() => props.file?.path, (path) => {
     if (view.value) sticky.init(view.value, path, stickyScrollEnabled())
+    restoreMarkers()
 })
+
+/** Re-derive this file's markers from the accumulated baseline. */
+function restoreMarkers() {
+    const f = props.file
+    if (f?.path && f.content) syncMarkersFor(f.path, 'code', f.content)
+}
 
 function getValue() {
     return view.value ? view.value.state.doc.toString() : (props.content || '')
