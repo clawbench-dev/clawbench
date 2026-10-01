@@ -1573,6 +1573,44 @@ func GetSessionProjectPath(sessionID string) string {
 	return projectPath
 }
 
+// SessionLookupOutcome classifies a project-path lookup so callers can tell a
+// missing session from a failing database.
+type SessionLookupOutcome int
+
+const (
+	SessionFound SessionLookupOutcome = iota
+	SessionMissing
+	SessionLookupError
+)
+
+// LookupSessionProjectPathActive resolves an active session's project path with
+// the failure cause preserved: SessionMissing means the row does not exist (or
+// is archived), SessionLookupError means the query itself failed.
+//
+// The distinction matters for ownership checks. The path is resolved through a
+// LEFT JOIN on projects, and an unmappable path is backfilled to the 0 sentinel
+// — which never has a projects row (the table is AUTOINCREMENT). Such an
+// orphaned session therefore resolves to "" with SessionFound, while a missing
+// session resolves to "" with SessionMissing. Comparing the path unconditionally
+// rejects the orphan; callers use the outcome to keep reporting 404 for a
+// session that does not exist and 500 for a broken database, instead of
+// collapsing all three into "forbidden".
+func LookupSessionProjectPathActive(sessionID string) (string, SessionLookupOutcome) {
+	var projectPath string
+	err := dbRead.QueryRow(
+		`SELECT COALESCE(p.path, '') FROM chat_sessions s
+		   LEFT JOIN projects p ON p.id = s.project_id
+		  WHERE s.id = ? AND s.archived = 0`, sessionID).Scan(&projectPath)
+	switch {
+	case err == nil:
+		return projectPath, SessionFound
+	case errors.Is(err, sql.ErrNoRows):
+		return "", SessionMissing
+	default:
+		return "", SessionLookupError
+	}
+}
+
 // GetSessionProjectPathIncludeArchived returns the project path of a session
 // regardless of archived status, or empty string if not found. Used by
 // read-only lookups that must work for archived sessions too (e.g. session

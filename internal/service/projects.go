@@ -194,9 +194,16 @@ func notifyProjectRenamed(oldPath, newPath string) {
 
 // RenameProject points a project at a new directory.
 //
-// This is the payoff of the id refactor: the directory on disk is NOT touched
-// and no other table is rewritten — every project-scoped row keeps referring to
-// the same id, so all of it follows the project to its new path.
+// This is what the id refactor buys: the directory on disk is NOT touched and
+// no other table is rewritten — every project-scoped row keeps referring to the
+// same id, so all of it follows the project to its new path.
+//
+// NOTE: there is currently NO production caller — no endpoint exposes a
+// rename, so the capability is unreachable today and is exercised only by
+// tests. It is kept because it is the operation the refactor exists to make
+// cheap, and because the caches it invalidates (the service's path→id map and
+// the RAG store's, via RegisterProjectRenamedHook) are live. Wire it to an
+// endpoint before claiming the refactor's payoff in user-facing terms.
 //
 // Colliding with an existing project is an error rather than a merge. Merging
 // would have to repoint ~15 tables and decide what to do with conflicting

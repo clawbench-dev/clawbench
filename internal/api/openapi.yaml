@@ -944,6 +944,10 @@ paths:
       responses:
         "200":
           description: 已标记
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 
   /api/ai/chat/user-messages:
     get:
@@ -1628,6 +1632,10 @@ paths:
       responses:
         "200":
           description: 排队消息
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     post:
       tags: [Queue]
       summary: 入队消息
@@ -1674,6 +1682,12 @@ paths:
       responses:
         "200":
           description: 入队结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     delete:
       tags: [Queue]
       summary: 删除排队消息
@@ -1695,6 +1709,10 @@ paths:
       responses:
         "200":
           description: 删除结果
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 
   /api/ai/queue/inject:
     post:

@@ -1384,3 +1384,71 @@ func TestQueueMergeHandler_CrossProject_403(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
+
+// ── Ownership checks must not be bypassed by an unresolvable project ─────
+//
+// Regression for the project-registry migration: GetSessionProjectPath resolves
+// the path through a LEFT JOIN on projects, and an unmappable path is backfilled
+// to the 0 sentinel — which never has a projects row (the table is
+// AUTOINCREMENT). Such a session resolves to "", and the old inline check
+// `sp != "" && sp != projectPath` read that as "no project to compare" and let
+// the request through. The pre-migration column was NOT NULL, so "" could only
+// mean "not found"; the JOIN made it reachable for a real session.
+
+// createOrphanedSession inserts a session whose project_id has no matching
+// projects row, reproducing the 0 sentinel an unmappable path leaves behind.
+func createOrphanedSession(t *testing.T, sessionID string) {
+	t.Helper()
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES (?, 0, 'claude', 'orphan', '', 'default', '', 'chat', 0)`,
+		sessionID,
+	)
+	require.NoError(t, err)
+}
+
+func TestQueueOwnership_OrphanedSessionIsRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-orphan-ownership"
+	createOrphanedSession(t, sessionID)
+	defer service.ClearQueuedMessages(sessionID)
+
+	// Sanity: the session really does resolve to "" (the bypass precondition).
+	require.Equal(t, "", service.GetSessionProjectPath(sessionID),
+		"an orphaned session must resolve to an empty project path")
+
+	// Enqueue from a normal project cookie: must be forbidden, not accepted.
+	body := map[string]any{"message": "should be rejected"}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestQueueGet_OrphanedSessionIsRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "q-orphan-get"
+	createOrphanedSession(t, sessionID)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/queue?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+	assertStatus(t, w, http.StatusForbidden)
+}
+
+func TestMarkChatRead_OrphanedSessionIsRejected(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID := "mark-read-orphan"
+	createOrphanedSession(t, sessionID)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/chat/read?session_id="+sessionID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(MarkChatRead, req)
+	assertStatus(t, w, http.StatusForbidden)
+}

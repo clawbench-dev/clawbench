@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -991,5 +992,142 @@ func TestSeedTestProjectsForTest_StoresCanonicalPaths(t *testing.T) {
 	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects WHERE path = ?", link).Scan(&rawCount))
 	if rawCount != 0 {
 		t.Errorf("the raw symlinked path %q must not be seeded", link)
+	}
+}
+
+// TestRenameProject_OldPathGetsAFreshID is the cache-staleness half of the
+// rename contract that TestRenameProject_FollowsEveryTable does not cover.
+//
+// ProjectIDForPath is lookup-or-create and consults projectIDCache first. If
+// the rename failed to evict the OLD path's key, a project later created at
+// that freed-up path would be handed the RENAMED project's id — silently
+// merging two unrelated directories, with every project-scoped row of the first
+// one now visible from the second.
+func TestRenameProject_OldPathGetsAFreshID(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	// Populate the cache for the old path, then rename away from it.
+	oldID, err := ProjectIDForPath(oldDir)
+	requireNoError(t, err)
+	requireNoError(t, RenameProject(oldDir, newDir))
+
+	// A different directory now lives at the freed-up old path.
+	freshID, err := ProjectIDForPath(oldDir)
+	requireNoError(t, err)
+	if freshID == oldID {
+		t.Fatalf("the reused path resolved to the renamed project's id %d — the cache key was not evicted", oldID)
+	}
+
+	// And the renamed project still owns its own id under the new path.
+	renamedID, err := ProjectIDForPath(newDir)
+	requireNoError(t, err)
+	if renamedID != oldID {
+		t.Errorf("the renamed project's id changed: got %d, want %d", renamedID, oldID)
+	}
+
+	var count int
+	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
+	if count != 2 {
+		t.Errorf("projects rows = %d, want 2 (the renamed one plus the recreated old path)", count)
+	}
+}
+
+// ── legacyProjectPathIndexes must all be recreated somewhere ─────────────
+//
+// The migration DROPs these indexes (SQLite refuses to drop a column while an
+// index references it) and relies on the normal schema creation to bring them
+// back. That makes two hand-maintained lists: the drop list here, and the
+// CREATE INDEX statements scattered across the schema owners. Nothing linked
+// them, so adding an index to one side only would either make it vanish
+// silently (added to the drop list, never recreated) or leave it pointing at a
+// dropped column (recreated from the migration's own DDL).
+//
+// The recreation sites are NOT all in database.go: project_forges and the RAG
+// store own their own schema, so this scans the whole module rather than one
+// file. A rename or relocation of a CREATE INDEX is therefore caught too.
+func TestLegacyProjectPathIndexes_AreAllRecreated(t *testing.T) {
+	root := repoRootForTest(t)
+
+	// Collect every "CREATE [UNIQUE] INDEX [IF NOT EXISTS] <name>" in the module.
+	created := make(map[string]string) // index name -> file it was found in
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".clawbench-web", "node_modules", "dist", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// Only this module. A sibling checkout (a git worktree under
+		// .worktrees/, or .codebuddy/worktrees/) contains a full copy of the
+		// same source, so scanning it would make this test pass even after the
+		// index was renamed HERE — a false negative, not a stricter check.
+		// Matches the exclusion list in vitest.config.ts.
+		if strings.Contains(path, "/.worktrees/") || strings.Contains(path, "/.codebuddy/worktrees/") {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		for _, m := range createIndexRe.FindAllStringSubmatch(string(data), -1) {
+			name := m[1]
+			if _, seen := created[name]; !seen {
+				created[name] = path
+			}
+		}
+		return nil
+	})
+	requireNoError(t, err)
+
+	if len(created) == 0 {
+		t.Fatal("found no CREATE INDEX statements — the scan is broken, not the schema")
+	}
+	// Guard the exclusion above: the schema MUST define this index (it is the
+	// migration's own drop target and is recreated by createTables), so if the
+	// scan cannot see it, it is reading the wrong tree.
+	if _, ok := created["idx_history_session"]; !ok {
+		t.Fatal("the scan did not find idx_history_session — it is reading the wrong tree " +
+			"(a sibling worktree, or the module root is wrong)")
+	}
+
+	for _, idx := range legacyProjectPathIndexes {
+		if _, ok := created[idx]; !ok {
+			t.Errorf("index %q is dropped by the project migration but never recreated; "+
+				"it would silently disappear after an upgrade", idx)
+		}
+	}
+}
+
+// createIndexRe matches "CREATE [UNIQUE] INDEX [IF NOT EXISTS] <name>".
+var createIndexRe = regexp.MustCompile(`(?i)CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)`)
+
+// repoRootForTest walks up from the test's working directory to the module root.
+func repoRootForTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	requireNoError(t, err)
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("could not locate the module root (no go.mod found)")
+		}
+		dir = parent
 	}
 }

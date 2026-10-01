@@ -18,6 +18,7 @@ import (
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/proxy"
+	"clawbench/internal/service"
 	"clawbench/internal/ws"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
 )
@@ -76,6 +77,69 @@ func requireProject(w http.ResponseWriter, r *http.Request) (string, bool) {
 		return "", false
 	}
 	return projectPath, true
+}
+
+// sessionOwnership describes the outcome of an ownership check.
+type sessionOwnership int
+
+const (
+	// ownershipOK: the session exists and belongs to the requesting project.
+	ownershipOK sessionOwnership = iota
+	// ownershipForbidden: the session exists but belongs to another project —
+	// or belongs to none at all (an unresolvable project), which must be
+	// rejected just the same.
+	ownershipForbidden
+	// ownershipNoSession: no such (active) session. Reported as 404, so a
+	// deleted session does not masquerade as an authorization failure.
+	ownershipNoSession
+	// ownershipLookupFailed: the lookup itself failed (database error). Must
+	// NOT be turned into a 403 — that would mask an outage as a permission
+	// problem.
+	ownershipLookupFailed
+)
+
+// checkSessionOwnership resolves the session's project and classifies it
+// against `projectPath`.
+//
+// Why this exists instead of the inline `sp != "" && sp != projectPath` check
+// it replaces: since the project registry migration, GetSessionProjectPath
+// resolves the path through a LEFT JOIN on projects, and an unmappable path is
+// backfilled to the 0 sentinel — which never has a projects row (the table is
+// AUTOINCREMENT). Such a session therefore resolves to "", and the old
+// `!= ""` short-circuit read that as "no project to compare" and let the
+// request through. The column it used to read was NOT NULL, so "" could only
+// ever mean "session not found"; the JOIN made "" reachable for a real, foreign
+// session. The comparison is now unconditional.
+func checkSessionOwnership(sessionID, projectPath string) sessionOwnership {
+	path, outcome := service.LookupSessionProjectPathActive(sessionID)
+	switch outcome {
+	case service.SessionMissing:
+		return ownershipNoSession
+	case service.SessionLookupError:
+		return ownershipLookupFailed
+	}
+	if path != projectPath {
+		return ownershipForbidden
+	}
+	return ownershipOK
+}
+
+// requireSessionOwnership writes the appropriate error for a failed ownership
+// check and reports whether the request may proceed.
+func requireSessionOwnership(w http.ResponseWriter, r *http.Request, sessionID, projectPath string) bool {
+	switch checkSessionOwnership(sessionID, projectPath) {
+	case ownershipOK:
+		return true
+	case ownershipNoSession:
+		writeLocalizedError(w, r, model.NotFound(nil, "SessionNotFound"))
+	case ownershipLookupFailed:
+		// A failing lookup is an outage, not a permission problem — reporting
+		// 403 here would hide a broken database behind "access denied".
+		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+	default:
+		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+	}
+	return false
 }
 
 // requireMethod checks that the request method is one of the allowed methods.
