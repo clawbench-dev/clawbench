@@ -437,14 +437,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Determine if the user message carries file attachments for conditional prompt injection
 	hasAttachments := len(req.FilePaths) > 0 || len(req.Files) > 0
 
-	// Resolve agent config early (needed for both enqueue and execution paths)
-	effectiveAgentID := req.AgentID
-	if effectiveAgentID == "" {
-		effectiveAgentID = service.GetSessionAgentID(sessionID)
-	}
-	if effectiveAgentID == "" {
-		effectiveAgentID = model.GetDefaultAgentID()
-	}
+	// Resolve agent config early (needed for both enqueue and execution paths).
+	// Shared resolution: explicit pick → session's agent → default.
+	effectiveAgentID := service.ResolveAgentID(sessionID, req.AgentID)
 
 	// Persist user's model selection to session so that subsequent GET requests
 	// return the correct modelId. This ensures the frontend can restore the

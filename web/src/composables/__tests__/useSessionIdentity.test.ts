@@ -515,6 +515,49 @@ describe('useSessionIdentity', () => {
 
             expect(mockSend).toHaveBeenCalledWith('test message')
         })
+
+        it('does not carry a stale agent/model/transport onto a freshly created session', async () => {
+            // Regression: when the fallback had to create the session, it still
+            // forwarded the currentAgentId/Model/Transport refs, which describe
+            // the PREVIOUS session. The new session must use the server default
+            // agent, so these must be omitted.
+            registerSessionActions({
+                switchSession: vi.fn(),
+                createSession: vi.fn(),
+                archiveSession: vi.fn(),
+                sendMessage: undefined as never,
+                openChatPanel: vi.fn(),
+                continueFromExecution: vi.fn().mockResolvedValue(true),
+                checkContinueSession: vi.fn().mockResolvedValue({ exists: false, sessionId: '' }),
+            })
+
+            const fetchMock = vi.fn().mockImplementation((url: string) => {
+                if (String(url).includes('/api/ai/sessions')) {
+                    return Promise.resolve({ ok: true, json: async () => ({ ok: true, sessionId: 'fresh-session' }) })
+                }
+                return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
+            })
+            vi.stubGlobal('fetch', fetchMock)
+
+            const identity = useSessionIdentity()
+            // No current session → the fallback creates one.
+            identity.currentSessionId.value = ''
+            // Stale values from whatever session was open before.
+            identity.currentAgentId.value = 'stale-agent'
+            identity.currentModelId.value = 'stale-model'
+            identity.currentTransport.value = 'acp-stdio'
+
+            await identity.sendMessage('first message')
+
+            const call = fetchMock.mock.calls.find(c => String(c[0]).includes('/api/ai/queue'))
+            expect(call, 'the fallback must post to the queue endpoint').toBeTruthy()
+            const body = JSON.parse(call![1].body)
+            expect(body.agentId).toBeUndefined()
+            expect(body.modelId).toBeUndefined()
+            expect(body.transport).toBeUndefined()
+
+            vi.unstubAllGlobals()
+        })
     })
 
     // ── openChatPanel ──

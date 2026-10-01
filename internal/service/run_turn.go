@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"clawbench/internal/ai"
-	"clawbench/internal/model"
 	"clawbench/internal/ws"
 )
 
@@ -232,13 +231,7 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	// cancelled. Callers release it via activeTurn.release().
 	at := &activeTurn{turnCtx: turnCtx, turnCancel: turnCancel, spec: spec}
 
-	agentID := spec.AgentID
-	if agentID == "" {
-		agentID = GetSessionAgentID(spec.SessionID)
-	}
-	if agentID == "" {
-		agentID = model.GetDefaultAgentID()
-	}
+	agentID := ResolveAgentID(spec.SessionID, spec.AgentID)
 
 	sessionTransport := GetSessionTransport(spec.SessionID)
 	slog.Info("acp perf: executeStreamRun.start",
@@ -314,7 +307,7 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 		ProjectPath:        spec.ProjectPath,
 		BackendName:        spec.BackendName,
 		SessionID:          spec.SessionID,
-		AgentID:            spec.AgentID,
+		AgentID:            agentID,
 		ChatRequest:        spec.ChatReq,
 		FileDir:            spec.FileDir,
 		StreamingMessageID: streamingMsgID,

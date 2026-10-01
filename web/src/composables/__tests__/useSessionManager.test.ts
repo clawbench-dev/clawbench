@@ -4,12 +4,18 @@ import { ref } from 'vue'
 // Mock dependencies
 const mockCurrentSessionId = ref('session-1')
 const mockCurrentBackend = ref('claude')
+const mockCurrentAgentId = ref('')
+const mockCurrentModelId = ref('')
+const mockCurrentTransport = ref('')
 const mockRunningSessions = ref(new Set<string>())
 
 vi.mock('@/composables/useSessionIdentity', () => ({
     useSessionIdentity: () => ({
         currentSessionId: mockCurrentSessionId,
         currentBackend: mockCurrentBackend,
+        currentAgentId: mockCurrentAgentId,
+        currentModelId: mockCurrentModelId,
+        currentTransport: mockCurrentTransport,
         registerSessionActions: vi.fn(),
     }),
     get runningSessions() { return mockRunningSessions },
@@ -71,6 +77,9 @@ describe('useSessionManager', () => {
         vi.clearAllMocks()
         mockCurrentSessionId.value = 'session-1'
         mockCurrentBackend.value = 'claude'
+        mockCurrentAgentId.value = ''
+        mockCurrentModelId.value = ''
+        mockCurrentTransport.value = ''
         mockRunningSessions.value = new Set()
         mockCancelChat.mockResolvedValue(undefined)
         _resetAskStatesForTesting()
@@ -493,6 +502,57 @@ describe('useSessionManager', () => {
 
             const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
             expect(body.clientId).toBe('device-test-1')
+
+            fetchSpy.mockRestore()
+        })
+
+        it('carries the current session agent/model/transport so a queued turn matches a direct send', async () => {
+            // Regression: without these the queued request reached the backend
+            // with an empty agentId, backend creation skipped the ACP branch,
+            // and a pure-ACP backend failed with "unsupported backend type".
+            const opts = createMockOptions()
+            mockCurrentAgentId.value = 'agent-xyz'
+            mockCurrentModelId.value = 'model-abc'
+            mockCurrentTransport.value = 'acp-stdio'
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('session-1', 'hello', [], [], 'pending-1')
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.agentId).toBe('agent-xyz')
+            expect(body.modelId).toBe('model-abc')
+            expect(body.transport).toBe('acp-stdio')
+            // The queue endpoint has no thinkingEffort field — sending it would
+            // be silently dropped, so it must not be in the payload.
+            expect(body.thinkingEffort).toBeUndefined()
+
+            fetchSpy.mockRestore()
+        })
+
+        it('does NOT carry the current session config when enqueuing to a different session', async () => {
+            // enqueueToSession targets other sessions: the live refs describe the
+            // session on screen, so forwarding them would misconfigure the target
+            // turn. The backend must inherit the target session's own values.
+            const opts = createMockOptions()
+            mockCurrentAgentId.value = 'agent-of-visible-session'
+            mockCurrentModelId.value = 'model-of-visible-session'
+            mockCurrentTransport.value = 'acp-stdio'
+            const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+                ok: true,
+                json: () => Promise.resolve({ ok: true, started: false }),
+            } as Response)
+            const mgr = useSessionManager(opts)
+
+            await mgr.enqueueMessage('session-OTHER', 'hello', [], [], 'pending-1')
+
+            const body = JSON.parse((fetchSpy.mock.calls[0] as any[])[1].body)
+            expect(body.agentId).toBeUndefined()
+            expect(body.modelId).toBeUndefined()
+            expect(body.transport).toBeUndefined()
 
             fetchSpy.mockRestore()
         })

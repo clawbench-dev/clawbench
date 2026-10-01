@@ -88,12 +88,19 @@ func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
 // If the override requests acp-stdio but the agent doesn't support it, falls back
 // to CLI backend gracefully instead of erroring out.
 func NewBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
+	// agentID and backendType are different identifiers (agent ID vs backend
+	// name) and are not interchangeable: resolving an agent by backendType is
+	// only a best-effort recovery for callers that omitted the agent ID. It is
+	// deliberately NOT extended to the default agent — the default agent may
+	// have nothing to do with backendType, so using it here would hand back an
+	// ACPBackend for an unrelated agent (whose Name() is that agent's backend)
+	// and silently run the wrong agent/command. When no agent matches the
+	// backend type, fall through to the CLI factory, which fails loudly for
+	// ACP-only backends instead of running something unintended.
 	effectiveAgentID := agentID
 	if effectiveAgentID == "" {
 		if a := model.GetAgent(backendType); a != nil {
 			effectiveAgentID = a.ID
-		} else {
-			effectiveAgentID = model.GetDefaultAgentID()
 		}
 	}
 	if effectiveAgentID != "" {

@@ -858,6 +858,11 @@ export function useSessionIdentity() {
     // Fallback: direct API call (ChatPanel not yet mounted)
     try {
       let sid = currentSessionId.value
+      // True when we had to create the session here. The new session's agent is
+      // the server default, NOT whatever currentAgentId still holds — so the
+      // agentId below must be suppressed for it, or we would pin the fresh
+      // session to a stale agent from a previous one.
+      let createdSession = false
       if (!sid) {
         const createResp = await fetch('/api/ai/sessions', {
           method: 'POST',
@@ -868,6 +873,7 @@ export function useSessionIdentity() {
         if (createData.ok && createData.sessionId) {
           sid = createData.sessionId
           currentSessionId.value = sid
+          createdSession = true
         }
       }
       const url = sid
@@ -886,10 +892,11 @@ export function useSessionIdentity() {
       // whole point of that action. Read them synchronously (before the await)
       // so a concurrent change cannot swap the batch mid-send.
       const { allFiles, filePaths } = buildSendPayload([], attachedFiles.value)
+      // thinkingEffort is not sent: the queue endpoint has no such field.
       const resp = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, agentId: currentAgentId.value || undefined, modelId: currentModelId.value || undefined, thinkingEffort: currentThinkingEffort.value || undefined, transport: currentTransport.value || undefined, clientId: localStorage.getItem('clawbench_client_id') || undefined }),
+        body: JSON.stringify({ message: text, queueId, filePaths, files: allFiles, agentId: createdSession ? undefined : (currentAgentId.value || undefined), modelId: createdSession ? undefined : (currentModelId.value || undefined), transport: createdSession ? undefined : (currentTransport.value || undefined), clientId: localStorage.getItem('clawbench_client_id') || undefined }),
       })
       if (resp.ok) {
         // Delivered — drop the batch so it is not sent again on the next message.

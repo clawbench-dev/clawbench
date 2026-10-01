@@ -43,12 +43,7 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick takes priority
 	effectiveMode := modeOverride                     // Explicit pick takes priority
 
-	if agentID == "" {
-		agentID = GetSessionAgentID(sessionID)
-	}
-	if agentID == "" {
-		agentID = model.GetDefaultAgentID()
-	}
+	agentID = ResolveAgentID(sessionID, agentID)
 
 	// Session-persisted choices fill in when the caller did not specify one.
 	// Read once here so every caller (direct send, queue drain, push) behaves
