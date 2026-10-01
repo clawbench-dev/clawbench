@@ -44,6 +44,9 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	effectiveMode := modeOverride                     // Explicit pick takes priority
 
 	if agentID == "" {
+		agentID = GetSessionAgentID(sessionID)
+	}
+	if agentID == "" {
 		agentID = model.GetDefaultAgentID()
 	}
 

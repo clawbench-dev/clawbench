@@ -102,6 +102,12 @@ export function useSessionManager(options: UseSessionManagerOptions) {
     ]
 
 
+    const isCurrentSession = sessionId === identity.currentSessionId?.value
+    const agentId = isCurrentSession ? (identity.currentAgentId?.value || undefined) : undefined
+    const modelId = isCurrentSession ? (identity.currentModelId?.value || undefined) : undefined
+    const thinkingEffort = isCurrentSession ? (identity.currentThinkingEffort?.value || undefined) : undefined
+    const transport = isCurrentSession ? (identity.currentTransport?.value || undefined) : undefined
+
     try {
       const resp = await fetch(
         `/api/ai/queue?session_id=${encodeURIComponent(sessionId)}`,
@@ -113,6 +119,10 @@ export function useSessionManager(options: UseSessionManagerOptions) {
             queueId,
             filePaths,
             files: allFileEntries,
+            agentId,
+            modelId,
+            thinkingEffort,
+            transport,
             // Required so the backend's user_message broadcast carries
             // senderClientId and this device can skip its own echo — without
             // it the queued message is rendered twice (pending bubble + remote

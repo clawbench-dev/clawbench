@@ -456,11 +456,18 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 
 		// Start execution now; the loop inside will consume the REST of the
 		// queue (any messages beyond the first).
+		effectiveAgentID := cfg.AgentID
+		if effectiveAgentID == "" {
+			effectiveAgentID = GetSessionAgentID(cfg.SessionID)
+		}
+		if effectiveAgentID == "" {
+			effectiveAgentID = model.GetDefaultAgentID()
+		}
 		LaunchSessionExecution(LaunchConfig{
 			SessionID:   cfg.SessionID,
 			ProjectPath: cfg.ProjectPath,
 			BackendName: cfg.BackendName,
-			AgentID:     cfg.AgentID,
+			AgentID:     effectiveAgentID,
 			Message:     cfg.Message,
 			Files:       cfg.Files,
 			RunCtx:      runCtx,
@@ -608,7 +615,15 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 	parts := model.ClassifyAttachments(cfg.Files, nil)
 	prompt = model.ApplyAttachmentPrefixes(prompt, nil, nil, parts)
 
-	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, cfg.AgentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
+	agentID := cfg.AgentID
+	if agentID == "" {
+		agentID = GetSessionAgentID(cfg.SessionID)
+	}
+	if agentID == "" {
+		agentID = model.GetDefaultAgentID()
+	}
+
+	chatReq := BuildChatRequest(prompt, cfg.SessionID, cfg.ProjectPath, cfg.BackendName, agentID, "", "", "", "", fileDir, model.HasAttachmentEntries(cfg.Files))
 
 	// The one AI-turn implementation — shared with the /api/ai/chat handler and
 	// the scheduler so a fix can no longer land in only one copy.
@@ -618,7 +633,7 @@ func executeStreamRunShared(ctx context.Context, cfg LaunchConfig) streamRunResu
 		ProjectPath:     cfg.ProjectPath,
 		BackendName:     cfg.BackendName,
 		SessionID:       cfg.SessionID,
-		AgentID:         cfg.AgentID,
+		AgentID:         agentID,
 		ChatReq:         chatReq,
 		FileDir:         fileDir,
 		DrainOnFinalize: true,

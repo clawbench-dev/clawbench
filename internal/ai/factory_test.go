@@ -312,3 +312,54 @@ func TestNewBackendForAgentWithTransport_ACPOverrideOnCLIAgent_FallsBack(t *test
 	_, ok = backend.(*ACPBackend)
 	assert.False(t, ok, "should NOT be ACPBackend when agent transport is cli")
 }
+
+func TestNewBackendForAgentWithTransport_EmptyAgentID_ResolvesBackendAgent(t *testing.T) {
+	setupTestBackends()
+	origAgents := model.Agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	model.Agents = map[string]*model.Agent{
+		"antigravity": {
+			ID:         "antigravity",
+			Backend:    "antigravity",
+			Transport:  "acp-stdio",
+			AcpCommand: "npx -y agy-acp@latest",
+		},
+	}
+
+	// When agentID is empty, it should resolve to model.GetAgent("antigravity")
+	// and create an ACPBackend instead of failing with no CLI implementation.
+	backend, err := NewBackendForAgentWithTransport("antigravity", "", "acp-stdio")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	assert.Equal(t, "antigravity", backend.Name())
+
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok, "should resolve to ACPBackend for ACP-only agent when agentID is empty")
+}
+
+func TestNewBackendForAgentWithTransport_EmptyAgentID_FallsBackToDefaultAgent(t *testing.T) {
+	setupTestBackends()
+	origAgents := model.Agents
+	origDefault := model.DefaultAgentID
+	t.Cleanup(func() {
+		model.Agents = origAgents
+		model.DefaultAgentID = origDefault
+	})
+
+	model.Agents = map[string]*model.Agent{
+		"default-acp": {
+			ID:         "default-acp",
+			Backend:    "antigravity",
+			Transport:  "acp-stdio",
+			AcpCommand: "npx -y agy-acp@latest",
+		},
+	}
+	model.DefaultAgentID = "default-acp"
+
+	backend, err := NewBackendForAgentWithTransport("unknown-backend", "", "acp-stdio")
+	assert.NoError(t, err)
+	assert.NotNil(t, backend)
+	_, ok := backend.(*ACPBackend)
+	assert.True(t, ok)
+}

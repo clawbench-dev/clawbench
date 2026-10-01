@@ -748,6 +748,39 @@ func TestQueueHandler_Enqueue_ValidAgentID(t *testing.T) {
 	service.CancelSession(sessionID)
 }
 
+// TestQueueHandler_Enqueue_OmittedAgentID_InheritsSessionAgentID verifies that
+// when POST /api/ai/queue omits agentId, it inherits the session's configured agentId
+// instead of falling back to empty string or failing.
+func TestQueueHandler_Enqueue_OmittedAgentID_InheritsSessionAgentID(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.Agents["inherited-agent"] = &model.Agent{ID: "inherited-agent", Backend: "claude"}
+	t.Cleanup(func() { delete(model.Agents, "inherited-agent") })
+
+	sessionID := "q-enqueue-inherit-agent"
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 'Queue Session', 'inherited-agent')`,
+		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+	)
+	assert.NoError(t, err)
+	defer service.ClearQueuedMessages(sessionID)
+
+	body := map[string]any{
+		"message": "hello without agent id",
+	}
+	req := newRequest(t, http.MethodPost, "/api/ai/queue?session_id="+sessionID, body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(QueueHandler, req)
+
+	assertOK(t, w)
+	var result map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &result)
+	assert.Equal(t, true, result["ok"])
+
+	service.CancelSession(sessionID)
+}
+
 func TestQueueHandler_Get_MissingProjectCookie(t *testing.T) {
 	sessionID := "q-no-cookie-get"
 

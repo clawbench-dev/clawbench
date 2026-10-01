@@ -345,6 +345,14 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	effectiveAgentID := req.AgentID
+	if effectiveAgentID == "" {
+		effectiveAgentID = info.AgentID
+	}
+	if effectiveAgentID == "" {
+		effectiveAgentID = model.GetDefaultAgentID()
+	}
+
 	// Persist the message + start execution or signal the running drain loop.
 	// EnqueueAndMaybeStart emits the announcement itself: user_message when the
 	// session was idle (the message is a real chat_history row now) or
@@ -354,7 +362,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		SessionID:      sessionID,
 		ProjectPath:    info.ProjectPath,
 		BackendName:    info.Backend,
-		AgentID:        req.AgentID,
+		AgentID:        effectiveAgentID,
 		Message:        req.Message,
 		Files:          validatedFiles,
 		QueueID:        req.QueueID,

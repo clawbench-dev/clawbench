@@ -440,6 +440,9 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// Resolve agent config early (needed for both enqueue and execution paths)
 	effectiveAgentID := req.AgentID
 	if effectiveAgentID == "" {
+		effectiveAgentID = service.GetSessionAgentID(sessionID)
+	}
+	if effectiveAgentID == "" {
 		effectiveAgentID = model.GetDefaultAgentID()
 	}
 

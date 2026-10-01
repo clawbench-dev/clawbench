@@ -88,8 +88,16 @@ func NewBackendForAgent(backendType, agentID string) (AIBackend, error) {
 // If the override requests acp-stdio but the agent doesn't support it, falls back
 // to CLI backend gracefully instead of erroring out.
 func NewBackendForAgentWithTransport(backendType, agentID, transportOverride string) (AIBackend, error) {
-	if agentID != "" {
-		if agent := model.GetAgent(agentID); agent != nil {
+	effectiveAgentID := agentID
+	if effectiveAgentID == "" {
+		if a := model.GetAgent(backendType); a != nil {
+			effectiveAgentID = a.ID
+		} else {
+			effectiveAgentID = model.GetDefaultAgentID()
+		}
+	}
+	if effectiveAgentID != "" {
+		if agent := model.GetAgent(effectiveAgentID); agent != nil {
 			effectiveTransport := transportOverride
 			if effectiveTransport == "" {
 				effectiveTransport = agent.Transport
@@ -98,13 +106,13 @@ func NewBackendForAgentWithTransport(backendType, agentID, transportOverride str
 				if agent.SupportsACP() {
 					acpBackend, err := NewACPBackend(agent)
 					if err != nil {
-						return nil, fmt.Errorf("acp backend for agent %q: %w", agentID, err)
+						return nil, fmt.Errorf("acp backend for agent %q: %w", effectiveAgentID, err)
 					}
 					return acpBackend, nil
 				}
 				// transport override says acp-stdio but agent doesn't support it;
 				// fall through to CLI backend instead of erroring out.
-				slog.Warn("agent does not support acp-stdio transport, falling back to CLI", "agentID", agentID)
+				slog.Warn("agent does not support acp-stdio transport, falling back to CLI", "agentID", effectiveAgentID)
 			}
 		}
 	}
