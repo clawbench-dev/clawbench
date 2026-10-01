@@ -835,6 +835,87 @@ func TestBuildChatRequest_EmptyAgentID_InheritsSessionAgent(t *testing.T) {
 	assert.Equal(t, "custom-model", req.Model)
 }
 
+// TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort verifies the
+// queue/push/scheduler path (which passes empty overrides) still honors the
+// user's persisted mode and thinking effort. These live only in context_state,
+// so before the fallback a drained turn silently reverted to the agent default
+// — and for mode there is no agent-level session memory to fall back to.
+func TestBuildChatRequest_EmptyOverrides_InheritSessionModeAndEffort(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', ?)`,
+		"sess-mode-effort",
+		`{"mode":{"currentModeId":"plan"},"thinkingEffort":{"currentId":"high"}}`,
+	)
+	require.NoError(t, err)
+
+	// Empty overrides, exactly as the drain/push path calls it.
+	req := BuildChatRequest("hello", "sess-mode-effort", "/proj", "claude", "acp-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "plan", req.Mode, "drained turn must inherit the session's persisted mode")
+	assert.Equal(t, "high", req.ThinkingEffort, "drained turn must inherit the session's persisted thinking effort")
+}
+
+// TestBuildChatRequest_ExplicitOverrides_WinOverSession pins the priority order:
+// an explicit pick (the direct-send path) must beat the persisted value.
+func TestBuildChatRequest_ExplicitOverrides_WinOverSession(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"acp-agent": {ID: "acp-agent", Backend: "claude", Transport: "acp-stdio", AcpCommand: "claude acp"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, context_state) VALUES (?, 1, 'claude', 'T', 'acp-agent', ?)`,
+		"sess-mode-effort-explicit",
+		`{"mode":{"currentModeId":"plan"},"thinkingEffort":{"currentId":"high"}}`,
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-mode-effort-explicit", "/proj", "claude", "acp-agent", "", "low", "default", "", "/proj", false)
+	assert.Equal(t, "default", req.Mode, "explicit mode must win over the persisted one")
+	assert.Equal(t, "low", req.ThinkingEffort, "explicit effort must win over the persisted one")
+}
+
+// TestBuildChatRequest_NoContextState_FallsBackToAgentDefault ensures the new
+// context_state lookup is not required: a session with no persisted state must
+// still build a request using the agent's own defaults.
+func TestBuildChatRequest_NoContextState_FallsBackToAgentDefault(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"plain-agent": {
+			ID:             "plain-agent",
+			Backend:        "claude",
+			ThinkingEffort: "medium",
+			PreferredMode:  "agent-mode",
+		},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	_, err := db.Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'claude', 'T', 'plain-agent')`,
+		"sess-no-ctx",
+	)
+	require.NoError(t, err)
+
+	req := BuildChatRequest("hello", "sess-no-ctx", "/proj", "claude", "plain-agent", "", "", "", "", "/proj", false)
+	assert.Equal(t, "medium", req.ThinkingEffort, "agent's default effort applies when nothing is persisted")
+	assert.Equal(t, "agent-mode", req.Mode, "agent's preferred mode applies when nothing is persisted")
+}
+
 func TestBuildChatRequest_WithAttachments(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()

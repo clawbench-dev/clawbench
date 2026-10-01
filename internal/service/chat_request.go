@@ -40,9 +40,6 @@ import (
 // the user selected in the session, instead of silently reverting to the
 // agent default.
 func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick takes priority
-	effectiveMode := modeOverride                     // Explicit pick takes priority
-
 	agentID = ResolveAgentID(sessionID, agentID)
 
 	// Session-persisted choices fill in when the caller did not specify one.
@@ -58,6 +55,29 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 	if transportOverride == "" {
 		transportOverride = sessionTransport
 	}
+
+	// Mode / thinking effort have no session-level column of their own: the
+	// user's picks are persisted to chat_sessions.context_state (written by
+	// PATCH /api/ai/session/update) and nowhere else. A drained queued turn
+	// passes empty overrides, so without this fallback it would silently drop
+	// the mode the user selected and revert to the agent default — for mode
+	// there is no agent-level session memory at all (agent.EffectiveModeID()
+	// only returns PreferredMode, not the session's current mode). The direct
+	// send path always passes its picks explicitly, so this only changes the
+	// queue/push/scheduler paths, which is the intent.
+	if thinkingEffortOverride == "" || modeOverride == "" {
+		if cs := GetContextState(sessionID); cs != nil {
+			if thinkingEffortOverride == "" && cs.ThinkingEffort != nil {
+				thinkingEffortOverride = cs.ThinkingEffort.CurrentID
+			}
+			if modeOverride == "" && cs.Mode != nil {
+				modeOverride = cs.Mode.CurrentModeID
+			}
+		}
+	}
+
+	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick > session > agent default
+	effectiveMode := modeOverride                     // Explicit pick > session > agent default
 
 	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, effectiveMode)
 
