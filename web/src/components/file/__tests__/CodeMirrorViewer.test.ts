@@ -11,7 +11,16 @@ const i18n = createI18n({
 
 const quoteMocks = vi.hoisted(() => ({ showBar: vi.fn(), hideBar: vi.fn(), isPointerPressed: vi.fn(() => false) }))
 
-vi.mock('@/composables/useMarkdownDiff.ts', () => ({ diffMarkers: ref([]), openDiffDrawer: vi.fn(), clearDiffMarkers: vi.fn() }))
+// A single shared ref stands in for the published diff markers. clearDiffMarkers
+// empties it (as the real one does), so a test asserting the nav's clear button
+// clears the markers has teeth — a no-op mock would let that pass regardless.
+const markdownDiffMock = vi.hoisted(() => ({ clearDiffMarkers: vi.fn() }))
+vi.mock('@/composables/useMarkdownDiff.ts', async () => {
+  const { ref } = await import('vue')
+  const diffMarkers = ref([] as any[])
+  markdownDiffMock.clearDiffMarkers.mockImplementation(() => { diffMarkers.value = [] })
+  return { diffMarkers, openDiffDrawer: vi.fn(), clearDiffMarkers: markdownDiffMock.clearDiffMarkers }
+})
 // Keep the real flash state, but make the baseline re-derivation observable so
 // the change-navigation wiring (restore-on-switch) is pinned.
 vi.mock('@/composables/useFileRefresh.ts', async (importOriginal) => {
@@ -769,6 +778,9 @@ describe('CodeMirrorViewer — change navigation wiring', () => {
     await nextTick()
 
     expect(clearBaseline).toHaveBeenCalledWith('/a.ts')
+    // The published markers must actually be dropped too (the pill disappears).
+    expect(diffMarkers.value).toEqual([])
+    expect(wrapper.find('.file-change-nav').exists()).toBe(false)
   })
 
   it('hides the pill in editable mode (the toolbar owns the surface)', async () => {
