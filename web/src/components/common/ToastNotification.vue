@@ -30,7 +30,7 @@ defineProps({
     margin: 0 auto;
     background: color-mix(in srgb, var(--accent-color) 85%, var(--bg-tertiary));
     color: #fff;
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-full);
     padding: var(--space-3) 14px;
     display: flex;
     align-items: center;
