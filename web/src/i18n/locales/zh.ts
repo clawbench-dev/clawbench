@@ -1321,6 +1321,13 @@ export default {
   file: {
     /** Label for the aggregate upload progress bar. */
     uploading: '上传中...',
+    /** Change navigation pill in the file preview (diff markers). */
+    changeNav: {
+      count: '{count} 处变更',
+      prev: '上一处变更',
+      next: '下一处变更',
+      clear: '清除变更标记',
+    },
     codePreview: {
       title: '代码预览',
       dragToMove: '拖动窗口',

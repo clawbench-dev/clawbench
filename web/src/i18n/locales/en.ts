@@ -1319,6 +1319,13 @@ export default {
   file: {
     /** Label for the aggregate upload progress bar. */
     uploading: 'Uploading...',
+    /** Change navigation pill in the file preview (diff markers). */
+    changeNav: {
+      count: '{count} changes',
+      prev: 'Previous change',
+      next: 'Next change',
+      clear: 'Clear change markers',
+    },
     codePreview: {
       title: 'Code Preview',
       dragToMove: 'Drag to move',
