@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
-import { _setIsPCForTest, _resetPlatformForTest, usePlatformDetect, isAndroidUA, isIOSUA, isIPadOSUA, isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect'
+import { _setPlatformForTest, _resetPlatformForTest, usePlatformDetect, isAndroidUA, isIOSUA, isIPadOSUA, isWindowsUA, isMacDesktopUA, isLinuxDesktopUA, isMobileOSUA } from '@/composables/usePlatformDetect'
 
-// Mock useAppMode to control isAppMode in tests
+// Mock useAppMode to control the host axis in tests
 vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
 }))
@@ -27,59 +27,107 @@ describe('UA detection constants', () => {
   })
 })
 
-describe('usePlatformDetect', () => {
-  it('returns isPC = true for desktop browser (jsdom default UA)', () => {
-    const { isPC } = usePlatformDetect()
-    expect(isPC.value).toBe(true)
+/**
+ * The module exposes three ORTHOGONAL axes, replacing the old conflated `isPC`:
+ *   HOST     — isElectron / isAndroidApp / isWebApp (+ isNativeApp rollup)
+ *   INPUT    — isTouchPrimary
+ *   VIEWPORT — isWideScreen (lives in useWideScreenLayout, not here)
+ *
+ * These tests pin the host/input axes and, crucially, their INDEPENDENCE: a
+ * consumer that picks the wrong axis must fail here rather than silently
+ * inheriting the old conflated behaviour.
+ */
+describe('usePlatformDetect axes', () => {
+  it('defaults to the web host with a fine pointer (jsdom)', () => {
+    const { isElectron, isAndroidApp, isWebApp, isNativeApp, isTouchPrimary } = usePlatformDetect()
+    expect(isWebApp.value).toBe(true)
+    expect(isElectron.value).toBe(false)
+    expect(isAndroidApp.value).toBe(false)
+    expect(isNativeApp.value).toBe(false)
+    // jsdom has no matchMedia; the UA fallback sees a desktop UA → not touch.
+    expect(isTouchPrimary.value).toBe(false)
   })
 
-  it('_setIsPCForTest overrides isPC value', () => {
-    _setIsPCForTest(false)
-    const { isPC } = usePlatformDetect()
-    expect(isPC.value).toBe(false)
-
-    _setIsPCForTest(true)
-    expect(isPC.value).toBe(true)
+  it('_setPlatformForTest drives each axis independently', () => {
+    // A touchscreen laptop: web host, but a coarse primary pointer.
+    _setPlatformForTest({ isElectron: false, isAndroidApp: false, isWebApp: true, isTouchPrimary: true })
+    const a = usePlatformDetect()
+    expect(a.isWebApp.value).toBe(true)
+    expect(a.isTouchPrimary.value).toBe(true)
+    expect(a.isElectron.value).toBe(false)
+    expect(a.isNativeApp.value).toBe(false)
   })
 
-  it('_resetPlatformForTest resets to uninitialized state', () => {
-    const { isPC } = usePlatformDetect()
-    expect(isPC.value).toBe(true)
+  it('_setPlatformForTest keeps isNativeApp consistent with the host axes', () => {
+    _setPlatformForTest({ isElectron: true, isAndroidApp: false, isWebApp: false })
+    expect(usePlatformDetect().isNativeApp.value).toBe(true)
     _resetPlatformForTest()
-    expect(isPC.value).toBe(false)
+    _setPlatformForTest({ isElectron: false, isAndroidApp: true, isWebApp: false })
+    expect(usePlatformDetect().isNativeApp.value).toBe(true)
+  })
+
+  it('_resetPlatformForTest resets every axis', () => {
+    _setPlatformForTest({ isElectron: true, isAndroidApp: true, isWebApp: true, isTouchPrimary: true })
+    _resetPlatformForTest()
+    const a = usePlatformDetect()
+    // Re-initialized from the (mocked) web host.
+    expect(a.isWebApp.value).toBe(true)
+    expect(a.isElectron.value).toBe(false)
+    expect(a.isAndroidApp.value).toBe(false)
+    expect(a.isNativeApp.value).toBe(false)
+    expect(a.isTouchPrimary.value).toBe(false)
   })
 })
 
-describe('isPC logic', () => {
-  it('isPC = false when isAppMode is true (Android native app)', async () => {
+describe('host axis from useAppMode', () => {
+  it('Android WebView: isAndroidApp true, isElectron false, isNativeApp true', async () => {
     vi.doMock('@/composables/useAppMode', () => ({
       useAppMode: () => ({ isAppMode: { value: true }, isDesktopApp: { value: false } }),
     }))
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')
-    // Note: module-level UA constants are already computed with jsdom UA,
-    // so isAndroidUA/isIOSUA/isIPadOSUA are all false. Only isAppMode blocks isPC.
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(false)
+    const { isElectron, isAndroidApp, isWebApp, isNativeApp } = mod.usePlatformDetect()
+    expect(isAndroidApp.value).toBe(true)
+    expect(isElectron.value).toBe(false)
+    expect(isWebApp.value).toBe(false)
+    expect(isNativeApp.value).toBe(true)
+    vi.doUnmock('@/composables/useAppMode')
   })
 
-  it('isPC = true for the Electron desktop shell (isAppMode + isDesktopApp)', async () => {
-    // The Electron shell is a native host (isAppMode = true) but has a physical
-    // keyboard and mouse. Before isDesktopApp was consulted it fell into every
-    // mobile branch — most visibly the bottom-sheet file quick-preview.
+  it('Electron shell: isElectron true, isAndroidApp false', async () => {
+    // Electron is a native host too, so a consumer that tests only "native"
+    // cannot tell the two apart — that is why the axes are separate.
     vi.doMock('@/composables/useAppMode', () => ({
       useAppMode: () => ({ isAppMode: { value: true }, isDesktopApp: { value: true } }),
     }))
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(true)
+    const { isElectron, isAndroidApp, isWebApp, isNativeApp } = mod.usePlatformDetect()
+    expect(isElectron.value).toBe(true)
+    expect(isAndroidApp.value).toBe(false)
+    expect(isWebApp.value).toBe(false)
+    expect(isNativeApp.value).toBe(true)
     // doMock registrations outlive resetModules and would otherwise leak this
-    // isDesktopApp=true into every later UA case (making them read as PC).
+    // isDesktopApp=true into every later case.
     vi.doUnmock('@/composables/useAppMode')
   })
 
-  it('isPC = false for Android browser UA', async () => {
+  it('plain browser: web host, neither native', async () => {
+    vi.doMock('@/composables/useAppMode', () => ({
+      useAppMode: () => ({ isAppMode: { value: false }, isDesktopApp: { value: false } }),
+    }))
+    vi.resetModules()
+    const mod = await import('@/composables/usePlatformDetect')
+    const { isElectron, isAndroidApp, isWebApp, isNativeApp } = mod.usePlatformDetect()
+    expect(isWebApp.value).toBe(true)
+    expect(isElectron.value).toBe(false)
+    expect(isAndroidApp.value).toBe(false)
+    expect(isNativeApp.value).toBe(false)
+  })
+})
+
+describe('input axis falls back to the UA when matchMedia is unavailable', () => {
+  it('Android browser UA → isTouchPrimary true', async () => {
     const androidUA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: androidUA })
     vi.resetModules()
@@ -87,11 +135,10 @@ describe('isPC logic', () => {
     expect(mod.isAndroidUA).toBe(true)
     expect(mod.isIOSUA).toBe(false)
     expect(mod.isIPadOSUA).toBe(false)
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(false)
+    expect(mod.usePlatformDetect().isTouchPrimary.value).toBe(true)
   })
 
-  it('isPC = false for iOS Safari UA', async () => {
+  it('iOS Safari UA → isTouchPrimary true', async () => {
     const iosUA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: iosUA })
     vi.resetModules()
@@ -99,11 +146,10 @@ describe('isPC logic', () => {
     expect(mod.isAndroidUA).toBe(false)
     expect(mod.isIOSUA).toBe(true)
     expect(mod.isIPadOSUA).toBe(false)
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(false)
+    expect(mod.usePlatformDetect().isTouchPrimary.value).toBe(true)
   })
 
-  it('isPC = false for iPadOS 13+ desktop-mode UA with maxTouchPoints > 0', async () => {
+  it('iPadOS 13+ desktop-mode UA (maxTouchPoints > 0) → isTouchPrimary true', async () => {
     const ipadUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: ipadUA })
     Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 })
@@ -112,11 +158,10 @@ describe('isPC logic', () => {
     expect(mod.isAndroidUA).toBe(false)
     expect(mod.isIOSUA).toBe(false)
     expect(mod.isIPadOSUA).toBe(true)
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(false)
+    expect(mod.usePlatformDetect().isTouchPrimary.value).toBe(true)
   })
 
-  it('isPC = true for real Mac desktop UA (Macintosh + maxTouchPoints = 0)', async () => {
+  it('real Mac desktop UA (maxTouchPoints = 0) → isTouchPrimary false', async () => {
     const macUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: macUA })
     Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 })
@@ -128,11 +173,10 @@ describe('isPC logic', () => {
     expect(mod.isAndroidUA).toBe(false)
     expect(mod.isIOSUA).toBe(false)
     expect(mod.isIPadOSUA).toBe(false)
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(true)
+    expect(mod.usePlatformDetect().isTouchPrimary.value).toBe(false)
   })
 
-  it('isPC = true for Windows desktop UA', async () => {
+  it('Windows desktop UA → isTouchPrimary false', async () => {
     const winUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: winUA })
     vi.doMock('@/composables/useAppMode', () => ({
@@ -143,57 +187,44 @@ describe('isPC logic', () => {
     expect(mod.isAndroidUA).toBe(false)
     expect(mod.isIOSUA).toBe(false)
     expect(mod.isIPadOSUA).toBe(false)
-    const { isPC } = mod.usePlatformDetect()
-    expect(isPC.value).toBe(true)
+    expect(mod.usePlatformDetect().isTouchPrimary.value).toBe(false)
   })
 })
 
-describe('OS detection constants', () => {
-  it('isWindowsUA detects Windows NT UA', async () => {
-    const winUA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: winUA })
-    vi.resetModules()
-    const mod = await import('@/composables/usePlatformDetect')
-    expect(mod.isWindowsUA).toBe(true)
-    expect(mod.isMacDesktopUA).toBe(false)
-    expect(mod.isLinuxDesktopUA).toBe(false)
-  })
-
-  it('isMacDesktopUA detects real Mac desktop UA (maxTouchPoints = 0)', async () => {
-    const macUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: macUA })
-    Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 })
-    vi.resetModules()
-    const mod = await import('@/composables/usePlatformDetect')
-    expect(mod.isWindowsUA).toBe(false)
-    expect(mod.isMacDesktopUA).toBe(true)
-    expect(mod.isLinuxDesktopUA).toBe(false)
-  })
-
-  it('isMacDesktopUA excludes iPadOS desktop-mode (maxTouchPoints > 0)', async () => {
+/**
+ * `isMobileOSUA` exists because iPadOS 13+ sends a macOS UA. A caller asking
+ * "is this a desktop computer?" that tests only Android/iOS hands an iPad the
+ * macOS build — the regression this constant prevents.
+ */
+describe('isMobileOSUA covers the iPadOS desktop-mode UA', () => {
+  it('is true for the iPadOS desktop-mode UA', async () => {
     const ipadUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
     Object.defineProperty(navigator, 'userAgent', { configurable: true, value: ipadUA })
     Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 5 })
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')
-    expect(mod.isMacDesktopUA).toBe(false)
+    // The individual predicates disagree — this is exactly the trap.
+    expect(mod.isIOSUA).toBe(false)
+    expect(mod.isAndroidUA).toBe(false)
+    expect(mod.isIPadOSUA).toBe(true)
+    expect(mod.isMobileOSUA).toBe(true)
   })
 
-  it('isLinuxDesktopUA detects Linux desktop UA without Android', async () => {
-    const linuxUA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: linuxUA })
+  it('is false for a real Mac desktop UA', async () => {
+    const macUA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: macUA })
+    Object.defineProperty(navigator, 'maxTouchPoints', { configurable: true, value: 0 })
     vi.resetModules()
     const mod = await import('@/composables/usePlatformDetect')
-    expect(mod.isWindowsUA).toBe(false)
-    expect(mod.isMacDesktopUA).toBe(false)
-    expect(mod.isLinuxDesktopUA).toBe(true)
+    expect(mod.isMobileOSUA).toBe(false)
   })
+})
 
-  it('isLinuxDesktopUA excludes Android UA (Linux + Android)', async () => {
-    const androidUA = 'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36'
-    Object.defineProperty(navigator, 'userAgent', { configurable: true, value: androidUA })
-    vi.resetModules()
-    const mod = await import('@/composables/usePlatformDetect')
-    expect(mod.isLinuxDesktopUA).toBe(false)
+describe('exported UA constants stay available', () => {
+  it('exposes the desktop-OS predicates used by the download / proxy copy', () => {
+    expect(typeof isWindowsUA).toBe('boolean')
+    expect(typeof isMacDesktopUA).toBe('boolean')
+    expect(typeof isLinuxDesktopUA).toBe('boolean')
+    expect(typeof isMobileOSUA).toBe('boolean')
   })
 })

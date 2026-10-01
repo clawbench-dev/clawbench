@@ -40,7 +40,12 @@ export function buildSwaggerSrcdoc(specJson: string, isDark: boolean = false, sc
   ::-webkit-scrollbar-thumb:hover { background: #999; }
   ::-webkit-scrollbar-button { display: none; }
   ::-webkit-scrollbar-corner { background: transparent; }
-  * { scrollbar-color: ${scrollbarThumb} ${scrollbarTrack}; }
+  /* Firefox only — Chromium 121+ drops every ::-webkit-scrollbar rule above
+     (arrows included) as soon as scrollbar-color is set. Firefox has no px
+     control, so thin approximates the 4px bar. */
+  @supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-color: ${scrollbarThumb} ${scrollbarTrack}; scrollbar-width: thin; }
+  }
   /* Hide the top bar (Swagger UI logo + URL input) — we provide the spec inline */
   .swagger-ui .topbar { display: none; }
   /* Tighten page margins so content uses more of the preview area */

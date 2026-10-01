@@ -373,7 +373,18 @@ html.wallpaper-active .drilldown-item:active {
     background: transparent;
 }
 
-/* Firefox: scrollbar-color only — scrollbar-width overrides ::-webkit-scrollbar in Chrome 121+ */
-* {
-    scrollbar-color: var(--scrollbar-thumb) transparent;
+/* Firefox only. Chromium 121+ disables ALL ::-webkit-scrollbar-* rules the
+   moment `scrollbar-color` is set — including the `-button { display: none }`
+   above — so the bar silently reverts to the native one: 15px wide and
+   carrying the ▲/▼ arrow buttons we just hid. Gating on `::-webkit-scrollbar`
+   support keeps the custom bar in Chromium, while Firefox (no webkit
+   pseudo-elements) still gets `scrollbar-color` theming.
+
+   Firefox has no px control over the bar, only `auto | thin | none`, so the
+   thickness is approximated with `thin`. */
+@supports not selector(::-webkit-scrollbar) {
+    * {
+        scrollbar-color: var(--scrollbar-thumb) transparent;
+        scrollbar-width: thin;
+    }
 }

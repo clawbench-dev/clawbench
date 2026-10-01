@@ -421,6 +421,28 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 - **表单控件行高必须是整数 px**：`--input-line-height: 18px`。textarea 文字顶对齐，内容盒高度恰是一行时没有余量；Android WebView 会**独立地**四舍五入行盒和内容盒高度，CJK 字体升降部更大，分数行高下两次舍入不再抵消，光标会明显偏高。桌面 Chrome 恰好舍入一致，所以**只在 WebView 复现**。
 - **畸形表单标签要重置 `white-space`**：DOMPurify 会保留真实 `<option>` / `<optgroup>` / `<select>`，而 UA 样式给 `<option>` 加了 `nowrap`，会静默撑破气泡（`overflow:hidden` 裁掉）。`ChatMessageItem.vue:641` 逐标签重置。
 
+### 红线 7：`scrollbar-color` / `scrollbar-width` 会让 Chromium 弃用 `::-webkit-scrollbar-*`
+
+只要给某个元素（或 `*`）设了**标准属性** `scrollbar-color` 或 `scrollbar-width`，Chromium 121+ 就**整体忽略**该元素的全部 `::-webkit-scrollbar-*` 规则——包括 `::-webkit-scrollbar-button { display: none }`。表现：自定义的 4px 细滚动条**退回 15px 原生条**，并且**上下箭头按钮复活**（实测 headed Chrome：17px 带箭头 vs 6px 无箭头）。
+
+`base.css` 原先把 `* { scrollbar-color: … }` 写成了无门控的全局规则，于是紧跟其上的 webkit 细条与 `-button` 规则全部失效——**箭头就是这么冒出来的**。
+
+正解是把标准属性**只留给没有 webkit 伪元素的引擎**（Firefox）：
+
+```css
+@supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-color: var(--scrollbar-thumb) transparent; }
+}
+```
+
+`::-webkit-scrollbar-*` 规则本身保持无门控（Chromium 会走它）。**三处同源**：`web/css/base.css`、`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）——改一处必须三处同改，`__tests__/scrollbarNoArrowButtons.test.ts` 同时钉住。
+
+**粗细全端统一为 4px**（三处同源都是字面量 `4px`，没有 token）。曾短暂按输入设备/宽屏分档（鼠标面 12px）以便更好点、也避开分割条抓取带，但**已按用户要求回退**——统一一个尺寸，跨设备观感一致；分割条那边的冲突在分割条侧解决（见 `SplitDivider.vue`）。守卫会拒绝任何重新引入的分档：出现 `--scrollbar-size` 或第二个 `12px` 宽度即失败。
+
+> Firefox 只有 `auto | thin | none`，没有 px 控制，所以统一用 `scrollbar-width: thin` 近似 4px（放在已有的 webkit 门控里）。
+
+> 验证必须在 **headed** 浏览器里看（headless 用 overlay 滚动条，量不出宽度也画不出箭头）。
+
 ---
 
 ## 改动检查清单
@@ -514,6 +536,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
+| `__tests__/scrollbarNoArrowButtons.test.ts` | `scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活） |
 
 **写新守卫时注意两个坑**（都实际栽过）：
 1. **jsdom 不解析 `var()` 和 `color-mix()`**——`getComputedStyle` 会把 `var(--x)` 原样返回。所以 token 类断言必须**读源码**，不能读计算样式。

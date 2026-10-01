@@ -26,11 +26,19 @@ export function shouldAutoRefocusTerminal(
  * Whether the terminal blur-refocus workaround should be installed at all.
  *
  * The workaround exists only for the Android WebView soft-keyboard quirk (see
- * the comment above). On desktop (isPC) it is not only unnecessary but harmful:
- * in the wide-screen split layout the terminal panel stays active while the
- * chat pane is on the right, so a blur on the xterm textarea can re-claim focus
- * from the chat input in the same tick, making the chat textarea unfocusable.
+ * the comment above) — so the question is HOST, not input: it must be on for
+ * the Android shell and off for the Electron shell, even though both are native
+ * hosts and both usually have no fine pointer.
+ *
+ * On any other host it is not only unnecessary but harmful: in the wide-screen
+ * split layout the terminal panel stays active while the chat pane is on the
+ * right, so a blur on the xterm textarea can re-claim focus from the chat input
+ * in the same tick, making the chat textarea unfocusable.
+ *
+ * (This used to take `isPC` — the conflated predicate — which asked "is this
+ * not a desktop?" and so answered `true` for Android by accident. Naming the
+ * host directly makes the intent checkable.)
  */
-export function shouldInstallTerminalBlurRefocus(isPC: boolean): boolean {
-  return !isPC
+export function shouldInstallTerminalBlurRefocus(isAndroidApp: boolean): boolean {
+  return isAndroidApp
 }

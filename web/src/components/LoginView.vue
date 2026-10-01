@@ -474,7 +474,16 @@ onMounted(() => {
     margin-bottom: 0;
     max-height: 160px;
     overflow-y: auto;
-    scrollbar-width: thin;
+}
+
+/* Firefox only: Chromium 121+ ignores every ::-webkit-scrollbar rule (the 4px
+   themed bar and the hidden arrow buttons in base.css) as soon as the element
+   sets `scrollbar-width`. Gating keeps the custom bar in Chromium while Firefox
+   still gets a slim bar here. */
+@supports not selector(::-webkit-scrollbar) {
+    .server-selector {
+        scrollbar-width: thin;
+    }
 }
 
 .server-list-header {

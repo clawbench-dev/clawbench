@@ -12,15 +12,15 @@ import { nextTick, ref, defineComponent, h } from 'vue'
 import { createI18n } from 'vue-i18n'
 import ChatInputBar from '../ChatInputBar.vue'
 import { apiGet } from '@/utils/api'
-import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import enLocale from '@/i18n/locales/en'
 import zhLocale from '@/i18n/locales/zh'
 import { _resetChatDraftsForTesting } from '@/utils/chatDraftStore.ts'
 
 // `isAndroidUA` is a module-level constant read from navigator.userAgent, so
-// the real `_setIsPCForTest` hook cannot drive it. Override only that export
+// the real `_setPlatformForTest` hook cannot drive it. Override only that export
 // (via a getter) and keep the rest of the module real, so the existing
-// _setIsPCForTest-based cases keep working.
+// _setPlatformForTest-based cases keep working.
 const platform = vi.hoisted(() => ({ isAndroid: false }))
 vi.mock('@/composables/usePlatformDetect', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/composables/usePlatformDetect')>()),
@@ -2877,19 +2877,19 @@ describe('ChatInputBar', () => {
 
     it('shows the swipe-history hint in the placeholder only on mobile surfaces', async () => {
       // PC: swipe hint must NOT be in the rotating placeholder hints
-      _setIsPCForTest(true)
+      _setPlatformForTest({ isTouchPrimary: false })
       let wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).not.toContain('Swipe history')
       wrapper.unmount()
       // Mobile (non-PC): swipe hint must be present
-      _setIsPCForTest(false)
+      _setPlatformForTest({ isTouchPrimary: true })
       wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('Swipe history')
       wrapper.unmount()
     })
 
     it('always includes the @ file-reference hint in the rotating placeholder hints', async () => {
-      _setIsPCForTest(true)
+      _setPlatformForTest({ isTouchPrimary: false })
       const wrapper = mountBar({ currentSessionId: 's1', messages: HISTORY })
       expect(wrapper.vm.placeholderHints).toContain('File ref')
       wrapper.unmount()

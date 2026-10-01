@@ -40,7 +40,7 @@ vi.mock('@/utils/mediaBlockFactory.ts', () => ({
   annotateMediaBlocksIn: (doc: Document) => { seenDocs.push(doc) },
 }))
 vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  usePlatformDetect: () => ({ isPC: { value: true } }),
+  useWideScreenLayout: () => ({ isWideScreen: { value: true } }),
 }))
 vi.mock('@/utils/chatRenderUtils.ts', () => ({
   rewriteImageUrls: (h: string) => h,

@@ -2,7 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, ref } from 'vue'
 import CompletionPopover from '@/components/common/CompletionPopover.vue'
-import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { readWebFile } from '@/testUtils/readWebFile'
 
 // Mock the singleton composable so each test controls state directly.
@@ -718,7 +718,7 @@ describe('CompletionPopover', () => {
     it('uses the mobile top slide-down transition by default', () => {
         // jsdom 的 UA 是桌面 Chrome，usePlatformDetect 会推出 isPC=true；
         // 这里显式钉成移动端，才能验证默认分支。
-        _setIsPCForTest(false)
+        _setPlatformForTest({ isTouchPrimary: true })
         mockState.active = ref(makeItem())
         mountPopover()
 
@@ -729,7 +729,7 @@ describe('CompletionPopover', () => {
     })
 
     it('uses the desktop bottom-right slide-in transition on a PC', () => {
-        _setIsPCForTest(true)
+        _setPlatformForTest({ isTouchPrimary: false })
         mockState.active = ref(makeItem())
         mountPopover()
 
@@ -740,7 +740,7 @@ describe('CompletionPopover', () => {
     })
 
     it('pins the desktop layer to the bottom-right corner', () => {
-        _setIsPCForTest(true)
+        _setPlatformForTest({ isTouchPrimary: false })
         mockState.active = ref(makeItem())
         mountPopover()
 

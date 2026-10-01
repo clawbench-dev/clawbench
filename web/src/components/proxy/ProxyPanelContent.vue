@@ -16,7 +16,7 @@
 
     <div class="proxy-panel">
       <!-- App mode: tunnel status banners -->
-      <template v-if="isAppMode">
+      <template v-if="isNativeApp">
         <!-- Current transport (ssh / h2 / auto). Hidden when the host cannot
              report one (older Android/Electron bridge) rather than guessing. -->
         <div v-if="transportLabel" class="tunnel-transport">
@@ -54,7 +54,7 @@
       </template>
 
       <!-- Web mode: app recommendation banner -->
-      <div v-if="!isAppMode" class="tunnel-banner tip tunnel-banner--square">
+      <div v-if="isWebApp" class="tunnel-banner tip tunnel-banner--square">
         <Smartphone :size="16" />
         <div class="tunnel-banner-content">
           <span class="tunnel-banner-detail">{{ t('proxy.appRecommendation') }}</span>
@@ -62,7 +62,7 @@
       </div>
 
       <!-- Web mode: manual SSH tunnel guide -->
-      <div v-if="!isAppMode && sshInfo && sshInfo.enabled" class="tunnel-guide">
+      <div v-if="isWebApp && sshInfo && sshInfo.enabled" class="tunnel-guide">
         <div class="tunnel-guide-header" @click="tunnelGuideExpanded = !tunnelGuideExpanded">
           <Lock :size="14" />
           <span>{{ t('proxy.tunnelGuide') }}</span>
@@ -295,10 +295,9 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import { usePortForward } from '@/composables/usePortForward.ts'
-import { useAppMode } from '@/composables/useAppMode'
 import { useTabDrawer } from '@/composables/useTabDrawer.ts'
 import { useToast } from '@/composables/useToast.ts'
-import { isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect.ts'
+import { usePlatformDetect, isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from '@/composables/usePlatformDetect.ts'
 import { sshInstallHint } from '@/utils/portForwardUtils.ts'
 
 const { t } = useI18n()
@@ -341,12 +340,13 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, isAppMode, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+// Host axis (see usePlatformDetect). `isNativeApp` is true for BOTH native
+// hosts; `isAndroidApp` excludes the Electron desktop shell.
+const { isNativeApp, isAndroidApp, isWebApp } = usePlatformDetect()
 // `isAppMode` is true for BOTH native hosts (it is just isNativeApp()), so any
 // banner whose copy is Android-specific must additionally exclude the Electron
 // desktop shell. Same predicate as SettingsCategory.vue / FileManagerContent.vue.
-const { isDesktopApp } = useAppMode()
-const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 const toast = useToast()
 
 // Human label for the transport currently carrying the tunnel. '' when the

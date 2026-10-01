@@ -159,7 +159,7 @@ describe('TerminalPanel xterm selection defaults', () => {
 
     const tabWatcher = source.slice(
       source.indexOf('watch(activeTabId'),
-      source.indexOf('const { isPC } = usePlatformDetect()'),
+      source.indexOf('const { isAndroidApp, isTouchPrimary } = usePlatformDetect()'),
     )
     expect(tabWatcher).toContain('quoteQuestion.hideBar()')
   })

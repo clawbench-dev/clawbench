@@ -6,11 +6,13 @@ vi.mock('@/utils/appLog', () => ({
 }))
 
 vi.mock('@/composables/usePlatformDetect', () => {
-  const isPC = { value: false }
+  const isTouchPrimary = { value: true }
   return {
-    usePlatformDetect: () => ({ isPC }),
-    _setIsPCForTest: (val: boolean) => { isPC.value = val },
-    _resetPlatformForTest: () => { isPC.value = false },
+    usePlatformDetect: () => ({ isTouchPrimary }),
+    _setPlatformForTest: (v: { isTouchPrimary?: boolean }) => {
+      if (v.isTouchPrimary !== undefined) isTouchPrimary.value = v.isTouchPrimary
+    },
+    _resetPlatformForTest: () => { isTouchPrimary.value = true },
   }
 })
 
@@ -29,7 +31,7 @@ vi.mock('@/utils/tableRowExpand.ts', () => {
 
 import { useTableRowExpand } from '@/composables/useTableRowExpand.ts'
 import { parseTableDataFromElement, isTableDragClick } from '@/utils/tableRowExpand.ts'
-import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect.ts'
+import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect.ts'
 
 describe('useTableRowExpand', () => {
   beforeEach(() => {
@@ -108,7 +110,7 @@ describe('useTableRowExpand', () => {
   })
 
   it('handleTableRowClick returns false on PC even for a touch click (no row viewer on PC)', () => {
-    _setIsPCForTest(true)
+    _setPlatformForTest({ isTouchPrimary: false })
     const { handleTableRowClick, tableRowModal } = useTableRowExpand()
     const table = document.createElement('table')
     table.setAttribute('data-table-idx', '0')

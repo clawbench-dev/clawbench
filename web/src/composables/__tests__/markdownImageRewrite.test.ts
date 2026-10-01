@@ -1,7 +1,7 @@
 import { describe, expect, it, beforeEach } from 'vitest'
 import { renderMarkdown } from '@/composables/useMarkdownRenderer.ts'
 import { store } from '@/stores/app.ts'
-import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect.ts'
+import { _setWideScreenForTest } from '@/composables/useWideScreenLayout.ts'
 
 /**
  * Regression tests for relative markdown image handling.
@@ -19,8 +19,8 @@ describe('renderMarkdown relative image handling', () => {
   beforeEach(() => {
     store.state.projectRoot = '/proj'
     store.state.homeDir = '/home'
-    _resetPlatformForTest()
-    _setIsPCForTest(true)
+    // Thumbnail width follows the VIEWPORT axis, not the input device.
+    _setWideScreenForTest(true)
   })
 
   it('keeps src and applies thumbnail + lightbox to a relative image', () => {
@@ -45,8 +45,8 @@ describe('renderMarkdown relative image handling', () => {
     expect(r.html).toContain('data-full-src="/api/fs/raw/logo.png"')
   })
 
-  it('uses mobile thumbnail width when device is not PC', () => {
-    _setIsPCForTest(false)
+  it('uses the smaller thumbnail width on a narrow layout', () => {
+    _setWideScreenForTest(false)
     const r = renderMarkdown('![a](img/logo.png)', {})
     expect(r.html).toContain('src="/api/fs/thumb?target=img/logo.png&amp;w=640"')
     expect(r.html).toContain('data-full-src="/api/fs/raw/img/logo.png"')

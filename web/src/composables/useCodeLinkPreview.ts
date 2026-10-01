@@ -100,7 +100,7 @@ let activePreviewClose: (() => void) | null = null
 export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
   const { containerRef } = options
   const { localConfig } = useSettingsConfig()
-  const { isPC } = usePlatformDetect()
+  const { isTouchPrimary } = usePlatformDetect()
 
   const enabled = computed(() => options.enabled
     ? options.enabled.value
@@ -273,7 +273,7 @@ export function useCodeLinkPreview(options: UseCodeLinkPreviewOptions = {}) {
 
   const isTouchDevice = (): boolean => {
     if (typeof window === 'undefined') return false
-    if (!isPC.value) return true
+    if (isTouchPrimary.value) return true
     if (typeof window.innerWidth === 'number' && window.innerWidth < 768) return true
     if (typeof window.matchMedia !== 'undefined') {
       if (window.matchMedia('(hover: none), (pointer: coarse)').matches) return true

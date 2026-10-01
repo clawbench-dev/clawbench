@@ -26,6 +26,7 @@
           :key="tab.id"
           class="terminal-tab"
           :class="{ active: tab.id === activeTabId }"
+          :data-session-id="tab.sessionId || ''"
           @click="handleTabClick(tab.id)"
         >
           <span class="terminal-tab-title" :title="tab.cwd">{{ tab.title }}</span>
@@ -41,6 +42,7 @@
       </div>
       <button
         class="terminal-tab-add"
+        data-action="new-tab"
         :class="{ disabled: !canCreateMore }"
         :disabled="!canCreateMore"
         @click="handleCreateTab"
@@ -48,10 +50,11 @@
       >
         <PlusIcon :size="14" />
       </button>
-      <template v-if="isPC">
+      <template v-if="!isTouchPrimary">
       <button
         v-if="cwdProbeSupported === true"
         class="terminal-tab-add"
+        data-action="open-current-dir"
         @click="openCurrentDirInFileManager"
         :title="t('terminal.openCurrentDir')"
       >
@@ -59,6 +62,7 @@
       </button>
       <button
         class="terminal-tab-add"
+        data-action="theme"
         @click="openThemeMenu"
         :title="t('terminal.theme')"
       >
@@ -66,6 +70,7 @@
       </button>
       <button
         class="terminal-tab-add"
+        data-action="quick-commands"
         ref="cmdBtnTopRef"
         @click="openCommands"
         :title="t('terminal.quickCommands')"
@@ -125,7 +130,7 @@
     </div>
 
     <!-- Virtual key toolbar -->
-    <div class="terminal-toolbar" v-show="!isPC">
+    <div class="terminal-toolbar" v-show="isTouchPrimary">
       <!-- Symbol bar (toggleable, above main toolbar) -->
       <Transition name="symbol-bar">
         <div v-if="showSymbolBar" class="symbol-bar">
@@ -191,7 +196,7 @@
     </template>
 
     <!-- Quick commands popup -->
-    <PopupMenu v-model:show="showCommands" :target-element="isPC ? cmdBtnTopRef : cmdBtnRef" :max-width="260" :max-height="280" :menu-items-count="visibleCommands.length + 1">
+    <PopupMenu v-model:show="showCommands" :target-element="isTouchPrimary ? cmdBtnRef : cmdBtnTopRef" :max-width="260" :max-height="280" :menu-items-count="visibleCommands.length + 1">
       <div class="quick-send-title">{{ t('terminal.quickCommands') }}</div>
       <button v-for="cmd in visibleCommands" :key="cmd.id" class="quick-send-item" @click="executeCommand(cmd)">
         <span class="qs-label">{{ cmd.label }}</span>
@@ -209,7 +214,7 @@
     <!-- Terminal help drawer -->
     <TerminalHelpDrawer
       :open="helpDrawer.effectiveOpen.value"
-      :gestures="!isPC"
+      :gestures="isTouchPrimary"
       :app-mode="isAppMode"
       :mac="isMacDesktopUA"
       :copy-on-select="copyOnSelect"
@@ -946,7 +951,7 @@ watch(activeTabId, () => {
   nextTick(() => nextTick(() => gestures.attach()))
 })
 
-const { isPC } = usePlatformDetect()
+const { isAndroidApp, isTouchPrimary } = usePlatformDetect()
 
 ;(window as unknown as { __onVolumeKey?: (direction: 'up' | 'down') => void }).__onVolumeKey = (direction: 'up' | 'down') => {
   if (direction === 'up') terminalKeys.sendArrowUp()
@@ -1068,7 +1073,7 @@ function mountTabToContainer(tab: TerminalTab, container: HTMLElement) {
   // decision logic lives in shouldAutoRefocusTerminal() (utils/terminalBlurUtils.ts)
   // and is unit-tested; keep any new "should dismiss" exceptions gated there.
   const installBlurRefocus = () => {
-    if (!shouldInstallTerminalBlurRefocus(isPC.value)) return
+    if (!shouldInstallTerminalBlurRefocus(isAndroidApp.value)) return
     const textareaEl = tab.xterm?.textarea
     if (!textareaEl || (textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus) return
     ;(textareaEl as unknown as { __blurRefocus?: boolean }).__blurRefocus = true

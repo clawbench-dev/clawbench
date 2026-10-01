@@ -25,7 +25,7 @@
           <button class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.multiSelect.archive')" @click="doBatchArchive">
             <Package :size="16" />
           </button>
-          <button v-if="isAppMode && allSelectedAreFiles" class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.multiSelect.share')" @click="doBatchShare">
+          <button v-if="isNativeApp && allSelectedAreFiles" class="toolbar-btn" :disabled="multiSelect.selected.size === 0" :title="t('file.multiSelect.share')" @click="doBatchShare">
             <Share2 :size="16" />
           </button>
           <button class="toolbar-btn ms-toolbar-danger" :disabled="multiSelect.selected.size === 0" :title="t('common.delete')" @click="doBatchDelete">
@@ -495,7 +495,7 @@
             <Download :size="14" />
             {{ t('common.download') }}
           </div>
-          <div class="context-menu-item" v-if="isAppMode && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
+          <div class="context-menu-item" v-if="isNativeApp && ctxMenu.entry.type !== 'dir'" @click.stop="doShareExternal">
             <Share2 :size="14" />
             {{ t('file.context.shareExternal') }}
           </div>
@@ -572,7 +572,6 @@ import {
 import { store } from '@/stores/app.ts'
 import { navToFileInManager, openFilePath } from '@/composables/useFilePathAnnotation.ts'
 import { localConfig, setLocalConfig, getZoomedViewport, toFixedCSS } from '@/composables/useSettingsConfig'
-import { useAppMode } from '@/composables/useAppMode.ts'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useTerminalStatus } from '@/composables/useTerminalStatus.ts'
 import { useFileUpload } from '@/composables/useFileUpload.ts'
@@ -600,15 +599,8 @@ import { requestAttachmentTarget } from '@/composables/useConversationTarget.ts'
 import { toDisplayEntry, highlightName } from '@/utils/fileSearchMark'
 
 const toast = inject('toast', null)
-const { isAppMode, isDesktopApp } = useAppMode()
-const { isPC } = usePlatformDetect()
-/**
- * True only in the Android WebView shell. `isAppMode` is just `isNativeApp()`,
- * so it is ALSO true in the Electron desktop shell — gating desktop-capable
- * features on `!isAppMode` hides them there. Same predicate as
- * SettingsCategory.vue and the keyboard-shortcut guard below.
- */
-const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
+// Host axis (which shell) + input axis (touch vs mouse). See usePlatformDetect.
+const { isAndroidApp, isNativeApp, isTouchPrimary } = usePlatformDetect()
 const { t, locale } = useI18n()
 const TAG = 'FileManager'
 
@@ -1008,8 +1000,8 @@ const dirPreviewName = computed(() => {
 // Minimum pane heights. Mobile viewports are short (a phone leaves ~500px for
 // the panel), so the desktop minimums would leave almost no room to drag; use
 // tighter floors there and keep the roomier desktop values on a PC.
-const previewPaneMinTop = computed(() => (isPC.value ? 160 : 120))
-const previewPaneMinBottom = computed(() => (isPC.value ? 200 : 140))
+const previewPaneMinTop = computed(() => (isTouchPrimary.value ? 120 : 160))
+const previewPaneMinBottom = computed(() => (isTouchPrimary.value ? 140 : 200))
 
 function collapsePreviewPane() {
     previewPaneOpen.value = false
@@ -2196,7 +2188,7 @@ function handleItemClick(e) {
     // PC Shift+click extends the selection over the contiguous range from the
     // anchor. It never opens the entry and does not move the anchor, so
     // repeated Shift+clicks re-extend from the same starting point.
-    if (isPC.value && e.shiftKey) {
+    if (!isTouchPrimary.value && e.shiftKey) {
         if (!multiSelect.active) enterMultiSelectKeepSelection()
         extendRangeTo(path)
         return
@@ -2204,7 +2196,7 @@ function handleItemClick(e) {
 
     // PC Ctrl/Cmd+click toggles multi-select without entering the explicit mode first.
     // Keep any previously selected paths: Ctrl+click accumulates a multi-selection.
-    if (isPC.value && (e.ctrlKey || e.metaKey)) {
+    if (!isTouchPrimary.value && (e.ctrlKey || e.metaKey)) {
         if (!multiSelect.active) {
             // Seed the batch with the previously highlighted file so the
             // prior single selection is included in the multi-selection.
@@ -2233,7 +2225,7 @@ function handleItemClick(e) {
     // synthesize `dblclick`, and a timing window silently fails slow tappers.
     // "Tap the selected item again" has no timing constraint and matches the
     // iOS Files / Google Drive convention.
-    if (!isPC.value && filePreviewMode.value) {
+    if (isTouchPrimary.value && filePreviewMode.value) {
         const alreadySelected = selectedPath.value === path
         selectedPath.value = path
         setRangeAnchor(path)
@@ -2269,7 +2261,7 @@ function handleItemClick(e) {
         }
         return
     }
-    if (isPC.value) return
+    if (!isTouchPrimary.value) return
 
     // Touch without preview mode: the original one-tap-to-enter behavior.
     openItem(action, path)
@@ -2280,7 +2272,7 @@ function handleItemDblClick(e) {
     // Touch enters through the select-then-tap path in handleItemClick. Some
     // touch browsers still emit a native dblclick, which would enter twice —
     // ignore it here so exactly one open happens per gesture.
-    if (!isPC.value) return
+    if (isTouchPrimary.value) return
     const item = e.target.closest('.file-item, .grid-item')
     if (!item) return
     if (multiSelect.active) return
@@ -2433,7 +2425,7 @@ async function doArchive(paths, zipName) {
         }
         const blob = result.blob
         const native = getNative()
-        if (isAppMode.value && native && native.downloadBlob) {
+        if (isNativeApp.value && native && native.downloadBlob) {
             // Android native: convert blob to base64 and pass to native bridge
             const reader = new FileReader()
             reader.onload = () => {
@@ -2537,12 +2529,10 @@ async function handleKeydown(e) {
     if (activeTab.value !== 'browse') return
     // Focus-aware: in wide-screen mode also require the left pane to be focused
     if (props.keyboardActive === false) return
-    // Skip in the Android WebView shell only. `isAppMode` is true for BOTH
-    // native hosts (it is just isNativeApp()), and Electron has a physical
-    // keyboard — keying on isAppMode alone silently disabled every shortcut
-    // below on the desktop shell. Same exclusion as SettingsCategory.vue and
-    // useGlobalEvents.
-    if (isAppMode.value && !isDesktopApp.value) return
+    // Skip in the Android WebView shell only. Naming the host directly (rather
+    // than testing "is this native?") is what keeps the Electron shell's
+    // physical keyboard working — see usePlatformDetect's HOST axis.
+    if (isAndroidApp.value) return
     // Skip if a dialog/prompt is open (don't interfere with input fields)
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return
 

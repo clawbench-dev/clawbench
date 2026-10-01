@@ -208,7 +208,7 @@ describe('shareLinks — integration through the markdown pipeline', () => {
     try {
       const { html, detectedPaths } = buildMarkdownPreviewDom(
         { content: '[Guide](./docs/guide.md)', path: '/repo/readme.md' },
-        { isPC: true, imageTimestamp: 1 }
+        { isWideScreen: true, imageTimestamp: 1 }
       )
       expect(detectedPaths).toEqual([])
       expect(html).toContain(SHARE_PATH_ATTR + '="/repo/docs/guide.md"')

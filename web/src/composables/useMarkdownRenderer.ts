@@ -4,7 +4,7 @@ import { injectTableRowAttrsIn } from '@/utils/tableRowExpand.ts'
 import { annotateCodeBlockHeadersIn, annotateTableBlockHeadersIn } from '@/composables/useCodeBlockHeader.ts'
 import { rewriteImageUrls, markInlineSvgs, convertAudioLinks, convertVideoLinks, getThumbWidth } from '@/utils/chatRenderUtils.ts'
 import { annotateMediaBlocksIn } from '@/utils/mediaBlockFactory.ts'
-import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { annotateFilePathsIn } from '@/composables/useFilePathAnnotation.ts'
 import { annotateCommitHashesIn } from '@/composables/useCommitHashAnnotation.ts'
 import { annotateWorktreePathsIn } from '@/composables/useWorktreeAnnotation.ts'
@@ -337,9 +337,9 @@ export function renderMarkdown(
     if (!skipEnhancements) {
         const projectRoot = store.state.projectRoot
         const homeDir = store.state.homeDir
-        const { isPC } = usePlatformDetect()
+        const { isWideScreen } = useWideScreenLayout()
 
-        html = rewriteImageUrls(html, projectRoot, getThumbWidth(isPC.value))
+        html = rewriteImageUrls(html, projectRoot, getThumbWidth(isWideScreen.value))
         html = convertAudioLinks(html, projectRoot)
         html = convertVideoLinks(html, projectRoot)
 

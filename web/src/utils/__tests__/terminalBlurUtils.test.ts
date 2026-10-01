@@ -28,14 +28,16 @@ describe('shouldAutoRefocusTerminal', () => {
 })
 
 describe('shouldInstallTerminalBlurRefocus', () => {
-  it('installs the blur-refocus workaround on touch platforms (non-PC)', () => {
-    expect(shouldInstallTerminalBlurRefocus(false)).toBe(true)
+  it('installs the blur-refocus workaround in the Android WebView host', () => {
+    // The quirk is Android's soft keyboard, so the argument is the HOST axis —
+    // not "is this a desktop?". Electron is also a native host yet must not
+    // install it, which is exactly why the parameter is named isAndroidApp.
+    expect(shouldInstallTerminalBlurRefocus(true)).toBe(true)
   })
 
-  it('does NOT install the blur-refocus workaround on desktop/PC', () => {
-    // Desktop (isPC) must not reclaim focus from the chat input in the
-    // wide-screen split layout; the workaround is only for the Android WebView
-    // soft-keyboard quirk.
-    expect(shouldInstallTerminalBlurRefocus(true)).toBe(false)
+  it('does NOT install the workaround outside the Android WebView', () => {
+    // Electron and the browser must not reclaim focus from the chat input in the
+    // wide-screen split layout.
+    expect(shouldInstallTerminalBlurRefocus(false)).toBe(false)
   })
 })

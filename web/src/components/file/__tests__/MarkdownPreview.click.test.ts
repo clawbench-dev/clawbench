@@ -20,7 +20,7 @@ vi.mock('@/composables/useMarkdownRenderer.ts', () => ({
 }))
 
 vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  usePlatformDetect: () => ({ isPC: ref(true) }),
+  useWideScreenLayout: () => ({ isWideScreen: ref(true) }),
 }))
 
 vi.mock('@/composables/useDoubleClickCopy.ts', () => ({

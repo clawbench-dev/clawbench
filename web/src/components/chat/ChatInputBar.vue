@@ -526,17 +526,16 @@ const settingsDrawer = useTabDrawer('chat')
 const placeholderIndex = ref(0)
 let placeholderTimer = null
 
-// `!isPC` = mobile surface (Android/iOS app, phone/tablet browser, iPadOS) —
-// exactly where the swipe-history gesture is available, so its hint is shown
-// only there.
-const { isPC } = usePlatformDetect()
+// A coarse primary pointer (touch) is exactly where the swipe-history gesture
+// is available, so its hint is shown only there.
+const { isTouchPrimary } = usePlatformDetect()
 
 // The candidate hints cycle when the textarea is empty, unfocused, and not in queue/upload mode.
 // The plain "type a message" hint is omitted — it's implied by the empty input box.
 // When quickSendItems exist, the cycle includes the quick-send tip; otherwise it's skipped.
 const placeholderHints = computed(() => {
   const hints = []
-  if (!isPC.value) {
+  if (isTouchPrimary.value) {
     hints.push(t('chat.input.placeholderSwipeHistory'))
   }
   if (quickSendItems.value.length > 0) {

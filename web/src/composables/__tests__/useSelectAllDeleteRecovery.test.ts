@@ -14,7 +14,7 @@ vi.mock('@/composables/usePlatformDetect', () => ({
   // A getter, not a constant: the composable reads this on every event, so the
   // value must reflect the current test's platform.
   get isAndroidUA() { return platform.isAndroid },
-  usePlatformDetect: () => ({ isPC: { value: false } }),
+  usePlatformDetect: () => ({ isTouchPrimary: { value: true } }),
 }))
 
 import { useSelectAllDeleteRecovery } from '@/composables/useSelectAllDeleteRecovery'

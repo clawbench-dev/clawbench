@@ -52,7 +52,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import { renderMermaidInElement } from '@/composables/useMarkdownRenderer.ts'
-import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { useDoubleClickCopy } from '@/composables/useDoubleClickCopy.ts'
 import { useQuoteQuestion } from '@/composables/useQuoteQuestion.ts'
 import { useFilePathAnnotation } from '@/composables/useFilePathAnnotation.ts'
@@ -212,7 +212,7 @@ function onImageLoad() {
 }
 
 const { verifyFilePaths, resolveRelativePath, openFilePath, parseFileUri, readLineTargetFromEl } = useFilePathAnnotation()
-const { isPC } = usePlatformDetect()
+const { isWideScreen } = useWideScreenLayout()
 const codeLinkPreview = useCodeLinkPreview({
     containerRef: bodyRef,
     source: 'file',
@@ -431,7 +431,7 @@ async function doRender(f: { content: string; path?: string; error?: boolean }) 
             projectRoot: store.state.projectRoot,
             homeDir: store.state.homeDir,
         },
-        { isPC: isPC.value, imageTimestamp: imageTimestamp.value }
+        { isWideScreen: isWideScreen.value, imageTimestamp: imageTimestamp.value }
     )
     renderedHtml.value = annotatedHtml
 

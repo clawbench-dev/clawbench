@@ -22,7 +22,7 @@ import { dirName, joinPath, splitPath, isAbsolutePath, normalizeSlashes } from '
 import { escapeHtml } from '@/utils/html.ts'
 import { isThumbExtension, buildThumbUrl, getThumbWidth, markInlineSvgs } from '@/utils/chatRenderUtils.ts'
 import { annotateMediaBlocks } from '@/utils/mediaBlockFactory.ts'
-import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 import { isShareMode, shareApiUrl } from '@/share/shareMode'
 import { annotateShareLinks } from '@/share/shareLinks.ts'
 
@@ -56,8 +56,8 @@ export interface FixLocalImagePathsOptions {
     baseDir: string
     /** Cache-buster appended to /api/fs/raw/ URLs (?t=…). */
     imageTimestamp: number
-    /** Desktop (true) uses a wider inline thumbnail. */
-    isPC: boolean
+    /** Wide-screen (true) uses a wider inline thumbnail — a viewport question. */
+    isWideScreen: boolean
 }
 
 /**
@@ -74,7 +74,7 @@ export interface FixLocalImagePathsOptions {
  *   header bar (view / attach / open buttons) — uniform across mobile and PC.
  */
 export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html: string) => string {
-    const { baseDir, imageTimestamp, isPC } = opts
+    const { baseDir, imageTimestamp, isWideScreen } = opts
     return function fixLocalImagePaths(html: string): string {
         const currentDir = baseDir
         let result = html.replace(/<img\s+([^>]*src=[^>]*)>/gi, (match: string, attrs: string) => {
@@ -142,7 +142,7 @@ export function createFixLocalImagePaths(opts: FixLocalImagePathsOptions): (html
             // The thumb endpoint takes a path in its own right (absolute paths are
             // stat'd directly), so the absolute form is passed encoded as-is.
             const thumbSrc = isThumbExtension(src)
-                ? buildThumbUrl(isAbsoluteSrc ? encodeURIComponent(src) : rel, getThumbWidth(isPC))
+                ? buildThumbUrl(isAbsoluteSrc ? encodeURIComponent(src) : rel, getThumbWidth(isWideScreen))
                 : null
             // data-attach-src carries the DECODED project-relative file path (resolved
             // against the markdown file's dir) so the rendered view can re-drag the
@@ -208,13 +208,13 @@ export interface BuildMarkdownPreviewDomResult {
  */
 export function buildMarkdownPreviewDom(
     source: MarkdownSource,
-    opts: { isPC?: boolean; imageTimestamp?: number } = {}
+    opts: { isWideScreen?: boolean; imageTimestamp?: number } = {}
 ): BuildMarkdownPreviewDomResult {
     const { content, path, projectRoot = '', homeDir = '' } = source
     const currentDir = path ? dirName(path) : ''
-    const { isPC } = usePlatformDetect()
+    const { isWideScreen: currentIsWideScreen } = useWideScreenLayout()
 
-    const effectiveIsPC = opts.isPC ?? isPC.value
+    const effectiveIsWideScreen = opts.isWideScreen ?? currentIsWideScreen.value
     const imageTimestamp = opts.imageTimestamp ?? Date.now()
 
     const html = renderMarkdownHtml(content, {
@@ -223,7 +223,7 @@ export function buildMarkdownPreviewDom(
         fixImagePaths: createFixLocalImagePaths({
             baseDir: currentDir,
             imageTimestamp,
-            isPC: effectiveIsPC,
+            isWideScreen: effectiveIsWideScreen,
         }),
     })
 

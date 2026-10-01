@@ -20,13 +20,15 @@ vi.mock('@/composables/useLocale', () => ({
   gt: (key: string) => key,
 }))
 
-// Mock usePlatformDetect — default to mobile (isPC = false) so copy works.
-// Use the test hooks to flip isPC for PC-mode tests.
-const mockIsPC = { value: false }
+// Mock usePlatformDetect — default to a TOUCH surface so double-click copy
+// works (it is a touch-only gesture). The hooks flip it for desktop cases.
+const mockIsTouchPrimary = { value: true }
 vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({ isPC: mockIsPC }),
-  _setIsPCForTest: (val: boolean) => { mockIsPC.value = val },
-  _resetPlatformForTest: () => { mockIsPC.value = false },
+  usePlatformDetect: () => ({ isTouchPrimary: mockIsTouchPrimary }),
+  _setPlatformForTest: (v: { isTouchPrimary?: boolean }) => {
+    if (v.isTouchPrimary !== undefined) mockIsTouchPrimary.value = v.isTouchPrimary
+  },
+  _resetPlatformForTest: () => { mockIsTouchPrimary.value = true },
 }))
 
 // Ensure CSS.escape is available in jsdom
@@ -203,7 +205,7 @@ describe('useDoubleClickCopy', () => {
   describe('handleDblClick — double-click copy', () => {
     afterEach(() => {
       vi.useRealTimers()
-      mockIsPC.value = false
+      mockIsTouchPrimary.value = true
     })
 
     it('copies text on double-click of same element within threshold', () => {
@@ -275,7 +277,7 @@ describe('useDoubleClickCopy', () => {
 
     it('does not copy on double-click in PC mode', () => {
       vi.useRealTimers()
-      mockIsPC.value = true
+      mockIsTouchPrimary.value = false
       const { handleDblClick } = useDoubleClickCopy()
 
       const p = document.createElement('p')
@@ -298,7 +300,7 @@ describe('useDoubleClickCopy', () => {
 
     it('does not call onCopy on double-click in PC mode', () => {
       vi.useRealTimers()
-      mockIsPC.value = true
+      mockIsTouchPrimary.value = false
       const onCopy = vi.fn()
       const { handleDblClick } = useDoubleClickCopy({ onCopy })
 
@@ -321,7 +323,7 @@ describe('useDoubleClickCopy', () => {
 
     it('still opens file links on double-click in PC mode', () => {
       vi.useRealTimers()
-      mockIsPC.value = true
+      mockIsTouchPrimary.value = false
       const { handleDblClick } = useDoubleClickCopy()
       const onOpenFile = vi.fn()
 
