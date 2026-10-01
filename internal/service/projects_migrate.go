@@ -158,8 +158,10 @@ func migrateProjectsToIDs() error { //nolint:gocyclo // ordered multi-table conv
 	// scope. Where the new schema enforces one row per project, the extra rows
 	// must go before the rebuild recreates that constraint — otherwise the copy
 	// fails and, because InitDB's error exits the process, the server refuses to
-	// start after an upgrade. This runs for every rebuild table rather than only
-	// for the ones known to be affected today.
+	// start after an upgrade.
+	//
+	// Coverage comes from projectScopeSpecs, which is hand-maintained: this call
+	// does NOT discover the tables automatically. See the note on that variable.
 	if err := dropDuplicateScopedRows(tx); err != nil {
 		return err
 	}
@@ -474,6 +476,16 @@ type projectScopeSpec struct {
 // constraint. project_forges and recent_projects also carry a UNIQUE index that
 // createTables recreates after the migration, so a leftover duplicate would fail
 // there too, just later.
+//
+// This is a HAND-MAINTAINED list, not a derived one. A table that gains a
+// UNIQUE(...project_id) constraint must be added here, or the rebuild's
+// INSERT ... SELECT fails on the duplicate and — because InitDB's error exits
+// the process — the server refuses to start after an upgrade.
+// TestRebuildTables_ProjectScopedUniquenessIsDeduplicated enforces that.
+//
+// session_tags is deliberately absent: it carries UNIQUE(name, project_id) but
+// is deduplicated by rebuildSessionTagsAndLinks instead, which has to run
+// separately anyway to preserve its inbound foreign key from session_tag_links.
 var projectScopeSpecs = []projectScopeSpec{
 	// UNIQUE(project_id): one recents entry per project. Keep the most recently
 	// accessed, so the merge does not lose the newer "when did I last open it".

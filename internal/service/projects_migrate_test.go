@@ -1131,3 +1131,81 @@ func repoRootForTest(t *testing.T) string {
 		dir = parent
 	}
 }
+
+// ── Rebuild-table dedup coverage (WARN-102) ──────────────────────────────
+//
+// dropDuplicateScopedRows iterates a HAND-MAINTAINED list (projectScopeSpecs),
+// so a rebuilt table that gains a UNIQUE(...project_id) constraint is only
+// deduplicated if someone remembers to add it. Forgetting means the rebuild's
+// INSERT ... SELECT hits a duplicate and InitDB returns an error — which exits
+// the process, so the server refuses to start after an upgrade.
+//
+// This test turns that memory requirement into a failing assertion: every
+// rebuilt table whose post-migration DDL carries a project-scoped UNIQUE must
+// be covered, either by projectScopeSpecs or by the dedicated session_tags
+// path.
+
+// projectScopedUniqueRe matches a project-scoped UNIQUE in a CREATE TABLE body.
+// SQLite expresses it two ways and the migration produces both, so a pattern
+// that only understands one of them silently checks nothing:
+//
+//	UNIQUE(project_id)                   table-level   (session_tags: UNIQUE(name, project_id))
+//	project_id INTEGER NOT NULL UNIQUE   column-level  (recent_projects)
+//
+// Matching the column-level form needs the UNIQUE to appear on the same
+// definition as the project_id column, so it is matched as "project_id ...
+// UNIQUE" without an intervening comma (which would start the next column).
+var projectScopedUniqueRe = regexp.MustCompile(`(?is)(UNIQUE\s*\([^)]*\bproject_id\b[^)]*\)|\bproject_id\b[^,()]*\bUNIQUE\b)`)
+
+func TestRebuildTables_ProjectScopedUniquenessIsDeduplicated(t *testing.T) {
+	raw := openLegacyDB(t)
+	_ = raw.Close()
+	requireNoError(t, InitDB(true))
+	defer CloseDB()
+
+	// Tables deduplicated by rebuildSessionTagsAndLinks rather than by
+	// projectScopeSpecs, for the foreign-key reason documented on that function.
+	handledElsewhere := map[string]bool{"session_tags": true}
+
+	covered := make(map[string]bool, len(projectScopeSpecs))
+	for _, spec := range projectScopeSpecs {
+		covered[spec.table] = true
+	}
+
+	checked := 0
+	detected := map[string]bool{}
+	for _, rt := range legacyRebuildTables {
+		var ddl string
+		if err := db.QueryRow(
+			"SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='table' AND name=?", rt.name,
+		).Scan(&ddl); err != nil {
+			t.Fatalf("read DDL of %s: %v", rt.name, err)
+		}
+		if !projectScopedUniqueRe.MatchString(ddl) {
+			continue
+		}
+		checked++
+		detected[rt.name] = true
+		if covered[rt.name] || handledElsewhere[rt.name] {
+			continue
+		}
+		t.Errorf("rebuilt table %q has a project-scoped UNIQUE after migration but is not "+
+			"deduplicated: add it to projectScopeSpecs (or handle it explicitly like "+
+			"session_tags), or the upgrade will fail and the server will not start", rt.name)
+	}
+
+	// Guard the scan against passing vacuously. Both spellings of a
+	// project-scoped UNIQUE must be recognized: recent_projects uses the
+	// column-level form (`project_id ... UNIQUE`) and session_tags the
+	// table-level one. A pattern that only understands one would silently check
+	// nothing, and the loop above would report success for the wrong reason.
+	for _, must := range []string{"recent_projects", "session_tags"} {
+		if !detected[must] {
+			t.Fatalf("failed to detect the project-scoped UNIQUE on %q — the detection "+
+				"pattern is broken, so this test proves nothing", must)
+		}
+	}
+	if checked < 2 {
+		t.Fatalf("detected only %d project-scoped UNIQUE constraints, expected at least 2", checked)
+	}
+}
