@@ -18,6 +18,10 @@
   justify-content: flex-start;
   border: none;
   padding: 0;
+  /* This element is a <button> and the repo has no global button-background
+     reset, so without this it falls back to the UA `buttonface` — an opaque
+     grey block, i.e. the very 20px block this marker replaced. */
+  background: transparent;
   cursor: pointer;
   /* Rail at rest is muted; hover/focus brings it and the chip to full. */
   opacity: var(--opacity-muted);

@@ -21,18 +21,28 @@ describe('diff marker rail', () => {
   const viewerCss = readFileSync(resolve(__dirname, '../../../assets/code-viewer.css'), 'utf8')
 
   it('draws the rail from theme tokens, not hard-coded rgba colours', () => {
-    expect(markerCss).not.toMatch(/rgba\(\s*255\s*,\s*165\s*,\s*0/)
-    expect(markerCss).not.toMatch(/rgba\(\s*255\s*,\s*80\s*,\s*80/)
-    expect(markerCss).not.toMatch(/rgba\(\s*80\s*,\s*200\s*,\s*80/)
+    // No rgba() at all: the old implementation hard-coded orange/red/green, and
+    // any re-introduced literal colour would bypass a 3-literal denylist.
+    expect(markerCss).not.toContain('rgba(')
     expect(markerCss).toContain('var(--diff-mod-accent)')
     expect(markerCss).toContain('var(--diff-del-accent)')
     expect(markerCss).toContain('var(--diff-add-accent)')
   })
 
-  it('draws the rail 3px wide', () => {
+  it('is transparent at rest, so the UA buttonface block never shows', () => {
+    // The element is a <button>; with no global button-background reset it
+    // falls back to the UA `buttonface` (an opaque grey 20px block) unless the
+    // base rule explicitly clears it.
+    const base = markerCss.match(/\.diff-marker\s*\{[\s\S]*?\}/)
+    expect(base).toBeTruthy()
+    expect(base![0]).toContain('background: transparent')
+  })
+
+  it('draws the rail 3px wide, pinned to the right edge', () => {
     const rail = markerCss.match(/\.diff-marker::before\s*\{[\s\S]*?\}/)
     expect(rail).toBeTruthy()
     expect(rail![0]).toContain('width: 3px')
+    expect(rail![0]).toContain('right: 0')
   })
 
   it('keeps a tappable hit area wider than the rail', () => {
