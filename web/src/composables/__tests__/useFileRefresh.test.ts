@@ -152,6 +152,10 @@ import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 describe('useFileRefresh deduplication', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Baselines are module-level state; reset them here so no test can inherit a
+    // baseline seeded by an earlier describe (a marker assertion could otherwise
+    // pass for the wrong reason).
+    clearAllBaselines()
     flashRanges.value = []
     flashType.value = 'add'
     diffMarkers.value = []
@@ -270,7 +274,8 @@ describe('useFileRefresh deduplication', () => {
 
   describe('syncMarkersFor (accumulated baseline)', () => {
     beforeEach(() => {
-      clearAllBaselines()
+      // clearAllBaselines() now runs in the outer beforeEach (baselines are
+      // module-level and must not leak across describes).
       vi.clearAllMocks()
       diffMarkers.value = []
     })
@@ -298,12 +303,26 @@ describe('useFileRefresh deduplication', () => {
 
     it('restores markers when re-syncing the same path later', () => {
       recordBaseline('c.go', 'v1\n')
+      // The module mock defaults computeCodeDiffMarkers to [], which would make
+      // this assertion vacuous ([] === []). Return real markers so a broken
+      // restore path actually fails.
+      const markers = [{
+        id: 'code-modified-1-1',
+        type: 'modified' as const,
+        label: 'M',
+        blockSelector: '',
+        lineNumbers: [1],
+        charDiff: null,
+        ariaLabel: 'modified line 1',
+      }]
+      ;(computeCodeDiffMarkers as any).mockReturnValueOnce(markers)
       syncMarkersFor('c.go', 'code', 'v2\n')
-      const first = diffMarkers.value
+      expect(diffMarkers.value).toEqual(markers)
       // Simulate navigating away then back: markers cleared, then re-synced.
       diffMarkers.value = []
+      ;(computeCodeDiffMarkers as any).mockReturnValueOnce(markers)
       syncMarkersFor('c.go', 'code', 'v2\n')
-      expect(diffMarkers.value).toEqual(first)
+      expect(diffMarkers.value).toEqual(markers)
     })
   })
 })
