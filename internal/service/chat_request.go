@@ -40,24 +40,12 @@ import (
 // the user selected in the session, instead of silently reverting to the
 // agent default.
 func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, modelOverride, thinkingEffortOverride, modeOverride, transportOverride, fileDir string, hasAttachments bool) ai.ChatRequest {
-	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick takes priority
-	effectiveMode := modeOverride                     // Explicit pick takes priority
-
 	agentID = ResolveAgentID(sessionID, agentID)
 
-	// Session-persisted choices fill in when the caller did not specify one.
-	// Read once here so every caller (direct send, queue drain, push) behaves
-	// identically — the queue path previously passed empty overrides and lost
-	// the user's model/transport selection.
-	sessionModel := GetSessionModel(sessionID)
-	sessionTransport := GetSessionTransport(sessionID)
+	modelOverride, transportOverride, thinkingEffortOverride, modeOverride = applySessionOverrides(sessionID, modelOverride, transportOverride, thinkingEffortOverride, modeOverride)
 
-	if modelOverride == "" {
-		modelOverride = sessionModel
-	}
-	if transportOverride == "" {
-		transportOverride = sessionTransport
-	}
+	effectiveThinkingEffort := thinkingEffortOverride // Explicit pick > session > agent default
+	effectiveMode := modeOverride                     // Explicit pick > session > agent default
 
 	systemPrompt, agentModel, agentCommand, effectiveThinkingEffort, effectiveMode := resolveAgentConfig(agentID, projectPath, modelOverride, effectiveThinkingEffort, effectiveMode)
 
@@ -168,6 +156,41 @@ func BuildChatRequest(prompt, sessionID, projectPath, backendName, agentID, mode
 		ForkContext:            forkContext,
 		Compacted:              compacted,
 	}
+}
+
+// applySessionOverrides fills each empty override from the session's persisted
+// choice, so every caller (direct send, queue drain, push, scheduler) behaves
+// identically. The queue path historically passed empty overrides and lost the
+// user's selection.
+//
+// Sources differ by field:
+//   - model / transport have their own chat_sessions columns;
+//   - mode / thinking effort have NO column — the user's picks live only in
+//     chat_sessions.context_state (written by PATCH /api/ai/session/update).
+//     Without reading context_state a drained turn would silently revert to the
+//     agent default, and for mode there is no agent-level session memory at all
+//     (agent.EffectiveModeID() returns only PreferredMode, not the session's
+//     current mode).
+//
+// Explicit overrides always win; this only fills the blanks.
+func applySessionOverrides(sessionID, modelOverride, transportOverride, thinkingEffortOverride, modeOverride string) (string, string, string, string) {
+	if modelOverride == "" {
+		modelOverride = GetSessionModel(sessionID)
+	}
+	if transportOverride == "" {
+		transportOverride = GetSessionTransport(sessionID)
+	}
+	if thinkingEffortOverride == "" || modeOverride == "" {
+		if cs := GetContextState(sessionID); cs != nil {
+			if thinkingEffortOverride == "" && cs.ThinkingEffort != nil {
+				thinkingEffortOverride = cs.ThinkingEffort.CurrentID
+			}
+			if modeOverride == "" && cs.Mode != nil {
+				modeOverride = cs.Mode.CurrentModeID
+			}
+		}
+	}
+	return modelOverride, transportOverride, thinkingEffortOverride, modeOverride
 }
 
 // resolveAgentConfig looks up the agent and derives the prompt, model, command,
