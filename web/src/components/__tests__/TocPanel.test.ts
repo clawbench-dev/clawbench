@@ -1,6 +1,8 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick, defineComponent } from 'vue'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import TocPanel from '@/components/TocPanel.vue'
 
 // ── Mocks ──
@@ -649,3 +651,71 @@ describe('TocPanel — code-row observation is scoped to the file container', ()
     mine.remove()
   })
 })
+
+describe('TocPanel — container has no padding, only the search box does', () => {
+  // The TOC dock's list rows must sit flush with the dock edges: `.toc-item`
+  // hover/active backgrounds and the 2px level indent read as inset panels when
+  // the container pads them. Only the search box keeps a gutter.
+  it('gives .toc-body no padding at all', () => {
+    const body = cssRule('.toc-body')
+    expect(body, '.toc-body rule must exist').not.toBeNull()
+    expect(body!.decl('padding')).toBe('0')
+  })
+
+  it('does not re-add horizontal padding via padding-left/right or a shorthand', () => {
+    const body = cssRule('.toc-body')
+    expect(body!.has('padding-left')).toBe(false)
+    expect(body!.has('padding-right')).toBe(false)
+    // A `padding: <v> <h>` shorthand would re-introduce the side gutters.
+    expect(body!.decl('padding')).not.toMatch(/var\(--space|px/)
+  })
+
+  it('keeps the horizontal gutter on the search row instead', () => {
+    const row = cssRule('.toc-search-row')
+    expect(row, '.toc-search-row rule must exist').not.toBeNull()
+    const padding = row!.decl('padding') || ''
+    // Vertical + horizontal shorthand, horizontal side non-zero.
+    const parts = padding.split(/\s+/)
+    expect(parts.length).toBeGreaterThanOrEqual(2)
+    expect(parts[1]).toMatch(/var\(--space|px/)
+  })
+})
+
+/**
+ * Extract a single top-level rule body from TocPanel's scoped `<style>` block.
+ * Hand-rolled rather than regex-on-the-whole-file so an edit to a different
+ * rule cannot accidentally satisfy the assertion (and so the read follows the
+ * same cwd-resolution dance as TocDock.test.ts).
+ */
+function cssRule(selector: string): { decl: (prop: string) => string; has: (prop: string) => boolean } | null {
+  const src = readSource('TocPanel.vue')
+  const scoped = src.slice(src.indexOf('<style scoped>'))
+  const block = scoped.match(new RegExp(`\\${selector}\\s*\\{([^}]*)\\}`))
+  if (!block) return null
+  // Strip comments before parsing: the `.toc-body` block documents its own
+  // "no padding" decision in a comment, and a naive `(?:^|;)` lookup would skip
+  // the declaration that follows it (the test then passes for the wrong reason).
+  const declarations = block[1].replace(/\/\*[\s\S]*?\*\//g, '')
+  const map = new Map<string, string>()
+  for (const part of declarations.split(';')) {
+    const idx = part.indexOf(':')
+    if (idx < 0) continue
+    map.set(part.slice(0, idx).trim(), part.slice(idx + 1).trim())
+  }
+  return {
+    decl: (prop: string) => map.get(prop) ?? '',
+    has: (prop: string) => map.has(prop),
+  }
+}
+
+/** Read an SFC source; cwd differs between a bare vitest run and vitest-run.sh. */
+function readSource(relPath: string): string {
+  for (const base of [process.cwd(), resolve(process.cwd(), 'web')]) {
+    try {
+      return readFileSync(resolve(base, 'src/components/' + relPath), 'utf8')
+    } catch {
+      // try the next candidate
+    }
+  }
+  throw new Error(relPath + ' not found from cwd: ' + process.cwd())
+}
