@@ -85,7 +85,11 @@
   }
 }
 
-/* Diff marker inline structural positioning (visual styles in diff-marker.css) */
+/* Diff marker inline structural positioning (visual styles in diff-marker.css).
+   The element is the HIT AREA, kept 20px wide so a thin rail stays comfortably
+   tappable; the visible 3px rail is drawn by .diff-marker::before at this
+   element's right edge (the reading column's right edge). Do NOT shrink this to
+   3px — that would make the marker nearly unhittable. */
 .diff-marker-inline {
     position: absolute;
     right: 0;

@@ -11,10 +11,11 @@
         :class="`diff-marker-${pm.type}`"
         :style="{ top: pm.top + 'px', height: pm.height + 'px' }"
         :data-marker-id="pm.id"
+        :data-marker-label="pm.label"
         role="button"
         tabindex="0"
         :aria-label="pm.ariaLabel"
-      >{{ pm.label }}</button>
+      ></button>
     </div>
   </div>
 
@@ -508,7 +509,10 @@ defineExpose({
        .markdown-body used to be centered with `margin: 0 auto`, so a marker at
        right:0 sat at the element border — i.e. half the slack (W−900)/2 in from
        the screen edge. Now the element is full-width (padding-based cap), so the
-       same visual spot is `right: max(0px, (100% − 900px)/2)`. */
+       same visual spot is `right: max(0px, (100% − 900px)/2)`.
+
+       Width stays 20px: this element is the HIT AREA. The visible 3px rail is
+       drawn by .diff-marker::before at its right edge. */
     right: max(0px, (100% - 900px) / 2);
     width: 20px;
     height: auto;
