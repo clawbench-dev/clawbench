@@ -2947,3 +2947,64 @@ func TestNewPushQueueID_UniqueWithinSecond(t *testing.T) {
 		seen[id] = true
 	}
 }
+
+// TestSetLaunchSessionExecutionForTest_RestoresDefault pins the test seam's
+// contract (both branches) and — via the real enqueue path — asserts that an
+// omitted agentId is resolved to the session's agent before it reaches the
+// executor. This lives in package service so the seam body itself is covered by
+// this package's own test run (cross-package calls from internal/handler do not
+// count toward internal/service coverage).
+func TestSetLaunchSessionExecutionForTest_RestoresDefault(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	origList := model.AgentList
+	origDefault := model.DefaultAgentID
+	model.Agents = map[string]*model.Agent{
+		"seam-session-agent": {ID: "seam-session-agent", Backend: "claude"},
+		"seam-default-agent": {ID: "seam-default-agent", Backend: "claude"},
+	}
+	model.AgentList = []*model.Agent{{ID: "seam-session-agent"}, {ID: "seam-default-agent"}}
+	model.DefaultAgentID = "seam-default-agent"
+	defer func() {
+		model.Agents = origAgents
+		model.AgentList = origList
+		model.DefaultAgentID = origDefault
+	}()
+
+	sid := "seam-inherit-agent"
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, 1, 'claude', 'T', 'seam-session-agent')",
+		sid,
+	)
+	require.NoError(t, err)
+
+	// Substitute the launch seam so no real AI backend starts.
+	var launched []LaunchConfig
+	restore := SetLaunchSessionExecutionForTest(func(cfg LaunchConfig) {
+		launched = append(launched, cfg)
+	})
+	defer SetLaunchSessionExecutionForTest(restore)
+	defer ClearQueuedMessages(sid)
+	defer FinishSessionRun(sid)
+
+	started, _, err := EnqueueAndMaybeStart(EnqueueStartConfig{
+		SessionID:   sid,
+		ProjectPath: "/test",
+		BackendName: "claude",
+		// AgentID intentionally omitted: it must be inherited from the session.
+		Message: "hello",
+		QueueID: "seam-pending-1",
+	})
+	require.NoError(t, err)
+	require.True(t, started)
+
+	require.Len(t, launched, 1, "idle session must launch exactly one execution")
+	assert.Equal(t, "seam-session-agent", launched[0].AgentID,
+		"an omitted agentId must be resolved to the session's agent before launch")
+
+	// Passing nil must restore the real implementation (not leave the stub).
+	assert.NotNil(t, SetLaunchSessionExecutionForTest(nil), "restoring must return the previous seam")
+	assert.NotNil(t, launchSessionExecution, "the seam must never be left nil")
+}
