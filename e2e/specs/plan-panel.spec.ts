@@ -21,9 +21,15 @@ test.describe('Plan Progress Panel', () => {
     chat = new ChatPage(page)
     // Ensure the page is loaded and the bridge is available
     await page.waitForFunction(() => !!(window as any).__clawbench?.updatePlanEntries, undefined, { timeout: 10000 })
+    // Plan state is module-level and survives navigation, so a prior test's
+    // injected plan would leak into the "no plan data" case. Clear it first.
+    await page.evaluate(() => {
+      const bridge = (window as any).__clawbench
+      if (bridge?.clearPlanState) bridge.clearPlanState()
+    })
   })
 
-  /** Inject plan entries via the E2E bridge and wait for Vue to render */
+  /** Inject plan entries via the E2E bridge; callers await the rendered result. */
   async function injectPlanEntries(page: any, entries: Array<{ content: string; priority: string; status: string }>) {
     await page.evaluate((entries) => {
       const bridge = (window as any).__clawbench
@@ -31,8 +37,6 @@ test.describe('Plan Progress Panel', () => {
         bridge.updatePlanEntries(entries)
       }
     }, entries)
-    // Wait for Vue to render the plan panel
-    await page.waitForTimeout(200)
   }
 
   const sampleEntries = [

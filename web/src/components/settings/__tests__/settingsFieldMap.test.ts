@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getServerFieldToLabelKey, categoryItems, categoryHasPanels, isPanelOnlyCategory, getCategoryPanels, isSubPageRoute, getSubPagePanel, getSubPageTitleKey, subPagePanelMap, buildFontFamilyOptions } from '@/components/settings/settingsFieldMap'
 import { UI_SCALE_STEP } from '@/utils/uiScale'
+import i18n from '@/i18n'
 
 describe('settingsFieldMap', () => {
   it('maps all server-side dot-path keys to i18n label keys', () => {
@@ -12,7 +13,10 @@ describe('settingsFieldMap', () => {
     expect(map['terminal.enabled']).toBeTruthy()
     expect(map['tts.engine']).toBeTruthy()
     expect(map['rag.base_url']).toBeTruthy()
-    expect(map['port_forward.enabled']).toBeTruthy()
+    // port_forward.enabled is deliberately absent: the listener is always on
+    // (pinned server-side), so it is no longer a settable field.
+    expect(map['port_forward.enabled']).toBeUndefined()
+    expect(map['port_forward.port']).toBeTruthy()
 
     // Hot-reload fields
     expect(map['chat.page_size']).toBeTruthy()
@@ -443,15 +447,56 @@ describe('settingsFieldMap', () => {
 
   // ── Port Forward panel ──
 
-  it('portForward panel has enableKey and commonFields (hot-reload, no needsRestart)', () => {
+  it('portForward panel has NO enable switch — the SSH listener is always on', () => {
+    // The switch was removed with the server-side pin (see ApplyDefaults): the
+    // listener is server-side while the transport choice is client-local, so no
+    // single value could serve every client of one server. Removing it also
+    // removed the "which one does this actually gate?" confusion.
     const panels = getCategoryPanels('portForward')
     expect(panels.length).toBe(1)
     const cfg = panels[0]
-    expect(cfg.enableKey).toBe('port_forward.enabled')
-    expect(cfg.enableLabelKey).toBe('settings.items.portForwardEnabled')
+    expect(cfg.enableKey).toBeUndefined()
+    expect(cfg.enableLabelKey).toBeUndefined()
     expect(cfg.commonFields.length).toBe(1)
     expect(cfg.commonFields[0].key).toBe('port_forward.port')
     expect(cfg.commonFields[0].needsRestart).toBeFalsy()
+  })
+
+  it('portForward panel has NO connectivity test button — the status row replaces it', () => {
+    // The panel used to render both a "Test Connection" button and a tunnel
+    // status row, and they answered overlapping questions. The button could
+    // only ever report the server-side listener (it dials loopback from inside
+    // the server, so it cannot see a client), while the status row reports that
+    // plus the client tunnel and per-port liveness. The row won.
+    const cfg = getCategoryPanels('portForward')[0]
+    expect(cfg.hasConnectivityTest).toBeFalsy()
+    expect(cfg.getTestCategories).toBeUndefined()
+  })
+
+  it('portForward port shows a localized "auto" for 0, never a raw sentinel', () => {
+    // 0 means "auto-assign" to the server, so the row must not render a bare
+    // "0". It used to transform to the literal '__auto__', which reached the
+    // user verbatim: SettingsItem stringifies whatever displayTransform returns
+    // and never looks it up in i18n (SettingsItem.vue displayValue).
+    const cfg = getCategoryPanels('portForward')[0]
+    const transform = cfg.commonFields[0].displayTransform
+    expect(transform, 'port_forward.port must keep a displayTransform').toBeTruthy()
+
+    const auto = String(transform!(0))
+    expect(auto).not.toContain('__')
+    expect(auto).not.toBe('0')
+    // Resolves to a real message rather than echoing the key back. The locale
+    // the module captured is whatever detectLocale() picked (jsdom reports
+    // en-US), so assert against the active locale instead of hardcoding one.
+    expect(auto).toBe(i18n.global.t('settings.items.portForwardPortAuto'))
+    expect(auto).not.toContain('portForwardPortAuto')
+    // And it is genuinely localized: the two locales disagree.
+    const zh = i18n.global.t('settings.items.portForwardPortAuto', {}, { locale: 'zh' })
+    const en = i18n.global.t('settings.items.portForwardPortAuto', {}, { locale: 'en' })
+    expect(zh).not.toBe(en)
+
+    // A concrete port is shown as-is.
+    expect(transform!(20001)).toBe(20001)
   })
 
   // ── FRP panel ──
@@ -484,7 +529,7 @@ describe('settingsFieldMap', () => {
     expect(map['terminal.enabled']).toBe('settings.items.terminalEnabled')
     expect(map['tts.engine']).toBe('settings.items.ttsEngine')
     expect(map['rag.base_url']).toBe('settings.items.ragBaseUrl')
-    expect(map['port_forward.enabled']).toBe('settings.items.portForwardEnabled')
+    expect(map['port_forward.port']).toBe('settings.items.portForwardPort')
     expect(map['frp.enabled']).toBe('settings.items.frpEnabled')
     expect(map['frp.server_addr']).toBe('settings.items.frpServerAddr')
     expect(map['frp.remote_port']).toBe('settings.items.frpRemotePort')

@@ -18,6 +18,7 @@ import { verifyFilePaths } from '@/composables/useFilePathAnnotation.ts'
 import { verifyCommitHashes } from '@/composables/useCommitHashAnnotation.ts'
 import { isShareMode } from '@/share/shareMode'
 import { getSessionId } from '@/composables/useSessionIdentity.ts'
+import { teamMemberColorVar } from './teamMemberColor.ts'
 import { COPY_ICON_SVG, copyWithFlash } from '@/utils/copyButton.ts'
 import { getAskState, patchAskState } from '@/utils/askQuestionState.ts'
 
@@ -764,6 +765,17 @@ function renderPermissionApproval(input: ToolInput, blockCtx?: ToolBlockCtx): st
   }
 
   html += '">'
+
+  // Agent Team attribution: when a team member asks for permission, the card
+  // names it (with its colour) so concurrent members' approvals are
+  // distinguishable. Absent for ordinary single-agent approvals.
+  const teamMember = input.teamMember as { name?: unknown; color?: unknown } | undefined
+  const memberName = teamMember ? str(teamMember.name) : ''
+  if (memberName) {
+    const color = str(teamMember?.color)
+    const dot = color ? teamMemberColorVar(color) : 'var(--text-muted, #6c757d)'
+    html += `<div class="permission-team-member"><span class="permission-team-member__dot" style="background:${dot}"></span>${escapeHtml(memberName)}</div>`
+  }
 
   // Tool that is requesting permission. The card title ("Permission Request")
   // lives on the surrounding card header strip, not here — this body focuses

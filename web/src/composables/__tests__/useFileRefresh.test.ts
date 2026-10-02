@@ -10,6 +10,7 @@
  * in-flight, new calls are deferred until the current one completes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { nextTick } from 'vue'
 
 // ── Timer leak prevention ──
 
@@ -42,25 +43,71 @@ afterEach(() => {
 
 // Mock dependencies before importing
 const closeCurrentFileMock = vi.hoisted(() => vi.fn())
-vi.mock('@/stores/app.ts', () => ({
-  store: {
-    state: {
-      currentFile: null as any,
-      currentDir: undefined as string | undefined,
-    },
-    loadFiles: vi.fn(),
-    selectFile: vi.fn().mockResolvedValue(true),
-    closeCurrentFile: closeCurrentFileMock,
-  },
+// The store mock mirrors the real selectFile contract: it replaces the open
+// file's content with what it fetched. Tests drive content through
+// globalThis.fetch, so selectFile reads the same source. Without this, the
+// refresh path would observe stale content and derive no markers.
+const storeMock = vi.hoisted(() => ({
+  state: null as any,
+  loadFiles: vi.fn(),
+  selectFile: vi.fn(),
+  closeCurrentFile: closeCurrentFileMock,
 }))
+// The real store is reactive, and useFileRefresh registers module-level watchers
+// on `store.state.currentFile.path`. A plain-object mock would make those
+// watchers dead, so the file-navigation tests must drive a reactive state.
+vi.mock('@/stores/app.ts', async () => {
+  const { reactive } = await import('vue')
+  storeMock.state = reactive({ currentFile: null, currentDir: undefined })
+  return { store: storeMock }
+})
+
+/** Faithful stand-in for the real store.selectFile: fetch + apply content. */
+function faithfulSelectFile(path: string): Promise<boolean> {
+  return (globalThis.fetch as typeof fetch)(`/api/fs/file/${encodeURIComponent(path)}`)
+    .then(async (resp) => {
+      if (!resp || !resp.ok) return false
+      const data = await resp.json()
+      if (storeMock.state.currentFile?.path === path) Object.assign(storeMock.state.currentFile, data)
+      else storeMock.state.currentFile = data
+      return true
+    })
+}
+
+/** Restore the faithful selectFile behavior (overrides leak across tests). */
+function resetStoreMock(): void {
+  storeMock.selectFile.mockImplementation(faithfulSelectFile as any)
+}
+
+// Mock implementations set via mockResolvedValue/mockImplementation survive
+// clearAllMocks, so restore the faithful default before every test.
+beforeEach(() => {
+  resetStoreMock()
+})
+
+// Shared markdown-diff state. `clearDiffMarkers` mirrors the real one (which
+// empties the published refs) rather than being a no-op: the drop-to-baseline
+// path relies on it actually clearing `diffMarkers`, so a no-op mock would make
+// that assertion vacuous.
+const mdDiffMock = vi.hoisted(() => {
+  const diffMarkers = { value: [] as any[] }
+  const diffOldContent = { value: null as string | null }
+  const diffOldFilePath = { value: null as string | null }
+  const clearDiffMarkers = vi.fn(() => {
+    diffMarkers.value = []
+    diffOldContent.value = null
+    diffOldFilePath.value = null
+  })
+  return { diffMarkers, diffOldContent, diffOldFilePath, clearDiffMarkers }
+})
 
 vi.mock('@/composables/useMarkdownDiff.ts', () => ({
   computeMarkdownDiff: vi.fn(),
   offscreenExtractBlocks: vi.fn(),
-  diffMarkers: { value: [] },
-  diffOldContent: { value: null },
-  diffOldFilePath: { value: null },
-  clearDiffMarkers: vi.fn(),
+  diffMarkers: mdDiffMock.diffMarkers,
+  diffOldContent: mdDiffMock.diffOldContent,
+  diffOldFilePath: mdDiffMock.diffOldFilePath,
+  clearDiffMarkers: mdDiffMock.clearDiffMarkers,
   extractBlocks: vi.fn(),
   computeCodeDiffMarkers: vi.fn().mockReturnValue([]),
 }))
@@ -108,15 +155,28 @@ vi.mock('@/composables/useDialog.ts', () => ({
   }),
 }))
 
-import { refreshCurrentFile, isRefreshing, flashRanges, flashType, markFileSaved, wasRecentlySaved } from '../useFileRefresh.ts'
+import {
+  refreshCurrentFile,
+  isRefreshing,
+  flashRanges,
+  flashType,
+  markFileSaved,
+  wasRecentlySaved,
+  syncMarkersFor,
+} from '../useFileRefresh.ts'
+import { clearAllBaselines, getBaseline, recordBaseline } from '@/composables/useFileChangeBaseline.ts'
 import { store } from '@/stores/app.ts'
 import { computeDiff } from '@/utils/diffUtils.ts'
-import { computeCodeDiffMarkers, diffMarkers, diffOldContent } from '@/composables/useMarkdownDiff.ts'
+import { computeCodeDiffMarkers, computeMarkdownDiff, offscreenExtractBlocks, diffMarkers, diffOldContent } from '@/composables/useMarkdownDiff.ts'
 import { useFileNavStack } from '@/composables/useFileNavStack.ts'
 
 describe('useFileRefresh deduplication', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Baselines are module-level state; reset them here so no test can inherit a
+    // baseline seeded by an earlier describe (a marker assertion could otherwise
+    // pass for the wrong reason).
+    clearAllBaselines()
     flashRanges.value = []
     flashType.value = 'add'
     diffMarkers.value = []
@@ -231,6 +291,149 @@ describe('useFileRefresh deduplication', () => {
     await refreshCurrentFile()
 
     expect(store.selectFile).not.toHaveBeenCalled()
+  })
+
+  describe('syncMarkersFor (accumulated baseline)', () => {
+    beforeEach(() => {
+      // clearAllBaselines() now runs in the outer beforeEach (baselines are
+      // module-level and must not leak across describes).
+      vi.clearAllMocks()
+      diffMarkers.value = []
+    })
+
+    it('derives code markers from the baseline, not the last refresh', () => {
+      recordBaseline('a.go', 'line1\nline2\n')
+      // computeCodeDiffMarkers is mocked to return [] by the module mock; assert
+      // it was called with the BASELINE as oldContent.
+      syncMarkersFor('a.go', 'code', 'line1\nCHANGED\n')
+      expect(computeCodeDiffMarkers).toHaveBeenCalledWith(
+        expect.anything(),
+        'line1\nline2\n',
+        'line1\nCHANGED\n',
+      )
+    })
+
+    it('produces no markers and records no baseline when none exists', () => {
+      // syncMarkersFor only DERIVES. Recording the baseline is the refresh path's
+      // job (it alone knows the pre-change content); a bare sync must not seed a
+      // baseline, or merely opening a file would create one.
+      syncMarkersFor('b.go', 'code', 'fresh\n')
+      expect(getBaseline('b.go')).toBeNull()
+      expect(diffMarkers.value).toEqual([])
+    })
+
+    it('restores markers when re-syncing the same path later', () => {
+      recordBaseline('c.go', 'v1\n')
+      // The module mock defaults computeCodeDiffMarkers to [], which would make
+      // this assertion vacuous ([] === []). Return real markers so a broken
+      // restore path actually fails.
+      const markers = [{
+        id: 'code-modified-1-1',
+        type: 'modified' as const,
+        label: 'M',
+        blockSelector: '',
+        lineNumbers: [1],
+        charDiff: null,
+        ariaLabel: 'modified line 1',
+      }]
+      ;(computeCodeDiffMarkers as any).mockReturnValueOnce(markers)
+      syncMarkersFor('c.go', 'code', 'v2\n')
+      expect(diffMarkers.value).toEqual(markers)
+      // Simulate navigating away then back: markers cleared, then re-synced.
+      diffMarkers.value = []
+      ;(computeCodeDiffMarkers as any).mockReturnValueOnce(markers)
+      syncMarkersFor('c.go', 'code', 'v2\n')
+      expect(diffMarkers.value).toEqual(markers)
+    })
+
+    it('publishes markdown markers from the baseline on the markdown surface', () => {
+      recordBaseline('doc.md', '# old\n')
+      const oldBlocks = [{ id: 'b0', tag: 'h1', text: '# old' }]
+      const newBlocks = [{ id: 'b0', tag: 'h1', text: '# new' }]
+      const markers = [{
+        id: 'md-modified-0',
+        type: 'modified' as const,
+        label: 'M',
+        blockSelector: '#block-0',
+        charDiff: null,
+        ariaLabel: 'modified block 0',
+      }]
+      ;(offscreenExtractBlocks as any)
+        .mockReturnValueOnce(oldBlocks)
+        .mockReturnValueOnce(newBlocks)
+      ;(computeMarkdownDiff as any).mockReturnValueOnce({ markers, hasChanges: true })
+
+      syncMarkersFor('doc.md', 'markdown', '# new\n')
+
+      // Real markers must be published — the module mock returns undefined by
+      // default, so comparing against [] here would be vacuous.
+      expect(diffMarkers.value).toEqual(markers)
+      expect(diffOldContent.value).toBe('# old\n')
+      // Extracted from the BASELINE (not the current content) and the current
+      // content, in that order.
+      expect(offscreenExtractBlocks).toHaveBeenNthCalledWith(1, '# old\n')
+      expect(offscreenExtractBlocks).toHaveBeenNthCalledWith(2, '# new\n')
+    })
+
+    it('drops markers when the content returns to the baseline', () => {
+      recordBaseline('d.go', 'v1\n')
+      ;(computeCodeDiffMarkers as any).mockReturnValueOnce([{
+        id: 'code-modified-1-1',
+        type: 'modified' as const,
+        label: 'M',
+        blockSelector: '',
+        lineNumbers: [1],
+        charDiff: null,
+        ariaLabel: 'modified line 1',
+      }])
+      syncMarkersFor('d.go', 'code', 'v2\n')
+      expect(diffMarkers.value).not.toEqual([])
+
+      // Content back at the baseline → the marker must be cleared.
+      syncMarkersFor('d.go', 'code', 'v1\n')
+      expect(diffMarkers.value).toEqual([])
+    })
+  })
+})
+
+describe('useFileRefresh file-navigation watch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clearAllBaselines()
+    flashRanges.value = []
+    flashType.value = 'add'
+    diffMarkers.value = []
+    diffOldContent.value = null
+    mdDiffMock.diffOldFilePath.value = null
+    isRefreshing.value = false
+    resetStoreMock()
+  })
+
+  it('clears the diff-drawer side effects (not just the markers) on file switch', async () => {
+    // Regression guard: replacing clearDiffMarkers() with `diffMarkers.value = []`
+    // here left diffOldContent / diffOldFilePath set and the drawer open on the
+    // previous file, with a dead Undo. Assert the full side-effect set.
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'a\n' }
+    diffMarkers.value = [{ id: 'x', type: 'modified', label: 'M', blockSelector: '', lineNumbers: [1], charDiff: null, ariaLabel: 'm' }]
+    diffOldContent.value = 'old\n'
+    mdDiffMock.diffOldFilePath.value = 'a.go'
+
+    store.state.currentFile = { name: 'b.go', path: 'b.go', content: 'b\n' }
+    await nextTick()
+
+    expect(diffMarkers.value).toEqual([])
+    expect(diffOldContent.value).toBeNull()
+    expect(mdDiffMock.diffOldFilePath.value).toBeNull()
+  })
+
+  it('keeps the accumulated baseline across a file switch (markers must survive)', async () => {
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'a\n' }
+    recordBaseline('a.go', 'v1\n')
+    store.state.currentFile = { name: 'b.go', path: 'b.go', content: 'b\n' }
+    await nextTick()
+    // The baseline is what restores the markers on return; navigation must not
+    // drop it.
+    expect(getBaseline('a.go')).toBe('v1\n')
   })
 })
 

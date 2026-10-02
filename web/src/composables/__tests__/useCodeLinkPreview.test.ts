@@ -3,7 +3,7 @@ import { nextTick, ref } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { useCodeLinkPreview, handleVerifiedFilePathClick } from '@/composables/useCodeLinkPreview'
 import { previewCache } from '@/utils/codeLinkPreview'
-import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 
 const { reactiveStore, reactiveLocalConfig } = await vi.hoisted(async () => {
   const { reactive } = await import('vue')
@@ -1377,7 +1377,7 @@ describe('useCodeLinkPreview', () => {
     })
 
     it('never opens a preview from focusin alone (keyboard/touch focus)', () => {
-      _setIsPCForTest(false)
+      _setPlatformForTest({ isTouchPrimary: true })
       const preview = useCodeLinkPreview()
       const anchor = document.createElement('span')
       anchor.className = 'chat-file-path'
@@ -1393,7 +1393,7 @@ describe('useCodeLinkPreview', () => {
     })
 
     it('does not open a preview on desktop keyboard focus alone', () => {
-      _setIsPCForTest(true)
+      _setPlatformForTest({ isTouchPrimary: false })
       const preview = useCodeLinkPreview()
       const anchor = document.createElement('span')
       anchor.className = 'chat-file-path'
@@ -1405,7 +1405,7 @@ describe('useCodeLinkPreview', () => {
     })
 
     it('opens BottomSheet mode on touch device tap and prevents modifier pinned mode', () => {
-      _setIsPCForTest(false)
+      _setPlatformForTest({ isTouchPrimary: true })
       const preview = useCodeLinkPreview()
       const anchor = document.createElement('span')
       anchor.className = 'chat-file-path'

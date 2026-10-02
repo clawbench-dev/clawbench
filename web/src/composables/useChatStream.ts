@@ -6,6 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
+import { updateTeamState } from './useTeamState'
 import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
@@ -647,7 +648,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'content', payload); noteDroppedEvent('content', 'buffered until placeholder'); return }
         const contentData = payload as unknown as ContentEventData
-        dispatch({ type: 'ws_content', text: contentData.content ?? '', parentToolCallId: contentData.parent_tool_call_id })
+        dispatch({ type: 'ws_content', text: contentData.content ?? '', parentToolCallId: contentData.parent_tool_call_id, memberName: contentData.member_name, memberColor: contentData.member_color })
         debouncedRender()
         break
       }
@@ -656,7 +657,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking', payload); noteDroppedEvent('thinking', 'buffered until placeholder'); return }
         const thinkingData = payload as unknown as ThinkingEventData
-        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id })
+        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id, memberName: thinkingData.member_name, memberColor: thinkingData.member_color })
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
         debouncedRender()
@@ -956,6 +957,14 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (Array.isArray(planData.entries)) {
           updatePlanEntries(planData.entries as import('@/composables/usePlanProgress').PlanEntry[])
         }
+        break
+      }
+
+      case 'team_update': {
+        if (sessionChanged()) return
+        // Full-snapshot replace (the wire always sends the whole roster).
+        // A team_deleted payload clears the panel.
+        updateTeamState(payload as unknown as import('@/composables/useTeamState').TeamState)
         break
       }
 

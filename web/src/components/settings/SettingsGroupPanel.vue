@@ -5,7 +5,9 @@
     <div v-if="showTitle && config.titleKey" class="group-panel__header">
       {{ t(config.titleKey) }}
     </div>
-    <!-- Enable toggle row -->
+    <!-- Enable toggle row. Only panels whose feature has a real on/off state
+         still have one (terminal, frp); the port-forward panel's switch was
+         removed because the SSH listener is always on. -->
     <div v-if="config.enableKey" class="group-panel__enable-row">
       <div class="group-panel__enable-left">
         <span class="group-panel__enable-label">{{ t(config.enableLabelKey!) }}</span>
@@ -87,30 +89,44 @@
       </template>
     </template>
 
-    <!-- Android-only h2 tunnel toggle. A dedicated row rather than a
-         commonFields entry: the truth source is Android SharedPreferences, so
-         it must not flow through usePanelSnapshot's save routing (which would
-         write localStorage for 'local' or 400 the whole save for 'server').
-         Rendered only once the async initial value has arrived, and hidden
-         entirely on a host that lacks the bridge method (see h2ToggleVisible). -->
-    <template v-if="h2ToggleVisible">
+    <!-- Tunnel transport picker, shared by both native hosts. A dedicated row
+         rather than a commonFields entry: the truth source is the host's own
+         store (Electron store / Android SharedPreferences), so it must not flow
+         through usePanelSnapshot's save routing (which would write localStorage
+         for 'local' or 400 the whole save for 'server'). Two values (ssh / h2) —
+         there is no automatic mode. Rendered only once the async initial value
+         has arrived, and hidden entirely on a host that lacks the bridge methods
+         (see transportPickerVisible). The value is a draft until Save writes it
+         and reconnects. -->
+    <template v-if="transportPickerVisible">
       <SettingsItem
-        :label="t('settings.items.portForwardH2')"
-        :description="t('settings.items.portForwardH2Desc')"
-        type="switch"
-        :model-value="h2Enabled"
+        :label="t('settings.items.portForwardTransport')"
+        :description="t('settings.items.portForwardTransportDesc')"
+        type="select"
+        :model-value="transportPref"
+        :options="transportOptions"
         :no-divider="true"
-        @update:model-value="onH2Toggle"
+        @update:model-value="onTransportChange"
       />
-      <div class="group-panel__h2-hint">
-        <span>{{ t('settings.items.portForwardH2ReconnectHint') }}</span>
+    </template>
+
+    <!-- Tunnel status, shown while the transport controls are on screen.
+         Applying a transport change tears the tunnel down and rebuilds it,
+         which can take up to CONNECT_TIMEOUT_MS (20s) — without this the Save
+         button spins with no explanation of what is happening or whether it
+         worked. Reads the same usePortForward state the port-forward dock panel
+         shows, so the two can never disagree. -->
+    <template v-if="tunnelStatusVisible">
+      <div class="group-panel__tunnel-status" :class="`group-panel__tunnel-status--${tunnelStatusState}`">
+        <span class="group-panel__tunnel-dot" aria-hidden="true"></span>
+        <span class="group-panel__tunnel-text">{{ tunnelStatusText }}</span>
         <button
           type="button"
-          class="fbtn group-panel__h2-reconnect"
-          :disabled="h2Reconnecting"
-          @click="onReconnectTunnel"
+          class="fbtn group-panel__tunnel-retry"
+          :disabled="tunnelChecking"
+          @click="onRefreshTunnelStatus"
         >
-          {{ t('settings.items.portForwardH2Reconnect') }}
+          {{ t('proxy.retryCheck') }}
         </button>
       </div>
     </template>
@@ -168,8 +184,8 @@
         </button>
         <button
           class="fbtn group-panel__save-btn"
-          :class="{ 'fbtn-primary group-panel__save-btn--accent': hasChanges }"
-          :disabled="!hasChanges || !canSave || saving"
+          :class="{ 'fbtn-primary group-panel__save-btn--accent': panelDirty }"
+          :disabled="!panelDirty || !canSave || saving"
           @click="onSave"
         >
           {{ saving ? t('settings.panel.saving') : t('settings.panel.save') }}
@@ -227,8 +243,9 @@ import { useConnectivityTest } from '@/composables/useConnectivityTest'
 import { useToast } from '@/composables/useToast'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import { useFrp } from '@/composables/useFrp'
-import { useAppMode } from '@/composables/useAppMode'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { getNative, reconnectTunnel } from '@/utils/clawbenchNative'
+import { usePortForward } from '@/composables/usePortForward'
 import { useRagStatus } from '@/composables/useRagStatus'
 import { useDialog } from '@/composables/useDialog'
 import { startRebuild, rebuildStatus, type RebuildKind } from '@/composables/useRagRebuild'
@@ -350,10 +367,19 @@ const terminalThemePreviews = computed<Record<string, TerminalPreview> | undefin
 
 onMounted(() => {
   initSnapshot()
-  registerGuard(`panel-${props.config.panelId}`, () => !hasChanges.value && !hasFailedSave.value)
+  registerGuard(`panel-${props.config.panelId}`, () => !panelDirty.value && !hasFailedSave.value)
   // Fetch RAG status on mount so progress counts are visible immediately
   if (props.config.panelId === 'rag') {
     refreshRagStatus()
+  }
+  // Web mode's status row has no client tunnel to probe, so seed it from the
+  // server's readiness. Runs after setup (the refs are declared below), which is
+  // the same order the transport picker's own onMounted relies on.
+  if (props.config.panelId === 'portForward' && isWebApp.value) {
+    webStatusChecking.value = true
+    loadSSHInfo().finally(() => {
+      webStatusChecking.value = false
+    })
   }
 })
 
@@ -447,7 +473,7 @@ const renderList = computed((): RenderEntry[] => {
   const result: RenderEntry[] = []
 
   // Common fields (filtered by dependsOn)
-  for (const f of cfg.commonFields) {
+  for (const f of visibleCommonFields.value) {
     if (!isDependsOnMet(f.dependsOn, (k) => localValues[k])) continue
     if (f.sectionHeader) {
       result.push({ type: 'header', key: `header-${f.key}`, label: t(f.sectionHeader) })
@@ -584,82 +610,282 @@ const frpSshPortDisplay = computed(() => {
   return port
 })
 
-// ── Android-only h2 tunnel toggle ──
+// ── Tunnel transport preference (both native hosts) ──
+//
+// The transport choice is a DRAFT, saved by the panel's own Save button rather
+// than written the moment the control moves. Two reasons:
+//
+//  1. Writing on change made the Save button lie — the control is a dedicated
+//     row (its truth source is the host's own store, not the server config, so
+//     it must not go through usePanelSnapshot's save routing), which meant the
+//     preference was already persisted while `hasChanges` still reported the
+//     panel clean.
+//  2. Applying a transport switch means tearing down the live tunnel, so it
+//     must happen at a moment the user chose. Save is that moment.
+//
+// The draft feeds `sshOnlyFieldsHidden` too, so the SSH-only rows appear and
+// disappear as the user edits — before anything is committed.
+//
+// Both native hosts render the SAME two-option picker. They differ only in the
+// bridge vocabulary — Electron stores 'ssh' | 'h2' through
+// get/setTunnelTransport, Android stores a boolean through
+// get/setTunnelTransportH2Enabled — which the adapters below hide.
 
-const { isAppMode, isDesktopApp } = useAppMode()
-/**
- * True only in the Android WebView shell. Both native hosts report
- * isAppMode === true, so Electron must be excluded explicitly — the toggle is
- * Android-only (Electron is clamped to SSH). Same definition as
- * SettingsCategory.vue's `isAndroidApp`.
- */
-const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
+// Host axis: which shell is running (see usePlatformDetect). Both native hosts
+// get the picker, the browser neither — but the browser still gets the
+// readiness row (see tunnelStatusVisible).
+const { isElectron: isDesktopShell, isAndroidApp, isWebApp } = usePlatformDetect()
 
-const h2Enabled = ref(false)
+/** 'ssh' | 'h2', or null while the initial value is still loading. */
+const transportPref = ref<'ssh' | 'h2' | null>(null)
+/** The persisted value, kept separate from the draft so Save can tell whether
+ *  anything changed and so a failed write can roll back to the truth. */
+const transportInitial = ref<'ssh' | 'h2' | null>(null)
 /** Set once the async initial value has been read; gates the row's v-if so it
- *  never flashes a false "off" before the real value arrives. */
-const h2ToggleLoaded = ref(false)
-/** The host lacks the new bridge getter (an older APK) — hide the row instead
- *  of showing a toggle that would not persist. */
-const h2ToggleUnsupported = ref(false)
-const h2Reconnecting = ref(false)
+ *  never flashes a default before the real value arrives. */
+const transportLoaded = ref(false)
+/** The host lacks the bridge methods this row reads/writes through (an older
+ *  APK or desktop build) — hide the row instead of offering a choice that
+ *  cannot persist. */
+const transportUnsupported = ref(false)
 
-const h2ToggleVisible = computed(() =>
-  isAndroidApp.value
+/**
+ * Read the host's persisted transport preference, or null when this host cannot
+ * report one. The two shells store the same two-wire choice in different
+ * shapes; this is the only place that knows the difference.
+ */
+async function readTransportPref(): Promise<'ssh' | 'h2' | null> {
+  const native = getNative()
+  if (isAndroidApp.value) {
+    // The getter's presence is the "new enough host" signal (the 2026 bug was a
+    // host that shipped the setter without it), so it gates the read too.
+    if (!native?.getTunnelTransportH2Enabled) return null
+    const on = !!(await native.getTunnelTransportH2Enabled())
+    return on ? 'h2' : 'ssh'
+  }
+  if (isDesktopShell.value) {
+    if (!native?.getTunnelTransport || !native?.setTunnelTransport) return null
+    const value = await native.getTunnelTransport()
+    // A store holding the retired 'both' is migrated to 'h2' by
+    // initTransportPreference() (it meant "probe h2 first"), so the host
+    // reports a value this picker can show.
+    return value === 'ssh' || value === 'h2' ? value : null
+  }
+  return null
+}
+
+/** Persist a preference to the host. Returns false when it was not accepted. */
+async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
+  const native = getNative()
+  if (isAndroidApp.value) {
+    const setter = native?.setTunnelTransportH2Enabled
+    if (typeof setter !== 'function') return false
+    await setter.call(native, value === 'h2')
+    return true
+  }
+  if (isDesktopShell.value) {
+    const setter = native?.setTunnelTransport
+    if (typeof setter !== 'function') return false
+    // The host validates too; a false answer means it stored nothing.
+    return (await setter.call(native, value)) !== false
+  }
+  return false
+}
+
+const transportPickerVisible = computed(() =>
+  (isAndroidApp.value || isDesktopShell.value)
   && props.config.panelId === 'portForward'
-  && h2ToggleLoaded.value
-  && !h2ToggleUnsupported.value
+  && transportLoaded.value
+  && !transportUnsupported.value
 )
 
 onMounted(async () => {
-  if (!isAndroidApp.value || props.config.panelId !== 'portForward') return
-  const native = getNative()
-  // Legacy host: no persisted toggle exists, so there is nothing truthful to
-  // render. Keep it hidden rather than fall back to a non-persisting setter.
-  if (!native?.getTunnelTransportH2Enabled) {
-    h2ToggleUnsupported.value = true
-    return
-  }
+  if ((!isAndroidApp.value && !isDesktopShell.value) || props.config.panelId !== 'portForward') return
   try {
-    h2Enabled.value = !!(await native.getTunnelTransportH2Enabled())
+    const stored = await readTransportPref()
+    // Legacy host: no readable preference exists, so there is nothing truthful
+    // to render. Keep the row hidden rather than fall back to a non-persisting
+    // control.
+    if (stored === null) {
+      transportUnsupported.value = true
+      return
+    }
+    transportPref.value = stored
+    transportInitial.value = stored
   } catch {
-    h2ToggleUnsupported.value = true
+    transportUnsupported.value = true
     return
   }
-  h2ToggleLoaded.value = true
+  transportLoaded.value = true
 })
 
-/** Persist the toggle. Takes effect on the next reconnect (the native setter
- *  only writes SharedPreferences and does not touch the live transport), hence
- *  the hint + reconnect button below the row.
+/** Draft only — nothing is written until Save. */
+function onTransportChange(value: unknown) {
+  if (value !== 'ssh' && value !== 'h2') return
+  transportPref.value = value
+}
+
+/** True while the user's tunnel is on h2, on either host.
  *
- *  The switch is optimistic: it flips immediately, then awaits the native
- *  write. A rejected write (bridge error) reverts the row to its previous
- *  value so the UI never claims a preference the host did not persist. A
- *  missing host or setter is a no-op via optional chaining — it does not throw,
- *  so the row keeps its optimistic value. */
-async function onH2Toggle(value: unknown) {
-  const next = !!value
-  const previous = h2Enabled.value
-  h2Enabled.value = next
+ *  `port_forward.port` is an SSH-server setting — it feeds `ssh.NewServer` and
+ *  nothing else (cmd/server/main.go). The h2 wire rides the main HTTP port, so
+ *  when this client is on h2 that row configures a port this client never dials.
+ *
+ *  The listener itself stays on regardless (it is pinned server-side), so this
+ *  only hides a row, never a control. An unknown value (older host, web mode)
+ *  keeps the row rather than guessing.
+ */
+const sshOnlyFieldsHidden = computed(() =>
+  props.config.panelId === 'portForward' && transportPref.value === 'h2'
+)
+
+/** The SSH-server rows, minus the ones this transport does not use. */
+const visibleCommonFields = computed(() =>
+  sshOnlyFieldsHidden.value
+    ? props.config.commonFields.filter(f => f.key !== 'port_forward.port')
+    : props.config.commonFields
+)
+
+/** Labels reuse `proxy.transportSsh` / `transportH2`, the same keys the
+ *  port-forward panel uses for the live "current transport" line, so the two
+ *  never drift. No third option: there is no automatic mode. */
+const transportOptions = computed(() => [
+  { label: t('proxy.transportSsh'), value: 'ssh' },
+  { label: t('proxy.transportH2'), value: 'h2' },
+])
+
+// ── Draft → save wiring ──
+
+/** True when the transport draft differs from what the host has persisted. */
+const transportDirty = computed(() =>
+  transportPickerVisible.value && transportPref.value !== transportInitial.value
+)
+
+/** The panel's own dirty flag, widened to include the transport draft — without
+ *  this the Save button stays disabled (and the unsaved-changes guard stays
+ *  open) when the transport is the only thing the user changed. */
+const panelDirty = computed(() => hasChanges.value || transportDirty.value)
+
+/**
+ * Write the transport preference and reconnect, returning false when the host
+ * rejected the write (nothing was stored, so the live tunnel is untouched).
+ *
+ * A failed RECONNECT is deliberately not rolled back: the preference was
+ * accepted and persisted, so reverting the stored value would make the host and
+ * the UI disagree. The user is told instead, and the monitor retries on its own.
+ */
+async function applyTransportDraft(): Promise<boolean> {
+  if (!transportDirty.value) return true
+  const value = transportPref.value
+  if (value === null) return true
+
   try {
-    await getNative()?.setTunnelTransportH2Enabled?.(next)
+    if (!(await writeTransportPref(value))) return false
   } catch (err) {
-    h2Enabled.value = previous
-    appLog.w(TAG, 'h2 toggle write failed, reverted', err)
+    appLog.w(TAG, 'transport preference write failed', err)
+    return false
+  }
+  transportInitial.value = value
+
+  try {
+    return await reconnectTunnel()
+  } catch (err) {
+    appLog.w(TAG, 'tunnel reconnect after transport change failed', err)
+    return false
   }
 }
 
-async function onReconnectTunnel() {
-  if (h2Reconnecting.value) return
-  h2Reconnecting.value = true
-  try {
-    if (await reconnectTunnel()) {
-      toast.show(t('portForward.tunnelReconnected'), { icon: '🔗', type: 'success' })
-    }
-  } finally {
-    h2Reconnecting.value = false
+// ── Tunnel status ──
+
+const {
+  tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
+  sshInfo, transportAllowsH2, loadSSHInfo,
+} = usePortForward()
+
+/**
+ * Shown whenever a transport control is on screen — i.e. on a host that can
+ * actually report and switch its wire — and in plain web mode, where it is the
+ * single readiness signal that replaced the removed "Test Connection" button.
+ *
+ * Web mode has no client tunnel, but the row still answers the question the old
+ * test button answered: can this server carry forwards at all? It reads server
+ * readiness (SSH listener up, or an h2-capable transport) instead of a
+ * client-side tunnel, so the derivations below have a web branch. A legacy
+ * native host that cannot say which wire it runs still keeps the row out rather
+ * than showing an "unknown" the user cannot act on.
+ */
+const tunnelStatusVisible = computed(() =>
+  props.config.panelId === 'portForward'
+  && (isWebApp.value || transportPickerVisible.value)
+)
+
+/**
+ * Whether this server can carry forwards at all, independent of any client. An
+ * SSH listener up or an h2-capable transport is enough — the same predicate the
+ * port-forward panel's "unavailable" banner uses.
+ */
+const serverCarriesForwards = computed(() =>
+  !!sshInfo.value?.enabled || transportAllowsH2.value
+)
+
+/** Web-mode probe in flight. Separate from `tunnelChecking` because the web
+ *  branch re-reads SSH info rather than running the client-side health check. */
+const webStatusChecking = ref(false)
+
+/** Busy in either mode — drives the dot and the label. */
+const tunnelStatusBusy = computed(() => webStatusChecking.value || tunnelChecking.value)
+
+/**
+ * Coarse state for the dot's colour. `unknown` covers both "not checked yet"
+ * and the transient `checkTunnelHealth` reset; the two look identical to the
+ * user and both mean "we have not established anything".
+ *
+ * Web mode derives its own state from server readiness: there is no client
+ * tunnel to be ok/degraded/disconnected, so "ready" is the only healthy answer.
+ */
+const tunnelStatusState = computed(() => {
+  if (tunnelStatusBusy.value) return 'checking'
+  if (isWebApp.value) return serverCarriesForwards.value ? 'ok' : 'disconnected'
+  if (tunnelStatus.value === 'ok') return 'ok'
+  if (tunnelStatus.value === 'degraded') return 'degraded'
+  if (tunnelStatus.value === 'disconnected') return 'disconnected'
+  return 'unknown'
+})
+
+/**
+ * The status line. In web mode it names which wire makes the server ready; in
+ * native mode it uses `tunnelMessage` when the composable produced one — it is
+ * already localized and carries the transport annotation (e.g.
+ * `隧道已连接（HTTP/2）`) — and falls back to a plain label for the states it
+ * leaves unset (`ok`, and `unknown` before the first check).
+ */
+const tunnelStatusText = computed(() => {
+  if (tunnelStatusBusy.value) return t('settings.items.tunnelStatusChecking')
+  if (isWebApp.value) {
+    if (sshInfo.value?.enabled) return t('settings.items.tunnelStatusServerReady')
+    if (transportAllowsH2.value) return t('settings.items.tunnelStatusServerReadyH2')
+    return t('settings.items.tunnelStatusUnavailable')
   }
+  if (tunnelStatus.value === 'ok') return t('settings.items.tunnelStatusConnected')
+  if (tunnelMessage.value) return tunnelMessage.value
+  return t('settings.items.tunnelStatusUnknown')
+})
+
+async function onRefreshTunnelStatus() {
+  // Web mode has no client tunnel: re-read the server's readiness rather than
+  // running the client-side health check (which would have nothing to report).
+  if (isWebApp.value) {
+    if (webStatusChecking.value) return
+    webStatusChecking.value = true
+    try {
+      await loadSSHInfo()
+    } finally {
+      webStatusChecking.value = false
+    }
+    return
+  }
+  if (tunnelChecking.value) return
+  await checkTunnelHealth()
 }
 
 // ── Save ──
@@ -669,9 +895,27 @@ async function onSave() {
   if (result.needsRestart && result.changedColdFields.length > 0) {
     emit('restartNeeded', result.changedColdFields)
   }
-  if (!serverError.value) {
-    toast.show(t('settings.panel.saved'), { icon: '✅', type: 'success', duration: 3000 })
+  if (serverError.value) return
+
+  // Applying the transport switch tears the tunnel down and rebuilds it,
+  // bounded by CONNECT_TIMEOUT_MS (20s). Reuse the Save button's own spinner so
+  // the wait is visible rather than looking like a hang.
+  const switchingTransport = transportDirty.value
+  if (switchingTransport) saving.value = true
+  try {
+    if (!(await applyTransportDraft())) {
+      if (switchingTransport) {
+        // The preference may or may not have been stored; either way the tunnel
+        // is not on it, so say so instead of the plain "saved" toast.
+        toast.show(t('settings.panel.transportApplyFailed'), { icon: '⚠️', type: 'error', duration: 5000 })
+      }
+      return
+    }
+  } finally {
+    if (switchingTransport) saving.value = false
   }
+
+  toast.show(t('settings.panel.saved'), { icon: '✅', type: 'success', duration: 3000 })
 }
 
 // ── Custom field actions (RAG progress) ──
@@ -1014,19 +1258,60 @@ watch(localValues, () => {
   margin-bottom: var(--space-3);
 }
 
-/* Android h2 toggle hint + reconnect action, shown directly under the switch
-   row. Aligned with the SettingsItem padding so the two read as one block. */
-.group-panel__h2-hint {
+/* Tunnel status row. Sits inside the card, aligned with the SettingsItem rows'
+   16px horizontal padding (a container must not add its own — see the design
+   guide's "自定义卡片块的横向内边距"). */
+.group-panel__tunnel-status {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-4);
-  padding: 0 var(--space-7) var(--space-4);
+  padding: var(--space-4) var(--space-7);
   font-size: var(--font-size-sm);
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
-.group-panel__h2-reconnect {
+.group-panel__tunnel-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+/* The dot is the fast read; the text says the same thing for anyone who cannot
+   use colour. Both channels are present, so neither is load-bearing alone. */
+.group-panel__tunnel-status--ok .group-panel__tunnel-dot {
+  background: var(--color-green);
+}
+
+.group-panel__tunnel-status--degraded .group-panel__tunnel-dot {
+  background: var(--color-yellow);
+}
+
+.group-panel__tunnel-status--disconnected .group-panel__tunnel-dot {
+  background: var(--color-red);
+}
+
+/* A pulse, not a spin: the row is reporting a probe in flight, and a ring here
+   would read as "the tunnel itself is reconnecting". Not gated on
+   prefers-reduced-motion for the same reason as BusyBar — the movement is the
+   only channel that distinguishes "checking" from "stuck". */
+.group-panel__tunnel-status--checking .group-panel__tunnel-dot {
+  background: var(--accent-color);
+  animation: group-panel-tunnel-pulse 1s ease-in-out infinite;
+}
+
+@keyframes group-panel-tunnel-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: var(--opacity-muted); }
+}
+
+.group-panel__tunnel-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.group-panel__tunnel-retry {
   flex-shrink: 0;
 }
 

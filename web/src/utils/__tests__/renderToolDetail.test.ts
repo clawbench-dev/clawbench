@@ -1519,6 +1519,31 @@ describe('PermissionApproval renderer', () => {
     expect(html).not.toContain('permission-tool-name')
   })
 
+  it('shows the Agent Team member badge when the request is attributed', () => {
+    const html = formatToolInput(
+      { toolName: 'Bash', options: [], teamMember: { name: 'probe-alpha', color: 'blue' } },
+      'PermissionApproval',
+    )
+    expect(html).toContain('permission-team-member')
+    expect(html).toContain('probe-alpha')
+    // Colour comes from the shared palette, not the raw wire name.
+    expect(html).toContain('var(--color-info')
+  })
+
+  it('omits the member badge for an ordinary (non-team) request', () => {
+    const html = formatToolInput({ toolName: 'Bash', options: [] }, 'PermissionApproval')
+    expect(html).not.toContain('permission-team-member')
+  })
+
+  it('escapes the member name (no HTML injection from the wire)', () => {
+    const html = formatToolInput(
+      { options: [], teamMember: { name: '<img src=x onerror=alert(1)>', color: 'blue' } },
+      'PermissionApproval',
+    )
+    expect(html).not.toContain('<img src=x')
+    expect(html).toContain('&lt;img')
+  })
+
   it('parses toolInput JSON and shows file_path', () => {
     const html = formatToolInput({
       toolName: 'Edit',

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { configureMarkedRenderer } from '@/utils/markedConfig'
-import { _setIsPCForTest } from '@/composables/usePlatformDetect'
+import { _setWideScreenForTest } from '@/composables/useWideScreenLayout'
 import {
   buildMarkdownPreviewDom,
   createFixLocalImagePaths,
@@ -13,7 +13,7 @@ configureMarkedRenderer()
 
 describe('createFixLocalImagePaths', () => {
   it('resolves relative image srcs against the markdown file dir', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isWideScreen: true })
     const html = '<p><img src="assets/a.png" alt="a"></p>'
     const out = fix(html)
     expect(out).toContain('src="/api/fs/thumb?target=docs/assets/a.png&amp;w=1200"')
@@ -30,7 +30,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('keeps remote and embedded URLs untouched', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     for (const src of ['https://x.com/a.png', '//cdn.x.com/a.png', 'data:image/png;base64,abc']) {
       const out = fix(`<img src="${src}">`)
       expect(out).toContain(`src="${src}"`)
@@ -49,7 +49,7 @@ describe('createFixLocalImagePaths', () => {
     // the site root and get a 404 — the reported "external image doesn't show"
     // bug. It must be served through the absolute forms of the local endpoints,
     // and carries no attach data (the attach flow speaks project-relative paths).
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<img src="/abs/a.png">')
     expect(out).toContain('data-full-src="/api/fs/raw/?target=%2Fabs%2Fa.png&amp;t=1"')
     expect(out).toContain('target=%2Fabs%2Fa.png')
@@ -61,7 +61,7 @@ describe('createFixLocalImagePaths', () => {
   it('serves a project-external absolute path without prefixing the document dir', () => {
     // baseDir must NOT be prepended to an absolute src: "docs/tmp/a.png" would
     // resolve against the project root and point at a different file.
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 3, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 3, isWideScreen: true })
     const out = fix('<img src="/tmp/final_icon.png">')
     expect(out).toContain('?target=%2Ftmp%2Ffinal_icon.png')
     expect(out).not.toContain('docs%2Ftmp')
@@ -74,7 +74,7 @@ describe('createFixLocalImagePaths', () => {
     // already-served URL a second time produced
     // `?path=/api/fs/raw/images/a.png`, which the backend then treats as a
     // literal relative path and skips.
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     for (const src of [
       '/api/fs/raw/images/a.png',
       '/api/fs/raw/?target=%2Ftmp%2Fa.png',
@@ -89,18 +89,18 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('serves non-thumbnailable formats from the original full URL', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isPC: false })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isWideScreen: false })
     const out = fix('<img src="anim.gif">')
     expect(out).toContain('src="/api/fs/raw/docs/anim.gif?t=7"')
     expect(out).not.toContain('/api/fs/thumb')
     expect(out).toContain('data-attach-src="docs/anim.gif"')
     // Mobile width 640 for non-PC
-    const pc = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isPC: true })
+    const pc = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 7, isWideScreen: true })
     expect(pc('<img src="p.png">')).toContain('w=1200')
   })
 
   it('normalizes dot/.. segments and encodes CJK/space segments', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'a/b', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'a/b', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<img src="../c/图 d.png">')
     // ../ popped → a/c; CJK/space percent-encoded by segment.
     expect(out).toContain('target=a/c/%E5%9B%BE%20d.png')
@@ -110,7 +110,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('wraps every image in an image-block figure', () => {
-    const fix = createFixLocalImagePaths({ baseDir: '', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: '', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<img src="x.png"><img src="https://y.com/z.png">')
     expect(out).toContain('image-block-wrapper')
     expect(out.match(/image-block-wrapper/g)).toHaveLength(2)
@@ -119,7 +119,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('injects attach/open buttons only for local images (data-attach-src)', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<img src="a.png"><img src="https://x.com/b.png"><img src="data:image/png;base64,abc">')
     // Local raster → thumbnail; only its figure has attach + open buttons.
     expect(out.match(/image-block-attach-btn/g)).toHaveLength(1)
@@ -129,7 +129,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('HTML-escapes data-attach-src so decoded filenames cannot break the attribute', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     // A percent-encoded quote+onerror decodes into the path attribute. It must
     // stay escaped inside data-attach-src — never break out into new attributes.
     const out = fix('<img src="we%22onerror%3D%22alert(1).png">')
@@ -143,7 +143,7 @@ describe('createFixLocalImagePaths', () => {
   it('emits token-scoped full-size URLs and skips thumbnails in share mode', () => {
     setShareToken('tokabc')
     try {
-      const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isPC: true })
+      const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 42, isWideScreen: true })
       const out = fix('<img src="assets/a.png" alt="a">')
       // Relative ref resolves against the markdown dir → token-scoped local endpoint.
       expect(out).toContain('src="/api/share/tokabc/local/docs/assets/a.png?t=42"')
@@ -166,7 +166,7 @@ describe('createFixLocalImagePaths', () => {
     try {
       // Share SPA always renders with an absolute file path, e.g.
       // /home/user/proj/test/markdown/images-demo.md referencing ../images/…
-      const fix = createFixLocalImagePaths({ baseDir: '/home/user/proj/test/markdown', imageTimestamp: 7, isPC: true })
+      const fix = createFixLocalImagePaths({ baseDir: '/home/user/proj/test/markdown', imageTimestamp: 7, isWideScreen: true })
       const out = fix('<img src="../images/pic.jpg" alt="p">')
       expect(out).toContain('src="/api/share/tokabs/local?path=%2Fhome%2Fuser%2Fproj%2Ftest%2Fmarkdown%2F..%2Fimages%2Fpic.jpg&amp;t=7"')
       expect(out).not.toContain('/local-file')
@@ -179,7 +179,7 @@ describe('createFixLocalImagePaths', () => {
   it('keeps external URLs untouched in share mode with absolute dirs', () => {
     setShareToken('tokabs')
     try {
-      const fix = createFixLocalImagePaths({ baseDir: '/home/user/proj/test/markdown', imageTimestamp: 1, isPC: true })
+      const fix = createFixLocalImagePaths({ baseDir: '/home/user/proj/test/markdown', imageTimestamp: 1, isWideScreen: true })
       const out = fix('<img src="https://x.com/a.png">')
       expect(out).toContain('src="https://x.com/a.png"')
     } finally {
@@ -188,7 +188,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('promotes a solo-paragraph image out of its <p> into a block figure', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<p><img src="a.png" alt="a"></p>')
     // <p> removed entirely; the figure is a sibling block.
     expect(out).not.toContain('<p>')
@@ -197,7 +197,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('splits a paragraph that has text on both sides of an image', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<p>before <img src="a.png"> after</p>')
     // Leading text stays in the first <p>, trailing text becomes its own <p>.
     expect(out).toContain('<p>before </p>')
@@ -210,7 +210,7 @@ describe('createFixLocalImagePaths', () => {
   })
 
   it('blockifies an image nested inside a table cell', () => {
-    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isPC: true })
+    const fix = createFixLocalImagePaths({ baseDir: 'docs', imageTimestamp: 1, isWideScreen: true })
     const out = fix('<table><tr><td><img src="a.png"></td></tr></table>')
     expect(out).toContain('<td><div class="image-block-wrapper">')
     expect(out).toContain('image-block-header')
@@ -218,12 +218,13 @@ describe('createFixLocalImagePaths', () => {
 })
 
 describe('buildMarkdownPreviewDom', () => {
-  beforeEach(() => _setIsPCForTest(true))
+  // Thumbnail width follows the VIEWPORT axis.
+  beforeEach(() => _setWideScreenForTest(true))
   afterEach(() => vi.restoreAllMocks())
 
   it('renders headings with deduplicated ids (like markedConfig)', () => {
     const md = '# Intro\n\n# Intro\n\n## Setup'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     // ids are preserved; opening tags may carry a data-source-line attribute
     expect(html).toContain('id="intro"')
     expect(html).toContain('id="intro-2"')
@@ -232,7 +233,7 @@ describe('buildMarkdownPreviewDom', () => {
 
   it('wraps tables and injects row attributes', () => {
     const md = '| a | b |\n|---|---|\n| 1 | 2 |'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('class="table-wrap"')
     expect(html).toContain('data-table-idx="0"')
     expect(html).toContain('data-row-idx="0"')
@@ -243,7 +244,7 @@ describe('buildMarkdownPreviewDom', () => {
     // [data-source-line] ancestor, so each <tr> must carry its own line or every
     // row reports the table's first line.
     const md = ['| a | b |', '|---|---|', '| 1 | 2 |', '| 3 | 4 |'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('<tr data-source-line="1">') // header row
     // Data rows also carry data-row-idx (row-expand modal), so match the line
     // attribute anywhere in the opening tag.
@@ -253,7 +254,7 @@ describe('buildMarkdownPreviewDom', () => {
 
   it('annotates code blocks with headers (language + copy/wrap)', () => {
     const md = '```ts\nconst x: number = 1\n```'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('code-block-wrapper')
     expect(html).toContain('code-block-header')
     expect(html).toContain('code-block-lang')
@@ -262,14 +263,14 @@ describe('buildMarkdownPreviewDom', () => {
 
   it('renders mermaid fenced blocks as pre.mermaid', () => {
     const md = '```mermaid\ngraph TD; A-->B\n```'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     // opening tag may carry a data-source-line / data-source-end attribute
     expect(html).toMatch(/<pre class="mermaid"( data-source-line="\d+")?( data-source-end="\d+")?>/)
   })
 
   it('resolves relative image paths through fixImagePaths + lightbox wrap', () => {
     const md = '![img](img/x.png)'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 5 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 5 })
     expect(html).toContain('lightbox-img-wrap')
     expect(html).toContain('/api/fs/thumb?target=img/x.png&amp;w=1200')
     expect(html).toContain('data-attach-src="img/x.png"')
@@ -280,7 +281,7 @@ describe('buildMarkdownPreviewDom', () => {
     const md = 'Open `src/main.ts:10` for details'
     const { detectedPaths } = buildMarkdownPreviewDom(
       { content: md, path: 'README.md', projectRoot: '', homeDir: '' },
-      { isPC: true, imageTimestamp: 1 }
+      { isWideScreen: true, imageTimestamp: 1 }
     )
     expect(detectedPaths.length).toBeGreaterThan(0)
   })
@@ -291,7 +292,7 @@ describe('buildMarkdownPreviewDom', () => {
       const md = 'Open `src/main.ts:10` for details'
       const { html, detectedPaths } = buildMarkdownPreviewDom(
         { content: md, path: 'README.md', projectRoot: '', homeDir: '' },
-        { isPC: true, imageTimestamp: 1 }
+        { isWideScreen: true, imageTimestamp: 1 }
       )
       expect(detectedPaths).toHaveLength(0)
       expect(html).not.toContain('chat-file-open-btn')
@@ -305,7 +306,7 @@ describe('buildMarkdownPreviewDom', () => {
     setShareToken('tokshare')
     try {
       const md = '![img](img/x.png)'
-      const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isPC: true, imageTimestamp: 5 })
+      const { html } = buildMarkdownPreviewDom({ content: md, path: 'README.md' }, { isWideScreen: true, imageTimestamp: 5 })
       expect(html).toContain('src="/api/share/tokshare/local/img/x.png?t=5"')
       expect(html).not.toContain('/api/fs/thumb')
     } finally {
@@ -332,7 +333,7 @@ describe('buildMarkdownPreviewDom', () => {
       ].join(String.fromCharCode(10) + String.fromCharCode(10))
       const { html, detectedPaths } = buildMarkdownPreviewDom(
         { content: md, path: 'README.md' },
-        { isPC: true, imageTimestamp: 1 },
+        { isWideScreen: true, imageTimestamp: 1 },
       )
 
       expect(detectedPaths,
@@ -356,7 +357,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
       '```js', 'const x = 1', '```', '',
       '尾部',
     ].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'x.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'x.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('data-source-line="1"')
     expect(html).toContain('<p data-source-line="3">')
     expect(html).toContain('<ul data-source-line="5">')
@@ -369,7 +370,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
   it('preserves line anchors for content that protectMarkdown rewrites (math, code)', () => {
     // fenced code and math are protected then restored with the same row count.
     const md = ['第一行', '', '```', '$x_i$', '```', '', '公式 $a_{i}$ 结尾'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isWideScreen: true, imageTimestamp: 1 })
     // paragraph 1 at line 1, code block starts line 3 (ends line 5), math paragraph at line 7
     expect(html).toContain('<p data-source-line="1">')
     expect(html).toContain('<pre data-source-line="3" data-source-end="5">')
@@ -381,7 +382,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
   it('keeps line numbers correct after MULTI-LINE display math (row-count preservation)', () => {
     // 8 source lines; the $$..$$ block spans lines 3-6.
     const md = ['标题', '', '$$', 'a=b', 'c=d', '$$', '', '结尾段落'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('<p data-source-line="1">')
     // The block after the formula must be line 8 (not shifted by the 3 rows
     // the placeholder would otherwise have collapsed).
@@ -391,7 +392,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
 
   it('keeps line numbers correct after multi-line \\[...\\] display math', () => {
     const md = ['a', '', '\\[', 'x=y', '\\]', '', 'b'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'm.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('data-source-line="1"')
     expect(html).toContain('data-source-line="7"')
     expect(html).not.toContain('\x00')
@@ -400,7 +401,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
   it('keeps line numbers aligned with the file when the source starts with blank lines', () => {
     // 2 leading blank lines: a real file line 3 is the first heading.
     const md = ['', '', '# 标题', '', '第二行内容'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'lead.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'lead.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('<h1 id="标题" data-source-line="3">')
     expect(html).toContain('<p data-source-line="5">')
   })
@@ -409,7 +410,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
     // The $$ inside a fenced code block is code text — protectMarkdown leaves it
     // in the restored multi-line code, so following lines must not shift.
     const md = ['a', '', '```', '$$x=y$$', 'b', '```', '', 'c'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'c.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'c.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('<p data-source-line="1">')
     expect(html).toContain('<pre data-source-line="3" data-source-end="6">')
     // c is on file line 8 (paragraph 1, blank 2, code 3-6, blank, c)
@@ -418,7 +419,7 @@ describe('data-source-line through the full markdown preview pipeline', () => {
 
   it('keeps correct lines for display math directly after a heading', () => {
     const md = ['## H', '', '$$', 'x', 'y', '$$', '', 'z'].join('\n')
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'd.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'd.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('<h2 id="h" data-source-line="1">')
     // z is on file line 8.
     expect(html).toContain('data-source-line="8"')
@@ -526,7 +527,7 @@ describe('external links open in a new tab (browser mode)', () => {
   it('annotates in file-preview mode (skipEnhancements)', () => {
     const { html } = buildMarkdownPreviewDom(
       { content: '[site](https://example.com)', path: 'docs/README.md' },
-      { isPC: true, imageTimestamp: 1 }
+      { isWideScreen: true, imageTimestamp: 1 }
     )
     expect(anchorsIn(html)[0].getAttribute('target')).toBe('_blank')
   })
@@ -560,7 +561,7 @@ describe('inline svg in file previews is lifted into a media figure', () => {
   // proportional sizing keys off `.image-block-wrapper` — no fill-width sizing.
   it('lifts a solo inline svg into a figure with a view button', () => {
     const md = '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('class="image-block-wrapper"')
     expect(html).toContain('lightbox-svg-wrap')
     expect(html).toContain('class="lightbox-svg"')
@@ -571,7 +572,7 @@ describe('inline svg in file previews is lifted into a media figure', () => {
 
   it('splits a paragraph that has text around an inline svg', () => {
     const md = 'before <svg viewBox="0 0 10 10" width="10" height="10"></svg> after'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).toContain('image-block-wrapper')
     expect(html.indexOf('before')).toBeLessThan(html.indexOf('image-block-wrapper'))
     expect(html.indexOf('image-block-wrapper')).toBeLessThan(html.indexOf('after'))
@@ -582,7 +583,7 @@ describe('inline svg in file previews is lifted into a media figure', () => {
     // content svg. Exactly one figure means the icon was left alone, and the
     // icon must still be a direct child of the button (not re-wrapped).
     const md = '<svg viewBox="0 0 400 100"><rect width="400" height="100"></rect></svg>'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html.match(/class="image-block-wrapper"/g)).toHaveLength(1)
     const doc = new DOMParser().parseFromString(html, 'text/html')
     const btn = doc.querySelector('.image-block-view-btn')!
@@ -592,7 +593,7 @@ describe('inline svg in file previews is lifted into a media figure', () => {
 
   it('leaves KaTeX stretchy-delimiter svgs inside their formula (issue #473)', () => {
     const md = '$$\\underbrace{a}_{b}$$'
-    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isPC: true, imageTimestamp: 1 })
+    const { html } = buildMarkdownPreviewDom({ content: md, path: 'docs/README.md' }, { isWideScreen: true, imageTimestamp: 1 })
     expect(html).not.toContain('image-block-wrapper')
     expect(html).toContain('class="katex"')
     expect(html).not.toContain('katex-error')

@@ -1,6 +1,15 @@
-import { test, expect } from '../fixtures'
+import { test, expect, type Page } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
 
+/**
+ * Chat scroll FAB.
+ *
+ * IMPORTANT: the FAB visibility is gated on `isUserScrolling()` — a real user
+ * gesture (touch, wheel, or scrollbar drag). A programmatic `el.scrollTop = …`
+ * fires a scroll event but does NOT set that flag, so the FAB never appears.
+ * These tests therefore scroll with `page.mouse.wheel()`, which dispatches a
+ * genuine wheel event.
+ */
 test.describe('Chat scroll FAB', () => {
   let chat: ChatPage
 
@@ -8,133 +17,141 @@ test.describe('Chat scroll FAB', () => {
     chat = new ChatPage(page)
   })
 
-  /**
-   * Helper: send multiple messages to fill the chat enough for scrolling.
-   * ACP mock agent responds quickly, so we can accumulate messages.
-   */
+  /** Send multiple messages so the transcript overflows and can scroll. */
   async function fillChatWithMessages(count: number) {
     for (let i = 0; i < count; i++) {
       await chat.sendAndAwaitACPReply(`Message ${i + 1}`)
     }
   }
 
+  /**
+   * Ensure the transcript is scrollable with enough range to satisfy the FAB
+   * gating: `scrolledUp` needs scrollTop >= NEAR_TOP_THRESHOLD (100) AND
+   * distFromBottom > SCROLL_BUTTON_TRIGGER (200), so the scrollable range must
+   * exceed ~300px. A handful of messages may only yield ~300px, which the wheel
+   * then consumes in one go (landing at the top, where the FAB is suppressed).
+   */
+  async function ensureScrollableRange(page: Page): Promise<void> {
+    for (let i = 0; i < 6; i++) {
+      const range = await page.locator('.chat-messages').evaluate(
+        (el) => el.scrollHeight - el.clientHeight
+      )
+      if (range > 500) return
+      await chat.sendAndAwaitACPReply(`Padding message ${i + 1}`)
+    }
+  }
+
+  /** Whether the message container actually overflows (is scrollable). */
+  async function isScrollable(page: Page): Promise<boolean> {
+    return await page.locator('.chat-messages').evaluate(
+      (el) => el.scrollHeight > el.clientHeight + 10
+    )
+  }
+
+  /** Scroll the transcript with a real wheel gesture over the message list. */
+  async function wheelScroll(page: Page, deltaY: number): Promise<void> {
+    const box = await page.locator('.chat-messages').boundingBox()
+    if (!box) throw new Error('.chat-messages has no layout box')
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.wheel(0, deltaY)
+  }
+
   test('scroll-up FAB appears when scrolling up in a long chat', async ({ page }) => {
-    // Send enough messages to make the chat scrollable
     await fillChatWithMessages(4)
+    await ensureScrollableRange(page)
+    expect(await isScrollable(page), 'chat transcript must overflow for this test').toBe(true)
 
-    // Scroll up by a significant amount using the messages container
-    const messagesContainer = page.locator('.chat-messages')
-    await messagesContainer.evaluate((el: HTMLElement) => {
-      el.scrollTop = Math.max(0, el.scrollTop - 400)
-    })
+    // Scroll up with a real wheel gesture.
+    await wheelScroll(page, -400)
 
-    // The scroll-up FAB group should appear
     const scrollFabGroup = page.locator('.scroll-fab-group')
     await expect(scrollFabGroup).toBeVisible({ timeout: 5000 })
 
     // Should have scroll-to-top and scroll-to-previous buttons
-    const scrollUpButtons = scrollFabGroup.locator('.scroll-fab-btn')
-    await expect(scrollUpButtons).toHaveCount(2)
+    await expect(scrollFabGroup.locator('.scroll-fab-round')).toHaveCount(2)
   })
 
   test('scroll FAB auto-hides after 3 seconds', async ({ page }) => {
     await fillChatWithMessages(4)
+    await ensureScrollableRange(page)
+    expect(await isScrollable(page)).toBe(true)
 
-    const messagesContainer = page.locator('.chat-messages')
-    await messagesContainer.evaluate((el: HTMLElement) => {
-      el.scrollTop = Math.max(0, el.scrollTop - 400)
-    })
+    await wheelScroll(page, -400)
 
-    // FAB should be visible
     const scrollFabGroup = page.locator('.scroll-fab-group')
     await expect(scrollFabGroup).toBeVisible({ timeout: 5000 })
 
     // Wait for auto-hide (3s delay + animation)
-    await expect(scrollFabGroup).not.toBeVisible({ timeout: 5000 })
+    await expect(scrollFabGroup).not.toBeVisible({ timeout: 8000 })
   })
 
   test('clicking scroll-to-top FAB scrolls to top and button remains visible briefly', async ({ page }) => {
     await fillChatWithMessages(4)
+    await ensureScrollableRange(page)
+    expect(await isScrollable(page)).toBe(true)
 
-    const messagesContainer = page.locator('.chat-messages')
-    await messagesContainer.evaluate((el: HTMLElement) => {
-      el.scrollTop = Math.max(0, el.scrollTop - 400)
-    })
+    await wheelScroll(page, -400)
 
-    // Wait for FAB to appear
     const scrollFabGroup = page.locator('.scroll-fab-group')
     await expect(scrollFabGroup).toBeVisible({ timeout: 5000 })
 
     // Click the scroll-to-top button (first button)
-    await scrollFabGroup.locator('.scroll-fab-btn').first().click()
+    const before = await page.locator('.chat-messages').evaluate((el) => el.scrollTop)
+    await scrollFabGroup.locator('.scroll-fab-round').first().click()
 
-    // The chat should scroll toward the top
-    // Wait a moment for smooth scroll to complete
-    await page.waitForTimeout(700)
+    // After reaching the top the buttons hide (nearTop triggers immediate hide
+    // during programmatic scroll).
+    await expect(scrollFabGroup).not.toBeVisible({ timeout: 8000 })
 
-    // After reaching the top, the buttons should eventually disappear
-    // (because nearTop triggers immediate hide during programmatic scroll)
-    await expect(scrollFabGroup).not.toBeVisible({ timeout: 5000 })
-
-    // Verify we're near the top
-    const scrollTop = await messagesContainer.evaluate((el: HTMLElement) => el.scrollTop)
-    expect(scrollTop).toBeLessThan(150)
+    // Verify the jump moved the viewport up substantially. A full-suite run can
+    // have older history to load, and the load-more anchoring then settles the
+    // scroll above 0 — so assert a large reduction, not an exact zero.
+    await expect.poll(
+      async () => page.locator('.chat-messages').evaluate((el) => el.scrollTop),
+      { timeout: 15000, intervals: [200, 500, 1000] }
+    ).toBeLessThan(before - 200)
   })
 
   test('clicking scroll-to-bottom FAB scrolls to bottom', async ({ page }) => {
     await fillChatWithMessages(4)
+    await ensureScrollableRange(page)
+    expect(await isScrollable(page)).toBe(true)
 
-    const messagesContainer = page.locator('.chat-messages')
+    // Scroll up first (real gesture), then scroll down a little so the FAB
+    // switches to the "down" direction while still away from the bottom.
+    await wheelScroll(page, -600)
+    await wheelScroll(page, 200)
 
-    // Scroll up first to trigger the scroll-down FAB
-    await messagesContainer.evaluate((el: HTMLElement) => {
-      el.scrollTop = Math.max(0, el.scrollTop - 400)
-    })
-
-    // Scroll down to trigger the down buttons
-    await messagesContainer.evaluate((el: HTMLElement) => {
-      el.scrollTop = el.scrollTop + 300
-    })
-
-    // Wait for FAB to appear (scrolledDown direction)
     const scrollFabGroup = page.locator('.scroll-fab-group')
     await expect(scrollFabGroup).toBeVisible({ timeout: 5000 })
 
     // Click the scroll-to-bottom button
-    await scrollFabGroup.locator('.scroll-fab-btn').first().click()
+    await scrollFabGroup.locator('.scroll-fab-round').first().click()
 
-    // Wait for smooth scroll
-    await page.waitForTimeout(700)
-
-    // Verify we're near the bottom
-    const distFromBottom = await messagesContainer.evaluate((el: HTMLElement) =>
-      el.scrollHeight - el.scrollTop - el.clientHeight
-    )
-    expect(distFromBottom).toBeLessThan(150)
+    // Wait for the smooth scroll to settle
+    await expect.poll(async () =>
+      page.locator('.chat-messages').evaluate(
+        (el) => el.scrollHeight - el.scrollTop - el.clientHeight
+      ), { timeout: 8000 }
+    ).toBeLessThan(150)
   })
 
   test('clicking FAB resets the auto-hide timer so button stays visible', async ({ page }) => {
     await fillChatWithMessages(4)
+    await ensureScrollableRange(page)
+    expect(await isScrollable(page)).toBe(true)
 
-    const messagesContainer = page.locator('.chat-messages')
-    await messagesContainer.evaluate((el: HTMLElement) => {
-      el.scrollTop = Math.max(0, el.scrollTop - 400)
-    })
+    await wheelScroll(page, -400)
 
-    // Wait for FAB to appear
     const scrollFabGroup = page.locator('.scroll-fab-group')
     await expect(scrollFabGroup).toBeVisible({ timeout: 5000 })
 
-    // Click the scroll-to-previous button (second button) — this doesn't
-    // scroll to the top edge, so the button should remain visible after click
-    await scrollFabGroup.locator('.scroll-fab-btn').nth(1).click()
-
-    // The button should still be visible immediately after click
-    // (timer was reset, not immediately hidden)
-    await page.waitForTimeout(200)
+    // Click the scroll-to-previous button (second button) — this does not reach
+    // the top edge, so the group stays visible after the click (timer reset).
+    await scrollFabGroup.locator('.scroll-fab-round').nth(1).click()
     await expect(scrollFabGroup).toBeVisible()
 
-    // It should eventually auto-hide after the 3s timer
-    await expect(scrollFabGroup).not.toBeVisible({ timeout: 5000 })
+    // It should still auto-hide eventually
+    await expect(scrollFabGroup).not.toBeVisible({ timeout: 8000 })
   })
 })

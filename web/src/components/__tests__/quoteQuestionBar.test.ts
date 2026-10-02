@@ -476,6 +476,70 @@ describe('QuoteQuestionBar component', () => {
     ta.remove()
   })
 
+  it('expands on Enter when focus is in a READ-ONLY contenteditable region (CodeMirror browse)', async () => {
+    // Regression: a code-selection quote showed the bar but Enter never expanded
+    // it. CodeMirror keeps contenteditable="true" on .cm-content in read-only
+    // browse mode (only EditorState.readOnly is set, not the editable facet) and
+    // mirrors it via aria-readonly="true". The old guard bailed on any
+    // isContentEditable target, treating the editor as a text field.
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    expect(vm.expanded).toBe(false)
+
+    const cm = document.createElement('div')
+    cm.className = 'cm-content'
+    cm.setAttribute('contenteditable', 'true')
+    cm.setAttribute('aria-readonly', 'true')
+    // jsdom does not compute isContentEditable; the focused .cm-content is the
+    // event target in a real editor, so this is what the guard actually sees.
+    Object.defineProperty(cm, 'isContentEditable', { value: true })
+    document.body.appendChild(cm)
+
+    cm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(vm.expanded).toBe(true)
+    cm.remove()
+  })
+
+  it('expands on Enter from a descendant of a read-only contenteditable host', async () => {
+    // The caret can sit in a .cm-line inside .cm-content, so the target may be a
+    // descendant rather than the host itself — the guard resolves via closest().
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+
+    const cm = document.createElement('div')
+    cm.setAttribute('contenteditable', 'true')
+    cm.setAttribute('aria-readonly', 'true')
+    Object.defineProperty(cm, 'isContentEditable', { value: true })
+    const line = document.createElement('div')
+    line.className = 'cm-line'
+    // Real browsers report descendants of a contenteditable host as editable too.
+    Object.defineProperty(line, 'isContentEditable', { value: true })
+    cm.appendChild(line)
+    document.body.appendChild(cm)
+
+    line.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(vm.expanded).toBe(true)
+    cm.remove()
+  })
+
+  it('still ignores Enter in a genuinely editable contenteditable field', async () => {
+    const wrapper = mountBar()
+    const vm = wrapper.vm as any
+    expect(vm.expanded).toBe(false)
+
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    Object.defineProperty(editable, 'isContentEditable', { value: true })
+    document.body.appendChild(editable)
+
+    editable.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await nextTick()
+    expect(vm.expanded).toBe(false)
+    editable.remove()
+  })
+
   it('does not re-expand on Enter when the bar is already expanded', async () => {
     const wrapper = mountBar()
     const vm = wrapper.vm as any

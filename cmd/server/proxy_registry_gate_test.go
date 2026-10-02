@@ -1,14 +1,18 @@
 package main
 
 import (
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/handler"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/ssh"
 
 	"github.com/stretchr/testify/require"
 )
@@ -264,4 +268,100 @@ func TestReservedPortsFor_AppliedToRegistry(t *testing.T) {
 		require.True(t, r.IsPortReserved(20001))
 		require.False(t, r.IsPortReserved(0))
 	})
+}
+
+// TestStartSSHServer_ClearsReferenceOnBindFailure pins the second half of the
+// "SSH tunnel server is not listening on port 20001" bug.
+//
+// startSSHServer publishes the server before ListenAndServe so handlers can see
+// the port while the listener comes up. When the bind then fails, the
+// publication has to be retracted: the reference is what /api/ssh/info and the
+// port-forward connectivity test read, and nothing ever retries it. Without the
+// retraction the test dials a dead port for the rest of the process lifetime.
+//
+// The startup path was missing that retraction (only the hot-reload path had
+// it), which is how a restart that lost the port race left port forwarding
+// broken until the next restart.
+func TestStartSSHServer_ClearsReferenceOnBindFailure(t *testing.T) {
+	origSSH := handler.GetSSHServer()
+	t.Cleanup(func() { handler.SetSSHServer(origSSH) })
+
+	// Occupy the port so the bind fails, and keep holding it for the whole test.
+	// The blocker must bind the SAME wildcard address the server uses (0.0.0.0):
+	// on BSD/macOS a listener sets SO_REUSEADDR, which lets a wildcard bind
+	// succeed even while a specific-address socket holds the port — so a
+	// 127.0.0.1 blocker would not actually make the server's bind fail there.
+	blocker, err := net.Listen("tcp", "0.0.0.0:0")
+	require.NoError(t, err)
+	defer blocker.Close()
+	port := blocker.Addr().(*net.TCPAddr).Port
+
+	srv := ssh.NewServer(
+		model.PortForwardConfig{Enabled: true, Port: port}, 20000, "pw", nil,
+	)
+	// Keep the test fast; the production window is deliberately generous.
+	srv.SetBindRetryForTest(150*time.Millisecond, 10*time.Millisecond)
+
+	startSSHServer(srv)
+
+	// The failure is reported from the ListenAndServe goroutine, so poll.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if handler.GetSSHServer() == nil {
+			return // the dead reference was retracted
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("published SSH server was not cleared after its listener failed to bind")
+}
+
+// TestReleaseSSHPortOnShutdown_ClosesPublishedServer pins the root-cause half
+// of the restart race.
+//
+// The SSH listener used to be released only by a deferred Close registered
+// early in main(); because defer is LIFO it ran LAST, after terminal sessions
+// (up to ~4s each), the HTTP drain and the ACP grace period. The replacement
+// process starts as soon as the MAIN port is free, so it reached the SSH port
+// while the outgoing process still held it and lost the bind.
+//
+// Releasing at the start of shutdown makes the port free long before the
+// replacement can start, instead of relying on the retry window to outlast an
+// unbounded teardown.
+func TestReleaseSSHPortOnShutdown_ClosesPublishedServer(t *testing.T) {
+	origSSH := handler.GetSSHServer()
+	t.Cleanup(func() { handler.SetSSHServer(origSSH) })
+
+	// Bind a real listener so closing it is observable on the port.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := ln.Addr().(*net.TCPAddr).Port
+	require.NoError(t, ln.Close())
+
+	srv := ssh.NewServer(
+		model.PortForwardConfig{Enabled: true, Port: port}, 20000, "pw", nil,
+	)
+	srv.SetBindRetryForTest(time.Second, 10*time.Millisecond)
+	startSSHServer(srv)
+	t.Cleanup(func() { srv.Close() })
+
+	// Wait until the listener is actually up, so the close below has something
+	// to release (otherwise the test would pass for the wrong reason).
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		conn, dialErr := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if dialErr == nil {
+			_ = conn.Close()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	releaseSSHPortOnShutdown()
+
+	// The port must be free immediately: that is the whole point — it is
+	// released before the slow teardown, not after it.
+	free, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err, "SSH port was not released by releaseSSHPortOnShutdown")
+	_ = free.Close()
 }

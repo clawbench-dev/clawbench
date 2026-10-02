@@ -71,7 +71,13 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 		if idx, found := findLastBlockOfType("text", parent); found {
 			(*blocks)[idx].Text += event.Content
 		} else {
-			*blocks = append(*blocks, model.ContentBlock{Type: "text", Text: event.Content, ParentToolCallID: parent})
+			*blocks = append(*blocks, model.ContentBlock{
+				Type:             "text",
+				Text:             event.Content,
+				ParentToolCallID: parent,
+				MemberName:       event.MemberName,
+				MemberColor:      event.MemberColor,
+			})
 		}
 	case "thinking":
 		parent := event.ParentToolCallID
@@ -107,6 +113,8 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 			Text:             event.Content,
 			ThinkID:          id,
 			ParentToolCallID: parent,
+			MemberName:       event.MemberName,
+			MemberColor:      event.MemberColor,
 		})
 		return id
 	case "thinking_done":
@@ -193,6 +201,8 @@ func AccumulateBlock(blocks *[]model.ContentBlock, event StreamEvent) (thinkID s
 					Status:           event.Tool.Status,
 					DurationMs:       event.Tool.DurationMs,
 					ParentToolCallID: event.Tool.ParentToolCallID,
+					MemberName:       event.MemberName,
+					MemberColor:      event.MemberColor,
 				})
 				upsertToolCallMeta(&(*blocks)[len(*blocks)-1])
 			}

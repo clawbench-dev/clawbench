@@ -11,6 +11,9 @@ import { useSessionIdentity } from './useSessionIdentity'
 import { useSettingsConfig } from './useSettingsConfig'
 import { getNative, reconnectTunnel as nativeReconnectTunnel } from '@/utils/clawbenchNative'
 import type { ClawBenchNative } from '@/utils/clawbenchNative'
+import { appLog, diagLog } from '@/utils/appLog'
+
+const TAG = 'PortForward'
 
 interface ForwardedPort {
   port: number        // Target port (server-side for forward, client-side for reverse)
@@ -52,15 +55,19 @@ export type TunnelStatus = 'unknown' | 'ok' | 'disconnected' | 'degraded'
 export type TunnelErrorType = 'auth' | 'network' | 'hostkey' | 'unknown' | ''
 
 /**
- * Tunnel transport: the configured preference (`port_forward.transport`), the
- * concrete wire that actually carried the last connect, or `''` when unknown.
+ * Tunnel transport: the concrete wire that carried the last connect, or `''`
+ * when unknown (web mode, or a host that predates the bridge methods).
  *
- * `'both'` is only ever a preference — the active transport resolves to 'ssh'
- * or 'h2'. Kept as one type so the panel can label either without branching.
+ * There is no `'both'`: the automatic mode was removed, and no shipped host
+ * reports it — Electron's `getActiveTransport()` is typed `'ssh' | 'h2'` and
+ * migrates a stored `'both'` to `'h2'` on load, and Android derives the family
+ * from the live session. (The server config still pins `port_forward.transport`
+ * to `both`; that is a capability flag, not this value — see
+ * `tunnelTransportAllowsH2`.)
  */
-export type TunnelTransport = 'ssh' | 'h2' | 'both' | ''
+export type TunnelTransport = 'ssh' | 'h2' | ''
 
-const TRANSPORTS: readonly string[] = ['ssh', 'h2', 'both']
+const TRANSPORTS: readonly string[] = ['ssh', 'h2']
 
 // Module-level shared state
 const ports = ref<ForwardedPort[]>([])
@@ -76,7 +83,7 @@ const tunnelErrorType = ref<TunnelErrorType>('')
 // The transport that actually carried the tunnel ('ssh' | 'h2'), or '' when it
 // cannot be determined (web mode, or a host that predates the bridge methods).
 // Read from the native layer rather than the server config because only the
-// native tunnel knows which wire won a 'both' preference.
+// native tunnel knows which wire it ended up on.
 const activeTransport = ref<TunnelTransport>('')
 
 // Ports that are newly registered and waiting for SSH tunnel to become reachable.
@@ -114,7 +121,17 @@ let tunnelPollTimer: ReturnType<typeof setInterval> | null = null
 // Callback set by usePortForward() to handle port-forward-result events.
 // We need this indirection because loadPorts() is defined inside usePortForward(),
 // but the event listener is set up at module level.
-let onPortForwardResult: ((localPort: number, success: boolean) => void) | null = null
+//
+// `reason` is optional (older hosts omit it; an absent value keeps the original
+// "unreachable" copy). `requestedLocalPort` is the port the caller asked for,
+// which differs from `localPort` when the listener had to bind a free neighbour
+// — the callback re-keys the server registry in that case.
+let onPortForwardResult: ((
+  localPort: number,
+  success: boolean,
+  reason?: 'conflict' | 'unreachable',
+  requestedLocalPort?: number,
+) => void) | null = null
 
 // Module-level listener for port forward result callbacks from Android native layer.
 // The native BackgroundService calls notifyPortForwardResult() which dispatches
@@ -127,9 +144,10 @@ function ensurePortForwardListener() {
   portForwardListenerInitialized = true
 
   window.addEventListener('clawbench-port-forward-result', ((e: CustomEvent) => {
+    diagLog('PortForward', `event received: ${JSON.stringify(e.detail)}`)
     if (onPortForwardResult) {
-      const { localPort, success } = e.detail
-      onPortForwardResult(localPort, success)
+      const { localPort, success, reason, requestedLocalPort } = e.detail
+      onPortForwardResult(localPort, success, reason, requestedLocalPort)
     }
   }) as EventListener)
 }
@@ -144,13 +162,20 @@ function hasActivePorts(): boolean {
 // sync with the value usePortForward() exposes.
 const { isAppMode } = useAppMode()
 
-// Guards against overlapping probe rounds. Module-scoped on purpose: it
+// Single-flight state for the reachability probe. Module-scoped on purpose: it
 // protects the module-level `localReachable`, while usePortForward() is called
 // from several places (the panel, App.vue's syncToNative, the localhost
 // annotation handler). A closure-local flag would let two instances probe
 // concurrently — each probe is a synchronous JS-bridge call that can take 500ms
 // on Android, so overlapping rounds double the bridge load.
+//
+// A round requested while one is in flight is QUEUED, not dropped. Dropping it
+// is what left a freshly created mapping red until a manual refresh: the first
+// round runs from registerPort's fire-and-forget loadPorts BEFORE Android's
+// async bind completes, records `false`, and the native success event's
+// re-probe was discarded — so the stale `false` was what the dot rendered.
 let probingReachability = false
+let reprobeRequested = false
 
 /**
  * Ports with their `active` flag corrected for the local device.
@@ -208,14 +233,40 @@ export function usePortForward() {
   // This needs to be inside usePortForward() because it calls loadPorts()
   // which is defined here. The module-level event listener dispatches to this callback.
   if (!onPortForwardResult) {
-    onPortForwardResult = (localPort: number, success: boolean) => {
+    onPortForwardResult = (
+      localPort: number,
+      success: boolean,
+      reason?: 'conflict' | 'unreachable',
+      requestedLocalPort?: number,
+    ) => {
+      const requested = requestedLocalPort ?? localPort
+      diagLog('PortForward', `native result: localPort=${localPort} requested=${requested} success=${success} reason=${reason ?? ''}`)
+      // The listener may have moved to a free port when the requested one was
+      // occupied. Re-key the server so DELETE/PUT/enable and the UI URL follow
+      // it, exactly like the desktop path does from the bind result.
+      if (success && localPort !== requested) {
+        void (async () => {
+          if (await rebindServerPort(requested, localPort)) {
+            connectingPorts.value.delete(requested)
+            connectingPorts.value.add(localPort)
+            connectingPorts.value = new Set(connectingPorts.value)
+            const toast = useToast()
+            toast.show(gt('portForward.portRebound', { requested, port: localPort }), { icon: '🔀', type: 'info' })
+          } else {
+            // The server refused the new key; release the orphaned listener.
+            removeNativeForward(localPort)
+            reportForwardFailure(requested, 'conflict')
+          }
+          loadPorts(true)
+        })()
+        return
+      }
       connectingPorts.value.delete(localPort)
       connectingPorts.value = new Set(connectingPorts.value)
       // Refresh port list to pick up the new active state from backend
       loadPorts(true)
       if (!success) {
-        const toast = useToast()
-        toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
+        reportForwardFailure(localPort, reason)
       }
     }
   }
@@ -225,6 +276,7 @@ export function usePortForward() {
     try {
       const data = await apiGet<{ ports: ForwardedPort[] }>('/api/proxy/ports')
       ports.value = data.ports || []
+      diagLog('PortForward', `loadPorts: ${(data.ports || []).map(p => `${p.localPort}(active=${p.active},enabled=${p.enabled},dir=${p.direction || 'forward'})`).join(' ') || '(none)'}`)
       // Clear connectingPorts when backend reports a port as active.
       // In web mode this is the ONLY path (no native callback).
       // In app mode this is a safety net: the native clawbench-port-forward-result
@@ -269,48 +321,155 @@ export function usePortForward() {
       if (localReachable.value.size > 0) localReachable.value = new Map()
       return
     }
-    // Probes are sequential and can take 500ms each, while loadPorts() is
-    // called from a 5s poll. Without this guard the rounds overlap and a stale
-    // round can overwrite a newer one's results.
-    if (probingReachability) return
+    // Single-flight with a queued re-run. Probes are sequential and can take
+    // 500ms each, while loadPorts() is called from a 5s poll; running rounds
+    // concurrently would double the bridge load, so an overlapping request is
+    // remembered and honoured as soon as the current round finishes. Dropping
+    // it instead (the old behaviour) let a stale pre-bind result outlive the
+    // success event's re-probe and stick as a red dot.
+    if (probingReachability) {
+      reprobeRequested = true
+      return
+    }
     probingReachability = true
     try {
-      const next = new Map<number, boolean>()
-      for (const p of ports.value) {
-        // Reverse mappings have no local listener — probing would always fail
-        // and paint every reverse entry as tunnel-down.
-        if (!p.enabled || isReversePort(p)) continue
-        try {
-          next.set(p.localPort, (await native.testPortReachable(p.localPort)) === true)
-        } catch {
-          next.set(p.localPort, false)
+      do {
+        // Clear before the round: a request arriving during this round must
+        // schedule the NEXT one, not be swallowed by a stale flag.
+        reprobeRequested = false
+        const next = new Map<number, boolean>()
+        for (const p of ports.value) {
+          // Reverse mappings have no local listener — probing would always fail
+          // and paint every reverse entry as tunnel-down.
+          if (!p.enabled || isReversePort(p)) continue
+          try {
+            next.set(p.localPort, (await native.testPortReachable(p.localPort)) === true)
+          } catch {
+            next.set(p.localPort, false)
+          }
         }
-      }
-      localReachable.value = next
+        localReachable.value = next
+        diagLog(
+          'PortForward',
+          `probe round: ${[...next.entries()].map(([k, v]) => `${k}=${v}`).join(',') || '(empty)'}` +
+            ` | ports=${ports.value.filter(p => p.enabled && !isReversePort(p)).map(p => p.localPort).join(',') || '(none)'}`,
+        )
+      } while (reprobeRequested)
     } finally {
       probingReachability = false
+      reprobeRequested = false
     }
   }
 
   /**
    * Register a forward with the native layer and surface a hard failure.
    *
-   * The bridge is heterogeneous: Android returns undefined (synchronous void),
-   * Electron returns Promise<boolean>. Only an explicit `false` means "the
-   * listener could not be bound" — treating undefined as failure would pop a
-   * false error on every Android call, and swallowing false (the old behaviour)
-   * left a dead mapping looking healthy.
+   * The bridge is heterogeneous and so are its success signals:
+   *   - Current Electron: `AddForwardResult` — an explicit ok/reason, and the
+   *     port actually bound (which may differ from `localPort` when it was
+   *     already taken on this machine).
+   *   - Legacy Electron: a bare boolean.
+   *   - Android: `undefined` (a synchronous @JavascriptInterface void). Its
+   *     verdict arrives later through the `clawbench-port-forward-result`
+   *     CustomEvent, so an absent value is NOT success and NOT failure — the
+   *     pending indicator must stay until the event lands.
+   *
+   * Only an explicit `false` (or `{ok:false}`) means failure: treating undefined
+   * as failure would pop a false error on every Android call, and swallowing
+   * false (the old behaviour) left a dead mapping looking healthy.
+   *
+   * Resolves to the port the listener actually bound (== `localPort` when it
+   * did not move, or when the verdict is still pending), or null on failure.
    */
-  function addNativeForward(localPort: number, targetPort: number, host: string, direction?: PortDirection): void {
+  async function addNativeForward(localPort: number, targetPort: number, host: string, direction?: PortDirection): Promise<number | null> {
     const native = getNative()
     const isReverse = direction === 'reverse'
     const method = isReverse ? native?.addReverseForwardedPort : native?.addForwardedPort
-    if (!method) return
+    if (!method) return localPort
     // For a reverse mapping the roles flip: `localPort` is the server-side bind
     // port and `targetPort` the local service to relay to.
-    Promise.resolve(method.call(native, localPort, targetPort, host || ''))
-      .then(ok => { if (ok === false) reportForwardFailure(localPort) })
-      .catch(() => reportForwardFailure(localPort))
+    let raw: unknown
+    try {
+      raw = await Promise.resolve(method.call(native, localPort, targetPort, host || ''))
+    } catch {
+      reportForwardFailure(localPort)
+      return null
+    }
+    const outcome = classifyForwardResult(raw, localPort)
+
+    if (outcome.kind === 'failure') {
+      reportForwardFailure(localPort, outcome.reason)
+      return null
+    }
+    if (outcome.kind === 'pending') {
+      // Android: the CustomEvent will clear the indicator and re-key if needed.
+      return localPort
+    }
+    if (outcome.port !== localPort) {
+      // The listener moved to a free port; re-key the server so DELETE/PUT/
+      // enable and the UI URL follow it.
+      const rebound = await rebindServerPort(localPort, outcome.port)
+      if (rebound) {
+        connectingPorts.value.delete(localPort)
+        connectingPorts.value.add(outcome.port)
+        connectingPorts.value = new Set(connectingPorts.value)
+        loadPorts(true)
+        return outcome.port
+      }
+      // The server refused (another mapping took the port between our bind and
+      // this call). Release the listener we just bound and report the conflict —
+      // never leave a listener the registry does not know about.
+      removeNativeForward(outcome.port, direction)
+      reportForwardFailure(localPort, 'conflict')
+      return null
+    }
+    // Bound on the requested port: mirror onPortForwardResult.
+    if (connectingPorts.value.delete(localPort)) {
+      connectingPorts.value = new Set(connectingPorts.value)
+    }
+    loadPorts(true)
+    return localPort
+  }
+
+  type ForwardOutcome =
+    | { kind: 'success'; port: number }
+    | { kind: 'pending' }
+    | { kind: 'failure'; reason: 'conflict' | 'unreachable' }
+
+  /**
+   * Classify the native bind result.
+   *
+   * `undefined`/`null` is PENDING, not success: Android's method is a
+   * synchronous void whose verdict arrives via the CustomEvent, so clearing the
+   * pending indicator here would flash "connected" before the bind is known.
+   */
+  function classifyForwardResult(raw: unknown, requested: number): ForwardOutcome {
+    if (raw === false) return { kind: 'failure', reason: 'unreachable' }
+    if (raw === true) return { kind: 'success', port: requested }
+    if (raw == null) return { kind: 'pending' }
+    const r = raw as { ok?: boolean; port?: unknown; reason?: unknown }
+    if (r.ok === false) {
+      return { kind: 'failure', reason: r.reason === 'conflict' ? 'conflict' : 'unreachable' }
+    }
+    if (typeof r.port === 'number' && r.port > 0) return { kind: 'success', port: r.port }
+    return { kind: 'success', port: requested }
+  }
+
+  /**
+   * Move the server's registry key from `oldPort` to `newPort`.
+   *
+   * Returns false when the server refused (409 = another mapping took the port,
+   * 404 = the mapping was deleted concurrently). The caller then releases the
+   * listener rather than leaving it orphaned.
+   */
+  async function rebindServerPort(oldPort: number, newPort: number): Promise<boolean> {
+    try {
+      await apiPost('/api/proxy/ports/rebind', { localPort: oldPort, newLocalPort: newPort })
+      return true
+    } catch (e) {
+      appLog.w(TAG, `rebind ${oldPort} -> ${newPort} failed`, e)
+      return false
+    }
   }
 
   /** Tear down a native forward of either direction. */
@@ -321,12 +480,22 @@ export function usePortForward() {
     Promise.resolve(method.call(native, localPort)).catch(() => {})
   }
 
-  /** Clear the pending indicator and tell the user the port could not be bound. */
-  function reportForwardFailure(localPort: number) {
+  /**
+   * Clear the pending indicator and tell the user the forward could not be set
+   * up. `reason === 'conflict'` means the LOCAL port was occupied (retry on
+   * another port); anything else is the tunnel/target being unreachable — which
+   * is what the original copy was written for and must not be shown for a
+   * client-side conflict.
+   */
+  function reportForwardFailure(localPort: number, reason?: 'conflict' | 'unreachable') {
     if (connectingPorts.value.delete(localPort)) {
       connectingPorts.value = new Set(connectingPorts.value)
     }
     const toast = useToast()
+    if (reason === 'conflict') {
+      toast.show(gt('portForward.portConflict'), { icon: '🚫', type: 'error' })
+      return
+    }
     toast.show(gt('portForward.portUnreachable'), { icon: '🚫', type: 'error' })
   }
 
@@ -345,23 +514,36 @@ export function usePortForward() {
     ensurePortForwardListener()
     connectingPorts.value.add(localPort)
     connectingPorts.value = new Set(connectingPorts.value)
-    // Register with the native layer: pass localPort, targetPort, host
+    diagLog('PortForward', `registerPort: localPort=${localPort} target=${port} host=${host || ''} dir=${direction || 'forward'} appMode=${isAppMode.value}`)
+    // Register with the native layer: pass localPort, targetPort, host.
+    // Await it so we can return the port the listener ACTUALLY bound: when the
+    // requested port is taken on this machine the desktop shell binds the next
+    // free one and re-keys the server, and the caller (a localhost-URL click)
+    // must open THAT port. Android reports through the CustomEvent instead, so
+    // it returns the requested port here and self-corrects on the next load.
+    let actualPort = localPort
     if (isAppMode.value) {
-      addNativeForward(localPort, port, host || '', direction)
+      const bound = await addNativeForward(localPort, port, host || '', direction)
+      if (bound !== null) actualPort = bound
     }
-    // Fire-and-forget: refresh port list and SSH info in the background.
-    // Do NOT await — the caller needs localPort immediately to open the WebView.
-    loadPorts(true).catch(() => {})
-    loadSSHInfo().catch(() => {})
-    return localPort
+    // Recompute the tunnel verdict, not just the list. `tunnelStatus` is only
+    // written by checkTunnelHealth(), and syncToNative() returns early when the
+    // server had no enabled ports at startup — so without this the panel stayed
+    // on 'unknown' after the first add: the Android background-permission tip
+    // (gated on `tunnelStatus === 'ok'`) never appeared, and the status row
+    // kept claiming it had not checked. Fire-and-forget: the caller awaits the
+    // registration, not a health round-trip.
+    checkTunnelHealth(true).catch(() => {})
+    return actualPort
   }
 
   async function updatePort(localPort: number, port: number, host: string, name: string, protocol: string, direction?: PortDirection) {
     await apiPut('/api/proxy/ports', { localPort, port, host, name, protocol, direction: direction || 'forward' })
-    // Re-sync native layer after update: remove old, add new with correct localPort
+    // Re-sync native layer after update: remove old, add new with correct localPort.
+    // Fire-and-forget: the caller awaits the server write, not the local bind.
     if (isAppMode.value) {
       removeNativeForward(localPort, direction)
-      addNativeForward(localPort, port, host || '', direction)
+      void addNativeForward(localPort, port, host || '', direction)
     }
     await Promise.all([loadPorts(true), loadSSHInfo()])
   }
@@ -408,11 +590,14 @@ export function usePortForward() {
     if (isAppMode.value) {
       const p = ports.value.find(x => x.localPort === localPort)
       if (enabled && p) {
-        addNativeForward(p.localPort, p.port, p.host || '', p.direction)
+        void addNativeForward(p.localPort, p.port, p.host || '', p.direction)
       } else if (!enabled) {
         removeNativeForward(localPort, p?.direction)
       }
     }
+    // Enabling/disabling changes which ports count toward the verdict, so the
+    // status must be recomputed — same reason as registerPort.
+    checkTunnelHealth(true).catch(() => {})
   }
 
   /** Open the scan drawer, auto-running a scan the first time it is opened. */
@@ -474,8 +659,9 @@ export function usePortForward() {
         reportForwardFailure(p.localPort)
         continue
       }
-      const ok = await Promise.resolve(method.call(native, p.localPort, p.port, p.host || '')).catch(() => false)
-      if (ok === false) reportForwardFailure(p.localPort)
+      // Route through the shared helper so a reconciliation that lands on a
+      // different free port re-keys the server exactly like a fresh add does.
+      await addNativeForward(p.localPort, p.port, p.host || '', p.direction)
     }
     // Re-probe now that the forwards have been (re)established, so the dots
     // reflect reality instead of the pre-sync state.
@@ -526,11 +712,10 @@ export function usePortForward() {
   /**
    * Refresh `activeTransport` from the native tunnel.
    *
-   * Prefers `getActiveTunnelTransport()` (the wire that actually won a 'both'
-   * preference) and falls back to the configured preference when nothing has
-   * connected yet. Both bridge methods are optional, so an older host or
-   * Android build simply leaves the value unknown — never throws, never
-   * invents a transport.
+   * Prefers `getActiveTunnelTransport()` (the wire the session actually came up
+   * on) and falls back to the configured preference when nothing has connected
+   * yet. Both bridge methods are optional, so an older host simply leaves the
+   * value unknown — never throws, never invents a transport.
    */
   async function refreshActiveTransport(): Promise<void> {
     if (!isAppMode.value) {
@@ -564,11 +749,10 @@ export function usePortForward() {
    * Parenthesized transport annotation for status copy, or `''` when no single
    * wire is known.
    *
-   * Only a concrete `'ssh'` / `'h2'` yields a label; `''` (unknown) and
-   * `'both'` (a preference, not a wire) stay empty so the caller renders the
-   * neutral wording rather than guessing. The bracket style lives in the
-   * `proxy.transportAnnotation` message so zh gets full-width brackets and en
-   * half-width ones without a locale branch here.
+   * Only a concrete `'ssh'` / `'h2'` yields a label; `''` (unknown) stays empty
+   * so the caller renders the neutral wording rather than guessing. The bracket
+   * style lives in the `proxy.transportAnnotation` message so zh gets full-width
+   * brackets and en half-width ones without a locale branch here.
    */
   function transportAnnotation(): string {
     const key = transportLabelKey(activeTransport.value)
@@ -587,15 +771,29 @@ export function usePortForward() {
    */
   const transportAllowsH2 = computed(() => tunnelTransportAllowsH2())
 
-  /** Check SSH tunnel health and determine status */
-  async function checkTunnelHealth() {
+  /**
+   * Check SSH tunnel health and determine status.
+   *
+   * `silent` suppresses the port list's loading state. Callers that recompute
+   * the verdict after a mutation pass it: the list is already on screen, and
+   * flashing "loading" over it on every add/disable is a visible regression.
+   * The initial check and the manual retry keep the spinner (the user asked for
+   * it, and the list is not yet trustworthy).
+   */
+  async function checkTunnelHealth(silent = false) {
     tunnelChecking.value = true
-    tunnelStatus.value = 'unknown'
+    // Keep the previous verdict during a silent recompute. The reset exists so
+    // a stale verdict is not shown while a user-requested check runs, but a
+    // post-mutation recompute would then blink the Android tip off and back on
+    // (and flip the settings dot through 'checking') on every add/disable.
+    if (!silent) {
+      tunnelStatus.value = 'unknown'
+    }
     tunnelMessage.value = ''
     tunnelError.value = ''
     tunnelErrorType.value = ''
 
-    await Promise.all([loadPorts(), loadSSHInfo(), refreshActiveTransport()])
+    await Promise.all([loadPorts(silent), loadSSHInfo(), refreshActiveTransport()])
 
     const info = sshInfo.value
     // SSH not configured does NOT mean the tunnel is unavailable: an h2-only

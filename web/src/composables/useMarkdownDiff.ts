@@ -30,6 +30,13 @@ export interface BlockInfo {
     tag: string
     /** textContent — used for char-level diff display */
     textContent: string
+    /**
+     * Text belonging to this block itself, excluding the text of nested blocks.
+     * For leaf blocks (P/H1/PRE/…) this equals textContent; for containers (LI,
+     * BLOCKQUOTE) it is only their direct text, because textContent there is the
+     * union of all descendants.
+     */
+    ownText: string
     /** innerHTML — used for block-level diff comparison */
     innerHTML: string
     /** CSS selector or path to locate this block in the live DOM */
@@ -196,6 +203,7 @@ function toBlockInfo(el: Element, selector: string, _index: number): BlockInfo {
     const info: BlockInfo = {
         tag,
         textContent: el.textContent || '',
+        ownText: computeOwnText(el),
         innerHTML: el.innerHTML,
         selector,
     }
@@ -218,15 +226,113 @@ function toBlockInfo(el: Element, selector: string, _index: number): BlockInfo {
 // ─── Block comparison key ───
 
 /**
+ * Text that belongs to `el` itself, excluding the text of any descendant that
+ * is extracted as its own block (nested LI/P/PRE/BLOCKQUOTE, table-wrap,
+ * mermaid, katex-display).
+ *
+ * Containers (LI, BLOCKQUOTE) are pushed AND recursed into, so their
+ * `textContent` is a superset of every nested block's text. Comparing on that
+ * superset made one edit light up twice — the child block and the container
+ * that merely contains it — so the comparison key must exclude the nested
+ * blocks' text.
+ */
+function computeOwnText(el: Element): string {
+    let out = ''
+    const walk = (node: Node) => {
+        for (const child of node.childNodes) {
+            if (child.nodeType === Node.TEXT_NODE) {
+                out += child.nodeValue || ''
+            } else if (child.nodeType === Node.ELEMENT_NODE) {
+                const childEl = child as Element
+                // A descendant that is itself a block contributes to its own
+                // marker, not to this container's key.
+                if (isDiffBlock(childEl) || childEl.classList.contains('katex-display')) continue
+                walk(childEl)
+            }
+        }
+    }
+    walk(el)
+    return out
+}
+
+/**
  * Get the comparison key for a block.
- * Uses textContent for semantic comparison — innerHTML is unreliable
- * because live DOM blocks may contain rendered artifacts (image timestamps,
- * file-path annotations, hljs classes) that differ from offscreen renders
- * even when the actual content is identical.
+ * Uses ownText for semantic comparison — innerHTML is unreliable because live
+ * DOM blocks may contain rendered artifacts (image timestamps, file-path
+ * annotations, hljs classes) that differ from offscreen renders even when the
+ * actual content is identical, and textContent double-counts nested blocks.
  */
 function blockKey(block: BlockInfo): string {
     if (block.mermaidSource !== undefined) return block.mermaidSource
-    return block.textContent
+    return block.ownText
+}
+
+// ─── Nested-marker merge ───
+
+/** True when `descendantSel` targets a block nested inside `ancestorSel`. */
+function isNestedSelector(descendantSel: string, ancestorSel: string): boolean {
+    // Selectors are `:scope > :nth-child(a) > :nth-child(b) …`. A real descendant
+    // continues after the ancestor's `)` with a child separator, so require the
+    // ` > ` boundary rather than a bare prefix match (the `)` already rules out
+    // `:nth-child(1)` matching `:nth-child(11)`, but the explicit boundary keeps
+    // the intent clear and survives a selector-format change).
+    return descendantSel.length > ancestorSel.length
+        && descendantSel.startsWith(ancestorSel + ' > ')
+}
+
+/** Concatenate diff lines, dropping entries already present in `base`. */
+function mergeDiffLines(base: DiffLine[] | undefined, extra: DiffLine[] | undefined): DiffLine[] | undefined {
+    if (!base) return extra ? [...extra] : undefined
+    if (!extra || extra.length === 0) return base
+    const seen = new Set(base.map(l => `${l.type}\u0000${l.content}`))
+    const merged = [...base]
+    for (const line of extra) {
+        const key = `${line.type}\u0000${line.content}`
+        if (!seen.has(key)) {
+            seen.add(key)
+            merged.push(line)
+        }
+    }
+    return merged
+}
+
+/**
+ * Collapse markers whose blocks nest (an ancestor block AND a descendant block
+ * both changed). Their rails would otherwise overlap — the descendant's rail is
+ * drawn inside the ancestor's span — and the ancestor's own diff already spans
+ * the descendant's text, so the group becomes ONE marker anchored on the
+ * outermost block, carrying the union of every member's diff lines. Clicking it
+ * shows all the changes together.
+ *
+ * Order-independent: a marker absorbs any already-seen descendant, and is
+ * absorbed by an already-seen ancestor.
+ */
+function mergeNestedMarkers(markers: DiffMarker[]): DiffMarker[] {
+    if (markers.length < 2) return markers
+    const out: DiffMarker[] = []
+    for (const m of markers) {
+        const parent = out.find(o => isNestedSelector(m.blockSelector, o.blockSelector))
+        if (parent) {
+            // Fold this nested marker into the outermost one already collected.
+            parent.diffLines = mergeDiffLines(parent.diffLines, m.diffLines)
+            if (!parent.charDiff) parent.charDiff = m.charDiff
+            continue
+        }
+        // This marker may itself be an ancestor of markers already collected
+        // (defensive: the walk emits outermost-first, but don't rely on order).
+        const absorbed = out.filter(o => isNestedSelector(o.blockSelector, m.blockSelector))
+        const merged: DiffMarker = {
+            ...m,
+            diffLines: m.diffLines ? [...m.diffLines] : m.diffLines,
+        }
+        for (const a of absorbed) {
+            merged.diffLines = mergeDiffLines(merged.diffLines, a.diffLines)
+            if (!merged.charDiff) merged.charDiff = a.charDiff
+            out.splice(out.indexOf(a), 1)
+        }
+        out.push(merged)
+    }
+    return out
 }
 
 // ─── Diff computation ───
@@ -245,8 +351,9 @@ export function computeMarkdownDiff(
 
     // Empty → non-empty: all added
     if (oldBlocks.length === 0) {
+        const addedMarkers = newBlocks.map((b, i) => toMarker('added', b, i, null))
         return {
-            markers: newBlocks.map((b, i) => toMarker('added', b, i, null)),
+            markers: mergeNestedMarkers(addedMarkers),
             hasChanges: true,
         }
     }
@@ -366,9 +473,10 @@ export function computeMarkdownDiff(
         }
     }
 
+    const mergedMarkers = mergeNestedMarkers(markers)
     return {
-        markers,
-        hasChanges: markers.length > 0,
+        markers: mergedMarkers,
+        hasChanges: mergedMarkers.length > 0,
     }
 }
 

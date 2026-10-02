@@ -26,13 +26,21 @@ export type { ControlMessage, ControlStream, H2TransportKind } from './h2Transpo
  */
 
 /**
- * Which transport the tunnel prefers. The three values are kept for the
- * `both` fallback (`['h2', 'ssh']`, design doc §2.3) and for the tests that
- * exercise it; in production, however, Electron is hard-wired to SSH —
- * nothing calls `setTransportPreference()` at runtime (only the tests do), so
- * the server's `port_forward.transport` value is no longer consumed here.
+ * Which transport the tunnel uses. Deliberately just the two wires — there is
+ * no "auto"/`both` mode any more.
+ *
+ * `both` used to probe h2 first and silently fall back to SSH. That made the
+ * user's choice unobservable (the same setting could mean either wire) and
+ * doubled the connect timeout on a deployment where one wire was known to be
+ * wrong. The settings row now asks for one wire explicitly; the user knows
+ * their deployment better than a probe does.
+ *
+ * The preference is client-local (Electron store), which is exactly why the
+ * server-side SSH listener is unconditionally on (see ApplyDefaults): the
+ * server cannot read this value, so it cannot use it to decide whether to
+ * listen.
  */
-export type TransportPreference = 'ssh' | 'h2' | 'both'
+export type TransportPreference = 'ssh' | 'h2'
 
 export interface TransportConnectOptions {
   /** Server host, e.g. `127.0.0.1`. */

@@ -420,6 +420,11 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 	defer loadCancel()
 
 	c.loadSessionActive.Store(true)
+	if c.client != nil {
+		// Clear any end marker from a previous replay so this replay's
+		// completion is judged on its own marker.
+		c.client.ResetReplayEnd()
+	}
 	loadStart := time.Now()
 	var loadResp acp.LoadSessionResponse
 	var err error
@@ -799,6 +804,11 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	// tee by request-id prefix.
 	rawRPC := newACPRawRPC(stdinWriter, conn.Done())
 	stdoutFilter.SetRawSink(rawRPC)
+
+	// Notification tee: the SDK's SessionUpdate union misclassifies extension
+	// variants (it re-types an unknown discriminator as SessionInfoUpdate and
+	// drops the payload), so the client reads those straight from the raw line.
+	stdoutFilter.SetNotificationSink(client)
 
 	initCtx, initCancel := context.WithTimeout(ctx, acpInitializeTimeout)
 	defer initCancel()

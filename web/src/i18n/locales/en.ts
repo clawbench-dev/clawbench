@@ -466,6 +466,7 @@ export default {
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage tasks',
       usageDesc: 'View token usage',
+      userGuideDesc: 'Look up the ClawBench user manual',
       btwDesc: 'Ask a side question (answered by the summary model, without disturbing this session)',
     },
     btw: {
@@ -612,6 +613,23 @@ export default {
       priorityHigh: 'High',
       priorityMedium: 'Med',
       priorityLow: 'Low',
+    },
+    team: {
+      title: 'Team',
+      active: '{count} active',
+      ended: 'ended',
+      autoTeam: 'auto team',
+      tools: 'tools',
+      tokens: 'tokens',
+      contextWindow: 'context',
+      agentType: 'type',
+      status: {
+        pending: 'pending',
+        running: 'running',
+        completed: 'completed',
+        failed: 'failed',
+        terminated: 'ended',
+      },
     },
     sessionSetting: {
       searchPlaceholder: 'Search models...',
@@ -1319,6 +1337,13 @@ export default {
   file: {
     /** Label for the aggregate upload progress bar. */
     uploading: 'Uploading...',
+    /** Change navigation pill in the file preview (diff markers). */
+    changeNav: {
+      count: '{count} changes',
+      prev: 'Previous change',
+      next: 'Next change',
+      clear: 'Clear change markers',
+    },
     codePreview: {
       title: 'Code Preview',
       dragToMove: 'Drag to move',
@@ -1674,7 +1699,6 @@ export default {
     transportLabel: 'Transport',
     transportSsh: 'SSH',
     transportH2: 'HTTP/2',
-    transportAuto: 'Auto',
     // Parenthesized annotation appended to status copy once the wire is known,
     // e.g. `Tunnel disconnected (SSH)`. Half-width brackets are the en
     // convention; the caller only passes this the label (`proxy.transportSsh` /
@@ -1727,6 +1751,8 @@ export default {
     tunnelReconnected: 'Tunnel reconnected{transport}',
     portUnreachable: 'Port unreachable, please check if the service is running',
     portConnecting: 'Port is still connecting, please wait',
+    portConflict: 'That local port is in use and no free port could be bound',
+    portRebound: 'Local port {requested} was in use; using {port} instead',
   },
   pwa: {
     installTitle: 'Install ClawBench',
@@ -2620,14 +2646,17 @@ export default {
       ragEmbedProgress: 'Embedding Progress',
       ragEmbedProgressDesc: 'Number of chat messages with vector embeddings completed',
       ragProgressFormat: '{done}/{total}',
-      portForwardEnabled: 'Enable Port Mapping',
-      portForwardPort: 'Port Mapping Port',
+      portForwardPort: 'SSH Tunnel Port',
       portForwardPortAuto: 'Auto',
-      portForwardPortDesc: 'Local port number for port mapping service to listen on, 0 for auto-assign',
-      portForwardH2: 'H2 Mode (Experimental)',
-      portForwardH2Desc: 'Use an HTTP/2 tunnel (over the main port) instead of the SSH tunnel; takes effect after reconnecting',
-      portForwardH2ReconnectHint: 'The change takes effect after the next reconnect',
-      portForwardH2Reconnect: 'Reconnect Now',
+      portForwardPortDesc: 'Port the SSH tunnel server listens on, 0 for auto-assign (main port + 1)',
+      portForwardTransport: 'Tunnel Transport',
+      portForwardTransportDesc: 'Which channel carries the port forwards; reconnects automatically on save',
+      tunnelStatusConnected: 'Tunnel connected',
+      tunnelStatusServerReady: 'Server ready — connect with the app or ssh to start tunneling',
+      tunnelStatusServerReadyH2: 'Server ready — port mapping runs over H2 (main port)',
+      tunnelStatusUnavailable: 'Port mapping unavailable: the SSH tunnel server is off and this transport does not support H2',
+      tunnelStatusChecking: 'Checking tunnel status…',
+      tunnelStatusUnknown: 'Tunnel status unknown',
       frpEnabled: 'Enable NAT Traversal',
       frpEnabledDesc: 'Forward service to public internet via FRP, allowing phone access outside LAN',
       frpServerAddr: 'FRP Server Address',
@@ -2915,6 +2944,7 @@ export default {
       continueEditing: 'Continue Editing',
       saved: 'Configuration saved',
       saveFailed: 'Save failed',
+      transportApplyFailed: 'Transport saved, but the tunnel failed to reconnect — port forwarding is unavailable',
       testConnectivity: 'Test Connectivity',
       testing: 'Testing...',
     },

@@ -1,6 +1,8 @@
 <template>
   <div class="toc-body">
-    <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" @dblclick="clearSearch" />
+    <div class="toc-search-row">
+      <SearchInput v-model="searchQuery" :placeholder="t('toc.searchPlaceholder')" @enter="listNav.confirm" @down="listNav.down" @up="listNav.up" @dblclick="clearSearch" />
+    </div>
     <div class="toc-list" ref="listRef">
       <LoadingIndicator v-if="loading" :label="t('toc.loading')" size="md" />
       <div v-else-if="filteredToc.length === 0" class="toc-empty">{{ searchQuery ? t('toc.noMatch') : t('toc.noHeadings') }}</div>
@@ -509,7 +511,23 @@ onBeforeUnmount(() => {
     display: flex;
     flex-direction: column;
     min-height: 0;
+    /* No padding on the container: the dock's list rows must sit flush with the
+       dock edges (the row hover/active backgrounds and the 2px level indent
+       read as inset panels otherwise). Only the search box carries horizontal
+       padding — same split as UserMsgIndexDrawer's `.msg-index-search-row`.
+       `overflow: hidden` is safe here: `.toc-list` scrolls internally. */
+    padding: 0;
+}
+
+/* The search box's own gutter — the one element that keeps horizontal padding. */
+.toc-search-row {
+    display: flex;
+    align-items: center;
     padding: var(--space-4) var(--space-3) 0;
+    flex-shrink: 0;
+}
+.toc-search-row :deep(.search-pill) {
+    flex: 1;
 }
 
 .toc-list {

@@ -141,10 +141,22 @@ type Server struct {
 	addr             string
 	cfg              model.PortForwardConfig
 	mainPort         int // ClawBench's own HTTP port — never bindable by a reverse forward
-	connCount        int
-	activeChannels   int
-	lastConnected    time.Time
-	authTracker      *authTracker
+
+	// Bind-retry budget. A restart can hand this process a port the outgoing
+	// one has not released yet; see listenWithRetry. Held per-server (rather
+	// than as package constants) so tests can shrink the window.
+	bindRetryWindow   time.Duration
+	bindRetryInterval time.Duration
+
+	// afterBindHook runs after a successful bind but before the listener is
+	// published. Test-only: it makes the narrow Close()-during-bind window
+	// deterministic, which is otherwise unreachable from a test.
+	afterBindHook func()
+
+	connCount      int
+	activeChannels int
+	lastConnected  time.Time
+	authTracker    *authTracker
 
 	// Active reverse-forward registrations, keyed by connection. Tracked so
 	// Close() can release the loopback listeners they bound: without this a
@@ -243,6 +255,109 @@ func NewServer(cfg model.PortForwardConfig, mainPort int, password string, portR
 		mainPort:         mainPort,
 		authTracker:      newAuthTracker(),
 		reverseConns:     make(map[*reverseConn]struct{}),
+
+		bindRetryWindow:   defaultBindRetryWindow,
+		bindRetryInterval: defaultBindRetryInterval,
+	}
+}
+
+const (
+	// defaultBindRetryWindow bounds how long ListenAndServe keeps retrying a
+	// failed bind before giving up.
+	//
+	// A restart re-launches the new process as soon as the MAIN port (20000)
+	// is free, but the outgoing process releases the SSH port (20001) much
+	// later: its Close is a deferred call registered early in main(), so LIFO
+	// runs it after every other teardown — the terminal manager, file watcher,
+	// IM managers and frp all close first. Measured on a real restart
+	// (2026-10-01): "server stopped" at 11:24:15.423 but "SSH tunnel server
+	// stopped" only at 11:24:21.459 — the port was held ~6s, and the
+	// replacement's bind attempt at 11:24:20.722 lost by 737ms. That teardown
+	// is not bounded by anything in this package: each terminal session alone
+	// can take up to 4s (SIGTERM grace + SIGKILL grace), so the delay grows
+	// with the session count.
+	//
+	// Before this retry existed the new process logged one error and never
+	// listened again: the port stayed unbound for the whole process lifetime
+	// and /api/config/test reported "SSH tunnel server is not listening on
+	// port 20001" until the next restart. (releaseSSHPortOnShutdown now closes
+	// the listener at the start of shutdown so the race window is small; this
+	// retry is the safety net for the paths that do not go through it, e.g. a
+	// SIGKILL'd process.)
+	//
+	// 10s comfortably covers the teardown observed above. Retrying longer
+	// would only delay the (correct) failure report on a genuinely occupied
+	// port.
+	defaultBindRetryWindow = 10 * time.Second
+	// defaultBindRetryInterval is the gap between bind attempts.
+	defaultBindRetryInterval = 100 * time.Millisecond
+)
+
+// SetBindRetryForTest overrides the bind-retry window and interval (test helper).
+func (s *Server) SetBindRetryForTest(window, interval time.Duration) {
+	s.bindRetryWindow = window
+	s.bindRetryInterval = interval
+}
+
+// SetAfterBindHookForTest installs a callback that runs after a successful bind
+// but before the listener is published (test helper). It exists solely to make
+// the Close()-during-bind race deterministic.
+func (s *Server) SetAfterBindHookForTest(f func()) {
+	s.afterBindHook = f
+}
+
+// listenWithRetry binds s.addr, retrying while the bind keeps failing until
+// the retry window elapses.
+//
+// Retrying on ANY bind failure (rather than only on address-in-use) is
+// deliberate: detecting address-in-use portably would need per-OS errno
+// handling, because syscall.EADDRINUSE is an invented value on Windows and
+// never matches the real WSAEADDRINUSE (see internal/tunnel/bind.go:165-169
+// for the same conclusion). The cost of the broader predicate is bounded —
+// a permanently un-bindable address (bad interface, permission) simply
+// fails after the window instead of immediately — and it keeps this correct
+// on every platform.
+//
+// The retry also checks s.done: a Close() during the window must not be
+// followed by a successful bind, or shutdown would leave a listening socket
+// owned by a stopped server.
+func (s *Server) listenWithRetry() (net.Listener, error) {
+	deadline := time.Now().Add(s.bindRetryWindow)
+	for attempt := 0; ; attempt++ {
+		select {
+		case <-s.done:
+			return nil, fmt.Errorf("ssh: server closed before binding %s", s.addr)
+		default:
+		}
+
+		//nolint:noctx // SSH server uses net.Listener directly
+		ln, err := net.Listen("tcp", s.addr)
+		if err == nil {
+			if attempt > 0 {
+				slog.Info(
+					"SSH tunnel server bound after retry",
+					slog.String("addr", s.addr),
+					slog.Int("attempts", attempt+1),
+				)
+			}
+			return ln, nil
+		}
+
+		if !time.Now().Before(deadline) {
+			return nil, err
+		}
+		slog.Warn(
+			"ssh: bind failed, retrying (port may still be held by the outgoing process)",
+			slog.String("addr", s.addr),
+			slog.Int("attempt", attempt+1),
+			slog.String("err", err.Error()),
+		)
+
+		select {
+		case <-s.done:
+			return nil, fmt.Errorf("ssh: server closed before binding %s", s.addr)
+		case <-time.After(s.bindRetryInterval):
+		}
 	}
 }
 
@@ -283,15 +398,16 @@ func (s *Server) ListenAndServe() error {
 	}
 	config.AddHostKey(s.hostKey)
 
-	// Start TCP listener
-	//nolint:noctx // SSH server uses net.Listener directly
-	listener, err := net.Listen("tcp", s.addr)
+	// Start TCP listener. Retries, because a restart routinely races the
+	// outgoing process for this port (see listenWithRetry).
+	listener, err := s.listenWithRetry()
 	if err != nil {
 		return fmt.Errorf("ssh: failed to listen on %s: %w", s.addr, err)
 	}
-	s.mu.Lock()
-	s.listener = listener
-	s.mu.Unlock()
+
+	if err := s.publishListener(listener); err != nil {
+		return err
+	}
 
 	// Periodically cleanup expired auth records
 	go func() {
@@ -327,6 +443,32 @@ func (s *Server) ListenAndServe() error {
 
 		go s.handleConn(conn, config)
 	}
+}
+
+// publishListener records the bound listener, refusing to do so if the server
+// was closed while the bind was in flight.
+//
+// Close() reads s.listener under s.mu and would have seen nil had it run
+// before this point, so it could not close the listener just created. Without
+// this re-check the listener would be leaked and its port held for the life of
+// the process — the very failure the bind retry exists to fix.
+func (s *Server) publishListener(listener net.Listener) error {
+	// Test-only window widener: Close() arriving exactly here is the race this
+	// function defends against.
+	if s.afterBindHook != nil {
+		s.afterBindHook()
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	select {
+	case <-s.done:
+		_ = listener.Close()
+		return fmt.Errorf("ssh: server closed before binding %s", s.addr)
+	default:
+	}
+	s.listener = listener
+	return nil
 }
 
 // Close shuts down the SSH server. Safe to call multiple times.

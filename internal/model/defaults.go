@@ -238,7 +238,18 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- Session ---
-	if cfg.Session.MaxCount <= 0 {
+	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is
+	// an expressible value, not a zero-value to be defaulted. Only an omitted
+	// key takes the default. Rewriting an explicit 0 to 15 made "unlimited"
+	// unexpressable in config.yaml — an install that opted out of the limit was
+	// silently enrolled in one. Negative values are nonsensical; clamp them to
+	// the default rather than letting them reach the `> 0` gate (which would
+	// read a negative as unlimited).
+	if p, ok := presence["session.max_count"]; ok && p {
+		if cfg.Session.MaxCount < 0 {
+			cfg.Session.MaxCount = 15
+		}
+	} else if cfg.Session.MaxCount <= 0 {
 		cfg.Session.MaxCount = 15
 	}
 	// ArchiveRetentionEnabled: bool zero-value (false) is intentional default.
@@ -264,10 +275,22 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- Port Forward (SSH Tunnel) ---
-	// Same bool zero-value trap as Proxy.
-	if !presence["port_forward.enabled"] {
-		cfg.PortForward.Enabled = true
-	}
+	// The SSH tunnel listener is ALWAYS on. It is pinned here rather than left
+	// to the file, for the same reason Transport is pinned below: the switch
+	// that used to control it was removed.
+	//
+	// Why it went away: the listener is server-side while the transport choice
+	// is client-local (Electron store / Android SharedPreferences), so a
+	// per-client toggle could never be enforced on the server — and a global
+	// one would let one client silently break another (an h2 desktop client
+	// turning the listener off would strand every SSH client, including the
+	// manual `ssh -L` path the web UI documents). Always-on removes the
+	// conflict instead of arbitrating it, and costs one idle loopback-adjacent
+	// listener that was already the default.
+	//
+	// The bool zero-value trap no longer applies: Enabled is unconditionally
+	// true, so a config that says false is converged on load.
+	cfg.PortForward.Enabled = true
 	// Persist host key to avoid SSH fingerprint mismatch after server restart
 	if cfg.PortForward.HostKey == "" {
 		cfg.PortForward.HostKey = filepath.Join(DataDir, "ssh_host_key")

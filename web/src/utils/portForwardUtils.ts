@@ -58,10 +58,15 @@ export function tunnelStatusFromPorts(ports: ForwardedPort[]): 'ok' | 'degraded'
  * This is the ONE expression behind every "port mapping is unavailable" gate in
  * the UI — the dock tab filter, the force-switch watcher, the localhost-URL
  * annotation/click guards and the panel's warning banner. It lives here, not in
- * each call site, precisely so those gates cannot drift apart again: they all
- * used to key off the SSH listener alone, which hid the entire feature on an
- * h2-only install (`port_forward.enabled: false` + `transport: h2|both`) that
- * forwards ports perfectly well over the stream tunnel.
+ * each call site, precisely so those gates cannot drift apart.
+ *
+ * Since the SSH listener became unconditional (ApplyDefaults pins
+ * `port_forward.enabled`) and the server transport is pinned to `both`, the
+ * second operand is always true — so this currently always returns false. It is
+ * kept rather than deleted because it is still the correct predicate if the
+ * listener ever fails to bind (ClearSSHServer retracts the reference, and
+ * `/api/ssh/info` then reports enabled:false), and because removing it would
+ * mean re-deriving the same reasoning at four call sites.
  *
  * `sshEnabled` is the tri-state from `/api/ssh/info`. `undefined`/`null` means
  * "not loaded yet" and must NOT read as disabled — only an explicit `false`

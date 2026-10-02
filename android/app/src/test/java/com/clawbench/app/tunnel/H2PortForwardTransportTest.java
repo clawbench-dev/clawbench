@@ -60,6 +60,56 @@ public class H2PortForwardTransportTest {
     }
 
     @Test
+    public void addLocal_occupiedPortFallsBackToTheNextFreeOne() throws Exception {
+        // The requested port is taken on this device; the transport must bind
+        // the next free port and RETURN it, so the caller can re-key the server
+        // registry and the UI URL to the listener that actually exists.
+        sockets.occupiedPorts.add(3080);
+
+        int bound = transport.addLocal(3080, 80, "127.0.0.1");
+
+        assertEquals("must bind the next free port", 3081, bound);
+        assertEquals("the occupied port must be released", 1, transport.listenerCount());
+        assertTrue("the listener is keyed by the bound port", transport.isLocalReachable(3081));
+        assertFalse("the requested port must not be registered", transport.isLocalReachable(3080));
+    }
+
+    @Test
+    public void addLocal_skipsSeveralOccupiedPorts() throws Exception {
+        sockets.occupiedPorts.add(3080);
+        sockets.occupiedPorts.add(3081);
+
+        assertEquals(3082, transport.addLocal(3080, 80, "127.0.0.1"));
+    }
+
+    @Test
+    public void addLocal_removeLocalTargetsTheBoundPort() throws Exception {
+        // The re-keyed caller sends removeLocal(boundPort); if the listener were
+        // still keyed by the requested port this would miss and leak it.
+        sockets.occupiedPorts.add(3080);
+        int bound = transport.addLocal(3080, 80, "127.0.0.1");
+
+        transport.removeLocal(bound);
+
+        assertEquals(0, transport.listenerCount());
+        assertFalse(transport.isLocalReachable(bound));
+    }
+
+    @Test
+    public void addLocal_nonConflictBindErrorDoesNotWalkPorts() throws Exception {
+        // A non-BindException IOException (bad address, permission, …) is not
+        // fixed by changing ports, so the scan must stop immediately.
+        sockets.failNextBind = true;
+        try {
+            transport.addLocal(3080, 80, "127.0.0.1");
+            org.junit.Assert.fail("expected the bind failure to propagate");
+        } catch (IOException expected) {
+            // expected
+        }
+        assertEquals("must not try further candidates", 1, sockets.created.size());
+    }
+
+    @Test
     public void addLocal_doesNotOpenAStreamUntilAConnectionArrives() throws Exception {
         transport.addLocal(3080, 80, "127.0.0.1");
 
@@ -194,16 +244,24 @@ public class H2PortForwardTransportTest {
     }
 
     @Test
-    public void addLocal_portZero_isAcceptedAsAnEphemeralRequest() throws Exception {
-        // Pins current behaviour: the transport treats 0 like InetSocketAddress
-        // does (an OS-assigned port). It is NOT rejected, which is a latent
-        // problem for -L: the frontend reaches the forward at
-        // localhost:{localPort}, and the server's registry never assigns 0
-        // (allocateLocalPort remaps <1024 to 1024+), so a 0 here yields a
-        // listener nothing can address. See the report.
-        transport.addLocal(0, 80, "127.0.0.1");
-        assertEquals(1, transport.listenerCount());
-        assertTrue(transport.isLocalReachable(0));
+    public void addLocal_portZero_isRejected() {
+        // 0 is not a usable forward key: the frontend reaches the forward at
+        // localhost:{localPort} and the server's registry never assigns 0, so a
+        // listener bound to an OS-chosen port would be unaddressable. The
+        // transport now rejects it up front instead of binding something the
+        // caller cannot name (the OS-assigned fallback is internal to the scan,
+        // appended as the last candidate after the explicit ones).
+        for (int bad : new int[]{0, -1, 65536}) {
+            try {
+                transport.addLocal(bad, 80, "127.0.0.1");
+                org.junit.Assert.fail("expected port " + bad + " to be rejected");
+            } catch (IllegalArgumentException expected) {
+                // expected
+            } catch (Exception other) {
+                org.junit.Assert.fail("expected an unchecked rejection, got " + other);
+            }
+        }
+        assertEquals("a rejected port must not register a listener", 0, transport.listenerCount());
     }
 
     // ==================================================================

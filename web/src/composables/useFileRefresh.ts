@@ -22,12 +22,13 @@ import {
   diffOldContent,
   diffOldFilePath,
   clearDiffMarkers,
-  extractBlocks,
   computeCodeDiffMarkers,
-  type DiffMarker,
-  type BlockInfo,
-  type DiffResult,
 } from '@/composables/useMarkdownDiff.ts'
+import {
+  recordBaseline,
+  getBaseline,
+  clearBaseline,
+} from '@/composables/useFileChangeBaseline.ts'
 import { getFileType } from '@/utils/fileType.ts'
 import { useFileEditor } from '@/composables/useFileEditor.ts'
 import { useDialog } from '@/composables/useDialog.ts'
@@ -195,20 +196,21 @@ function isMarkdownRenderedMode(): boolean {
     return !!document.querySelector('.markdown-body .markdown-content')
 }
 
-/**
- * Get old block list from the live DOM for markdown block-level diff.
- */
-function getOldBlockList() {
-    const content = document.querySelector('.markdown-body .markdown-content') || document.querySelector('.markdown-body')
-    if (!content) return []
-    return extractBlocks(content)
-}
-
 // ─── Clear flash on file navigation ───
 
 watch(() => store.state.currentFile?.path, (newPath, oldPath) => {
     if (newPath !== oldPath) {
         clearFlash()
+        // Reset the published markers AND the diff-drawer side effects
+        // (diffOldContent / diffOldFilePath / closeDiffDrawer). Clearing only
+        // diffMarkers left the drawer open on the previous file's diff with a
+        // dead Undo (its path guard rejects) — markdown happened to call this
+        // from its own watcher, code files had no other closer.
+        //
+        // This does NOT touch the accumulated baseline, which is what actually
+        // persists: the baseline must survive so switching away and back
+        // restores the markers. The consuming component re-derives via
+        // syncMarkersFor on mount.
         clearDiffMarkers()
     }
 })
@@ -217,6 +219,61 @@ watch(() => store.state.currentFile?.path, (newPath, oldPath) => {
 
 const DELETE_FLASH_MS = 1200
 const ADD_FLASH_CLEAR_MS = 2000
+
+/** Preview surface. The two surfaces have different marker shapes and derive differently. */
+export type ChangeSurface = 'markdown' | 'code'
+
+/**
+ * Recompute and publish the markers for the current file + surface from the
+ * accumulated baseline.
+ *
+ * This is the single publish point — it replaces the scattered
+ * clearDiffMarkers() calls so "switch file / switch surface / external refresh"
+ * all run the same baseline logic and markers survive navigation.
+ *
+ * **This only DERIVES; it never creates a baseline.** Seeding the baseline is
+ * the refresh path's job — only it knows the pre-change content. Seeding here
+ * would make merely opening a file establish a baseline.
+ *
+ * - No baseline → no markers (no change observed yet).
+ * - Baseline present → markers = diff(baseline, currentContent).
+ * - Content equal to baseline → no markers (the caller drops the baseline).
+ */
+export function syncMarkersFor(path: string, surface: ChangeSurface, currentContent: string): void {
+  const baseline = path ? getBaseline(path) : null
+  if (baseline === null || baseline === currentContent) {
+    clearDiffMarkers()
+    return
+  }
+
+  if (surface === 'markdown') {
+    const oldBlocks = offscreenExtractBlocks(baseline)
+    const newBlocks = offscreenExtractBlocks(currentContent)
+    // Mirror the historical guard: a baseline that rendered to zero blocks would
+    // otherwise mark the whole document as "added".
+    const result = (oldBlocks.length > 0 && newBlocks.length > 0)
+      ? computeMarkdownDiff(oldBlocks, newBlocks)
+      : null
+    if (result && result.hasChanges) {
+      diffMarkers.value = result.markers
+      diffOldContent.value = baseline
+      diffOldFilePath.value = path
+    } else {
+      clearDiffMarkers()
+    }
+    return
+  }
+
+  const lineDiff = computeDiff(baseline, currentContent)
+  const markers = computeCodeDiffMarkers(lineDiff, baseline, currentContent)
+  if (markers.length > 0) {
+    diffMarkers.value = markers
+    diffOldContent.value = baseline
+    diffOldFilePath.value = path
+  } else {
+    clearDiffMarkers()
+  }
+}
 
 /**
  * Refresh the currently viewed file content while preserving scroll position.
@@ -322,24 +379,13 @@ async function doRefreshCurrentFile(options: {
   }
 
   let diffResult: LineDiff | null = null
-  let codeMarkers: DiffMarker[] | null = null
-  let markdownResult: DiffResult | null = null
   let hasDeletions = false
 
-  if (isMarkdown) {
-      // Block-level diff for rendered markdown
-      const oldBlocks = getOldBlockList()
-      const newBlocks: BlockInfo[] = newContent !== null ? offscreenExtractBlocks(newContent) : []
-      markdownResult = (oldBlocks.length > 0 && newBlocks.length > 0 && newContent !== oldContent)
-          ? computeMarkdownDiff(oldBlocks, newBlocks)
-          : null
-  } else if (oldContent) {
-      // Line-level diff for code/raw files
-      if (newContent !== null && newContent !== oldContent) {
-          diffResult = computeDiff(oldContent, newContent)
-          hasDeletions = diffResult.deletedInOld.length > 0 || diffResult.deletedChars.size > 0
-          codeMarkers = computeCodeDiffMarkers(diffResult, oldContent, newContent)
-      }
+  if (!isMarkdown && oldContent && newContent !== null && newContent !== oldContent) {
+      // Line-level diff drives the delete/add flash only. Persistent markers are
+      // derived from the accumulated baseline in syncMarkersFor below.
+      diffResult = computeDiff(oldContent, newContent)
+      hasDeletions = diffResult.deletedInOld.length > 0 || diffResult.deletedChars.size > 0
   }
 
   // ─── Phase 1: Red-flash deletions (code only) ───
@@ -384,24 +430,24 @@ async function doRefreshCurrentFile(options: {
     return
   }
 
-  // ─── Apply markers (common) ───
+  // ─── Apply markers via the accumulated baseline (common) ───
 
-  if (isMarkdown) {
-      if (markdownResult && markdownResult.hasChanges) {
-          diffMarkers.value = markdownResult.markers
-          diffOldContent.value = oldContent
-          diffOldFilePath.value = currentFilePath
-      } else {
-          clearDiffMarkers()
+  const surface: ChangeSurface = isMarkdown ? 'markdown' : 'code'
+  const appliedContent = store.state.currentFile?.content ?? newContent
+  if (appliedContent !== null) {
+    const existing = getBaseline(currentFilePath)
+    if (existing === null) {
+      // First observed change: seed the baseline with the content as it was
+      // BEFORE this refresh, so markers accumulate from here on.
+      if (oldContent !== null && oldContent !== appliedContent) {
+        recordBaseline(currentFilePath, oldContent)
       }
-  } else {
-      if (codeMarkers && codeMarkers.length > 0) {
-          diffMarkers.value = codeMarkers
-          diffOldContent.value = oldContent
-          diffOldFilePath.value = currentFilePath
-      } else {
-          clearDiffMarkers()
-      }
+    } else if (existing === appliedContent) {
+      // The file returned to its baseline — drop it so the marker clears and the
+      // next change starts a fresh baseline.
+      clearBaseline(currentFilePath)
+    }
+    syncMarkersFor(currentFilePath, surface, appliedContent)
   }
 
   // ─── Phase 3: Blue-flash additions (code only) ───

@@ -230,6 +230,7 @@
 - 物理宽度那条是为了高分辨率平板：2400 物理 px / DPR 2.5 = 960 CSS px，只看 CSS 宽度会漏判。
 - 横屏判定用 `screen.width/height` 而非 `window` 内尺寸，防止 Android 软键盘 `adjustResize` 把竖屏平板抖成宽屏。
 - 生效方式是给 `.main-content` 加 `.wide-screen` 类，`wide-screen.css` 切成 `flex-direction: row`。
+- **默认分屏比例是 4:6（左侧稍窄）**，常量 `DEFAULT_RATIO` 在 `utils/splitRatio.ts`——composable 初值与 `resetWideScreenState` 都引用它，不要把 0.4 散落成魔数。用户已持久化的自定义比例不受影响（localStorage 优先）。
 
 ### 安全区
 
@@ -288,6 +289,9 @@
 - **做法**：`:disabled="当前值 === 默认值"`，CSS 用 `opacity: var(--opacity-disabled)` + `cursor: not-allowed` 灰显。按钮留在文档流里，宽度恒定。
 - **唯一允许的 `v-if` 是 `defaultValue !== undefined`**：整行没有可重置的目标时，按钮应当是**不存在**而不是永久禁用（永不生效的控件是噪音，同 §壁纸那条）。判据是「该控件**能否**生效」，不是「此刻**是否**已生效」。
 - 形状只在 `css/components.css` 定义一次（见 §设置面板控件）；两个组件只保留模板与 `:disabled` 绑定。`sliderResetResident.css.test.ts` 守住（钉「presence 不得依赖当前值」「必须有 :disabled」「必须有灰显规则」）。
+### 复制按钮
+
+**`CopyButton.vue`**（`web/src/components/common/CopyButton.vue`）是全站唯一的复制按钮。**反馈是图标互换**（图标临时变成对勾）**而非文字标签**，也**不弹 toast**——对勾本身就是反馈。文字标签被刻意排除：按钮通常钉在容器边缘或定宽工具栏里，变宽的标签会挤进旁边的内容，而要保持不挤就必须预留最宽的那条翻译（中文「已复制」与日文「コピーしました」宽度差约 2×）；恒定占位则两个问题都没有。两种模式：非受控传 `text`（组件自己复制并闪一下）、受控传 `copied`（宿主掌握剪贴板写入与计时，用于状态已在父组件的场景如代码预览工具栏）。此前全仓有四套互不一致的反馈机制（图标互换 / 文字替换 / 仅 toast / 仅变色），现已统一。
 
 ### 角标
 
@@ -315,6 +319,7 @@
 - 库：**`lucide-vue-next`**，用 `:size` 属性。
 - 实测最常用的尺寸：**14（311 处）**、16（144）、12（114）、13（66）。**新图标默认用 14**，除非所在位置的邻居都是别的尺寸。
 - 共享类里的图标尺寸写在 CSS 里：`.chat-action-btn svg { width:14px; height:14px }`、`.fbtn svg { flex-shrink: 0 }`。
+- **溢出的按钮条要支持拖拽横向滚动**：聊天 Action Bar 的按钮在窄窗格下会溢出，而滚动条是隐藏的——普通鼠标滚轮只能滚页面，够不到被挡住的按钮（触控板横滑与触摸拖拽本来就能用，只有鼠标不行）。`utils/dragScroll.ts` 在**真正溢出时**才挂载（放得下就不拦截按压、也不显示抓手光标），按下并左右拖动即滚动；形态沿用 `dragClickGuard`（独立 util + 返回 disposer + 组件挂载）
 - 自定义品牌图标走 `AgentIcon.vue` / `ProviderIcon.vue`；单色图标配色在 `mono-icon-colors.css`，深浅主题各一套。
 
 ---
@@ -388,6 +393,8 @@ Vue 的 scoped 属性只加在**组件模板渲染出的**元素上。`v-html` �
 
 判断方法：加之前问「**它会不会吃掉剩余空间**」。`flex:1` / `inset:0` 都危险。需要豁免时**下沉到内部的收缩元素**（`.stt-viewport` 是 `width: fit-content`）。
 
+**`app-region` 命中取 DOM 顺序最后一个，与绘制顺序/z-index/`pointer-events` 无关。** Chromium 对某点求 `-webkit-app-region` 时取 DOM 顺序中**最后**覆盖该点的元素。桌面登录页的真实事故：`<body>` 是 `drag`，两个全屏装饰层 `.bg-gradient` / `.bg-grid` 继承 `drag` 且原本排在 `.splash` / `#versionGate` **之后**，于是吃掉整个视口的点击——版本 gate 的「仍然继续」「下载」与 splash 的「取消连接」全部无响应，而 `elementsFromPoint` 仍报告命中的是按钮本身（骗人）。**`z-index` 与 `pointer-events:none` 都不豁免**。症状不对称是判据：排在装饰层之后的 `.window-close`、登录表单正常。修法是把装饰层排到最前，交互浮层一律排其后（像素 diff = 0）。验证必须真实 OS 点击（Xvfb + openbox + XTEST），`elementFromPoint` 会误报。
+
 ### 红线 4：对比度不能靠「固定跳一档背景」
 
 **不要**假设 `--bg-tertiary` 或 `--bg-elevated` 在每套主题里都"明显不同于 `--bg-secondary`"。实测 36 套主题里 **15 套**的 secondary↔tertiary 对比度低于 1.12，ayu-dark 只有 **1.062**——方块直接消失。
@@ -413,6 +420,28 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 - **`:root[data-app-mode] .chat-message { will-change: transform }` 不能删**（`ChatMessageItem.vue:663`）——它是跨图层像素污染（GPU ghost）的唯一解。
 - **表单控件行高必须是整数 px**：`--input-line-height: 18px`。textarea 文字顶对齐，内容盒高度恰是一行时没有余量；Android WebView 会**独立地**四舍五入行盒和内容盒高度，CJK 字体升降部更大，分数行高下两次舍入不再抵消，光标会明显偏高。桌面 Chrome 恰好舍入一致，所以**只在 WebView 复现**。
 - **畸形表单标签要重置 `white-space`**：DOMPurify 会保留真实 `<option>` / `<optgroup>` / `<select>`，而 UA 样式给 `<option>` 加了 `nowrap`，会静默撑破气泡（`overflow:hidden` 裁掉）。`ChatMessageItem.vue:641` 逐标签重置。
+
+### 红线 7：`scrollbar-color` / `scrollbar-width` 会让 Chromium 弃用 `::-webkit-scrollbar-*`
+
+只要给某个元素（或 `*`）设了**标准属性** `scrollbar-color` 或 `scrollbar-width`，Chromium 121+ 就**整体忽略**该元素的全部 `::-webkit-scrollbar-*` 规则——包括 `::-webkit-scrollbar-button { display: none }`。表现：自定义的 4px 细滚动条**退回 15px 原生条**，并且**上下箭头按钮复活**（实测 headed Chrome：17px 带箭头 vs 6px 无箭头）。
+
+`base.css` 原先把 `* { scrollbar-color: … }` 写成了无门控的全局规则，于是紧跟其上的 webkit 细条与 `-button` 规则全部失效——**箭头就是这么冒出来的**。
+
+正解是把标准属性**只留给没有 webkit 伪元素的引擎**（Firefox）：
+
+```css
+@supports not selector(::-webkit-scrollbar) {
+    * { scrollbar-color: var(--scrollbar-thumb) transparent; }
+}
+```
+
+`::-webkit-scrollbar-*` 规则本身保持无门控（Chromium 会走它）。**三处同源**：`web/css/base.css`、`src/utils/swaggerHtml.ts`（Swagger 预览 srcdoc）、`src/utils/exportMarkdownHtml.ts`（导出 HTML）——改一处必须三处同改，`__tests__/scrollbarNoArrowButtons.test.ts` 同时钉住。
+
+**粗细全端统一为 4px**（三处同源都是字面量 `4px`，没有 token）。曾短暂按输入设备/宽屏分档（鼠标面 12px）以便更好点、也避开分割条抓取带，但**已按用户要求回退**——统一一个尺寸，跨设备观感一致；分割条那边的冲突在分割条侧解决（见 `SplitDivider.vue`）。守卫会拒绝任何重新引入的分档：出现 `--scrollbar-size` 或第二个 `12px` 宽度即失败。
+
+> Firefox 只有 `auto | thin | none`，没有 px 控制，所以统一用 `scrollbar-width: thin` 近似 4px（放在已有的 webkit 门控里）。
+
+> 验证必须在 **headed** 浏览器里看（headless 用 overlay 滚动条，量不出宽度也画不出箭头）。
 
 ---
 
@@ -497,6 +526,8 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/forge/__tests__/forgeDetailChrome.css.test.ts` | forge 面板 chrome 全局 |
 | `components/git/__tests__/gitHistoryChrome.css.test.ts` | git 历史 chrome 全局 |
 | `components/settings/__tests__/settingsRowTypography.css.test.ts` | 设置行字号层级 |
+| `components/settings/__tests__/skillsCardsStyles.css.test.ts` | 技能设置页两张卡的 chrome 全局唯一（scoped 不得重复） |
+| `components/chat/__tests__/permissionResultChip.css.test.ts` | 权限审批卡片：label 吸附命令框、按钮一体化、结果芯片（自动批准徽标与「已批准」同规格） |
 | `components/settings/__tests__/settingsHeaderAlignment.css.test.ts` | 设置页头部对齐 |
 | `components/settings/__tests__/sliderResetResident.css.test.ts` | 滑块重置按钮常驻 + 灰显（不按当前值出现/消失） |
 | `components/settings/__tests__/settingsControls.css.test.ts` | 设置控件形状全局唯一（开关/滑块/重置）、尺寸对齐 30px、scoped 不得重加几何、按钮复用 `.fbtn` |
@@ -505,6 +536,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `components/__tests__/wideDockIconSize.css.test.ts` | 宽屏 dock 图标尺寸 |
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
+| `__tests__/scrollbarNoArrowButtons.test.ts` | `scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活） |
 
 **写新守卫时注意两个坑**（都实际栽过）：
 1. **jsdom 不解析 `var()` 和 `color-mix()`**——`getComputedStyle` 会把 `var(--x)` 原样返回。所以 token 类断言必须**读源码**，不能读计算样式。

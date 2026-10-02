@@ -47,7 +47,6 @@ const i18n = createI18n({
         transportLabel: '传输方式',
         transportSsh: 'SSH',
         transportH2: 'HTTP/2',
-        transportAuto: '自动',
       },
     },
   },
@@ -96,11 +95,27 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: vi.fn(), dismiss: vi.fn() }),
 }))
 
-vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  isWindowsUA: false,
-  isMacDesktopUA: false,
-  isLinuxDesktopUA: false,
-}))
+// The component reads the host axes through usePlatformDetect, not useAppMode.
+// Deriving them from `isAppMode` per call keeps each test's platform setup
+// meaningful (the real composable snapshots the first call behind a guard).
+// Real refs, not bare `{ value }` objects: the template binds `isNativeApp`
+// directly, and only a real ref is auto-unwrapped there — a plain object is
+// always truthy and would keep the row mounted in web mode.
+vi.mock('@/composables/usePlatformDetect.ts', async () => {
+  const { ref } = await import('vue')
+  return {
+    usePlatformDetect: () => ({
+      isElectron: ref(false),
+      isAndroidApp: ref(isAppMode.value),
+      isWebApp: ref(!isAppMode.value),
+      isNativeApp: ref(isAppMode.value),
+      isTouchPrimary: ref(false),
+    }),
+    isWindowsUA: false,
+    isMacDesktopUA: false,
+    isLinuxDesktopUA: false,
+  }
+})
 
 vi.mock('@/utils/portForwardUtils.ts', async () => {
   // Keep the REAL portForwardUnavailable: the panel's banner gate now uses it,
@@ -160,13 +175,14 @@ describe('ProxyPanelContent transport row', () => {
     expect(wrapper.find('.tunnel-transport-value').text()).toBe('HTTP/2')
   })
 
-  it('labels an unresolved both-preference as auto', () => {
-    // 'both' is a preference, not a wire: before anything connects the native
-    // layer can only report the preference, which reads as "auto".
+  it('hides the row for a value it cannot label (there is no automatic mode)', () => {
+    // The retired 'both' preference is no longer a possible wire, and a future
+    // value this client does not know must not be rendered as a made-up label.
+    // Anything but a concrete 'ssh' / 'h2' hides the row.
     activeTransport.value = 'both'
     const wrapper = mountPanel()
 
-    expect(wrapper.find('.tunnel-transport-value').text()).toBe('自动')
+    expect(wrapper.find('.tunnel-transport').exists()).toBe(false)
   })
 
   it('hides the row when the host cannot report a transport', () => {

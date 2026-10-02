@@ -1,80 +1,113 @@
-/* Shared diff marker visual styles — used by CodePreview (inline) and MarkdownPreview (overlay) */
+/* Shared diff marker visual styles — used by the markdown preview overlay.
 
-/* ─── Base marker styles ─── */
+   The marker is a 3px rail in the theme's --diff-*-accent colour, matching every
+   other diff surface (css/diff-rows.css). The M/D/+ label is a chip that appears
+   only on hover/focus: a permanent 20px solid block was too heavy over large
+   changed sections, and its hard-coded red/green carried no shape channel for
+   colour-vision-deficient readers.
+
+   Structural positioning (absolute, right offset, hit area) lives in
+   code-viewer.css / MarkdownPreview.vue (.diff-marker-inline). The element is
+   the HIT AREA (20px); the rail is drawn by ::before at its right edge. */
+
+/* ─── Base marker ─── */
 
 .diff-marker {
-  min-height: 24px;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   border: none;
-  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+  padding: 0;
+  /* This element is a <button> and the repo has no global button-background
+     reset, so without this it falls back to the UA `buttonface` — an opaque
+     grey block, i.e. the very 20px block this marker replaced. */
+  background: transparent;
   cursor: pointer;
-  opacity: var(--opacity-disabled);
+  /* Rail at rest is muted; hover/focus brings it and the chip to full. */
+  opacity: var(--opacity-muted);
   transition: opacity var(--duration-base);
   font-size: var(--font-size-2xs);
   font-weight: var(--font-weight-bold);
-  user-select: none;
-  color: white;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  line-height: 1;
-  padding: 0;
   font-family: var(--font-ui);
+  user-select: none;
+  line-height: 1;
+  position: relative;
+}
+
+/* The visible rail: a 3px stripe at the element's right edge. currentColor is
+   set per type below, so the rail and the chip share one accent. */
+.diff-marker::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: currentColor;
 }
 
 .diff-marker:hover,
 .diff-marker:focus-visible {
-  opacity: var(--opacity-hover);
+  opacity: 1;
   outline: none;
-  box-shadow: 0 0 0 2px var(--accent-color);
+}
+
+/* Change-navigation landed on this rail: flash it and raise it to full opacity
+   so a jump is visible even when the scroll distance is tiny. The class is
+   applied by flashElement() and removed when the animation ends. The glow is
+   drawn on ::before (the visible rail), so the 20px hit-area button itself does
+   not flash. Keyframes + reduced-motion handling live in code-viewer.css. */
+.diff-marker.diff-marker-rail-flash {
+  opacity: 1;
+}
+.diff-marker.diff-marker-rail-flash::before {
+  animation: diff-rail-flash var(--flash-duration, 0.7s) ease-out forwards;
 }
 
 .diff-marker:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-color);
+  border-radius: var(--radius-xs);
+}
+
+/* The M/D/+ label — hidden until hover/focus, then a chip overhanging the rail
+   to the LEFT (the rail hugs the reading column's right edge, so there is no
+   room to its right). */
+.diff-marker::after {
+  content: attr(data-marker-label);
+  position: absolute;
+  right: calc(100% + var(--space-1));
+  top: 50%;
+  transform: translateY(-50%);
+  min-width: 16px;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-xs);
+  text-align: center;
+  background: var(--diff-marker-chip-bg, transparent);
+  color: currentColor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--duration-base);
+}
+
+.diff-marker:hover::after,
+.diff-marker:focus-visible::after {
   opacity: 1;
 }
 
-/* ─── Marker type colors ─── */
+/* ─── Marker type colours (rail + chip share the type accent) ─── */
 
-/* Modified: orange */
 .diff-marker-modified {
-  background: rgba(255, 165, 0, 0.7);
-  animation: diff-marker-highlight 1.5s ease-out;
+  color: var(--diff-mod-accent);
+  --diff-marker-chip-bg: var(--diff-mod-bg);
 }
 
-/* Deleted: red */
 .diff-marker-deleted {
-  background: rgba(255, 80, 80, 0.7);
-  animation: diff-marker-highlight 1.5s ease-out;
+  color: var(--diff-del-accent);
+  --diff-marker-chip-bg: var(--diff-del-bg);
 }
 
-/* Added: green */
 .diff-marker-added {
-  background: rgba(80, 200, 80, 0.7);
-  animation: diff-marker-added-flash 1.5s ease-out;
-}
-
-/* ─── Animations ─── */
-
-@keyframes diff-marker-highlight {
-  0% { opacity: 1; }
-  100% { opacity: var(--opacity-disabled); }
-}
-
-@keyframes diff-marker-added-flash {
-  0% { background: rgba(100, 200, 255, 0.9); opacity: 1; }
-  100% { background: rgba(80, 200, 80, 0.7); opacity: var(--opacity-disabled); }
-}
-
-/* ─── Dark theme adjustments ─── */
-
-[data-theme-base="dark"] .diff-marker-modified {
-  background: rgba(255, 165, 0, 0.6);
-}
-
-[data-theme-base="dark"] .diff-marker-deleted {
-  background: rgba(255, 80, 80, 0.6);
-}
-
-[data-theme-base="dark"] .diff-marker-added {
-  background: rgba(80, 200, 80, 0.6);
+  color: var(--diff-add-accent);
+  --diff-marker-chip-bg: var(--diff-add-bg);
 }

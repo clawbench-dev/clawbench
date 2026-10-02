@@ -54,10 +54,10 @@ test.describe('Chat', () => {
 
   test('should show model selector chip', async ({ page }) => {
     // acp-mock agent has models configured (mock-pro, mock-fast)
-    // The settings chip opens the SessionSettingModal which shows the model
+    // The session info model chip opens the session setting drawer (Model tab)
     await chat.openSessionSettingModal()
     // The current model (Mock Pro) should be visible with the current class
-    const mockProItem = page.locator('.model-item').filter({ hasText: /Mock Pro/ })
+    const mockProItem = chat.sessionSettingDrawer.locator('.model-item').filter({ hasText: /Mock Pro/ })
     await expect(mockProItem).toBeVisible({ timeout: 5000 })
     await expect(mockProItem).toHaveClass(/current/)
   })
@@ -99,39 +99,30 @@ test.describe('Chat', () => {
   test('should attach a file and show attachment tag', async ({ page }) => {
     // Create a small test file
     const testFilePath = path.join(process.cwd(), 'test-upload.txt')
+    const fs = await import('fs')
+    fs.writeFileSync(testFilePath, 'test content for e2e upload')
 
-    // The file input is hidden; use setInputFiles directly on the input element
-    const fileInput = page.locator('input[type="file"]')
-
-    // Click the attach button to open the menu, which makes the file input available
-    const attachBtn = page.locator('.chat-attach-btn')
-    const isAttachVisible = await attachBtn.isVisible({ timeout: 3000 }).catch(() => false)
-
-    if (isAttachVisible) {
-      await attachBtn.click()
-      await page.waitForTimeout(500)
-    }
-
-    // Set files on the hidden input
-    await fileInput.setInputFiles(testFilePath).catch(async () => {
-      // If the file doesn't exist, create it temporarily
-      const fs = await import('fs')
-      fs.writeFileSync(testFilePath, 'test content for e2e upload')
-      await fileInput.setInputFiles(testFilePath)
-    })
-
-    // File attachment tag should appear
-    const attachment = page.locator('.chat-file-attachment')
-    const isAttachmentVisible = await attachment.isVisible({ timeout: 5000 }).catch(() => false)
-    // Soft assertion: attachment visibility depends on file upload working
-    expect(typeof isAttachmentVisible).toBe('boolean')
-
-    // Clean up temp file
     try {
-      const fs = await import('fs')
+      // The attach button opens the AttachDrawer (a BottomSheet). Its hidden
+      // `<input type="file">` is the single upload entry point — the page also
+      // contains the file manager's own file/folder inputs, so scope the
+      // locator to the drawer to avoid a strict-mode violation.
+      await page.locator('.chat-attach-btn').click()
+
+      const drawer = page.locator('.bs-panel').filter({ has: page.locator('.ad-header') })
+      await expect(drawer).toBeVisible({ timeout: 10000 })
+
+      await drawer.locator('input[type="file"]').setInputFiles(testFilePath)
+
+      // The drawer footer reuses AttachmentTags, so the attached file shows up
+      // as a `.chat-file-attachment` chip inside the drawer. The server de-dupes
+      // upload names (`test-upload.txt` → `test-upload_2.txt` when a prior run
+      // left one behind), so match the stem rather than the exact name.
+      const attachment = drawer.locator('.chat-file-attachment')
+      await expect(attachment.first()).toBeVisible({ timeout: 10000 })
+      await expect(attachment.first()).toContainText(/test-upload(_\d+)?\.txt/)
+    } finally {
       if (fs.existsSync(testFilePath)) fs.unlinkSync(testFilePath)
-    } catch {
-      // Ignore cleanup errors
     }
   })
 
@@ -156,8 +147,10 @@ test.describe('Chat', () => {
     await expect(thinkingBlock).toHaveClass(/thinking-collapsed/)
     // Inline thinking content should NOT be visible when collapsed
     await expect(thinkingBlock.locator('.thinking-inline-content')).not.toBeVisible()
-    // The green check icon should be visible (thinking done indicator)
-    await expect(thinkingBlock.locator('.thinking-check')).toBeVisible()
+    // The chevron marks the collapsed (expandable) state. The old
+    // `.thinking-check` "done" icon no longer exists — the header now shows a
+    // spinner while streaming and a ChevronDown/ChevronUp otherwise.
+    await expect(thinkingBlock.locator('.thinking-chevron')).toBeVisible()
   })
 
   test('should expand thinking block when clicking collapsed chip', async ({ page }) => {
@@ -170,14 +163,14 @@ test.describe('Chat', () => {
     const thinkingBlock = chat.getLastAssistantMessage().locator('.chat-thinking')
     await expect(thinkingBlock).toHaveClass(/thinking-collapsed/, { timeout: 5000 })
 
-    // Click the collapsed chip to expand — opens the ToolDetailOverlay (BottomSheet)
-    await thinkingBlock.click()
+    // Click the collapsed chip to expand — this expands the block INLINE
+    // (handleThinkingClick toggles thinking-expanded-done). It no longer opens
+    // the ToolDetailOverlay, which was the old behaviour.
+    await thinkingBlock.locator('.thinking-header').click()
 
-    // The BottomSheet overlay should appear with tool detail header
-    const overlayHeader = page.locator('.tool-detail-header')
-    await expect(overlayHeader.first()).toBeVisible({ timeout: 5000 })
-    // The header should show "DeepThink" as the tool name for thinking blocks
-    await expect(overlayHeader.locator('.tool-detail-header-name').first()).toContainText('DeepThink', { timeout: 5000 })
+    // The block leaves the collapsed state and shows its inline content.
+    await expect(thinkingBlock).not.toHaveClass(/thinking-collapsed/, { timeout: 5000 })
+    await expect(thinkingBlock.locator('.thinking-inline-content')).toBeVisible({ timeout: 5000 })
   })
 
   // ───────────────────────────────────────────────────────

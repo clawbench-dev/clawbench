@@ -101,6 +101,16 @@ contextBridge.exposeInMainWorld('ClawBenchNative', {
   getTunnelErrorType: () => invoke('native:get-tunnel-error-type'),
   /** The preference the main process is currently using. */
   getTunnelTransport: () => invoke('native:get-tunnel-transport'),
+  /**
+   * Write the tunnel transport preference ('ssh' | 'h2'). The main process
+   * validates the value, persists it and applies it to the next connect; it
+   * resolves true when accepted.
+   *
+   * Desktop-only: the Android shell has no equivalent method, because its
+   * transport is a local SharedPreferences boolean
+   * (`setTunnelTransportH2Enabled`).
+   */
+  setTunnelTransport: (pref: string) => invoke('native:set-tunnel-transport', pref),
   /** 'ssh' | 'h2' — the transport that carried the last successful connect. */
   getActiveTunnelTransport: () => invoke('native:get-active-tunnel-transport'),
   getPendingNavigation: () => invoke('native:get-pending-navigation'),

@@ -42,6 +42,16 @@ test.describe('Navigation', () => {
   })
 
   test('should open overflow menu', async ({ page }) => {
+    // The overflow (3-dot) button is responsive, not fixed: it appears only
+    // when the dock is too short to hold every tab inline. It also exists only
+    // in the NARROW bottom dock — at >=1024px the wide vertical dock renders
+    // all tabs and has no overflow at all.
+    //
+    // Overflow threshold: primaryCount=4, so minContent = 5*34 + 4*12 = 218px
+    // and each extra tab costs 46px. Four overflow tabs need >= 402px, so 380px
+    // guarantees the popup path.
+    await page.setViewportSize({ width: 380, height: 800 })
+    await expect(page.locator('.bottom-dock')).toBeVisible({ timeout: 10000 })
     await nav.openOverflowMenu()
     // Overflow popup should be visible
     await expect(page.locator('.dock-overflow-popup')).toBeVisible()

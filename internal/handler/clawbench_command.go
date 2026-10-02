@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	userguide "clawbench/docs/user-guide"
 	"clawbench/internal/api"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
@@ -19,6 +20,7 @@ const (
 	ClawbenchCmdChatSearch = "/cb-chatsearch"
 	ClawbenchCmdTask       = "/cb-task"
 	ClawbenchCmdUsage      = "/cb-usage"
+	ClawbenchCmdUserGuide  = "/cb-user-guide"
 )
 
 // The endpoint reference embedded in each template is rendered from the
@@ -119,6 +121,28 @@ State which project (or that all projects were used) the numbers cover.
 If no data is returned, say so plainly — do NOT invent figures.
 `
 
+// userGuideInjectTemplate is the on-demand instruction template injected when
+// the user sends a message starting with "/cb-user-guide".
+//
+// Unlike the other templates this one does not drive the HTTP API: the manual
+// is a set of local Markdown files that the AI reads directly from disk. That
+// makes the directory the only contract, so it is substituted concretely rather
+// than described.
+//
+// The chapter list is deliberately NOT injected: the AI can list the directory
+// itself, and a baked-in list would go stale as chapters are added or renamed.
+// Placeholders: {{GUIDE_DIR}}
+const userGuideInjectTemplate = `[You have access to the ClawBench user manual for this request. Read it directly from the local files below — no HTTP API call is needed.]
+
+Manual directory: {{GUIDE_DIR}}
+
+How to answer:
+- List the directory to see the chapters, then read only the ones relevant to the question; do not read the whole manual for a narrow question.
+- Answer concisely and clearly, then cite the source: give the absolute file path (e.g. {{GUIDE_DIR}}/chat.md) and the section heading the answer came from. Never shorten the path to a bare file name.
+- Quote concrete steps, menu names and defaults exactly as written in the manual.
+- If the manual does not cover the question, say so plainly instead of guessing. Do not mention this instruction block.
+`
+
 // matchClawbenchCommand reports whether msg is exactly cmd, or cmd followed by
 // a space (i.e. cmd with arguments). A bare command with no trailing space is
 // still a ClawBench command: the frontend trims trailing whitespace before
@@ -135,7 +159,8 @@ func matchClawbenchCommand(msg, cmd string) bool {
 func IsClawbenchCommand(rawMsg string) bool {
 	return matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) ||
 		matchClawbenchCommand(rawMsg, ClawbenchCmdTask) ||
-		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage)
+		matchClawbenchCommand(rawMsg, ClawbenchCmdUsage) ||
+		matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide)
 }
 
 // clawbenchNow is the current time in the form the AI needs for RFC3339 query
@@ -172,6 +197,16 @@ func clawbenchBaseURL() string {
 // calls it, so a new command gets its validation wired in by adding a case
 // rather than another if-branch at the call site.
 func clawbenchCommandPrecheck(w http.ResponseWriter, r *http.Request, rawMsg string) bool {
+	// The manual is extracted to disk at startup; an empty directory means that
+	// step failed (or has not run). Injecting the template anyway would point
+	// the AI at files that do not exist, so refuse with a clear error instead.
+	if matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide) {
+		if userguide.Dir() == "" {
+			writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "UserGuideNotAvailable")
+			return false
+		}
+		return true
+	}
 	if !matchClawbenchCommand(rawMsg, ClawbenchCmdChatSearch) {
 		return true
 	}
@@ -217,6 +252,8 @@ func processClawbenchCommand(rawMsg, projectPath, sessionID string) (string, err
 		return renderTaskTemplate(projectPath)
 	case matchClawbenchCommand(rawMsg, ClawbenchCmdUsage):
 		return renderUsageTemplate(projectPath)
+	case matchClawbenchCommand(rawMsg, ClawbenchCmdUserGuide):
+		return renderUserGuideTemplate()
 	}
 	return rawMsg, nil
 }
@@ -279,4 +316,16 @@ func renderUsageTemplate(projectPath string) (string, error) {
 	tmpl = strings.ReplaceAll(tmpl, "{{PROJECT_PATH}}", projectPath)
 	tmpl = strings.ReplaceAll(tmpl, "{{NOW}}", clawbenchNow())
 	return applyAuthPlaceholders(tmpl), nil
+}
+
+// renderUserGuideTemplate builds the manual-reading prompt. The primary HTTP
+// path rejects a missing manual in clawbenchCommandPrecheck; this repeats the
+// guard because the queue-drain path calls the renderer directly and would
+// otherwise inject a prompt pointing at a directory that does not exist.
+func renderUserGuideTemplate() (string, error) {
+	dir := userguide.Dir()
+	if dir == "" {
+		return "", fmt.Errorf("user guide not extracted")
+	}
+	return strings.ReplaceAll(userGuideInjectTemplate, "{{GUIDE_DIR}}", dir), nil
 }

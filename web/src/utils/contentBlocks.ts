@@ -241,7 +241,7 @@ const SLASH_COMMAND_RE = /^\/(\w[\w:-]*)(\s[\s\S]*)?$/
  * an agent command that happens to start with "cb-" must still render as an
  * agent badge (see the /cb-something case in contentBlocks.test.ts).
  */
-const CLAWBENCH_COMMAND_RE = /^\/cb-(chatsearch|task|usage)(\s|$)/
+const CLAWBENCH_COMMAND_RE = /^\/cb-(chatsearch|task|usage|user-guide)(\s|$)/
 
 export interface SlashCommandBadge {
   command: string    // e.g. "/commit"

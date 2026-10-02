@@ -75,9 +75,17 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => ({ show: mockToastShow }),
 }))
 
-const mockDrawerOpen = vi.fn()
-const mockDrawerClose = vi.fn()
-const mockDrawerEffectiveOpen = ref(false)
+// hoisted: the component now imports usePortForward, whose module graph
+// evaluates useSessionIdentity -> useTabDrawer at import time — before this
+// file's ordinary `const` initializers run. Non-hoisted bindings would be in
+// their temporal dead zone and the factory would throw on access.
+const { mockDrawerOpen, mockDrawerClose, mockDrawerEffectiveOpen } = vi.hoisted(() => ({
+  mockDrawerOpen: vi.fn(),
+  mockDrawerClose: vi.fn(),
+  // `ref` is not available inside vi.hoisted (its factory runs before imports),
+  // so expose a mutable holder and make it reactive below.
+  mockDrawerEffectiveOpen: { value: false },
+}))
 
 vi.mock('@/composables/useTabDrawer', () => ({
   useTabDrawer: () => ({

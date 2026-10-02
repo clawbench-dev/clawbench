@@ -6630,3 +6630,59 @@ func TestUpdateQueuedMessageQuoteNote(t *testing.T) {
 	_, err = service.UpdateQueuedMessageQuoteNote(sid, "", "quote-1", "x")
 	assert.ErrorIs(t, err, service.ErrChatQuoteNotFound)
 }
+
+// ── LookupSessionProjectPathActive: the three outcomes ───────────────────
+//
+// The ownership check depends on telling these apart. An orphaned session
+// (project_id with no projects row — the 0 sentinel an unmappable path leaves
+// behind) must resolve to SessionFound with an empty path, so the caller
+// compares "" against the request's project and rejects it. Collapsing that
+// into SessionMissing would report 404 for a session that exists; collapsing a
+// database error into either would mask an outage as a permission problem.
+
+func TestLookupSessionProjectPathActive_OrphanedSessionIsFound(t *testing.T) {
+	setupDB(t)
+
+	// project_id 0 has no projects row (the table is AUTOINCREMENT).
+	_, err := service.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
+		 VALUES ('orphan', 0, 'claude', 'orphan', '', 'default', '', 'chat', 0)`)
+	require.NoError(t, err)
+
+	path, outcome := service.LookupSessionProjectPathActive("orphan")
+	assert.Equal(t, service.SessionFound, outcome,
+		"an orphaned session exists — it must not be reported as missing")
+	assert.Equal(t, "", path, "its unresolvable project resolves to the empty path")
+}
+
+func TestLookupSessionProjectPathActive_MissingSession(t *testing.T) {
+	setupDB(t)
+
+	_, outcome := service.LookupSessionProjectPathActive("no-such-session")
+	assert.Equal(t, service.SessionMissing, outcome)
+}
+
+func TestLookupSessionProjectPathActive_ArchivedIsMissing(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Test")
+	_, err := service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET archived = 1 WHERE id = ?`, sid)
+	require.NoError(t, err)
+
+	_, outcome := service.LookupSessionProjectPathActive(sid)
+	assert.Equal(t, service.SessionMissing, outcome,
+		"the active-only lookup must treat an archived session as absent")
+}
+
+func TestLookupSessionProjectPathActive_DBError(t *testing.T) {
+	setupDB(t)
+
+	closedDB, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	closedDB.Close()
+	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	defer cleanup()
+
+	_, outcome := service.LookupSessionProjectPathActive("any")
+	assert.Equal(t, service.SessionLookupError, outcome,
+		"a failing query must be distinguishable from a missing session")
+}

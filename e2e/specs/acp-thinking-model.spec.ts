@@ -39,14 +39,12 @@ test.describe.serial('ACP Thinking Effort & Model List', () => {
     // Wait for ACP state to be available (mode_update/thinking_effort_update SSE)
     await chat.waitForACPState()
 
-    // Open SessionSettingModal → thinking tab → select "High"
-    await chat.openSessionSettingModal()
+    // Open the session setting drawer on the thinking tab → select "High"
     await chat.openThinkingTab()
     await chat.selectThinkingEffort('High')
 
-    // Modal closes after selection — verify it's gone
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).not.toBeVisible({ timeout: 5000 })
+    // Drawer closes after selection — verify it's gone
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
 
     // Wait for thinking effort to be persisted via PATCH before reloading
     await chat.waitForSessionThinkingEffort('high')
@@ -61,12 +59,11 @@ test.describe.serial('ACP Thinking Effort & Model List', () => {
     // Wait for the UI to be ready
     await expect(chat.textarea).toBeVisible({ timeout: 5000 })
 
-    // Open SessionSettingModal → thinking tab — "High" should be the active selection
-    await chat.openSessionSettingModal()
+    // Open the thinking tab — "High" should be the active selection
     await chat.openThinkingTab()
 
     // The "High" item should have the active/selected class
-    const highItem = page.locator('.thinking-item').filter({ hasText: /high/i })
+    const highItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /high/i })
     await expect(highItem).toBeVisible()
     await expect(highItem).toHaveClass(/current/, { timeout: 5000 })
   })
@@ -76,16 +73,14 @@ test.describe.serial('ACP Thinking Effort & Model List', () => {
     // Wait for ACP state to be available
     await chat.waitForACPState()
 
-    // Verify by opening the modal
-    await chat.openSessionSettingModal()
+    // Verify by opening the drawer
     await chat.openThinkingTab()
 
     // Change to "Low" for this test
     await chat.selectThinkingEffort('Low')
 
-    // Modal closes after selection
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).not.toBeVisible({ timeout: 5000 })
+    // Drawer closes after selection
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
 
     // Create a new session with the same agent
     await chat.createSessionWithAgent('acp-mock')
@@ -93,14 +88,13 @@ test.describe.serial('ACP Thinking Effort & Model List', () => {
     // Wait for the new session to be ready and ACP state to populate
     await chat.waitForACPState()
 
-    // Open SessionSettingModal → thinking tab
-    await chat.openSessionSettingModal()
+    // Open the thinking tab
     await chat.openThinkingTab()
 
     // For a new session, thinking effort comes from the agent's
     // preferred_thinking_effort (saved via PATCH /api/agents when user selects).
     // The "Low" selection from the previous session should be the agent default now.
-    const lowItem = page.locator('.thinking-item').filter({ hasText: /low/i })
+    const lowItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /low/i })
     await expect(lowItem).toBeVisible()
 
     // Verify the thinking effort is reflected in the chat API response
@@ -130,18 +124,18 @@ test.describe.serial('ACP Thinking Effort & Model List', () => {
     // Warm up ACP connection (may still be warm from previous test)
     await chat.sendAndAwaitACPReply('hi')
 
-    // Open SessionSettingModal
+    // Open the session setting drawer on the Model tab
     await chat.openSessionSettingModal()
 
     // Model items should be visible (from agent's configured model list)
-    const modelItems = page.locator('.model-item')
+    const modelItems = chat.sessionSettingDrawer.locator('.model-item')
     await expect(modelItems.first()).toBeVisible({ timeout: 5000 })
 
     // At least one model should be present
     const count = await modelItems.count()
     expect(count).toBeGreaterThan(0)
 
-    // Close the modal by selecting any model
+    // Close the drawer by selecting any model
     await modelItems.first().click()
   })
 

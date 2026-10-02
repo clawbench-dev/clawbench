@@ -20,9 +20,9 @@ const TRANSPORT_LABEL_KEYS: Record<string, string> = {
  * Resolve the i18n label key for a transport value, or `''` when no single wire
  * is known.
  *
- * `''` (unknown — web mode, or a host that predates the bridge methods) and
- * `'both'` (a preference, not a wire) both yield `''`: the caller then renders
- * the neutral wording with no annotation rather than guessing.
+ * `''` (unknown — web mode, or a host that predates the bridge methods) yields
+ * `''`: the caller then renders the neutral wording with no annotation rather
+ * than guessing.
  */
 export function transportLabelKey(transport: string): string {
   return TRANSPORT_LABEL_KEYS[transport] ?? ''

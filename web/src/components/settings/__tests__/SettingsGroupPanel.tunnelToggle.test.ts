@@ -102,6 +102,54 @@ vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockAppMode.isAppMode, isDesktopApp: mockAppMode.isDesktopApp }),
 }))
 
+// The component reads the host axis through usePlatformDetect, NOT useAppMode.
+// The real composable copies useAppMode into module-level refs behind a
+// `platformInitialized` guard, so it would snapshot whatever the FIRST test in
+// this file set and ignore every later change — which is exactly the
+// order-dependent failure this mock prevents. Deriving the axes per call from
+// mockAppMode keeps the suite's platform setup meaningful for every test:
+//   isElectron  = isDesktopApp
+//   isAndroidApp = isAppMode && !isDesktopApp
+vi.mock('@/composables/usePlatformDetect', () => ({
+  usePlatformDetect: () => ({
+    isElectron: { value: mockAppMode.isDesktopApp.value },
+    isAndroidApp: { value: mockAppMode.isAppMode.value && !mockAppMode.isDesktopApp.value },
+    isWebApp: { value: !mockAppMode.isAppMode.value },
+    isNativeApp: { value: mockAppMode.isAppMode.value },
+    isTouchPrimary: { value: false },
+  }),
+}))
+
+// The status row reads the port-forward composable's shared state. Mock it so
+// the row is deterministic and the suite never touches the network layer.
+// Real refs, not bare `{ value }` objects: the component's template binds
+// `:disabled="tunnelChecking"`, and only a real ref is auto-unwrapped there — a
+// plain object is always truthy and would disable the button permanently.
+const mockTunnel = vi.hoisted(() => ({}) as Record<string, unknown>)
+vi.mock('@/composables/usePortForward', async () => {
+  const { ref } = await import('vue')
+  const tunnelStatus = ref('unknown')
+  const tunnelChecking = ref(false)
+  const tunnelMessage = ref('')
+  const checkTunnelHealth = vi.fn().mockResolvedValue(undefined)
+  // Web mode's status row reads these instead of the client-tunnel state: with
+  // no native tunnel there is nothing client-side to report, so readiness comes
+  // from the server (SSH listener up, or an h2-capable transport).
+  const sshInfo = ref<{ enabled: boolean } | null>(null)
+  const transportAllowsH2 = ref(false)
+  const loadSSHInfo = vi.fn().mockResolvedValue(undefined)
+  Object.assign(mockTunnel, {
+    tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
+    sshInfo, transportAllowsH2, loadSSHInfo,
+  })
+  return {
+    usePortForward: () => ({
+      tunnelStatus, tunnelChecking, tunnelMessage, checkTunnelHealth,
+      sshInfo, transportAllowsH2, loadSSHInfo,
+    }),
+  }
+})
+
 // Bridge holder. `getNative` returns whatever `native` currently is, so each
 // case can install the host shape it wants (new method / absent method / none).
 const mockNative = vi.hoisted(() => ({ current: undefined as unknown }))
@@ -119,17 +167,26 @@ const i18n = createI18n({
   messages: {
     zh: {
       settings: {
-        panel: { saved: '已保存', saving: '保存中…', save: '保存', testing: '测试中…', testConnectivity: '测试连通性', needsRestartHint: '需要重启生效' },
+        panel: {
+          saved: '配置已保存', saving: '保存中…', save: '保存', testing: '测试中…',
+          testConnectivity: '测试连通性', needsRestartHint: '需要重启生效',
+          transportApplyFailed: '传输方式已保存，但隧道重连失败，端口映射暂不可用',
+        },
         items: {
-          portForwardEnabled: '启用端口映射',
-          portForwardPort: '端口',
-          portForwardH2: 'H2 模式（实验）',
-          portForwardH2Desc: '改用 HTTP/2 隧道',
-          portForwardH2ReconnectHint: '切换将在下次重连后生效',
-          portForwardH2Reconnect: '立即重连',
+          portForwardEnabled: 'SSH 隧道服务器',
+          portForwardEnabledDesc: '监听独立端口，供手动 ssh -L 或桌面端连接',
+          portForwardPort: 'SSH 隧道端口',
+          portForwardTransport: '隧道传输方式',
+          portForwardTransportDesc: '选择端口映射使用的传输通道',
+          tunnelStatusConnected: '隧道已连接',
+          tunnelStatusServerReady: '服务器已就绪，可用 App 或 ssh 建立隧道',
+          tunnelStatusServerReadyH2: '服务器已就绪，端口映射走 H2（主端口）',
+          tunnelStatusUnavailable: '端口映射不可用：SSH 隧道服务器已关闭，且当前传输方式不支持 H2',
+          tunnelStatusChecking: '正在检测隧道状态…',
+          tunnelStatusUnknown: '隧道状态未知',
         },
       },
-      portForward: { tunnelReconnected: '隧道已重连' },
+      proxy: { transportSsh: 'SSH', transportH2: 'HTTP/2', retryCheck: '重新检测' },
     },
   },
 })
@@ -139,13 +196,10 @@ const i18n = createI18n({
 function makePortForwardConfig(): GroupPanelConfig {
   return {
     panelId: 'portForward',
-    enableKey: 'port_forward.enabled',
-    enableLabelKey: 'settings.items.portForwardEnabled',
+    // No enableKey: the SSH listener is always on, so the panel has no switch.
     commonFields: [
       { labelKey: 'settings.items.portForwardPort', key: 'port_forward.port', type: 'number', source: 'server' },
     ],
-    hasConnectivityTest: true,
-    getTestCategories: (values) => [{ category: 'port_forward', values }],
   }
 }
 
@@ -169,9 +223,9 @@ function mountPanel(config: GroupPanelConfig = makePortForwardConfig()) {
   })
 }
 
-/** The h2 toggle row's SettingsItem (the only switch in this panel). */
-function findToggle(wrapper: ReturnType<typeof mountPanel>) {
-  return wrapper.findAllComponents({ name: 'SettingsItem' }).find(i => i.props('type') === 'switch')
+/** The transport picker's SettingsItem (the only select in this panel). */
+function findTransportSelect(wrapper: ReturnType<typeof mountPanel>) {
+  return wrapper.findAllComponents({ name: 'SettingsItem' }).find(i => i.props('type') === 'select')
 }
 
 beforeEach(() => {
@@ -184,6 +238,13 @@ beforeEach(() => {
   mockNative.current = undefined
   mockReconnectTunnel.fn.mockReset()
   mockReconnectTunnel.fn.mockResolvedValue(true)
+  ;(mockTunnel.tunnelStatus as { value: string }).value = 'unknown'
+  ;(mockTunnel.tunnelChecking as { value: boolean }).value = false
+  ;(mockTunnel.tunnelMessage as { value: string }).value = ''
+  ;(mockTunnel.checkTunnelHealth as ReturnType<typeof vi.fn>).mockClear()
+  ;(mockTunnel.sshInfo as { value: unknown }).value = null
+  ;(mockTunnel.transportAllowsH2 as { value: boolean }).value = false
+  ;(mockTunnel.loadSSHInfo as ReturnType<typeof vi.fn>).mockClear()
 })
 
 afterEach(() => {
@@ -192,16 +253,16 @@ afterEach(() => {
 
 // ── Platform gate ──
 
-describe('h2 toggle: platform gate', () => {
+describe('transport picker: platform gate', () => {
   it('renders in the Android WebView shell', async () => {
     mockAppMode.isAppMode.value = true
     mockAppMode.isDesktopApp.value = false
-    mockNative.current = { getTunnelTransportH2Enabled: () => false }
+    mockNative.current = { getTunnelTransportH2Enabled: () => false, setTunnelTransportH2Enabled: vi.fn() }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeTruthy()
+    expect(findTransportSelect(wrapper)).toBeTruthy()
   })
 
   it('hides in plain web mode', async () => {
@@ -211,18 +272,18 @@ describe('h2 toggle: platform gate', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeFalsy()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
   })
 
-  it('hides in the Electron desktop shell (isAppMode is also true there)', async () => {
+  it('renders the same select on the Electron desktop shell', async () => {
     mockAppMode.isAppMode.value = true
     mockAppMode.isDesktopApp.value = true
-    mockNative.current = { getTunnelTransportH2Enabled: () => false }
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeFalsy()
+    expect(findTransportSelect(wrapper)).toBeTruthy()
   })
 
   it('hides on a non-portForward panel even on Android', async () => {
@@ -232,13 +293,13 @@ describe('h2 toggle: platform gate', () => {
     const wrapper = mountPanel({ panelId: 'terminal', commonFields: [] })
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeFalsy()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
   })
 })
 
 // ── Async initial value / degradation ──
 
-describe('h2 toggle: initial value', () => {
+describe('transport picker: Android initial value', () => {
   beforeEach(() => {
     mockAppMode.isAppMode.value = true
     mockAppMode.isDesktopApp.value = false
@@ -248,43 +309,44 @@ describe('h2 toggle: initial value', () => {
     let resolve: (v: boolean) => void = () => {}
     mockNative.current = {
       getTunnelTransportH2Enabled: () => new Promise<boolean>(r => { resolve = r }),
+      setTunnelTransportH2Enabled: vi.fn(),
     }
 
     const wrapper = mountPanel()
     await nextTick()
-    // Pending: must not flash a false "off".
-    expect(findToggle(wrapper)).toBeFalsy()
+    // Pending: must not flash a default before the real value arrives.
+    expect(findTransportSelect(wrapper)).toBeFalsy()
 
     resolve(true)
     await flushPromises()
-    expect(findToggle(wrapper)).toBeTruthy()
+    expect(findTransportSelect(wrapper)).toBeTruthy()
   })
 
-  it('reflects a true initial value', async () => {
-    mockNative.current = { getTunnelTransportH2Enabled: () => true }
+  it('maps the boolean ON to the h2 option', async () => {
+    mockNative.current = { getTunnelTransportH2Enabled: () => true, setTunnelTransportH2Enabled: vi.fn() }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)!.props('modelValue')).toBe(true)
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
   })
 
-  it('reflects a false initial value', async () => {
-    mockNative.current = { getTunnelTransportH2Enabled: () => Promise.resolve(false) }
+  it('maps the boolean OFF to the ssh option', async () => {
+    mockNative.current = { getTunnelTransportH2Enabled: () => Promise.resolve(false), setTunnelTransportH2Enabled: vi.fn() }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)!.props('modelValue')).toBe(false)
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('ssh')
   })
 
-  it('hides on a legacy host without the getter (never shows a fake off)', async () => {
+  it('hides on a legacy host without the getter (never shows a fake default)', async () => {
     mockNative.current = { isNativeApp: () => true }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeFalsy()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
   })
 
   it('hides when the host has the setter but not the getter (the 2026 bug)', async () => {
@@ -292,14 +354,14 @@ describe('h2 toggle: initial value', () => {
     // fix: the bridge had setTunnelTransportH2Enabled but no getter, because
     // the older getTunnelTransport() was kept for the status display and the
     // missing read accessor was never noticed. The row must stay hidden rather
-    // than render a switch whose initial value could never be read — pinning
+    // than render a picker whose initial value could never be read — pinning
     // that the getter, not the setter, is the visibility precondition.
     mockNative.current = { setTunnelTransportH2Enabled: vi.fn() }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeFalsy()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
   })
 
   it('hides when the getter rejects', async () => {
@@ -308,13 +370,18 @@ describe('h2 toggle: initial value', () => {
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(findToggle(wrapper)).toBeFalsy()
+    expect(findTransportSelect(wrapper)).toBeFalsy()
   })
 })
 
-// ── Toggle + reconnect ──
+// ── Draft + reconnect (Android) ──
 
-describe('h2 toggle: interaction', () => {
+describe('transport picker: Android draft + save', () => {
+  /** The panel's Save button. */
+  function saveButton(wrapper: ReturnType<typeof mountPanel>) {
+    return wrapper.find('.group-panel__save-btn')
+  }
+
   beforeEach(() => {
     mockAppMode.isAppMode.value = true
     mockAppMode.isDesktopApp.value = false
@@ -324,22 +391,87 @@ describe('h2 toggle: interaction', () => {
     }
   })
 
-  it('writes the new value through the setter on change', async () => {
+  it('does NOT write on change — the value stays a draft', async () => {
+    // Writing on change made the Save button lie: the preference was already
+    // persisted while the panel still reported itself clean.
     const wrapper = mountPanel()
     await flushPromises()
 
-    const item = findToggle(wrapper)!
-    await item.vm.$emit('update:modelValue', true)
-
     const setter = (mockNative.current as { setTunnelTransportH2Enabled: ReturnType<typeof vi.fn> }).setTunnelTransportH2Enabled
-    expect(setter).toHaveBeenCalledWith(true)
-    expect(findToggle(wrapper)!.props('modelValue')).toBe(true)
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await flushPromises()
+
+    expect(setter).not.toHaveBeenCalled()
+    // The row reflects the draft so the user sees what they are about to save.
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
   })
 
-  it('reverts the optimistic value when the native setter rejects', async () => {
-    // The row flips immediately, then awaits the write. A rejected write (the
-    // host exists but the bridge call failed) must roll the row back so the UI
-    // never claims a preference that was not persisted.
+  it('enables Save when the transport is the only thing changed', async () => {
+    // Without folding the draft into the dirty flag the button stays disabled
+    // and the change can never be committed.
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await flushPromises()
+
+    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
+  })
+
+  it('writes the boolean and reconnects on save', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const setter = (mockNative.current as { setTunnelTransportH2Enabled: ReturnType<typeof vi.fn> }).setTunnelTransportH2Enabled
+    // The picker's 'h2' is the Android bridge's boolean true.
+    expect(setter).toHaveBeenCalledWith(true)
+    expect(mockReconnectTunnel.fn).toHaveBeenCalledOnce()
+    // Committed: the draft is now the persisted value, so the panel is clean
+    // again (otherwise Save stays enabled forever).
+    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+  })
+
+  it('writes the boolean false when switching back to ssh', async () => {
+    // The inverse mapping: picking 'ssh' must store false, not leave the host
+    // on h2. Pins the direction of the conversion (a constant `true` write
+    // would pass the h2 case above).
+    mockNative.current = {
+      getTunnelTransportH2Enabled: () => true,
+      setTunnelTransportH2Enabled: vi.fn(),
+    }
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'ssh')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const setter = (mockNative.current as { setTunnelTransportH2Enabled: ReturnType<typeof vi.fn> }).setTunnelTransportH2Enabled
+    expect(setter).toHaveBeenCalledWith(false)
+  })
+
+  it('does not reconnect when only a server field changed', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    // Touch a commonFields entry, not the transport.
+    localValues['port_forward.port'] = 12345
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft and warns when the native write rejects', async () => {
+    // A rejected write means nothing was persisted, so the tunnel is untouched.
+    // The draft must survive so the user can retry, and the failure must not be
+    // reported as a plain success.
     const setter = vi.fn().mockRejectedValue(new Error('bridge'))
     mockNative.current = {
       getTunnelTransportH2Enabled: () => false,
@@ -348,59 +480,500 @@ describe('h2 toggle: interaction', () => {
 
     const wrapper = mountPanel()
     await flushPromises()
-    expect(findToggle(wrapper)!.props('modelValue')).toBe(false)
 
-    await findToggle(wrapper)!.vm.$emit('update:modelValue', true)
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
     await flushPromises()
 
     expect(setter).toHaveBeenCalledWith(true)
-    // Rolled back to the pre-toggle value.
-    expect(findToggle(wrapper)!.props('modelValue')).toBe(false)
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+    expect(mockToastShow).not.toHaveBeenCalledWith('配置已保存', expect.anything())
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
   })
 
-  it('keeps the value when there is no native setter (no-op, not a failure)', async () => {
-    // Android host with the getter but no setter: optional chaining means
-    // nothing is called and nothing throws, so the optimistic value stands.
+  it('keeps the stored preference when the reconnect fails', async () => {
+    // The preference WAS accepted and persisted, so reverting it would make the
+    // host and the UI disagree. The user is warned instead.
+    mockReconnectTunnel.fn.mockResolvedValue(false)
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    const setter = (mockNative.current as { setTunnelTransportH2Enabled: ReturnType<typeof vi.fn> }).setTunnelTransportH2Enabled
+    expect(setter).toHaveBeenCalledWith(true)
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+    expect(mockToastShow).toHaveBeenCalledWith(
+      '传输方式已保存，但隧道重连失败，端口映射暂不可用',
+      expect.objectContaining({ type: 'error' }),
+    )
+  })
+
+  it('no longer renders a reconnect hint or button', async () => {
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('.group-panel__h2-hint').exists()).toBe(false)
+    expect(wrapper.find('.group-panel__h2-reconnect').exists()).toBe(false)
+  })
+})
+
+// ── Desktop transport picker (Electron) ──
+
+/**
+ * The desktop shell renders the SAME two-valued picker Android gets; only the
+ * bridge vocabulary differs (Electron store vs SharedPreferences). The
+ * automatic mode was removed, so the choice is always one concrete wire.
+ */
+describe('desktop transport picker: platform gate', () => {
+  it('renders in the Electron shell', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeTruthy()
+  })
+
+  it('hides in plain web mode', async () => {
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+  })
+
+  it('hides on a non-portForward panel even in Electron', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel({ panelId: 'terminal', commonFields: [] })
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+  })
+})
+
+describe('desktop transport picker: initial value', () => {
+  beforeEach(() => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+  })
+
+  it('offers exactly two transports with the shared labels', async () => {
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const options = findTransportSelect(wrapper)!.props('options') as Array<{ label: string; value: string }>
+    // No 'both': the automatic mode was removed, so the choice is always one
+    // concrete wire.
+    expect(options.map(o => o.value)).toEqual(['ssh', 'h2'])
+    // Labels come from the same keys the panel's "current transport" line uses.
+    expect(options.map(o => o.label)).toEqual(['SSH', 'HTTP/2'])
+  })
+
+  it('reflects the stored preference', async () => {
+    mockNative.current = { getTunnelTransport: () => 'h2', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+  })
+
+  it('hides on a host without the setter (an older desktop build)', async () => {
+    // No setter means the choice could not persist, so the row must not appear.
+    mockNative.current = { getTunnelTransport: () => 'ssh' }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+  })
+
+  it('hides when the host reports a value it cannot interpret', async () => {
+    mockNative.current = { getTunnelTransport: () => 'quic', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+  })
+
+  it('hides when the getter rejects', async () => {
+    mockNative.current = {
+      getTunnelTransport: () => Promise.reject(new Error('bridge')),
+      setTunnelTransport: vi.fn(),
+    }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeFalsy()
+  })
+})
+
+describe('desktop transport picker: draft + save', () => {
+  function saveButton(wrapper: ReturnType<typeof mountPanel>) {
+    return wrapper.find('.group-panel__save-btn')
+  }
+
+  beforeEach(() => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+  })
+
+  it('does NOT write on change — the value stays a draft', async () => {
+    const setter = vi.fn().mockResolvedValue(true)
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: setter }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await flushPromises()
+
+    expect(setter).not.toHaveBeenCalled()
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+  })
+
+  it('enables Save when the transport is the only thing changed', async () => {
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn().mockResolvedValue(true) }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await flushPromises()
+
+    expect(saveButton(wrapper).attributes('disabled')).toBeUndefined()
+  })
+
+  it('writes the preference and reconnects on save', async () => {
+    const setter = vi.fn().mockResolvedValue(true)
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: setter }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(setter).toHaveBeenCalledWith('h2')
+    expect(mockReconnectTunnel.fn).toHaveBeenCalledOnce()
+    // Committed: the draft is now the persisted value, so the panel is clean
+    // again (otherwise Save stays enabled forever).
+    expect(saveButton(wrapper).attributes('disabled')).toBeDefined()
+  })
+
+  it('keeps the draft and warns when the host rejects the value', async () => {
+    const setter = vi.fn().mockResolvedValue(false)
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: setter }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(setter).toHaveBeenCalledWith('h2')
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+    expect(mockToastShow).not.toHaveBeenCalledWith('配置已保存', expect.anything())
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft and warns when the setter throws', async () => {
+    const setter = vi.fn().mockRejectedValue(new Error('bridge'))
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: setter }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the stored preference when the reconnect fails', async () => {
+    mockReconnectTunnel.fn.mockResolvedValue(false)
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn().mockResolvedValue(true) }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+    expect(mockToastShow).toHaveBeenCalledWith(
+      '传输方式已保存，但隧道重连失败，端口映射暂不可用',
+      expect.objectContaining({ type: 'error' }),
+    )
+  })
+
+  it('no longer renders a reconnect hint or button', async () => {
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn().mockResolvedValue(true) }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(wrapper.find('.group-panel__h2-hint').exists()).toBe(false)
+    expect(wrapper.find('.group-panel__h2-reconnect').exists()).toBe(false)
+  })
+})
+
+// ── SSH-only rows hidden on an h2-only tunnel ──
+
+/**
+ * `port_forward.port` configures the SSH SERVER, not port mapping: the h2 wire
+ * rides the main HTTP port and never reads it. When this client is on h2 that
+ * row configures a port it never dials, so the panel hides it.
+ *
+ * There is no enable switch to reason about any more — the listener is pinned
+ * on server-side, so the panel only ever hides an input, never a control.
+ */
+describe('h2-only transport: SSH-server rows', () => {
+  /** The rendered port-mapping-port row, if any. */
+  function portRow(wrapper: ReturnType<typeof mountPanel>) {
+    return wrapper.findAllComponents({ name: 'SettingsItem' })
+      .find(i => i.props('label') === 'SSH 隧道端口')
+  }
+
+  it('shows the port row on the default (SSH) desktop transport', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)).toBeTruthy()
+  })
+
+  it('hides the port row on desktop H2', async () => {
+    // Only the port row (a port nothing reads on h2) goes; the transport picker
+    // itself is never hidden, since it is how the user would switch back.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'h2', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)).toBeFalsy()
+  })
+
+  it('hides the port row when the host reports the migrated h2 preference', async () => {
+    // A store holding the retired 'both' is migrated to 'h2' by the main
+    // process, so this is what such a host reports back — and it hides the row
+    // exactly like a natively-chosen h2.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'h2', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)).toBeFalsy()
+  })
+
+  it('hides the port row on Android when the picker reads h2', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = false
+    mockNative.current = { getTunnelTransportH2Enabled: () => true }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)).toBeFalsy()
+  })
+
+  it('keeps the port row on Android when the picker reads ssh', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = false
     mockNative.current = { getTunnelTransportH2Enabled: () => false }
 
     const wrapper = mountPanel()
     await flushPromises()
 
-    await findToggle(wrapper)!.vm.$emit('update:modelValue', true)
-    await flushPromises()
-
-    expect(findToggle(wrapper)!.props('modelValue')).toBe(true)
+    expect(portRow(wrapper)).toBeTruthy()
   })
 
-  it('shows the reconnect hint and button alongside the row', async () => {
+  it('keeps the port row in plain web mode', async () => {
+    mockNative.current = undefined
+
     const wrapper = mountPanel()
     await flushPromises()
 
-    expect(wrapper.find('.group-panel__h2-hint').exists()).toBe(true)
-    expect(wrapper.find('.group-panel__h2-hint').text()).toContain('切换将在下次重连后生效')
-    expect(wrapper.find('.group-panel__h2-reconnect').exists()).toBe(true)
+    expect(portRow(wrapper)).toBeTruthy()
   })
+})
 
-  it('reconnects and toasts the existing message on success', async () => {
+// ── Tunnel status row ──
+
+/**
+ * The row exists because applying a transport change takes the tunnel down and
+ * rebuilds it — bounded by CONNECT_TIMEOUT_MS (20s) — with nothing else on
+ * screen saying what is happening or whether it worked.
+ */
+describe('tunnel status row', () => {
+  function statusRow(wrapper: ReturnType<typeof mountPanel>) {
+    return wrapper.find('.group-panel__tunnel-status')
+  }
+
+  it('renders alongside the desktop picker', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
     const wrapper = mountPanel()
     await flushPromises()
 
-    await wrapper.find('.group-panel__h2-reconnect').trigger('click')
-    await flushPromises()
-
-    expect(mockReconnectTunnel.fn).toHaveBeenCalledOnce()
-    expect(mockToastShow).toHaveBeenCalledWith('隧道已重连', expect.objectContaining({ type: 'success' }))
+    expect(statusRow(wrapper).exists()).toBe(true)
   })
 
-  it('does not toast when the reconnect fails', async () => {
-    mockReconnectTunnel.fn.mockResolvedValue(false)
+  it('renders alongside the Android toggle', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = false
+    mockNative.current = { getTunnelTransportH2Enabled: () => false }
+
     const wrapper = mountPanel()
     await flushPromises()
 
-    await wrapper.find('.group-panel__h2-reconnect').trigger('click')
+    expect(statusRow(wrapper).exists()).toBe(true)
+  })
+
+  it('renders in plain web mode too — it replaces the removed test button', async () => {
+    // Web mode has no client tunnel, but the row still answers the question the
+    // old "Test Connection" button answered: can this server carry forwards?
+    mockNative.current = undefined
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: true }
+
+    const wrapper = mountPanel()
     await flushPromises()
 
-    expect(mockToastShow).not.toHaveBeenCalled()
+    expect(statusRow(wrapper).exists()).toBe(true)
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--ok')
+    expect(statusRow(wrapper).text()).toContain('服务器已就绪')
+  })
+
+  it('reports web mode ready over H2 when the SSH listener is off', async () => {
+    mockNative.current = undefined
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: false }
+    ;(mockTunnel.transportAllowsH2 as { value: boolean }).value = true
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--ok')
+    expect(statusRow(wrapper).text()).toContain('H2')
+  })
+
+  it('reports web mode unavailable when neither wire can carry forwards', async () => {
+    mockNative.current = undefined
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: false }
+    ;(mockTunnel.transportAllowsH2 as { value: boolean }).value = false
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--disconnected')
+    expect(statusRow(wrapper).text()).toContain('端口映射不可用')
+  })
+
+  it('stays out on a legacy host that cannot report a transport', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh' } // no setter
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).exists()).toBe(false)
+  })
+
+  it('reports a connected tunnel', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelStatus as { value: string }).value = 'ok'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--ok')
+    expect(statusRow(wrapper).text()).toContain('隧道已连接')
+  })
+
+  it('surfaces the composable message for a problem state', async () => {
+    // tunnelMessage is already localized and carries the transport annotation,
+    // so the row must show it verbatim rather than re-deriving the wording.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelStatus as { value: string }).value = 'disconnected'
+    ;(mockTunnel.tunnelMessage as { value: string }).value = '隧道未连接（SSH）'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--disconnected')
+    expect(statusRow(wrapper).text()).toContain('隧道未连接（SSH）')
+  })
+
+  it('shows the checking state while a probe is in flight', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelChecking as { value: boolean }).value = true
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).classes()).toContain('group-panel__tunnel-status--checking')
+    expect(statusRow(wrapper).text()).toContain('正在检测隧道状态')
+  })
+
+  it('re-runs the health check from the retry button', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelStatus as { value: string }).value = 'disconnected'
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await statusRow(wrapper).find('.group-panel__tunnel-retry').trigger('click')
+    await flushPromises()
+
+    expect(mockTunnel.checkTunnelHealth as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce()
+  })
+
+  it('disables the retry button while a check is running', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+    ;(mockTunnel.tunnelChecking as { value: boolean }).value = true
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(statusRow(wrapper).find('.group-panel__tunnel-retry').attributes('disabled')).toBeDefined()
   })
 })
 
@@ -422,12 +995,12 @@ describe('h2 toggle: interaction', () => {
  * The `readAndroidBridge` / `androidBridgeExposes` helpers live in
  * `@/testUtils/androidBridgeContract` so other contract specs share them.
  */
-describe('h2 toggle: real Android host contract', () => {
+describe('transport picker: real Android host contract', () => {
   const src = readAndroidBridge()
 
   it('the Android bridge implements the getter the row requires', () => {
     // SettingsGroupPanel.vue hides the row when `getTunnelTransportH2Enabled`
-    // is absent, so without this the toggle can never be turned on in the app.
+    // is absent, so without this the picker can never show the real value.
     expect(androidBridgeExposes(src, 'getTunnelTransportH2Enabled')).toBe(true)
   })
 

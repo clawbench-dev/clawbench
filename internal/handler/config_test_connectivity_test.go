@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/service"
 	"clawbench/internal/ssh"
 	"clawbench/internal/summarize"
 
@@ -379,12 +380,17 @@ func TestTestDingTalk_AuthError(t *testing.T) {
 
 func TestTestPortForward_NoServer(t *testing.T) {
 	origSSH := sshServerRef
+	origRegistry := service.ProxyService
 	sshServerRef = nil
-	defer func() { sshServerRef = origSSH }()
+	// Both wires must be gone for "not available": an h2-only install has no
+	// SSH listener but still forwards ports, so clearing the SSH ref alone is
+	// no longer enough to reach the failure branch.
+	service.ProxyService = nil
+	defer func() { sshServerRef = origSSH; service.ProxyService = origRegistry }()
 
 	result := testPortForward(context.Background(), map[string]any{})
 	assert.False(t, result.Success)
-	assert.Contains(t, result.Message, "not running")
+	assert.Contains(t, result.Message, "not available")
 }
 
 // ── TTS tests ────────────────────────────────────────────────
@@ -624,12 +630,49 @@ func TestTestTTS_NanoInvalidModelDir(t *testing.T) {
 
 func TestTestPortForward_ServerNotListening(t *testing.T) {
 	origSSH := sshServerRef
-	// Set sshServerRef to nil (no server running)
+	origRegistry := service.ProxyService
+	// Set sshServerRef to nil (no server running). The registry must go too —
+	// with it present the h2 branch reports success (see the h2-only case).
 	sshServerRef = nil
-	defer func() { sshServerRef = origSSH }()
+	service.ProxyService = nil
+	defer func() { sshServerRef = origSSH; service.ProxyService = origRegistry }()
 
 	result := testPortForward(context.Background(), map[string]any{})
 	assert.False(t, result.Success)
+}
+
+func TestTestPortForward_H2Only(t *testing.T) {
+	// The regression this guards: an h2-only install (port_forward.enabled:
+	// false, so no SSH listener) forwards ports perfectly well, and the test
+	// endpoint used to report it as broken because it only ever looked at SSH.
+	origSSH := sshServerRef
+	origRegistry := service.ProxyService
+	sshServerRef = nil
+	service.ProxyService = &service.ProxyRegistry{}
+	defer func() { sshServerRef = origSSH; service.ProxyService = origRegistry }()
+
+	result := testPortForward(context.Background(), map[string]any{})
+	assert.True(t, result.Success)
+	assert.Contains(t, result.Message, "HTTP/2")
+}
+
+func TestTestPortForward_SshWinsWhenBothAvailable(t *testing.T) {
+	// With an SSH listener up, the message stays the SSH one: it is the more
+	// specific answer, and the pre-h2 behavior for SSH installs is unchanged.
+	origSSH := sshServerRef
+	origRegistry := service.ProxyService
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+
+	port := ln.Addr().(*net.TCPAddr).Port
+	sshServerRef = ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: port}, 20000, "test-password", nil)
+	service.ProxyService = &service.ProxyRegistry{}
+	defer func() { sshServerRef = origSSH; service.ProxyService = origRegistry }()
+
+	result := testPortForward(context.Background(), map[string]any{})
+	assert.True(t, result.Success)
+	assert.Contains(t, result.Message, "SSH tunnel server is listening")
 }
 
 func TestTestPortForward_ServerListening(t *testing.T) {

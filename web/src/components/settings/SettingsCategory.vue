@@ -128,10 +128,10 @@ import { useSettingsConfig, getEffectiveUIScale, autoFitUIScale } from '@/compos
 import { useAgents } from '@/composables/useAgents'
 import { useToast } from '@/composables/useToast'
 import { useDialog } from '@/composables/useDialog'
-import { useAppMode } from '@/composables/useAppMode'
 import { setLogCaptureEnabled } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { usePwaInstall } from '@/composables/usePwaInstall'
+import { usePlatformDetect } from '@/composables/usePlatformDetect'
 import { useDesktopDownload } from '@/composables/useDesktopDownload'
 import { downloadByUrl } from '@/utils/download'
 import { openExternalUrl } from '@/utils/externalLink'
@@ -158,8 +158,9 @@ const toast = useToast()
 const dialog = useDialog()
 const { localConfig, serverConfig, setLocalConfig, getServerValueWithDefault, setServerValue } = useSettingsConfig()
 const { loadAgents } = useAgents()
-const { isAppMode, isDesktopApp } = useAppMode()
 const pwaInstall = usePwaInstall()
+// Host axis: which shell is running (see usePlatformDetect).
+const { isNativeApp, isAndroidApp } = usePlatformDetect()
 const desktopDownload = useDesktopDownload()
 const activeKey = ref<string | null>(null)
 const showPasswordDialog = ref(false)
@@ -245,7 +246,6 @@ const subPagePanel = computed((): GroupPanelConfig | undefined => {
  * isAppMode() === true, so the desktop shell must be excluded explicitly —
  * `hideInAndroidApp` rows (e.g. auto UI scale) still apply on desktop.
  */
-const isAndroidApp = computed(() => isAppMode.value && !isDesktopApp.value)
 
 const renderList = computed(() => {
   const raw = categoryItems[props.categoryId] ?? []
@@ -254,10 +254,10 @@ const renderList = computed(() => {
   for (const entry of raw) {
     if (entry.type === 'item') {
       if (!isDependsOnMet(entry.spec.dependsOn, resolveConfigValue)) continue
-      if (entry.spec.appOnly && !isAppMode.value) continue
+      if (entry.spec.appOnly && !isNativeApp.value) continue
       if (entry.spec.androidOnly && !isAndroidApp.value) continue
       if (entry.spec.hideInAndroidApp && isAndroidApp.value) continue
-      if (entry.spec.key === 'appVersion' && !isAppMode.value) continue
+      if (entry.spec.key === 'appVersion' && !isNativeApp.value) continue
       if (entry.spec.key === 'addToHomeScreen' && !pwaInstall.showPwaInstall.value) continue
       if (entry.spec.key === 'downloadAndroidApp' && !pwaInstall.showApkDownload.value) continue
       // Hide when this platform has no published desktop build (or the registry

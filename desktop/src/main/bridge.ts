@@ -10,7 +10,7 @@ import {
 } from './secrets'
 import { addForwardedPort, removeForwardedPort as rmFwd, addReverseForwardedPort, removeReverseForwardedPort as rmReverseFwd,
   getForwardedPorts, isTunnelConnected, getTunnelError, getTunnelErrorType, testPortReachable, reconnectTunnel,
-  getTransportPreference, getActiveTransport } from './tunnel'
+  getTransportPreference, getActiveTransport, initTransportPreference, persistTransportPreference } from './tunnel'
 import type { TransportPreference } from './transport'
 import {
   getMainWindow, createMainWindow, openSandboxWindow, showLoginPage,
@@ -33,6 +33,10 @@ export function registerBridge(): void {
   // Absorb credentials written by older builds into the per-URL map before any
   // handler can read them. Idempotent.
   migratePasswords()
+  // Hydrate the tunnel module from the persisted preference before any window
+  // exists, so the first connect already uses the user's choice rather than the
+  // SSH default.
+  initTransportPreference()
 
   ipcMain.on('native:get-language', (e) => {
     // Prefer the language the user picked in the web UI; fall back to the OS
@@ -127,6 +131,10 @@ export function registerBridge(): void {
   // Which transport actually carried the last successful connect — distinct
   // from the configured preference, and what the panel shows to the user.
   ipcMain.handle('native:get-active-tunnel-transport', () => getActiveTransport())
+  // The settings row's write path. The value is validated in the tunnel module
+  // (not here) so the accepted set lives next to the transport dispatch it
+  // feeds; an unrecognized value is rejected rather than stored.
+  ipcMain.handle('native:set-tunnel-transport', (_e, pref: unknown) => persistTransportPreference(pref))
   ipcMain.handle('native:add-forwarded-port', (_e, l: number, t: number, h: string) => addForwardedPort(l, t, h))
   ipcMain.handle('native:remove-forwarded-port', (_e, l: number) => rmFwd(l))
   ipcMain.handle('native:add-reverse-forwarded-port', (_e, s: number, t: number, h: string) => addReverseForwardedPort(s, t, h))

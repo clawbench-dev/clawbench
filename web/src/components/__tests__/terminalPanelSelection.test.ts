@@ -159,7 +159,7 @@ describe('TerminalPanel xterm selection defaults', () => {
 
     const tabWatcher = source.slice(
       source.indexOf('watch(activeTabId'),
-      source.indexOf('const { isPC } = usePlatformDetect()'),
+      source.indexOf('const { isAndroidApp, isTouchPrimary } = usePlatformDetect()'),
     )
     expect(tabWatcher).toContain('quoteQuestion.hideBar()')
   })
@@ -212,6 +212,14 @@ describe('TerminalPanel xterm selection defaults', () => {
     expect(source).toContain('getFallbackDir: () => activeTab.value?.cwd')
     // Reuse the shared overlay + progress bar rather than bespoke markup.
     expect(source).toContain('<DropOverlay :visible="terminalFileDrop.dropActive.value"')
+    // The label must be the terminal's own ("Drop to upload"), not the file
+    // manager's `file.dropToUpload` ("Drop to upload to current folder"). The
+    // file manager drops into the browsed directory; this drops into the
+    // shell's live cwd, which the terminal never displays — so naming a
+    // "current folder" is misleading. Both keys exist, so the literal-keys
+    // guard cannot catch this swap; only an explicit assertion can.
+    expect(source).toContain("t('chat.attach.dropToUpload')")
+    expect(source).not.toContain("t('file.dropToUpload')")
     expect(source).toContain('<UploadProgressBar')
     expect(source).toContain('@cancel="cancelDirUpload"')
   })
@@ -220,11 +228,12 @@ describe('TerminalPanel xterm selection defaults', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 
     // PC tab bar AND the mobile virtual-key toolbar each get the button, so the
-    // action is reachable on every form factor.
-    const pcButton = source.indexOf('class="terminal-tab-add"\n        @click="openCurrentDirInFileManager"')
-    const mobileButton = source.indexOf('btn-func" @click="openCurrentDirInFileManager"')
-    expect(pcButton).toBeGreaterThan(-1)
-    expect(mobileButton).toBeGreaterThan(-1)
+    // action is reachable on every form factor. Count the click bindings rather
+    // than matching a fixed attribute order — the surrounding markup gains
+    // hooks (e.g. data-action) over time and whitespace-based matching silently
+    // rots.
+    const clickBindings = source.match(/@click="openCurrentDirInFileManager"/g) ?? []
+    expect(clickBindings).toHaveLength(2)
 
     // Reuses the shared directory-jump event rather than inventing a new emit,
     // and tags the source so Back returns to the terminal.

@@ -385,15 +385,18 @@ paths:
         偏好，不在配置中。
 
         `port_forward` 段包含 `enabled`、`port`、`transport`（`host_key` 与
-        `allowed_ports` 不下发）。`transport` **恒为 `both`**：服务端已把该字段
-        钉死（`ApplyDefaults` 无条件归一），yaml 里写 `ssh` / `h2` / `both` /
-        非法值最终都是 `both`。
+        `allowed_ports` 不下发）。`enabled` **恒为 `true`**：SSH 隧道监听器
+        常开，开关已移除（见 `ApplyDefaults` 的 `PortForward.Enabled` 钉死）。
+        `transport` **恒为 `both`**：服务端已把该字段钉死（`ApplyDefaults`
+        无条件归一），yaml 里写 `ssh` / `h2` / `both` / 非法值最终都是 `both`。
 
-        它现在只剩一个消费者：web 端健康检查门控（`tunnelTransportAllowsH2()`
-        读该值，仅 `h2` / `both` 为真）——因此字段保留、值恒为 `both`，不能删除
-        （删掉会让前端读到 `undefined` 而误判为 ssh-only，反而隐藏 h2 面板）。
-        两个原生客户端都不消费该值——Electron 在 IPC 边界固定为 `ssh`，Android 用
-        本地 SharedPreferences 开关（`tunnel_transport_h2_enabled`，默认关 = SSH）。
+        `transport` 现在只剩一个消费者：web 端健康检查门控
+        （`tunnelTransportAllowsH2()` 读该值，仅 `h2` / `both` 为真）——因此字段
+        保留、值恒为 `both`，不能删除（删掉会让前端读到 `undefined` 而误判为
+        ssh-only，反而隐藏 h2 面板）。传输方式的选择本身是**客户端本地**的
+        （Electron store 的 `tunnelTransport`，取 `ssh` / `h2`；Android 的
+        SharedPreferences 开关 `tunnel_transport_h2_enabled`），服务端读不到，
+        这正是监听器必须常开的原因：服务端无法用该值决定是否监听。
       operationId: getConfig
       responses:
         "200":
@@ -406,6 +409,9 @@ paths:
         壁纸的共享资源（`appearance.local.items` / `appearance.bing.file`）不在白名单，
         须经专用端点写入；每设备的壁纸选择（来源 / 开关 / 选中项）存在浏览器
         localStorage，PATCH 会被白名单拒绝。
+
+        `port_forward.enabled` 仍为白名单键，但**值被忽略**：任何值都返回 200，
+        存储值恒为 `true`（监听器常开，与 `ApplyDefaults` 一致）。
 
         `port_forward.transport` 仍为白名单键，但**值被忽略**：`ssh` / `h2` /
         `both` 都返回 200，存储值恒为 `both`（与 `ApplyDefaults` 一致，避免运行时
@@ -944,6 +950,10 @@ paths:
       responses:
         "200":
           description: 已标记
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 
   /api/ai/chat/user-messages:
     get:
@@ -1628,6 +1638,10 @@ paths:
       responses:
         "200":
           description: 排队消息
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     post:
       tags: [Queue]
       summary: 入队消息
@@ -1674,6 +1688,12 @@ paths:
       responses:
         "200":
           description: 入队结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
     delete:
       tags: [Queue]
       summary: 删除排队消息
@@ -1695,6 +1715,10 @@ paths:
       responses:
         "200":
           description: 删除结果
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
 
   /api/ai/queue/inject:
     post:
@@ -4512,6 +4536,31 @@ paths:
       responses:
         "200":
           description: 结果
+
+  /api/proxy/ports/rebind:
+    post:
+      tags: [Proxy]
+      summary: 改绑端口转发的本地监听端口
+      operationId: proxyPortsRebind
+      description: |
+        请求体：`{localPort, newLocalPort}`。把一条正向映射从 `localPort` 改绑到
+        `newLocalPort`（目标端口/主机/名称/协议/方向不变），返回 `{status, localPort}`。
+
+        客户端持有正向映射的监听器：当请求的本地端口在客户端机器上已被占用时，
+        客户端会改绑到下一个空闲端口，并调用本接口同步注册表 —— 否则以 `localPort`
+        为键的删除/更新/启停接口与 UI 里的 URL 都会指向无人监听的端口。
+
+        状态码：400 参数非法；404 `localPort` 不存在（可能已被并发删除）；
+        409 `newLocalPort` 已被另一条映射占用（客户端应换端口重试）。
+      responses:
+        "200":
+          description: 结果
+        "400":
+          description: 端口号非法
+        "404":
+          description: 源 localPort 未注册
+        "409":
+          description: 目标 localPort 已被占用
 
   /api/proxy/detect:
     get:

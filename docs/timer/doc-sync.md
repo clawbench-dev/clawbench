@@ -85,9 +85,8 @@ git log --oneline --since="24 hours ago" origin/main
 - `README.md` — 中文版 README（GitHub 主页默认渲染）
 - `README.en.md` — 英文版 README（面向国际用户）
 - `AGENTS.md` — AI Agent 项目指引（架构、组件、配置、模式）
-- `docs/FAQ.md` — 常见问题
-- `docs/FAQ.en.md` — 英文FAQ
-- 其他 `docs/` 下的专题文档
+- `docs/user-guide/FAQ.md` — 常见问题
+- 其他 `docs/user-guide/` 下的专题文档
 
 更新原则：
 - 阅读当前文档内容，根据提交内容在合适位置添加或更新相关描述

@@ -1044,6 +1044,16 @@ type ACPConn struct {
 	currentModelID          string
 	cachedPlanState         *PlanState
 	cachedUsageState        *UsageState
+	// cachedTeamState is the latest Agent Team snapshot (nil when the session
+	// has no team). Written from the notification goroutine via
+	// SetCachedTeamState, so it follows the same leaf-lock rule as the others.
+	cachedTeamState *TeamState
+	// memberToolCallIDs maps an Agent Team member name to the tool-call id of
+	// the Agent spawn frame that created it. Team member content frames carry
+	// only `_meta.memberEvent` (the member name), NOT parentToolCallId, so this
+	// map is what lets the mapper backfill ParentToolCallID and reuse the
+	// existing sub-agent grouping. Guarded by stateMu.
+	memberToolCallIDs map[string]string
 
 	// currentSelections is a generalized map for tracking the current
 	// selection of any category (mode, thought_level, model, etc.).
@@ -1696,6 +1706,50 @@ func (c *ACPConn) GetCachedPlanState() *PlanState {
 	c.stateMu.Lock()
 	defer c.stateMu.Unlock()
 	return c.cachedPlanState
+}
+
+// SetCachedTeamState caches the latest Agent Team snapshot. Passing nil clears
+// it (used when the team is deleted). Called from the SDK notification
+// goroutine — uses stateMu, never c.mu (see ACPConn.stateMu for why c.mu would
+// deadlock).
+func (c *ACPConn) SetCachedTeamState(state *TeamState) {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	c.cachedTeamState = state
+}
+
+// GetCachedTeamState returns the cached Agent Team snapshot (nil when none).
+func (c *ACPConn) GetCachedTeamState() *TeamState {
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.cachedTeamState
+}
+
+// SetMemberToolCallID records the Agent spawn tool-call id for a team member,
+// so member content frames (which carry only the member name) can be grouped
+// under the Agent card. Called from the SDK notification goroutine — leaf lock
+// only (stateMu).
+func (c *ACPConn) SetMemberToolCallID(memberName, toolCallID string) {
+	if memberName == "" || toolCallID == "" {
+		return
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.memberToolCallIDs == nil {
+		c.memberToolCallIDs = make(map[string]string)
+	}
+	c.memberToolCallIDs[memberName] = toolCallID
+}
+
+// MemberToolCallID returns the Agent spawn tool-call id for a team member, or
+// "" when unknown. Guarded by stateMu (leaf lock).
+func (c *ACPConn) MemberToolCallID(memberName string) string {
+	if memberName == "" {
+		return ""
+	}
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	return c.memberToolCallIDs[memberName]
 }
 
 // SetCachedUsageState caches the usage state from a usage_update event.

@@ -12,7 +12,7 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
  */
 export function useTableRowExpand() {
   const tableRowModal = ref<{ headers: string[], rows: string[][], currentIndex: number } | null>(null)
-  const { isPC } = usePlatformDetect()
+  const { isTouchPrimary } = usePlatformDetect()
 
   function closeTableRowModal() {
     tableRowModal.value = null
@@ -39,7 +39,7 @@ export function useTableRowExpand() {
     const target = event.target as HTMLElement
     // Row viewer is a mobile/touch feature — never open it on PC. On PC the
     // table image's lightbox expand icon opens the lightbox directly instead.
-    if (isPC.value) return false
+    if (!isTouchPrimary.value) return false
     // Only activate on touch — skip mouse clicks for PC mode
     if ('pointerType' in event && event.pointerType !== 'touch') return false
     // Skip if click target is an interactive element inside the cell (the

@@ -10,6 +10,7 @@ import { useDialog } from '@/composables/useDialog'
 import { useFileNavStack } from '@/composables/useFileNavStack'
 import { resetForgeBindingState } from '@/composables/useForgeBinding'
 import { clearMediaWatchState } from '@/composables/useMediaWatch.ts'
+import { clearAllBaselines } from '@/composables/useFileChangeBaseline.ts'
 
 const TAG = 'Store'
 
@@ -326,6 +327,12 @@ function resetProjectState(): void {
     // being reported to the file watcher. Covers every switch path (worktree
     // jumps call setProject() directly without remounting the app subtree).
     clearMediaWatchState()
+    // Change baselines are keyed by PROJECT-RELATIVE path too: the baseline for
+    // `src/main.go` recorded in the old project would otherwise survive into the
+    // new one and derive phantom markers against unrelated content (worse, the
+    // shared diff drawer's Undo could overwrite the new project's file with the
+    // old project's content). Dropping them here covers every switch path.
+    clearAllBaselines()
     // The forge binding belongs to the project being left behind. Dropping it
     // here — rather than in App.vue's hotSwitchProject — covers every switch
     // path: worktree jumps (task exec detail, chat messages, git panel) call

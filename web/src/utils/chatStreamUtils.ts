@@ -59,6 +59,10 @@ export interface ContentBlock {
    * group a sub-agent's thinking/text/tool_use under its parent Agent card.
    */
   parent_tool_call_id?: string
+  /** Agent Team member that produced this block (wire memberEvent). */
+  member_name?: string
+  /** Member display colour (wire name, e.g. "blue") for the timeline accent. */
+  member_color?: string
   [key: string]: unknown
 }
 
@@ -101,6 +105,10 @@ export interface ContentEventData {
   content?: string
   /** Parent Agent tool-call id when this content belongs to a sub-agent. */
   parent_tool_call_id?: string
+  /** Agent Team member that produced this block (wire memberEvent). */
+  member_name?: string
+  /** Member display colour (wire name, e.g. "blue") for the timeline accent. */
+  member_color?: string
 }
 
 /** Extract the textual content of a message: blocks' text concat, else content. */
@@ -150,6 +158,10 @@ export interface ThinkingEventData {
   think_id?: string
   /** Parent Agent tool-call id when this thinking belongs to a sub-agent. */
   parent_tool_call_id?: string
+  /** Agent Team member that produced this block (wire memberEvent). */
+  member_name?: string
+  /** Member display colour (wire name, e.g. "blue") for the timeline accent. */
+  member_color?: string
 }
 
 /** SSE event data for tool_use/tool_result events */
@@ -165,6 +177,10 @@ export interface ToolUseEventData {
   duration_ms?: number
   /** Parent Agent tool-call id when this tool call belongs to a sub-agent. */
   parent_tool_call_id?: string
+  /** Agent Team member that produced this block (wire memberEvent). */
+  member_name?: string
+  /** Member display colour (wire name, e.g. "blue") for the timeline accent. */
+  member_color?: string
 }
 
 /** SSE event data for mode/config/thinking_effort events */
@@ -621,8 +637,8 @@ export type ChatMessageAction =
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
-  | { type: 'ws_content'; text: string; parentToolCallId?: string }
-  | { type: 'ws_thinking'; text: string; key?: string; thinkId?: string; parentToolCallId?: string }
+  | { type: 'ws_content'; text: string; parentToolCallId?: string; memberName?: string; memberColor?: string }
+  | { type: 'ws_thinking'; text: string; key?: string; thinkId?: string; parentToolCallId?: string; memberName?: string; memberColor?: string }
   | { type: 'ws_thinking_done'; parentToolCallId?: string }
   | { type: 'ws_content_reset' }
   | { type: 'ws_tool_use'; data: ToolUseEventData }
@@ -1791,7 +1807,13 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
       const parent = action.parentToolCallId
       const existingText = findBlockByTypeBackward(blocks, 'text', parent)
       if (existingText) existingText.text += action.text
-      else blocks.push({ type: 'text', text: action.text, ...(parent ? { parent_tool_call_id: parent } : {}) })
+      else blocks.push({
+        type: 'text',
+        text: action.text,
+        ...(parent ? { parent_tool_call_id: parent } : {}),
+        ...(action.memberName ? { member_name: action.memberName } : {}),
+        ...(action.memberColor ? { member_color: action.memberColor } : {}),
+      })
       return state
     }
     case 'ws_thinking': {
@@ -1815,8 +1837,13 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         parent,
         () => findBlockByTypeBackward(blocks, 'thinking', parent),
         // `_key` remains the fallback identity for a server that does not send
-        // think_id yet (see computeStableBlockKey).
-        action.key ? { _key: action.key } : undefined,
+        // think_id yet (see computeStableBlockKey). Agent Team attribution rides
+        // along so the block's accent matches its member.
+        {
+          ...(action.key ? { _key: action.key } : {}),
+          ...(action.memberName ? { member_name: action.memberName } : {}),
+          ...(action.memberColor ? { member_color: action.memberColor } : {}),
+        },
       )
       return state
     }
@@ -1909,6 +1936,8 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (data.file_path !== undefined) existing.file_path = data.file_path
         if (data.duration_ms !== undefined) existing.duration_ms = data.duration_ms
         if (data.parent_tool_call_id) existing.parent_tool_call_id = data.parent_tool_call_id
+        if (data.member_name) existing.member_name = data.member_name
+        if (data.member_color) existing.member_color = data.member_color
         if (data.done) existing.done = true
       } else {
         blocks.push({
@@ -1923,6 +1952,8 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
           ...(data.file_path ? { file_path: data.file_path } : {}),
           ...(data.duration_ms !== undefined ? { duration_ms: data.duration_ms } : {}),
           ...(data.parent_tool_call_id ? { parent_tool_call_id: data.parent_tool_call_id } : {}),
+          ...(data.member_name ? { member_name: data.member_name } : {}),
+          ...(data.member_color ? { member_color: data.member_color } : {}),
         } as ContentBlock)
       }
       return state
@@ -1936,6 +1967,8 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         if (data.name) block.name = data.name
         if (data.status !== undefined) block.status = data.status
         if (data.parent_tool_call_id) block.parent_tool_call_id = data.parent_tool_call_id
+        if (data.member_name) block.member_name = data.member_name
+        if (data.member_color) block.member_color = data.member_color
         block.done = true
         if (data.duration_ms !== undefined) block.duration_ms = data.duration_ms
       }

@@ -4,7 +4,7 @@
 
 > 移动原因：规格需通过 `go:embed` 编入二进制，用于渲染内置斜杠命令注入给 AI 的接口说明；而 `go:embed` 不能跨模块目录向上引用。**编辑规格请改 `internal/api/openapi.yaml`。**
 
-它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 158 个路径 / 200 个操作。
+它是 ClawBench HTTP API 的完整 OpenAPI 3.0 单文件规格（自包含、无外链 `$ref`），覆盖全部 164 个路径 / 207 个操作。
 
 ## 使用方式
 
@@ -50,9 +50,12 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 
 | 命令 | 注入的 operationId |
 |------|-------------------|
-| `/cb-chatsearch` | `ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
-| `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList` |
-| `/cb-usage` | `usageStats` |
+| `/cb-chatsearch` | `conversationProjectsList`、`ragSearch`、`ragMessage`、`ragSession`、`ragSessionSearch` |
+| `/cb-task` | `tasksList`、`tasksCreate`、`taskGet`、`taskUpdate`、`taskDelete`、`taskExecutions`、`agentsList`、`forgeBindingGet` |
+| `/cb-usage` | `conversationProjectsList`、`usageStats` |
+| `/cb-user-guide` | 无 —— 手册是本地 Markdown 文件，AI 直接读盘，不走 HTTP API |
+
+`conversationProjectsList`（`GET /api/conversation-projects`）在两个命令里都排首位：它是 AI 解析"用户点名的另一个项目"的**唯一**手段——拿到确切路径后写进项目 Cookie，搜索与用量接口本身无需为跨项目做任何改动。它列出所有有对话历史的项目（含目录已删除的，`exists=false`），以便历史仍可检索。
 
 选取列表见 `internal/api/render.go` 的 `commandOperations`；`internal/api/render_test.go` 断言每个 operationId 存在且仍带预期 tag。
 
@@ -67,6 +70,6 @@ Auth、System、Config、Theme、Projects、Chat、Sessions、Queue、Events、G
 - 留意通配路由的子路径分发：`/api/tasks/`（`{id}` 与 `executions` 子路径）、`/api/agents/`、`/api/fs/file/`、`/api/fs/raw/`、`/api/share/`、`/api/chat/quick-send/` 等。
 - 鉴权变化须同步 `security` 标注（默认 `cookieAuth` 或本机 AI 的 `aiToken`，免鉴权端点显式写 `security: []`）。
 - 已移除的端点（如 `/api/files`、`/api/git/status`、`/api/terminal/config`）在相关操作的 `description` 中标注了取代者。
-- **本文件与 `docs/spec/README.md` 的散文计数（「158 个路径 / 200 个操作」）必须手工同步**：`openapi_drift_test.go` 只校验路径与鉴权的双向一致，**不校验计数与文字**，所以计数漂移 CI 不会报。计数口径是 `paths:` 下的**全部路径键**（含非 `/api/` 的 `/login` 与 `/share/{token}`）与全部 HTTP 方法数。改动规格后跑 `grep -c "^  /" internal/api/openapi.yaml` 与 `grep -cE "^    (get|post|put|patch|delete):" internal/api/openapi.yaml` 复核（2026-09-29 实测 158 / 200）。
+- **本文件与 `docs/spec/README.md` 的散文计数（「164 个路径 / 207 个操作」）必须手工同步**：`openapi_drift_test.go` 只校验路径与鉴权的双向一致，**不校验计数与文字**，所以计数漂移 CI 不会报。计数口径是 `paths:` 下的**全部路径键**（含非 `/api/` 的 `/login` 与 `/share/{token}`）与全部 HTTP 方法数。改动规格后跑 `grep -c "^  /" internal/api/openapi.yaml` 与 `grep -cE "^    (get|post|put|patch|delete):" internal/api/openapi.yaml` 复核（2026-10-02 实测 164 / 207）。
 - **全双工流式端点无法用 schema 表达请求/响应体**：`/api/tunnel/stream`、`/api/tunnel/control` 是 duplex 字节流（无 `Content-Length`），OpenAPI 3.0 没有对应模型。这类端点的载荷形态（字段、消息类型、关闭语义）**必须写进 operation 的 `description`**，路径与方法照常建模。
 - 改完自检：路由无遗漏无多余、YAML 合法、无重复 `operationId`、`$ref` 可解析。

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
 
@@ -1721,4 +1722,170 @@ func TestSSHReverseForward_UnknownGlobalRequestDoesNotHang(t *testing.T) {
 		t.Fatalf("connection unusable after an unknown global request: %v", err)
 	}
 	_ = conn.Close()
+}
+
+// --- Bind retry tests ---
+
+// waitForListener polls until the server has a bound listener, or fails after
+// a bounded deadline. ListenAndServe binds on its own goroutine, so the
+// listener is not observable synchronously.
+func waitForListener(t *testing.T, srv *Server) bool {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		srv.mu.Lock()
+		ln := srv.listener
+		srv.mu.Unlock()
+		if ln != nil {
+			return true
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return false
+}
+
+// freePort returns a currently-unused loopback port.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to find a free port: %v", err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestSSHServer_BindRetry_SucceedsOncePortFreed(t *testing.T) {
+	// The restart race: the outgoing process still holds the SSH port when the
+	// new one starts, and releases it a moment later. Without the retry the
+	// new server logged one error and never listened again, so the port stayed
+	// unbound for the whole process lifetime.
+	portReg := newTestRegistry(t)
+	port := freePort(t)
+
+	// Simulate the outgoing process holding the port.
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+
+	srv := NewServer(model.PortForwardConfig{Enabled: true, Port: port}, 20000, "test", portReg)
+	srv.SetBindRetryForTest(3*time.Second, 20*time.Millisecond)
+	srv.addr = fmt.Sprintf("127.0.0.1:%d", port)
+
+	done := make(chan error, 1)
+	go func() { done <- srv.ListenAndServe() }()
+	t.Cleanup(func() { srv.Close() })
+
+	// Let the server fail at least one bind attempt before the port is freed.
+	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, blocker.Close(), "release the port the outgoing process held")
+
+	if !waitForListener(t, srv) {
+		t.Fatal("server never bound the port even after it was released; retry did not work")
+	}
+
+	// The listener must actually accept connections, not merely be non-nil.
+	conn, err := net.DialTimeout("tcp", srv.addr, 2*time.Second)
+	if err != nil {
+		t.Fatalf("bound listener is not accepting connections: %v", err)
+	}
+	_ = conn.Close()
+
+	// The server must stay running (ListenAndServe has not returned).
+	select {
+	case err := <-done:
+		t.Fatalf("ListenAndServe returned early: %v", err)
+	default:
+	}
+}
+
+func TestSSHServer_BindRetry_GivesUpWhenPortStaysHeld(t *testing.T) {
+	// The retry must be bounded: a genuinely occupied port has to surface as a
+	// failure rather than hanging the caller forever.
+	portReg := newTestRegistry(t)
+	port := freePort(t)
+
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+	defer blocker.Close()
+
+	srv := NewServer(model.PortForwardConfig{Enabled: true, Port: port}, 20000, "test", portReg)
+	srv.SetBindRetryForTest(200*time.Millisecond, 20*time.Millisecond)
+	srv.addr = fmt.Sprintf("127.0.0.1:%d", port)
+
+	err = srv.ListenAndServe()
+	require.Error(t, err, "expected ListenAndServe to give up once the retry window elapsed")
+	assert.Contains(t, err.Error(), "failed to listen")
+}
+
+func TestSSHServer_BindRetry_CloseDuringRetryStopsBinding(t *testing.T) {
+	// A Close() during the retry window must not be followed by a successful
+	// bind, or shutdown would leave a listening socket owned by a stopped
+	// server.
+	portReg := newTestRegistry(t)
+	port := freePort(t)
+
+	blocker, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	require.NoError(t, err)
+
+	srv := NewServer(model.PortForwardConfig{Enabled: true, Port: port}, 20000, "test", portReg)
+	srv.SetBindRetryForTest(5*time.Second, 20*time.Millisecond)
+	srv.addr = fmt.Sprintf("127.0.0.1:%d", port)
+
+	done := make(chan error, 1)
+	go func() { done <- srv.ListenAndServe() }()
+
+	time.Sleep(80 * time.Millisecond)
+	srv.Close()
+	require.NoError(t, blocker.Close())
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "a closed server must not report a successful bind")
+	case <-time.After(2 * time.Second):
+		t.Fatal("ListenAndServe did not return after Close during the retry window")
+	}
+
+	// The port must be free: the closed server must not have bound it.
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("port still held after Close during retry: %v", err)
+	}
+	_ = ln.Close()
+}
+
+func TestSSHServer_CloseDuringPublishDoesNotLeakListener(t *testing.T) {
+	// The narrow race: Close() lands after a successful bind but before the
+	// listener is published. Close() reads s.listener under s.mu and would see
+	// nil, so it cannot close the new listener — without the re-check in
+	// ListenAndServe the listener leaks and the port stays bound for the life
+	// of the process, which is exactly the failure the retry exists to fix.
+	portReg := newTestRegistry(t)
+	port := freePort(t)
+
+	srv := NewServer(model.PortForwardConfig{Enabled: true, Port: port}, 20000, "test", portReg)
+	srv.addr = fmt.Sprintf("127.0.0.1:%d", port)
+	srv.SetBindRetryForTest(time.Second, 10*time.Millisecond)
+	srv.SetAfterBindHookForTest(func() { srv.Close() })
+
+	// Run in a goroutine with a deadline: if the re-check is missing, the
+	// leaked listener keeps Accept() blocked forever and ListenAndServe never
+	// returns, so a synchronous call would hang the whole test binary rather
+	// than failing this one test.
+	done := make(chan error, 1)
+	go func() { done <- srv.ListenAndServe() }()
+
+	select {
+	case err := <-done:
+		require.Error(t, err, "a server closed during publish must not report success")
+	case <-time.After(3 * time.Second):
+		t.Fatal("ListenAndServe did not return: the listener was published after Close, so it leaked and Accept() is blocked forever")
+	}
+
+	// The port must be free: the listener created after Close() must have been
+	// closed rather than leaked.
+	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		t.Fatalf("listener leaked: port %d still held after Close during publish: %v", port, err)
+	}
+	_ = ln.Close()
 }

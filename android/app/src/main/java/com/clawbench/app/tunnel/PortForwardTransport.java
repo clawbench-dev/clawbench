@@ -34,10 +34,18 @@ public interface PortForwardTransport {
      * {@code targetHost:targetPort}. Idempotent — a port that is already
      * registered/ listening is treated as success.
      *
+     * <p>When {@code localPort} is already taken on this device the transport
+     * binds the next free port instead of failing, and returns the port it
+     * ACTUALLY bound. The caller must re-key its bookkeeping (and the server
+     * registry) to that port, or the UI URL and the server's key would point at
+     * a port nothing listens on. A successful return always names a bound port.
+     *
+     * @return the local port the listener actually bound ({@code localPort}
+     *         when it was free).
      * @throws Exception when the forward could not be established, so the
      *                   caller can drop the port from its bookkeeping.
      */
-    void addLocal(int localPort, int targetPort, String targetHost) throws Exception;
+    int addLocal(int localPort, int targetPort, String targetHost) throws Exception;
 
     /**
      * {@code -L}: stop forwarding {@code localPort} and release its listener.

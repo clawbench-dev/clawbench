@@ -20,6 +20,23 @@ export type TunnelErrorType = 'auth' | 'network' | 'hostkey' | 'unknown' | ''
 /** 'forward' = ssh -L (server → local), 'reverse' = ssh -R (local → server). */
 export type ForwardDirection = 'forward' | 'reverse'
 
+/**
+ * Outcome of binding a forward's local listener.
+ *
+ * `ok: true` carries the port ACTUALLY bound, which may differ from the one the
+ * caller asked for when it was already taken on this machine (see
+ * `listenForward`). The renderer must re-key the server registry to it, or the
+ * UI URL and the server's key would point at a port nothing listens on.
+ *
+ * `reason` separates a local bind conflict (the port is occupied — the mapping
+ * can be retried on another port) from an unreachable tunnel (nothing the
+ * caller can fix by changing ports). Without this split both surfaced as the
+ * misleading "check if the service is running" toast.
+ */
+export type AddForwardResult =
+  | { ok: true; port: number }
+  | { ok: false; reason: 'conflict' | 'unreachable' }
+
 export interface TunnelState {
   connected: boolean
   error: string
@@ -61,15 +78,15 @@ let transport: TunnelTransport | null = null
 let sshTransport: TunnelTransport | null = null
 
 /**
- * Which transport to use. Electron is hard-wired to SSH: there is no live
- * caller of `setTransportPreference()` in production, so the server's
- * `port_forward.transport` value ('h2'/'both') is deliberately never consumed
- * here. The SSH default keeps today's behavior (and the existing test suite)
- * byte-for-byte identical.
+ * Which transport to use. Defaults to SSH — today's behaviour, and what the
+ * existing test suite assumes. The settings row in the port-forward panel
+ * writes a preference (SSH / H2 / Auto) that the bridge persists, and
+ * `initTransportPreference()` hydrates this module from the store at startup
+ * so the choice survives a restart.
  *
- * The setter is retained — `tunnel.h2.test.ts` drives the h2 dispatch tests
- * through it directly — and the h2 path below is kept so the transport can be
- * enabled later without rewriting it.
+ * `setTransportPreference()` itself stays pure (no persistence): it is the
+ * in-memory setter the h2 dispatch tests drive directly, and folding a store
+ * write into it would make those tests depend on electron-store.
  */
 let transportPreference: TransportPreference = 'ssh'
 
@@ -82,7 +99,7 @@ let activeTransport: 'ssh' | 'h2' = 'ssh'
  * avoids paying that rejection on every reconnect (design doc §2.3). Module
  * state, not persisted: the cost of getting it wrong once per process is one
  * fast failed handshake, while a stale store entry would need its own
- * invalidation rules (and T8 owns persistence).
+ * invalidation rules.
  */
 let lastH2Kind: 'tls' | 'h2c' | null = null
 
@@ -92,6 +109,44 @@ export function setTransportPreference(pref: TransportPreference): void {
 
 export function getTransportPreference(): TransportPreference {
   return transportPreference
+}
+
+/**
+ * Load the persisted preference into the module. Called once by `registerBridge`
+ * before any window exists, so the first `ensureTunnel` already uses the user's
+ * choice instead of the SSH default.
+ *
+ * The stored value is re-validated here rather than trusted: the store is a
+ * plain JSON file a user can hand-edit, and an unrecognized value must not
+ * reach the transport dispatch.
+ *
+ * The retired `'both'` value migrates to `'h2'`, not to the SSH default: `both`
+ * meant "probe h2 first", so a deployment that stored it and connected was
+ * almost certainly carried by h2. Mapping it to SSH would silently move those
+ * users onto a different wire; mapping it to h2 preserves what they were
+ * actually running, and an h2 failure is loud (a visible connect error) rather
+ * than a silent downgrade.
+ */
+export function initTransportPreference(): void {
+  const stored = getStore().get('tunnelTransport')
+  if (stored === 'ssh' || stored === 'h2') {
+    transportPreference = stored
+    return
+  }
+  if (stored === 'both') {
+    transportPreference = 'h2'
+    getStore().set('tunnelTransport', 'h2')
+  }
+}
+
+/** Persist a preference (the settings row's write path). Rejects unknown values
+ *  instead of storing them, so the store can never hold a value the transport
+ *  dispatch would misinterpret. */
+export function persistTransportPreference(pref: unknown): boolean {
+  if (pref !== 'ssh' && pref !== 'h2') return false
+  getStore().set('tunnelTransport', pref)
+  setTransportPreference(pref)
+  return true
 }
 
 /** The transport that carried the last successful connect. */
@@ -119,12 +174,16 @@ export function getTunnelTransportKind(): 'tls' | 'h2c' | null {
   return transport && transport === h2Transport ? h2Transport.getKind() : null
 }
 
-/** Ordered transport candidates for the current preference (design doc §2.3). */
+/**
+ * The transport candidate list for the current preference.
+ *
+ * Exactly one entry: the preference names the wire to use, and there is no
+ * automatic fallback any more. A single-element list keeps `ensureTunnel`'s
+ * loop (which handles the shared connect/error/rebuild bookkeeping) intact
+ * rather than forking a second code path for the now-degenerate case.
+ */
 function transportCandidates(): Array<'ssh' | 'h2'> {
-  if (transportPreference === 'ssh') return ['ssh']
-  if (transportPreference === 'h2') return ['h2']
-  // 'both': probe h2 first, then fall back to SSH.
-  return ['h2', 'ssh']
+  return [transportPreference]
 }
 
 // Upper bound on a single connect attempt. Without it a connect that never
@@ -593,55 +652,121 @@ function spliceDuplex(local: Duplex, remote: Duplex): void {
  * Bind localhost:localPort and pipe each accepted socket through the SSH
  * channel to host:targetPort.
  *
+ * If `localPort` is already taken on THIS machine, bind the next free port
+ * instead and report it (see `AddForwardResult`). The client is the only party
+ * that can see a conflict here, and a successful `listen` IS the binding — so
+ * the scan below has no probe/close TOCTOU window. The caller re-keys the
+ * server registry to the returned port.
+ *
  * Per-port single-flight: `listen()` is asynchronous, so two concurrent binds
  * for the same port would both reach the OS; the loser's EADDRINUSE handler
  * used to `closeForwardServer(localPort)`, which destroyed the WINNER's entry
  * and left the port unreachable while `state.forwarded` still claimed it was
  * forwarded. Joining the in-flight bind instead makes repeated adds idempotent.
  */
-const pendingBinds = new Map<number, Promise<boolean>>()
+const pendingBinds = new Map<number, Promise<AddForwardResult>>()
 
-function listenForward(localPort: number, targetPort: number, host: string): Promise<boolean> {
+/**
+ * How many ports above the requested one to try before falling back to an
+ * OS-assigned port. A conflict is usually a single stray listener, so a short
+ * walk (Vite-style 3000→3001) covers it; the `0` fallback guarantees success
+ * even if the whole neighbourhood is occupied.
+ */
+const FORWARD_PORT_SCAN_LIMIT = 50
+
+/** The candidate ports to try, in order: the request, its neighbours, then 0. */
+function forwardPortCandidates(requested: number): number[] {
+  const out: number[] = []
+  for (let p = requested; p <= Math.min(requested + FORWARD_PORT_SCAN_LIMIT, 65535); p++) {
+    out.push(p)
+  }
+  // 0 = let the OS pick. Appended last so a predictable neighbour wins when one
+  // is free, but a fully-occupied range still succeeds.
+  out.push(0)
+  return out
+}
+
+function listenForward(localPort: number, targetPort: number, host: string): Promise<AddForwardResult> {
   const inFlight = pendingBinds.get(localPort)
   if (inFlight) return inFlight
   closeForwardServer(localPort)
-  const p = new Promise<boolean>((resolve) => {
+  const p = new Promise<AddForwardResult>((resolve) => {
     const t = transport
-    if (!t || !t.isConnected()) { resolve(false); return }
-    // allowHalfOpen: see spliceDuplex — without it the local FIN destroys the
-    // socket and the target's response is lost.
-    const server = net.createServer({ allowHalfOpen: true }, (socket) => {
-      // Re-read the transport per connection: a reconnect may have replaced it
-      // since the listener was created (the listener itself survives, since
-      // only the SSH/h2 channel died).
-      const cur = transport
-      if (!cur || !cur.isConnected()) { socket.destroy(); return }
-      cur.openStream(host, targetPort).then((stream) => {
-        spliceDuplex(socket, stream)
-      }).catch(() => {
-        // The stream could not be opened (dial failed, port not allowed,
-        // unauthenticated): drop the local socket instead of piping it into
-        // nothing.
-        socket.destroy()
-      })
-    })
-    server.listen(localPort, '127.0.0.1', () => {
-      // A removeForwardedPort() landing during listen() must win: publishing
-      // here would revive a port the user just deleted, with no desired entry.
-      if (!state.forwarded.has(localPort)) {
-        try { server.close() } catch { /* ignore */ }
-        resolve(false)
+    if (!t || !t.isConnected()) { resolve({ ok: false, reason: 'unreachable' }); return }
+
+    const candidates = forwardPortCandidates(localPort)
+    // Any non-conflict error (permission, bad address, …) is not fixable by
+    // changing ports, so it ends the scan immediately.
+    let failedHard = false
+
+    const tryCandidate = (index: number): void => {
+      if (index >= candidates.length) {
+        resolve({ ok: false, reason: failedHard ? 'unreachable' : 'conflict' })
         return
       }
-      forwardServers.set(localPort, server)
-      resolve(true)
-    })
-    server.on('error', () => {
-      // Release only THIS server, never a different (winning) one.
-      if (forwardServers.get(localPort) === server) forwardServers.delete(localPort)
-      try { server.close() } catch { /* ignore */ }
-      resolve(false)
-    })
+      const candidate = candidates[index]
+      // allowHalfOpen: see spliceDuplex — without it the local FIN destroys the
+      // socket and the target's response is lost.
+      const server = net.createServer({ allowHalfOpen: true }, (socket) => {
+        // Re-read the transport per connection: a reconnect may have replaced it
+        // since the listener was created (the listener itself survives, since
+        // only the SSH/h2 channel died).
+        const cur = transport
+        if (!cur || !cur.isConnected()) { socket.destroy(); return }
+        cur.openStream(host, targetPort).then((stream) => {
+          spliceDuplex(socket, stream)
+        }).catch(() => {
+          // The stream could not be opened (dial failed, port not allowed,
+          // unauthenticated): drop the local socket instead of piping it into
+          // nothing.
+          socket.destroy()
+        })
+      })
+      server.on('error', (err: NodeJS.ErrnoException) => {
+        // Release only THIS server, never a different (winning) one.
+        try { server.close() } catch { /* ignore */ }
+        if (err.code === 'EADDRINUSE') {
+          // Occupied on this machine — try the next candidate.
+          tryCandidate(index + 1)
+          return
+        }
+        failedHard = true
+        resolve({ ok: false, reason: 'unreachable' })
+      })
+      server.listen(candidate, '127.0.0.1', () => {
+        const bound = (server.address() as net.AddressInfo | null)?.port
+        if (typeof bound !== 'number') {
+          // Defensive: listen() succeeded, so the address should be readable.
+          try { server.close() } catch { /* ignore */ }
+          failedHard = true
+          resolve({ ok: false, reason: 'unreachable' })
+          return
+        }
+        // A removeForwardedPort() landing during listen() must win: publishing
+        // here would revive a port the user just deleted, with no desired entry.
+        // The guard is keyed on the REQUESTED port — that is what the caller
+        // recorded in `state.forwarded`, even when the bound port moved.
+        if (!state.forwarded.has(localPort)) {
+          try { server.close() } catch { /* ignore */ }
+          resolve({ ok: false, reason: 'unreachable' })
+          return
+        }
+        // Re-key the desired set to the port actually bound, so a later
+        // removeForwardedPort(actual) (the renderer re-keys the server to it)
+        // and a reconnect rebuild both find it. Done here, in the same
+        // synchronous block as the publish, so no removal can slip between the
+        // guard above and the move.
+        if (bound !== localPort) {
+          const entry = state.forwarded.get(localPort)
+          state.forwarded.delete(localPort)
+          if (entry) state.forwarded.set(bound, entry)
+        }
+        forwardServers.set(bound, server)
+        resolve({ ok: true, port: bound })
+      })
+    }
+
+    tryCandidate(0)
   }).finally(() => { pendingBinds.delete(localPort) })
   pendingBinds.set(localPort, p)
   return p
@@ -783,31 +908,58 @@ async function rebuildAllForwards(): Promise<void> {
 }
 
 /** Add a local port forward: localhost:localPort → host:targetPort via the SSH channel. */
-export async function addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean> {
-  if (!state.connected) {
-    const ok = await ensureTunnel()
-    if (!ok) return false
-  }
-  // Record the intent BEFORE binding, so a concurrent reconnect's
-  // rebuildAllForwards() can pick it up even if this call loses the race.
-  state.forwarded.set(localPort, { targetPort, host, direction: 'forward' })
-  // There is now something worth keeping alive.
-  syncMonitor()
-  return listenForward(localPort, targetPort, host)
+export function addForwardedPort(localPort: number, targetPort: number, host: string): Promise<AddForwardResult> {
+  return withLiveTunnel(() => {
+    // Record the intent BEFORE binding, so a concurrent reconnect's
+    // rebuildAllForwards() can pick it up even if this call loses the race.
+    state.forwarded.set(localPort, { targetPort, host, direction: 'forward' })
+    // There is now something worth keeping alive.
+    syncMonitor()
+    return listenForward(localPort, targetPort, host)
+  }, () => ({ ok: false, reason: 'unreachable' }))
 }
 
 /**
  * Add a reverse forward: expose this machine's host:targetPort on the server's
  * loopback `serverPort`.
  */
-export async function addReverseForwardedPort(serverPort: number, targetPort: number, host: string): Promise<boolean> {
-  if (!state.connected) {
-    const ok = await ensureTunnel()
-    if (!ok) return false
-  }
-  state.forwarded.set(serverPort, { targetPort, host, direction: 'reverse' })
-  syncMonitor()
-  return listenReverse(serverPort, targetPort, host)
+export function addReverseForwardedPort(serverPort: number, targetPort: number, host: string): Promise<boolean> {
+  // Same reasoning as addForwardedPort: never gate on `state.connected`.
+  return withLiveTunnel(() => {
+    state.forwarded.set(serverPort, { targetPort, host, direction: 'reverse' })
+    syncMonitor()
+    return listenReverse(serverPort, targetPort, host)
+  }, () => false)
+}
+
+/**
+ * Run `action` once a tunnel is live, reconnecting first if it is not.
+ *
+ * The liveness test is the COMPOSITE one — `state.connected` AND
+ * `transport.isConnected()` — not `state.connected` alone. The two can
+ * disagree: h2Transport keeps its own `sessionDead` and cannot tell this module
+ * when a session dies (it does not import tunnel.ts), so a silently-dead h2
+ * session leaves `state.connected === true` while the transport is already
+ * gone. Gating on the stale flag skipped the reconnect, listenForward() then
+ * failed its own (correct) check, and the renderer reported "port unreachable"
+ * for a port that was fine.
+ *
+ * The healthy path runs `action` SYNCHRONOUSLY and returns its promise without
+ * an `await` of its own. That matters: `action` records the desired forward in
+ * `state.forwarded`, and `await`ing anything first — even a resolved value,
+ * which still yields a microtask — opens a window for a `removeForwardedPort()`
+ * landing in between to be silently undone by that later write. The SSH
+ * reverse-forward tests pin exactly that (a removal during the request must
+ * win), so the reconnect path is kept in a separate branch that is only taken
+ * when the tunnel is actually down.
+ *
+ * Generic over the result so the forward path can return an `AddForwardResult`
+ * while the reverse path keeps its boolean. `unavailable` is the value for the
+ * "no live tunnel" case, which each caller spells in its own vocabulary.
+ */
+function withLiveTunnel<T>(action: () => Promise<T>, unavailable: () => T): Promise<T> {
+  if (state.connected && transport?.isConnected()) return action()
+  return ensureTunnel().then((ok) => (ok ? action() : unavailable()))
 }
 
 export function removeForwardedPort(localPort: number): void {
@@ -918,8 +1070,8 @@ async function attemptTransport(
  * replace each other's transport, leaving the first caller's promise pending
  * forever (the original hang that killed every forward).
  *
- * Dispatch (design doc §2.3): SSH-only and h2-only are single attempts; `both`
- * probes h2 first and falls back to SSH. Only the SSH path needs the
+ * Dispatch: exactly one candidate, named by the preference — there is no
+ * automatic fallback (see transportCandidates). Only the SSH path needs the
  * `/api/ssh/info` prelude (the SSH port and username) — h2 uses the main URL's
  * own host and port.
  *

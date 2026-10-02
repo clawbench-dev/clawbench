@@ -10,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -39,6 +40,14 @@ public final class FakeSockets {
          * first call fails deterministically (no race with the loop starting).
          */
         public volatile IOException nextAcceptFailure = null;
+        /**
+         * Ports whose {@code bind()} must fail as if occupied. Mirrors a real
+         * EADDRINUSE so the free-port scan can be exercised without real sockets.
+         */
+        public final Set<Integer> occupiedPorts = Collections.synchronizedSet(new java.util.HashSet<>());
+        /** Hands out ports for a {@code bind(0)} (OS-assigned) request. */
+        private final java.util.concurrent.atomic.AtomicInteger ephemeralNext =
+                new java.util.concurrent.atomic.AtomicInteger(40000);
         /** Dials the reverse ({@code -R}) targets; shared with the transport. */
         public final FakeDialer dialer = new FakeDialer();
 
@@ -47,6 +56,11 @@ public final class FakeSockets {
             FakeServerSocket socket = new FakeServerSocket(this);
             created.add(socket);
             return socket;
+        }
+
+        /** The port a {@code bind(0)} should be answered with. */
+        int nextEphemeralPort() {
+            return ephemeralNext.getAndIncrement();
         }
     }
 
@@ -110,6 +124,8 @@ public final class FakeSockets {
         public final AtomicBoolean closed = new AtomicBoolean(false);
         public volatile boolean bound = false;
         public volatile InetSocketAddress bindAddress;
+        /** The port this socket reports from {@code getLocalPort()} once bound. */
+        private volatile int localPort = -1;
         /** The thread blocked in {@code accept()} — proves whose pool it is. */
         public volatile Thread acceptThread;
         private final Factory factory;
@@ -128,8 +144,20 @@ public final class FakeSockets {
                 factory.failNextBind = false;
                 throw new IOException("bind refused");
             }
+            int requested = ((InetSocketAddress) endpoint).getPort();
+            if (requested != 0 && factory.occupiedPorts.contains(requested)) {
+                // Model a real EADDRINUSE: the port is taken on this device.
+                throw new java.net.BindException("Address already in use");
+            }
+            // A bind(0) is answered with an OS-assigned port, like a real socket.
+            localPort = requested == 0 ? factory.nextEphemeralPort() : requested;
             bound = true;
             bindAddress = (InetSocketAddress) endpoint;
+        }
+
+        @Override
+        public int getLocalPort() {
+            return localPort;
         }
 
         @Override

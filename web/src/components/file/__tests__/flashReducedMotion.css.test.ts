@@ -54,6 +54,18 @@ describe('flash animations respect prefers-reduced-motion', () => {
     expect(css).toContain('animation: line-flash var(--flash-duration, 0.7s) ease-out forwards')
   })
 
+  it('code-viewer.css defines the rail-flash keyframes used by nav highlighting', async () => {
+    // The change-nav rail flash (markdown rail + code gutter) shares this
+    // keyframes; both surfaces reference it by name.
+    const css = await rawCss('@/assets/code-viewer.css')
+    expect(css).toContain('@keyframes diff-rail-flash')
+  })
+
+  it('code-viewer.css keeps a static rail-flash tint under reduced motion', async () => {
+    const css = await rawCss('@/assets/code-viewer.css')
+    expect(css).toMatch(/\.diff-marker-rail-flash::before,\s*\.cm-diff-gutter-rail-flash\s*{[\s\S]*?animation: none !important/)
+  })
+
   it('search-bar.css kills the search-match flash animation under reduced motion', async () => {
     const css = await rawCss('@/assets/search-bar.css')
     expect(css).toContain('@media (prefers-reduced-motion: reduce)')

@@ -8,7 +8,6 @@ import { type Locator, type Page, expect } from '@playwright/test'
  * - .chat-send-btn        → send button (hidden during loading)
  * - .chat-stop-btn        → stop/cancel button (visible during loading)
  * - .quick-send-title     → quick-send popup title
- * - .settings-chip        → session settings chip (model/thinking/mode)
  * - .chat-messages        → messages scroll container
  * - .chat-message.user    → user message
  * - .chat-message.assistant → AI assistant message
@@ -19,6 +18,8 @@ import { type Locator, type Page, expect } from '@playwright/test'
  * - .chat-thinking        → thinking block in assistant message
  * - .thinking-collapsed   → collapsed thinking block
  * - .thinking-header      → thinking block header (clickable to expand)
+ * - .session-info-model   → opens the session setting drawer on the Model tab
+ * - .session-info-mode    → opens the session setting drawer on the Mode tab
  */
 export class ChatPage {
   readonly page: Page
@@ -26,7 +27,6 @@ export class ChatPage {
   readonly sendButton: Locator
   readonly stopButton: Locator
   readonly messagesContainer: Locator
-  readonly settingsChip: Locator
 
   constructor(page: Page) {
     this.page = page
@@ -34,7 +34,6 @@ export class ChatPage {
     this.sendButton = page.locator('.chat-send-btn')
     this.stopButton = page.locator('.chat-stop-btn')
     this.messagesContainer = page.locator('.chat-messages')
-    this.settingsChip = page.locator('.settings-chip')
   }
 
   /** Fill the textarea with text */
@@ -98,6 +97,14 @@ export class ChatPage {
 
   /** Click the sessions list button (the first .chat-action-btn) */
   async openSessionList() {
+    // A prior step (e.g. createSessionWithAgent via the test bridge) can leave a
+    // drawer's `.bs-overlay` mounted; it then intercepts clicks on the session
+    // list underneath. Dismiss any stale overlay before opening the list.
+    const staleOverlay = this.page.locator('.bs-overlay')
+    if (await staleOverlay.count() > 0) {
+      await this.page.keyboard.press('Escape')
+      await expect(staleOverlay).toHaveCount(0, { timeout: 5000 }).catch(() => {})
+    }
     await this.page.locator('.chat-action-btn').first().click()
   }
 
@@ -316,72 +323,109 @@ export class ChatPage {
   }
 
   // ───────────────────────────────────────────────────────
-  // SessionSettingModal helpers
+  // Session setting drawer helpers
+  //
+  // The old SessionSettingModal was replaced by chat/SessionDrawer.vue. Its
+  // tab/menu classes (.model-tab, .model-item, .thinking-item, .set-default-btn,
+  // .model-search-input) survived the move, but the trigger did not: there is no
+  // `.settings-chip` any more. The drawer is opened from the session info bar —
+  // `.session-info-model` opens the Model tab, `.session-info-mode` the Mode tab.
   // ───────────────────────────────────────────────────────
 
-  /** Open SessionSettingModal by clicking the model chip */
-  async openSessionSettingModal(): Promise<void> {
-    await this.settingsChip.click()
-    // Wait for modal to appear
-    await expect(this.page.locator('.model-tab').first()).toBeVisible({ timeout: 5000 })
+  /** The session setting drawer (BottomSheet, teleported to <body>). */
+  private get settingDrawer(): Locator {
+    return this.page.locator('.bs-panel').filter({ has: this.page.locator('.session-setting-tabs') })
   }
 
-  /** Switch to a model by name in SessionSettingModal */
+  /**
+   * Public accessor for the session setting drawer root.
+   *
+   * Specs should scope their `.model-tab` / `.model-item` / `.thinking-item`
+   * queries through this: the drawer is the only source of those classes, but a
+   * bare page-level locator would break in strict mode if another BottomSheet
+   * (session list, agent selector) is open at the same time.
+   */
+  get sessionSettingDrawer(): Locator {
+    return this.settingDrawer
+  }
+
+  /** Open the session setting drawer on a specific tab. */
+  private async openSettingTab(tab: 'model' | 'thinking' | 'mode' | 'transport'): Promise<void> {
+    // Prefer the direct trigger when it exists: the model chip always does; the
+    // mode chip only renders for ACP agents with modes.
+    const trigger = tab === 'mode'
+      ? this.page.locator('.session-info-mode')
+      : this.page.locator('.session-info-model')
+    await expect(trigger).toBeVisible({ timeout: 10000 })
+    await trigger.click()
+
+    await expect(this.settingDrawer).toBeVisible({ timeout: 10000 })
+    // The drawer remembers the last tab; force the one we want when it differs.
+    const target = this.settingDrawer.locator('.model-tab').filter({ hasText: this.tabLabel(tab) })
+    await expect(target).toBeVisible({ timeout: 5000 })
+    if (!(await target.evaluate((el) => el.classList.contains('active')))) {
+      await target.click()
+    }
+    await expect(target).toHaveClass(/active/, { timeout: 5000 })
+  }
+
+  /** Locale-independent label matcher for a drawer tab. */
+  private tabLabel(tab: 'model' | 'thinking' | 'mode' | 'transport'): RegExp {
+    switch (tab) {
+      case 'model': return /Model|模型/i
+      case 'thinking': return /Thinking|思考/i
+      case 'mode': return /^Mode$|^模式$/i
+      case 'transport': return /Protocol|协议|传输/i
+    }
+  }
+
+  /** Close the session setting drawer (click the overlay backdrop). */
+  async closeSettingDrawer(): Promise<void> {
+    await this.page.locator('.bs-overlay').click({ position: { x: 5, y: 5 } })
+    await expect(this.settingDrawer).not.toBeVisible({ timeout: 5000 })
+  }
+
+  /** Open SessionSettingDrawer on the Model tab */
+  async openSessionSettingModal(): Promise<void> {
+    await this.openSettingTab('model')
+  }
+
+  /** Switch to a model by name in the session setting drawer */
   async switchModel(modelName: string): Promise<void> {
-    const item = this.page.locator('.model-item').filter({ hasText: modelName })
+    const item = this.settingDrawer.locator('.model-item').filter({ hasText: modelName })
     await expect(item).toBeVisible({ timeout: 5000 })
     await item.click()
   }
 
-  /** Search models in SessionSettingModal */
+  /** Search models in the session setting drawer */
   async searchModel(query: string): Promise<void> {
-    const input = this.page.locator('.model-search-input')
+    const input = this.settingDrawer.locator('.model-search-input')
     await expect(input).toBeVisible({ timeout: 5000 })
     await input.fill(query)
   }
 
-  /** Switch to the thinking effort tab in SessionSettingModal.
-   * Waits for ACP thinking effort state to be available before switching. */
+  /** Switch to the thinking effort tab in the session setting drawer. */
   async openThinkingTab(): Promise<void> {
-    // Ensure thinking effort state is available
-    const start = Date.now()
-    const timeout = 10000
-    while (Date.now() - start < timeout) {
-      try {
-        const result = await this.page.evaluate(async () => {
-          const resp = await fetch('/api/ai/chat?limit=1')
-          if (!resp.ok) return { hasThinking: false }
-          const data = await resp.json()
-          return { hasThinking: (data.thinkingEffortState?.availableLevels?.length || 0) > 0 }
-        })
-        if (result.hasThinking) break
-      } catch {
-        // retry
-      }
-      await this.page.waitForTimeout(500)
-    }
-    const thinkingTab = this.page.locator('.model-tab').filter({ hasText: /thinking|思考/i })
-    await expect(thinkingTab).toBeVisible({ timeout: 10000 })
-    await thinkingTab.click()
+    await this.openSettingTab('thinking')
   }
 
   /** Select a thinking effort level by name */
   async selectThinkingEffort(name: string): Promise<void> {
-    const item = this.page.locator('.thinking-item').filter({ hasText: new RegExp(name, 'i') })
+    const item = this.settingDrawer.locator('.thinking-item').filter({ hasText: new RegExp(name, 'i') })
     await expect(item).toBeVisible({ timeout: 5000 })
     await item.click()
   }
 
   /** Click the set-default star button on a thinking item by name */
   async setDefaultThinkingEffort(name: string): Promise<void> {
-    const item = this.page.locator('.thinking-item').filter({ hasText: new RegExp(name, 'i') })
+    const item = this.settingDrawer.locator('.thinking-item').filter({ hasText: new RegExp(name, 'i') })
     await expect(item).toBeVisible({ timeout: 5000 })
     await item.locator('.set-default-btn').click()
   }
 
   /** Click the set-default star button on a model item by name */
   async setDefaultModel(modelName: string): Promise<void> {
-    const item = this.page.locator('.model-item').filter({ hasText: modelName })
+    const item = this.settingDrawer.locator('.model-item').filter({ hasText: modelName })
     await expect(item).toBeVisible({ timeout: 5000 })
     await item.locator('.set-default-btn').click()
   }
@@ -390,28 +434,21 @@ export class ChatPage {
   // ACP Mode helpers
   // ───────────────────────────────────────────────────────
 
-  /** Open the ACP mode tab in SessionSettingModal.
-   * Waits for ACP mode state to be available before opening.
-   * This avoids timing issues where the mode tab doesn't exist yet
-   * because the mode_update SSE event hasn't been processed. */
+  /**
+   * Open the ACP mode tab in the session setting drawer.
+   *
+   * Waits for the backend to cache mode state first: the `.session-info-mode`
+   * chip only renders once `availableModes` is non-empty, so clicking before
+   * that would target a missing element.
+   */
   async openModeMenu(): Promise<void> {
-    // Ensure ACP mode state is available (backend has it cached)
     await this.waitForACPModeState()
-    // Open settings modal
-    await this.settingsChip.click()
-    // Wait for modal to appear
-    await expect(this.page.locator('.model-tab').first()).toBeVisible({ timeout: 5000 })
-    // Switch to mode tab — use exact match to avoid matching "Model" tab
-    const modeTab = this.page.locator('.model-tab').filter({ hasText: /^Mode$|^模式$/ })
-    await expect(modeTab).toBeVisible({ timeout: 10000 })
-    await modeTab.click()
-    // Wait for mode tab to be active
-    await expect(this.page.locator('.model-tab.active').filter({ hasText: /^Mode$|^模式$/ })).toBeVisible({ timeout: 5000 })
+    await this.openSettingTab('mode')
   }
 
   /** Select an ACP mode by name */
   async selectMode(modeName: string): Promise<void> {
-    const item = this.page.locator('.thinking-item').filter({ hasText: new RegExp(modeName, 'i') })
+    const item = this.settingDrawer.locator('.thinking-item').filter({ hasText: new RegExp(modeName, 'i') })
     await expect(item).toBeVisible({ timeout: 5000 })
     await item.click()
   }

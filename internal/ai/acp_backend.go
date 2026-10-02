@@ -317,6 +317,13 @@ func (b *ACPBackend) emitSessionAndCacheState(conn *ACPConn, isNew bool, ch chan
 	if planState := conn.GetCachedPlanState(); planState != nil {
 		forwardACPEvent(ch, StreamEvent{Type: "plan_update", Plan: planState})
 	}
+
+	// Re-emit the cached Agent Team snapshot so the team panel repopulates on
+	// reconnect/respawn. Unlike the plan, no per-turn reset clears it, so a
+	// session with a live team keeps showing it across turns.
+	if teamState := conn.GetCachedTeamState(); teamState != nil {
+		forwardACPEvent(ch, StreamEvent{Type: "team_update", Team: teamState})
+	}
 }
 
 // shouldNewSessionFallback reports whether a failed session recovery should

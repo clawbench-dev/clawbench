@@ -77,6 +77,13 @@ public final class H2PortForwardTransport implements PortForwardTransport {
     private static final int BACKLOG = 50;
     private static final int BUFFER_SIZE = 16 * 1024;
     private static final String LOOPBACK = "127.0.0.1";
+    /**
+     * How many ports above the requested one to try before falling back to an
+     * OS-assigned port. A conflict is usually a single stray listener, so a
+     * short walk (Vite-style 3000→3001) covers it; the {@code 0} fallback
+     * guarantees success even if the whole neighbourhood is occupied.
+     */
+    private static final int LOCAL_PORT_SCAN_LIMIT = 50;
 
     /** Supplies the shared {@link TunnelStream} (process-wide in production). */
     public interface TunnelStreamProvider {
@@ -151,14 +158,20 @@ public final class H2PortForwardTransport implements PortForwardTransport {
     // ------------------------------------------------------------------
 
     @Override
-    public void addLocal(int localPort, int targetPort, String targetHost) throws Exception {
+    public int addLocal(int localPort, int targetPort, String targetHost) throws Exception {
+        // Reject an out-of-range port before the scan: the caller's bookkeeping
+        // keys off it, and walking candidates from an invalid value would either
+        // throw from InetSocketAddress anyway or silently bind elsewhere.
+        if (localPort <= 0 || localPort > 65535) {
+            throw new IllegalArgumentException("invalid local port: " + localPort);
+        }
         // Idempotent: a reconnect replay re-adds ports whose listener survived
         // (the listener is independent of the h2 session — it opens a stream per
         // connection), and re-binding would fail with EADDRINUSE.
         ServerSocket existing = listeners.get(localPort);
         if (existing != null && !existing.isClosed()) {
             AppLog.d(TAG, "H2: listener for " + localPort + " already bound, reusing");
-            return;
+            return localPort;
         }
 
         TunnelStream tunnel = tunnels.get();
@@ -166,24 +179,75 @@ public final class H2PortForwardTransport implements PortForwardTransport {
             throw new TunnelException(TunnelErrorKind.CLOSED, "tunnel not connected");
         }
 
-        ServerSocket server = socketFactory.create();
-        server.setReuseAddress(true);
-        try {
-            server.bind(new InetSocketAddress(LOOPBACK, localPort), BACKLOG);
-        } catch (IOException e) {
-            closeQuietly(server);
-            throw e;
+        // Bind the requested port, or the next free one when it is taken on this
+        // device. A successful bind IS the reservation (no probe/close race), so
+        // the scan walks candidates and stops at the first that binds. `0` is the
+        // OS-assigned fallback, appended last so a predictable neighbour wins
+        // when one is free.
+        ServerSocket server = null;
+        int boundPort = localPort;
+        IOException lastConflict = null;
+        for (int candidate : localPortCandidates(localPort)) {
+            ServerSocket attempt = socketFactory.create();
+            attempt.setReuseAddress(true);
+            try {
+                attempt.bind(new InetSocketAddress(LOOPBACK, candidate), BACKLOG);
+            } catch (java.net.BindException e) {
+                // Occupied on this device — try the next candidate.
+                closeQuietly(attempt);
+                lastConflict = e;
+                continue;
+            } catch (IOException e) {
+                // Anything else (bad address, permission, …) is not fixed by
+                // changing ports, so stop the scan immediately.
+                closeQuietly(attempt);
+                throw e;
+            }
+            server = attempt;
+            boundPort = attempt.getLocalPort();
+            break;
         }
-        listeners.put(localPort, server);
-        AppLog.i(TAG, "H2: listening on " + LOOPBACK + ":" + localPort + " -> " + targetHost + ":" + targetPort);
+        if (server == null) {
+            // Every candidate, including the OS-assigned one, was occupied.
+            throw lastConflict != null ? lastConflict : new IOException("no free local port");
+        }
+        if (boundPort != localPort) {
+            AppLog.i(TAG, "H2: port " + localPort + " was occupied, bound " + boundPort + " instead");
+        }
+
+        // The listener and every relay are keyed by the port ACTUALLY bound, so
+        // removeLocal(boundPort) — which is what the re-keyed caller will send —
+        // finds them.
+        final int bound = boundPort;
+        final ServerSocket boundServer = server;
+        listeners.put(bound, boundServer);
+        AppLog.i(TAG, "H2: listening on " + LOOPBACK + ":" + bound + " -> " + targetHost + ":" + targetPort);
 
         try {
-            executor().execute(() -> acceptLoop(localPort, server, targetHost, targetPort));
+            executor().execute(() -> acceptLoop(bound, boundServer, targetHost, targetPort));
         } catch (RejectedExecutionException e) {
-            listeners.remove(localPort, server);
-            closeQuietly(server);
+            listeners.remove(bound, boundServer);
+            closeQuietly(boundServer);
             throw new IOException("h2 tunnel executor rejected accept loop", e);
         }
+        return boundPort;
+    }
+
+    /**
+     * Candidate local ports for a forward, in order: the requested port, its
+     * next {@value #LOCAL_PORT_SCAN_LIMIT} neighbours, then {@code 0} (let the
+     * OS pick). Mirrors the desktop shell's scan and the server's own
+     * {@code scanPort} semantics.
+     */
+    private static int[] localPortCandidates(int requested) {
+        int start = Math.max(1, requested);
+        int count = Math.min(start + LOCAL_PORT_SCAN_LIMIT, 65535) - start + 1;
+        int[] out = new int[Math.max(0, count) + 1];
+        for (int i = 0; i < count; i++) {
+            out[i] = start + i;
+        }
+        out[out.length - 1] = 0;
+        return out;
     }
 
     @Override

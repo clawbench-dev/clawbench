@@ -44,7 +44,7 @@ flowchart TD
 - **注册表恒创建**：创建条件由 `cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 决定，现为 `return true`（原先的 `Enabled || transport != "ssh"` 比较已删除——`transport` 被 `ApplyDefaults` 无条件钉死为 `both`，比较恒真）。**注意 `port_forward.transport` 已不是可配置项**：服务端在 `ApplyDefaults` 与 PATCH 路径都归一为 `both`，`ssh` / `h2` 不可达；它仅剩 web 端健康检查门控一个消费者，两个原生客户端都不消费（Electron 在 IPC 边界写死 `ssh`，Android 用本地 SharedPreferences 开关 `tunnel_transport_h2_enabled`，默认关）。**不存在让 h2 端点返回 503 的配置组合**（详见 [SSH 隧道](ssh-tunnel.md) 的「传输方式」）。旧的「仅 `PortForward.Enabled`」门控会让 `port_forward.enabled=false` 给 h2 隧道请求一个 nil 注册表和 503。创建是**无副作用**的：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，不绑任何端口（监听仍是 SSH server 的职责，仍受 `Enabled` 门控）
 - **反向映射的服务器端口分配**：`allocateServerPort` 在 registry 分配阶段 bind-then-close 探测 OS 并跳过保留端口（ClawBench 自身 HTTP 端口与 SSH 端口，经 `SetReservedPorts` 登记）。**改选只能发生在此阶段**——SSH bind 阶段改绑会破坏客户端按请求端口匹配 `forwarded-tcpip` 通道的约定
 - **健康检查**：定期检查转发端口的可用性，不可用的端口自动标记。前端只展示可用的端口，避免用户点击后才发现服务不可达。**反向条目完全跳过拨号探测**：目标在客户端，且拨服务器自身监听端口恒为真，其 `active` 由 `SetReverseBound` 在 `tcpip-forward` 成功/释放时驱动
-- **端口自动检测**：`/api/proxy/detect` 端点扫描常用端口，发现可用的开发服务。用户不需要记住端口号
+- **端口自动检测**：`/api/proxy/detect` 端点扫描常用端口，发现可用的开发服务。用户不需要记住端口号。探测**并行**执行并有全局并发上限——端口多时串行探测会累加超时（单端口最坏 3s，111 个端口远超前端 10s 请求超时），请求被 abort 后 UI 静默渲染成"未检测到可转发的端口"，与"真的没有端口"完全无法区分。前端也必须捕获扫描错误并展示，不能让它变成静默的空结果
 - **CORS 代理**：`/api/openapi-proxy` 端点为 Swagger UI 的"Try it out"功能转发 API 请求，绕过浏览器 CORS 限制。仅转发 HTTP/HTTPS 请求，过滤 hop-by-hop 头部。生产环境可设置 `AllowLocalProxy=false` 阻止对私有 IP 的请求（防 SSRF），DNS 重绑定攻击在 TCP dial 阶段二次校验
 - **FRP 状态接口**：FRP 客户端由独立的 `internal/frp` 模块管理。`GET /api/frp/info` 返回包含公网地址的完整状态并要求认证；`GET /api/frp/status` 仅返回 enabled/running 等最小状态，供无需认证的本地或原生状态检查使用
 
@@ -57,4 +57,5 @@ flowchart TD
 - **特权端口映射对 Android 必要**：Android 没有 root 权限，无法绑定 1024 以下端口。自动映射到高端口号后，SSH 隧道在 Android 上也能转发 80/443 端口的服务
 - **默认端口剥离**：重写 Host 时按 HTTP 规范剥离默认端口号（80 for HTTP, 443 for HTTPS），避免 `backend:80` 这样的非规范 Host 导致后端匹配失败
 - **支持自签名证书**：HTTPS 目标跳过证书验证——开发环境常用自签名证书，严格验证会阻断转发
+- **探测目标恒为 loopback，超时必须按此收紧**：探测只连本机端口，真实握手是亚毫秒级，因此建连/握手超时收到 500ms 而非通用的秒级——保留宽超时会让"端口很多"再次退化成超时。并行度与全局并发都要有界：单请求内并行探测，同时用信号量封顶全局并发，避免 N 个并发请求各自扇出
 - **CORS 代理是开发便利工具**：Swagger UI 的"Try it out"从浏览器直接请求后端 API，但本地开发服务通常没有 CORS 头。CORS 代理在服务端转发请求，让用户在预览界面内直接测试 API。默认允许本地地址（`AllowLocalProxy=true`），生产环境应关闭

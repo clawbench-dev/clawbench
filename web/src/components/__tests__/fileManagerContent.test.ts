@@ -514,7 +514,7 @@ describe('FileManagerContent — onSortSelect', () => {
 })
 
 describe('FileManagerContent — handleItemClick', () => {
-  // PC (jsdom resolves isPC=true): single click selects, double-click opens.
+  // Desktop (jsdom = fine pointer): single click selects, double-click opens.
   it('PC: single click selects a dir item but does not navigate', async () => {
     const wrapper = mountContent()
     const dirItem = document.createElement('div')

@@ -11,6 +11,7 @@ const TAG = 'ChatSession'
 import { updateAvailableModes, updateCommandState, updateAvailableThinkingEfforts, clearUsageStateById, updateUsageState, currentAgentId as _currentAgentId, clearSessionIdentity, reconcileRunningSessions } from '@/composables/useSessionIdentity.ts'
 import { getRecentSession, clearRecentSession } from '@/composables/useRecentSession'
 import { clearPlanState, updatePlanEntries } from '@/composables/usePlanProgress'
+import { clearTeamState } from '@/composables/useTeamState'
 import { useAgents, restoreOriginalModels, getAgentThinkingEffortLevels, populateACPStateFromCache, updateACPModelList, applyResolvedModelList } from '@/composables/useAgents'
 import { store } from '@/stores/app.ts'
 import { buildMessageSnapshot, parseMessages } from '@/utils/chatSessionUtils.ts'
@@ -948,6 +949,8 @@ export function useChatSession(options: UseChatSessionOptions) {
     clearSessionIdentity(sessionId)
     // Clear plan progress from previous session — will be repopulated by SSE plan_update
     clearPlanState()
+    // Clear the Agent Team roster from the previous session (repopulated by SSE team_update)
+    clearTeamState()
 
     // Delegate to loadHistory which handles:
     // - Fetch + parseMessages + queue restore (single path, no duplication)
@@ -1266,6 +1269,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // re-populates the panel afterwards).
       if (data.status === 'rewound' && sid === currentSessionId.value) {
         clearPlanState()
+        clearTeamState()
         // Rewind discards the queue server-side too (a queued message is work
         // that has not run yet), so drop the local queue panel entries as well.
         // Without this, a client that did NOT issue the rewind keeps showing
@@ -1677,6 +1681,7 @@ export function useChatSession(options: UseChatSessionOptions) {
       // after the anchor must not survive. Clear BEFORE the reload so a plan
       // the reload does report (not possible today, but cheap insurance) wins.
       clearPlanState()
+      clearTeamState()
       // Reload the message list in place (skipIfUnchanged=false forces an
       // authoritative refresh that rebuilds from the truncated DB snapshot).
       // Unlike switchSession this keeps the identity, cookie, WS subscription

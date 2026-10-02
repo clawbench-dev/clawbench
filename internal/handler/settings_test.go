@@ -1861,6 +1861,28 @@ func TestServeConfigPatch_PortForward(t *testing.T) {
 	assert.Equal(t, 2222, model.ConfigInstance.PortForward.Port)
 }
 
+func TestServeConfigPatch_PortForwardEnabledCannotBeTurnedOff(t *testing.T) {
+	// The SSH listener is always on (see ApplyDefaults), so `enabled: false` is
+	// accepted for backward compatibility and then ignored. A 400 would break
+	// older clients that still send the field; honoring it would let a client
+	// put the runtime into a state the loader immediately converges away from.
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.ConfigInstance = model.Config{}
+
+	body := `{"port_forward":{"enabled":false,"port":2222}}`
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeConfig, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, model.ConfigInstance.PortForward.Enabled, "enabled must stay pinned true")
+	// The rest of the patch still applies — only the pinned field is dropped.
+	assert.Equal(t, 2222, model.ConfigInstance.PortForward.Port)
+}
+
 func TestServeConfigPatch_TerminalFields(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()

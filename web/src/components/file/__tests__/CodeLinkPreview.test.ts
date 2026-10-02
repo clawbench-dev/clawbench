@@ -6,7 +6,7 @@ import CodeLinkPreview from '@/components/file/CodeLinkPreview.vue'
 import { store } from '@/stores/app'
 import type { useCodeLinkPreview } from '@/composables/useCodeLinkPreview'
 import { useChatContext } from '@/composables/useChatContext'
-import { _setIsPCForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
+import { _setPlatformForTest, _resetPlatformForTest } from '@/composables/usePlatformDetect'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
@@ -2865,7 +2865,7 @@ describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => 
   }
 
   it('renders the shared header row and meta row (desktop)', async () => {
-    _setIsPCForTest(true)
+    _setPlatformForTest({ isTouchPrimary: false })
     try {
       const wrapper = mountDocked()
       await flushPromises()
@@ -2890,7 +2890,7 @@ describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => 
   })
 
   it('renders the identical two-row layout on touch (no is-compact variant)', async () => {
-    _setIsPCForTest(false)
+    _setPlatformForTest({ isTouchPrimary: true })
     try {
       const wrapper = mountDocked()
       await flushPromises()
@@ -2910,7 +2910,7 @@ describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => 
   })
 
   it('puts Close in the header, not in the tool strip', async () => {
-    _setIsPCForTest(true)
+    _setPlatformForTest({ isTouchPrimary: false })
     try {
       const wrapper = mountDocked()
       await flushPromises()
@@ -2931,7 +2931,7 @@ describe('CodeLinkPreview.vue — docked pane reuses the two-row layout', () => 
     // The floating card is a draggable window with no breadcrumb above it, so it
     // keeps its title row. The floating card is teleported to <body>, so it is
     // queried off the document.
-    _setIsPCForTest(true)
+    _setPlatformForTest({ isTouchPrimary: false })
     try {
       const preview = createMockPreviewController({
         target: ref({ filePath: FILE, anchorEl: document.createElement('span') }),

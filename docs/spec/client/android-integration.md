@@ -93,6 +93,7 @@ flowchart LR
 - **BackgroundService（后台服务）**：管理端口映射和原生 WebSocket 事件通道，App 在后台时仍能接收通知。端口映射有两条传输：**SSH 隧道**（默认）与 **h2 流隧道**（实验性，走主端口 20000），由**本地开关** `tunnel_transport_h2_enabled` 选择——Android **不消费服务端 `port_forward.transport` 配置**（该配置已被服务端钉死为 `both`，仅剩 web 端健康检查门控一个消费者）
   - 关键 API：`setNativePushEnabled(boolean)`（总开关）、`getTrustAllSSLContext()`（给 PendingEventsWorker 共享 TLS）、`postEventNotificationFromWorker(ctx, eventType, data)`（跨进程触发通知）
 - **PendingEventsWorker**：WS 不可达时由 WorkManager 周期调度，通过 HTTP `GET /api/ai/events/pending?after=...` 拉取漏发事件，作为离线通知回退
+- **原生通知的已读门控（NativeNotificationPolicy）**：原生通知通道没有"已读"概念，也不消费服务端的 `replayed` 标记，因此已读消息会被反复弹通知（issue #495）。三条通知路径（live WS / WS replay / HTTP pending）原先各自内联判断且互相漂移，现收敛为一个纯策略类 `NativeNotificationPolicy`：读取服务端的 `suppress_notification` 标记、HTTP pending 路径补空游标守卫（对齐 Web 端）、`permission_pending` 在客户端也**永不被抑制**（漏弹审批会静默卡住会话，重弹只多一次点击）。**游标推进与是否通知解耦**：被抑制的事件仍必须推进游标，否则会被永久重复拉取；且 `advancesCursor` 谓词必须与服务端 `IsNotifiableEvent` 逐条对齐（服务端只持久化 completed/failed/cancelled，客户端的 running 会让游标指向不存在的行 → 离线期间的完成事件永远无法恢复）
 - **BootCompletedReceiver**：设备开机后恢复 BackgroundService + 调度 PendingEventsWorker
 - **OemUtils**：厂商 ROM 适配（自启动白名单 / 后台保活 / 电池优化白名单）
 - **SharedCacheUtils**：跨进程共享缓存
@@ -155,6 +156,7 @@ flowchart LR
 
 - **启动 splash 必须原生兜底，不能只等 JS**：splash 的关闭权在 JS 手上，而它要遮住的恰恰是"JS 起不来"这种情形——只依赖回调等于让故障本身成为永久遮挡。原生侧独立布防超时是最小代价的解法：正常路径下 JS 先关、定时器取消；异常路径下超时接管。JS 侧则用单出口的 guard 包裹初始化，保证任何异常都走同一条"就绪 + 关 splash"路径，而不是抛出去变成第二轮故障
 - **后台服务是端口映射的前提**：没有 BackgroundService，Android 杀进程后端口映射断开，已映射的端口全部不可达。后台服务保持隧道心跳，维持映射活跃。传输由本地开关选择（默认 SSH；开启 h2 后走主端口 20000 的 HTTP/2 流隧道），**不消费服务端 `port_forward.transport` 配置**
+- **停止端口映射必须同时清内存与持久化**：`stopBackgroundService()`（服务器报告零端口时由前端调用）曾只清 Activity 的缓存 map，服务自己的 map 与持久化的 `forwarded_ports` 都留着，而 `onDestroy` 只在内存 map 已空时才清 prefs——它恰恰不空。于是残留端口每次冷启动都被 `restoreBackgroundServiceIfNeeded()` 恢复，凭空造出一个连不上的服务，且常驻「即将停止」的前台通知。恢复路径还必须保证失败可重试：`restoreAndReconnect()` 失败后连接监控要能接管，否则首次失败就永久显示端口数（比不显示更糟的谎）
 - **悬浮窗与 Live Updates 共享事件通道与解析器**：悬浮窗不建立新连接，直接消费 BackgroundService 原生 WS 的 `session_update` / `chat_stream` 事件；Live Update 同样复用同一份 overview 快照，并委托给同一个 `computeStats` 解析器——省电、与 App 内状态天然一致，且两处展示永不出现数字打架。胶囊本身保持轻量（只做展示 + 展开面板），交互集中在展开后的会话面板上：按项目分组浏览各会话状态、一眼看到未读、点击行直达目标会话。overview 拉取有最小间隔节流（2s），避免展开时高频刷新
 - **空闲时隐藏而非常驻**：悬浮窗无任务、无未读时直接隐藏——空闲状态没有任何值得展示的信息，常驻一个空胶囊只会干扰桌面且让人误以为有内容。Live Updates 同样在无会话时移除状态栏通知，保持系统通知栏干净（两者在「无内容即不显示」上口径一致）
 - **Live Updates 是独立开关但共享数据**：Live Updates 不依赖悬浮窗开关——任一消费者存活就拉取 overview，各自的开关控制各自的通知生命周期。设置里独立开关（默认开），Bridge 提供权限检测与跳转，系统不支持实时更新时自动回退为普通常驻通知

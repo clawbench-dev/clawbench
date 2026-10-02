@@ -693,3 +693,88 @@ func TestProxyHandlers_NilRegistryReturns503(t *testing.T) {
 		})
 	}
 }
+
+// ── POST /api/proxy/ports/rebind ──
+
+func TestServeProxyRebind_MovesKey(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	local, _ := service.ProxyService.RegisterPort(5173, "", "Vite", "http", "")
+
+	req := newRequest(t, http.MethodPost, "/api/proxy/ports/rebind", map[string]interface{}{
+		"localPort":    local,
+		"newLocalPort": local + 1,
+	})
+	w := callHandler(ServeProxyRebind, req)
+
+	assertOK(t, w)
+	assertJSONField(t, w, "status", "ok")
+	// The response echoes the new key so the client does not have to assume it.
+	assertJSONField(t, w, "localPort", float64(local+1))
+	// isProxyPortRegistered keys off the TARGET port (unchanged by a rebind), so
+	// assert on the local key directly.
+	var found bool
+	for _, p := range service.ProxyService.ListPorts() {
+		if p.LocalPort == local+1 {
+			found = true
+		}
+		if p.LocalPort == local {
+			t.Fatalf("old local port %d must no longer be registered", local)
+		}
+	}
+	assert.True(t, found, "the mapping must be registered under the new local port")
+}
+
+func TestServeProxyRebind_UnknownSourceIs404(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/proxy/ports/rebind", map[string]interface{}{
+		"localPort":    9999,
+		"newLocalPort": 10000,
+	})
+	w := callHandler(ServeProxyRebind, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestServeProxyRebind_TargetTakenIs409(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	first, _ := service.ProxyService.RegisterPort(5173, "", "one", "http", "")
+	second, _ := service.ProxyService.RegisterPort(8080, "", "two", "http", "")
+
+	req := newRequest(t, http.MethodPost, "/api/proxy/ports/rebind", map[string]interface{}{
+		"localPort":    first,
+		"newLocalPort": second,
+	})
+	w := callHandler(ServeProxyRebind, req)
+
+	// 409 (not 400/500) is what lets the client retry with another port.
+	assert.Equal(t, http.StatusConflict, w.Code)
+}
+
+func TestServeProxyRebind_InvalidPortIs400(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/proxy/ports/rebind", map[string]interface{}{
+		"localPort":    8080,
+		"newLocalPort": 70000,
+	})
+	w := callHandler(ServeProxyRebind, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestServeProxyRebind_RejectsGet(t *testing.T) {
+	teardown := setupProxyTest(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodGet, "/api/proxy/ports/rebind", nil)
+	w := callHandler(ServeProxyRebind, req)
+
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}

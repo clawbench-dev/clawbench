@@ -241,12 +241,15 @@ import {
   addForwardedPort, addReverseForwardedPort, removeForwardedPort, ensureTunnel,
   getForwardedPorts, isTunnelConnected, disconnectTunnel, getTunnelErrorType,
   getActiveTransport, getTunnelTransportKind, setTransportPreference,
+  getTransportPreference, initTransportPreference, persistTransportPreference,
   testPortReachable, reconnectTunnel, _resetTransportForTesting,
   _rebuildAllForwardsForTesting,
 } from './tunnel'
 
 const PORT_A = 28941
 const PORT_TARGET = 28942
+/** A second forwarded port, for cases that add onto a dead session. */
+const PORT_B = 28943
 
 /**
  * Start a real loopback echo server, so -R splicing is proven with real bytes.
@@ -335,6 +338,7 @@ beforeEach(() => {
   netState.servers.length = 0
   FakeSshClient.instances = []
   storeData.serverUrl = 'https://127.0.0.1:20000'
+  delete storeData.tunnelTransport
 })
 
 afterEach(() => {
@@ -353,21 +357,18 @@ describe('tunnel/h2: transport dispatch', () => {
     expect(getTunnelTransportKind()).toBe('h2c')
   })
 
-  it('prefers h2 and falls back to ssh under the "both" preference', async () => {
-    // h2 unreachable (no h2 listener on the main port) — the probe fails.
+  it('does NOT fall back to ssh when h2 is the preference and h2 is unreachable', async () => {
+    // The automatic fallback was removed. Asking for h2 and getting an h2
+    // failure must surface as a failure, not silently move the user onto a
+    // different wire than the one they chose.
     h2State.connectResults.push({ ok: false, kind: 'tls', error: 'ERR_HTTP2_ERROR' })
-    setTransportPreference('both')
+    setTransportPreference('h2')
 
-    const p = ensureTunnel()
-    await vi.waitFor(() => expect(FakeSshClient.instances.length).toBe(1))
-    FakeSshClient.last().emit('ready')
-    expect(await p).toBe(true)
+    expect(await ensureTunnel()).toBe(false)
 
-    // h2 was probed FIRST (design doc §2.3), then SSH carried the tunnel.
+    // No SSH client was even constructed.
+    expect(FakeSshClient.instances.length).toBe(0)
     expect(h2State.connectCalls.length).toBe(1)
-    expect(h2State.connectCalls[0].host).toBe('127.0.0.1')
-    expect(getActiveTransport()).toBe('ssh')
-    expect(getTunnelTransportKind()).toBeNull()
   })
 
   it('remembering the last successful h2 kind skips the wasted TLS probe', async () => {
@@ -408,10 +409,69 @@ describe('tunnel/h2: transport dispatch', () => {
   })
 })
 
+describe('tunnel/h2: persisted transport preference', () => {
+  it('defaults to ssh when nothing is stored', () => {
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('ssh')
+  })
+
+  it('hydrates the stored preference', () => {
+    storeData.tunnelTransport = 'h2'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('h2')
+  })
+
+  it('migrates the retired "both" to h2 and rewrites the store', () => {
+    // `both` meant "probe h2 first", so a deployment that stored it and
+    // connected was carried by h2. Mapping it to the SSH default would silently
+    // move those users onto a different wire.
+    storeData.tunnelTransport = 'both'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('h2')
+    expect(storeData.tunnelTransport).toBe('h2')
+  })
+
+  it('ignores a stored value the dispatch does not recognize', () => {
+    // The store is a hand-editable JSON file; an unknown value must not reach
+    // transportCandidates().
+    setTransportPreference('ssh')
+    storeData.tunnelTransport = 'quic'
+    initTransportPreference()
+    expect(getTransportPreference()).toBe('ssh')
+  })
+
+  it('persists a valid preference and applies it immediately', () => {
+    expect(persistTransportPreference('h2')).toBe(true)
+    expect(storeData.tunnelTransport).toBe('h2')
+    expect(getTransportPreference()).toBe('h2')
+  })
+
+  it('rejects an invalid preference without touching the store', () => {
+    persistTransportPreference('ssh')
+    expect(persistTransportPreference('garbage')).toBe(false)
+    // Unchanged: the rejection must not have written anything.
+    expect(storeData.tunnelTransport).toBe('ssh')
+    expect(getTransportPreference()).toBe('ssh')
+  })
+
+  it('drives the dispatch after hydration', async () => {
+    // End-to-end of the setting: store → module → which transport is probed.
+    storeData.tunnelTransport = 'h2'
+    initTransportPreference()
+
+    await ensureTunnel()
+
+    // Exactly the wire the user picked was dialed, and nothing else.
+    expect(h2State.connectCalls.length).toBe(1)
+    expect(getActiveTransport()).toBe('h2')
+    expect(FakeSshClient.instances.length).toBe(0)
+  })
+})
+
 describe('tunnel/h2: -L forwarding', () => {
   it('opens one h2 stream per accepted connection and passes bytes both ways', async () => {
     await connectH2()
-    expect(await addForwardedPort(PORT_A, 20000, '')).toBe(true)
+    expect(await addForwardedPort(PORT_A, 20000, '')).toEqual({ ok: true, port: PORT_A })
 
     const client = await dialLocal(PORT_A)
     await vi.waitFor(() => expect(h2State.streams.length).toBe(1))
@@ -636,10 +696,9 @@ describe('tunnel/h2: error classification', () => {
   })
 
   it('leaves an SSH authentication failure classified as auth', async () => {
-    // h2 fails, then the SSH fallback reports a credential problem. The ssh2
-    // branches must still win: the h2 additions only cover connectivity.
-    h2State.connectResults.push({ ok: false, kind: 'tls', error: 'ERR_HTTP2_ERROR' })
-    setTransportPreference('both')
+    // The ssh2 branches must still classify their own errors; the h2 additions
+    // only cover connectivity. The preference is ssh, so no probe precedes it.
+    setTransportPreference('ssh')
 
     const p = ensureTunnel()
     await vi.waitFor(() => expect(FakeSshClient.instances.length).toBe(1))
@@ -665,7 +724,7 @@ describe('tunnel/h2: error classification', () => {
 describe('tunnel/h2: reconnect really rebinds the local listener', () => {
   it('makes the port reachable again after reconnectTunnel', async () => {
     await connectH2()
-    expect(await addForwardedPort(PORT_A, 20000, '')).toBe(true)
+    expect(await addForwardedPort(PORT_A, 20000, '')).toEqual({ ok: true, port: PORT_A })
     expect(await testPortReachable(PORT_A)).toBe(true)
 
     // reconnectTunnel = disconnectTunnel (closes every listener) + ensureTunnel.
@@ -737,6 +796,74 @@ describe('tunnel/h2: reconnect really rebinds the local listener', () => {
 
     expect(liveListeners(PORT_A)).toBe(1)
     expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+})
+
+describe('tunnel/h2: adding a port onto a silently-dead session', () => {
+  /**
+   * A session that died without a teardown leaves the two liveness views
+   * disagreeing: h2Transport's `sessionDead` flips (so `transport.isConnected()`
+   * is false) while tunnel.ts's own `state.connected` stays true, because
+   * nothing tells it — h2Transport cannot import tunnel.ts.
+   *
+   * `addForwardedPort` used to gate the reconnect on `state.connected` alone,
+   * so it skipped ensureTunnel(), called listenForward() — which checks the
+   * OTHER view — got false, and surfaced a "port unreachable" error to the user
+   * for a port that was fine. The monitor would have repaired the tunnel 15s
+   * later, which is exactly why the error looked wrong: nothing was actually
+   * wrong with the target service.
+   */
+  it('reconnects instead of reporting failure', async () => {
+    await connectH2()
+    await addForwardedPort(PORT_A, 20000, '')
+    expect(await testPortReachable(PORT_A)).toBe(true)
+
+    // The session dies with no teardown. Only the transport knows.
+    h2State.connected = false
+    // tunnel.ts still believes it is connected — the disagreement under test.
+    expect(isTunnelConnected()).toBe(true)
+
+    // Adding a second port must repair the tunnel, not fail.
+    const ok = await addForwardedPort(PORT_B, 20000, '')
+
+    expect(ok).toEqual({ ok: true, port: PORT_B })
+    expect(await testPortReachable(PORT_B)).toBe(true)
+    // The existing port must come back too — ensureTunnel rebuilds every
+    // desired forward, not just the one being added.
+    expect(await testPortReachable(PORT_A)).toBe(true)
+  })
+
+  it('reverse adds reconnect the same way', async () => {
+    await connectH2()
+    expect(await bindReverse(PORT_A, PORT_TARGET, '')).toBe(true)
+
+    h2State.connected = false
+    expect(isTunnelConnected()).toBe(true)
+
+    // Unlike reconnectTunnel(), flipping the flag directly does NOT tear the
+    // control stream down, so `sent` accumulates across the initial bind and
+    // the rebuild. Ack by index, in order, so each bind gets its own reply.
+    const sent = h2State.control.sent as Array<{ type: string; port: number }>
+    const start = sent.length
+    const p = addReverseForwardedPort(PORT_B, PORT_TARGET, '')
+    let settled = false
+    void p.then(() => { settled = true }, () => { settled = true })
+
+    let acked = start
+    while (!settled) {
+      if (sent.length > acked) {
+        const msg = sent[acked++]
+        if (msg.type === 'bind') h2State.control.emit({ type: 'bound', port: msg.port })
+      } else {
+        await new Promise((r) => setTimeout(r, 5))
+      }
+    }
+
+    expect(await p).toBe(true)
+    // Both the rebuilt port and the newly added one are bound (PORT_A's bind
+    // from the setup is before `start`, so only the post-death binds count).
+    expect(sent.slice(start).filter(m => m.type === 'bind').map(m => m.port).sort())
+      .toEqual([PORT_A, PORT_B])
   })
 })
 

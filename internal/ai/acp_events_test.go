@@ -1052,7 +1052,7 @@ func TestMapACPToolCallUpdate_NilStatus(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-nil-status"),
 		Status:     nil,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
 	assert.Equal(t, "", event.Tool.Status)
@@ -1069,7 +1069,7 @@ func TestMapACPToolCallUpdate_ExecuteKindWithLocationsFallback(t *testing.T) {
 		Title:      &title,
 		Status:     &inProgress,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_use", event.Type)
 	assert.Contains(t, event.Tool.Input, "command")
 	assert.Contains(t, event.Tool.Input, "go build")
@@ -1088,7 +1088,7 @@ func TestMapACPToolCallUpdate_ReadKindWithLocations(t *testing.T) {
 			{Path: "/home/user/main.go"},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_use", event.Type)
 	assert.Contains(t, event.Tool.Input, "file_path")
 	assert.Contains(t, event.Tool.Input, "/home/user/main.go")
@@ -1104,7 +1104,7 @@ func TestMapACPToolCallUpdate_WithFilePathRawInputNormalization(t *testing.T) {
 			"dirPath":  "/tmp/subdir",
 		},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Contains(t, event.Tool.Input, "file_path")
 	assert.Contains(t, event.Tool.Input, "path")
 	assert.NotContains(t, event.Tool.Input, "filePath")
@@ -1118,7 +1118,7 @@ func TestMapACPToolCallUpdate_CompletedWithRawOutput(t *testing.T) {
 		Status:     &completed,
 		RawOutput:  "plain string output",
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
 	assert.Equal(t, "success", event.Tool.Status)
@@ -1172,7 +1172,7 @@ func TestMapACPToolCall_RawInputDirPathNormalization(t *testing.T) {
 		Kind:       acp.ToolKindSearch,
 		RawInput:   map[string]any{"dirPath": "/home/user/project"},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 	assert.Contains(t, event.Tool.Input, "path")
 	assert.NotContains(t, event.Tool.Input, "dirPath")
 	assert.Contains(t, event.Tool.Input, "/home/user/project")
@@ -1188,7 +1188,7 @@ func TestMapACPToolCall_RawInputCellNormalization(t *testing.T) {
 			"cellType":  "code",
 		},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 	assert.Contains(t, event.Tool.Input, "cell_index")
 	assert.Contains(t, event.Tool.Input, "cell_type")
 	assert.NotContains(t, event.Tool.Input, "cellIndex")
@@ -1204,7 +1204,7 @@ func TestMapACPToolCallUpdate_RawInputDirPathNormalization(t *testing.T) {
 		Status:     &inProgress,
 		RawInput:   map[string]any{"dirPath": "/home/user/project"},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	assert.Contains(t, event.Tool.Input, "path")
 	assert.NotContains(t, event.Tool.Input, "dirPath")
 }
@@ -1619,7 +1619,7 @@ func TestMapACPToolCallUpdate_CarriesParentLink(t *testing.T) {
 		ToolCallId: acp.ToolCallId(id),
 		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_3", "codebuddy.ai/toolName": "Read"},
 	}
-	evt := mapACPToolCallUpdate(tcu, "codebuddy")
+	evt := mapACPToolCallUpdate(tcu, "codebuddy", nil)
 	require.NotNil(t, evt.Tool)
 	assert.Equal(t, "call_parent_3", evt.Tool.ParentToolCallID)
 }
@@ -1629,7 +1629,7 @@ func TestMapACPToolCall_CarriesParentLink(t *testing.T) {
 		ToolCallId: acp.ToolCallId("call_child_start"),
 		Meta:       map[string]any{"codebuddy.ai/parentToolCallId": "call_parent_4", "codebuddy.ai/toolName": "Grep"},
 	}
-	evt := mapACPToolCall(tc, "codebuddy")
+	evt := mapACPToolCall(tc, "codebuddy", nil)
 	require.NotNil(t, evt.Tool)
 	assert.Equal(t, "call_parent_4", evt.Tool.ParentToolCallID)
 }
@@ -1639,7 +1639,7 @@ func TestMapACPToolCall_ClaudeParentToolUseID(t *testing.T) {
 		ToolCallId: acp.ToolCallId("call_child_claude"),
 		Meta:       map[string]any{"claudeCode": map[string]any{"parentToolUseId": "toolu_parent_9", "toolName": "Read"}},
 	}
-	evt := mapACPToolCall(tc, "claude")
+	evt := mapACPToolCall(tc, "claude", nil)
 	require.NotNil(t, evt.Tool)
 	assert.Equal(t, "toolu_parent_9", evt.Tool.ParentToolCallID)
 }

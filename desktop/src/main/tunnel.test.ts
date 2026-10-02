@@ -326,7 +326,7 @@ afterEach(() => {
 describe('tunnel: reconnect preserves and rebuilds forwards', () => {
   it('keeps the mapping across reconnectTunnel and makes the port reachable again', async () => {
     await connectOnce()
-    expect(await addForwardedPort(PORT_A, 20000, '')).toBe(true)
+    expect(await addForwardedPort(PORT_A, 20000, '')).toEqual({ ok: true, port: PORT_A })
     expect(await testPortReachable(PORT_A)).toBe(true)
 
     const reconnected = reconnectTunnel()
@@ -379,8 +379,8 @@ describe('tunnel: reconnect preserves and rebuilds forwards', () => {
     ])
     listenDelay.ms = 0
 
-    expect(first).toBe(true)
-    expect(second).toBe(true)
+    expect(first).toEqual({ ok: true, port: PORT_A })
+    expect(second).toEqual({ ok: true, port: PORT_A })
     expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '', direction: 'forward' }])
     expect(await testPortReachable(PORT_A)).toBe(true)
   })
@@ -430,7 +430,10 @@ describe('tunnel: concurrent callers share one connection', () => {
       addForwardedPort(PORT_B, 20000, ''),
     ])
 
-    expect(results).toEqual([true, true])
+    expect(results).toEqual([
+      { ok: true, port: PORT_A },
+      { ok: true, port: PORT_B },
+    ])
     expect(await testPortReachable(PORT_A)).toBe(true)
     expect(await testPortReachable(PORT_B)).toBe(true)
   })
@@ -548,8 +551,8 @@ describe('tunnel: listener bookkeeping', () => {
 
   it('re-adding the same local port does not fail with EADDRINUSE', async () => {
     await connectOnce()
-    expect(await addForwardedPort(PORT_A, 20000, '')).toBe(true)
-    expect(await addForwardedPort(PORT_A, 30000, '')).toBe(true)
+    expect(await addForwardedPort(PORT_A, 20000, '')).toEqual({ ok: true, port: PORT_A })
+    expect(await addForwardedPort(PORT_A, 30000, '')).toEqual({ ok: true, port: PORT_A })
     expect(await testPortReachable(PORT_A)).toBe(true)
   })
 
@@ -561,6 +564,119 @@ describe('tunnel: listener bookkeeping', () => {
     await connectOnce()
     await addForwardedPort(PORT_A, 20000, '192.168.1.10')
     expect(getForwardedPorts()).toEqual([{ port: PORT_A, host: '192.168.1.10', direction: 'forward' }])
+  })
+})
+
+describe('tunnel: an occupied local port falls back to the next free one', () => {
+  /** Occupy a port on this machine the way an unrelated process would. */
+  function occupy(port: number): Promise<net.Server> {
+    return new Promise((resolve, reject) => {
+      const s = net.createServer()
+      s.once('error', reject)
+      s.listen(port, '127.0.0.1', () => resolve(s))
+    })
+  }
+
+  it('binds the next free port and reports it instead of failing', async () => {
+    const squatter = await occupy(PORT_A)
+    try {
+      await connectOnce()
+
+      const result = await addForwardedPort(PORT_A, 20000, '')
+
+      // The requested port is taken, so the listener lands on the next one.
+      expect(result).toEqual({ ok: true, port: PORT_A + 1 })
+      expect(await testPortReachable(PORT_A + 1)).toBe(true)
+      // And the desired set is keyed by the ACTUAL port, so a later
+      // removeForwardedPort(actual) closes it (the renderer re-keys the server
+      // to this port, so it is the one the remove will name).
+      expect(getForwardedPorts()).toEqual([{ port: PORT_A + 1, host: '', direction: 'forward' }])
+    } finally {
+      await new Promise<void>((r) => squatter.close(() => r()))
+    }
+  })
+
+  it('releases the rebound listener when the renderer removes the actual port', async () => {
+    // The renderer re-keys the server registry to the actual port, so a later
+    // delete names THAT port. If the desired set were still keyed by the
+    // requested one, this remove would miss and leak the listener forever.
+    const squatter = await occupy(PORT_A)
+    try {
+      await connectOnce()
+      const result = await addForwardedPort(PORT_A, 20000, '')
+      expect(result).toEqual({ ok: true, port: PORT_A + 1 })
+
+      removeForwardedPort(PORT_A + 1)
+
+      expect(getForwardedPorts()).toEqual([])
+      expect(await testPortReachable(PORT_A + 1)).toBe(false)
+    } finally {
+      await new Promise<void>((r) => squatter.close(() => r()))
+    }
+  })
+
+  it('skips several occupied ports before landing on a free one', async () => {
+    const squatters = [await occupy(PORT_A), await occupy(PORT_A + 1)]
+    try {
+      await connectOnce()
+
+      const result = await addForwardedPort(PORT_A, 20000, '')
+
+      expect(result).toEqual({ ok: true, port: PORT_A + 2 })
+      expect(await testPortReachable(PORT_A + 2)).toBe(true)
+    } finally {
+      for (const s of squatters) await new Promise<void>((r) => s.close(() => r()))
+    }
+  })
+
+  it('reports a conflict (not "unreachable") only when even the fallback fails', async () => {
+    // Force every candidate to fail with EADDRINUSE by stubbing listen to always
+    // emit that error: the scan exhausts its candidates and the `0` fallback,
+    // and the reason must be 'conflict' — that is what drives the port-specific
+    // toast instead of the misleading "check if the service is running".
+    await connectOnce()
+    const realCreateServer = net.createServer
+    const spy = vi.spyOn(net, 'createServer').mockImplementation(((...args: unknown[]) => {
+      const server = (realCreateServer as unknown as (...a: unknown[]) => net.Server)(...args)
+      server.listen = ((..._largs: unknown[]) => {
+        const err = Object.assign(new Error('occupied'), { code: 'EADDRINUSE' })
+        setImmediate(() => server.emit('error', err))
+        return server
+      }) as typeof server.listen
+      return server
+    }) as typeof net.createServer)
+    try {
+      const result = await addForwardedPort(PORT_A, 20000, '')
+      expect(result).toEqual({ ok: false, reason: 'conflict' })
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('treats a non-conflict bind error as unreachable, without walking ports', async () => {
+    // EACCES (or any non-EADDRINUSE code) is not fixed by changing ports, so the
+    // scan must stop immediately and report 'unreachable'.
+    await connectOnce()
+    const realCreateServer = net.createServer
+    let listenCalls = 0
+    const spy = vi.spyOn(net, 'createServer').mockImplementation(((...args: unknown[]) => {
+      const server = (realCreateServer as unknown as (...a: unknown[]) => net.Server)(...args)
+      server.listen = ((..._largs: unknown[]) => {
+        listenCalls++
+        const err = Object.assign(new Error('denied'), { code: 'EACCES' })
+        setImmediate(() => server.emit('error', err))
+        return server
+      }) as typeof server.listen
+      return server
+    }) as typeof net.createServer)
+    try {
+      const result = await addForwardedPort(PORT_A, 20000, '')
+      expect(result).toEqual({ ok: false, reason: 'unreachable' })
+      // One attempt only — a hard error must not walk the whole candidate list.
+      expect(listenCalls).toBe(1)
+    } finally {
+      spy.mockRestore()
+    }
   })
 })
 

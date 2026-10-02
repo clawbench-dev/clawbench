@@ -43,6 +43,8 @@ flowchart LR
 
 「动态」是面板的第一个页签也是默认落点——打开面板先看"有什么新东西"，而不是先看某个分类；它本身横跨后面三个分类。它曾经是 Dock 上的独立 tab，但那是 forge 集成的内容，放 Dock 上既是多余入口，也让"角标 → 去哪看"多绕一层，还得靠跨组件深链接缝把点击转发回面板。移入内部后行点击直接调用同一组件里的打开逻辑，净减一层间接和一类竞态。
 
+**页签切换不能只靠"类型变没变"决定是否加载**：议题与合并两个页签共用 `useForgeItems`，其 type 初值就是 `issue`，而 `setType` 有「类型未变则早返回」的守卫——于是「动态 → 议题」这一次切换既不改类型也不发请求，页面留下上一次的陈旧列表（其余页签进入时都会刷新，只有这条路径静默不请求）。改为：类型真变了交给 `setType`（它自己会 load），没变则补一次显式 `load()`——既补上缺口，又不会让 PR 切换发两个重复请求。
+
 ### 后台感知：轮询 → 事件 → 通知
 
 ```mermaid
@@ -97,8 +99,9 @@ sequenceDiagram
 ### 功能清单
 
 - **仓库绑定**：项目与 forge 仓库一一绑定，绑定关系随项目走。优先从本地 git remote 自动解析（官方 host 自动绑定，自建实例需确认），也支持手动填 URL。绑定是事件任务的作用域来源——事件任务不单独配置仓库，而是跟随所属项目绑定的仓库。自建实例支持 **http 与 https**：host[:port] 仍是身份键（凭据、快照、水位线、事件、限流桶、未读与去重键全部沿用），协议独立存放，因此同一实例的 http 与 https 是**一个**仓库、状态不分裂；协议按"绑定 → 实例提示 → https"三层解析，空的 scheme 表示"未说明"而非 https（否则会掩盖后续的 http 提示）。内网/自建实例**服务端不再做 host 闸门**，风险提示下沉到绑定弹窗、在提交前显示——自动绑定仍只限官方 host（该路径无用户交互、看不到警告）
+- **打开仓库**：顶栏仓库徽标的下拉菜单首项「打开仓库」在新标签页打开仓库主页（GitHub / GitLab / 自建实例）。URL 由绑定的 host + owner + repo + scheme 拼成，scheme 复用后端已解析的 API 协议（自建 http 实例不会被误跳到 https），GitLab 多级 group 的 `group/sub` 按路径段保留分隔符、只转义各段。它是真正的 `<a target="_blank" rel="noopener noreferrer">` 而非 `window.open`——新标签页交给浏览器、中键点击与「复制链接」都能正常工作。绑定信息不完整时不渲染该项，避免给出会 404 的链接
 - **Issue / PR 浏览**：forge 面板内的类型 chip（Issues / PRs）+ 状态 chip（Open 默认 / Closed / All）+「跟我相关」chip（全部 / 分配给我 / 我提的 / 待我 review，身份从 token 自动获取）。列表按更新时间倒序、滚动分页、服务端搜索；详情原地替换列表并带面包屑返回，展示正文 + 评论/时间线（不含 diff），复用共享 Markdown 渲染管线
-- **未读与通知**：tab 带未读徽标，**按条目而非事件计数**——同一 issue 连来三条评论只算一条未读，用户要的是"哪些东西有动静"而不是"发生了几件事"。未读按 `item_key`（`issue/<n>` / `pr/<n>` / `pipeline/run:<id>`）去重统计，标记已读只写现有行的 `read_at`，因此该条目之后再有活动会自然重新变未读。设置里六类事件开关（新开 / 关闭 / 合并 / 重开 / 评论 / CI 完成，默认全开）。未读计数**与通知开关解耦**——即使某类事件通知被关闭，未读仍计数（否则全关时徽标死掉而 AI 任务照跑，用户零信号）。列表行带行级未读标记，可单条标记已读，也可一键「全部标为已读」
+- **未读与通知**：tab 带未读徽标，**按条目而非事件计数**——同一 issue 连来三条评论只算一条未读，用户要的是"哪些东西有动静"而不是"发生了几件事"。未读按 `item_key`（`issue/<n>` / `pr/<n>` / `pipeline/run:<id>`）去重统计，标记已读只写现有行的 `read_at`，因此该条目之后再有活动会自然重新变未读。设置里六类事件开关（新开 / 关闭 / 合并 / 重开 / 评论 / CI 完成，默认全开）。未读计数**与通知开关解耦**——即使某类事件通知被关闭，未读仍计数（否则全关时徽标死掉而 AI 任务照跑，用户零信号）。列表行带行级未读标记，可单条标记已读，也可一键「全部标为已读」。**角标与列表谓词必须同源**：`CountUnreadForgeEvents` 与 `ListForgeActivityItems` 已在生产库核对结果相同，因此"列表有未读行、角标却是 0（「全部已读」按钮禁用）"这类分歧只可能出在**客户端刷新时机**——实测两处缺口：①打开 forge 面板只加载绑定与列表、不碰角标；②WS 重连的刷新链漏了 forge。修法：列表 `load()` 成功后重拉角标，且重连时把角标刷新**链在 `loadProject()` 之后**——角标是 project-scoped，早于 cookie 写入会 403，而它不像 sessions/files 会在下次用户动作自愈，错过会一直错到切项目
 - **「动态」页签与筛选**：跨 issue/PR/流水线聚合所有条目，按 `unread` / `read` / `all` 三种视图切换（默认未读），带行级已读标记与「有新评论」这类**事件原因**文案（与订阅用的类别名词刻意分开——前者回答"这里发生了什么"，后者是"任务在听什么"）。没有已读视图时，点开一行只是本地置灰、下次加载该行就彻底消失，用户无法回看自己读过什么。**已读是条目级聚合，筛选必须用 `HAVING`**：条目已读 = 它的全部事件都已读，用事件级条件（`WHERE read_at IS NULL`）会把"有旧已读事件 + 一条新未读事件"的条目漏进已读视图；行上的 `read` 字段与 `unread_count` 来自同一次查询，因此行的样式与选中它的筛选不可能互相矛盾
 - **事件触发 AI 任务**：任务表单可选「触发方式：定时 / 事件」。选事件后展开事件类型多选（`issue.opened`、`pr.merged`、`pipeline_done` 等按 kind 分域，merged 仅 PR），prompt 区上方出现**只读事件上下文块**（按事件类型条件渲染适用变量，不适用整行省略），与用户输入拼接为最终 prompt。事件到达即执行，产出会话 + 执行记录，四通道通知，执行记录带来源链接可深链回原始 issue/PR
 - **CI 完成事件（`pipeline_done`）**：仓库的流水线运行结束时触发任务——CI 失败自动让 AI 去看日志、CI 成功自动总结变更。只有 success / failure 两个终态派发事件（cancelled / skipped 不打扰），同一 run 只派发一次（按 `run_id` 去重），且首次同步只建基线不补发历史。流水线标题取"每次运行"的标题（GitHub 用 `display_title`，即 commit message / 手动输入的 run 名），而非 workflow 名——否则列表里十条运行全叫 "CI"，用户无法区分
@@ -115,7 +118,7 @@ sequenceDiagram
 - **窗口化的 PR 查询改走 issues 端点**：既然 PR 列表无法表达时间下界，带 `since` 的 PR 查询就改用 `issues` 端点（它同时返回 PR——PR 就是带 `pull_request` 链接的 issue，且该链接携带 `merged_at`）。实测 1.2s / 92KB，对比 PR 列表的 41s / 2.2MB。**不带窗口**的查询仍走 PR 列表，因为只有它返回 `head.ref`（CI 查询所需的 `SourceBranch`）；CI 查询本身走 `GetItem`（单 PR 1–3s），两条路互不影响
 - **首次同步的窗口是"现在"，不是"开天辟地"**：快照只用于"这一轮 vs 下一轮"的 diff（面板列表走 provider 实时拉取，从不读快照），所以回填整仓历史买不到任何东西——对大仓更是不可能：GitHub 对超过 1 万条的集合禁用 offset 分页（`page` 参数直接 422），全量拉取会中途失败，水位线因此永不推进，下一 tick 又从 page 1 重走一遍，配额被无限重试烧光。因此 `since` 恒为 `watermark - overlap`，首次同步取 `now - overlap`（一次请求而非上百次）。**每个类型各判各的首次**：旧库升级时 `pr_watermark` 刻意留 NULL（不从旧的共享游标回填），于是 PR 侧从"现在"起算、静默建立基线；若回填，PR 窗口会覆盖整仓历史并一次性派发全部 PR 事件
 - **首次见到、但时间早于窗口的老 item 只记快照不派发**：它的历史状态从未被观测，仅凭当前状态推导转移是猜测（2020 年就 closed 的 issue 会被误报成"刚刚关闭"）；判定依据是 `Item.CreatedAt`，窗口本身就是基线，无需新增状态。**`merged` 用同一把尺子**：merge 时刻（`Item.MergedAt`）落在窗口内才算"刚合并"。这条门控是必需的——`forge_items.merged` 在 GitHub 侧从未被填充过（PR 列表端点不报 merge 状态），一旦 merge 状态变得可见，所有"closed 但实际已 merged"的历史 PR 会同时被推导成 `merged` 事件，在真实仓库上就是数百条事件与推送（通知通道没有去抖）。未知 merge 时刻按"新"处理，与 `CreatedAt` 的约定一致（沉默会静默丢事件）。**代价要说准**：首次见到某 PR 时若它**创建**于窗口之前，即使它是在窗口**之内**才被合并的，也一并静默——首次同步只看 `CreatedAt`，不额外查 `MergedAt`。这是"不回放历史"的既有取舍（issue 侧一直如此），不是 `merged` 独有的行为；若首次同步时就要求精确区分"窗口内合并的老 PR"，需要在基线建立时一并判定 `MergedAt`，当前未做
-- **未读与通知解耦**：两者共用同一事件源但独立于开关。通知是"提醒你"，未读是"有变化"——把两者绑在一起会让关闭某类通知连带让徽标失去意义，而 AI 任务仍在后台触发，用户彻底失去信号。浏览器系统通知同理：`forge_event` 的 WS 广播**不受任何通知开关门控**（角标靠它保持实时），系统通知则受本地 `browserNotification` 门控——IM 推送受 `forge.notify.*` 服务端开关门控，三个通道各自独立
+- **未读与通知解耦**：两者共用同一事件源但独立于开关。通知是"提醒你"，未读是"有变化"——把两者绑在一起会让关闭某类通知连带让徽标失去意义，而 AI 任务仍在后台触发，用户彻底失去信号。桌面端系统通知同理：`forge_event` 的 WS 广播**不受任何通知开关门控**（角标靠它保持实时），系统通知则受本地 `desktopNotification` 门控（旧键 `browserNotification` 自动迁移）——IM 推送受 `forge.notify.*` 服务端开关门控，三个通道各自独立
 - **广播 payload 手工构造而非序列化结构体**：`ForgeEventDispatcher.HandleChange` 广播的 `event` 对象是显式 snake_case map（`platform`/`host`/`owner`/`repo`/`item_type`/`number`/`run_id`/`event_type`/`project_path`），不是 `ForgeEvent` 结构体。该结构体没有 json tag，直接序列化会得到 PascalCase（`EventType`）并泄漏内部簿记列（`DedupeKey`/`ItemKey`）；前端按字段名读取通知文案，一次"顺手改成结构体"的简化会静默让所有仓库通知退化成空标题。有测试（`TestForgeDispatcher_PayloadEventKeysAreSnakeCase`）同时断言键名存在与 PascalCase 键不存在
 - **通知带 project_path 与条目目标以支持深链**：广播是全局的（`BroadcastEvent` 扇出所有订阅），而 forge 面板与未读角标是项目作用域的。因此事件携带产生它的绑定所属项目（`ForgeRepoRef.ProjectPath`，从 `ProjectForge.ProjectPath` 透传），前端点击时先切项目再开面板。该字段**不是仓库身份的一部分**——`ForgeRepoRef.Key()` 刻意忽略它，否则同一仓库被两个项目绑定时会分裂成两个防抖桶；poller 按 repo 去重时保留的是 `updated_at DESC` 的第一行，故多项目绑同一仓库时归属取最近更新者。**`run_id` 是流水线深链的前提**：流水线的 `number` 恒为 0（CI run 不是 item、没有编号），所以 `(item_type, number)` 无法命名具体某次运行，前端也就既跳不到该 run、也无法标记它已读（已读键是 `pipeline/run:<id>`）。因此广播额外下发 `change.PipelineRunID`；issue/PR 事件该值为 0，前端据此区分。条目身份统一由前端 `forgeTargetItemKey` 构造，与 Go 侧 `forge.ItemKey` 格式对齐（`<type>/<number>` 或 `pipeline/run:<id>`），有测试双向钉住格式
 - **防递归靠身份识别而非提示词**：`CLAWBENCH_SCHEDULED=1` 只能阻止 AI 通过 `/cb-task` 再建任务，挡不住 AI 用 `gh`/`glab` 写回 forge 再触发自己。因此触发器解析凭据对应的账号登录名（缓存 10 分钟），抑制 acting actor 等于该账号的事件——比对 item 作者会漏掉"AI 评论别人的 issue"。**流水线事件刻意豁免**：CI 结束不是"用户做的动作"，而是几分钟前某次运行（可能是别人、可能是定时或 push 触发）的结果；抑制"自己"的流水线恰好会砍掉最有价值的场景——AI 推了修复、CI 失败、而负责修复的任务永远不跑。actor 仍随事件下发，任务 prompt 通过 `ACTOR_IS_SELF` 变量自行判断
@@ -150,14 +153,14 @@ per-host 令牌桶 + 全局并发上限，避免多 repo 同时打满限额；�
 
 | 表 | 用途 |
 |---|------|
-| `project_forges` | 项目 → 仓库绑定（`project_path` 归一化，`source` = auto/manual，含 opt-out 标记） |
+| `project_forges` | 项目 → 仓库绑定（按 `project_id` 归属，`source` = auto/manual，含 opt-out 标记） |
 | `forge_items` | 每个 issue/PR 的本地快照（状态、merged 标记、评论双键、`comments_baselined` 区分"零评论"与"从未拉取"） |
 | `forge_sync_state` | per-repo 的**两个**独立水位线（`issue_watermark` / `pr_watermark`）与同步状态；旧库升级时 `watermark` 重命名为 `issue_watermark`，`pr_watermark` 留 NULL（见"按 item 类型分离"） |
 | `forge_events` | 派生事件（`dedupe_key` 唯一、`item_key` 供未读按条目去重、`read_at` 已读标记、repo 索引） |
 | `forge_pipeline_runs` | 每个已处理 CI run 一行（`PRIMARY KEY (platform,host,owner,repo,run_id)`），去重与基线共用 |
 | `scheduled_tasks` | 增 `trigger_mode`（`cron`/`event`）与 `event_types`（逗号分隔订阅） |
 | `task_executions` | 增 `event_url` / `event_summary` 供执行记录溯源，`read_at` 逐条已读 |
-| `session_tags` / `session_tag_links` | 会话标签定义（`UNIQUE(name, project_path)`）与会话↔标签关联 |
+| `session_tags` / `session_tag_links` | 会话标签定义（`UNIQUE(name, project_id)`，全局标签用 `project_id=0` 哨兵）与会话↔标签关联 |
 
 ## API 端点
 

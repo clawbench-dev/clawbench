@@ -1,11 +1,11 @@
 <template>
   <Teleport to="body">
-    <div v-if="active" class="completion-notify-layer" :class="{ 'is-desktop': isPC }">
+    <div v-if="active" class="completion-notify-layer" :class="{ 'is-desktop': !isTouchPrimary }">
       <Transition :name="transitionName" appear>
         <div
           :key="active.groupKey"
           class="completion-notify"
-          :class="{ 'is-desktop': isPC, 'is-external': !!active.projectPath }"
+          :class="{ 'is-desktop': !isTouchPrimary, 'is-external': !!active.projectPath }"
           role="button"
           tabindex="0"
           :aria-label="navigateLabel"
@@ -69,10 +69,10 @@ import { usePlatformDetect } from '@/composables/usePlatformDetect'
 
 const { active, dismiss, pauseAutoDismiss, resumeAutoDismiss } = useCompletionPopover()
 const { getAgentBackend } = useAgents()
-const { isPC } = usePlatformDetect()
+const { isTouchPrimary } = usePlatformDetect()
 
 // 桌面端右下角滑入、移动端顶部滑下——两套动效方向相反，靠 Transition 名称切换。
-const transitionName = computed(() => isPC.value ? 'completion-notify-desktop' : 'completion-notify-mobile')
+const transitionName = computed(() => isTouchPrimary.value ? 'completion-notify-mobile' : 'completion-notify-desktop')
 
 const agentBackend = computed(() => {
     const agentId = active.value?.agentId

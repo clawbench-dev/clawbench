@@ -79,11 +79,23 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: vi.fn(), dismiss: vi.fn() }),
 }))
 
-vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  isWindowsUA: false,
-  isMacDesktopUA: false,
-  isLinuxDesktopUA: false,
-}))
+// The component reads the host axes through usePlatformDetect, not useAppMode.
+// This panel is exercised in web mode here, so every native axis is off.
+vi.mock('@/composables/usePlatformDetect.ts', async () => {
+  const { ref } = await import('vue')
+  return {
+    usePlatformDetect: () => ({
+      isElectron: ref(false),
+      isAndroidApp: ref(false),
+      isWebApp: ref(true),
+      isNativeApp: ref(false),
+      isTouchPrimary: ref(false),
+    }),
+    isWindowsUA: false,
+    isMacDesktopUA: false,
+    isLinuxDesktopUA: false,
+  }
+})
 
 vi.mock('@/utils/portForwardUtils.ts', async () => {
   // Keep the REAL portForwardUnavailable: the panel's banner gate now uses it,

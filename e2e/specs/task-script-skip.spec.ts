@@ -2,15 +2,21 @@ import { test, expect, type Page } from '../fixtures'
 import { apiFetch } from '../helpers/auth'
 
 /**
- * Smoke test for the optional pre-AI custom script on cron tasks.
+ * Smoke test for the optional pre-AI gating script on cron tasks.
  *
  * One coherent journey, end to end through the real UI:
- *   1. create a cron task through the form, typing a script that exits 0
- *      silently (`true`) into the script textarea
+ *   1. create a cron task through the form, typing a script that exits
+ *      NON-ZERO (`false`) into the script editor
  *   2. run it from the detail page's Run button
  *   3. the execution history shows a `skipped` row (the badge from
  *      TaskHistoryTab.vue / i18n `task.exec.statusSkipped`)
  *   4. NO completion notification was produced anywhere
+ *
+ * GATE SEMANTICS (reversed 2026-09-29, see
+ * docs/plans/2026-09-21-task-custom-script-design.md §「门控脚本」):
+ *   exit 0   → the gate OPENS and the AI turn runs
+ *   non-zero / timeout → the gate CLOSES and the run is skipped
+ * So the script here must FAIL (`false`), not succeed (`true`).
  *
  * Why step 4 is asserted the way it is: the feature's whole point is that a
  * silent skip is invisible. Every frontend notification channel is downstream
@@ -131,9 +137,19 @@ async function openTasksTab(page: Page): Promise<void> {
   await expect(page.locator('.task-tab')).toBeVisible({ timeout: 10000 })
 }
 
-/** Open the create form from the task list header. */
+/**
+ * Open the create form from the task list header.
+ *
+ * Clicking "+" first shows the "create a task with AI instead" hint dialog
+ * (unless previously dismissed). This test drives the manual form, so pre-set
+ * the dismissal flag — otherwise the click opens the hint and never reaches the
+ * form.
+ */
 async function openCreateForm(page: Page): Promise<void> {
-  await page.locator('.task-tab .create-btn').click()
+  await page.evaluate(() => localStorage.setItem('clawbench_task_create_hint_dismissed', 'true'))
+  const createBtn = page.locator('.task-tab .create-btn')
+  await expect(createBtn).toBeVisible({ timeout: 10000 })
+  await createBtn.click()
   await expect(page.locator('.task-form-page')).toBeVisible({ timeout: 10000 })
 }
 
@@ -150,7 +166,7 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
     }
   })
 
-  test('a silent exit-0 script skips the AI with no notification', async ({ page }) => {
+  test('a failing gate script skips the AI with no notification', async ({ page }) => {
     // Deterministic dock mode: ≥1024px CSS width selects the wide-screen dock.
     await page.setViewportSize({ width: 1280, height: 900 })
     await installNotificationRecorders(page)
@@ -181,11 +197,26 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
     await page.waitForTimeout(500)
     await agentOption.click()
 
-    // The cron-only script textarea must be present, and the point of this
-    // smoke test is that it is driven through the UI, not the API.
-    const scriptField = page.locator('.task-form-page .script-textarea')
-    await expect(scriptField).toBeVisible()
-    await scriptField.fill('true')
+    // The cron-only script editor is gated behind a switch (a task without a
+    // gate carries no script config at all). The checkbox input is visually
+    // hidden (opacity:0; width:0) and styled via a sibling track, so click the
+    // track — Playwright cannot `check()` an invisible input.
+    const scriptSwitch = page.locator('.task-form-page .script-switch-row .settings-item__switch-track')
+    await expect(scriptSwitch).toBeVisible()
+    await scriptSwitch.click()
+    await expect(
+      page.locator('.task-form-page .script-switch-row input[type="checkbox"]')
+    ).toBeChecked()
+
+    const scriptEditor = page.locator('.task-form-page .task-script-editor .cm-content')
+    await expect(scriptEditor).toBeVisible({ timeout: 10000 })
+    await scriptEditor.click()
+    // A FAILING script closes the gate and skips the AI (see the file header).
+    await page.keyboard.type('false')
+    // CodeMirror mounts asynchronously; the keystrokes only land once the
+    // editor has focus, so verify the text is actually in the document before
+    // saving. Without this the task saves with an EMPTY script and the AI runs.
+    await expect(scriptEditor).toContainText('false', { timeout: 5000 })
 
     await page.locator('.task-form-page .prompt-textarea').fill('This prompt must never reach the AI.')
 
@@ -217,9 +248,10 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
       .first()
     await expect(skippedItem).toBeVisible({ timeout: 30000 })
     await expect(skippedItem.locator('.exec-status-badge.skipped')).toHaveText(/Skipped|已跳过/)
-    // A skipped run produced no AI output by design, so the row explains the
+    // A gate-closed run produced no AI output by design, so the row explains the
     // empty body instead of reading as a failure.
-    await expect(skippedItem.locator('.exec-summary.empty')).toHaveText(/Skipped.*no output|已跳过/)
+    await expect(skippedItem.locator('.exec-summary.empty'))
+      .toHaveText(/Gating script did not pass|门控脚本未通过/)
 
     // ── 4. No notification was produced ──
     const updates = await page.evaluate(
@@ -252,11 +284,12 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
     await openTasksTab(page)
     await openCreateForm(page)
 
-    // Cron is the default trigger mode.
-    await expect(page.locator('.task-form-page .script-textarea')).toBeVisible()
+    // Cron is the default trigger mode. The script control is the switch that
+    // gates the script editor (`.script-switch-row`), not a bare textarea.
+    await expect(page.locator('.task-form-page .script-switch-row')).toBeVisible()
 
     // Switching to Event must drop the cron-only script fields entirely.
     await page.locator('.task-form-page .preset-btn').filter({ hasText: /^(Event|事件)$/ }).click()
-    await expect(page.locator('.task-form-page .script-textarea')).toHaveCount(0)
+    await expect(page.locator('.task-form-page .script-switch-row')).toHaveCount(0)
   })
 })

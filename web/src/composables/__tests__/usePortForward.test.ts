@@ -538,7 +538,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             ;(window as any).ClawBenchNative = {
                 getActiveTunnelTransport: async () => 'h2',
-                getTunnelTransport: async () => 'both',
+                getTunnelTransport: async () => 'ssh',
             }
 
             const { usePortForward } = await import('@/composables/usePortForward')
@@ -546,7 +546,7 @@ describe('usePortForward', () => {
 
             await refreshActiveTransport()
 
-            // The concrete winner, not the 'both' preference.
+            // The live wire wins over the stored preference.
             expect(activeTransport.value).toBe('h2')
 
             delete (window as any).ClawBenchNative
@@ -557,7 +557,7 @@ describe('usePortForward', () => {
             mockIsAppMode.value = true
             ;(window as any).ClawBenchNative = {
                 getActiveTunnelTransport: async () => '',
-                getTunnelTransport: () => 'both',
+                getTunnelTransport: () => 'h2',
             }
 
             const { usePortForward } = await import('@/composables/usePortForward')
@@ -565,7 +565,29 @@ describe('usePortForward', () => {
 
             await refreshActiveTransport()
 
-            expect(activeTransport.value).toBe('both')
+            expect(activeTransport.value).toBe('h2')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('rejects the retired "both" value rather than surfacing it', async () => {
+            // No shipped host reports 'both' any more (Electron migrates a
+            // stored one to 'h2', Android derives the family from the live
+            // session). If an unknown host ever sends it, it must read as
+            // unknown — not reach the panel as a label-able wire.
+            mockIsAppMode.value = true
+            ;(window as any).ClawBenchNative = {
+                getActiveTunnelTransport: async () => 'both',
+                getTunnelTransport: async () => 'both',
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { activeTransport, refreshActiveTransport } = usePortForward()
+
+            await refreshActiveTransport()
+
+            expect(activeTransport.value).toBe('')
 
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
@@ -668,7 +690,7 @@ describe('usePortForward', () => {
             gtImpl = (key) => key
         })
 
-        async function setActiveTransport(value: 'ssh' | 'h2' | 'both' | '') {
+        async function setActiveTransport(value: 'ssh' | 'h2' | '') {
             mockIsAppMode.value = true
             ;(window as any).ClawBenchNative = {
                 getActiveTunnelTransport: async () => value,
@@ -690,13 +712,6 @@ describe('usePortForward', () => {
         it('wraps the HTTP/2 label through proxy.transportAnnotation for an h2 wire', async () => {
             const { transportAnnotation } = await setActiveTransport('h2')
             expect(transportAnnotation()).toBe('(HTTP/2)')
-            delete (window as any).ClawBenchNative
-            mockIsAppMode.value = false
-        })
-
-        it('returns empty for the both preference (a preference, not a wire)', async () => {
-            const { transportAnnotation } = await setActiveTransport('both')
-            expect(transportAnnotation()).toBe('')
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
@@ -1110,6 +1125,124 @@ describe('usePortForward', () => {
             // When API returns no localPort, falls back to port number
             expect(result).toBe(3000)
         })
+
+        it('recomputes the tunnel verdict after adding a port', async () => {
+            // Regression: tunnelStatus is only written by checkTunnelHealth(), and
+            // syncToNative() returns early when the server had NO enabled ports at
+            // startup. So adding the first mapping left the verdict on 'unknown':
+            // the Android background-permission tip (gated on 'ok') never showed,
+            // and the status row kept claiming it had not checked. The add must
+            // recompute the verdict, not merely refresh the list.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockImplementation(async (url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                isTunnelConnected: async () => true,
+                testPortReachable: vi.fn(async () => true),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, tunnelStatus } = usePortForward()
+
+            expect(tunnelStatus.value).toBe('unknown')
+
+            await registerPort(3000, 'App', 'http')
+            // The re-check is fire-and-forget; let it settle.
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            expect(tunnelStatus.value).toBe('ok')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not flash the list loading state on the post-add re-check', async () => {
+            // The re-check runs while the list is already on screen. Reusing the
+            // initial-check path (which sets loading=true) would blank the list
+            // on every add; the silent variant must be used instead.
+            //
+            // Observed while the re-check is IN FLIGHT: an already-resolved mock
+            // settles within a microtask, so a poll would never catch the flag.
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            let releasePorts: (v: unknown) => void = () => {}
+            let portsHangs = false
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports' && portsHangs) {
+                    return new Promise(resolve => { releasePorts = resolve })
+                }
+                return Promise.resolve({ ports: [] })
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, loading } = usePortForward()
+
+            // Hang the ports fetch the re-check will issue, then run the add.
+            portsHangs = true
+            const pending = registerPort(3000, 'App', 'http')
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            // The re-check's loadPorts is parked on the hanging fetch right now.
+            expect(loading.value).toBe(false)
+
+            releasePorts({ ports: [] })
+            await pending
+            expect(loading.value).toBe(false)
+        })
+
+        it('does not blink the verdict to unknown on the post-add re-check', async () => {
+            // The re-check recomputes in the background while the panel is on
+            // screen. Resetting tunnelStatus to 'unknown' first (as the
+            // user-requested check does) would hide the Android background tip
+            // and flip the settings dot to 'checking' on every add. Park the
+            // re-check mid-flight and assert the previous verdict still holds.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            let releasePorts: (v: unknown) => void = () => {}
+            let portsHangs = false
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports' && portsHangs) {
+                    return new Promise(resolve => { releasePorts = resolve })
+                }
+                if (url === '/api/proxy/ports') {
+                    return Promise.resolve({ ports: [] })
+                }
+                return Promise.resolve({ enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } })
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                isTunnelConnected: async () => true,
+                testPortReachable: vi.fn(async () => true),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, tunnelStatus, checkTunnelHealth } = usePortForward()
+
+            // Establish a verdict first (as an earlier startup check would).
+            await checkTunnelHealth(true)
+            expect(tunnelStatus.value).toBe('ok')
+
+            portsHangs = true
+            const pending = registerPort(3000, 'App', 'http')
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            // Re-check is in flight — the verdict must not have been reset.
+            expect(tunnelStatus.value).toBe('ok')
+
+            releasePorts({ ports: [] })
+            await pending
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
     })
 
     describe('updatePort', () => {
@@ -1390,6 +1523,39 @@ describe('usePortForward', () => {
 
             await expect(setPortEnabled(8080, false)).resolves.toBeUndefined()
             expect(mockRemove).toHaveBeenCalledWith(8080)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('recomputes the tunnel verdict after enabling a port', async () => {
+            // Same class of staleness as registerPort: enabling a port changes
+            // which ports count toward the verdict, so leaving tunnelStatus on
+            // its old value misreports the tunnel (and gates the Android tip).
+            mockIsAppMode.value = true
+            mockApiPut.mockResolvedValue({ status: 'ok' })
+            mockApiGet.mockImplementation(async (url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 8080, localPort: 8080, host: '', name: 'API', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                isTunnelConnected: async () => true,
+                testPortReachable: vi.fn(async () => true),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { setPortEnabled, tunnelStatus } = usePortForward()
+
+            expect(tunnelStatus.value).toBe('unknown')
+
+            await setPortEnabled(8080, true)
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            expect(tunnelStatus.value).toBe('ok')
 
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
@@ -1685,6 +1851,54 @@ describe('usePortForward', () => {
             mockIsAppMode.value = false
         })
 
+        it('clears connectingPorts when the native bind resolves true (Electron)', async () => {
+            // Electron's addForwardedPort returns Promise<boolean> and resolves
+            // true once the local listener is bound. Android returns void and
+            // reports through the CustomEvent instead, so this is the ONLY
+            // success signal the desktop shell has — without it the dot stayed
+            // amber until the user pressed reconnect, even though the port was
+            // genuinely listening.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue(true)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            // The bind promise resolved during the await, so the pending
+            // indicator is already gone — no reconnect click needed.
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('keeps connectingPorts pending when the native bind returns void (Android)', async () => {
+            // Android's addForwardedPort is synchronous void: it cannot report
+            // success inline, so the port must stay pending until the native
+            // CustomEvent arrives. Pins that the Electron success branch above
+            // does not accidentally clear the Android case.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            await Promise.resolve()
+            await Promise.resolve()
+            expect(connectingPorts.value.has(3000)).toBe(true)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
         it('removes port from connectingPorts on native callback failure', async () => {
             mockIsAppMode.value = true
             mockApiPost.mockResolvedValue({ localPort: 3000 })
@@ -1760,6 +1974,168 @@ describe('usePortForward', () => {
             await loadPorts(true)
 
             expect(connectingPorts.value.has(3000)).toBe(false)
+        })
+
+        it('re-keys the server and the pending set when the native bind lands on another port', async () => {
+            // Desktop returns the ACTUAL port when the requested one was taken
+            // locally. The server registry (DELETE/PUT/enable are keyed by it)
+            // and the UI URL must follow, or they point at a port nothing
+            // listens on.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3001, host: '', name: 'App', protocol: 'http', active: false }] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue({ ok: true, port: 3001 })
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            const actual = await registerPort(3000, 'App', 'http')
+
+            // The caller gets the real port (a localhost-URL click must open it).
+            expect(actual).toBe(3001)
+            // The rebind endpoint was called with (requested, actual).
+            expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports/rebind', { localPort: 3000, newLocalPort: 3001 })
+            // The pending indicator followed the move rather than clearing on the
+            // now-unused requested port.
+            expect(connectingPorts.value.has(3001)).toBe(true)
+            expect(connectingPorts.value.has(3000)).toBe(false)
+            // No misleading "check the service" toast for a local port conflict.
+            expect(mockToastShow).not.toHaveBeenCalledWith('portForward.portUnreachable', expect.anything())
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('releases the rebound listener and reports a conflict when the server refuses the re-key', async () => {
+            // Another mapping may take the port between our local bind and the
+            // rebind call (409). The listener we bound must be released, and the
+            // user must see the port-specific copy, not "check the service".
+            mockIsAppMode.value = true
+            mockApiPost.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports/rebind') return Promise.reject(new Error('409'))
+                return Promise.resolve({ localPort: 3000 })
+            })
+            mockApiGet.mockResolvedValue({ ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: false }] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue({ ok: true, port: 3001 })
+            const mockRemoveForwardedPort = vi.fn()
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort, removeForwardedPort: mockRemoveForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            const actual = await registerPort(3000, 'App', 'http')
+
+            expect(actual).toBe(3000)
+            // The orphaned listener is torn down — never left bound while the
+            // registry has no entry for it.
+            expect(mockRemoveForwardedPort).toHaveBeenCalledWith(3001)
+            expect(mockToastShow).toHaveBeenCalledWith('portForward.portConflict', expect.objectContaining({ type: 'error' }))
+            expect(mockToastShow).not.toHaveBeenCalledWith('portForward.portUnreachable', expect.anything())
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('reports a local bind conflict with the port-specific toast', async () => {
+            // The desktop main process distinguishes an occupied port from an
+            // unreachable tunnel; the conflict copy must not be the
+            // "check if the service is running" one.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue({ ok: false, reason: 'conflict' })
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+
+            expect(mockToastShow).toHaveBeenCalledWith('portForward.portConflict', expect.objectContaining({ type: 'error' }))
+            expect(mockToastShow).not.toHaveBeenCalledWith('portForward.portUnreachable', expect.anything())
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('keeps the "unreachable" copy for a non-conflict bind failure', async () => {
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue({ ok: false, reason: 'unreachable' })
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+
+            expect(mockToastShow).toHaveBeenCalledWith('portForward.portUnreachable', expect.objectContaining({ type: 'error' }))
+            expect(mockToastShow).not.toHaveBeenCalledWith('portForward.portConflict', expect.anything())
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('re-keys on the Android event when the bound port differs from the requested one', async () => {
+            // Android's verdict arrives as a CustomEvent carrying both ports.
+            // When the listener had to move, the server registry and the pending
+            // set must follow, and the user must be told which port is now live.
+            mockIsAppMode.value = true
+            mockApiPost.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports/rebind') return Promise.resolve({ status: 'ok' })
+                return Promise.resolve({ localPort: 3000 })
+            })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, connectingPorts } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                detail: { localPort: 3001, requestedLocalPort: 3000, success: true },
+            }))
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports/rebind', { localPort: 3000, newLocalPort: 3001 })
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portRebound',
+                expect.objectContaining({ type: 'info' }),
+            )
+            expect(connectingPorts.value.has(3000)).toBe(false)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('shows the conflict copy on an Android bind conflict', async () => {
+            // The Android host reports `reason: 'conflict'` when no free port
+            // could be bound; that must not surface as "check the service".
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            const mockAddForwardedPort = vi.fn().mockResolvedValue(undefined)
+            ;(window as any).ClawBenchNative = { addForwardedPort: mockAddForwardedPort }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                detail: { localPort: 3000, success: false, reason: 'conflict' },
+            }))
+
+            expect(mockToastShow).toHaveBeenCalledWith('portForward.portConflict', expect.objectContaining({ type: 'error' }))
+            expect(mockToastShow).not.toHaveBeenCalledWith('portForward.portUnreachable', expect.anything())
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
         })
     })
 
@@ -2309,6 +2685,70 @@ describe('usePortForward', () => {
             // Server says active, but the local listener is dead → not active.
             expect(seen.length).toBeGreaterThan(0)
             expect(seen.every(p => p.active === false)).toBe(true)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not let a pre-bind probe stick: the success event must re-probe to green', async () => {
+            // Regression: creating a mapping showed a RED dot until the user hit
+            // refresh, even though the forward worked. registerPort's
+            // fire-and-forget loadPorts probes the listener BEFORE Android's
+            // async bind completes, so it records false. The native success
+            // event then calls loadPorts again — and that second round must
+            // actually apply its result, or the stale false is what the dot
+            // renders until a manual refresh.
+            //
+            // The race is only visible when the second round overlaps the first:
+            // refreshLocalReachability() drops an overlapping round outright
+            // (probingReachability), so the good result is discarded and the
+            // stale false survives. The deferred probe below forces that overlap.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true, enabled: true }],
+            })
+            // The FIRST probe (pre-bind) is held open; later probes answer true.
+            let releaseFirst: (v: boolean) => void = () => {}
+            let probes = 0
+            const mockTest = vi.fn(() => {
+                probes += 1
+                if (probes === 1) {
+                    return new Promise<boolean>((resolve) => { releaseFirst = resolve })
+                }
+                return Promise.resolve(true)
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                testPortReachable: mockTest,
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, localReachable } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            // Let registerPort's loadPorts reach the (held) probe.
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+            expect(probes).toBeGreaterThanOrEqual(1)
+
+            // The native verdict arrives while that probe is still in flight.
+            window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                detail: { localPort: 3000, success: true },
+            }))
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            // The pre-bind probe now resolves false — it must NOT win.
+            releaseFirst(false)
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(localReachable.value.get(3000)).toBe(true)
 
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false

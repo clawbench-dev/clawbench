@@ -181,7 +181,7 @@
           </div>
         </div>
         <template v-else>
-          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
+          <div :ref="(el) => setSubagentPillRef(subagentGroupKey(bi, block), el)" class="chat-tool-call" :class="{ done: block.done, 'chat-tool-call-group': hasSubagentGroup(block), 'chat-tool-call-group-open': hasSubagentGroup(block) && isSubagentGroupOpen(bi, block) }" :data-category="getToolIcon(block.name).category" :style="memberAccentStyle(block)" @click.stop="handleToolClick(block, key(bi), absIdx(bi))">
             <component :is="getToolIcon(block.name).icon" :size="12" class="tool-icon" />
             <span class="tool-name">{{ toolDisplayName(block.name, block.input, block.display_name) }}</span>
             <span v-if="toolCallSummary(block)" class="tool-summary">{{ toolCallSummary(block) }}</span>
@@ -366,6 +366,7 @@ import i18n from '@/i18n'
 import { handleToolAction, shouldAutoExpandTool, updateAskSubmitState, classifyAskQuestionsInput, restoreAskStatesInContainer, handleAskSupplementaryInput } from '@/utils/renderToolDetail.ts'
 import { askCardKey } from '@/utils/askQuestionState.ts'
 import { getToolIcon, toolDisplayName } from '@/utils/icons'
+import { teamMemberColorVar } from '@/utils/teamMemberColor'
 import { Brain, ChevronDown, ChevronUp, AlertCircle, AlertTriangle, XCircle, CheckCircle2 } from 'lucide-vue-next'
 import TaskChatCard from '@/components/chat/TaskChatCard.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
@@ -1007,6 +1008,20 @@ function subagentStepCount(agentToolId: string | undefined): number {
 /** Whether the Agent block has a sub-agent group to render. */
 function hasSubagentGroup(block: any): boolean {
   return !!block?.id && childBlocksOf(block.id).length > 0
+}
+
+/**
+ * Per-block accent style for Agent Team members.
+ *
+ * An Agent card that hosts a team member's timeline is attributed to that member
+ * (member_name/member_color on the block, see codebuddy_team_bridge.go). Setting
+ * --subagent-accent on the card makes the group border match the member's colour
+ * in the roster; a block without attribution keeps the default accent.
+ */
+function memberAccentStyle(block: any): Record<string, string> | undefined {
+  const color = block?.member_color
+  if (!color) return undefined
+  return { '--subagent-accent': teamMemberColorVar(color) }
 }
 
 /** Forward a child block's tool-detail event with its real root index. */
@@ -3563,6 +3578,23 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.content-blocks .tool-detail .permission-team-member {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.content-blocks .tool-detail .permission-team-member__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }
 
 .content-blocks .tool-detail .permission-tool-name {

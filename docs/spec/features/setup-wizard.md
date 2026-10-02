@@ -58,11 +58,12 @@ sequenceDiagram
 
 ### 功能清单
 
-- **后端检测面板**：显示所有 14 个注册后端（`internal/model/BackendRegistry`），每项标注：
+- **后端检测面板**：显示所有 15 个注册后端（`internal/model.BackendRegistry`），每项标注：
   - 后端名称 + 描述
   - 是否已检测到 CLI（来自 `agents` 表）
   - 安装命令（`BackendSpec.InstallCmd`，如 `"npm install -g @anthropic-ai/claude-code"`）
   - ACP 能力（是否支持 `Transport: "acp-stdio"`）
+- **检测期间显示加载指示器**：`GET /api/backends` 未返回前，面板显示加载态而不是空白（否则用户看到的是一个空框，会以为面板坏了）。每项也带一个小的状态 spinner，直到该后端的检测结果落定
 - **手动刷新**：`POST /api/agents/rescan` 触发 `model.RefreshAgents`（`internal/model/refresh.go`）重新扫描 PATH 中的 CLI
 - **安装对话框**：`AgentInstallDialog` 组件打开后显示安装命令和复制按钮，引导用户在终端执行
 - **持久化关闭状态**：用户关闭后写入 `localStorage['clawbench_welcome_dismissed']`，下次不再自动显示

@@ -55,7 +55,7 @@ vi.mock('@/utils/chatRenderUtils.ts', () => ({
   getThumbWidth: () => 800,
 }))
 vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  usePlatformDetect: () => ({ isPC: { value: true } }),
+  useWideScreenLayout: () => ({ isWideScreen: { value: true } }),
 }))
 vi.mock('@/composables/useWorktreeAnnotation.ts', () => ({
   annotateWorktreePathsIn: () => ({ detectedWorktreePaths: [], applied: false }),

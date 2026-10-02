@@ -80,6 +80,7 @@ AlreadyGitRepo: 已经是Git仓库
 NotAGitRepoShort: 不是Git仓库
 InvalidPortNumber: "无效的端口号: {{.Port}}"
 InvalidPortInQuery: 查询中的端口号无效
+PortAlreadyRegistered: 该本地端口已被另一条映射占用
 TaskIdRequired: 任务ID为必填项
 TaskNotFound: 任务未找到
 TaskFieldsRequired: 名称、cron表达式、智能体ID和提示词为必填项
@@ -132,6 +133,7 @@ NothingToRewind: 没有可回溯的内容 — 这是会话中的最后一条消�
 InvalidAgentID: 无效的智能体 ID
 Session: 会话
 SearchQueryRequired: 请输入搜索关键词
+UserGuideNotAvailable: 本实例的用户手册不可用
 InvalidRegex: '正则表达式无效：{{.Error}}'
 UpgradeInProgress: 升级正在进行中
 AlreadyLatestVersion: 已是最新版本

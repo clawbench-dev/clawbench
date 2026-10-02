@@ -59,7 +59,7 @@ export interface ExportOptions {
     /** Current UI locale ('zh' | 'en' | ...). Localizes embedded labels. */
     locale?: string
     /** Desktop rendering mode (affects thumbnail width). Defaults to platform detect. */
-    isPC?: boolean
+    isWideScreen?: boolean
 }
 
 /** One image that could not be embedded into the exported HTML. */
@@ -1157,7 +1157,7 @@ export async function exportMarkdownToHtml(options: ExportOptions): Promise<Expo
     // 1. Render through the shared file-preview pipeline.
     const { html: renderedHtml, detectedPaths } = buildMarkdownPreviewDom(
         { content, path, projectRoot, homeDir },
-        { isPC: options.isPC }
+        { isWideScreen: options.isWideScreen }
     )
 
     // 2. Mount content into a HIDDEN host on the live document. Mermaid's
@@ -1254,14 +1254,21 @@ html, body { margin: 0; padding: 0; font-size: 15px; line-height: 1.6; font-fami
 /* ─── Universal box-sizing reset (matches app base.css) ─── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 
-/* ─── Scrollbar styling (matches app base.css) ─── */
+/* ─── Scrollbar styling (matches app base.css) ───
+   Literal px rather than a shared token: this document only serializes rules
+   that match the content container, so a :root custom property would not
+   survive into the export. Uniform 4px, matching the app. */
 ::-webkit-scrollbar { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 ::-webkit-scrollbar-button { display: none; }
 ::-webkit-scrollbar-corner { background: transparent; }
-* { scrollbar-color: var(--scrollbar-thumb) transparent; }
+/* Firefox only — Chromium 121+ drops every ::-webkit-scrollbar rule above
+   (arrows included) as soon as scrollbar-color is set. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-color: var(--scrollbar-thumb) transparent; scrollbar-width: thin; }
+}
 
 /* ─── Theme variables + content styles (rules hitting the exported DOM) ─── */
 ${css}

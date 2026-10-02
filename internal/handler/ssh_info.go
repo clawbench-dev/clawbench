@@ -33,6 +33,28 @@ func GetSSHServer() *ssh.Server {
 	return s
 }
 
+// ClearSSHServer unpublishes s, but only if it is still the published server.
+//
+// This is a compare-and-clear rather than SetSSHServer(nil) because the caller
+// is a bind-failure path that runs asynchronously: by the time ListenAndServe
+// reports failure, a hot-reload may already have installed a successor on a
+// different port. An unconditional nil would then silently unpublish a healthy
+// server, leaving /api/ssh/info reporting "disabled" while the tunnel actually
+// works.
+//
+// Callers publish with SetSSHServer before starting ListenAndServe (the port
+// must be visible to handlers while the listener comes up), so a failure has
+// to retract that earlier publication — otherwise the reference outlives the
+// listener and /api/config/test dials a port nothing is listening on, which is
+// exactly the "SSH tunnel server is not listening on port 20001" report.
+func ClearSSHServer(s *ssh.Server) {
+	sshServerMu.Lock()
+	if sshServerRef == s {
+		sshServerRef = nil
+	}
+	sshServerMu.Unlock()
+}
+
 // ServeSSHInfo returns the minimal SSH info an unauthenticated client needs to
 // discover the tunnel port.
 // GET /api/ssh/info

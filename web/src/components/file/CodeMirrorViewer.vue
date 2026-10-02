@@ -1,6 +1,17 @@
 <template>
   <div class="cm-viewer" :class="{ 'is-editable': editable, 'cm-readonly': !editable }">
     <div ref="editorHost" class="cm-host"></div>
+
+    <!-- Change navigation: prev/next over the diff markers, plus clear. Hidden
+         while editing (the toolbar owns the surface then). -->
+    <FileChangeNav
+      v-if="!editable"
+      :count="changeNav.count.value"
+      :index="changeNav.index.value"
+      @prev="changeNav.prev"
+      @next="changeNav.next"
+      @clear="clearChanges"
+    />
     <div v-if="editable" class="code-editor-actions">
       <span class="code-editor-status">
         <span class="dirty-dot" v-if="dirty"></span>
@@ -24,7 +35,7 @@
 </template>
 
 <script setup>
-import { ref, shallowRef, watch, onMounted, onUnmounted } from 'vue'
+import { ref, shallowRef, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Compartment, EditorState, RangeSetBuilder } from '@codemirror/state'
 import { EditorView, lineNumbers, Decoration, gutter, GutterMarker, keymap } from '@codemirror/view'
@@ -34,12 +45,15 @@ import { searchPanel, searchPanelField, searchPanelToggle, openSearchPanelComman
 import { syntaxHighlighting } from '@codemirror/language'
 import { buildLangExtension, buildCompletionExtension } from '@/utils/codeEditorLang'
 import { codeHighlightStyle } from '@/utils/codeHighlightStyle'
-import { diffMarkers, openDiffDrawer } from '@/composables/useMarkdownDiff.ts'
-import { flashRanges, flashType } from '@/composables/useFileRefresh.ts'
+import { diffMarkers, openDiffDrawer, clearDiffMarkers } from '@/composables/useMarkdownDiff.ts'
+import { flashRanges, flashType, syncMarkersFor } from '@/composables/useFileRefresh.ts'
+import { clearBaseline } from '@/composables/useFileChangeBaseline.ts'
+import { useChangeNav } from '@/composables/useChangeNav.ts'
+import FileChangeNav from '@/components/file/FileChangeNav.vue'
 import { parseLineRanges, flattenLineNumbers } from '@/utils/lineRanges.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
-import { LINE_FLASH_MS } from '@/utils/domFlash'
+import { LINE_FLASH_MS, flashElement } from '@/utils/domFlash'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
 
@@ -71,6 +85,75 @@ const editorHost = ref(null)
 // breaks the Undo/Redo buttons.
 const view = shallowRef(null)
 const diffLineMap = ref(new Map())
+
+// ─── Change navigation (prev/next over the markers) ───
+// One target per marker: its first line, sorted ascending (markers may arrive
+// grouped per change, not in document order). Keeping the markers alongside the
+// sorted lines lets the flash step back from a target index to its marker id.
+const sortedMarkers = computed(() =>
+    [...diffMarkers.value].sort((a, b) => (a.lineNumbers?.[0] ?? 1) - (b.lineNumbers?.[0] ?? 1))
+)
+const markerLines = computed(() => sortedMarkers.value.map(m => m.lineNumbers?.[0] ?? 1))
+// A programmatic jump (scrollToLine) must not be read back as a user scroll:
+// the viewport-line event would then re-derive the index from wherever the
+// flash left the viewport, snapping the pill off the change just selected.
+let suppressScrollSync = false
+const changeNav = useChangeNav(
+    markerLines,
+    (i) => {
+        const marker = sortedMarkers.value[i]
+        const line = markerLines.value[i]
+        if (!marker || !line) return
+        suppressScrollSync = true
+        scrollToLine(line)
+        // Highlight the gutter rail we landed on, mirroring the markdown
+        // surface. scrollToLine flashes the changed LINE; this makes the M/D/+
+        // rail itself light up so the target reads at a glance.
+        requestAnimationFrame(() => {
+            suppressScrollSync = false
+            flashGutterRail(marker.id)
+        })
+    },
+    computed(() => props.file?.path),
+)
+
+/** Highlight the diff-gutter marker with the given id after the nav lands on it. */
+function flashGutterRail(markerId) {
+    // Match on the dataset rather than a CSS attribute selector: marker ids can
+    // contain characters a selector would need escaping for, and CSS.escape is
+    // absent in some environments (jsdom). CodeMirror only renders the visible
+    // lines, so an off-screen marker simply has no element to flash.
+    const els = editorHost.value?.querySelectorAll('.cm-diff-gutter-marker')
+    if (!els) return
+    for (const el of els) {
+        if (el.dataset.markerId === markerId) {
+            flashElement(el, { className: 'cm-diff-gutter-rail-flash' })
+            return
+        }
+    }
+}
+
+/**
+ * Follow manual scrolling on the code surface: the editor already emits
+ * `cm-editor-viewport-line` (the line at the viewport's vertical middle), which
+ * TocPanel consumes. Reuse it so the pill's "current change" tracks what the
+ * reader is looking at, matching the markdown surface's scroll tracking.
+ */
+function onViewportLine(e) {
+    if (suppressScrollSync) return
+    const d = e.detail
+    if (!d || (d.path && d.path !== props.file?.path)) return
+    // Targets are line numbers, so the viewport-middle line is the position to
+    // sync from (last change at or above it).
+    changeNav.syncIndexFromScroll(d.line)
+}
+
+/** Drop this file's baseline and its published markers. */
+function clearChanges() {
+    const path = props.file?.path
+    if (path) clearBaseline(path)
+    clearDiffMarkers()
+}
 const quoteQuestion = useQuoteQuestion()
 const dialog = useDialog()
 const canUndo = ref(false)
@@ -538,12 +621,15 @@ onMounted(() => {
     mountCompletion()
     sticky.init(view.value, props.file?.path, stickyScrollEnabled())
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
+    window.addEventListener('cm-editor-viewport-line', onViewportLine)
     document.addEventListener('pointerup', onDocPointerUp)
     attachViewportLineDispatch()
+    restoreMarkers()
 })
 
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
+    window.removeEventListener('cm-editor-viewport-line', onViewportLine)
     document.removeEventListener('pointerup', onDocPointerUp)
     detachViewportLineDispatch()
     if (pendingScrollRAF) cancelAnimationFrame(pendingScrollRAF)
@@ -621,9 +707,19 @@ watch(() => props.content, (c) => {
 })
 
 // Re-init sticky scroll when switching to a different file (new symbol set).
+// Also re-derive the change markers from the accumulated baseline: this
+// component is NOT remounted on a file switch (it watches file.path), so the
+// baseline is what lets switch-away-and-back restore the markers.
 watch(() => props.file?.path, (path) => {
     if (view.value) sticky.init(view.value, path, stickyScrollEnabled())
+    restoreMarkers()
 })
+
+/** Re-derive this file's markers from the accumulated baseline. */
+function restoreMarkers() {
+    const f = props.file
+    if (f?.path && f.content) syncMarkersFor(f.path, 'code', f.content)
+}
 
 function getValue() {
     return view.value ? view.value.state.doc.toString() : (props.content || '')
@@ -843,6 +939,12 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     .cm-diff-gutter-marker:hover {
         background: color-mix(in srgb, var(--accent-color) 20%, transparent);
     }
+}
+/* Change-navigation landed on this gutter label: pulse it in the marker's own
+   accent. Class toggled by flashElement(); keyframes + reduced-motion handling
+   live in code-viewer.css (the shared flash family). */
+.cm-diff-gutter-rail-flash {
+    animation: diff-rail-flash var(--flash-duration, 0.7s) ease-out forwards;
 }
 /* Diff line backgrounds + leading rail.
    Declared in the shared diff-row stylesheet (css/diff-rows.css) so a changed

@@ -567,3 +567,68 @@ func TestServeSSHInfoFull_MixedDirectionsRenderBothFlags(t *testing.T) {
 	assert.Contains(t, cmd, fmt.Sprintf("-L %d:localhost:5173", fwdPort))
 	assert.Contains(t, cmd, fmt.Sprintf("-R %d:localhost:3000", revPort))
 }
+
+// --- ClearSSHServer tests ---
+
+func TestClearSSHServer_ClearsMatchingReference(t *testing.T) {
+	origSSH := sshServerRef
+	defer func() { sshServerRef = origSSH }()
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "pw", nil)
+	SetSSHServer(srv)
+
+	ClearSSHServer(srv)
+
+	assert.Nil(t, GetSSHServer(), "the published server should have been cleared")
+}
+
+func TestClearSSHServer_LeavesSuccessorUntouched(t *testing.T) {
+	// The bind failure that clears the reference runs asynchronously. If a
+	// hot-reload installed a successor in the meantime, the late failure must
+	// not unpublish the healthy server — otherwise /api/ssh/info reports
+	// "disabled" while the tunnel actually works.
+	origSSH := sshServerRef
+	defer func() { sshServerRef = origSSH }()
+
+	failed := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "pw", nil)
+	successor := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20002}, 20000, "pw", nil)
+
+	SetSSHServer(successor)
+	ClearSSHServer(failed) // the late failure of the *previous* server
+
+	assert.Same(t, successor, GetSSHServer(), "a late failure must not unpublish its successor")
+}
+
+func TestClearSSHServer_NilReferenceIsNoop(t *testing.T) {
+	origSSH := sshServerRef
+	defer func() { sshServerRef = origSSH }()
+
+	SetSSHServer(nil)
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "pw", nil)
+
+	ClearSSHServer(srv) // must not panic
+
+	assert.Nil(t, GetSSHServer())
+}
+
+// TestServeSSHInfo_ReportsDisabledAfterBindFailure pins the user-visible
+// symptom: a server whose listener never bound must not be published, or
+// /api/ssh/info advertises a port nothing is listening on and the port-forward
+// connectivity test dials a dead port.
+func TestServeSSHInfo_ReportsDisabledAfterBindFailure(t *testing.T) {
+	origSSH := sshServerRef
+	defer func() { sshServerRef = origSSH }()
+
+	srv := ssh.NewServer(model.PortForwardConfig{Enabled: true, Port: 20001}, 20000, "pw", nil)
+	SetSSHServer(srv)
+	ClearSSHServer(srv)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/ssh/info", http.NoBody)
+	w := httptest.NewRecorder()
+	ServeSSHInfo(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var result map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, false, result["enabled"], "a server that failed to bind must not be advertised")
+}

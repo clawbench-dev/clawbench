@@ -506,6 +506,15 @@ func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueI
 
 	mergedFiles := mergeQueuedFiles(parts)
 
+	// Merging is only meaningful if the result carries something. Two
+	// attachment-only messages whose attachments are identical (fileEntryKey
+	// dedupes them) collapse to an empty body AND an empty file list — a queue
+	// row the user cannot send, and one the UI renders as "attachment" while
+	// opening it shows nothing. Decline instead: the originals stay queued.
+	if mergedContent == "" && len(mergedFiles) == 0 {
+		return QueuedRow{}, nil, false, nil
+	}
+
 	head := parts[0]
 	var filesJSON string
 	if len(mergedFiles) > 0 {

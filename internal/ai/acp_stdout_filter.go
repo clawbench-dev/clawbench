@@ -39,6 +39,12 @@ const (
 //     parsed line so a side channel can claim responses the SDK would drop. This
 //     is a tee, not a steal — the line is still forwarded to the SDK.
 //
+//  5. Notification tee: a rawNotificationSink (see acp_raw_notification.go)
+//     receives every `session/update` line so the client can read extension
+//     variants the SDK's SessionUpdate union misclassifies (it re-types an
+//     unknown discriminator as SessionInfoUpdate, dropping the payload). Also a
+//     tee, not a steal.
+//
 // The filter runs a background goroutine that reads from the underlying source and
 // writes filtered output to an io.Pipe. Closing the filter (via Close) unblocks any
 // pending reads, preventing the ACP connection cleanup from hanging when the agent
@@ -60,6 +66,10 @@ type acpStdoutFilter struct {
 	// an atomic.Value because it is written once after the pump starts and read
 	// on the pump goroutine.
 	rawSink atomic.Value // holds rawResponseSink
+
+	// notifSink, when set, is handed every `session/update` line (see
+	// SetNotificationSink). Same atomic.Value discipline as rawSink.
+	notifSink atomic.Value // holds rawNotificationSink
 }
 
 // SetRawSink installs a sink that receives every parsed line. Must be called at
@@ -73,6 +83,21 @@ func (f *acpStdoutFilter) SetRawSink(s rawResponseSink) {
 func (f *acpStdoutFilter) dispatchRawSink(line []byte) {
 	if s, ok := f.rawSink.Load().(rawResponseSink); ok && s != nil {
 		s.DispatchRawResponse(line)
+	}
+}
+
+// SetNotificationSink installs a sink that receives every `session/update`
+// notification line (the raw JSON-RPC envelope). Must be called at most once
+// per filter.
+func (f *acpStdoutFilter) SetNotificationSink(s rawNotificationSink) {
+	f.notifSink.Store(s)
+}
+
+// dispatchNotificationSink forwards a session/update line to the registered
+// sink, if any. Never blocks (sinks must not block — this runs on the pump).
+func (f *acpStdoutFilter) dispatchNotificationSink(line []byte) {
+	if s, ok := f.notifSink.Load().(rawNotificationSink); ok && s != nil {
+		s.DispatchRawNotification(line)
 	}
 }
 
@@ -108,6 +133,14 @@ func (f *acpStdoutFilter) pump(src io.Reader) {
 		// id carries its own string prefix; the line is still written to the SDK
 		// below, which no-ops ids it does not recognize.
 		f.dispatchRawSink(fixed)
+
+		// Tee agent→client JSON-RPC messages so the client can read both
+		// extension session/update variants and custom notification methods the
+		// SDK misclassifies or drops. Same tee discipline: the line is still
+		// written to the SDK below.
+		if bytes.Contains(fixed, jsonRPCMethodMarker) {
+			f.dispatchNotificationSink(fixed)
+		}
 
 		// Extract SessionModelState from session/new or session/resume responses.
 		// Some agents (e.g., kimi) return a "models" field that the ACP Go SDK

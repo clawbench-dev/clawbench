@@ -151,9 +151,61 @@ playwright-cli -s=shot close
 - 中间聊天有内容的会话由「当前项目 + 上次会话」决定；若要指定会话，在会话侧栏 `.session-sidebar .session-item` 里点击目标项。
 - 截图前确认五件事（DOM）：`.markdown-body` 可见、`.toc-dock` 可见、`.chat-tab-panel` 有文本长度、`.session-sidebar` 可见、无 pop/up/wel。
 
-## Hero 宣传图（product_hero.html）制作要点
+## Hero 宣传图（product_hero.html）
 
-- 源文件 `docs/screenshots/product_hero.html`（1920×1080 画布），素材在 `docs/screenshots/product_hero_assets/`；设备截图素材为纵向长图，经 `object-fit: cover` 裁入横屏/竖屏设备框。
-- 改完用 `python3 -m http.server 8899 --directory docs/screenshots` 起静态服务，再 `playwright-cli open http://127.0.0.1:8899/product_hero.html`，**务必 `resize 1920 1080`**（viewport 默认 1280×720 会只截到画布一角）。
-- 桌面端截图素材即上文流程产物（推荐 1080p 的桌面三栏画面）。
-- 已踩坑：在已铺满 brand/tablet/phone/features/footer 的现有画布里「插入」一台显示器，会和前景设备互相遮挡、支架被盖。三端融合需整体重排或把显示器作为后景完整露出，勿在拥挤布局上硬叠。
+README 顶部头图：`README.md` 用 `product_hero.png`，`README.en.md` 用 `product_hero.en.png`。源文件是纯 HTML/CSS 画布（1920×1080），可编辑后用 Playwright 重新导出 PNG。
+
+### 素材
+
+| 文件 | 说明 |
+|------|------|
+| `docs/screenshots/product_hero.html` / `product_hero.en.html` | 中 / 英纯 HTML/CSS 源（可编辑） |
+| `docs/screenshots/product_hero.png` / `product_hero.en.png` | 中 / 英导出图（1920×1080，2x DPR） |
+| `docs/screenshots/product_hero_assets/bg_tech.jpg` | MiniMax 生成的科技风背景 |
+| `docs/screenshots/product_hero_assets/phone_screenshot.jpg` | 手机端截图 |
+| `docs/screenshots/product_hero_assets/tablet_screenshot.jpg` | 平板端截图 |
+| `docs/screenshots/product_hero_assets/logo.png` | ClawBench Logo |
+
+设备截图素材为纵向长图，经 `object-fit: cover` 裁入横屏/竖屏设备框；桌面端截图素材即上文流程产物（推荐 1080p 的桌面三栏画面）。
+
+### 在线预览
+
+浏览器直接打开 `docs/screenshots/product_hero.html` 查看完整交互版。
+
+### 自定义
+
+编辑 `product_hero.html`：
+
+- **设备尺寸**：`.tablet-screen` / `.phone-screen` 的 `width` / `height`
+- **功能亮点**：右侧 `.feature-card` 区域
+- **品牌信息**：左上角 `.brand` 区域
+- **背景**：替换 `bg_tech.jpg` 或改 `.bg-image` 的 `filter`
+
+### 重新导出
+
+改完用 `python3 -m http.server 8899 --directory docs/screenshots` 起静态服务，再：
+
+```bash
+cd docs
+node -e "
+const { chromium } = require('playwright');
+(async () => {
+  const browser = await chromium.launch();
+  const page = await browser.newPage({
+    viewport: { width: 1920, height: 1080 },
+    deviceScaleFactor: 2,
+  });
+  await page.goto('file://' + process.cwd() + '/screenshots/product_hero.html');
+  await page.waitForTimeout(2000);
+  await page.screenshot({ path: 'screenshots/product_hero.png', fullPage: false });
+  await browser.close();
+  console.log('Done');
+})();
+"
+```
+
+或 `playwright-cli open http://127.0.0.1:8899/product_hero.html` 后**务必 `resize 1920 1080`**（viewport 默认 1280×720 会只截到画布一角）。
+
+### 已踩坑
+
+在已铺满 brand/tablet/phone/features/footer 的现有画布里「插入」一台显示器，会和前景设备互相遮挡、支架被盖。三端融合需整体重排或把显示器作为后景完整露出，勿在拥挤布局上硬叠。

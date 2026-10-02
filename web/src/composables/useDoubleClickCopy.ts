@@ -46,7 +46,7 @@ export interface DoubleClickCopyOptions {
  */
 export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
     const toast = inject<ToastShow | null>('toast', null)
-    const { isPC } = usePlatformDetect()
+    const { isTouchPrimary } = usePlatformDetect()
     let lastTarget: EventTarget | null = null
     let lastTime = 0
     const DBLCLICK_THRESHOLD = 300 // ms，与浏览器默认双击间隔一致
@@ -224,8 +224,8 @@ export function useDoubleClickCopy(options?: DoubleClickCopyOptions) {
             return
         }
 
-        // PC 模式禁用双击复制段落
-        if (isPC.value) {
+        // 鼠标/键盘环境禁用双击复制段落（触摸面才用双击）
+        if (!isTouchPrimary.value) {
             return
         }
 

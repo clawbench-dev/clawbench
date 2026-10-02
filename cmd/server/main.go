@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 
+	"clawbench/docs/user-guide"
 	"clawbench/internal/ai"
 	_ "clawbench/internal/ai/backends"
 	_ "clawbench/internal/ai/backends/antigravity"
@@ -775,6 +776,17 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	slog.SetDefault(slog.New(multiHandler))
 	slog.Info("server starting")
 
+	// Materialize the embedded user manual under the data directory, versioned
+	// so a new build replaces the old copy. This backs the /cb-user-guide
+	// built-in command, which points the AI at these files. Failure is
+	// non-fatal: the command reports "not available" instead of injecting a
+	// prompt that references files which were never written.
+	if dir, ugErr := userguide.Extract(model.DataDir, version.Get()); ugErr != nil {
+		slog.Warn("failed to extract user guide", "error", ugErr)
+	} else {
+		slog.Info("user guide extracted", "dir", dir)
+	}
+
 	// Ensure $SHELL reflects the user's login shell (from /etc/passwd).
 	// On Debian/Ubuntu, $SHELL may be /bin/sh (dash) when started from
 	// non-login contexts (systemd, cron, nohup), but AI CLI tools read
@@ -1074,34 +1086,24 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		proxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 
 		// Reverse mappings bind ports on the server, so ClawBench's own HTTP
-		// port must never be handed out. The SSH port is protected only when
-		// SSH is enabled: sshPort == 0 means "none", not "auto" (the SSH
-		// server's own mainPort+1 default is already hard-denied by the h2
-		// guard's SSHPort field — see tunnelGuard).
-		sshPort := 0
-		if cfg.PortForward.Enabled {
-			sshPort = cfg.PortForward.Port
-			if sshPort == 0 {
-				sshPort = port + 1
-			}
+		// port must never be handed out. The SSH port is always reserved: the
+		// listener is always on (see the start below), and reserving a port
+		// that is actually in use is the point — a reverse mapping that took
+		// 20001 would fight the tunnel itself.
+		sshPort := cfg.PortForward.Port
+		if sshPort == 0 {
+			sshPort = port + 1
 		}
 		proxyService.SetReservedPorts(reservedPortsFor(port, sshPort)...)
 		service.ProxyService = proxyService
 		defer proxyService.Stop()
 	}
 
-	if cfg.PortForward.Enabled {
-		sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-		handler.SetSSHServer(sshServerRef)
-		go func() {
-			if err := sshServerRef.ListenAndServe(); err != nil {
-				slog.Error("SSH server failed", slog.String("err", err.Error()))
-			}
-		}()
-		defer func() { sshServerRef.Close() }()
-	} else {
-		slog.Info("SSH tunnel and port forwarding disabled by config")
-	}
+	// The SSH tunnel listener is always on; see ApplyDefaults for why the
+	// switch was removed.
+	sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+	startSSHServer(sshServerRef)
+	defer func() { sshServerRef.Close() }()
 
 	// Initialize FRP tunnel (Fast Reverse Proxy for remote access from Android).
 	// FRP is disabled by default; requires user-provided frps server.
@@ -1394,8 +1396,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Count tasks
 	taskCount := scheduler.TaskCount()
 
-	// Determine SSH port
-	sshEnabled := cfg.PortForward.Enabled && sshServerRef != nil
+	// Determine SSH port. The listener is always on, so the only question is
+	// whether it actually came up (a bind failure retracts sshServerRef — see
+	// ClearSSHServer).
+	sshEnabled := sshServerRef != nil
 	sshPort := 0
 	if sshEnabled {
 		sshPort = sshServerRef.Port()
@@ -1458,6 +1462,22 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	go func() {
 		<-ctx.Done()
 		slog.Info("received shutdown signal, draining connections...")
+
+		// 0. Release the SSH tunnel port FIRST.
+		//
+		// The SSH listener is otherwise closed by the deferred
+		// sshServerRef.Close() registered earlier in main(), and defer is LIFO:
+		// it runs after every other teardown — terminal sessions (up to ~4s
+		// each), the HTTP drain, the ACP grace period. The replacement process
+		// is launched as soon as the MAIN port is free, so it reached the SSH
+		// port while this process still held it, lost the bind, and (before
+		// listenWithRetry existed) never listened again.
+		//
+		// Closing here decouples the SSH port from the unrelated teardown
+		// below: it is free within milliseconds of the shutdown signal, long
+		// before the replacement can start. The deferred Close still runs and
+		// is a no-op (closeOnce).
+		releaseSSHPortOnShutdown()
 
 		// 1. Cancel running tasks and all interactive session contexts
 		//    so their executors can finalize. Must happen before the stream waits,
@@ -1783,6 +1803,53 @@ func reserveSSHPorts(mainPort, sshPort int) {
 	service.ProxyService.SetReservedPorts(reservedPortsFor(mainPort, sshPort)...)
 }
 
+// startSSHServer publishes and starts an already-created SSH tunnel server.
+//
+// Publishing happens BEFORE ListenAndServe so handlers can see the port while
+// the listener comes up. That ordering means a bind failure must retract the
+// publication: the reference is what /api/ssh/info and the port-forward
+// connectivity test read, and a reference whose listener never bound makes the
+// test dial a dead port and report "SSH tunnel server is not listening on port
+// N" for the rest of the process lifetime — the reference is never retried.
+// ClearSSHServer is a compare-and-clear, so a concurrent hot-reload that
+// installed a successor is not clobbered by this late failure.
+//
+// Every start path (startup, hot-reload enable, hot-reload port change) goes
+// through here so the retraction cannot be forgotten in one of them — the
+// hot-reload path had it and the startup path did not, which is exactly how
+// the stale-reference bug survived.
+func startSSHServer(srv *ssh.Server) {
+	handler.SetSSHServer(srv)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil {
+			slog.Error("SSH server failed", slog.String("err", err.Error()))
+			handler.ClearSSHServer(srv)
+		}
+	}()
+}
+
+// releaseSSHPortOnShutdown closes the SSH listener at the START of shutdown,
+// before any of the slow unrelated teardown runs.
+//
+// Why it must happen first: the listener is otherwise released by the deferred
+// sshServerRef.Close() registered early in main(), and defer is LIFO — it runs
+// last, after terminal sessions (up to ~4s each), the HTTP drain and the ACP
+// grace period. The replacement process is launched as soon as the MAIN port is
+// free, so it reached the SSH port while the outgoing process still held it and
+// lost the bind. Releasing here makes the port free within milliseconds of the
+// shutdown signal, long before the replacement can start. The deferred Close
+// still runs and is a no-op (closeOnce).
+//
+// The reference is read from the handler, not main's local variable: a
+// hot-reload that changed the port or toggled SSH leaves the local one pointing
+// at an already-closed server, while the handler holds whichever listener
+// currently owns the port.
+func releaseSSHPortOnShutdown() {
+	if srv := handler.GetSSHServer(); srv != nil {
+		srv.Close()
+	}
+}
+
 // hotReloadSSH reconfigures or toggles the SSH tunnel / port-forward server on
 // hot-reload.
 //
@@ -1809,20 +1876,10 @@ func hotReloadSSH(cfg model.Config, port int) {
 		service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 	}
 
-	if !cfg.PortForward.Enabled {
-		// SSH should be disabled. Close only the SSH listener: the registry
-		// keeps serving the h2 tunnel (see shouldCreateProxyRegistry), and its
-		// reverse mappings stay usable over h2. Only the SSH port stops being
-		// reserved — mainPort stays protected.
-		if sshRef != nil {
-			sshRef.Close()
-			handler.SetSSHServer(nil)
-			slog.Info("hot-reload: SSH tunnel disabled")
-		}
-		reserveSSHPorts(port, 0)
-		return
-	}
-
+	// The SSH listener is always on (cfg.PortForward.Enabled is pinned true in
+	// ApplyDefaults and in the PATCH path), so there is no "disable it" branch
+	// here any more — the listener either needs starting, restarting on a new
+	// port, or just reconfiguring.
 	newPort := cfg.PortForward.Port
 	if newPort == 0 {
 		newPort = port + 1
@@ -1830,18 +1887,10 @@ func hotReloadSSH(cfg model.Config, port int) {
 	reserveSSHPorts(port, newPort)
 
 	if sshRef == nil {
-		// SSH was disabled, now enabled — start the SSH server. The registry
-		// already exists (created above if missing); do not create another.
-		newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-		handler.SetSSHServer(newSrv)
-		go func() {
-			if err := newSrv.ListenAndServe(); err != nil {
-				slog.Error("SSH server failed", slog.String("err", err.Error()))
-				// Only the SSH listener failed. The registry is shared with the
-				// h2 tunnel handlers, which remain usable, so leave it in place.
-				handler.SetSSHServer(nil)
-			}
-		}()
+		// SSH was disabled (or its listener failed to bind) — start it. The
+		// registry already exists (created above if missing); do not create
+		// another.
+		startSSHServer(ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService))
 		slog.Info("hot-reload: SSH tunnel enabled")
 		return
 	}
@@ -1849,13 +1898,7 @@ func hotReloadSSH(cfg model.Config, port int) {
 	if sshRef.Port() != newPort {
 		// Port changed — close old server, start new one.
 		sshRef.Close()
-		newSrv := ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-		handler.SetSSHServer(newSrv)
-		go func() {
-			if err := newSrv.ListenAndServe(); err != nil {
-				slog.Error("SSH server failed", slog.String("err", err.Error()))
-			}
-		}()
+		startSSHServer(ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService))
 		slog.Info("hot-reload: SSH tunnel restarted on new port", slog.Int("port", newPort))
 		return
 	}

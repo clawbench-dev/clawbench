@@ -8,6 +8,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -46,6 +47,53 @@ public class SshPortForwardTransportTest {
     public void addLocal_issuesTheLoopbackForward() throws Exception {
         transport.addLocal(3080, 80, "127.0.0.1");
         verify(session).setPortForwardingL("127.0.0.1", 3080, "127.0.0.1", 80);
+    }
+
+    @Test
+    public void addLocal_returnsThePortJSchActuallyBound() throws Exception {
+        // JSch returns the bound local port; the caller re-keys the server
+        // registry to it, so discarding it would desync the UI URL from the
+        // real listener. Asserted with a return value that DIFFERS from the
+        // requested port, which is exactly what the return value is for.
+        when(session.setPortForwardingL(anyString(), anyInt(), anyString(), anyInt())).thenReturn(3999);
+        assertEquals(3999, transport.addLocal(3080, 80, "127.0.0.1"));
+    }
+
+    @Test
+    public void addLocal_occupiedPortFallsBackToTheNextFreeOne() throws Exception {
+        // "cannot be bound" means the requested port is taken on this device;
+        // the transport must try the next candidate rather than fail.
+        when(session.setPortForwardingL(anyString(), anyInt(), anyString(), anyInt()))
+                .thenThrow(new JSchException("PortForwardingL: local port 127.0.0.1:3080 cannot be bound."))
+                .thenReturn(3081);
+
+        assertEquals("must bind the next free port", 3081, transport.addLocal(3080, 80, "127.0.0.1"));
+        verify(session).setPortForwardingL("127.0.0.1", 3080, "127.0.0.1", 80);
+        verify(session).setPortForwardingL("127.0.0.1", 3081, "127.0.0.1", 80);
+    }
+
+    @Test
+    public void addLocal_givesUpWhenEveryCandidateIsOccupied() {
+        try {
+            when(session.setPortForwardingL(anyString(), anyInt(), anyString(), anyInt()))
+                    .thenThrow(new JSchException("PortForwardingL: local port 127.0.0.1:3080 cannot be bound."));
+            transport.addLocal(3080, 80, "127.0.0.1");
+            org.junit.Assert.fail("an exhausted scan must report failure");
+        } catch (Exception expected) {
+            // The service drops the mapping and the frontend shows the conflict copy.
+        }
+    }
+
+    @Test
+    public void addLocal_rejectsAnInvalidPort() {
+        for (int bad : new int[]{0, -1, 65536}) {
+            try {
+                transport.addLocal(bad, 80, "127.0.0.1");
+                org.junit.Assert.fail("expected port " + bad + " to be rejected");
+            } catch (Exception expected) {
+                // expected
+            }
+        }
     }
 
     @Test

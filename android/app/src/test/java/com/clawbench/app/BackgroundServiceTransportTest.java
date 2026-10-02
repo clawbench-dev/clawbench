@@ -73,14 +73,21 @@ public class BackgroundServiceTransportTest {
         volatile boolean connected = true;
         volatile boolean localReachable = true;
         volatile Exception addLocalFailure;
+        /**
+         * The port {@code addLocal} reports as bound. Defaults to echoing the
+         * requested port; set it to simulate the transport moving to a free
+         * neighbour when the requested port is occupied.
+         */
+        volatile int addLocalBoundPort = -1;
 
         @Override
-        public void addLocal(int localPort, int targetPort, String targetHost) throws Exception {
+        public int addLocal(int localPort, int targetPort, String targetHost) throws Exception {
             addLocalCalls.incrementAndGet();
             lastLocalPort = localPort;
             lastTargetPort = targetPort;
             lastTargetHost = targetHost;
             if (addLocalFailure != null) throw addLocalFailure;
+            return addLocalBoundPort > 0 ? addLocalBoundPort : localPort;
         }
 
         @Override
@@ -322,6 +329,22 @@ public class BackgroundServiceTransportTest {
         // rewrite the Host header itself.
         assertEquals("127.0.0.1", h2.lastTargetHost);
         assertEquals(3080, h2.lastTargetPort);
+    }
+
+    @Test
+    public void addPortForward_reKeysBookkeepingWhenTheTransportBindsAnotherPort() throws Exception {
+        enableH2Preference();
+        setField("activeTransport", null);
+        // The requested port was occupied, so the transport bound 3081.
+        h2.addLocalBoundPort = 3081;
+
+        invoke("addPortForward", 3080, 80, "127.0.0.1");
+
+        // The map must be keyed by the port the listener actually bound, or a
+        // later removeForwardedPort(3081) would miss it and leak the listener.
+        assertFalse("the requested port must not linger in the map",
+                forwardedPorts().containsKey(3080));
+        assertTrue("the bound port must be tracked", forwardedPorts().containsKey(3081));
     }
 
     @Test

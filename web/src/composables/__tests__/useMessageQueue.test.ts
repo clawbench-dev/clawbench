@@ -376,6 +376,34 @@ describe('syncFromHistory — authoritative absence of a committed entry', () =>
     expect(isInFlightSend('q1')).toBe(false)
     expect(getQueue('s1')).toHaveLength(0)
   })
+
+  // WARN-501: the generation bookkeeping keys on queueId, so a queueId that is
+  // REUSED for a new message must not inherit the previous commit's generation.
+  // Otherwise a snapshot issued before the new message was committed would look
+  // "newer than the commit" and wrongly prove the new entry absent — deleting a
+  // message the user just sent.
+  it('does not let a reused queueId inherit an earlier commit generation', () => {
+    // First message commits, then is cleared — releasing its bookkeeping.
+    addQueued('s1', { queueId: 'q1', text: 'first', files: [] })
+    trackInFlightSend('q1')
+    markSendCommitted('q1')
+    const genAfterFirstCommit = beginQueueSnapshot()
+    syncFromHistory('s1', [], genAfterFirstCommit)
+    expect(getQueue('s1')).toHaveLength(0)
+
+    // The same queueId is reused for a NEW message whose POST has not resolved.
+    const genBeforeSecondCommit = beginQueueSnapshot()
+    addQueued('s1', { queueId: 'q1', text: 'second', files: [] })
+    trackInFlightSend('q1')
+
+    // A snapshot requested before the second POST resolved must NOT be able to
+    // prove the new entry absent, even though the id was committed once before.
+    syncFromHistory('s1', [], genBeforeSecondCommit)
+
+    expect(getQueue('s1').map((m) => m.queueId)).toEqual(['q1'])
+    expect(getQueue('s1')[0].text).toBe('second')
+    expect(isInFlightSend('q1')).toBe(true)
+  })
 })
 
 describe('queuedMessages / queuedCount follow setActiveQueueSession', () => {

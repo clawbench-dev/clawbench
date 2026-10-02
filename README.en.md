@@ -19,7 +19,7 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
 
-📖 **User Guides** (Chinese): [Desktop](docs/user-guid/user-guid.md) · [Mobile](docs/user-guid/user-guid-mobile.md)
+📖 **User Guide** (Chinese): [ClawBench User Guide](docs/user-guide/README.md)
 
 <p align="center">
   <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
@@ -31,7 +31,7 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### Prerequisites
 
-- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
+- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/user-guide/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
 - **Any device**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or open the server address in any browser — desktop, tablet, or phone
 
 ### npm Install
@@ -86,7 +86,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or any browse
 
 ### 📱 Run Completely on an Android Phone (Termux)
 
-> See the full guide in **[Termux (Android)](docs/TERMUX.md)**.
+> See the full guide in **[Termux (Android)](docs/user-guide/TERMUX.md)**.
 
 ClawBench runs completely on your Android phone inside [Termux](https://f-droid.org/repo/com.termux.app.apk). The pure-Go `linux-arm64` backend, the built-in web frontend, and your AI coding agents all run locally on the phone — no separate PC or server required:
 
@@ -96,39 +96,40 @@ npm install -g @xulongzhe/clawbench
 clawbench
 ```
 
-> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
+> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/user-guide/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
 
 ---
 
 ## Core Features
 
-> The table below is a feature overview. **Per-feature instructions, screenshots, and edge cases live in the [Desktop](docs/user-guid/user-guid.md) / [Mobile](docs/user-guid/user-guid-mobile.md) user guides (Chinese).**
+> The table below is a feature overview. **Per-feature instructions, screenshots, and edge cases live in the [ClawBench User Guide](docs/user-guide/README.md) (Chinese).**
 
 | Module | Highlights |
 |---|---|
-| 📁 **File Management** | Recursive browsing (120+ extensions), search & sort, list/grid views, multi-select batch ops, upload & directory-tree download, drag-and-drop move, paste upload, `.gitignore`-aware dimming, **file share links** (revocable capability tokens), **interactive OpenAPI/Swagger preview** |
-| 🎨 **Code Preview & Editing** | CodeMirror browse/edit dual mode, syntax highlighting, autocompletion (11 languages), **Sticky Scroll**, VS Code-style search bar, diff flash highlighting, **Excalidraw canvas**, path jumps with line ranges |
+| 📁 **File Management** | Recursive browsing (120+ extensions), search & sort, list/grid views, multi-select batch ops, upload & directory-tree download, drag-and-drop move, paste upload, **untitled-buffer new file** (named on first save), `.gitignore`-aware dimming, **file share links** (revocable capability tokens; in-page relative-link navigation in the share page), **interactive OpenAPI/Swagger preview** |
+| 🎨 **Code Preview & Editing** | CodeMirror browse/edit dual mode, syntax highlighting, autocompletion (11 languages), **Sticky Scroll**, VS Code-style search bar, diff flash highlighting, **Excalidraw canvas** (`.xdraw` / `.excalidraw`), path jumps with line ranges |
 | 📝 **Markdown** | Render/source toggle, TOC drawer, LaTeX, Mermaid, image lightbox, **code-link preview overlay**, **self-contained HTML export** (KaTeX fonts inlined) |
 | 📄 **Documents & Media** | Native Word / Excel / PowerPoint rendering, paged PDF with zoom, inline image/audio/video players, lightbox |
-| 🤖 **AI Agents** | **15 backends** (CodeBuddy, Claude Code, OpenCode, Codex, Qoder, VeCLI, CodeWhale, DeepSeek Harness, MiMo, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode), streaming responses, visible reasoning, **sub-agent content grouping**, thinking-depth levels, persisted model choice, persisted ACP context state, local skill scanning |
-| 💬 **AI Conversation** | Tool-call visualization, **interactive question cards**, suggested replies, slash commands (ACP + built-in merged), quote-to-ask, message queue, disconnect protection, rewind & fork, auto-summary, RAG result cards, draft restore, completion popup |
-| 📂 **Session Management** | Create / switch / archive sessions, **session tags** (project-scoped, hash-colored), unread counted **per item**, per-project session restore, swipe-to-switch toggle |
-| ⏰ **Task Scheduling** | Cron schedules (presets + custom) and **event triggers** (`issue.opened` / `pr.merged` / `pipeline_done`), 3-level breadcrumb navigation, continue-chat from run details, completion push |
+| 🤖 **AI Agents** | **15 backends** (CodeBuddy, Claude Code, OpenCode, Codex, Qoder, VeCLI, CodeWhale, DeepSeek Harness, MiMo, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode), streaming responses, visible reasoning, **sub-agent content grouping**, thinking-depth levels, persisted model choice, persisted ACP context state, **cross-agent skill discovery** (a Skill installed by any agent is visible to all agents, with git-source sync and deduplication) |
+| 💬 **AI Conversation** | Tool-call visualization, **interactive question cards**, suggested replies, slash commands (ACP + built-in merged, including **`/btw` side questions** — answered by the summary model from a session snapshot without occupying the current agent), **unified quote cards** (selection / file / issue / pipeline / message share one form; notes editable, jump back to source; a **target-session picker** appears when the chat panel is hidden, offering "add only" or "add and open"), message queue, disconnect protection, **auto-continue on abnormal termination**, rewind & fork, auto-summary, RAG result cards, draft restore, completion popup |
+| 📂 **Session Management** | Create / switch / archive / **remove** sessions, **session tags** (project-scoped, hash-colored), **AI auto-naming** (title generated by the summary model after the first message; shares one implementation with manual "generate title"), unread counted **per item**, per-project session restore, swipe-to-switch toggle, **session sharing** (public read-only link to a conversation snapshot, with in-page TOC, managed per project) |
+| ⏰ **Task Scheduling** | Cron schedules (presets + custom) and **event triggers** (`issue.opened` / `pr.merged` / `pipeline_done`), optional **pre-AI script** (cron only; a silent exit 0 skips the AI run and sends no notification), in-chat `/cb-task` creation entry, 3-level breadcrumb navigation, continue-chat from run details, completion push |
 | 🔗 **Git & Forge** | Commit history, **branch graph**, diff view, working-tree changes, three-tab management (worktree/branches/tags), swipe-to-delete; **GitHub / GitLab integration** (Activity/Issues/Merges/Pipelines tabs, "mine" filters, event-driven tasks, quote to chat, per-host credential isolation) |
-| 💻 **Web Terminal** | PTY + xterm.js, multi-session multi-tab, **three-mode gesture system**, virtual key toolbar, key/symbol config, quick commands, 157 terminal themes, mobile input drawer |
+| 💻 **Web Terminal** | PTY + xterm.js, multi-session multi-tab, **three-mode gesture system**, virtual key toolbar, key/symbol config, quick commands, **open current directory** (tracks live `cd`), **drag-and-drop upload into the shell's cwd**, 157 terminal themes, mobile input drawer |
 | 📊 **Statistics** | Usage overview (donut with cache-hit drilldown), dimension filters and chart switching, **code inventory** (gocloc per-language snapshot), **code churn** (per-author time trend) |
 | 🔊 **Speech** | **TTS**: 5 engines (Edge / MiniMax / Piper / Kokoro / MOSS-Nano), auto-summarized read-aloud; **STT**: streaming and non-streaming modes, vLLM Whisper |
-| 🔀 **SSH Tunnel** | Transparent for all protocols (HTTP/HTTPS/WS/SSE/gRPC), arbitrary target hosts, automatic port allocation, health check & reconnect, one-tap localhost URL |
-| 🎨 **Themes** | **36 named themes**, live system-follow, **custom wallpaper** (upload or local path + opacity/blur), custom fonts, quick theme picker |
+| 🔀 **SSH Tunnel** | Transparent for all protocols (HTTP/HTTPS/WS/SSE/gRPC), **bidirectional port mapping** (forward ssh -L + reverse ssh -R), arbitrary target hosts, automatic port allocation, health check & reconnect, one-tap localhost URL |
+| 🎨 **Themes** | **36 named themes**, live system-follow, **custom wallpaper** (local gallery / Bing daily / **animated styles**; opacity/blur, per-device selection), custom fonts, quick theme picker |
 | 📱 **Multi-Device** | Android App (native bridge, **floating status window**, **Live Updates / Dynamic Island**, self-update, version-mismatch detection, full i18n), installable PWA, full local run on a phone via Termux |
-| 🔔 **Notifications** | Sound + haptics, browser push, task-completion push, **DingTalk / Feishu bot push** (browse sessions and send messages from IM) |
+| 🖥️ **Desktop Client** | Electron shell hosting the same Web UI; **frameless window on Windows / Linux** (minimize/maximize/close drawn in the header; macOS keeps its native traffic lights); native system notifications (click to open session/task/repo, **still delivered while minimized**), native context menu, external links to default browser, **SSH port mapping** (keepalive + auto-reconnect), multi-server management (safeStorage-encrypted credentials, **per-server passwords**), **resolution-based auto UI scaling** (Ctrl+wheel / Ctrl+=/-/0 native zoom), **self-update** (side-by-side install + pointer switch, rollback-capable; **incremental payload** swaps only `resources/` and reuses the Electron runtime; GitHub/npm mirrors in CN), `Ctrl+Shift+R` hard refresh / `F12` DevTools |
+| 🔔 **Notifications** | Sound + haptics, desktop system notifications, task-completion push, **DingTalk / Feishu bot push** (browse sessions and send messages from IM) |
 | 🔒 **Security** | Salted SHA-256 password, path-traversal protection, Git argument-injection guards, XSS sanitization (DOMPurify), **short-lived HMAC tokens** (local requests no longer trusted by address alone), TLS auto-discovery, per-instance cookie isolation |
 
 ---
 
 ## FAQ
 
-See **[FAQ](docs/FAQ.en.md)** .
+See **[FAQ](docs/user-guide/FAQ.md)** (Chinese).
 
 ---
 

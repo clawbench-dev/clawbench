@@ -223,3 +223,54 @@ func TestMergeQueuedMessages_MintsQueueIDWhenEmpty(t *testing.T) {
 	require.True(t, ok)
 	assert.NotEmpty(t, merged.QueueID, "an empty queueID must be minted, not stored blank")
 }
+
+// TestMergeQueuedMessages_EmptyResultIsDecline pins the guard against producing
+// a queue row with nothing in it.
+//
+// The reachable trigger is whitespace-only text. The enqueue handler rejects an
+// empty message with `req.Message == ""`, which a whitespace-only string
+// passes; the merge then drops it via `strings.TrimSpace(r.Content) != ""`. So
+// two whitespace-only, attachment-less messages collapse to an empty body AND
+// an empty file list — a row the user cannot send, and one the UI renders as
+// "attachment" while opening it shows nothing. Declining keeps the originals.
+func TestMergeQueuedMessages_EmptyResultIsDecline(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Merge Empty Result")
+
+	// Whitespace-only, no attachments: passes the handler's `== ""` check.
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "   ", nil, "q-1", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "\n\t", nil, "q-2", "")
+	require.NoError(t, err)
+
+	merged, oldIDs, ok, err := service.MergeQueuedMessages(sid, "q-merged")
+	require.NoError(t, err)
+	assert.False(t, ok, "a merge with no text and no attachment must decline")
+	assert.Empty(t, oldIDs)
+	assert.Equal(t, "", merged.Content)
+
+	// The originals survive — declining must not delete them.
+	msgs, err := service.GetQueuedMessages(sid)
+	require.NoError(t, err)
+	assert.Len(t, msgs, 2, "a declined merge must leave both rows queued")
+}
+
+// TestMergeQueuedMessages_AttachmentOnlyWithDistinctFilesIsAllowed is the
+// counterweight: an empty body is fine as long as the merge carries something.
+// Without this, a blanket "empty content declines" would silently break
+// attachment-only merging, which is a legitimate flow.
+func TestMergeQueuedMessages_AttachmentOnlyWithDistinctFilesIsAllowed(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "claude", "Merge Attach Only")
+
+	_, err := service.AddQueuedMessage("/project", "claude", sid, "", []model.FileEntry{{Path: "/project/a.png"}}, "q-1", "")
+	require.NoError(t, err)
+	_, err = service.AddQueuedMessage("/project", "claude", sid, "", []model.FileEntry{{Path: "/project/b.png"}}, "q-2", "")
+	require.NoError(t, err)
+
+	merged, _, ok, err := service.MergeQueuedMessages(sid, "q-merged")
+	require.NoError(t, err)
+	require.True(t, ok, "distinct attachments are a real merge")
+	assert.Equal(t, "", merged.Content)
+	require.Len(t, merged.Files, 2)
+}

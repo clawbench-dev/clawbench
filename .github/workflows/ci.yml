@@ -411,11 +411,39 @@ jobs:
           name: android-apk
           path: android/app/build/outputs/apk/debug/clawbench-android-debug.apk
 
+  # --------------------------------------------------------------------------
+  # Playwright E2E — the full 3-browser suite (chromium/firefox/webkit).
+  #
+  # Runs on EVERY `pull_request` (and manual dispatch), like `android-e2e`
+  # below. It used to sit behind a `run-e2e` label, which meant it effectively
+  # never ran: the suite was red for a long stretch, so nobody labelled PRs and
+  # CI silently skipped all Playwright coverage (see the E2E infrastructure
+  # memory: ~60 consecutive runs with Playwright skipped). The suite is now
+  # green (324 passed / 0 failed across the three browsers), so the label gate
+  # is removed and it runs on each PR. It is skipped on `push`: the same commit
+  # is already covered by the `pull_request` event.
+  #
+  # `continue-on-error: true` (matching `android-e2e`) keeps the *workflow run*
+  # from turning red when the suite flakes. It is NOT a free pass, though: the
+  # job's own check-run still reports `failure` (observed via the API for
+  # android-e2e on 77f1d1ba — job= failure, run= success), and auto-merge.yml
+  # skips any PR whose check-runs contain a `failure`. So a genuinely red e2e
+  # still blocks auto-merge; the flag only keeps the run badge green. Treat a
+  # red e2e as blocking.
+  #
+  # Local discipline (see AGENTS.md): do NOT run this full 3-browser suite
+  # locally — it takes ~33 min and contends with concurrent agents. Locally run
+  # only the specs you added or that your change touches (`--project=chromium
+  # <spec>`); let CI cover the full matrix.
+  # --------------------------------------------------------------------------
   e2e:
     name: E2E Tests (Playwright)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-e2e')
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     continue-on-error: true
+    # A hang must fail rather than burn the 6-hour default. The full suite
+    # measures ~33 min; the margin covers a cold Playwright browser install.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

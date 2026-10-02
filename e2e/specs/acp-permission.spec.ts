@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { restoreNonBlockingMode } from '../helpers/agent-mode'
 import type { Page } from '@playwright/test'
 
 /**
@@ -25,6 +26,14 @@ test.describe.serial('ACP Permission Approval', () => {
 
   let chat: ChatPage
 
+  // This spec deliberately switches the shared agent/session into Code mode,
+  // where the mock blocks on a permission request. Cancel any parked turn and
+  // restore the non-blocking mode so later specs are not affected
+  // (see helpers/agent-mode.ts).
+  test.afterAll(async () => {
+    await restoreNonBlockingMode()
+  })
+
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
   })
@@ -34,6 +43,16 @@ test.describe.serial('ACP Permission Approval', () => {
    * to Code mode so that subsequent messages trigger permission requests.
    */
   async function warmUpAndSwitchToCodeMode(page: Page) {
+    // Start from the non-blocking mode. The run shares one session across
+    // specs, so a previous spec may have left it in Code/Plan — in which case
+    // the warm-up message would block on a permission request forever.
+    // Reload so the frontend re-reads the persisted mode (it sends its own
+    // `modeId` on every chat POST).
+    await restoreNonBlockingMode()
+    await page.reload()
+    await page.waitForLoadState('domcontentloaded')
+    await expect(chat.textarea).toBeVisible({ timeout: 10000 })
+
     // First message warms up ACP connection (default mode is bypass-permissions)
     await chat.sendAndAwaitACPReply('hi')
 
@@ -42,9 +61,8 @@ test.describe.serial('ACP Permission Approval', () => {
     await chat.openModeMenu()
     await chat.selectMode('Code')
 
-    // Wait for modal to close (mode selection auto-closes the modal)
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).not.toBeVisible({ timeout: 5000 })
+    // Wait for drawer to close (mode selection auto-closes it)
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
   }
 
   test('should show permission approval card in non-bypass mode', async ({ page }) => {
@@ -54,18 +72,11 @@ test.describe.serial('ACP Permission Approval', () => {
     const countBefore = await chat.sendMessage('write a file')
     await chat.waitForReply(30000, countBefore)
 
-    // The PermissionApproval tool_use block should appear in the assistant message
-    // It renders as a .chat-tool-call with data-category="permission" and auto-expands
-    const permissionTool = page.locator('.chat-tool-call[data-category="permission"]')
-    await expect(permissionTool.first()).toBeVisible({ timeout: 15000 })
-
-    // The auto-expanded detail area should contain the permission approval view
+    // The PermissionApproval block renders as an auto-expanded unified inline
+    // card (`.chat-inline-card` with data-category="permission"), not a plain
+    // `.chat-tool-call`.
     const permissionView = page.locator('.permission-approval-view')
-    await expect(permissionView.first()).toBeVisible({ timeout: 5000 })
-
-    // Permission header should be visible with warning icon and title
-    const permissionHeader = page.locator('.permission-header').first()
-    await expect(permissionHeader).toBeVisible()
+    await expect(permissionView.first()).toBeVisible({ timeout: 15000 })
 
     // Permission option buttons should be present
     const permissionBtns = page.locator('.permission-btn')
@@ -112,11 +123,21 @@ test.describe.serial('ACP Permission Approval', () => {
   })
 
   test('permission respond API should work directly', async ({ page }) => {
+    // Restore the non-blocking mode: the previous test left the session in Code
+    // mode, where the mock blocks on a permission request.
+    await restoreNonBlockingMode()
+    await page.reload()
+    await page.waitForLoadState('domcontentloaded')
+    await expect(chat.textarea).toBeVisible({ timeout: 10000 })
+
     // Warm up ACP connection
     await chat.sendAndAwaitACPReply('hi')
 
-    // Test the API endpoint directly with a non-existent session/toolCallId
-    // This should return 404 (permission not found) rather than 500
+    // Test the API endpoint directly with a non-existent session.
+    // The handler validates project ownership BEFORE looking up the permission,
+    // and an unknown session resolves to no project — so the response is 403
+    // (AccessDenied), not 404. The point of the assertion is that it is a
+    // deliberate client error, never a 500.
     const result = await page.evaluate(async () => {
       const resp = await fetch('/api/ai/permission/respond', {
         method: 'POST',
@@ -131,8 +152,7 @@ test.describe.serial('ACP Permission Approval', () => {
       return { status: resp.status, ok: resp.ok }
     })
 
-    // Should get 404 (session not found or permission not found), not 500
-    expect(result.status).toBe(404)
+    expect(result.status).toBe(403)
 
     // Test with missing required fields — should get 400
     const missingFieldsResult = await page.evaluate(async () => {

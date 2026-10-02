@@ -339,6 +339,45 @@ type PlanState struct {
 	Entries []PlanEntry `json:"entries"`
 }
 
+// TeamMember is one member of a CodeBuddy Agent Team, as reported in the
+// teamUpdate extension (see docs/dev/codebuddy_acp_team_integration.md §1.1).
+//
+// Status, Activity and Lifecycle evolve independently on the wire: a member
+// typically reaches status=completed, then activity=idle, and only later
+// lifecycle=terminated. Consumers must not infer one from another.
+type TeamMember struct {
+	Name          string          `json:"name"`
+	AgentType     string          `json:"agentType,omitempty"`
+	Color         string          `json:"color,omitempty"`
+	Description   string          `json:"description,omitempty"`
+	Status        string          `json:"status,omitempty"`   // pending|running|completed|failed|killed
+	Activity      string          `json:"activity,omitempty"` // starting|working|idle
+	Lifecycle     string          `json:"lifecycle,omitempty"`
+	TaskID        string          `json:"taskId,omitempty"`
+	SessionID     string          `json:"sessionId,omitempty"`
+	TokenUsage    *TeamTokenUsage `json:"tokenUsage,omitempty"`
+	ToolCallCount int             `json:"toolCallCount"`
+}
+
+// TeamTokenUsage is the per-member token accounting carried in teamUpdate.
+type TeamTokenUsage struct {
+	InputTokens       int `json:"inputTokens"`
+	OutputTokens      int `json:"outputTokens"`
+	LastContextWindow int `json:"lastContextWindow,omitempty"`
+}
+
+// TeamState is a full snapshot of a CodeBuddy Agent Team, parsed from
+// session_info_update._meta["codebuddy.ai/teamUpdate"]. It is a session-level
+// live state (like PlanState/UsageState): the latest snapshot wins, and it is
+// cached on the connection rather than persisted per message.
+type TeamState struct {
+	Type       string       `json:"type"` // team_created|team_deleted|member_status_change|team_idle|team_busy
+	TeamName   string       `json:"teamName"`
+	IsAutoTeam bool         `json:"isAutoTeam,omitempty"`
+	HasLive    bool         `json:"hasLiveMembers"`
+	Members    []TeamMember `json:"members"`
+}
+
 // UsageState carries context window usage information from an ACP UsageUpdate.
 type UsageState struct {
 	Used              int     `json:"used"`                        // Tokens currently in context
@@ -412,6 +451,19 @@ type StreamEvent struct {
 	// the backend's _meta parent-link key; lets the frontend group a sub-agent's
 	// thinking/text under the Agent card that spawned it.
 	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	// Team is the full team snapshot (Type=team_update). Session-level state:
+	// the latest snapshot replaces the previous one.
+	Team *TeamState `json:"team,omitempty"`
+	// MemberName is the Agent Team member that produced this event (Type=content,
+	// thinking, tool_use, tool_result). Empty for top-level content and for
+	// ordinary sub-agents. Extracted from _meta["codebuddy.ai/memberEvent"];
+	// team members carry no parentToolCallId, so this is the only attribution
+	// the wire provides (see docs/dev/codebuddy_acp_team_integration.md §1.3).
+	MemberName string `json:"member_name,omitempty"`
+	// MemberColor is the member's display color (wire name, e.g. "blue"),
+	// resolved from the latest team snapshot. Lets the member's timeline accent
+	// match the roster. Empty when unknown.
+	MemberColor string `json:"member_color,omitempty"`
 }
 
 // StreamStartData carries the streaming message DB id for the stream_start event.

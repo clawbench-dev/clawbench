@@ -79,6 +79,7 @@ MissingSha: missing sha
 NotAGitRepoShort: not a git repository
 InvalidPortNumber: "Invalid port number: {{.Port}}"
 InvalidPortInQuery: Invalid port number in query
+PortAlreadyRegistered: that local port is already used by another mapping
 TaskIdRequired: Task ID required
 TaskNotFound: Task not found
 TaskFieldsRequired: name, cronExpr, agentId, and prompt are required
@@ -131,6 +132,7 @@ NothingToRewind: Nothing to rewind — this is the last message in the session
 InvalidAgentID: Invalid agent ID
 Session: Untitled Session
 SearchQueryRequired: Search query is required
+UserGuideNotAvailable: User guide is not available on this instance
 InvalidRegex: 'Invalid regular expression: {{.Error}}'
 UpgradeInProgress: Upgrade already in progress
 AlreadyLatestVersion: Already on the latest version

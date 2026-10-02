@@ -4,7 +4,7 @@
 
 ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台，移动端交互适配优先、桌面端完整支持，将 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）封装为 Web 平台。Go 后端调用 CLI 工具，通过 WebSocket 流式传输 JSON 事件；Vue 3 前端实时渲染。支持 ACP (Agent Client Protocol) stdio 传输（含桥接适配器）、SSH 隧道端口转发、任务系统（含 GitHub/GitLab 事件触发）。
 
-规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。
+规格文档：`docs/spec/`（模块索引见 `docs/spec/README.md`）。面向使用者的图文操作手册：`docs/user-guid/user-guid.md`（截图维护流程见 `docs/Skills/clawbench-user-guide/SKILL.md`）。
 
 ## 构建与运行
 
@@ -22,6 +22,10 @@ go build -o clawbench ./cmd/server                    # 仅 Go 二进制
 go test ./...                                         # 单包：go test ./internal/ai/...
 npm test                                              # Vitest 前端测试
 ./scripts/pre-push-checks.sh [--skip-coverage|--skip-android]   # 推送前全量检查
+
+# E2E（Playwright，见下方「E2E 测试」规则）
+go build -o clawbench ./cmd/server && go build -o acp-mock ./cmd/acp-mock   # e2e 依赖这两个二进制
+npx playwright test --config e2e/playwright.config.ts --project=chromium-coverage e2e/specs/<你的 spec>.spec.ts
 
 # 编译并后台重启（可在 Web 终端内执行）
 ./build.sh --restart [--restart-skip-build] [--restart-port=8080]
@@ -65,17 +69,20 @@ npm test                                              # Vitest 前端测试
 | `internal/api/` | `go:embed` OpenAPI 规格，按 operationId 渲染内置斜杠命令注入给 AI 的接口提示片段 |
 | `internal/wallpaper/` | 壁纸校验 / 缩放 / 编码 + 磁盘布局与生效解析；handler 与 service worker 共用。缩放上限取舍见源码注释 |
 | `internal/gitignore/` | 判定「git 是否会跟踪该路径」：go-git 模式引擎 + 来自 index 的三条规则（已跟踪文件/含已跟踪文件的目录永不忽略、祖先被排除则整体忽略、自身最后一条匹配）。文件管理器灰显与 cloc 排除共用；按真实 `git check-ignore` 差分验证 |
-| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`，队列兜底回收 `queue_reaper.go`；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
-| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗 |
+| `internal/service/` | 业务逻辑：聊天持久化、摘要与推荐的调度、调度器（cron + 事件触发任务；cron 可选的前置脚本执行器 `task_script.go`，静默成功即跳过 AI 且不发通知）、SQLite、Schema 迁移、Agent 存储、用量聚合、会话截断；**项目以整数 id 为身份**（`projects.go` 的项目注册表 + `projects_migrate.go` 的路径→id 转换：所有项目作用域表存 `project_id` 而非路径，改名/移动目录只需一条 UPDATE；`project_id=0` 是全局标签与无法归属分享的保留哨兵，故不声明外键）；会话运行态收敛在 `session_runner.go`（单一 owner runner，运行态与可取消性同源），AI 回合编排唯一实现 `run_turn.go`，请求构造唯一实现 `chat_request.go`；**排队消息存独立表 `queued_messages`（出队才落 `chat_history`，`queue_store.go` 的 claim 在同一事务内 DELETE 队列行 + INSERT 历史行，使历史行 id 顺序恒等于对话顺序）**，队列兜底回收 `queue_reaper.go`；`/btw` 旁路问答（`btw.go`，独立表 `btw_questions`）；最近项目分组（`recent_project_groups.go` + `repo_layout.go`，纯文件系统识别主仓库/工作树/子目录）；含 SessionCleanupWorker / BingWallpaperWorker / ForgePoller（forge 变化轮询）、桌面端升级检查（`desktop_upgrade.go`）等后台 worker |
+| `internal/ai/` + `backends/` | AI 后端抽象：`AIBackend` → `CLIBackend`（CLI+行解析）或 `ACPBackend`（JSON-RPC over stdio）；15 个后端子包；CLI/ACP 均支持无进度看门狗（ACP 侧按**模型进展**判定，与连接活性双信号分离）；`compact_detect.go` 识别各后端上下文压缩信号（压缩后下一轮重注入系统提示）；ACP 客户端能力按 agent 定制（CodeBuddy 隐藏 Terminal / `fs.readTextFile`——声明能力会替换其原生工具实现）；ACP 连接缓存状态用 leaf lock `stateMu`（绝不在 RPC 期间持有），避免通知回调与在飞 RPC 互相等待致通知队列溢出杀连接 |
+| `internal/askquestion/` | `<clawbench-ask-question>` 载荷解析的**唯一** Go 实现（叶子包，不 import 任何 internal 包）；与前端 `web/src/utils/askQuestion.ts` 互为镜像，由 `testdata/parity_corpus.json` 双向固化。契约：检测即解析；不可解析时剥离标签、把标签内文字作为 Fallback 交给 Markdown 渲染（`Match.Fallback`），**绝不丢内容**。旧 XML 子元素格式与标签内 JSON 已不再解析 |
 | `internal/model/` | 数据模型、后端注册表、模型发现（`ModelSource` 注册表 + 单一合并点 `ResolveModels`）、27 个 LLM Provider |
 | `internal/speech/` + `internal/stt/` | 语音：TTS（Edge / Piper / Kokoro / MOSS-TTS-Nano）与 STT（vLLM Whisper，流式 + 非流式） |
 | `internal/rag/` | RAG：SQLite + sqlite-vec 向量存储 + FTS5 全文检索，OpenAI 兼容嵌入 API；消息聚类（ClusterWorker） |
 | `internal/terminal/` | Web 终端：PTY 会话、环形缓冲回放、多标签 |
-| `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外） |
-| `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发 |
+| `internal/ws/` | WebSocket 事件通道：StreamHub 会话级扇出，Manager 广播 + 重连缓冲回放；`delivery_stats.go` 记录按原因的投递丢弃计数（`GET /api/ws/delivery-stats`），关键事件在通道满时等待空位（ACP 来源除外）。遥测类事件（`system_resources`）走**非缓冲投递**路径（不写回放缓冲、队列满时丢弃而非断连），需求由客户端 `metrics_preference` 声明 |
+| `internal/ssh/` + `internal/proxy/` | SSH 隧道服务器；HTTP 反向代理 + 端口转发。反向映射仅绑 127.0.0.1 且禁绑保留端口 |
+| `internal/tunnel/` | h2 流隧道的传输无关内核（`/api/tunnel/stream` 数据面 + `/api/tunnel/control` 反向控制面）：`bind.go`（端口分配 + 白名单/保留端口）、`guard.go`（`PortGuard` 镜像 `internal/ssh` 的端口策略，保证 h2 与 SSH 同一套规则）、`claim.go`（`-R` 的单次 token 认领）、`ndjson.go`（控制流分帧）、`relay.go`（双向转发 + 半关闭）、`target.go`（目标地址解析） |
 | `internal/forge/` | GitHub/GitLab 集成：平台无关的只读 `Provider` 抽象（统一 Issue/PR/Comment/Pipeline 模型）+ `github/`（go-github）/ `gitlab/`（轻量 REST client）adapter；remote URL 解析（host 与 scheme 分离解析）、per-host 令牌桶限流、事件推导引擎。**无 host 安全闸门**（内网/自建实例一律放行，风险提示在前端绑定弹窗） |
 | `internal/push/` | IM 机器人推送：`common/`（共享接口 + 会话命令）、`dingtalk/`（Stream API）、`feishu/`（Lark SDK WebSocket + 互动卡片） |
 | `internal/symbol/` | 基于 tree-sitter 的代码符号提取（纯 Go，无 CGO） |
+| `internal/skill/` | 后端无关的跨智能体 Skill 发现框架（Skill = 含 `SKILL.md` 的目录）。只依赖 `internal/model`（不得 import `internal/ai`/`backends`，否则成环）：`scanner.go` 递归扫描（有界深度、跳过 `.git`/`node_modules` 等）、`registry.go` 按 `SourceKind`（本智能体原生 > 用户目录 > git > 其他原生）去重、`git.go`+`worker.go` clone/pull git 源（单例 worker，启动 + 定时 + 手动 `POST /api/skills/refresh` 三触发）。系统提示词注入在 `service.AppendSkillsSection`，**两个 `ai.ChatRequest.SystemPrompt` 生产者都必须调用**（`chat_request.go` 与 `scheduler.go`）。`AutoLoadsNativeSkills` 决定后端是否自加载（codebuddy=false 必须注入；其余多为 true），取值由 `internal/ai/backends/native_skills_test.go` 双向表钉住 |
 | `internal/summarize/` | 摘要与推荐的底层引擎（多后端 provider、多 pass 压缩、`StripMarkdown`、`RecommendNextStep`） |
 | `internal/system/` | 系统资源监控：CPU / 内存 / 磁盘 / 网络实时采集与推送 |
 | `internal/cli/` | AI Agent 自助命令：仅剩 upgrade-replace（自升级内部机制）；task/rag 业务子命令已移除，改由 `/cb-*` 内置斜杠命令直调 HTTP API |
@@ -84,15 +91,17 @@ npm test                                              # Vitest 前端测试
 
 ### 前端（Vue 3 + TypeScript）
 
-源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。
+源码根：`web/src/`。无 Vue Router，基于抽屉的单页布局。单一 `reactive()` store (`stores/app.ts`)。**同一时刻只允许一个标签页跑应用**（`useSingleTab.ts` 用 `BroadcastChannel` 选举，第二标签页只显示阻塞屏、不挂载应用）：服务端按 `localStorage` 里的 `client_id` 键控 WS 订阅槽，同源所有标签页共用同一个 id，两个标签页会互相顶掉 socket 并各自重连，实测 17 分钟 1402 次 subscribe、约 2900 请求/分钟。新增全局唯一资源的消费者前先确认是否也受此约束。
 
 Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、Navigation/Gesture、Settings、Agent、Task、Infrastructure、System）。新建 composable 须放 `web/src/composables/` 并以 `useXxx` 命名，测试用 `*.test.ts` 同目录或 `__tests__/`。
 
-宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。
+`web/src/utils/askQuestion.ts` 与 Go 的 `internal/askquestion` 互为镜像（共享语料 `internal/askquestion/testdata/parity_corpus.json` 双向固化）——改一侧必须同步另一侧，否则同一段文本会在前后端得到不同解析。
 
-`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。
+宽屏 Dock 页签定义在 `web/src/composables/dockTabs.ts`（单一注册表，渲染集合与切换白名单都从它派生），图标单独放 `dockTabMeta.ts`。`dockTabs.ts` 必须保持零 import（`useWideScreenLayout` 依赖它，而多个测试文件对 `lucide-vue-next` 做了窄 mock）。左侧面板归属（宽屏 Dock 显示哪个页签）是**项目属性**而非代码路径属性，由 `useProjectPanel.ts` 按 `clawbench-project-panel:<项目根>` 记忆；项目切换期间用计数器抑制误写（可并发调用，布尔会被先结束者清掉）。
 
-`web/src/share/` 是文件分享链接的独立只读 SPA（类型分派渲染 + TOC + 下载），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
+`web/vendor-build/excalidraw/` 是独立的 Excalidraw 编辑器构建（React），由 `build.sh` 单独构建到 `.clawbench-web/vendor/excalidraw/`，`.excalidraw` 文件通过 iframe 懒加载，Vue 主包不含 React 依赖。它**有意不进根 Vite 构建**（否则主 bundle 会膨胀约 8MB），因此根 `npm run build` 不产出它——**所有 CI / release job 都必须显式构建该 vendor bundle**，否则发布二进制内嵌的前端里没有 `vendor/excalidraw/`，`/vendor/excalidraw/index.html` 走 `ServeIndex` 的 `http.NotFound` 返回 Go 的 "404 page not found"（本地用 `build.sh` 构建正常，缺陷只在 release / Docker 产物上暴露）。
+
+`web/src/share/` 是分享链接的独立只读 SPA（文件分享=类型分派渲染 + TOC + 下载；会话分享=快照对话 + 目录导航 + 导出 JSON），由 vite 多入口构建为 `share.html`，服务端在 `/share/{token}` 无鉴权公开（token 即凭证）。
 
 ### 桌面端（Electron）
 
@@ -100,19 +109,24 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 | 模块 | 职责 |
 |------|------|
-| `window.ts` | 主窗口创建、原生上下文菜单（cut/copy/paste 走 OS role，copy-link/copy-image 按语言翻译）、外部链接拦截交给默认浏览器 |
+| `window.ts` | 主窗口创建（Windows/Linux 无边框，macOS 原生帧）、最小化/最大化/关闭三个自绘控制的 IPC、原生上下文菜单（cut/copy/paste 走 OS role，copy-link/copy-image 按语言翻译）、外部链接拦截交给默认浏览器 |
+| `windowChrome.ts` | 无边框窗口的平台判定（纯模块、无 electron import、可单测）：Windows/Linux 自绘控制簇，macOS 保留原生交通灯，未知平台回退原生帧 |
+| `splash.ts` | 登录/启动加载屏（对齐 Android splash）：页面加载成功后才淡出；复用页面时必须清掉上一次的淡出类，且加载成功要取消连接超时 |
 | `bridge.ts` | IPC 桥：服务器列表/凭据、SSH 端口映射、文件下载、分享、系统通知、主题、语言、日志捕获、屏幕常亮 |
 | `tunnel.ts` | ssh2 客户端，读取 `/api/ssh/info` 建立 SSH 端口映射 |
 | `download.ts` | 文件下载（保存对话框 + 下载后定位）、URL/Blob 下载 |
-| `notification.ts` | 原生系统通知，点击导航到会话/任务（冷启动挂起派发）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
+| `notification.ts` | 原生系统通知，点击导航到会话/任务/仓库（冷启动挂起派发，经 `navReady` 的 `rendererReady()` 握手后才放行）。窗口**可见且未最小化**时**抑制通知**（刻意不看焦点：窗口开着就不打扰）——用户开着应用，通知只会重复应用内完成卡片；判定必须在主进程做，渲染层的 `document.hasFocus()` 在最小化/隐藏窗口里仍可能为真 |
 | `clientLog.ts` | 主进程日志回传：缓冲 POST `/api/client-log`（`source="electron"`）+ 写 `{userData}/desktop.log`；镜像渲染进程 console，`recordError` 上报未捕获异常 |
-| `identity.ts` | `APP_USER_MODEL_ID`（Windows toast 身份），**必须与 `electron-builder.yml` 的 `appId` 一致**——该 yml 不随包分发，运行时读不到，漂移会让 Windows 通知静默消失；`identity.test.ts` 守住 |
+| `identity.ts` | `APP_USER_MODEL_ID`（Windows toast 身份），**必须与 `electron-builder.yml` 的 `appId` 一致**——该 yml 不随包分发，运行时读不到，漂移会让 Windows 通知静默消失；`identity.test.ts` 守住。Linux 任务栏图标另依赖 `desktop/package.json` 的 `desktopName`（决定窗口 `app_id`），**不能改 `productName`**——那会挪动 userData 目录、丢用户配置 |
+| `urlPolicy.ts` / `contextMenu.ts` | 外部链接判定（以服务器 Origin 为边界）与原生右键菜单（标准项走 OS role 本地化） |
+| `navReady.ts` / `session.ts` | 渲染进程就绪握手、会话缓存强刷 |
+| `shortcuts.ts` | 应用级快捷键决策表（`before-input-event` 只认领 Ctrl+Shift+R / F12，F5 等一律放行给页面），不 import electron 便于单测 |
 | `updater.ts` | 升级检查：请求**服务端** `/api/desktop/latest`（不查 npm）；语义化版本比较，降级不误报 |
-| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针 |
-| `secrets.ts` / `store.ts` | safeStorage 加密存密码、electron-store 持久化服务器列表/主题/语言 |
+| `install.ts` | 自升级安装：多候选 URL 依次降级下载 → SRI 校验 → 解压 zip（剥顶层包装目录、拒绝路径穿越、**恢复可执行位**）→ 侧装到 `~/.clawbench-desktop/app-<version>/` → 翻转 `current` 指针。另支持**增量载荷包**：安装到从当前版本克隆出的目录、复用 Electron 运行时，装前按主版本 + 壳指纹门控，不符即静默回退全量下载 |
+| `secrets.ts` / `store.ts` | safeStorage 加密存密码（**按服务端分别存于各自 entry**，旧全局槽迁移时只归属当时的活动服务端）、electron-store 持久化服务器列表/主题/语言 |
 | `powersave.ts` | 屏幕常亮（powerSaveBlocker） |
 
-**自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；`npm/desktop-main/bin/clawbench-desktop.js` 启动时读该指针决定运行哪个版本（指针缺失/目录不存在则回退到 npm 包自带版本），因此失败可回滚、旧版本保留。
+**自升级采用"侧装 + 指针"而非原地替换**：运行中的进程无法覆盖自身（Windows 上尤其如此）。`install.ts` 把新版本解压到独立目录并改写 `~/.clawbench-desktop/current`；**应用自己**在 `whenReady` 最前面读该指针决定运行哪个版本（`selectStartupVersion` + `handOffToPointedVersion`）——指针缺失、目标目录不存在或指向自身都清指针并继续用当前版本启动，因此失败可回滚、旧版本保留，被删坏或写坏的升级永远不会让应用打不开。必须由应用自己读：原先读指针的 npm 启动器已随 npm 渠道一并移除，双击 Release 解压出的旧 exe 时若无人读指针，会静默退回旧版。
 
 **全量包以 GitHub Release 为准，载荷包只走 npm**：桌面端与服务端同版本发布，`/api/desktop/latest` 直接返回服务端自身版本 + 资产地址，**不查询任何外部服务**（不查 npm、不查 GitHub API）。每个平台返回**候选 URL 列表**（国内镜像优先、直连 github.com 兜底），客户端与前端都取首个可用项。
 
@@ -120,13 +134,23 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 
 `tag` 为空表示当前是 dev/未打标签构建（无对应 Release），此时 `downloads` 为空、客户端隐藏下载入口——不要把它当错误处理。
 
-构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job 打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。
+**桌面壳不是"手机 App 模式"**：两者都经原生桥被识别为原生环境，但省电策略相反——Android 退到后台会被系统挂起，故隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在跑，断开 WS 等于自断通知来源（通知全部由 WS 事件产生）。前端用 `isDesktopApp`（preload 注入 → `useAppMode` → 消费点三层打通）区分，门控写成 `isAppMode && !isDesktopApp`。任何一层漏掉都会让最小化后的推送静默失效。端口映射同理要按"期望状态"而非快照管理：重连后必须重建全部 listener，`ensureTunnel` 需单飞守卫（并发调用会互相拆台）。**`isDesktopApp` 还必须参与 `isPC` 判定**：Electron 的 preload 上报 `isNativeApp()=true`，若 `isPC` 只看 `isAppMode` 就会把整个桌面端判成移动端（文件快捷预览弹 BottomSheet 而非桌面浮卡、点选语义、终端 PC 工具栏、输入框滑动提示全部走移动分支）——Electron 是有物理键盘鼠标的桌面窗口，必须直接判为 PC。
+
+构建与发布：`desktop/` 用 electron-builder 的 `dir` target 产出免安装目录，由 `release.yml` 的 `build-desktop-*` 四个 job（linux / linux-arm64 / windows / macos）打包为 zip 挂 GitHub Release（**只挂全量包**）。资产名必须与 `internal/service/desktop_upgrade.go` 的 `desktopAssetName` 完全一致，否则下载 404。`publish-npm-desktop` 发三个 `@xulongzhe/clawbench-desktop-<plat>-payload` 包（linux-x64 / linux-arm64 / win32-x64；darwin 从不发 npm）；`publish-npm` 只发服务端 CLI `@xulongzhe/clawbench`。CI 构建前需 `ELECTRON_MIRROR` 走镜像，否则 `@electron/get` 从 GitHub 下载常中断。`win.signAndEditExecutable` **不要**在 electron-builder.yml 里禁用——CI 的 windows job 原生可用 rcedit，禁用会跳过向 exe 写入图标与版本元数据；本地无 wine 交叉编译时才用命令行临时覆盖。
 
 ## 开发规则
 
 - **改 UI 前先读视觉设计指导手册**：动样式、加组件、加主题、加动效之前必读 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)——样式三层归属、设计 token（字号/间距/圆角/层级/时长）、36 主题机制与新增步骤、布局骨架，以及六条红线（`v-html` 匹配不到 scoped 规则、共享类基规则也必须全局、`app-region` 豁免只能是控件、对比度不能靠固定跳一档背景、`content-visibility` 滚动跳变、Android WebView 像素怪癖）。改动检查清单与守卫测试索引也在文末。
 - **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
+- **E2E 测试（`e2e/`，Playwright）**：改动涉及跨组件流程 / 真实后端行为（聊天流式、ACP、终端、文件、任务、排队）时，须在 `e2e/specs/` 补对应 spec。**CI 会在每个 PR 跑全量 3 浏览器**（chromium/firefox/webkit，约 33 分钟）。
+  - **本地默认不跑全量 e2e**：`npx playwright test`（不带 `--project`/`--grep`）会跑 3 浏览器 × 全部 spec，约 33 分钟且与并发 agent 争抢资源。本地只跑**本次新增的 spec** 与**改动设计所涉及的 spec**：
+    ```bash
+    npx playwright test --config e2e/playwright.config.ts --project=chromium-coverage e2e/specs/<新增或受影响的>.spec.ts
+    ```
+  - **前置二进制**：e2e 用仓库根的 `./clawbench` 与 `./acp-mock`（`e2e/helpers/server.ts` 复制到临时目录；可用 `E2E_SERVER_BIN` 覆盖）。改了 Go 代码后先 `go build -o clawbench ./cmd/server && go build -o acp-mock ./cmd/acp-mock`，否则 e2e 跑的是旧二进制。
+  - **写 spec 的约定**：优先稳定 hook（`data-tab`/`data-session-id`/`data-action`）而非位置索引（`.nth(2)`）或易漂移的类名；跨 spec 的共享状态（ACP mode、会话、terminal PTY）会泄漏，改动 mode 的 spec 须在 `afterAll` 调 `restoreNonBlockingMode()`；不用固定 `waitForTimeout` 掩盖竞态，改用条件等待（`expect.poll`/`toBeVisible`）。
+  - **flaky 判定**：spec 单独跑绿、全量跑红 ⇒ 先查跨 spec 状态泄漏与共享服务器状态（3 浏览器共用同一服务器/DB），勿直接归咎产品。全量留给 CI；本地判「是否我引入的回归」用隔离单跑。
 - **改动 HTTP 接口必须同步 OpenAPI 文档**：任何新增 / 删除 / 修改 `/api/` 端点（路径、方法、鉴权、参数、请求 / 响应字段、状态码）都必须同步更新 `internal/api/openapi.yaml`（已从 `docs/spec/api/` 迁入以支持 `go:embed`）。
   - 字段名、参数名、方法**必须从 handler 代码里抄**（`decodeJSON` 结构体的 JSON tag、`r.URL.Query().Get(...)`、`requireMethod(...)` / `switch r.Method`），**禁止凭路由名望文生义**。
   - 路由唯一来源是 `internal/handler/handler.go` 的 `RegisterRoutes`；`internal/handler/openapi_drift_test.go` 双向校验路径与鉴权（**不校验字段名**）。

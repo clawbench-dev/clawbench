@@ -12,6 +12,7 @@
 import { getNative } from '@/utils/clawbenchNative'
 import { UI_SCALE_STEP } from '@/utils/uiScale'
 import { buildFontStack, DEFAULT_MONO_STACK, DEFAULT_UI_STACK, MONO_FONT_CHOICES, UI_FONT_CHOICES, MONO_FALLBACK_CHOICES, type FontChoice } from '@/utils/fontConfig'
+import i18n from '@/i18n'
 
 /** Raw (untranslated) font option descriptor used by the settings pickers. */
 export interface FontOptionRaw {
@@ -570,18 +571,21 @@ export const categoryItems: Record<string, CategoryEntry[]> = {
   portForward: [
     { type: 'panel', config: {
       panelId: 'portForward',
-      enableKey: 'port_forward.enabled',
-      enableLabelKey: 'settings.items.portForwardEnabled',
+      // No enable switch: the SSH listener is always on (pinned server-side in
+      // ApplyDefaults). The switch used to live here, but its scope could not
+      // be honest — the listener is server-side while the transport choice is
+      // client-local, so no single value could serve every client of one
+      // server. Removing it also removed the need to explain the difference.
       commonFields: [
-        { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: unknown) => v === 0 ? '__auto__' : v },
+        { labelKey: 'settings.items.portForwardPort', descriptionKey: 'settings.items.portForwardPortDesc', key: 'port_forward.port', type: 'number', source: 'server', displayTransform: (v: unknown) => v === 0 ? i18n.global.t('settings.items.portForwardPortAuto') : v },
       ],
-      hasConnectivityTest: true,
-      getTestCategories: (values) => [{ category: 'port_forward', values }],
-      afterSave(changedKeys) {
-        if (changedKeys.includes('port_forward.enabled')) {
-          import('@/composables/usePortForward').then(m => m.usePortForward().loadSSHInfo()).catch(() => {})
-        }
-      },
+      // No connectivity test button: the panel's tunnel status row is the single
+      // readiness signal. The server-side test could only ever answer "the
+      // listener bound and accepts a loopback dial" — it runs inside the server,
+      // so it cannot observe whether a client actually connected — while the
+      // status row reports that plus the client-side tunnel and per-port
+      // liveness. Two rows answering overlapping questions is what the merge
+      // removed.
     }},
   ],
   frp: [

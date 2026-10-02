@@ -24,12 +24,13 @@ export const THUMB_DEFAULT_WIDTH = 1200
 export const THUMB_MOBILE_WIDTH = 640
 
 /**
- * Resolve the inline thumbnail width for the current device. Phones/tablets
- * have small viewports, so a 480px thumbnail is sharp enough and decodes much
- * cheaper than the desktop 800px. Pure function: callers inject isPC.
+ * Resolve the inline thumbnail width for the current device. This is a VIEWPORT
+ * question, not an input one: a phone-sized viewport renders the image small, so
+ * a 640px thumbnail is sharp enough and decodes much cheaper than the 1200px a
+ * full-width desktop pane wants. Pure function: callers inject `isWideScreen`.
  */
-export function getThumbWidth(isPC: boolean): number {
-  return isPC ? THUMB_DEFAULT_WIDTH : THUMB_MOBILE_WIDTH
+export function getThumbWidth(isWideScreen: boolean): number {
+  return isWideScreen ? THUMB_DEFAULT_WIDTH : THUMB_MOBILE_WIDTH
 }
 
 /**

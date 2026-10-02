@@ -100,7 +100,8 @@ flowchart TD
 - **TLS 证书自动发现**：HTTPS 启用方式从手动配置 `enabled`/`cert_file`/`key_file` 改为自动发现证书目录（`tls.cert_dir`，默认 `<DataDir>/config/tls`）。`ResolveTLSCerts` 扫描目录中的证书文件，按优先级匹配：Let's Encrypt 风格（`fullchain.pem` + `privkey.pem`）→ 通用（`cert.pem` + `key.pem`）→ 合并文件（`combined.pem`）。找到有效证书对即启用 HTTPS，否则回退 HTTP。旧配置 `tls.enabled`/`tls.cert_file`/`tls.key_file` 仍可读取并自动迁移到 `cert_dir`
 - **配置连通性测试**：`POST /api/config/test` 端点对设置表单中的各服务做即时连通性验证。支持 8 个类别：FRP、文本摘要、语音摘要、RAG、钉钉、飞书、端口映射、TTS。测试使用表单当前值（可能未保存），无需先保存配置即可验证连接性——降低配置试错成本
 - **多实例 Cookie 隔离**：`ScopedCookieName()`（`internal/model/config.go`）为非默认端口实例的 Cookie 名添加前缀——端口 20300 的 `clawbench_session` 变为 `cb20300_clawbench_session`。默认端口 20000 保持原名称（向后兼容）。前端 `scopedCookieKey()`（`web/src/i18n/index.ts`）镜像相同逻辑。不同端口实例可安全共存于同一浏览器
-- **Schema 迁移双机制**：加列 / 建索引类迁移采用列检测模式（`internal/service/database.go`）——每条迁移通过 `pragma_table_info('table')` 或 `sqlite_master` 查询是否已存在，不存在才执行 `ALTER TABLE` / `CREATE INDEX`。此方式天然幂等，无需台账。`InitDB()` 先用 `CREATE TABLE IF NOT EXISTS` 创建最新表结构，再依次运行增量迁移（如 `summary` 列、`transport` 列、`custom_system_prompt` 列、ACP 相关列含 `acp_available_models`、`indexed` 列用于 RAG 索引进度跟踪等）。**数据转换类**迁移（`MigrateMetadataFromContent`、`MigrateTaskExecutionSummaries`、`MigrateToolCallsFromContent`、`MigrateThinkingFromContent`）无法用列探针判断是否完成，改由 `schema_migrations` 台账按名记账（详见下节）
+- **项目 id 化注册表**：每个项目在 `projects` 表里有一个稳定的整数 id（`path` 唯一、按 `NormalizeProjectPath` 规范化存储，绝对路径 + 解析软链 + 清理），所有项目作用域表（`chat_history`、`chat_sessions`、`scheduled_tasks`、`queued_messages`、`session_tags`、`project_forges`、`file_shares`、`chat_metadata`、RAG chunks 等）存 `project_id` 而非项目路径。重命名或移动项目目录因此只是对 `projects` 表的一条 UPDATE，而不是重写约 15 张表——此前没有任何代码做这件事，改名会静默让所有行变成孤儿。`project_id = 0` 是保留哨兵（全局会话标签、无法归属的文件分享），因此其他表**不声明外键**（真实 FK 需要一行 id=0 的合成项目行）。原 `project_meta` 表并入 `projects`（其 `next_session_number` 是死列，已删）
+- **Schema 迁移双机制**：加列 / 建索引类迁移采用列检测模式（`internal/service/database.go`）——每条迁移通过 `pragma_table_info('table')` 或 `sqlite_master` 查询是否已存在，不存在才执行 `ALTER TABLE` / `CREATE INDEX`。此方式天然幂等，无需台账。`InitDB()` 先用 `CREATE TABLE IF NOT EXISTS` 创建最新表结构，再依次运行增量迁移（如 `summary` 列、`transport` 列、`custom_system_prompt` 列、ACP 相关列含 `acp_available_models`、`indexed` 列用于 RAG 索引进度跟踪等）。**项目路径→id 转换（`migrateProjectsToIDs`）也是列探针迁移**：只要任一项目作用域表仍带 `project_path` 列即触发，全新安装建表即带 `project_id` 故整体跳过；它必须跑在 `createTables` 之前，因为后者的 `CREATE INDEX` 已改名 `project_id`，在老库上会因列不存在而中止整个 Exec。**数据转换类**迁移（`MigrateMetadataFromContent`、`MigrateTaskExecutionSummaries`、`MigrateToolCallsFromContent`、`MigrateThinkingFromContent`）无法用列探针判断是否完成，改由 `schema_migrations` 台账按名记账（详见下节）
 - **覆盖率门禁**：两层强制执行，每次 PR/push 到 main 分支触发（`scripts/check-go-coverage.sh`、`scripts/check-frontend-coverage.sh`、`scripts/check-android-coverage.sh`）：
   - **Tier 1 项目门禁**：当前包覆盖率 `>= 基线% - 1.5%`（`TIER1_TOLERANCE = 1.5`）
   - **Tier 2 Diff 覆盖率**：变更行覆盖率 `>= 80%`（`DIFF_THRESHOLD = 80.0`）
@@ -110,7 +111,7 @@ flowchart TD
 
 - **Agent 存储以 DB 为主**：Agent 配置存储在数据库（`agents` 表），YAML 用于手动定义的特殊 Agent（如 E2E 测试使用的 acp-mock）。DB 优先；自动发现只更新基础设施字段（`acp_command`、`transport`），用户自定义的 `name`、`command` 不被覆盖
 - **发现与重载的两条入口**：`RefreshAgents` 是同步路径，按固定顺序执行探测 CLI → 加载 YAML →（可选）发现模型 → 重载内存，顺序本身承载语义（例如必须先探测才能给新装的后端发现模型）。启动时传 `SkipDiscovery: true` 只跑同步那一半（约 0.1s），`StartModelDiscoveryAsync` 随后在后台补上模型探测、落库与加锁重载。`service.LoadAgentsIntoMemory` 委托给 `model.LoadAgentsIntoMemoryFromDB`，因此"加载并组装 prompt"只有一份实现
-- **默认项目持久化**：`recent_projects.is_default` 标记服务端默认项目。读取时依次回退到显式默认项目、最近访问项目、用户主目录和首个可用根路径，确保首次启动和旧数据均可用
+- **默认项目持久化**：`recent_projects.is_default` 标记服务端默认项目（表按 `project_id` 记录，见「项目 id 化注册表」）。读取时依次回退到显式默认项目、最近访问项目、用户主目录和首个可用根路径，确保首次启动和旧数据均可用
 - **ACP 能力持久化**：Agent 的 ACP 相关属性（`transport`、`acp_command`、可用模式、思考深度、命令、模型等）持久化在 `agents` 表中，重启后无需重新发现——这些信息在首次连接时从 ACP Initialize 握手中提取并缓存
 - **供应商模型注册**：模型列表通过各后端的 `RegisterModelSource()` 在 `init()` 注册，`model.DiscoverModels` 只走这张注册表（没有静态声明的已知模型字段）。运行时可通过 `POST /api/agents/rescan` 重新触发 PATH 扫描；模型数据不依赖 `<dataDir>/provider_models.json` 或生成脚本
 - **API 密钥与密码联动**：加密密钥由登录密码派生。`agent_api_keys` 表和 `crypto.go` 已移除，密码修改不再触发 API Key 加密轮换
@@ -118,7 +119,9 @@ flowchart TD
 - **ACP 运行时模型验证**：设置 preferred_model 时，验证范围包含 CLI 发现的模型和 ACP 运行时返回的模型（`GetModelListState`），ACP-only 模型（如 Kimi kimi-k3）不再因 CLI 模型列表中不存在而报 `InvalidModelForAgent`
 - **部分后端无 CLI 模型列表**：VeCLI、Qoder 等后端没有 `--list-models` 类命令，其发现函数只能返回内置默认清单或读取本地缓存，也可由用户手动提供模型。ACP 后端优先使用 ACP 提供的模型列表（覆盖 CLI 发现结果）——ACP 模型列表更准确
 - **发现失败的原因随返回值传递**：`ModelSource.Discover` 返回 `(models, detail)`，detail 说明探测了哪些位置。此前 codebuddy 用进程级全局变量记录失败原因，并发刷新会互相串台；现在原因随调用返回，不会误归因
+- **默认值只用 presence 判定，不用零值比较**：新增的 `chat.auto_continue_max_retries` 中 `-1`（不限）与 `0`（不重试）**都有意义**，因此"未设置时回退到默认值"不能写成 `if v <= 0 { v = default }`——那会把用户显式选择的 0 冲成 3。凡是有多个合法特殊值的数值配置项都必须区分"字段缺省"与"显式零值"
 - **Codex 的多级发现**：Codex 无列模型命令且发布的是 stripped Rust 二进制，因此按可信度依次尝试——先读 CLI 缓存的完整模型目录（`~/.codex/models_cache.json`，含账号可用清单），再扫描二进制字符串，最后落到 `internal/model/catalogs.go` 中的内置清单。原先的 state SQLite 分支是死代码（定位到文件后无条件 `return nil`），已删除
+- **CLI 模型输出会随版本漂移，解析必须 header 感知**：CodeWhale 0.10.0 的 `models` 输出改为本地化（中/英）、只列 active provider、行内不再带 provider 标签，旧正则两个方向都失配（模型列表刷新后解析为 0 条）。因此解析器同时兼容中英 header 与有无标签两种行格式、尾部锚定挡住 banner/footer，并新增 `scopedProvider`：**无标签的行只在 header 为空或等于目标 provider 时才接受**——否则未 scope 的 fallback 输出会把别的 provider 的模型误标成本 provider。命令链也随版本分叉（0.10.0 无 `--provider` 时只打印 active provider 的模型，故显式 scope；旧版二进制拒绝该 flag 会 exit 2，自动回退到无 scope 调用）。教训：解析第三方 CLI 的文本输出不是稳定契约，需对"标签缺失/本地化/多 provider"三种漂移同时设防
 
 ## 迁移台账（schema_migrations）
 

@@ -97,11 +97,26 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: vi.fn(), dismiss: vi.fn() }),
 }))
 
-vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  isWindowsUA: false,
-  isMacDesktopUA: false,
-  isLinuxDesktopUA: false,
-}))
+// The component reads the host axes through usePlatformDetect, not useAppMode.
+// Deriving them from `host` per call keeps each case's host setup meaningful
+// (the real composable snapshots the first call behind a guard). Real refs, not
+// bare `{ value }` objects: the template binds them directly, and a plain object
+// would always be truthy.
+vi.mock('@/composables/usePlatformDetect.ts', async () => {
+  const { ref } = await import('vue')
+  return {
+    usePlatformDetect: () => ({
+      isElectron: ref(host.isDesktopApp.value),
+      isAndroidApp: ref(host.isAppMode.value && !host.isDesktopApp.value),
+      isWebApp: ref(!host.isAppMode.value),
+      isNativeApp: ref(host.isAppMode.value),
+      isTouchPrimary: ref(false),
+    }),
+    isWindowsUA: false,
+    isMacDesktopUA: false,
+    isLinuxDesktopUA: false,
+  }
+})
 
 vi.mock('@/utils/portForwardUtils.ts', () => ({
   sshInstallHint: () => null,

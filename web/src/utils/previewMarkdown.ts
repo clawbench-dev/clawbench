@@ -14,14 +14,14 @@
 import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer.ts'
 import { createFixLocalImagePaths } from '@/composables/useMarkdownRenderPipeline.ts'
 import { dirName } from '@/utils/path.ts'
-import { usePlatformDetect } from '@/composables/usePlatformDetect.ts'
+import { useWideScreenLayout } from '@/composables/useWideScreenLayout.ts'
 
 export interface BuildPreviewMarkdownHtmlOptions {
   /** Source markdown text (already line-sliced for large-file truncation). */
   content: string
   /** Previewed file path — its directory resolves relative images/links. */
   path: string
-  isPC?: boolean
+  isWideScreen?: boolean
   imageTimestamp?: number
 }
 
@@ -29,8 +29,8 @@ export interface BuildPreviewMarkdownHtmlOptions {
 export function buildPreviewMarkdownHtml(source: BuildPreviewMarkdownHtmlOptions): string {
   const { content, path } = source
   const currentDir = path ? dirName(path) : ''
-  const { isPC } = usePlatformDetect()
-  const effectiveIsPC = source.isPC ?? isPC.value
+  const { isWideScreen: currentIsWideScreen } = useWideScreenLayout()
+  const effectiveIsWideScreen = source.isWideScreen ?? currentIsWideScreen.value
   const imageTimestamp = source.imageTimestamp ?? Date.now()
 
   return renderMarkdownHtml(content, {
@@ -41,7 +41,7 @@ export function buildPreviewMarkdownHtml(source: BuildPreviewMarkdownHtmlOptions
     fixImagePaths: createFixLocalImagePaths({
       baseDir: currentDir,
       imageTimestamp,
-      isPC: effectiveIsPC,
+      isWideScreen: effectiveIsWideScreen,
     }),
   })
 }

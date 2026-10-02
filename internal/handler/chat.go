@@ -283,8 +283,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
 			return
 		}
-	} else if sessionProject := service.GetSessionProjectPath(sessionID); sessionProject != "" && sessionProject != projectPath {
-		writeLocalizedError(w, r, model.Forbidden(nil, "AccessDenied"))
+	} else if !requireSessionOwnership(w, r, sessionID, projectPath) {
 		return
 	}
 

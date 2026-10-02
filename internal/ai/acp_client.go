@@ -49,10 +49,29 @@ type ClawBenchACPClient struct {
 	loadSessionBuf   []acp.SessionNotification
 	loadSessionBufMu sync.Mutex
 
+	// replayEndSeen records whether CodeBuddy's explicit "history replay end"
+	// marker arrived during the current LoadSession replay. CodeBuddy brackets
+	// its replay with session_info_update._meta["codebuddy.ai/historyReplay"] =
+	// "start"/"end" (verified against a real process); the end marker is the
+	// authoritative "replay complete" signal, so the load handler can stop
+	// waiting instead of relying solely on a quiet-window heuristic. Atomic:
+	// written on the SDK notification goroutine, read on the handler goroutine.
+	replayEndSeen atomic.Bool
+
 	// Terminal sessions for ACP terminal/* methods (see acp_terminal.go)
 	termMu    sync.Mutex
 	terminals map[string]*terminalSession // terminalId → session
 	termSeq   atomic.Int64                // auto-increment ID for terminal IDs
+
+	// extensionUpdateHandler, when set, receives session/update variants the
+	// SDK's typed union misclassifies (see acp_raw_notification.go). Guarded by
+	// mu. Nil by default: reading a variant is a backend concern, wired per
+	// connection after the client is created.
+	extensionUpdateHandler func(ExtensionUpdate)
+	// extensionNotificationHandler, when set, receives custom agent→client
+	// notification methods the SDK does not dispatch (see
+	// acp_raw_notification.go). Guarded by mu, nil by default.
+	extensionNotificationHandler func(ExtensionNotification)
 }
 
 // NewClawBenchACPClient creates a new ACP client with session routing support.
@@ -133,6 +152,21 @@ func (c *ClawBenchACPClient) GetLoadSessionBufLen() int {
 	return len(c.loadSessionBuf)
 }
 
+// ReplayEndSeen reports whether CodeBuddy's explicit "history replay end" marker
+// has arrived since the last ResetReplayEnd. It is the authoritative
+// end-of-replay signal, letting the load handler stop waiting immediately
+// rather than only after a quiet window.
+func (c *ClawBenchACPClient) ReplayEndSeen() bool {
+	return c.replayEndSeen.Load()
+}
+
+// ResetReplayEnd clears the history-replay end marker. Call at the start of a
+// LoadSession replay so a marker from a previous replay cannot be mistaken for
+// this one's.
+func (c *ClawBenchACPClient) ResetReplayEnd() {
+	c.replayEndSeen.Store(false)
+}
+
 // SetLoadSessionBufForTest injects replay notifications for testing.
 // Production code must not use this.
 func (c *ClawBenchACPClient) SetLoadSessionBufForTest(buf []acp.SessionNotification) {
@@ -203,6 +237,18 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
+	// The SDK's SessionUpdate union misclassifies extension variants: its
+	// fallback blocks match on field presence, so an unknown discriminator can
+	// be parsed into a known struct (e.g. `tool_call_pending` with toolCallId +
+	// title becomes ToolCall) with every payload field wrong. The original name
+	// survives in the variant's SessionUpdate field, so detect the mismatch and
+	// ignore it here — the raw notification path handles these (see
+	// acp_raw_notification.go). Without this the branch below would emit a bogus
+	// tool_use for a frame that is not a tool call at all.
+	if sessionUpdateVariantMismatch(n.Update) {
+		return nil
+	}
+
 	// Cache available commands from the update (before route lookup).
 	// Merge with any pre-scanned plugin commands to avoid losing them
 	// when the first AvailableCommandsUpdate only contains built-in commands
@@ -236,6 +282,14 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// routing to WS stream channels. The load handler reads them after
 	// the LoadSession RPC returns.
 	if c.IsLoadSessionActive() {
+		// CodeBuddy brackets the replay with historyReplay start/end markers.
+		// Record the end marker so the load handler can stop waiting as soon as
+		// the replay is genuinely complete (see ReplayEndSeen).
+		if n.Update.SessionInfoUpdate != nil {
+			if metaString(n.Update.SessionInfoUpdate.Meta[metaKeyCodeBuddyHistoryReplay]) == "end" {
+				c.replayEndSeen.Store(true)
+			}
+		}
 		c.loadSessionBufMu.Lock()
 		c.loadSessionBuf = append(c.loadSessionBuf, n)
 		c.loadSessionBufMu.Unlock()
@@ -391,7 +445,6 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		Options:    p.Options,
 		Ch:         make(chan acp.RequestPermissionResponse, 1),
 	}
-
 	// Register the pending permission
 	c.mu.Lock()
 	c.pendingPermission[key] = pp
@@ -423,6 +476,13 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		"toolName":     toolName,
 		"toolInput":    toolInput,
 		"options":      p.Options,
+	}
+	// Agent Team attribution: when a team member asks for permission, CodeBuddy
+	// stamps the member on the toolCall's _meta (NOT the request's). Without it
+	// concurrent members' approval cards are indistinguishable.
+	// See docs/dev/codebuddy_acp_team_integration.md §1.5.
+	if member := permissionMemberAttribution(p.ToolCall.Meta); member != nil {
+		approvalInput["teamMember"] = member
 	}
 
 	// Check autoApprove mode — if enabled, mark the event

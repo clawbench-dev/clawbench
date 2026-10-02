@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { ref } from 'vue'
 import { mount } from '@vue/test-utils'
 import ToastNotification from '../ToastNotification.vue'
+import { readWebFile } from '@/testUtils/readWebFile'
 
 function makeToast(overrides = {}) {
   return {
@@ -97,5 +98,20 @@ describe('ToastNotification', () => {
     })
     expect(wrapper.find('.toast-spinner').exists()).toBe(false)
     expect(wrapper.find('.toast-icon').exists()).toBe(true)
+  })
+
+  // The toast is a floating pill: jsdom resolves neither var() nor layout, so
+  // the shape is pinned at the source level (same pattern as
+  // chatActionBarShape.test.ts). `--radius-lg` (14px) left the short toasts
+  // looking like rounded rectangles; a capsule needs the pill token.
+  it('shapes the toast as a capsule via the pill radius token', () => {
+    const source = readWebFile('src/components/common/ToastNotification.vue')
+    const m = source.match(/\n\s*\.toast\s*\{([\s\S]*?)\n\s*\}/)
+    expect(m, 'the .toast base rule should exist').not.toBeNull()
+    const base = m![1]
+    expect(base).toMatch(/border-radius:\s*var\(--radius-full\)/)
+    expect(base, '--radius-lg is the rounded-rect that was replaced').not.toMatch(
+      /border-radius:\s*var\(--radius-lg\)/,
+    )
   })
 })

@@ -10,17 +10,26 @@ function setUA(ua: string, arch?: string) {
   Object.defineProperty(navigator, 'userAgentData', { value: arch ? { architecture: arch } : undefined, configurable: true })
 }
 
-const mockIsAppMode = ref(false)
+const mockIsWebApp = ref(true)
 vi.mock('@/composables/useAppMode', () => ({
-  useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: { value: false } }),
+  useAppMode: () => ({ isAppMode: ref(false), isDesktopApp: { value: false } }),
 }))
 
-vi.mock('@/composables/usePlatformDetect', () => ({
-  isAndroidUA: false,
-  isIOSUA: false,
-  isIPadOSUA: false,
-  usePlatformDetect: () => ({ isPC: ref(true) }),
-}))
+// Spread the REAL module so newly-added exports (isMobileOSUA) stay defined —
+// a hand-written whitelist silently breaks every test in this file the moment
+// the subject imports one more helper. Only the two things this file needs to
+// control are overridden.
+vi.mock('@/composables/usePlatformDetect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/usePlatformDetect')>()
+  return {
+    ...actual,
+    // The UA constants are captured at module load, so a test that rewrites
+    // navigator.userAgent afterwards still sees the original values. Keep the
+    // real ones (jsdom = desktop) and let each case set the UA it needs; only
+    // the host axis is stubbed.
+    usePlatformDetect: () => ({ isWebApp: mockIsWebApp }),
+  }
+})
 
 const mockApiGet = vi.fn()
 vi.mock('@/utils/api', () => ({
@@ -65,11 +74,16 @@ describe('detectPlatformKey', () => {
     setUA('Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X)')
     expect(detectPlatformKey()).toBe('')
   })
+  // The iPadOS desktop-mode case (Macintosh UA + maxTouchPoints > 0) cannot be
+  // exercised here: `isMobileOSUA` is captured when usePlatformDetect loads, so
+  // rewriting navigator.userAgent inside this file has no effect. That
+  // regression is pinned in usePlatformDetect.test.ts instead, where the module
+  // is re-imported per case.
 })
 
 describe('useDesktopDownload', () => {
   beforeEach(() => {
-    mockIsAppMode.value = false
+    mockIsWebApp.value = true
     mockApiGet.mockReset()
     mockDownloadByUrl.mockReset()
   })
@@ -81,9 +95,9 @@ describe('useDesktopDownload', () => {
     expect(isDesktop).toBe(true)
   })
 
-  it('marks isDesktop false in app mode', async () => {
+  it('marks isDesktop false in a native host (no download offer)', async () => {
     setUA('Mozilla/5.0 (X11; Linux x86_64)')
-    mockIsAppMode.value = true
+    mockIsWebApp.value = false
     const { useDesktopDownload } = await import('../useDesktopDownload')
     const { isDesktop } = useDesktopDownload()
     expect(isDesktop).toBe(false)
@@ -121,7 +135,7 @@ describe('useDesktopDownload', () => {
 
   it('loadLatest does nothing when not on desktop', async () => {
     setUA('Mozilla/5.0 (X11; Linux x86_64)')
-    mockIsAppMode.value = true
+    mockIsWebApp.value = false
     mockApiGet.mockResolvedValue({ version: '1.0', downloads: {} })
 
     const { useDesktopDownload } = await import('../useDesktopDownload')

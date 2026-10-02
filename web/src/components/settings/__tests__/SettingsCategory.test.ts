@@ -80,6 +80,9 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 }))
 
 vi.mock('@/composables/useAgents', () => ({
+  // useSessionIdentity (reached transitively via usePortForward) calls this at
+  // module-evaluation time, so the mock must provide it or the import throws.
+  registerIdentityUpdaters: vi.fn(),
   useAgents: () => ({
     agents: ref(mockAgents),
     loadAgents: mockLoadAgents,
@@ -120,6 +123,22 @@ const mockIsAppMode = vi.hoisted(() => ({ value: false }))
 const mockIsDesktopApp = vi.hoisted(() => ({ value: false }))
 vi.mock('@/composables/useAppMode', () => ({
   useAppMode: () => ({ isAppMode: mockIsAppMode, isDesktopApp: mockIsDesktopApp }),
+}))
+
+// The component reads the host axis through usePlatformDetect, NOT useAppMode.
+// The real composable copies useAppMode into module-level refs behind a
+// `platformInitialized` guard, so it would snapshot whatever the FIRST test in
+// this file set and ignore every later change — which is exactly the
+// order-dependent failure this mock prevents. Deriving the axes per call from
+// mockIsAppMode/mockIsDesktopApp keeps each test's platform setup meaningful.
+vi.mock('@/composables/usePlatformDetect', () => ({
+  usePlatformDetect: () => ({
+    isElectron: { value: mockIsDesktopApp.value },
+    isAndroidApp: { value: mockIsAppMode.value && !mockIsDesktopApp.value },
+    isWebApp: { value: !mockIsAppMode.value },
+    isNativeApp: { value: mockIsAppMode.value },
+    isTouchPrimary: { value: false },
+  }),
 }))
 
 // The scale slider displays the factor actually in effect. Stubbed as a plain
@@ -247,7 +266,7 @@ const i18n = createI18n({
           ragBaseUrl: '嵌入接口地址',
           ragModel: '嵌入模型',
           portForwardEnabled: '启用端口映射',
-          portForwardPort: '端口映射端口',
+          portForwardPort: 'SSH 隧道端口',
           portForwardPortAuto: '自动',
           portForwardHeader: '端口映射',
           ttsCacheHeader: '缓存',

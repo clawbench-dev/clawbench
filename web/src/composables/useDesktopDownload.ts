@@ -1,6 +1,5 @@
 import { ref } from 'vue'
-import { useAppMode } from './useAppMode'
-import { isAndroidUA, isIOSUA } from './usePlatformDetect'
+import { usePlatformDetect, isMobileOSUA } from './usePlatformDetect'
 import { apiGet } from '@/utils/api'
 import { downloadByUrl } from '@/utils/download'
 
@@ -15,9 +14,16 @@ interface DesktopLatest {
   downloads: Record<string, string[]>
 }
 
-/** Detect the current desktop OS+arch platform key, mirroring spec §8.1. */
+/**
+ * Detect the current desktop OS+arch platform key, mirroring spec §8.1.
+ *
+ * Returns '' for a mobile/touch OS. iPadOS 13+ is why this cannot just test
+ * `/Macintosh/`: it sends a macOS UA, so without the `isMobileOSUA` guard an
+ * iPad was handed the `darwin-x64` build — a download it cannot install.
+ */
 export function detectPlatformKey(): string {
   const ua = navigator.userAgent
+  if (isMobileOSUA) return ''
   const archHint = (navigator as unknown as { userAgentData?: { platform?: string; architecture?: string } }).userAgentData
   if (/Windows/i.test(ua)) return 'win32-x64'
   if (/Macintosh/i.test(ua)) {
@@ -32,11 +38,16 @@ export function detectPlatformKey(): string {
 }
 
 export function useDesktopDownload() {
-  const { isAppMode } = useAppMode()
+  const { isWebApp } = usePlatformDetect()
   const latest = ref<DesktopLatest | null>(null)
   const loading = ref(false)
 
-  const isDesktop = !isAppMode.value && !isAndroidUA && !isIOSUA
+  // Offer the desktop app only to a plain browser on a desktop OS. Inside a
+  // native shell the user already HAS the app (Electron) or cannot install it
+  // (Android WebView), and on a mobile/touch OS there is no build to install —
+  // `isMobileOSUA` is what excludes iPadOS, whose desktop-mode UA otherwise
+  // looked like macOS.
+  const isDesktop = isWebApp.value && !isMobileOSUA
 
   async function loadLatest(): Promise<void> {
     if (!isDesktop) return

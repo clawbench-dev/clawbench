@@ -469,6 +469,7 @@ export default {
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理任务',
       usageDesc: '查看 token 用量',
+      userGuideDesc: '查阅 ClawBench 用户手册',
       btwDesc: '顺便问一句（用摘要模型回答，不打扰当前会话）',
     },
     btw: {
@@ -615,6 +616,23 @@ export default {
       priorityHigh: '高',
       priorityMedium: '中',
       priorityLow: '低',
+    },
+    team: {
+      title: '团队',
+      active: '{count} 个进行中',
+      ended: '已结束',
+      autoTeam: '自动团队',
+      tools: '次工具',
+      tokens: 'tokens',
+      contextWindow: '上下文',
+      agentType: '类型',
+      status: {
+        pending: '等待中',
+        running: '进行中',
+        completed: '已完成',
+        failed: '失败',
+        terminated: '已结束',
+      },
     },
     sessionSetting: {
       searchPlaceholder: '搜索模型...',
@@ -1321,6 +1339,13 @@ export default {
   file: {
     /** Label for the aggregate upload progress bar. */
     uploading: '上传中...',
+    /** Change navigation pill in the file preview (diff markers). */
+    changeNav: {
+      count: '{count} 处变更',
+      prev: '上一处变更',
+      next: '下一处变更',
+      clear: '清除变更标记',
+    },
     codePreview: {
       title: '代码预览',
       dragToMove: '拖动窗口',
@@ -1673,7 +1698,6 @@ export default {
     transportLabel: '传输方式',
     transportSsh: 'SSH',
     transportH2: 'HTTP/2',
-    transportAuto: '自动',
     // Parenthesized annotation appended to status copy once the wire is known,
     // e.g. `隧道未连接（SSH）`. Full-width brackets are the zh convention; the
     // caller only passes this the label (`proxy.transportSsh` / `transportH2`).
@@ -1725,6 +1749,8 @@ export default {
     tunnelReconnected: '隧道已重连{transport}',
     portUnreachable: '端口连接失败，请检查服务是否运行',
     portConnecting: '端口正在连接中，请稍候',
+    portConflict: '本地端口已被其他程序占用，且无法自动改绑到空闲端口',
+    portRebound: '本地端口 {requested} 已被占用，已改用 {port}',
   },
   pwa: {
     installTitle: '安装 ClawBench',
@@ -2617,14 +2643,17 @@ export default {
       ragEmbedProgress: '向量嵌入进度',
       ragEmbedProgressDesc: '已完成向量嵌入的聊天消息数量',
       ragProgressFormat: '{done}/{total}',
-      portForwardEnabled: '启用端口映射',
-      portForwardPort: '端口映射端口',
+      portForwardPort: 'SSH 隧道端口',
       portForwardPortAuto: '自动',
-      portForwardPortDesc: '端口映射服务监听的本地端口号，0 表示自动分配',
-      portForwardH2: 'H2 模式（实验）',
-      portForwardH2Desc: '改用 HTTP/2 隧道（走主端口）替代 SSH 隧道，切换后需重连生效',
-      portForwardH2ReconnectHint: '切换将在下次重连后生效',
-      portForwardH2Reconnect: '立即重连',
+      portForwardPortDesc: 'SSH 隧道服务端监听端口，0 表示自动分配（主端口 + 1）',
+      portForwardTransport: '隧道传输方式',
+      portForwardTransportDesc: '选择端口映射使用的传输通道，保存后自动重连生效',
+      tunnelStatusConnected: '隧道已连接',
+      tunnelStatusServerReady: '服务器已就绪，可用 App 或 ssh 建立隧道',
+      tunnelStatusServerReadyH2: '服务器已就绪，端口映射走 H2（主端口）',
+      tunnelStatusUnavailable: '端口映射不可用：SSH 隧道服务器已关闭，且当前传输方式不支持 H2',
+      tunnelStatusChecking: '正在检测隧道状态…',
+      tunnelStatusUnknown: '隧道状态未知',
       frpEnabled: '启用内网穿透',
       frpEnabledDesc: '通过 FRP 将服务转发到公网，让手机在非局域网环境下也能连接',
       frpServerAddr: 'FRP 服务器地址',
@@ -2912,6 +2941,7 @@ export default {
       continueEditing: '继续编辑',
       saved: '配置已保存',
       saveFailed: '保存失败',
+      transportApplyFailed: '传输方式已保存，但隧道重连失败，端口映射暂不可用',
       testConnectivity: '测试连接',
       testing: '测试中...',
     },

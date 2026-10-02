@@ -87,9 +87,19 @@ vi.mock('@/utils/clipboard', () => ({
 vi.mock('@/composables/useTerminalStatus', () => ({
   useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: true } }),
 }))
-const mockIsPC = ref(false)
+const mockIsTouchPrimary = ref(true)
+// HOST axis must be derived from the app-mode mocks, not hardcoded: the
+// Android-gated branches (keyboard shortcuts, folder upload) read isAndroidApp,
+// and the real composable computes it as `isAppMode && !isDesktopApp`. A frozen
+// `ref(false)` would make every Android test take the desktop path.
 vi.mock('@/composables/usePlatformDetect', () => ({
-  usePlatformDetect: () => ({ isPC: mockIsPC }),
+  usePlatformDetect: () => ({
+    isAndroidApp: computed(() => mockIsAppMode.value && !mockIsDesktopApp.value),
+    isNativeApp: computed(() => mockIsAppMode.value),
+    isWebApp: computed(() => !mockIsAppMode.value),
+    isElectron: computed(() => mockIsDesktopApp.value),
+    isTouchPrimary: mockIsTouchPrimary,
+  }),
 }))
 
 const mockHandleFileSelectToDir = vi.fn()
@@ -491,7 +501,7 @@ beforeEach(() => {
   mockHandleFileDropToDirStructured.mockResolvedValue(undefined)
   mockHandleFolderSelect.mockReset()
   mockHandleFolderSelect.mockResolvedValue(undefined)
-  mockIsPC.value = false
+  mockIsTouchPrimary.value = true
   mockIsAppMode.value = false
   mockIsDesktopApp.value = false
   mockIsRefreshing.value = false
@@ -704,7 +714,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: single click only selects, does not navigate or open', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const dirItem = wrapper.find('.dir-item')
     await dirItem.trigger('click')
@@ -715,7 +725,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: double-click emits navigateDir for a directory', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const dirItem = wrapper.find('.dir-item')
     await dirItem.trigger('dblclick')
@@ -725,7 +735,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: double-click emits selectFile for a file', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const fileItems = wrapper.findAll('.file-item:not(.dir-item)')
     await fileItems[0].trigger('dblclick')
@@ -734,7 +744,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: double-click does not open in multi-select mode', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     // Enter multi-select via Ctrl+Shift+M
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'm', ctrlKey: true, shiftKey: true, bubbles: true }))
@@ -746,7 +756,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Ctrl+click enters multi-select and selects the item without opening', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const dirItem = wrapper.find('.dir-item')
     await dirItem.trigger('click', { ctrlKey: true })
@@ -759,7 +769,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Ctrl+click accumulates multiple selections', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await wrapper.find('.dir-item').trigger('click', { ctrlKey: true })
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
@@ -772,7 +782,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Ctrl+click after a normal selection keeps the previously selected file', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     // First: normal single click selects test.ts (PC: single click only selects)
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -791,7 +801,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Ctrl+click toggles an already-selected item off', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const srcDir = wrapper.find('.dir-item')
     await srcDir.trigger('click', { ctrlKey: true })
@@ -802,7 +812,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Shift+click selects the contiguous range from the anchor', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent() // order: src, test.ts, readme.md
     // Plain click sets the anchor on the first entry.
     await wrapper.find('.file-item[data-path="src"]').trigger('click')
@@ -824,7 +834,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: repeated Shift+click re-extends from the same anchor', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent() // order: src, test.ts, readme.md
     await wrapper.find('.file-item[data-path="src"]').trigger('click')
     await nextTick()
@@ -843,7 +853,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Shift+click keeps selections made before the anchor', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent() // order: src, test.ts, readme.md
     // Ctrl+click builds an independent selection on readme.md.
     await wrapper.find('.file-item[data-path="readme.md"]').trigger('click', { ctrlKey: true })
@@ -862,7 +872,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Shift+click does not move the anchor', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent() // order: src, test.ts, readme.md
     await wrapper.find('.file-item[data-path="src"]').trigger('click')
     await nextTick()
@@ -881,7 +891,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Shift+click re-anchors after a directory change', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const dirA = [
       { name: 'a1', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
       { name: 'a2', type: 'file', modified: '2025-01-01T00:00:00Z', size: 1 },
@@ -910,7 +920,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Shift+click re-anchors after the query replaces the listing', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent() // order: src, test.ts, readme.md
     await wrapper.find('.file-item[data-path="src"]').trigger('click')
     await nextTick()
@@ -932,7 +942,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: Shift+click after select-all keeps the whole selection', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent() // order: src, test.ts, readme.md
     await wrapper.find('.file-item[data-path="src"]').trigger('click')
     await nextTick()
@@ -958,7 +968,7 @@ describe('FileManagerContent — handleItemClick', () => {
   })
 
   it('PC: closing the viewed file keeps the row highlighted', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     // Open a file: the click highlights it and the parent starts the viewer.
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -992,18 +1002,18 @@ describe('FileManagerContent — handleItemClick', () => {
 
 describe('FileManagerContent — preview mode', () => {
   it('shows the preview-mode toggle on both desktop and mobile', () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const desktop = mountContent()
     expect(desktop.find('.toolbar-btn[title="开启预览模式"]').exists()).toBe(true)
 
     // Mobile supports the docked preview pane too, so the toggle is available.
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     const mobile = mountContent()
     expect(mobile.find('.toolbar-btn[title="开启预览模式"]').exists()).toBe(true)
   })
 
   it('toggles preview mode and persists the setting', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const btn = wrapper.find('.toolbar-btn[title="开启预览模式"]')
     expect(btn.exists()).toBe(true)
@@ -1017,7 +1027,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('restores preview mode from the persisted setting on mount', () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -1028,7 +1038,7 @@ describe('FileManagerContent — preview mode', () => {
     // FileManagerContent stays mounted across tab switches, so a settings change
     // must sync in without a remount. Mutate the reactive proxy (what the
     // component watches), not the raw mock target.
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = false
     const wrapper = mountContent()
     const cfg = mockLocalConfigProxy.current!
@@ -1047,7 +1057,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('renders the toggle in the More dropdown when the toolbar is collapsed', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockToolbarCollapsedIds.push('previewMode')
     const wrapper = mountContent()
 
@@ -1067,7 +1077,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('shows the More button on mobile when previewMode is collapsed', () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockToolbarCollapsedIds.push('previewMode')
     const wrapper = mountContent()
 
@@ -1078,7 +1088,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('shows the More button on desktop when previewMode is collapsed', () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockToolbarCollapsedIds.push('previewMode')
     const wrapper = mountContent()
 
@@ -1087,7 +1097,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('desktop single-click previews a file in the docked pane when enabled', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -1111,7 +1121,7 @@ describe('FileManagerContent — preview mode', () => {
     ['voice.mp3', 'audio'],
     ['report.pdf', 'pdf'],
   ])('single-click previews the media file %s too', async (name) => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent({
       entries: [{ name, type: 'file', modified: '2025-01-01T00:00:00Z', size: 100 }],
@@ -1125,7 +1135,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('desktop single-click on a directory still navigates, never previews', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -1136,7 +1146,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('does not preview on single-click when preview mode is off', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = false
     const wrapper = mountContent()
 
@@ -1148,7 +1158,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('mobile single-click previews in the docked pane when preview mode is on', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -1163,7 +1173,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('mobile single tap opens the full viewer when preview mode is off', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = false
     const wrapper = mountContent()
 
@@ -1174,7 +1184,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('double-click still opens the full viewer and closes the preview card', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -1186,7 +1196,7 @@ describe('FileManagerContent — preview mode', () => {
   })
 
   it('closes the preview when the directory changes', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     mockClosePreview.mockClear()
@@ -1475,7 +1485,7 @@ describe('FileManagerContent — resident search', () => {
   })
 
   it('double-clicking a file result emits selectFile and keeps the query', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     searchState.query = 'main'
     searchState.results = [
       { name: 'main.go', path: 'cmd/main.go', type: 'file', matchedIndices: [] },
@@ -1490,7 +1500,7 @@ describe('FileManagerContent — resident search', () => {
   })
 
   it('double-clicking a dir result emits navigateDir and clears the query', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     searchState.query = 'cmd'
     searchState.results = [
       { name: 'cmd', path: 'cmd', type: 'dir', matchedIndices: [] },
@@ -2304,7 +2314,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Delete after Ctrl+click accumulation emits batchDelete for the multi-selection', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockDialogConfirm.mockResolvedValue(true)
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2432,7 +2442,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('Enter opens the selected entry (file → selectFile)', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountKeyboardContent()
     await nextTick()
 
@@ -2487,7 +2497,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('PC: Space toggle is preserved by a following Shift+click', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountKeyboardContent() // order: src, test.ts, readme.md
     await nextTick()
 
@@ -2553,7 +2563,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('ArrowDown retargets the docked preview to the next file', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2579,7 +2589,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('ArrowUp retargets the docked preview backwards', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2601,7 +2611,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('ArrowUp onto a directory swaps the pane to its listing', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     // Start on the file after the directory so ArrowUp lands on `src`.
     const wrapper = mountKeyboardContent()
@@ -2622,7 +2632,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('ArrowDown re-opens the pane when it was collapsed by the close button', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2647,7 +2657,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('does not retarget the preview when the highlight does not move', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2669,7 +2679,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('keyboard navigation does not open a preview when preview mode is off', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = false
     const wrapper = mountKeyboardContent()
     wrapper.vm._setSelectedPath('src')
@@ -2684,7 +2694,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('keyboard navigation does not retarget the preview in multi-select mode', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2702,7 +2712,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('keyboard navigation onto the already-listed directory keeps the pane as-is', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2730,7 +2740,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('keyboard navigation ignores an entry that is not in the current listing', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -2747,7 +2757,7 @@ describe('FileManagerContent — keyboard shortcuts', () => {
   })
 
   it('keyboard navigation previews a file that comes from search results', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountKeyboardContent()
     await nextTick()
@@ -3175,7 +3185,7 @@ describe('FileManagerContent — drag-and-drop move (PC)', () => {
   })
 
   it('moves a dragged file into the directory it is dropped on', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await nextTick()
 
@@ -3190,7 +3200,7 @@ describe('FileManagerContent — drag-and-drop move (PC)', () => {
   })
 
   it('moves all selected items when dragging from a Ctrl multi-selection', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await nextTick()
 
@@ -3209,7 +3219,7 @@ describe('FileManagerContent — drag-and-drop move (PC)', () => {
   })
 
   it('skips moving a directory into itself (self-nesting guard)', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await nextTick()
 
@@ -3998,7 +4008,7 @@ describe('FileManagerContent — grid view', () => {
   })
 
   it('grid: double-click on a file emits selectFile', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     wrapper.vm._setViewMode('grid')
     await nextTick()
@@ -4431,7 +4441,7 @@ describe('FileManagerContent — dragstart attach payload', () => {
   })
 
   it('writes the whole selection, tagging directories via metaForPath', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await nextTick()
     // Ctrl+click builds a multi-selection that includes the "src" directory.
@@ -4454,7 +4464,7 @@ describe('FileManagerContent — dragstart attach payload', () => {
   })
 
   it('keeps the multi-selection active after dragging to chat', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await nextTick()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
@@ -4471,7 +4481,7 @@ describe('FileManagerContent — dragstart attach payload', () => {
   })
 
   it('labels the drag ghost with the selection count', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     await nextTick()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click', { ctrlKey: true })
@@ -4850,7 +4860,7 @@ describe('FileManagerContent — jump to dir', () => {
 
 describe('FileManagerContent — docked preview pane', () => {
   it('renders no split divider until a preview is open', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     mockPreviewRefs.visible!.value = false
     const wrapper = mountContent()
@@ -4861,7 +4871,7 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 
   it('opens a vertical split with the docked pane when a file is previewed', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     mockPreviewRefs.visible!.value = false
     const wrapper = mountContent()
@@ -4880,7 +4890,7 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 
   it('collapses the split when the pane reports closed', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -4896,7 +4906,7 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 
   it('re-opens the collapsed pane on the next single-click preview', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -4914,7 +4924,7 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 
   it('drops the split when preview mode is turned off', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -4930,7 +4940,7 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 
   it('never splits on touch even with preview mode on', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     mockPreviewRefs.visible!.value = true
     const wrapper = mountContent()
@@ -4939,7 +4949,7 @@ describe('FileManagerContent — docked preview pane', () => {
   })
 
   it('persists the dragged ratio to localStorage', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     localStorage.removeItem('clawbench-fm-preview-split-ratio')
     const wrapper = mountContent()
@@ -4955,7 +4965,7 @@ describe('FileManagerContent — docked preview pane', () => {
 
   it('restores the persisted ratio on mount', async () => {
     localStorage.setItem('clawbench-fm-preview-split-ratio', '0.35')
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -4973,7 +4983,7 @@ describe('FileManagerContent — docked preview pane', () => {
     const orig = Element.prototype.scrollIntoView
     Element.prototype.scrollIntoView = scrollSpy
     try {
-      mockIsPC.value = true
+      mockIsTouchPrimary.value = false
       mockLocalConfig.filePreviewMode = true
       const wrapper = mountContent()
       scrollSpy.mockClear()
@@ -4996,7 +5006,7 @@ describe('FileManagerContent — docked preview pane', () => {
     const orig = Element.prototype.scrollIntoView
     Element.prototype.scrollIntoView = scrollSpy
     try {
-      mockIsPC.value = true
+      mockIsTouchPrimary.value = false
       mockLocalConfig.filePreviewMode = true
       const wrapper = mountContent()
       scrollSpy.mockClear()
@@ -5087,7 +5097,7 @@ describe('FileManagerContent — panel layout (search bar belongs to the listing
   })
 
   it('keeps the search dock above the docked preview pane when it is open', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -5106,8 +5116,8 @@ describe('FileManagerContent — panel layout (search bar belongs to the listing
 })
 
 describe('FileManagerContent — mobile docked preview', () => {
-  it('opens the docked split on mobile (no isPC gate)', async () => {
-    mockIsPC.value = false
+  it('opens the docked split on mobile (no input-axis gate)', async () => {
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5121,7 +5131,7 @@ describe('FileManagerContent — mobile docked preview', () => {
   })
 
   it('uses smaller pane minimums on mobile so a short viewport can still be dragged', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -5134,7 +5144,7 @@ describe('FileManagerContent — mobile docked preview', () => {
   })
 
   it('keeps the roomier pane minimums on desktop', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     await wrapper.find('.file-item[data-path="test.ts"]').trigger('click')
@@ -5147,7 +5157,7 @@ describe('FileManagerContent — mobile docked preview', () => {
   })
 
   it('previews a directory tap on mobile via the listing pane', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5163,7 +5173,7 @@ describe('FileManagerContent — mobile docked preview', () => {
 
 describe('FileManagerContent — mobile select-then-tap to enter', () => {
   it('selects on the first tap and enters on the second, with no timing window', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     const dir = wrapper.find('.dir-item')
@@ -5178,7 +5188,7 @@ describe('FileManagerContent — mobile select-then-tap to enter', () => {
   })
 
   it('after entering, a cleared selection makes the next tap select again', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     const dir = wrapper.find('.dir-item')
@@ -5195,7 +5205,7 @@ describe('FileManagerContent — mobile select-then-tap to enter', () => {
   })
 
   it('tapping a different entry re-selects instead of entering', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5207,7 +5217,7 @@ describe('FileManagerContent — mobile select-then-tap to enter', () => {
   })
 
   it('desktop is unaffected: two clicks do not enter, native dblclick does', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     const wrapper = mountContent()
     const dir = wrapper.find('.dir-item')
 
@@ -5220,7 +5230,7 @@ describe('FileManagerContent — mobile select-then-tap to enter', () => {
   })
 
   it('second tap on a file enters the viewer and drops the docked pane', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     const row = wrapper.find('.file-item[data-path="test.ts"]')
@@ -5235,7 +5245,7 @@ describe('FileManagerContent — mobile select-then-tap to enter', () => {
   })
 
   it('re-tapping an already-selected entry does not re-open the preview', async () => {
-    mockIsPC.value = false
+    mockIsTouchPrimary.value = true
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
     const row = wrapper.find('.file-item[data-path="test.ts"]')
@@ -5249,7 +5259,7 @@ describe('FileManagerContent — mobile select-then-tap to enter', () => {
 
 describe('FileManagerContent — directory quick preview', () => {
   it('clicking a directory in preview mode opens the listing pane, not a file preview', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5264,7 +5274,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('clicking a file replaces the directory listing with the file preview', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5282,7 +5292,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('clicking a directory replaces a file preview with the listing', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5300,7 +5310,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('pane open-dir navigates the main list and collapses the pane', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5317,7 +5327,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('pane open-file opens the full-screen viewer for the joined path', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5331,7 +5341,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('passes the listed directory path down for thumbnails', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5343,7 +5353,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('pane open-self opens the LISTED directory itself and collapses the pane', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5359,7 +5369,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('pane close collapses the pane', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5373,7 +5383,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('changing the directory drops the listing so a stale dir cannot linger', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5388,7 +5398,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('turning preview mode off collapses a directory listing', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5403,7 +5413,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('double-clicking a directory on desktop navigates without leaving the listing pane open', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = true
     const wrapper = mountContent()
 
@@ -5415,7 +5425,7 @@ describe('FileManagerContent — directory quick preview', () => {
   })
 
   it('does not open the pane for a directory when preview mode is off', async () => {
-    mockIsPC.value = true
+    mockIsTouchPrimary.value = false
     mockLocalConfig.filePreviewMode = false
     const wrapper = mountContent()
 

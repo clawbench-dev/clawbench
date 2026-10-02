@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { restoreNonBlockingMode } from '../helpers/agent-mode'
 
 /**
  * E2E tests for ACP config option (mode/thinkingEffort) latency and non-blocking behavior.
@@ -32,6 +33,12 @@ test.describe.serial('ACP Config Latency & Non-Blocking', () => {
   test.setTimeout(120000)
 
   let chat: ChatPage
+
+  // This spec PATCHes the shared session's mode to plan/code. Restore the
+  // non-blocking mode so later specs are not affected (helpers/agent-mode.ts).
+  test.afterAll(async () => {
+    await restoreNonBlockingMode()
+  })
 
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)

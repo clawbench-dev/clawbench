@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { restoreNonBlockingMode } from '../helpers/agent-mode'
 
 /**
  * E2E tests for ACP mode switching feature.
@@ -26,6 +27,13 @@ test.describe.serial('ACP Mode Switching', () => {
 
   let chat: ChatPage
 
+  // This spec leaves the shared agent/session in Code/Plan mode. In a
+  // non-bypass mode the mock blocks on a permission request, which would hang
+  // every later spec that sends a message (see helpers/agent-mode.ts).
+  test.afterAll(async () => {
+    await restoreNonBlockingMode()
+  })
+
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
   })
@@ -34,16 +42,16 @@ test.describe.serial('ACP Mode Switching', () => {
     // Establish ACP connection first (default agent is acp-mock)
     await chat.sendAndAwaitACPReply('hi')
 
-    // Open settings modal and switch to mode tab
+    // Open settings drawer and switch to mode tab
     // openModeMenu waits for ACP mode state before opening
     await chat.openModeMenu()
 
     // Mode tab should be active and mode items visible
-    const modeTab = page.locator('.model-tab.active').filter({ hasText: /^Mode$|^模式$/ })
+    const modeTab = chat.sessionSettingDrawer.locator('.model-tab.active').filter({ hasText: /^Mode$|^模式$/ })
     await expect(modeTab).toBeVisible({ timeout: 5000 })
 
-    // Mode items use .thinking-item class in the modal
-    const modeItems = page.locator('.model-tab-content .thinking-item')
+    // Mode items use .thinking-item class in the drawer
+    const modeItems = chat.sessionSettingDrawer.locator('.model-tab-content .thinking-item')
     await expect(modeItems.first()).toBeVisible({ timeout: 5000 })
 
     // acp-mock provides at least 2 modes
@@ -53,15 +61,14 @@ test.describe.serial('ACP Mode Switching', () => {
 
   test('should switch mode from Code to Plan', async ({ page }) => {
     // Previous test already established ACP connection
-    // Open mode tab in modal using ChatPage helper
+    // Open mode tab in the drawer using ChatPage helper
     await chat.openModeMenu()
 
     // Select "Plan" mode
     await chat.selectMode('Plan')
 
-    // Modal should close after selection
-    const modalTabs = page.locator('.model-tab')
-    await expect(modalTabs.first()).not.toBeVisible({ timeout: 3000 })
+    // Drawer should close after selection
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 3000 })
   })
 
   test('should persist mode after page reload', async ({ page }) => {
@@ -77,6 +84,18 @@ test.describe.serial('ACP Mode Switching', () => {
   })
 
   test('mode switch should be included in chat request body', async ({ page }) => {
+    // Earlier tests in this serial file left the shared session in Plan mode,
+    // where the mock blocks on a permission request. Restore the non-blocking
+    // mode first so this test's warm-up turn can actually complete.
+    //
+    // Reload after the reset: the frontend sends its OWN `modeId` on every chat
+    // POST, and the page still holds the pre-reset (Plan) value in memory.
+    // Reloading re-reads the persisted bypass mode from the backend.
+    await restoreNonBlockingMode()
+    await page.reload()
+    await page.waitForLoadState('domcontentloaded')
+    await expect(chat.textarea).toBeVisible({ timeout: 10000 })
+
     // Warm up ACP connection (reload in previous test may have reset state)
     await chat.sendAndAwaitACPReply('hi')
 
@@ -98,5 +117,11 @@ test.describe.serial('ACP Mode Switching', () => {
     // Verify request body contains modeId
     const body = chatRequest.postDataJSON()
     expect(body.modeId).toBeTruthy()
+
+    // Code mode makes the mock block on a permission request. Stop the turn and
+    // restore the non-blocking mode, otherwise the mock subprocess stays blocked
+    // and every later spec that sends a message hangs (the session never leaves
+    // "running", so new messages just queue).
+    await restoreNonBlockingMode()
   })
 })

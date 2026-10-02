@@ -2919,6 +2919,38 @@ describe('sub-agent parent grouping (reducer)', () => {
     s = chatMessageReducer(s, { type: 'ws_tool_use', data: { id: 't1', name: 'Read', parent_tool_call_id: 'call_p' } as any })
     expect(s[0].blocks![0]).toMatchObject({ type: 'tool_use', id: 't1', parent_tool_call_id: 'call_p' })
   })
+
+  it('ws_tool_use records Agent Team member attribution', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, {
+      type: 'ws_tool_use',
+      data: { id: 'call_a', name: 'Agent', member_name: 'probe-alpha', member_color: 'blue' } as any,
+    })
+    expect(s[0].blocks![0]).toMatchObject({
+      type: 'tool_use',
+      id: 'call_a',
+      member_name: 'probe-alpha',
+      member_color: 'blue',
+    })
+  })
+
+  it('ws_content records Agent Team member attribution on the new text block', () => {
+    let s = [streamingMsg()]
+    s = chatMessageReducer(s, {
+      type: 'ws_content',
+      text: 'hello',
+      parentToolCallId: 'call_a',
+      memberName: 'probe-alpha',
+      memberColor: 'blue',
+    })
+    expect(s[0].blocks![0]).toMatchObject({
+      type: 'text',
+      text: 'hello',
+      parent_tool_call_id: 'call_a',
+      member_name: 'probe-alpha',
+      member_color: 'blue',
+    })
+  })
 })
 
 describe('sub-agent thinking_done', () => {
