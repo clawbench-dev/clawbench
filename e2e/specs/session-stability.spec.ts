@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { NavigationPage } from '../pages/navigation.page'
 
 /**
  * E2E tests for session stability — verifying that the current session
@@ -35,16 +36,21 @@ test.describe.serial('Session Stability', () => {
     // Verify the user message is visible
     await expect(chat.getLastUserMessage()).toContainText(uniqueText)
 
-    // Switch to another tab (files)
-    await page.locator('.dock-item').filter({ hasText: /file|文件/i }).first().click().catch(() => {
-      // Fallback: click the second dock item
-      page.locator('.dock-item').nth(1).click()
-    })
-    await page.waitForTimeout(500)
+    // Switch the left pane to another tab and back, via the stable dock tab
+    // ids. The old `.dock-item` class does not exist, and a positional fallback
+    // would click whatever tab happened to be at that index. `browse` is the
+    // default left tab, so switch to `tasks` first to make the round trip real
+    // (clicking the already-active tab collapses the pane in wide mode).
+    const nav = new NavigationPage(page)
+    await nav.switchToTasks()
+    await expect(page.locator('.task-tab').first()).toBeVisible({ timeout: 10000 })
 
-    // Switch back to chat
-    await page.locator('.dock-item').first().click()
-    await page.waitForTimeout(500)
+    await nav.switchToFileManager()
+    await expect(page.locator('.file-list, .file-item, .file-grid, .grid-item').first()).toBeVisible({ timeout: 10000 })
+
+    // Switch back to chat (wide mode: the chat toggle; narrow mode: chat tab)
+    await nav.switchToChat()
+    await expect(chat.textarea).toBeVisible({ timeout: 10000 })
 
     // Verify the message is still visible (session wasn't lost)
     await expect(chat.getLastUserMessage()).toContainText(uniqueText)
@@ -160,7 +166,12 @@ test.describe.serial('Session Stability', () => {
   })
 
   test('POST /api/ai/chat without session_id returns 400 (no ghost session)', async ({ page }) => {
-    // Verify the backend correctly rejects POST without session_id
+    // The backend resolves the session from `?session_id=` and falls back to
+    // the `chat_session_id` cookie. To exercise the genuinely-missing case we
+    // must clear that cookie first, otherwise the request legitimately succeeds
+    // against the cookie's session (200, not 400).
+    await page.context().clearCookies({ name: /chat_session_id$/ })
+
     const result = await page.evaluate(async () => {
       const resp = await fetch('/api/ai/chat', {
         method: 'POST',

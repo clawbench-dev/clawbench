@@ -1,7 +1,22 @@
-import { test, expect } from '../fixtures'
+import { test, expect, type Page } from '../fixtures'
 import { FileManagerPage } from '../pages/file-manager.page'
 import { NavigationPage } from '../pages/navigation.page'
 
+/**
+ * File overlay: scroll-to-line and nav stack.
+ *
+ * The file viewer renders source through CodeMirror (CodeMirrorViewer.vue), not
+ * the old sliced `<pre>`. Two contracts follow from that and both are asserted
+ * here because the old ones silently stopped matching:
+ *
+ *   - DOM: lines are `.cm-line` inside `.cm-scroller`. The jump highlight is a
+ *     CodeMirror line *decoration* (`line-flash`), not a `.code-line[data-line]`
+ *     attribute — CodeMirror virtualizes its DOM, so there is no per-line
+ *     `data-line` to query.
+ *   - Events: the request is `cm-scroll-to-line` and it is acknowledged with
+ *     `cm-scroll-to-line-handled` carrying the same `requestId`. Dispatching the
+ *     old `scroll-to-line` is a no-op.
+ */
 test.describe('File overlay: scroll-to-line and nav stack', () => {
   let fm: FileManagerPage
   let nav: NavigationPage
@@ -15,108 +30,116 @@ test.describe('File overlay: scroll-to-line and nav stack', () => {
     await fm.waitForContent(15000)
   })
 
-  test('scroll-to-line scrolls file viewer to the target line and flashes it', async ({ page }) => {
-    // Open a known file by double-clicking
+  /** Open go.mod in the viewer and wait for CodeMirror to render. */
+  async function openGoMod(page: Page): Promise<void> {
     const goMod = page.locator('.file-item, .grid-item', { hasText: 'go.mod' }).first()
-    if (!(await goMod.isVisible().catch(() => false))) {
-      test.skip()
-      return
-    }
+    await expect(goMod).toBeVisible({ timeout: 10000 })
     await goMod.dblclick()
 
-    // Wait for file overlay to appear
     await expect(page.locator('.file-overlay')).toBeVisible({ timeout: 10000 })
-    // Wait for code lines to render
-    await expect(page.locator('.code-line').first()).toBeVisible({ timeout: 10000 })
+    // CodeMirror renders into .cm-scroller / .cm-line once the async component
+    // loads and the editor measures itself.
+    await expect(page.locator('.cm-scroller')).toBeVisible({ timeout: 15000 })
+    await expect(page.locator('.cm-line').first()).toBeVisible({ timeout: 15000 })
+  }
 
-    // Dispatch scroll-to-line event via page.evaluate (simulates clicking an
-    // annotated file path like `go.mod:3`)
-    await page.evaluate(() => {
-      window.dispatchEvent(new CustomEvent('scroll-to-line', { detail: { line: 3 } }))
-    })
+  /**
+   * Dispatch a scroll-to-line request and wait for CodeMirror to acknowledge it.
+   * The ack is the deterministic completion signal — the flash itself is a
+   * timed decoration, so waiting on it directly would race the 700ms timer.
+   */
+  async function requestScrollToLine(
+    page: Page,
+    detail: { line: number; lineEnd?: number; lineRanges?: string },
+  ): Promise<void> {
+    const requestId = Date.now()
+    const handled = page.evaluate(
+      (id) => new Promise<boolean>((resolve) => {
+        const onHandled = (e: Event) => {
+          const d = (e as CustomEvent).detail
+          if (d?.requestId !== id) return
+          window.removeEventListener('cm-scroll-to-line-handled', onHandled)
+          resolve(true)
+        }
+        window.addEventListener('cm-scroll-to-line-handled', onHandled)
+        // Give up after the viewer's own layout wait so a missed ack fails the
+        // test instead of hanging forever.
+        setTimeout(() => resolve(false), 10000)
+      }),
+      requestId,
+    )
+    await page.evaluate(
+      ({ id, d }) => {
+        window.dispatchEvent(new CustomEvent('cm-scroll-to-line', { detail: { ...d, requestId: id } }))
+      },
+      { id: requestId, d: detail },
+    )
+    expect(await handled, 'CodeMirror never acknowledged cm-scroll-to-line').toBe(true)
+  }
 
-    // The target line should get the line-flash class
-    await expect(page.locator('.code-line[data-line="3"].line-flash')).toBeVisible({ timeout: 5000 })
+  test('scroll-to-line scrolls file viewer to the target line and flashes it', async ({ page }) => {
+    await openGoMod(page)
+
+    await requestScrollToLine(page, { line: 3 })
+
+    // The target line gets the flash decoration class. CodeMirror renders it on
+    // a `.cm-line` element.
+    await expect(page.locator('.cm-line.line-flash').first()).toBeVisible({ timeout: 5000 })
   })
 
   test('scroll-to-line with range highlights multiple lines', async ({ page }) => {
-    const goMod = page.locator('.file-item, .grid-item', { hasText: 'go.mod' }).first()
-    if (!(await goMod.isVisible().catch(() => false))) {
-      test.skip()
-      return
-    }
-    await goMod.dblclick()
+    await openGoMod(page)
 
-    await expect(page.locator('.file-overlay')).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.code-line').first()).toBeVisible({ timeout: 10000 })
+    await requestScrollToLine(page, { line: 1, lineEnd: 3 })
 
-    // Dispatch scroll-to-line with range
-    await page.evaluate(() => {
-      window.dispatchEvent(new CustomEvent('scroll-to-line', { detail: { line: 1, lineEnd: 3 } }))
-    })
-
-    // Both lines should get the flash class
-    await expect(page.locator('.code-line[data-line="1"].line-flash')).toBeVisible({ timeout: 5000 })
-    await expect(page.locator('.code-line[data-line="3"].line-flash')).toBeVisible({ timeout: 5000 })
+    // Every line in the range carries the flash decoration.
+    await expect
+      .poll(async () => page.locator('.cm-line.line-flash').count(), { timeout: 5000 })
+      .toBeGreaterThanOrEqual(3)
   })
 
   test('nav stack does not duplicate same file on consecutive opens', async ({ page }) => {
+    await openGoMod(page)
+
+    // The overlay covers the file list, so to open the same file a second time
+    // through the app's own path we close it first and re-open from the list.
+    // (Dispatching `open-file-overlay` directly would skip the content fetch
+    // and land on an empty viewer — see FileManagerContent.vue.)
+    await page.locator('.overlay-close-btn').click()
+    await expect(page.locator('.file-overlay')).not.toBeVisible({ timeout: 10000 })
+
     const goMod = page.locator('.file-item, .grid-item', { hasText: 'go.mod' }).first()
-    if (!(await goMod.isVisible().catch(() => false))) {
-      test.skip()
-      return
-    }
+    await expect(goMod).toBeVisible({ timeout: 10000 })
     await goMod.dblclick()
+    await expect(page.locator('.cm-scroller')).toBeVisible({ timeout: 15000 })
 
-    await expect(page.locator('.file-overlay')).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.code-line').first()).toBeVisible({ timeout: 10000 })
-
-    // Open the same file again via open-file-overlay event
-    await page.evaluate(() => {
-      window.dispatchEvent(new CustomEvent('open-file-overlay', { detail: { path: 'go.mod' } }))
-    })
-
-    // Give Vue a tick to process
-    await page.waitForTimeout(200)
-
-    // Check nav stack length — should still be 1 (no duplicate)
-    const stackLength = await page.evaluate(() => {
-      // Access the internal nav stack via the composable's module state
-      // We verify indirectly: canGoBack should be false (only one entry)
-      const goBackBtn = document.querySelector('.file-header-back-btn')
-      return goBackBtn ? true : false
-    })
-
-    // The back button should NOT be visible (only one entry in stack)
-    // Note: if there were a duplicate, canGoBack would be true and the back
-    // button would appear. This is an indirect but reliable check.
-    expect(stackLength).toBe(false)
+    // Closing the overlay clears the file nav stack, so the fresh open is the
+    // FIRST entry: there is no in-file back target. The back button may still
+    // render (it doubles as "return to the file list"), so assert on its label
+    // rather than its presence — a duplicate stack entry would make it read
+    // "Back to go.mod" (file.nav.backToFile).
+    const backBtn = page.locator('.file-header-back-btn')
+    if (await backBtn.count() > 0) {
+      await expect(backBtn).not.toHaveAttribute('title', /Back to go\.mod|返回 go\.mod/)
+    }
   })
 
   test('cancel-scroll-restore prevents scroll position override', async ({ page }) => {
-    const goMod = page.locator('.file-item, .grid-item', { hasText: 'go.mod' }).first()
-    if (!(await goMod.isVisible().catch(() => false))) {
-      test.skip()
-      return
-    }
-    await goMod.dblclick()
+    await openGoMod(page)
 
-    await expect(page.locator('.file-overlay')).toBeVisible({ timeout: 10000 })
-    await expect(page.locator('.code-line').first()).toBeVisible({ timeout: 10000 })
+    // Scroll to the bottom first so there is a saved position to restore.
+    await page.locator('.cm-scroller').evaluate((el) => { el.scrollTop = el.scrollHeight })
+    await expect
+      .poll(async () => page.locator('.cm-scroller').evaluate((el) => el.scrollTop), { timeout: 5000 })
+      .toBeGreaterThan(0)
 
-    // Scroll to bottom first (so there's a saved scroll position)
-    const scrollContainer = page.locator('.raw-content-pre')
-    if ((await scrollContainer.count()) > 0) {
-      await scrollContainer.evaluate(el => { el.scrollTop = el.scrollHeight })
-      await page.waitForTimeout(200)
-    }
+    // Trigger the jump; it must not be overridden by the saved scroll restore.
+    await requestScrollToLine(page, { line: 1 })
 
-    // Now trigger scroll-to-line and verify it scrolls to the target
-    await page.evaluate(() => {
-      window.dispatchEvent(new CustomEvent('scroll-to-line', { detail: { line: 1 } }))
-    })
-
-    // Line 1 should be visible and flashed (not overridden by scroll restore)
-    await expect(page.locator('.code-line[data-line="1"].line-flash')).toBeVisible({ timeout: 5000 })
+    // Line 1 is back in view (the scroller returned near the top) and flashed.
+    await expect(page.locator('.cm-line.line-flash').first()).toBeVisible({ timeout: 5000 })
+    await expect
+      .poll(async () => page.locator('.cm-scroller').evaluate((el) => el.scrollTop), { timeout: 5000 })
+      .toBeLessThan(200)
   })
 })

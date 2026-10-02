@@ -197,6 +197,41 @@ func seedExistingInstall(t *testing.T) {
 	}
 }
 
+// TestApplyDefaultsSessionMaxCountPresence pins the 0-means-unlimited contract
+// for session.max_count. The create-session gate is `MaxCount > 0`, so 0 is an
+// expressible value ("no limit"), not a zero-value to be defaulted. An explicit
+// 0 in config.yaml must survive; only an omitted key takes the default.
+func TestApplyDefaultsSessionMaxCountPresence(t *testing.T) {
+	t.Run("explicit zero stays unlimited", func(t *testing.T) {
+		setupTestBinDir(t)
+		cfg := Config{}
+		cfg.Session.MaxCount = 0
+		ApplyDefaults(&cfg, map[string]bool{"session.max_count": true})
+		if cfg.Session.MaxCount != 0 {
+			t.Errorf("Session.MaxCount = %d, want 0 (explicit unlimited)", cfg.Session.MaxCount)
+		}
+	})
+
+	t.Run("omitted key takes the default", func(t *testing.T) {
+		setupTestBinDir(t)
+		cfg := Config{}
+		ApplyDefaults(&cfg, nil)
+		if cfg.Session.MaxCount != 15 {
+			t.Errorf("Session.MaxCount = %d, want 15", cfg.Session.MaxCount)
+		}
+	})
+
+	t.Run("negative clamps to default", func(t *testing.T) {
+		setupTestBinDir(t)
+		cfg := Config{}
+		cfg.Session.MaxCount = -3
+		ApplyDefaults(&cfg, map[string]bool{"session.max_count": true})
+		if cfg.Session.MaxCount != 15 {
+			t.Errorf("Session.MaxCount = %d, want 15 (negative is nonsensical)", cfg.Session.MaxCount)
+		}
+	})
+}
+
 // TestApplyDefaultsLeavesWallpaperAlone pins that ApplyDefaults no longer
 // derives any wallpaper state: the source, the on/off switch and the selected
 // image are per-device browser choices now, so loading a config must not invent

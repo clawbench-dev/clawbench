@@ -238,7 +238,18 @@ func ApplyDefaults(cfg *Config, presence map[string]bool) string { //nolint:goco
 	}
 
 	// --- Session ---
-	if cfg.Session.MaxCount <= 0 {
+	// MaxCount: 0 means "unlimited" (the create-session gate is `> 0`), so it is
+	// an expressible value, not a zero-value to be defaulted. Only an omitted
+	// key takes the default. Rewriting an explicit 0 to 15 made "unlimited"
+	// unexpressable in config.yaml — an install that opted out of the limit was
+	// silently enrolled in one. Negative values are nonsensical; clamp them to
+	// the default rather than letting them reach the `> 0` gate (which would
+	// read a negative as unlimited).
+	if p, ok := presence["session.max_count"]; ok && p {
+		if cfg.Session.MaxCount < 0 {
+			cfg.Session.MaxCount = 15
+		}
+	} else if cfg.Session.MaxCount <= 0 {
 		cfg.Session.MaxCount = 15
 	}
 	// ArchiveRetentionEnabled: bool zero-value (false) is intentional default.

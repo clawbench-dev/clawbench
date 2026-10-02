@@ -76,13 +76,13 @@ test.describe('File Manager', () => {
 
     // Viewer becomes active (file-view tab) — the file manager dock button is no longer active
     await expect(page.locator('.file-viewer')).toBeVisible({ timeout: 10000 })
-    await expect(nav.browseBtn).not.toHaveClass(/active/)
+    await expect(nav.getTabButton('browse')).not.toHaveClass(/active/)
 
     // Close the file via the viewer's close button
     await page.locator('.overlay-close-btn').click()
 
     // The file manager tab becomes active again automatically
-    await expect(nav.browseBtn).toHaveClass(/active/)
+    await expect(nav.getTabButton('browse')).toHaveClass(/active/)
     await expect(page.locator('.file-item, .grid-item').first()).toBeVisible({ timeout: 10000 })
   })
 })

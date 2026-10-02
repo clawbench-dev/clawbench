@@ -79,12 +79,23 @@ export const test = base.extend({
         await page.waitForLoadState('networkidle')
       }
 
-      // Fill password and submit
-      await page.locator('.login-page input[type="password"]').fill(E2E_PASSWORD)
-      await page.locator('.login-btn').click()
-
-      // Wait for the main app to load (login page should disappear)
-      await expect(page.locator('.login-page')).not.toBeVisible({ timeout: 10000 })
+      // Fill password and submit. The password-change spec rotates the server
+      // password and may leave it as NEW_PASSWORD if it crashes mid-test, so try
+      // the known alternates before giving up.
+      const candidates = [E2E_PASSWORD, 'new-e2e-password-123456']
+      let loggedIn = false
+      for (const candidate of candidates) {
+        await page.locator('.login-page input[type="password"]').fill(candidate)
+        await page.locator('.login-btn').click()
+        loggedIn = await page.locator('.login-page')
+          .waitFor({ state: 'hidden', timeout: 10000 })
+          .then(() => true)
+          .catch(() => false)
+        if (loggedIn) break
+      }
+      if (!loggedIn) {
+        throw new Error('E2E auth fixture: login failed with every known password')
+      }
     }
 
     // Wait for the project to be ready.

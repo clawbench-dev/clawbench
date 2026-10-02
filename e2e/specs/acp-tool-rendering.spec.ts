@@ -76,9 +76,11 @@ test.describe.serial('ACP Tool Rendering', () => {
     const overlayBody = page.locator('.tool-detail-body')
     await expect(overlayBody.first()).toBeVisible({ timeout: 5000 })
 
-    // Close the overlay by clicking the backdrop overlay
-    const overlay = page.locator('.bs-overlay')
-    await overlay.click()
+    // Close the overlay. Escape is the reliable route: `.bs-overlay` uses
+    // `@click.self`, and on a wide screen the overlay is a full-viewport layer
+    // whose clickable backdrop area can be occluded, making a positional click
+    // time out.
+    await page.keyboard.press('Escape')
     await expect(overlayHeader.first()).not.toBeVisible({ timeout: 5000 })
   })
 

@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { restoreNonBlockingMode } from '../helpers/agent-mode'
 
 /**
  * E2E tests for ACP session state persistence.
@@ -33,6 +34,12 @@ test.describe.serial('ACP Session State Persistence', () => {
 
   let chat: ChatPage
 
+  // This spec switches the shared session to Plan mode. Restore the
+  // non-blocking mode so later specs are not affected (helpers/agent-mode.ts).
+  test.afterAll(async () => {
+    await restoreNonBlockingMode()
+  })
+
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
   })
@@ -52,9 +59,8 @@ test.describe.serial('ACP Session State Persistence', () => {
     // Switch to a different mode to make the test meaningful
     await chat.selectMode('Plan')
 
-    // Modal closes after selection
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).not.toBeVisible({ timeout: 5000 })
+    // Drawer closes after selection
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
 
     // Wait for mode to be persisted via PATCH before reloading
     await chat.waitForSessionMode('plan')
@@ -73,7 +79,7 @@ test.describe.serial('ACP Session State Persistence', () => {
     await chat.openModeMenu()
 
     // The "Plan" item should have the current class (active selection)
-    const planItem = page.locator('.thinking-item').filter({ hasText: /Plan/i })
+    const planItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /Plan/i })
     await expect(planItem).toBeVisible({ timeout: 5000 })
     await expect(planItem).toHaveClass(/current/, { timeout: 5000 })
   })
@@ -121,53 +127,70 @@ test.describe.serial('ACP Session State Persistence', () => {
   // ───────────────────────────────────────────────────────
 
   test('should restore ACP state when switching back to session', async ({ page }) => {
-    // ACP connection is already warm. Current session has "Plan" mode.
-    // Wait for ACP mode state before opening the menu
-    await chat.waitForACPModeState()
+    // Make this test self-contained rather than relying on the mode left behind
+    // by the earlier serial tests. Test 1 left the shared session in Plan mode,
+    // where the mock blocks on a permission request — so restore the
+    // non-blocking mode and reload before the warm-up turn.
+    await restoreNonBlockingMode()
+    await page.reload()
+    await page.waitForLoadState('domcontentloaded')
+    await expect(chat.textarea).toBeVisible({ timeout: 10000 })
 
-    // Open mode menu to verify state
+    // Warm the connection, then set this session's mode to Plan explicitly.
+    await chat.sendAndAwaitACPReply('hi')
+    await chat.waitForACPState()
+
+    // Open mode menu and select "Plan"
     await chat.openModeMenu()
-
-    // Verify "Plan" is selected
-    const planItem = page.locator('.thinking-item').filter({ hasText: /Plan/i })
+    const planItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /Plan/i })
     await expect(planItem).toBeVisible({ timeout: 5000 })
-    await expect(planItem).toHaveClass(/current/, { timeout: 5000 })
+    await planItem.click()
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
 
-    // Close modal by pressing Escape
-    await page.keyboard.press('Escape')
-    await page.waitForTimeout(500)
+    // Remember the original session and confirm the mode stuck.
+    const originalId = await page.evaluate(async () => {
+      const resp = await fetch('/api/ai/chat?limit=1')
+      const data = await resp.json()
+      return data.sessionId as string
+    })
+    expect(originalId).toBeTruthy()
+    await chat.waitForSessionMode('plan', 10000)
 
-    // Create a new session with the same agent
+    // Create a new session with the same agent. This opens the agent selector
+    // drawer; make sure it is dismissed before opening the session list, or its
+    // overlay will intercept clicks on the list.
     await chat.createSessionWithAgent('acp-mock')
+    await page.keyboard.press('Escape')
+    await expect(page.locator('.bs-overlay')).toHaveCount(0, { timeout: 5000 }).catch(() => {})
 
     // Wait for the new session to be ready
     await chat.waitForACPState()
 
-    // Now switch back to the original session (first in the list)
-    // Open session drawer, click the first session item
+    // Open the session list and switch back to the ORIGINAL session (the one in
+    // Plan mode), identified by id rather than list position (user-draggable).
     await chat.openSessionList()
 
-    // Wait for session drawer (BottomSheet) to open
-    const sessionDrawer = page.locator('.bs-panel')
+    const sessionDrawer = page.locator('.bs-panel.session-drawer-sheet')
     await expect(sessionDrawer).toBeVisible({ timeout: 5000 })
 
-    // Click the second session in the list (the older one with Plan mode)
-    const sessionItems = page.locator('.session-item')
-    const sessionCount = await sessionItems.count()
-    expect(sessionCount).toBeGreaterThanOrEqual(2)
+    const originalRow = sessionDrawer.locator(`.session-row[data-session-id="${originalId}"]`).first()
+    await expect(originalRow).toBeVisible({ timeout: 10000 })
+    await originalRow.locator('.session-item').click()
 
-    // Click the second session (the older one with Plan mode)
-    await sessionItems.nth(1).click()
-
-    // Wait for mode to be restored to "plan" from backend
-    await chat.waitForSessionMode('plan', 10000)
+    // The switch is driven by the frontend; its session cookie (which the
+    // `/api/ai/chat` probe reads) updates asynchronously and may lag well past a
+    // timeout. Assert on the restored UI state instead — the drawer marks the
+    // switched-to row active, and the mode menu shows the restored selection.
+    await expect(
+      sessionDrawer.locator(`.session-row[data-session-id="${originalId}"] .session-item`)
+    ).toHaveClass(/active/, { timeout: 10000 })
 
     // Wait for ACP mode state to be restored for this session
     await chat.waitForACPModeState()
 
     // Open mode menu to verify "Plan" is still selected for the original session
     await chat.openModeMenu()
-    const restoredPlanItem = page.locator('.thinking-item').filter({ hasText: /Plan/i })
+    const restoredPlanItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /Plan/i })
     await expect(restoredPlanItem).toBeVisible({ timeout: 5000 })
     await expect(restoredPlanItem).toHaveClass(/current/, { timeout: 5000 })
   })
@@ -180,14 +203,12 @@ test.describe.serial('ACP Session State Persistence', () => {
     // Warm up ACP connection (session switch may have reset state)
     await chat.sendAndAwaitACPReply('hi')
 
-    // Open SessionSettingModal → thinking tab → select "High"
-    await chat.openSessionSettingModal()
+    // Open the session setting drawer on the thinking tab → select "High"
     await chat.openThinkingTab()
     await chat.selectThinkingEffort('High')
 
-    // Modal closes after selection
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).not.toBeVisible({ timeout: 5000 })
+    // Drawer closes after selection
+    await expect(chat.sessionSettingDrawer).not.toBeVisible({ timeout: 5000 })
 
     // Wait for thinking effort to be persisted via PATCH before reloading
     await chat.waitForSessionThinkingEffort('high')
@@ -202,12 +223,11 @@ test.describe.serial('ACP Session State Persistence', () => {
     // Wait for the UI to be ready
     await expect(chat.textarea).toBeVisible({ timeout: 5000 })
 
-    // Open SessionSettingModal → thinking tab — "High" should be the active selection
-    await chat.openSessionSettingModal()
+    // Open the thinking tab — "High" should be the active selection
     await chat.openThinkingTab()
 
     // The "High" item should have the active/selected class
-    const highItem = page.locator('.thinking-item').filter({ hasText: /high/i })
+    const highItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /high/i })
     await expect(highItem).toBeVisible()
     await expect(highItem).toHaveClass(/current/, { timeout: 5000 })
   })

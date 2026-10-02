@@ -57,6 +57,18 @@ test.describe.serial('Session Management', () => {
     })
     expect(sessionId).toBeTruthy()
 
+    // Archiving an EMPTY session hard-deletes it (no row left to resume), so
+    // give it a message first — that is what makes the archive a soft delete.
+    const sendOk = await page.evaluate(async (id) => {
+      const resp = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'resume-me', session_id: id, agentId: 'acp-mock' }),
+      })
+      return resp.ok
+    }, sessionId)
+    expect(sendOk).toBe(true)
+
     // Archive the session
     const deleteOk = await page.evaluate(async (id) => {
       const resp = await fetch(`/api/ai/session/archive?session_id=${id}&backend=acp-mock`, { method: 'DELETE' })
@@ -128,11 +140,15 @@ test.describe.serial('Session Management', () => {
 
     // Reload the page and verify messages are still visible
     await page.reload()
-    await page.waitForLoadState('networkidle')
-    await page.waitForTimeout(500)
+    await page.waitForLoadState('domcontentloaded')
+    await expect(page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
 
-    // The assistant message from before should still be rendered
-    await expect(page.locator('.chat-message.assistant').first()).toContainText('mock', { timeout: 10000 })
+    // Our user message survived the archive/resume round trip. Scope to it
+    // rather than the FIRST assistant message: the shared project may hold
+    // other sessions' messages, and `.first()` is not necessarily ours.
+    await expect(
+      page.locator('.chat-message.user').filter({ hasText: 'sessionresumetest123' })
+    ).toBeVisible({ timeout: 10000 })
   })
 
   test('should preserve agent and model after session resume', async ({ page }) => {
@@ -148,6 +164,16 @@ test.describe.serial('Session Management', () => {
     })
     expect(sessionId).toBeTruthy()
     expect(backend).toBeTruthy()
+
+    // Give the session content so the archive is a soft delete (an empty
+    // session is hard-deleted and cannot be resumed).
+    await page.evaluate(async (id) => {
+      await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'keep-agent', session_id: id, agentId: 'acp-mock' }),
+      })
+    }, sessionId)
 
     // Archive and resume
     await page.evaluate(async (id) => {

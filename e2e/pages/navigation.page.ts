@@ -3,96 +3,134 @@ import { type Locator, type Page, expect } from '@playwright/test'
 /**
  * Page Object Model for tab/drawer navigation.
  *
- * Dock buttons inside .dock-center (ordered by position):
- *   [0] Chat           (inside .dock-btn-wrap)
- *   [1] File Viewer    (direct .dock-btn)
- *   [2] File Manager   (direct .dock-btn, switches to 'browse' tab)
- *   [3] Tasks           (inside .dock-btn-wrap)
+ * The dock renders in two mutually exclusive shapes:
+ *   - wide screen (CSS width >= 1024px, the Playwright default at 1280×720):
+ *     a vertical `.wide-dock-center` on the left, chat toggled separately.
+ *   - narrow screen: a horizontal `.dock-center` at the bottom.
  *
- * Titles come from i18n and vary by locale (Chat/会话, File Manager/文件管理器, etc.),
- * so we use positional selectors in .dock-center for locale independence.
+ * Both shapes tag every tab button with `data-tab="<id>"` (see App.vue and
+ * `composables/dockTabs.ts`). Selectors therefore key off that stable id rather
+ * than a position: the old positional `.nth(N)` locators silently rotted every
+ * time a tab was added to `DOCK_TABS`, and they targeted `.dock-center` — which
+ * is `v-show`-hidden in wide mode, so every click timed out.
  */
 export class NavigationPage {
   readonly page: Page
-  private readonly dockBtns: Locator
 
   constructor(page: Page) {
     this.page = page
-    this.dockBtns = page.locator('.dock-center .dock-btn')
   }
 
-  // --- Tab switching via position (locale-independent) ---
-
-  /** Get the Chat dock button (1st .dock-btn in .dock-center) */
-  private get chatBtn(): Locator {
-    return this.dockBtns.nth(0)
+  /**
+   * The visible dock button for a tab id.
+   *
+   * `.filter({ visible: true })` picks the active dock shape: both the wide and
+   * narrow docks are in the DOM (one is `v-show`-hidden), so a bare
+   * `[data-tab]` query would resolve to two elements and fail strict mode.
+   */
+  private tabBtn(tab: string): Locator {
+    return this.page.locator(`.dock-btn[data-tab="${tab}"]`).filter({ visible: true }).first()
   }
 
-  /** Get the File Viewer dock button (2nd .dock-btn in .dock-center) */
-  private get viewerBtn(): Locator {
-    return this.dockBtns.nth(1)
+  /** Public accessor for a tab's visible dock button (for class assertions). */
+  getTabButton(tab: string): Locator {
+    return this.tabBtn(tab)
   }
 
-  /** Get the File Manager / Browse dock button (3rd .dock-btn in .dock-center) */
-  private get browseBtn(): Locator {
-    return this.dockBtns.nth(2)
+  /** Wait for the dock to render (either shape) and return a tab button. */
+  private async readyTabBtn(tab: string): Promise<Locator> {
+    const btn = this.tabBtn(tab)
+    await expect(btn).toBeVisible({ timeout: 10000 })
+    return btn
   }
 
-  /** Get the Tasks dock button (4th .dock-btn in .dock-center) */
-  private get tasksBtn(): Locator {
-    return this.dockBtns.nth(3)
+  // --- Tab switching (locale- and position-independent) ---
+
+  /**
+   * Switch to a left-pane tab.
+   *
+   * In wide mode the *active* tab's button toggles the left pane collapsed
+   * (VS Code-style), so clicking blindly can *hide* the pane we want. The
+   * `active` class already encodes "this is the current tab AND the pane is
+   * expanded" (see `wideDockBtnClass` in App.vue), so: if it is active there is
+   * nothing to do; otherwise a click either switches tabs or re-expands the
+   * pane, both of which are the desired outcome.
+   */
+  async switchToTab(tab: string): Promise<void> {
+    const btn = await this.readyTabBtn(tab)
+    if (await btn.evaluate((el) => el.classList.contains('active'))) return
+    await btn.click()
   }
 
   /** Switch to Chat tab */
-  async switchToChat() {
-    await this.chatBtn.click()
+  async switchToChat(): Promise<void> {
+    // In wide mode chat lives in the right pane and is toggled by its own
+    // button; in narrow mode it is a regular dock tab.
+    const chatToggle = this.page.locator('.wide-dock-bottom .dock-btn[data-tab="chat"]')
+    if (await chatToggle.isVisible().catch(() => false)) {
+      // Wide mode: the toggle's aria-pressed reflects whether chat is shown.
+      const pressed = await chatToggle.getAttribute('aria-pressed')
+      if (pressed !== 'true') await chatToggle.click()
+      await expect(this.page.locator('.chat-textarea')).toBeVisible({ timeout: 10000 })
+      return
+    }
+    await this.switchToTab('chat')
   }
 
   /** Switch to File Viewer tab */
-  async switchToViewer() {
-    await this.viewerBtn.click()
+  async switchToViewer(): Promise<void> {
+    await this.switchToTab('view')
   }
 
   /** Switch to File Manager (Browse) tab */
-  async switchToFileManager() {
-    await this.browseBtn.click()
+  async switchToFileManager(): Promise<void> {
+    await this.switchToTab('browse')
   }
 
   /** Switch to Tasks tab */
-  async switchToTasks() {
-    await this.tasksBtn.click()
+  async switchToTasks(): Promise<void> {
+    await this.switchToTab('tasks')
   }
 
-  // --- Overflow menu ---
+  // --- Overflow menu (narrow dock only) ---
+  //
+  // In wide mode every tab is rendered inline in `.wide-dock-center` and there
+  // is no overflow button at all, so these helpers must only be used against
+  // the narrow (bottom) dock.
 
-  /** Open the overflow menu (3-dot button) */
-  async openOverflowMenu() {
-    await this.page.locator('.dock-overflow-btn').click()
+  /** Open the overflow menu (3-dot button). Narrow dock only. */
+  async openOverflowMenu(): Promise<void> {
+    const overflowBtn = this.page.locator('.dock-overflow-btn')
+    await expect(overflowBtn).toBeVisible({ timeout: 5000 })
+    await overflowBtn.click()
     await expect(this.page.locator('.dock-overflow-popup')).toBeVisible()
   }
 
-  /** Switch to History tab (via overflow menu) */
-  async switchToHistory() {
+  /** Switch to a tab through the narrow dock's overflow menu. */
+  async switchToTabViaOverflow(label: RegExp): Promise<void> {
     await this.openOverflowMenu()
-    await this.page.locator('.dock-overflow-item', { hasText: /History|历史/ }).click()
+    await this.page.locator('.dock-overflow-item', { hasText: label }).click()
+  }
+
+  /** Switch to History tab (via overflow menu) */
+  async switchToHistory(): Promise<void> {
+    await this.switchToTabViaOverflow(/History|历史/)
   }
 
   /** Switch to Terminal tab (via overflow menu) */
-  async switchToTerminal() {
-    await this.openOverflowMenu()
-    await this.page.locator('.dock-overflow-item', { hasText: /Terminal|终端/ }).click()
+  async switchToTerminal(): Promise<void> {
+    await this.switchToTabViaOverflow(/Terminal|终端/)
   }
 
   /** Open Settings (via overflow menu) */
-  async openSettings() {
-    await this.openOverflowMenu()
-    await this.page.locator('.dock-overflow-item', { hasText: /Settings|设置/ }).click()
+  async openSettings(): Promise<void> {
+    await this.switchToTabViaOverflow(/Settings|设置/)
   }
 
   // --- Assertions ---
 
   /** Assert that the chat tab is active */
-  async expectChatActive() {
-    await expect(this.chatBtn).toHaveClass(/active/)
+  async expectChatActive(): Promise<void> {
+    await expect(this.tabBtn('chat')).toHaveClass(/active/)
   }
 }

@@ -4,20 +4,23 @@ import { type Locator, type Page, expect } from '@playwright/test'
  * Page Object Model for the Settings panel.
  *
  * Navigation flow:
- * 1. Click dock-overflow-btn → overflow popup with Settings option
+ * 1. Click the Settings dock button (wide mode: inline `data-tab="settings"`;
+ *    narrow mode: it may live behind the overflow menu)
  * 2. SettingsIndex page shows category rows (外观, 聊天, 安全, etc.)
  * 3. Click "安全/Security" row → SettingsCategory with items
  * 4. Click "修改密码/Change Password" item → PasswordChangeDialog
  *
  * Key selectors:
- * - .dock-overflow-btn    → bottom dock overflow (more) button
+ * - .dock-btn[data-tab="settings"] → Settings dock button (stable id, both docks)
+ * - .dock-overflow-btn    → narrow-dock overflow (more) button
  * - .dock-overflow-item   → overflow popup menu items
  * - .settings-index__row  → category row in settings index
  * - .settings-item        → individual setting item in a category
- * - .password-dialog      → password dialog box
+ * - .modal-dialog         → the dialog container (ModalDialog, teleported to body)
+ * - .password-dialog__body → password dialog content
  * - .password-dialog__input → password input fields (3: current, new, confirm)
- * - .password-dialog__btn--submit → submit button
- * - .password-dialog__btn--cancel → cancel button
+ * - .modal-dialog .fbtn-primary → submit button
+ * - .modal-dialog .fbtn   → cancel button
  * - .password-dialog__error → error message display
  */
 export class SettingsPage {
@@ -30,23 +33,35 @@ export class SettingsPage {
 
   constructor(page: Page) {
     this.page = page
-    this.passwordDialog = page.locator('.password-dialog')
-    this.passwordInputs = page.locator('.password-dialog__input')
-    this.passwordSubmitBtn = page.locator('.password-dialog__btn--submit')
-    this.passwordCancelBtn = page.locator('.password-dialog__btn--cancel')
-    this.passwordError = page.locator('.password-dialog__error')
+    // The dialog renders through the shared ModalDialog (teleported to <body>),
+    // so its container is `.modal-dialog` — the old bespoke `.password-dialog`
+    // wrapper no longer exists. Anchor on the content class to tell it apart
+    // from other modals.
+    this.passwordDialog = page.locator('.modal-dialog').filter({ has: page.locator('.password-dialog__body') })
+    this.passwordInputs = this.passwordDialog.locator('.password-dialog__input')
+    // The dialog's action buttons use the shared form-button classes:
+    // submit carries the primary modifier, cancel is the plain .fbtn.
+    this.passwordSubmitBtn = this.passwordDialog.locator('.fbtn-primary')
+    this.passwordCancelBtn = this.passwordDialog.locator('.fbtn:not(.fbtn-primary)')
+    this.passwordError = this.passwordDialog.locator('.password-dialog__error')
   }
 
-  /** Navigate to settings panel via the dock overflow menu */
+  /** Navigate to the settings panel. */
   async openSettings(): Promise<void> {
-    // Click the dock overflow button (three-dots/more menu in bottom dock)
-    await this.page.locator('.dock-overflow-btn').click()
-    // Click the Settings option in the overflow popup
-    const settingsItem = this.page.locator('.dock-overflow-item').filter({ hasText: /settings|设置/i })
-    await expect(settingsItem).toBeVisible({ timeout: 5000 })
-    await settingsItem.click()
+    // Wide mode renders every tab inline as `.dock-btn[data-tab="settings"]`.
+    // Narrow mode may hide settings behind the overflow menu, so fall back to
+    // that route when the direct button is not visible.
+    const directBtn = this.page.locator('.dock-btn[data-tab="settings"]').filter({ visible: true }).first()
+    if (await directBtn.isVisible().catch(() => false)) {
+      await directBtn.click()
+    } else {
+      await this.page.locator('.dock-overflow-btn').click()
+      const settingsItem = this.page.locator('.dock-overflow-item').filter({ hasText: /settings|设置/i })
+      await expect(settingsItem).toBeVisible({ timeout: 5000 })
+      await settingsItem.click()
+    }
     // Wait for settings page to load
-    await expect(this.page.locator('.settings-page')).toBeVisible({ timeout: 5000 })
+    await expect(this.page.locator('.settings-page')).toBeVisible({ timeout: 10000 })
   }
 
   /** Open the password change dialog from settings */

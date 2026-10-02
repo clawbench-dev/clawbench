@@ -1,5 +1,6 @@
 import { test, expect } from '../fixtures'
 import { ChatPage } from '../pages/chat.page'
+import { restoreNonBlockingMode } from '../helpers/agent-mode'
 
 /**
  * E2E tests for ACP slash command feature.
@@ -37,6 +38,10 @@ test.describe.serial('ACP Slash Commands', () => {
 
   test.beforeEach(async ({ page }) => {
     chat = new ChatPage(page)
+    // The run shares one session across specs; an earlier spec may have left it
+    // in a non-bypass mode where the mock blocks every turn on a permission
+    // request. Restore the non-blocking mode before each test.
+    await restoreNonBlockingMode()
   })
 
   // ───────────────────────────────────────────────────────
@@ -83,7 +88,8 @@ test.describe.serial('ACP Slash Commands', () => {
   test('should show ClawBench badge in user message after sending /cb-chatsearch', async ({ page }) => {
     await chat.textarea.click()
     await chat.textarea.fill('/cb-chatsearch test query')
-    await page.waitForTimeout(200)
+    // Wait for Vue's v-model to sync before the send button can act on it.
+    await expect(chat.textarea).toHaveValue('/cb-chatsearch test query')
     await chat.sendButton.click()
 
     const userMsg = chat.getLastUserMessage()
@@ -139,8 +145,7 @@ test.describe.serial('ACP Slash Commands', () => {
     // Reload the page — slash commands reload from GET /api/agents
     // (acpStates[].commands) without needing to send a message first.
     await page.reload()
-    await page.waitForLoadState('networkidle')
-    await page.waitForTimeout(500)
+    await page.waitForLoadState('domcontentloaded')
 
     // Wait for textarea to be ready
     await expect(chat.textarea).toBeVisible({ timeout: 5000 })
@@ -181,7 +186,7 @@ test.describe.serial('ACP Slash Commands', () => {
     // Send a slash command message
     await chat.textarea.click()
     await chat.textarea.fill('/commit fix auth bug')
-    await page.waitForTimeout(200)
+    await expect(chat.textarea).toHaveValue('/commit fix auth bug')
     await chat.sendButton.click()
 
     const userMsg = chat.getLastUserMessage()
@@ -205,12 +210,12 @@ test.describe.serial('ACP Slash Commands', () => {
     // Establish ACP connection first (default agent is acp-mock)
     await chat.sendAndAwaitACPReply('hi')
 
-    // Open settings modal — mode tab should be visible
+    // Open settings drawer — mode tab should be visible
     // openModeMenu waits for ACP mode state before opening
     await chat.openModeMenu()
 
     // Mode tab should be active and mode items visible
-    const modeItems = page.locator('.model-tab-content .thinking-item')
+    const modeItems = chat.sessionSettingDrawer.locator('.model-tab-content .thinking-item')
     await expect(modeItems.first()).toBeVisible({ timeout: 5000 })
 
     // acp-mock provides at least 2 modes
@@ -225,20 +230,11 @@ test.describe.serial('ACP Slash Commands', () => {
     // Wait for ACP state to be available
     await chat.waitForACPState()
 
-    // Open the model modal by clicking the model chip
-    const settingsChip = page.locator('.settings-chip')
-    await expect(settingsChip).toBeVisible({ timeout: 10000 })
-    await settingsChip.click()
-
-    // SessionSettingModal should appear
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).toBeVisible({ timeout: 5000 })
-
-    // The "Thinking Effort" tab should be visible (acp-mock provides thought_level options)
+    // Open the session setting drawer on the Thinking tab (from the model chip).
     await chat.openThinkingTab()
 
     // Thinking effort levels should be listed (acp-mock provides low/medium/high)
-    const thinkingItems = page.locator('.thinking-item')
+    const thinkingItems = chat.sessionSettingDrawer.locator('.thinking-item')
     // 1 auto + 3 levels (low/medium/high) = 4 items
     const count = await thinkingItems.count()
     expect(count).toBeGreaterThanOrEqual(3)
@@ -255,21 +251,16 @@ test.describe.serial('ACP Slash Commands', () => {
     // Wait for ACP state to be available
     await chat.waitForACPState()
 
-    // Open model modal → thinking tab
-    const settingsChip = page.locator('.settings-chip')
-    await expect(settingsChip).toBeVisible({ timeout: 10000 })
-    await settingsChip.click()
-
+    // Open the session setting drawer on the Thinking tab.
     await chat.openThinkingTab()
 
     // Click on "Low" thinking effort level
-    const lowItem = page.locator('.thinking-item').filter({ hasText: /low/i })
+    const lowItem = chat.sessionSettingDrawer.locator('.thinking-item').filter({ hasText: /low/i })
     await expect(lowItem).toBeVisible()
     await lowItem.click()
 
-    // Modal should close after selection
-    const modal = page.locator('.modal-dialog, [class*="modal"]')
-    await expect(modal.first()).not.toBeVisible({ timeout: 5000 })
+    // Drawer should close after selection
+    await expect(page.locator('.bs-overlay')).not.toBeVisible({ timeout: 5000 })
   })
 
   test('should return commands from API endpoint for ACP agent', async ({ page }) => {
@@ -367,8 +358,8 @@ test.describe.serial('ACP Slash Commands', () => {
 
   test('should show placeholder hint mentioning @ and /', async ({ page }) => {
     await chat.textarea.clear()
+    await expect(chat.textarea).toHaveValue('')
     await page.locator('body').click({ position: { x: 10, y: 10 } })
-    await page.waitForTimeout(500)
 
     await chat.textarea.focus()
     const focusedPlaceholder = await chat.textarea.getAttribute('placeholder')
