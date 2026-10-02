@@ -169,11 +169,23 @@ function onKeyDown(e) {
   if (e.key === 'Enter') {
     // Already expanded → the textarea handles Enter itself (send).
     if (expanded.value) return
-    // Don't hijack Enter while typing in an editable field / on interactive
-    // elements (they confirm via their own handlers).
+    // Don't hijack Enter while typing in a genuinely editable field / on
+    // interactive elements (they confirm via their own handlers).
+    //
+    // `isContentEditable` alone is too broad. CodeMirror keeps
+    // `contenteditable="true"` on its `.cm-content` even in read-only browse
+    // mode — the viewer only sets `EditorState.readOnly`, not the `editable`
+    // view facet — and mirrors that state via `aria-readonly="true"`. Treating
+    // it as "the user is typing" made Enter a no-op for a code-selection quote
+    // (the bar showed but never expanded), while the markdown preview — whose
+    // selection lives on plain DOM — worked. A read-only region has no
+    // meaningful Enter action, so let the bar expand there.
     const t = e.target
     const tag = t?.tagName
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t?.isContentEditable) return
+    // `closest` covers a target that is a descendant of the read-only host
+    // (CodeMirror's caret can sit in a `.cm-line` inside `.cm-content`).
+    const inEditable = t?.isContentEditable === true && !t?.closest?.('[aria-readonly="true"]')
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || inEditable) return
     if (t?.closest?.('button, a, [role="button"]')) return
     e.preventDefault()
     e.stopImmediatePropagation()
