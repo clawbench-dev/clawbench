@@ -267,6 +267,74 @@ function blockKey(block: BlockInfo): string {
     return block.ownText
 }
 
+// ─── Nested-marker merge ───
+
+/** True when `descendantSel` targets a block nested inside `ancestorSel`. */
+function isNestedSelector(descendantSel: string, ancestorSel: string): boolean {
+    // Selectors are `:scope > :nth-child(a) > :nth-child(b) …`. A real descendant
+    // continues after the ancestor's `)` with a child separator, so require the
+    // ` > ` boundary rather than a bare prefix match (the `)` already rules out
+    // `:nth-child(1)` matching `:nth-child(11)`, but the explicit boundary keeps
+    // the intent clear and survives a selector-format change).
+    return descendantSel.length > ancestorSel.length
+        && descendantSel.startsWith(ancestorSel + ' > ')
+}
+
+/** Concatenate diff lines, dropping entries already present in `base`. */
+function mergeDiffLines(base: DiffLine[] | undefined, extra: DiffLine[] | undefined): DiffLine[] | undefined {
+    if (!base) return extra ? [...extra] : undefined
+    if (!extra || extra.length === 0) return base
+    const seen = new Set(base.map(l => `${l.type}\u0000${l.content}`))
+    const merged = [...base]
+    for (const line of extra) {
+        const key = `${line.type}\u0000${line.content}`
+        if (!seen.has(key)) {
+            seen.add(key)
+            merged.push(line)
+        }
+    }
+    return merged
+}
+
+/**
+ * Collapse markers whose blocks nest (an ancestor block AND a descendant block
+ * both changed). Their rails would otherwise overlap — the descendant's rail is
+ * drawn inside the ancestor's span — and the ancestor's own diff already spans
+ * the descendant's text, so the group becomes ONE marker anchored on the
+ * outermost block, carrying the union of every member's diff lines. Clicking it
+ * shows all the changes together.
+ *
+ * Order-independent: a marker absorbs any already-seen descendant, and is
+ * absorbed by an already-seen ancestor.
+ */
+function mergeNestedMarkers(markers: DiffMarker[]): DiffMarker[] {
+    if (markers.length < 2) return markers
+    const out: DiffMarker[] = []
+    for (const m of markers) {
+        const parent = out.find(o => isNestedSelector(m.blockSelector, o.blockSelector))
+        if (parent) {
+            // Fold this nested marker into the outermost one already collected.
+            parent.diffLines = mergeDiffLines(parent.diffLines, m.diffLines)
+            if (!parent.charDiff) parent.charDiff = m.charDiff
+            continue
+        }
+        // This marker may itself be an ancestor of markers already collected
+        // (defensive: the walk emits outermost-first, but don't rely on order).
+        const absorbed = out.filter(o => isNestedSelector(o.blockSelector, m.blockSelector))
+        const merged: DiffMarker = {
+            ...m,
+            diffLines: m.diffLines ? [...m.diffLines] : m.diffLines,
+        }
+        for (const a of absorbed) {
+            merged.diffLines = mergeDiffLines(merged.diffLines, a.diffLines)
+            if (!merged.charDiff) merged.charDiff = a.charDiff
+            out.splice(out.indexOf(a), 1)
+        }
+        out.push(merged)
+    }
+    return out
+}
+
 // ─── Diff computation ───
 
 /**
@@ -283,8 +351,9 @@ export function computeMarkdownDiff(
 
     // Empty → non-empty: all added
     if (oldBlocks.length === 0) {
+        const addedMarkers = newBlocks.map((b, i) => toMarker('added', b, i, null))
         return {
-            markers: newBlocks.map((b, i) => toMarker('added', b, i, null)),
+            markers: mergeNestedMarkers(addedMarkers),
             hasChanges: true,
         }
     }
@@ -404,9 +473,10 @@ export function computeMarkdownDiff(
         }
     }
 
+    const mergedMarkers = mergeNestedMarkers(markers)
     return {
-        markers,
-        hasChanges: markers.length > 0,
+        markers: mergedMarkers,
+        hasChanges: mergedMarkers.length > 0,
     }
 }
 

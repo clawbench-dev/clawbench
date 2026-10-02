@@ -534,6 +534,81 @@ describe('computeMarkdownDiff — nested blocks produce one marker, not two', ()
   })
 })
 
+describe('computeMarkdownDiff — nested changed blocks merge into one marker', () => {
+  // When BOTH a container and a block nested inside it change, two markers used
+  // to be emitted whose rails nest (the child's rail is drawn inside the
+  // container's span). They now collapse into a single marker on the outermost
+  // block carrying the union of every member's diff lines, so one click shows
+  // all the changes together.
+  function diffHtml(oldHtml: string, newHtml: string) {
+    return computeMarkdownDiff(extractBlocks(htmlToElement(oldHtml)), extractBlocks(htmlToElement(newHtml)))
+  }
+
+  it('container + nested child both changed → one marker with both diffs', () => {
+    const oldHtml = '<ul><li>item one<ul><li>nested a</li><li>nested b</li></ul></li></ul>'
+    const newHtml = '<ul><li>item ONE<ul><li>nested A</li><li>nested b</li></ul></li></ul>'
+    const r = diffHtml(oldHtml, newHtml)
+    expect(r.markers).toHaveLength(1)
+    const lines = (r.markers[0].diffLines ?? []).map(l => l.content).join('\n')
+    // Both the container's own change and the nested child's change are present.
+    expect(lines).toContain('item one')
+    expect(lines).toContain('item ONE')
+    expect(lines).toContain('nested a')
+    expect(lines).toContain('nested A')
+  })
+
+  it('merged marker is anchored on the outermost block', () => {
+    const oldHtml = '<ul><li>item one<ul><li>nested a</li></ul></li></ul>'
+    const newHtml = '<ul><li>item ONE<ul><li>nested A</li></ul></li></ul>'
+    const r = diffHtml(oldHtml, newHtml)
+    expect(r.markers).toHaveLength(1)
+    // The outer LI path is `:scope > :nth-child(1) > :nth-child(1)`; the nested
+    // LI is one level deeper. The survivor must be the shallower one.
+    expect(r.markers[0].blockSelector).toBe(':scope > :nth-child(1) > :nth-child(1)')
+  })
+
+  it('sibling changes are NOT merged (they do not overlap)', () => {
+    const oldHtml = '<ul><li>one</li><li>two</li></ul>'
+    const newHtml = '<ul><li>ONE</li><li>TWO</li></ul>'
+    const r = diffHtml(oldHtml, newHtml)
+    expect(r.markers).toHaveLength(2)
+  })
+
+  it('blockquote + nested P both changed → one marker', () => {
+    const oldHtml = '<blockquote><p>alpha</p></blockquote>'
+    const newHtml = '<blockquote><p>ALPHA</p></blockquote>'
+    const r = diffHtml(oldHtml, newHtml)
+    // The container's ownText is empty, so only the P is a real change — still
+    // exactly one marker, never two.
+    expect(r.markers).toHaveLength(1)
+  })
+
+  it('all-added nested list merges the nested child into its parent', () => {
+    const r = computeMarkdownDiff([], extractBlocks(htmlToElement('<ul><li>a<ul><li>b</li></ul></li><li>c</li></ul>')))
+    // `a` (with nested `b`) is one marker; `c` is a separate sibling.
+    expect(r.markers).toHaveLength(2)
+    const parent = r.markers.find(m => m.blockSelector === ':scope > :nth-child(1) > :nth-child(1)')!
+    const lines = (parent.diffLines ?? []).map(l => l.content).join('\n')
+    expect(lines).toContain('a')
+    expect(lines).toContain('b')
+  })
+
+  it('does not merge siblings whose paths share a numeric prefix (nth-child(1) vs (11))', () => {
+    // Guards against a naive prefix match: `:scope > :nth-child(1)` must not be
+    // treated as an ancestor of `:scope > :nth-child(11)`. (The `)` in the
+    // selector already prevents the collision; this pins the intent so a future
+    // selector-format change cannot silently reintroduce it.)
+    const blocks = (n: number) => Array.from({ length: n }, (_, i) => ({ tag: 'P', textContent: `para ${i + 1}`, ownText: `para ${i + 1}`, innerHTML: `para ${i + 1}`, selector: `:scope > :nth-child(${i + 1})` }))
+    const oldBlocks = blocks(11)
+    const newBlocks = blocks(11)
+    newBlocks[0] = { ...newBlocks[0], textContent: 'para ONE', ownText: 'para ONE' }
+    newBlocks[10] = { ...newBlocks[10], textContent: 'para ELEVEN', ownText: 'para ELEVEN' }
+    const r = computeMarkdownDiff(oldBlocks, newBlocks)
+    expect(r.markers).toHaveLength(2)
+    expect(r.markers.map(m => m.blockSelector).sort()).toEqual([':scope > :nth-child(1)', ':scope > :nth-child(11)'])
+  })
+})
+
 describe('extractBlockElements', () => {
   it('returns block elements with el references', () => {
     const el = htmlToElement('<h1>Title</h1><p>Para</p>')
