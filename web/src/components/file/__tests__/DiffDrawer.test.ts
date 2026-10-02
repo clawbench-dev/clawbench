@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'fs'
+import { resolve } from 'path'
 import DiffDrawer from '../DiffDrawer.vue'
 
 // Mock BottomSheet (teleported, complex to test inline)
@@ -257,5 +259,19 @@ describe('DiffDrawer', () => {
     diffOldContent.value = null
     diffOldFilePath.value = null
     vi.restoreAllMocks()
+  })
+})
+
+describe('DiffDrawer diff-table breathing room', () => {
+  // The diff body has no vertical padding of its own (the sheet header/footer
+  // own that), so without margin the first diff line sits flush against the
+  // header and the last against the screen edge. Source-contract check: jsdom
+  // has no CSS engine to resolve var().
+  const source = readFileSync(resolve(__dirname, '../DiffDrawer.vue'), 'utf8')
+
+  it('gives the diff table top and bottom margin', () => {
+    const rule = source.match(/\.diff-table\s*\{[\s\S]*?\}/)
+    expect(rule).toBeTruthy()
+    expect(rule![0]).toMatch(/margin:\s*var\(--space-\d+\)\s+0/)
   })
 })

@@ -258,6 +258,10 @@ const segments = computed<Segment[]>(() => {
   width: 100%;
   border-collapse: collapse;
   table-layout: fixed;
+  /* Breathing room above the first and below the last diff line: without it the
+     first line sits flush against the sheet header and the last against the
+     screen edge. Vertical only — the cells already own horizontal padding. */
+  margin: var(--space-6) 0;
 }
 
 .diff-content {
