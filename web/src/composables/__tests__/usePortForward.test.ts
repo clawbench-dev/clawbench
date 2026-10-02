@@ -1125,6 +1125,124 @@ describe('usePortForward', () => {
             // When API returns no localPort, falls back to port number
             expect(result).toBe(3000)
         })
+
+        it('recomputes the tunnel verdict after adding a port', async () => {
+            // Regression: tunnelStatus is only written by checkTunnelHealth(), and
+            // syncToNative() returns early when the server had NO enabled ports at
+            // startup. So adding the first mapping left the verdict on 'unknown':
+            // the Android background-permission tip (gated on 'ok') never showed,
+            // and the status row kept claiming it had not checked. The add must
+            // recompute the verdict, not merely refresh the list.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockImplementation(async (url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                isTunnelConnected: async () => true,
+                testPortReachable: vi.fn(async () => true),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, tunnelStatus } = usePortForward()
+
+            expect(tunnelStatus.value).toBe('unknown')
+
+            await registerPort(3000, 'App', 'http')
+            // The re-check is fire-and-forget; let it settle.
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            expect(tunnelStatus.value).toBe('ok')
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('does not flash the list loading state on the post-add re-check', async () => {
+            // The re-check runs while the list is already on screen. Reusing the
+            // initial-check path (which sets loading=true) would blank the list
+            // on every add; the silent variant must be used instead.
+            //
+            // Observed while the re-check is IN FLIGHT: an already-resolved mock
+            // settles within a microtask, so a poll would never catch the flag.
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            let releasePorts: (v: unknown) => void = () => {}
+            let portsHangs = false
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports' && portsHangs) {
+                    return new Promise(resolve => { releasePorts = resolve })
+                }
+                return Promise.resolve({ ports: [] })
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, loading } = usePortForward()
+
+            // Hang the ports fetch the re-check will issue, then run the add.
+            portsHangs = true
+            const pending = registerPort(3000, 'App', 'http')
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            // The re-check's loadPorts is parked on the hanging fetch right now.
+            expect(loading.value).toBe(false)
+
+            releasePorts({ ports: [] })
+            await pending
+            expect(loading.value).toBe(false)
+        })
+
+        it('does not blink the verdict to unknown on the post-add re-check', async () => {
+            // The re-check recomputes in the background while the panel is on
+            // screen. Resetting tunnelStatus to 'unknown' first (as the
+            // user-requested check does) would hide the Android background tip
+            // and flip the settings dot to 'checking' on every add. Park the
+            // re-check mid-flight and assert the previous verdict still holds.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            let releasePorts: (v: unknown) => void = () => {}
+            let portsHangs = false
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports' && portsHangs) {
+                    return new Promise(resolve => { releasePorts = resolve })
+                }
+                if (url === '/api/proxy/ports') {
+                    return Promise.resolve({ ports: [] })
+                }
+                return Promise.resolve({ enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } })
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                isTunnelConnected: async () => true,
+                testPortReachable: vi.fn(async () => true),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, tunnelStatus, checkTunnelHealth } = usePortForward()
+
+            // Establish a verdict first (as an earlier startup check would).
+            await checkTunnelHealth(true)
+            expect(tunnelStatus.value).toBe('ok')
+
+            portsHangs = true
+            const pending = registerPort(3000, 'App', 'http')
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            // Re-check is in flight — the verdict must not have been reset.
+            expect(tunnelStatus.value).toBe('ok')
+
+            releasePorts({ ports: [] })
+            await pending
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
     })
 
     describe('updatePort', () => {
@@ -1405,6 +1523,39 @@ describe('usePortForward', () => {
 
             await expect(setPortEnabled(8080, false)).resolves.toBeUndefined()
             expect(mockRemove).toHaveBeenCalledWith(8080)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
+
+        it('recomputes the tunnel verdict after enabling a port', async () => {
+            // Same class of staleness as registerPort: enabling a port changes
+            // which ports count toward the verdict, so leaving tunnelStatus on
+            // its old value misreports the tunnel (and gates the Android tip).
+            mockIsAppMode.value = true
+            mockApiPut.mockResolvedValue({ status: 'ok' })
+            mockApiGet.mockImplementation(async (url: string) => {
+                if (url === '/api/proxy/ports') {
+                    return { ports: [{ port: 8080, localPort: 8080, host: '', name: 'API', protocol: 'http', active: true, enabled: true }] }
+                }
+                return { enabled: true, host: 'h', port: 20001, username: 'u', fingerprint: 'f', command: 'c', connectionStats: { connected: true, clientCount: 1, activeChannels: 1 } }
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                isTunnelConnected: async () => true,
+                testPortReachable: vi.fn(async () => true),
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { setPortEnabled, tunnelStatus } = usePortForward()
+
+            expect(tunnelStatus.value).toBe('unknown')
+
+            await setPortEnabled(8080, true)
+            await new Promise(r => setTimeout(r, 0))
+            await new Promise(r => setTimeout(r, 0))
+
+            expect(tunnelStatus.value).toBe('ok')
 
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false

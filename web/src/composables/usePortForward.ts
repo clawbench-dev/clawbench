@@ -526,9 +526,14 @@ export function usePortForward() {
       const bound = await addNativeForward(localPort, port, host || '', direction)
       if (bound !== null) actualPort = bound
     }
-    // Fire-and-forget: refresh port list and SSH info in the background.
-    loadPorts(true).catch(() => {})
-    loadSSHInfo().catch(() => {})
+    // Recompute the tunnel verdict, not just the list. `tunnelStatus` is only
+    // written by checkTunnelHealth(), and syncToNative() returns early when the
+    // server had no enabled ports at startup — so without this the panel stayed
+    // on 'unknown' after the first add: the Android background-permission tip
+    // (gated on `tunnelStatus === 'ok'`) never appeared, and the status row
+    // kept claiming it had not checked. Fire-and-forget: the caller awaits the
+    // registration, not a health round-trip.
+    checkTunnelHealth(true).catch(() => {})
     return actualPort
   }
 
@@ -590,6 +595,9 @@ export function usePortForward() {
         removeNativeForward(localPort, p?.direction)
       }
     }
+    // Enabling/disabling changes which ports count toward the verdict, so the
+    // status must be recomputed — same reason as registerPort.
+    checkTunnelHealth(true).catch(() => {})
   }
 
   /** Open the scan drawer, auto-running a scan the first time it is opened. */
@@ -763,15 +771,29 @@ export function usePortForward() {
    */
   const transportAllowsH2 = computed(() => tunnelTransportAllowsH2())
 
-  /** Check SSH tunnel health and determine status */
-  async function checkTunnelHealth() {
+  /**
+   * Check SSH tunnel health and determine status.
+   *
+   * `silent` suppresses the port list's loading state. Callers that recompute
+   * the verdict after a mutation pass it: the list is already on screen, and
+   * flashing "loading" over it on every add/disable is a visible regression.
+   * The initial check and the manual retry keep the spinner (the user asked for
+   * it, and the list is not yet trustworthy).
+   */
+  async function checkTunnelHealth(silent = false) {
     tunnelChecking.value = true
-    tunnelStatus.value = 'unknown'
+    // Keep the previous verdict during a silent recompute. The reset exists so
+    // a stale verdict is not shown while a user-requested check runs, but a
+    // post-mutation recompute would then blink the Android tip off and back on
+    // (and flip the settings dot through 'checking') on every add/disable.
+    if (!silent) {
+      tunnelStatus.value = 'unknown'
+    }
     tunnelMessage.value = ''
     tunnelError.value = ''
     tunnelErrorType.value = ''
 
-    await Promise.all([loadPorts(), loadSSHInfo(), refreshActiveTransport()])
+    await Promise.all([loadPorts(silent), loadSSHInfo(), refreshActiveTransport()])
 
     const info = sshInfo.value
     // SSH not configured does NOT mean the tunnel is unavailable: an h2-only
