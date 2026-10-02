@@ -295,6 +295,9 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		if event.MemberName != "" {
 			payload["member_name"] = event.MemberName
 		}
+		if event.MemberColor != "" {
+			payload["member_color"] = event.MemberColor
+		}
 		return payload
 	case "done", "replay_done":
 		return map[string]any{}
@@ -358,6 +361,9 @@ func simpleTextPayload(event ai.StreamEvent) any {
 	}
 	if event.MemberName != "" {
 		payload["member_name"] = event.MemberName
+	}
+	if event.MemberColor != "" {
+		payload["member_color"] = event.MemberColor
 	}
 	return payload
 }
@@ -423,6 +429,9 @@ func toolUsePayload(event ai.StreamEvent) any {
 	if event.MemberName != "" {
 		payload["member_name"] = event.MemberName
 	}
+	if event.MemberColor != "" {
+		payload["member_color"] = event.MemberColor
+	}
 	attachToolMeta(payload, event.ToolMeta)
 	// Interactive tools: include input so frontend can render permission UI
 	nameLower := strings.ToLower(event.Tool.Name)
@@ -457,6 +466,9 @@ func toolResultPayload(event ai.StreamEvent) any {
 	}
 	if event.MemberName != "" {
 		payload["member_name"] = event.MemberName
+	}
+	if event.MemberColor != "" {
+		payload["member_color"] = event.MemberColor
 	}
 	attachToolMeta(payload, event.ToolMeta)
 	return payload

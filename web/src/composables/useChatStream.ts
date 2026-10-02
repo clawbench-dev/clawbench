@@ -648,7 +648,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'content', payload); noteDroppedEvent('content', 'buffered until placeholder'); return }
         const contentData = payload as unknown as ContentEventData
-        dispatch({ type: 'ws_content', text: contentData.content ?? '', parentToolCallId: contentData.parent_tool_call_id })
+        dispatch({ type: 'ws_content', text: contentData.content ?? '', parentToolCallId: contentData.parent_tool_call_id, memberName: contentData.member_name, memberColor: contentData.member_color })
         debouncedRender()
         break
       }
@@ -657,7 +657,7 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (sessionChanged()) return
         if (!findStreamingMsg(messages.value)) { bufferEvent(sessionId, 'thinking', payload); noteDroppedEvent('thinking', 'buffered until placeholder'); return }
         const thinkingData = payload as unknown as ThinkingEventData
-        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id })
+        dispatch({ type: 'ws_thinking', text: thinkingData.text ?? '', key: `thinking-${thinkingBlockCounter++}`, thinkId: thinkingData.think_id, parentToolCallId: thinkingData.parent_tool_call_id, memberName: thinkingData.member_name, memberColor: thinkingData.member_color })
         // debouncedRender schedules the scroll pin in the same rAF — no
         // separate onScrollBottom here (duplicate pin in the same frame).
         debouncedRender()

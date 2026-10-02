@@ -101,6 +101,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			Type:             "thinking_done",
 			ParentToolCallID: memberParentOrParent(backendID, conn, update.AgentMessageChunk.Meta),
 			MemberName:       memberName,
+			MemberColor:      memberColorByName(conn, memberName),
 		})
 		content := update.AgentMessageChunk.Content
 		// Defensive filter against a codebuddy CLI resume defect: when an ACP
@@ -141,7 +142,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if !replayed {
 			parentID := memberParentOrParent(backendID, conn, update.AgentMessageChunk.Meta)
 			if content.Text != nil {
-				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: memberName})
+				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: memberName, MemberColor: memberColorByName(conn, memberName)})
 			}
 			// Per-agent _meta on the chunk (e.g. CodeBuddy OpenAI-style usage +
 			// codebuddy.ai/* trace) — accumulate onto the connection so the
@@ -159,7 +160,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		content := update.AgentThoughtChunk.Content
 		if content.Text != nil {
 			parentID := memberParentOrParent(backendID, conn, update.AgentThoughtChunk.Meta)
-			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: extractTeamMemberName(update.AgentThoughtChunk.Meta)})
+			thinkMember := extractTeamMemberName(update.AgentThoughtChunk.Meta)
+			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: thinkMember, MemberColor: memberColorByName(conn, thinkMember)})
 			if conn != nil {
 				conn.RecordTurnOutput()
 			}
@@ -177,10 +179,12 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// thinking_done so the frontend can stop the thinking spinner. Scoped to
 		// the tool's own parent so a sub-agent's tool call closes that
 		// sub-agent's thinking block, not another agent's.
+		toolMember := extractTeamMemberNameForTool(tc.Meta)
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
 			ParentToolCallID: memberParentOrParent(backendID, conn, tc.Meta),
-			MemberName:       extractTeamMemberName(tc.Meta),
+			MemberName:       toolMember,
+			MemberColor:      memberColorByName(conn, toolMember),
 		})
 		// A tool call is starting — mark it in-flight so the stall watchdog
 		// treats the agent as active while it runs the tool.

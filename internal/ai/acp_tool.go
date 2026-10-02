@@ -202,7 +202,8 @@ func acpRemapsForBackend(backendID string) map[string]string {
 func mapACPToolCall(tc acp.SessionUpdateToolCall, backendID string, conn *ACPConn) StreamEvent {
 	tool := parseACPToolCall(backendID, tc)
 	attachParentToolCallIDToTool(tool, backendID, conn, tc.Meta)
-	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: extractTeamMemberName(tc.Meta)}
+	member := extractTeamMemberNameForTool(tc.Meta)
+	return StreamEvent{Type: "tool_use", Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
 }
 
 // mapACPToolCallUpdate creates a StreamEvent from an ACP ToolCallUpdate.
@@ -220,7 +221,8 @@ func mapACPToolCallUpdate(tcu acp.SessionToolCallUpdate, backendID string, conn 
 		"status", fmt.Sprintf("%v", tcu.Status), "content_count", len(tcu.Content), "title", tcu.Title,
 		"raw_input", fmt.Sprintf("%v", tcu.RawInput))
 
-	return StreamEvent{Type: eventType, Tool: tool, MemberName: extractTeamMemberName(tcu.Meta)}
+	member := extractTeamMemberNameForTool(tcu.Meta)
+	return StreamEvent{Type: eventType, Tool: tool, MemberName: member, MemberColor: memberColorByName(conn, member)}
 }
 
 // attachParentToolCallIDToTool stamps the sub-agent parent link (if any) onto a

@@ -368,3 +368,68 @@ func TestPermissionMemberAttribution(t *testing.T) {
 	assert.Nil(t, permissionMemberAttribution(map[string]any{"codebuddy.ai/isTeamMember": true}))
 	assert.Nil(t, permissionMemberAttribution(nil))
 }
+
+// ---------------------------------------------------------------------------
+// Member colour resolution (P6)
+// ---------------------------------------------------------------------------
+
+func TestMemberColorByName(t *testing.T) {
+	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
+	// Seed a team snapshot with a coloured member.
+	bridgeCodeBuddyTeamUpdate(make(chan StreamEvent, 4), conn, map[string]any{
+		metaKeyCodeBuddyTeamUpdate: mustMeta(t, teamUpdateMemberStatus),
+	})
+	assert.Equal(t, "blue", memberColorByName(conn, "probe-alpha"))
+	assert.Equal(t, "green", memberColorByName(conn, "probe-beta"))
+	assert.Equal(t, "", memberColorByName(conn, "nobody"))
+	assert.Equal(t, "", memberColorByName(nil, "probe-alpha"))
+}
+
+// A tool frame's member may arrive as memberName (the Agent spawn frame that
+// HOSTS the timeline) rather than memberEvent (member-produced content).
+func TestExtractTeamMemberNameForTool(t *testing.T) {
+	// memberEvent wins when both present.
+	assert.Equal(t, "a", extractTeamMemberNameForTool(map[string]any{
+		metaKeyCodeBuddyMemberEvent: "a", metaKeyCodeBuddyMemberName: "b",
+	}))
+	// memberName-only (spawn frame) is still attributed.
+	assert.Equal(t, "spawn-name", extractTeamMemberNameForTool(map[string]any{
+		metaKeyCodeBuddyMemberName: "spawn-name", metaKeyCodeBuddySubagentType: "general-purpose",
+	}))
+	// Neither → empty.
+	assert.Equal(t, "", extractTeamMemberNameForTool(map[string]any{"x": "y"}))
+	assert.Equal(t, "", extractTeamMemberNameForTool(nil))
+}
+
+// The spawn frame (memberName) must resolve its colour so the Agent card hosting
+// the member's timeline can be tinted.
+func TestMapACPSessionUpdate_SpawnFrameGetsMemberColor(t *testing.T) {
+	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
+	bridgeCodeBuddyTeamUpdate(make(chan StreamEvent, 4), conn, map[string]any{
+		metaKeyCodeBuddyTeamUpdate: mustMeta(t, teamUpdateMemberStatus),
+	})
+
+	ch := make(chan StreamEvent, 16)
+	tc := acp.SessionUpdateToolCall{
+		ToolCallId: "call_agent",
+		Title:      "Agent",
+		Meta: map[string]any{
+			metaKeyCodeBuddyMemberName:   "probe-alpha",
+			metaKeyCodeBuddySubagentType: "general-purpose",
+			"codebuddy.ai/toolName":      "Agent",
+		},
+	}
+	mapACPSessionUpdate(acp.SessionUpdate{ToolCall: &tc}, ch, t.Context(), conn, nil)
+
+	var tool *StreamEvent
+	for len(ch) > 0 {
+		ev := <-ch
+		if ev.Type == "tool_use" {
+			e := ev
+			tool = &e
+		}
+	}
+	require.NotNil(t, tool)
+	assert.Equal(t, "probe-alpha", tool.MemberName)
+	assert.Equal(t, "blue", tool.MemberColor)
+}

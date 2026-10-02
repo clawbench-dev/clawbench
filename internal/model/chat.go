@@ -370,6 +370,12 @@ type ContentBlock struct {
 	// parent-link key (see internal/ai/acp_parent_link.go). Used by the frontend
 	// to group a sub-agent's output under its parent Agent card.
 	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+	// MemberName / MemberColor attribute content to an Agent Team member (see
+	// internal/ai/codebuddy_team_bridge.go). Members carry no parentToolCallId,
+	// so the member NAME is their join key; the colour lets the frontend render
+	// the member's timeline accent consistently with the roster.
+	MemberName  string `json:"member_name,omitempty"`
+	MemberColor string `json:"member_color,omitempty"`
 }
 
 // randRead is the entropy source for GenerateThinkingID, as a package-level
@@ -419,6 +425,9 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 				DurationMs  int            `json:"duration_ms,omitempty"`
 				// ParentToolCallID must round-trip for sub-agent grouping on reload.
 				ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+				// Agent Team attribution must round-trip too.
+				MemberName  string `json:"member_name,omitempty"`
+				MemberColor string `json:"member_color,omitempty"`
 			}
 			return json.Marshal(InteractiveBlock{
 				Type:             b.Type,
@@ -433,6 +442,8 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 				FilePath:         b.FilePath,
 				DurationMs:       b.DurationMs,
 				ParentToolCallID: b.ParentToolCallID,
+				MemberName:       b.MemberName,
+				MemberColor:      b.MemberColor,
 			})
 		}
 		// Slim serialization: type+name+id+status+done+summary+display_name+file_path
@@ -448,6 +459,9 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 			DurationMs  int    `json:"duration_ms,omitempty"`
 			// ParentToolCallID must round-trip for sub-agent grouping on reload.
 			ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
+			// Agent Team attribution must round-trip too.
+			MemberName  string `json:"member_name,omitempty"`
+			MemberColor string `json:"member_color,omitempty"`
 		}
 		return json.Marshal(SlimBlock{
 			Type:             b.Type,
@@ -460,6 +474,8 @@ func (b ContentBlock) MarshalJSON() ([]byte, error) {
 			FilePath:         b.FilePath,
 			DurationMs:       b.DurationMs,
 			ParentToolCallID: b.ParentToolCallID,
+			MemberName:       b.MemberName,
+			MemberColor:      b.MemberColor,
 		})
 	}
 	// Standard serialization using Alias to avoid infinite recursion

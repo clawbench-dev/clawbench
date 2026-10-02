@@ -36,26 +36,15 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ChevronDown, ChevronUp } from 'lucide-vue-next'
 import { useTeamState, type TeamMember } from '@/composables/useTeamState'
+import { teamMemberColorVar } from '@/utils/teamMemberColor'
 
 const { t } = useI18n()
 const { teamCollapsed, hasTeam, teamName, members, activeCount, toggleTeamCollapse } = useTeamState()
 
-// ── Member colouring ──
-// The wire supplies a colour name (blue/green/…). Map it to a theme token so
-// the roster matches the Agent card border colours.
-const MEMBER_COLORS: Record<string, string> = {
-  blue: 'var(--color-info, #3b82f6)',
-  green: 'var(--color-green, #16a34a)',
-  red: 'var(--color-red, #ef4444)',
-  yellow: 'var(--color-orange, #eab308)',
-  orange: 'var(--color-orange, #f97316)',
-  purple: 'var(--color-purple, #a855f7)',
-  pink: '#ec4899',
-  cyan: '#06b6d4',
-}
-
+// Member colour comes from the shared palette so the roster and the permission
+// card agree (see teamMemberColor.ts).
 function memberColor(m: TeamMember): string {
-  return MEMBER_COLORS[m.color ?? ''] ?? 'var(--text-secondary, #495057)'
+  return teamMemberColorVar(m.color)
 }
 
 // ── Status semantics ──

@@ -56,6 +56,40 @@ func extractTeamMemberName(meta map[string]any) string {
 	return metaString(meta[metaKeyCodeBuddyMemberEvent])
 }
 
+// extractTeamMemberNameForTool resolves the team member for a TOOL frame. Member
+// content frames carry `memberEvent`, but the Agent spawn frame that HOSTS the
+// member's timeline carries `memberName` instead (plus `subagentType`). Reading
+// both means the Agent card itself is attributed to its member, which is what
+// lets the frontend colour that card with the member's own colour.
+func extractTeamMemberNameForTool(meta map[string]any) string {
+	if name := extractTeamMemberName(meta); name != "" {
+		return name
+	}
+	if len(meta) == 0 {
+		return ""
+	}
+	return metaString(meta[metaKeyCodeBuddyMemberName])
+}
+
+// memberColorByName returns the display colour for a team member from the
+// latest cached team snapshot, or "" when unknown. Used to colour the member's
+// timeline accent consistently with the roster.
+func memberColorByName(conn *ACPConn, name string) string {
+	if conn == nil || name == "" {
+		return ""
+	}
+	state := conn.GetCachedTeamState()
+	if state == nil {
+		return ""
+	}
+	for _, m := range state.Members {
+		if m.Name == name {
+			return m.Color
+		}
+	}
+	return ""
+}
+
 // parseTeamState converts the raw teamUpdate object into a TeamState. It fails
 // closed (nil) when the shape is unrecognisable so a malformed extension never
 // wipes a live team panel with an empty snapshot.

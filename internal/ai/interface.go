@@ -460,6 +460,10 @@ type StreamEvent struct {
 	// team members carry no parentToolCallId, so this is the only attribution
 	// the wire provides (see docs/dev/codebuddy_acp_team_integration.md §1.3).
 	MemberName string `json:"member_name,omitempty"`
+	// MemberColor is the member's display colour (wire name, e.g. "blue"),
+	// resolved from the latest team snapshot. Lets the member's timeline accent
+	// match the roster. Empty when unknown.
+	MemberColor string `json:"member_color,omitempty"`
 }
 
 // StreamStartData carries the streaming message DB id for the stream_start event.
