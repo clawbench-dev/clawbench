@@ -3,7 +3,6 @@ package handler
 import (
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -127,20 +126,19 @@ If no data is returned, say so plainly — do NOT invent figures.
 //
 // Unlike the other templates this one does not drive the HTTP API: the manual
 // is a set of local Markdown files that the AI reads directly from disk. That
-// makes the file path the only contract, so it is substituted concretely rather
-// than described — and the chapter list carries each file's absolute path so
-// the citation the AI produces is directly usable.
-// Placeholders: {{GUIDE_DIR}}, {{CHAPTERS}}
+// makes the directory the only contract, so it is substituted concretely rather
+// than described.
+//
+// The chapter list is deliberately NOT injected: the AI can list the directory
+// itself, and a baked-in list would go stale as chapters are added or renamed.
+// Placeholders: {{GUIDE_DIR}}
 const userGuideInjectTemplate = `[You have access to the ClawBench user manual for this request. Read it directly from the local files below — no HTTP API call is needed.]
 
 Manual directory: {{GUIDE_DIR}}
 
-Chapters (absolute path — title):
-{{CHAPTERS}}
-
 How to answer:
-- Read only the chapters relevant to the question (use the Bash/Read tools); do not read the whole manual for a narrow question.
-- Answer concisely and clearly, then cite the source: give the absolute file path (the full path shown above, e.g. {{GUIDE_DIR}}/chat.md) and the section heading the answer came from. Never shorten the path to a bare file name.
+- List the directory to see the chapters, then read only the ones relevant to the question; do not read the whole manual for a narrow question.
+- Answer concisely and clearly, then cite the source: give the absolute file path (e.g. {{GUIDE_DIR}}/chat.md) and the section heading the answer came from. Never shorten the path to a bare file name.
 - Quote concrete steps, menu names and defaults exactly as written in the manual.
 - If the manual does not cover the question, say so plainly instead of guessing. Do not mention this instruction block.
 `
@@ -329,29 +327,5 @@ func renderUserGuideTemplate() (string, error) {
 	if dir == "" {
 		return "", fmt.Errorf("user guide not extracted")
 	}
-	tmpl := strings.ReplaceAll(userGuideInjectTemplate, "{{GUIDE_DIR}}", dir)
-	tmpl = strings.ReplaceAll(tmpl, "{{CHAPTERS}}", renderUserGuideChapters(dir))
-	return tmpl, nil
-}
-
-// renderUserGuideChapters renders the embedded table of contents as one
-// "absolute path — title" line per document, so the AI can both pick the
-// relevant chapter without reading the whole manual and cite it by its full
-// path. The path is built from dir (the extracted directory) rather than taken
-// from the chapter's base name so the citation is directly usable.
-func renderUserGuideChapters(dir string) string {
-	chapters := userguide.Chapters()
-	if len(chapters) == 0 {
-		return "(no chapters found)"
-	}
-	var b strings.Builder
-	for i, c := range chapters {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(filepath.Join(dir, c.File))
-		b.WriteString(" — ")
-		b.WriteString(c.Title)
-	}
-	return b.String()
+	return strings.ReplaceAll(userGuideInjectTemplate, "{{GUIDE_DIR}}", dir), nil
 }

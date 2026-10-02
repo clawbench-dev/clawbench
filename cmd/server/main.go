@@ -784,7 +784,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	if dir, ugErr := userguide.Extract(model.DataDir, version.Get()); ugErr != nil {
 		slog.Warn("failed to extract user guide", "error", ugErr)
 	} else {
-		slog.Info("user guide extracted", "dir", dir, "chapters", len(userguide.Chapters()))
+		slog.Info("user guide extracted", "dir", dir)
 	}
 
 	// Ensure $SHELL reflects the user's login shell (from /etc/passwd).

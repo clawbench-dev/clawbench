@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -198,31 +197,5 @@ func TestSafeVersion_NoPathEscape(t *testing.T) {
 		assert.NotContains(t, got, string(filepath.Separator))
 		assert.NotEqual(t, ".", got)
 		assert.NotEqual(t, "..", got)
-	}
-}
-
-// TestFirstHeading pins the table-of-contents extraction: the first level-1
-// heading wins, and a document with none falls back to its file name.
-func TestFirstHeading(t *testing.T) {
-	assert.Equal(t, "Hello", firstHeading("# Hello\n\ntext\n# Second", "fallback.md"))
-	// A level-2 heading is not a chapter title.
-	assert.Equal(t, "fallback.md", firstHeading("## Not a title\n", "fallback.md"))
-	// Empty level-1 heading is skipped, in favor of a real one.
-	assert.Equal(t, "Real", firstHeading("# \n# Real\n", "fallback.md"))
-	assert.Equal(t, "fallback.md", firstHeading("no heading", "fallback.md"))
-}
-
-// TestChapters_ListsEmbeddedDocs asserts the table of contents is non-empty,
-// sorted, and carries a title for every document.
-func TestChapters_ListsEmbeddedDocs(t *testing.T) {
-	chapters := Chapters()
-	require.NotEmpty(t, chapters)
-
-	var prev string
-	for _, c := range chapters {
-		assert.True(t, strings.HasSuffix(c.File, ".md"), "only Markdown is embedded: %s", c.File)
-		assert.NotEmpty(t, c.Title, "%s must resolve a title", c.File)
-		assert.LessOrEqual(t, prev, c.File, "chapters must be sorted by file name")
-		prev = c.File
 	}
 }

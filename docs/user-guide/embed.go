@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -53,36 +52,6 @@ func SetDir(d string) {
 	dir = d
 }
 
-// Chapter is one manual document with its top-level heading, used to render a
-// table of contents into the injected prompt.
-type Chapter struct {
-	File  string // base name, e.g. "chat.md"
-	Title string // first level-1 heading, or the file name when there is none
-}
-
-// Chapters lists the embedded documents sorted by file name, each paired with
-// its first heading. It reads from the embedded copy, not the extracted
-// directory, so the table of contents is available even before extraction.
-func Chapters() []Chapter {
-	entries, err := fs.ReadDir(embedded, ".")
-	if err != nil {
-		return nil
-	}
-	out := make([]Chapter, 0, len(entries))
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		data, err := fs.ReadFile(embedded, e.Name())
-		if err != nil {
-			continue
-		}
-		out = append(out, Chapter{File: e.Name(), Title: firstHeading(string(data), e.Name())})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].File < out[j].File })
-	return out
-}
-
 // unsafeVersion matches every character that may not appear in a single path
 // element. The version is injected from git/ldflags and can contain "/" (a
 // branch name via `git describe`), ":" or spaces — any of which would turn the
@@ -98,23 +67,6 @@ func safeVersion(v string) string {
 		return "unknown"
 	}
 	return v
-}
-
-// firstHeading returns the text of the first level-1 ("# ") heading, or
-// fallback when the document has none. Only "# " counts: the manual titles are
-// level-1 while "#" lines inside fenced code blocks are rare, so a false match
-// only mislabels one table-of-contents row.
-func firstHeading(content, fallback string) string {
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "# ") {
-			continue
-		}
-		if t := strings.TrimSpace(strings.TrimPrefix(line, "# ")); t != "" {
-			return t
-		}
-	}
-	return fallback
 }
 
 // Extract writes the embedded manual to <dataDir>/user-guide/<version>/ and
