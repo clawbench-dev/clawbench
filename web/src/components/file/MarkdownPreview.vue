@@ -141,10 +141,29 @@ const changeNav = useChangeNav(markerTops, (i) => {
     suppressScrollSync = true
     // 16px of headroom so the rail is not flush against the viewport top.
     el.scrollTo({ top: Math.max(0, target.top - NAV_HEADROOM), behavior: 'auto' })
-    // The scroll event (if any) fires before the next frame; release the guard
-    // after it so a subsequent user scroll is tracked again.
-    requestAnimationFrame(() => { suppressScrollSync = false })
+    // Flash the rail we landed on so the jump reads even when the scroll barely
+    // moves (adjacent changes). The scroll event fires before the next frame;
+    // release the guard after it so a subsequent user scroll is tracked again.
+    requestAnimationFrame(() => {
+        suppressScrollSync = false
+        flashRail(target.id)
+    })
 }, computed(() => props.file?.path))
+
+/** Highlight a change marker's rail after the nav lands on it. */
+function flashRail(markerId: string) {
+    // Match on the dataset rather than a CSS attribute selector: marker ids can
+    // contain characters a selector would need escaping for, and CSS.escape is
+    // absent in some environments (jsdom).
+    const els = bodyRef.value?.querySelectorAll('.diff-marker-inline')
+    if (!els) return
+    for (const el of els) {
+        if ((el as HTMLElement).dataset.markerId === markerId) {
+            flashElement(el, { className: 'diff-marker-rail-flash' })
+            return
+        }
+    }
+}
 
 /** Drop this file's baseline and its published markers. */
 function clearChanges() {

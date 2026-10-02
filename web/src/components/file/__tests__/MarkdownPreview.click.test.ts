@@ -287,6 +287,9 @@ describe('MarkdownPreview — change navigation wiring', () => {
         plugins: [i18n],
         stubs: { TableRowModal: true, MarkdownSearchBar: true, CodeLinkPreview: true },
       },
+      // Attach so the rail elements are `isConnected` — flashElement() no-ops on
+      // detached elements (it assumes they are about to be removed).
+      attachTo: document.body,
     })
   }
 
@@ -346,6 +349,44 @@ describe('MarkdownPreview — change navigation wiring', () => {
 
     // index 1 → top 100; minus 16px headroom = 84.
     expect(scrollToMock).toHaveBeenCalledWith({ top: 84, behavior: 'auto' })
+  })
+
+  it('flashes the rail of the marker the nav landed on', async () => {
+    // The rails render in jsdom (unlike CodeMirror's virtualized gutter), so this
+    // exercises the real lookup + flash class on the markdown surface.
+    ;(extractBlockElements as any).mockReturnValue([
+      { el: blockEl(0), tag: 'p', index: 0 },
+      { el: blockEl(100), tag: 'p', index: 1 },
+    ])
+    diffMarkers.value = [
+      markdownMarker('modified-0-p'),
+      markdownMarker('modified-1-p'),
+    ] as any
+    const wrapper = mountPreview()
+    await nextTick()
+    await nextTick()
+
+    // The flash lands on the next frame (after the jump scroll).
+    await wrapper.find('.fcn-btn-next').trigger('click')
+    await new Promise(r => setTimeout(r, 50))
+
+    const flashed = wrapper.findAll('.diff-marker-inline.diff-marker-rail-flash')
+    expect(flashed.length).toBe(1)
+    // index 1 → the second marker (modified-1-p).
+    expect(flashed[0].attributes('data-marker-id')).toBe('modified-1-p')
+  })
+
+  it('does not flash a rail when the nav cannot move', async () => {
+    ;(extractBlockElements as any).mockReturnValue([{ el: blockEl(0), tag: 'p', index: 0 }])
+    diffMarkers.value = [markdownMarker('modified-0-p')] as any
+    const wrapper = mountPreview()
+    await nextTick()
+    await nextTick()
+
+    // prev() at index 0 is a no-op.
+    await wrapper.find('.fcn-btn-prev').trigger('click')
+    await new Promise(r => setTimeout(r, 50))
+    expect(wrapper.findAll('.diff-marker-rail-flash').length).toBe(0)
   })
 
   it('clear button drops the current file baseline and clears positioned markers', async () => {

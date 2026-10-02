@@ -53,6 +53,18 @@
   outline: none;
 }
 
+/* Change-navigation landed on this rail: flash it and raise it to full opacity
+   so a jump is visible even when the scroll distance is tiny. The class is
+   applied by flashElement() and removed when the animation ends. The glow is
+   drawn on ::before (the visible rail), so the 20px hit-area button itself does
+   not flash. Keyframes + reduced-motion handling live in code-viewer.css. */
+.diff-marker.diff-marker-rail-flash {
+  opacity: 1;
+}
+.diff-marker.diff-marker-rail-flash::before {
+  animation: diff-rail-flash var(--flash-duration, 0.7s) ease-out forwards;
+}
+
 .diff-marker:focus-visible {
   box-shadow: 0 0 0 2px var(--accent-color);
   border-radius: var(--radius-xs);

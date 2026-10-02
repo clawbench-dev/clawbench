@@ -25,6 +25,17 @@
   animation: line-flash var(--flash-duration, 0.7s) ease-out forwards;
 }
 
+/* Rail flash — highlights the change marker that a prev/next navigation landed
+   on, so the target is obvious even when the scroll barely moves. Shared by the
+   markdown rail (.diff-marker-rail-flash, diff-marker.css) and the code gutter
+   label (.cm-diff-gutter-rail-flash, CodeMirrorViewer.vue). currentColor is the
+   marker's own per-type accent, so the glow matches the rail it points at.
+   Class is toggled by flashElement() (utils/domFlash.ts). */
+@keyframes diff-rail-flash {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  22%      { box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 45%, transparent); }
+}
+
 /* Copy flash animation for block elements — used by useDoubleClickCopy */
 @keyframes copy-flash {
   0%, 100% { background: transparent; }
@@ -82,6 +93,13 @@
   .char-flash-add {
     animation: none !important;
     background: rgba(100, 200, 255, 0.3);
+  }
+  /* Rail flash keeps its static glow (the class is held only briefly by
+     flashElement), so a reduced-motion user still sees which rail was selected. */
+  .diff-marker-rail-flash::before,
+  .cm-diff-gutter-rail-flash {
+    animation: none !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 45%, transparent);
   }
 }
 

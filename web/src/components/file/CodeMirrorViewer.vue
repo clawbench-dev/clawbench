@@ -53,7 +53,7 @@ import FileChangeNav from '@/components/file/FileChangeNav.vue'
 import { parseLineRanges, flattenLineNumbers } from '@/utils/lineRanges.ts'
 import { useQuoteQuestion, isPointerPressed } from '@/composables/useQuoteQuestion.ts'
 import { buildOverlayDecorations } from '@/utils/codeMirrorOverlay.ts'
-import { LINE_FLASH_MS } from '@/utils/domFlash'
+import { LINE_FLASH_MS, flashElement } from '@/utils/domFlash'
 import { useDialog } from '@/composables/useDialog.ts'
 import { useCodeStickyScroll } from '@/composables/useCodeStickyScroll.ts'
 
@@ -88,11 +88,12 @@ const diffLineMap = ref(new Map())
 
 // ─── Change navigation (prev/next over the markers) ───
 // One target per marker: its first line, sorted ascending (markers may arrive
-// grouped per change, not in document order). scrollToLine already flashes the
-// target line, so a jump is visible.
-const markerLines = computed(() =>
-    diffMarkers.value.map(m => m.lineNumbers?.[0] ?? 1).sort((a, b) => a - b)
+// grouped per change, not in document order). Keeping the markers alongside the
+// sorted lines lets the flash step back from a target index to its marker id.
+const sortedMarkers = computed(() =>
+    [...diffMarkers.value].sort((a, b) => (a.lineNumbers?.[0] ?? 1) - (b.lineNumbers?.[0] ?? 1))
 )
+const markerLines = computed(() => sortedMarkers.value.map(m => m.lineNumbers?.[0] ?? 1))
 // A programmatic jump (scrollToLine) must not be read back as a user scroll:
 // the viewport-line event would then re-derive the index from wherever the
 // flash left the viewport, snapping the pill off the change just selected.
@@ -100,14 +101,37 @@ let suppressScrollSync = false
 const changeNav = useChangeNav(
     markerLines,
     (i) => {
+        const marker = sortedMarkers.value[i]
         const line = markerLines.value[i]
-        if (!line) return
+        if (!marker || !line) return
         suppressScrollSync = true
         scrollToLine(line)
-        requestAnimationFrame(() => { suppressScrollSync = false })
+        // Highlight the gutter rail we landed on, mirroring the markdown
+        // surface. scrollToLine flashes the changed LINE; this makes the M/D/+
+        // rail itself light up so the target reads at a glance.
+        requestAnimationFrame(() => {
+            suppressScrollSync = false
+            flashGutterRail(marker.id)
+        })
     },
     computed(() => props.file?.path),
 )
+
+/** Highlight the diff-gutter marker with the given id after the nav lands on it. */
+function flashGutterRail(markerId) {
+    // Match on the dataset rather than a CSS attribute selector: marker ids can
+    // contain characters a selector would need escaping for, and CSS.escape is
+    // absent in some environments (jsdom). CodeMirror only renders the visible
+    // lines, so an off-screen marker simply has no element to flash.
+    const els = editorHost.value?.querySelectorAll('.cm-diff-gutter-marker')
+    if (!els) return
+    for (const el of els) {
+        if (el.dataset.markerId === markerId) {
+            flashElement(el, { className: 'cm-diff-gutter-rail-flash' })
+            return
+        }
+    }
+}
 
 /**
  * Follow manual scrolling on the code surface: the editor already emits
@@ -915,6 +939,12 @@ defineExpose({ getValue, scrollToLine, getView: () => view.value, handleExit, is
     .cm-diff-gutter-marker:hover {
         background: color-mix(in srgb, var(--accent-color) 20%, transparent);
     }
+}
+/* Change-navigation landed on this gutter label: pulse it in the marker's own
+   accent. Class toggled by flashElement(); keyframes + reduced-motion handling
+   live in code-viewer.css (the shared flash family). */
+.cm-diff-gutter-rail-flash {
+    animation: diff-rail-flash var(--flash-duration, 0.7s) ease-out forwards;
 }
 /* Diff line backgrounds + leading rail.
    Declared in the shared diff-row stylesheet (css/diff-rows.css) so a changed

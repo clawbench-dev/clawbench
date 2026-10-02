@@ -837,4 +837,45 @@ describe('CodeMirrorViewer — change navigation wiring', () => {
     await sleep(30)
     expect(wrapper.find('.file-change-nav').text()).toContain('1/3')
   })
+
+  it('flashes the gutter rail of the change the nav landed on', async () => {
+    // CodeMirror virtualizes its gutters and renders no marker elements in jsdom
+    // (viewport height 0), so inject the marker the editor would have produced
+    // for line 30 and assert the nav finds it by id and lights it up.
+    diffMarkers.value = [codeMarker('a', 10), codeMarker('b', 30), codeMarker('c', 50)] as any
+    const wrapper = mountNav({ file: { path: '/a.ts', content: CONTENT } })
+    await sleep(80)
+
+    const host = wrapper.find('.cm-host').element as HTMLElement
+    const markerEl = document.createElement('span')
+    markerEl.className = 'cm-diff-gutter-marker cm-diff-gutter-M'
+    markerEl.dataset.markerId = 'b'
+    host.appendChild(markerEl)
+
+    // Sorted targets [10, 30, 50]; next() from index 0 lands on line 30 (marker b).
+    await wrapper.find('.fcn-btn-next').trigger('click')
+    // The flash is applied on the next frame (after the jump scroll).
+    await sleep(50)
+
+    expect(markerEl.classList.contains('cm-diff-gutter-rail-flash')).toBe(true)
+    markerEl.remove()
+  })
+
+  it('does not flash a rail when the nav cannot move', async () => {
+    diffMarkers.value = [codeMarker('a', 10), codeMarker('b', 30)] as any
+    const wrapper = mountNav({ file: { path: '/a.ts', content: CONTENT } })
+    await sleep(80)
+
+    const host = wrapper.find('.cm-host').element as HTMLElement
+    const markerEl = document.createElement('span')
+    markerEl.className = 'cm-diff-gutter-marker cm-diff-gutter-M'
+    markerEl.dataset.markerId = 'a'
+    host.appendChild(markerEl)
+
+    // prev() at index 0 is a no-op, so nothing should light up.
+    await wrapper.find('.fcn-btn-prev').trigger('click')
+    await sleep(50)
+    expect(markerEl.classList.contains('cm-diff-gutter-rail-flash')).toBe(false)
+    markerEl.remove()
+  })
 })
