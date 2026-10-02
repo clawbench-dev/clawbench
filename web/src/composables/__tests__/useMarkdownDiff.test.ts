@@ -116,11 +116,11 @@ describe('extractBlocks', () => {
 describe('computeMarkdownDiff', () => {
   it('detects added blocks', () => {
     const oldBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
-      { tag: 'P', textContent: 'New paragraph', innerHTML: 'New paragraph', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'New paragraph', ownText: 'New paragraph', innerHTML: 'New paragraph', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -131,11 +131,11 @@ describe('computeMarkdownDiff', () => {
 
   it('detects deleted blocks', () => {
     const oldBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
-      { tag: 'P', textContent: 'Paragraph', innerHTML: 'Paragraph', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'Paragraph', ownText: 'Paragraph', innerHTML: 'Paragraph', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -145,13 +145,13 @@ describe('computeMarkdownDiff', () => {
 
   it('merges multiple consecutive deleted blocks into one marker', () => {
     const oldBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
-      { tag: 'P', textContent: 'Para 1', innerHTML: 'Para 1', selector: ':scope' },
-      { tag: 'P', textContent: 'Para 2', innerHTML: 'Para 2', selector: ':scope' },
-      { tag: 'P', textContent: 'Para 3', innerHTML: 'Para 3', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'Para 1', ownText: 'Para 1', innerHTML: 'Para 1', selector: ':scope' },
+      { tag: 'P', textContent: 'Para 2', ownText: 'Para 2', innerHTML: 'Para 2', selector: ':scope' },
+      { tag: 'P', textContent: 'Para 3', ownText: 'Para 3', innerHTML: 'Para 3', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -171,12 +171,12 @@ describe('computeMarkdownDiff', () => {
   it('merges extra deleted blocks in modified pair into one marker', () => {
     // 3 old blocks replaced by 1 new block → 1 modified + 2 merged deleted
     const oldBlocks = [
-      { tag: 'P', textContent: 'Line 1', innerHTML: 'Line 1', selector: ':scope' },
-      { tag: 'P', textContent: 'Line 2', innerHTML: 'Line 2', selector: ':scope' },
-      { tag: 'P', textContent: 'Line 3', innerHTML: 'Line 3', selector: ':scope' },
+      { tag: 'P', textContent: 'Line 1', ownText: 'Line 1', innerHTML: 'Line 1', selector: ':scope' },
+      { tag: 'P', textContent: 'Line 2', ownText: 'Line 2', innerHTML: 'Line 2', selector: ':scope' },
+      { tag: 'P', textContent: 'Line 3', ownText: 'Line 3', innerHTML: 'Line 3', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'P', textContent: 'Line 1 changed', innerHTML: 'Line 1 changed', selector: ':scope' },
+      { tag: 'P', textContent: 'Line 1 changed', ownText: 'Line 1 changed', innerHTML: 'Line 1 changed', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -195,12 +195,12 @@ describe('computeMarkdownDiff', () => {
 
   it('gives unique IDs to deleted markers from different positions', () => {
     const oldBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
-      { tag: 'P', textContent: 'Para A', innerHTML: 'Para A', selector: ':scope' },
-      { tag: 'P', textContent: 'Para B', innerHTML: 'Para B', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'P', textContent: 'Para A', ownText: 'Para A', innerHTML: 'Para A', selector: ':scope' },
+      { tag: 'P', textContent: 'Para B', ownText: 'Para B', innerHTML: 'Para B', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     // One merged marker, but its ID should be unique (contain old index)
@@ -210,10 +210,10 @@ describe('computeMarkdownDiff', () => {
 
   it('detects modified blocks', () => {
     const oldBlocks = [
-      { tag: 'P', textContent: 'Hello world', innerHTML: 'Hello world', selector: ':scope' },
+      { tag: 'P', textContent: 'Hello world', ownText: 'Hello world', innerHTML: 'Hello world', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'P', textContent: 'Hello universe', innerHTML: 'Hello universe', selector: ':scope' },
+      { tag: 'P', textContent: 'Hello universe', ownText: 'Hello universe', innerHTML: 'Hello universe', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -224,7 +224,7 @@ describe('computeMarkdownDiff', () => {
 
   it('returns no changes for identical blocks', () => {
     const blocks = [
-      { tag: 'H1', textContent: 'Title', innerHTML: 'Title', selector: ':scope' },
+      { tag: 'H1', textContent: 'Title', ownText: 'Title', innerHTML: 'Title', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(blocks, blocks)
     expect(result.hasChanges).toBe(false)
@@ -233,7 +233,7 @@ describe('computeMarkdownDiff', () => {
 
   it('handles empty old blocks (all added)', () => {
     const newBlocks = [
-      { tag: 'P', textContent: 'New', innerHTML: 'New', selector: ':scope' },
+      { tag: 'P', textContent: 'New', ownText: 'New', innerHTML: 'New', selector: ':scope' },
     ]
     const result = computeMarkdownDiff([], newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -243,7 +243,7 @@ describe('computeMarkdownDiff', () => {
 
   it('handles empty new blocks (all deleted)', () => {
     const oldBlocks = [
-      { tag: 'P', textContent: 'Old', innerHTML: 'Old', selector: ':scope' },
+      { tag: 'P', textContent: 'Old', ownText: 'Old', innerHTML: 'Old', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, [])
     expect(result.hasChanges).toBe(true)
@@ -255,10 +255,10 @@ describe('computeMarkdownDiff', () => {
     // Formatting-only changes (e.g. <strong> removed) produce no visible
     // content change, so no marker should appear.
     const oldBlocks = [
-      { tag: 'P', textContent: 'bold text', innerHTML: '<strong>bold</strong> text', selector: ':scope' },
+      { tag: 'P', textContent: 'bold text', ownText: 'bold text', innerHTML: '<strong>bold</strong> text', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'P', textContent: 'bold text', innerHTML: 'bold text', selector: ':scope' },
+      { tag: 'P', textContent: 'bold text', ownText: 'bold text', innerHTML: 'bold text', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(false)
@@ -267,10 +267,10 @@ describe('computeMarkdownDiff', () => {
 
   it('uses textContent for PRE block diff', () => {
     const oldBlocks = [
-      { tag: 'PRE', textContent: 'const x = 1;', innerHTML: 'const x = 1;', selector: ':scope' },
+      { tag: 'PRE', textContent: 'const x = 1;', ownText: 'const x = 1;', innerHTML: 'const x = 1;', selector: ':scope' },
     ]
     const newBlocks = [
-      { tag: 'PRE', textContent: 'const x = 2;', innerHTML: 'const x = 2;', selector: ':scope' },
+      { tag: 'PRE', textContent: 'const x = 2;', ownText: 'const x = 2;', innerHTML: 'const x = 2;', selector: ':scope' },
     ]
     const result = computeMarkdownDiff(oldBlocks, newBlocks)
     expect(result.hasChanges).toBe(true)
@@ -464,6 +464,73 @@ describe('isDiffBlock', () => {
   it('rejects inline elements like span', () => {
     const el = htmlToElement('<span>text</span>').firstElementChild!
     expect(isDiffBlock(el)).toBe(false)
+  })
+})
+
+describe('ownText (nested-block exclusion)', () => {
+  // Containers (LI/BLOCKQUOTE) are pushed AND recursed into, so their
+  // textContent is a superset of every nested block's text. The comparison key
+  // must use ownText, otherwise one edit produces two overlapping markers.
+  it('a container LI excludes its nested LI text', () => {
+    const blocks = extractBlocks(htmlToElement('<ul><li>item one<ul><li>nested a</li></ul></li></ul>'))
+    const container = blocks.find(b => b.textContent.includes('item one') && b.textContent.includes('nested a'))!
+    expect(container.ownText).toContain('item one')
+    expect(container.ownText).not.toContain('nested a')
+    // textContent still carries the full union (used for the drawer display).
+    expect(container.textContent).toContain('nested a')
+  })
+
+  it('a BLOCKQUOTE excludes the P text inside it', () => {
+    const blocks = extractBlocks(htmlToElement('<blockquote><p>quoted</p></blockquote>'))
+    const bq = blocks.find(b => b.tag === 'BLOCKQUOTE')!
+    expect(bq.ownText.trim()).toBe('')
+    expect(bq.textContent).toContain('quoted')
+  })
+
+  it('leaf blocks keep ownText === textContent', () => {
+    const blocks = extractBlocks(htmlToElement('<p>plain paragraph</p>'))
+    expect(blocks[0].ownText).toBe(blocks[0].textContent)
+  })
+})
+
+describe('computeMarkdownDiff — nested blocks produce one marker, not two', () => {
+  // Regression: editing a nested block used to emit a marker for the child AND
+  // for the container that merely contains it (its textContent changed too),
+  // so the same edit showed as two overlapping markers with the same content.
+  function diffHtml(oldHtml: string, newHtml: string) {
+    return computeMarkdownDiff(extractBlocks(htmlToElement(oldHtml)), extractBlocks(htmlToElement(newHtml)))
+  }
+
+  it('editing a blockquote body yields a single marker', () => {
+    const r = diffHtml('<blockquote><p>quoted text here</p></blockquote>', '<blockquote><p>quoted text CHANGED</p></blockquote>')
+    expect(r.markers).toHaveLength(1)
+    expect(r.markers[0].type).toBe('modified')
+    expect(r.markers[0].blockSelector).toBeTruthy()
+  })
+
+  it('editing a nested list item yields a single marker (the child, not the container)', () => {
+    const oldHtml = '<ul><li>item one<ul><li>nested a</li><li>nested b</li></ul></li></ul>'
+    const newHtml = '<ul><li>item one<ul><li>nested A</li><li>nested b</li></ul></li></ul>'
+    const r = diffHtml(oldHtml, newHtml)
+    expect(r.markers).toHaveLength(1)
+    expect(r.markers[0].charDiff?.oldText).toContain('nested a')
+    expect(r.markers[0].charDiff?.newText).toContain('nested A')
+    // The container's full union must NOT appear as a second marker.
+    expect(r.markers.every(m => !m.charDiff?.oldText?.includes('nested b'))).toBe(true)
+  })
+
+  it('editing a container\'s own text still yields a single marker', () => {
+    const oldHtml = '<ul><li>item one<ul><li>nested a</li></ul></li></ul>'
+    const newHtml = '<ul><li>item ONE<ul><li>nested a</li></ul></li></ul>'
+    const r = diffHtml(oldHtml, newHtml)
+    expect(r.markers).toHaveLength(1)
+    expect(r.markers[0].charDiff?.oldText).toContain('item one')
+  })
+
+  it('changing nothing still reports no changes', () => {
+    const html = '<ul><li>item one<ul><li>nested a</li></ul></li></ul>'
+    const r = diffHtml(html, html)
+    expect(r.hasChanges).toBe(false)
   })
 })
 
