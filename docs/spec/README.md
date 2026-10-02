@@ -6,6 +6,12 @@ ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工
 
 ## 模块地图
 
+### 数据模型
+
+| 模块 | 说明 |
+|------|------|
+| [数据库表结构](database.md) | 主库 `ClawBench.db`（SQLite，WAL，foreign_keys=ON，RAG 独立连接池）：各表列定义（chat_sessions / chat_history / chat_metadata / chat_tool_calls / summaries / tts_summaries / scheduled_tasks / task_executions / agents / agent_api_keys / recent_projects / forwarded_ports / terminal_quick_commands / terminal_key_config / chat_quick_send / pending_events / dingtalk_subscribers / rag_chunks）、外键级联汇总（含独立用量台账 `chat_metadata` 刻意不级联）与 ER 关系图 |
+
 ### core/ — 核心业务
 
 | 模块 | 说明 |
