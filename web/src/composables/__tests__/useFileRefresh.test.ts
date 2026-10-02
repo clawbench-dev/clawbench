@@ -10,6 +10,7 @@
  * in-flight, new calls are deferred until the current one completes.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { nextTick } from 'vue'
 
 // ── Timer leak prevention ──
 
@@ -47,15 +48,19 @@ const closeCurrentFileMock = vi.hoisted(() => vi.fn())
 // globalThis.fetch, so selectFile reads the same source. Without this, the
 // refresh path would observe stale content and derive no markers.
 const storeMock = vi.hoisted(() => ({
-  state: {
-    currentFile: null as any,
-    currentDir: undefined as string | undefined,
-  },
+  state: null as any,
   loadFiles: vi.fn(),
   selectFile: vi.fn(),
   closeCurrentFile: closeCurrentFileMock,
 }))
-vi.mock('@/stores/app.ts', () => ({ store: storeMock }))
+// The real store is reactive, and useFileRefresh registers module-level watchers
+// on `store.state.currentFile.path`. A plain-object mock would make those
+// watchers dead, so the file-navigation tests must drive a reactive state.
+vi.mock('@/stores/app.ts', async () => {
+  const { reactive } = await import('vue')
+  storeMock.state = reactive({ currentFile: null, currentDir: undefined })
+  return { store: storeMock }
+})
 
 /** Faithful stand-in for the real store.selectFile: fetch + apply content. */
 function faithfulSelectFile(path: string): Promise<boolean> {
@@ -388,6 +393,47 @@ describe('useFileRefresh deduplication', () => {
       syncMarkersFor('d.go', 'code', 'v1\n')
       expect(diffMarkers.value).toEqual([])
     })
+  })
+})
+
+describe('useFileRefresh file-navigation watch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    clearAllBaselines()
+    flashRanges.value = []
+    flashType.value = 'add'
+    diffMarkers.value = []
+    diffOldContent.value = null
+    mdDiffMock.diffOldFilePath.value = null
+    isRefreshing.value = false
+    resetStoreMock()
+  })
+
+  it('clears the diff-drawer side effects (not just the markers) on file switch', async () => {
+    // Regression guard: replacing clearDiffMarkers() with `diffMarkers.value = []`
+    // here left diffOldContent / diffOldFilePath set and the drawer open on the
+    // previous file, with a dead Undo. Assert the full side-effect set.
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'a\n' }
+    diffMarkers.value = [{ id: 'x', type: 'modified', label: 'M', blockSelector: '', lineNumbers: [1], charDiff: null, ariaLabel: 'm' }]
+    diffOldContent.value = 'old\n'
+    mdDiffMock.diffOldFilePath.value = 'a.go'
+
+    store.state.currentFile = { name: 'b.go', path: 'b.go', content: 'b\n' }
+    await nextTick()
+
+    expect(diffMarkers.value).toEqual([])
+    expect(diffOldContent.value).toBeNull()
+    expect(mdDiffMock.diffOldFilePath.value).toBeNull()
+  })
+
+  it('keeps the accumulated baseline across a file switch (markers must survive)', async () => {
+    store.state.currentFile = { name: 'a.go', path: 'a.go', content: 'a\n' }
+    recordBaseline('a.go', 'v1\n')
+    store.state.currentFile = { name: 'b.go', path: 'b.go', content: 'b\n' }
+    await nextTick()
+    // The baseline is what restores the markers on return; navigation must not
+    // drop it.
+    expect(getBaseline('a.go')).toBe('v1\n')
   })
 })
 

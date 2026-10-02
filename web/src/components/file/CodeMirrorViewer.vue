@@ -93,10 +93,36 @@ const diffLineMap = ref(new Map())
 const markerLines = computed(() =>
     diffMarkers.value.map(m => m.lineNumbers?.[0] ?? 1).sort((a, b) => a - b)
 )
-const changeNav = useChangeNav(markerLines, (i) => {
-    const line = markerLines.value[i]
-    if (line) scrollToLine(line)
-})
+// A programmatic jump (scrollToLine) must not be read back as a user scroll:
+// the viewport-line event would then re-derive the index from wherever the
+// flash left the viewport, snapping the pill off the change just selected.
+let suppressScrollSync = false
+const changeNav = useChangeNav(
+    markerLines,
+    (i) => {
+        const line = markerLines.value[i]
+        if (!line) return
+        suppressScrollSync = true
+        scrollToLine(line)
+        requestAnimationFrame(() => { suppressScrollSync = false })
+    },
+    computed(() => props.file?.path),
+)
+
+/**
+ * Follow manual scrolling on the code surface: the editor already emits
+ * `cm-editor-viewport-line` (the line at the viewport's vertical middle), which
+ * TocPanel consumes. Reuse it so the pill's "current change" tracks what the
+ * reader is looking at, matching the markdown surface's scroll tracking.
+ */
+function onViewportLine(e) {
+    if (suppressScrollSync) return
+    const d = e.detail
+    if (!d || (d.path && d.path !== props.file?.path)) return
+    // Targets are line numbers, so the viewport-middle line is the position to
+    // sync from (last change at or above it).
+    changeNav.syncIndexFromScroll(d.line)
+}
 
 /** Drop this file's baseline and its published markers. */
 function clearChanges() {
@@ -571,6 +597,7 @@ onMounted(() => {
     mountCompletion()
     sticky.init(view.value, props.file?.path, stickyScrollEnabled())
     window.addEventListener('cm-scroll-to-line', onScrollToLine)
+    window.addEventListener('cm-editor-viewport-line', onViewportLine)
     document.addEventListener('pointerup', onDocPointerUp)
     attachViewportLineDispatch()
     restoreMarkers()
@@ -578,6 +605,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     window.removeEventListener('cm-scroll-to-line', onScrollToLine)
+    window.removeEventListener('cm-editor-viewport-line', onViewportLine)
     document.removeEventListener('pointerup', onDocPointerUp)
     detachViewportLineDispatch()
     if (pendingScrollRAF) cancelAnimationFrame(pendingScrollRAF)

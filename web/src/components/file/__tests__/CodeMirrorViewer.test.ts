@@ -789,4 +789,52 @@ describe('CodeMirrorViewer — change navigation wiring', () => {
     await sleep(80)
     expect(wrapper.find('.file-change-nav').exists()).toBe(false)
   })
+
+  it('follows manual scrolling via cm-editor-viewport-line (current change updates)', async () => {
+    diffMarkers.value = [codeMarker('a', 10), codeMarker('b', 30), codeMarker('c', 50)] as any
+    const wrapper = mountNav({ file: { path: '/a.ts', content: CONTENT } })
+    await sleep(80)
+    expect(wrapper.find('.file-change-nav').text()).toContain('1/3')
+
+    // The editor reports the viewport-middle line; the pill should follow to the
+    // last change at or above it.
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', {
+      detail: { line: 35, path: '/a.ts' },
+    }))
+    await nextTick()
+    expect(wrapper.find('.file-change-nav').text()).toContain('2/3')
+
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', {
+      detail: { line: 5, path: '/a.ts' },
+    }))
+    await nextTick()
+    expect(wrapper.find('.file-change-nav').text()).toContain('1/3')
+  })
+
+  it('ignores viewport-line events for a different file path', async () => {
+    diffMarkers.value = [codeMarker('a', 10), codeMarker('b', 30)] as any
+    const wrapper = mountNav({ file: { path: '/a.ts', content: CONTENT } })
+    await sleep(80)
+    window.dispatchEvent(new CustomEvent('cm-editor-viewport-line', {
+      detail: { line: 35, path: '/other.ts' },
+    }))
+    await nextTick()
+    expect(wrapper.find('.file-change-nav').text()).toContain('1/2')
+  })
+
+  it('resets the nav index to the first change when switching files', async () => {
+    diffMarkers.value = [codeMarker('a', 10), codeMarker('b', 30), codeMarker('c', 50)] as any
+    const wrapper = mountNav({ file: { path: '/a.ts', content: CONTENT } })
+    await sleep(80)
+    await wrapper.find('.fcn-btn-next').trigger('click')
+    await nextTick()
+    await sleep(30)
+    expect(wrapper.find('.file-change-nav').text()).toContain('2/3')
+
+    // Switching files must not carry the old position into the new file's list.
+    await wrapper.setProps({ file: { path: '/b.ts', content: CONTENT } })
+    await nextTick()
+    await sleep(30)
+    expect(wrapper.find('.file-change-nav').text()).toContain('1/3')
+  })
 })

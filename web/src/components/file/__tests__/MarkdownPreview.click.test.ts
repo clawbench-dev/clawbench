@@ -362,4 +362,31 @@ describe('MarkdownPreview — change navigation wiring', () => {
     expect(clearBaseline).toHaveBeenCalledWith('/project/a.md')
     expect(wrapper.findAll('.diff-marker-inline').length).toBe(0)
   })
+
+  it('restores rails when switching away and back (markers survive navigation)', async () => {
+    // The headline claim: a file with a baseline shows its markers again on
+    // return. syncMarkersFor is the derive entry point; make it publish a marker
+    // for the target path (as the real one does) and assert the rail renders.
+    ;(extractBlockElements as any).mockReturnValue([{ el: blockEl(0), tag: 'p', index: 0 }])
+    ;(syncMarkersFor as any).mockImplementation((path: string) => {
+      if (path === '/project/a.md') diffMarkers.value = [markdownMarker('modified-0-p')] as any
+      else diffMarkers.value = []
+    })
+
+    const wrapper = mountPreview({ file: { path: '/project/b.md', content: '# B' } })
+    await nextTick()
+    await nextTick()
+    // B has no baseline → no rails.
+    expect(wrapper.findAll('.diff-marker-inline').length).toBe(0)
+
+    // Switch back to A, which has a baseline → its markers must reappear.
+    await wrapper.setProps({ file: { path: '/project/a.md', content: '# A' } })
+    await nextTick()
+    await nextTick()
+    expect(syncMarkersFor).toHaveBeenCalledWith('/project/a.md', 'markdown', '# A')
+    expect(wrapper.findAll('.diff-marker-inline').length).toBe(1)
+
+    // Clean up the per-test implementation so it does not leak.
+    ;(syncMarkersFor as any).mockReset()
+  })
 })

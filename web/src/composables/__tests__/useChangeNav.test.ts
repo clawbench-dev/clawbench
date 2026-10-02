@@ -51,7 +51,7 @@ describe('useChangeNav', () => {
     expect(nav.index.value).toBe(0)
   })
 
-  it('syncIndexFromScroll picks the last target at or above the position', () => {
+  it('syncIndexFromScroll picks the last target at or below the position', () => {
     const targets = ref<number[]>([100, 300, 500])
     const nav = useChangeNav(targets, vi.fn())
     nav.syncIndexFromScroll(350)
@@ -60,5 +60,30 @@ describe('useChangeNav', () => {
     expect(nav.index.value).toBe(0)
     nav.syncIndexFromScroll(9999)
     expect(nav.index.value).toBe(2)
+  })
+
+  it('resets the index to the first change when resetKey changes (new file)', async () => {
+    const targets = ref<number[]>([100, 300, 500])
+    const filePath = ref('/a.md')
+    const nav = useChangeNav(targets, vi.fn(), filePath)
+    nav.next()
+    nav.next()
+    expect(nav.index.value).toBe(2)
+    // Switching files must start at the new file's first change, not carry the
+    // previous file's position (which would read e.g. "3/4").
+    filePath.value = '/b.md'
+    await nextTick()
+    expect(nav.index.value).toBe(0)
+  })
+
+  it('does not reset when only the targets change (same file, new content)', async () => {
+    const targets = ref<number[]>([100, 300, 500])
+    const filePath = ref('/a.md')
+    const nav = useChangeNav(targets, vi.fn(), filePath)
+    nav.next()
+    expect(nav.index.value).toBe(1)
+    targets.value = [100, 300, 500, 700]
+    await nextTick()
+    expect(nav.index.value).toBe(1)
   })
 })

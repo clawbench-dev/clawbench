@@ -144,7 +144,7 @@ const changeNav = useChangeNav(markerTops, (i) => {
     // The scroll event (if any) fires before the next frame; release the guard
     // after it so a subsequent user scroll is tracked again.
     requestAnimationFrame(() => { suppressScrollSync = false })
-})
+}, computed(() => props.file?.path))
 
 /** Drop this file's baseline and its published markers. */
 function clearChanges() {

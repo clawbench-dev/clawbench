@@ -3,6 +3,7 @@ import { loadBrowseDir, loadOpenFile, clearStaleOpenFile } from '@/stores/app.ts
 import { store } from '@/stores/app.ts'
 import { apiGet, apiPost } from '@/utils/api'
 import { useForgeBinding, setForgeBindingState, resetForgeBindingState } from '@/composables/useForgeBinding'
+import { recordBaseline, getBaseline, clearAllBaselines } from '@/composables/useFileChangeBaseline.ts'
 
 // Mock API to prevent real network calls
 vi.mock('@/utils/api', () => ({
@@ -718,5 +719,20 @@ describe('setProject resets the cached forge binding', () => {
     await store.setProject('/worktrees/wt')
 
     expect(useForgeBinding().slug.value).toBe('')
+  })
+
+  it('drops accumulated change baselines (keyed by project-relative path)', async () => {
+    // Baselines are keyed by PROJECT-RELATIVE path, so `src/main.go` from the old
+    // project would otherwise survive and derive phantom markers against the new
+    // project's file (and its Undo could overwrite the new file with the old
+    // content). resetProjectState must clear them on every switch path.
+    clearAllBaselines()
+    recordBaseline('src/main.go', 'old content\n')
+    expect(getBaseline('src/main.go')).toBe('old content\n')
+
+    vi.mocked(apiPost).mockResolvedValueOnce({ ok: 'ok', path: '/proj/b' } as never)
+    await store.setProject('/proj/b')
+
+    expect(getBaseline('src/main.go')).toBeNull()
   })
 })
