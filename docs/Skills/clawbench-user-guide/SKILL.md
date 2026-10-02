@@ -1,6 +1,6 @@
 ---
 name: clawbench-user-guide
-description: 为 ClawBench 生成桌面端与移动端图文使用说明 / 用户手册配图。桌面端：720p 降采样截图参数（2560×1440 视口 + zoom=2 再 LANCZOS 降到 1280×720）、左栏 441px 构图约束、浮层抑制与自检（三个 fixed 浮层的 offsetParent 判据失效陷阱）、完成通知卡片必须 reload 清除、演示数据搭建与还原、按模块的取景清单与 DOM 选择器、三段式文档结构。移动端：CDP 设备模拟（zoom 方案对移动端完全无效）、390×844@3 竖屏参数与 585×1266 后处理、底部 Dock 与全屏 TabPanel 布局事实、手势阈值速查、Android App 模式 bridge stub 注入（必须 dispose）、移动端验收判据。触发词：使用说明、用户手册、user guide、图文说明、功能说明文档、手册配图、文档配图、移动端文档、手机端说明、竖屏截图。
+description: 为 ClawBench 生成桌面端与移动端图文使用说明 / 用户手册配图。桌面端：720p 降采样截图参数（2560×1440 视口 + zoom=2 再 LANCZOS 降到 1280×720）、左栏 441px 构图约束、浮层抑制与自检（三个 fixed 浮层的 offsetParent 判据失效陷阱）、完成通知卡片必须 reload 清除、演示数据搭建与还原、按模块的取景清单与 DOM 选择器、索引式手册 + 按模块详解文档结构。移动端：CDP 设备模拟（zoom 方案对移动端完全无效）、390×844@3 竖屏参数与 585×1266 后处理、底部 Dock 与全屏 TabPanel 布局事实、手势阈值速查、Android App 模式 bridge stub 注入（必须 dispose）、移动端验收判据。触发词：使用说明、用户手册、user guide、图文说明、功能说明文档、手册配图、文档配图、移动端文档、手机端说明、竖屏截图。
 allowed-tools: Bash(playwright-cli:*), Bash(curl:*), Bash(python3:*)
 ---
 
@@ -211,15 +211,42 @@ localStorage.setItem('clawbench-widescreen-split-ratio', String(441 / 1232));
 - 可靠判据：`getBoundingClientRect()` 量各栏 x/width，算重叠；用 `scrollWidth > clientWidth` 判文本截断；用 `.filter(e => e.scrollWidth > e.clientWidth + 1)` 数截断条目。
 - 视觉模型仍适合：判断「整体观感是否协调」「有没有明显异常」，以及在多张候选图之间做定性比较。
 
-## 七、三段式文档结构
+## 七、文档结构（索引式手册 + 按模块详解）
 
-`docs/user-guid/user-guid.md`，中文单文件：
+手册已重构为**索引式**：`docs/user-guide/README.md` 是**唯一**的手册入口，**不再包含详细操作内容，也没有目录（TOC）**，只保留四部分章节骨架 + 每节一句话概览 + 指向详解文档的链接（桌面端与移动端**合并为一本**，差异处用 **桌面端** / **移动端** 内联标注）：
 
-1. **快速上手** — 登录与多服务器、选择项目、界面总览（三栏/页签/会话侧栏）、发起第一次对话
-2. **功能详解** — AI 对话（模式切换、斜杠命令、@引用、附件、权限审批、提问卡、推荐回复、分叉/回溯/续接）、会话管理、文件管理、Git 管理、终端、任务、Forge、RAG、用量统计、系统监控、设置
-3. **进阶** — 快捷键速查、多项目与 worktree、上下文与摘要、推送通知、常见问题
+1. **快速上手** — 登录、选择项目、界面总览、发起第一次对话
+2. **功能详解** — AI 对话、会话管理、文件管理、文件查看与编辑、标注与跳转、Git、终端、任务、数据统计、设置
+3. **进阶** — 快捷键与手势、多项目与 Worktree、上下文与摘要、推送通知、常见问题、部署与访问
+4. **移动端与 Android App** — Android App 专有功能、PWA 安装与 APK 下载
 
-图片放 `docs/user-guid/screenshots/`，按 `NN-module-name.png` 编号（编号与章节顺序对应）。**桌面端视角**：移动端专属功能（悬浮窗、手势返回、PWA 安装）不写或只作一句说明。
+详细内容在**同目录的按模块详解文档**中（桌面/移动共用一篇，差异处用 **桌面端** / **移动端** 内联标注）：
+
+| 模块 | 详解文档 |
+|---|---|
+| 快速上手 | `getting-started.md` |
+| AI 对话 | `chat.md` |
+| 会话管理 | `session.md` |
+| 文件管理 | `file-manager.md` |
+| 文件查看与编辑 | `file-viewer.md` |
+| 标注与跳转 | `annotation.md` |
+| Git 管理 | `git.md` |
+| 终端 | `TERMINAL.md` |
+| 任务 | `tasks.md` |
+| 数据统计 | `stats.md` |
+| 设置 | `settings.md` |
+| 语音朗读 | `TTS.md` |
+| 会话搜索 | `RAG.md` |
+| 快捷键与手势 | `shortcuts.md` |
+| 多项目与 Worktree | `projects.md` |
+| 上下文、摘要与分叉 | `context.md` |
+| Android App 专有 | `android-app.md` |
+| PWA 与 APK | `pwa-apk.md` |
+| 推送通知 | `DINGTALK_PUSH.md` / `FEISHU_PUSH.md` |
+| 部署与访问 | `PUBLIC_ACCESS.md` / `TERMUX.md` |
+| 常见问题 | `FAQ.md` |
+
+截图放 `docs/user-guide/screenshots/`（桌面）与 `docs/user-guide/screenshots-mobile/`（移动），按 `NN-module-name.png` / `m-NN-name.png` 编号。**桌面端视角**：移动端专属功能（悬浮窗、手势返回、PWA 安装）不写或只作一句说明；新增截图与文字应写进对应的**详解文档**，而不是手册本身。
 
 ## 八、Vue 交互陷阱（第二版实测补充，最重要的一节）
 
@@ -284,7 +311,7 @@ if (!document.querySelector('.settings-index')) {
 
 ## 十一、截图目录与引用校验
 
-- 输出到 `docs/user-guid/screenshots/`，按 `<模块前缀>-<序号>-<名称>.png` 命名。
+- 输出到 `docs/user-guide/screenshots/`，按 `<模块前缀>-<序号>-<名称>.png` 命名。
 - **写完文档必须校验引用**：用 `comm` 双向比对文档里 `grep -o` 出的路径与实际文件，确认**无缺失、无冗余**。
 - 迭代过程中会留下被新图取代的旧图，及时删除未引用项。
 
@@ -867,8 +894,8 @@ if Image.open(raw).size != (1170, 2532):   # CSS 390×844 × DPR 3
 
 ### 命名与目录约定
 
-- 文档：`docs/user-guid/user-guid-mobile.md`
-- 截图：`docs/user-guid/screenshots-mobile/`（与桌面 `screenshots/` 平级隔离，避免混入桌面引用校验）
+- 文档：`docs/user-guide/README.md`（手册入口）与各按模块详解文档（见 §七 表格）
+- 截图：`docs/user-guide/screenshots-mobile/`（与桌面 `screenshots/` 平级隔离，避免混入桌面引用校验）
 - 命名：`m-NN-name.png`（`m-` 前缀 + 两位序号 + 语义名）
 
 ---

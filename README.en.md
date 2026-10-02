@@ -19,7 +19,7 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 - **Supported Platforms**: Browser (PC / Tablet / Phone), Android App, PWA
 - **AI Backends**: CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, DeepSeek Harness, MiMo-Code, Pi, Copilot, Kimi, Antigravity, Grok Build, ZCode
 
-📖 **User Guides** (Chinese): [Desktop](docs/user-guid/user-guid.md) · [Mobile](docs/user-guid/user-guid-mobile.md)
+📖 **User Guide** (Chinese): [ClawBench User Guide](docs/user-guide/README.md)
 
 <p align="center">
   <img src="assets/architecture.en.svg" alt="ClawBench Deployment Architecture" width="640">
@@ -31,7 +31,7 @@ Core Advantage: Native passthrough of AI capabilities (tool calls, extended thin
 
 ### Prerequisites
 
-- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
+- **A PC (Linux / macOS / Windows) or an Android phone with [Termux](docs/user-guide/TERMUX.md)**: To run the ClawBench server, with at least one AI coding agent CLI installed (CodeBuddy, Claude Code, OpenCode, Codex, Qoder CLI, VeCLI, CodeWhale, MiMo-Code, Pi, Copilot, or Kimi)
 - **Any device**: Install the [ClawBench Android App](https://github.com/xulongzhe/clawbench/releases), or open the server address in any browser — desktop, tablet, or phone
 
 ### npm Install
@@ -86,7 +86,7 @@ Once deployed, access `http://server-ip:20000` from your phone app or any browse
 
 ### 📱 Run Completely on an Android Phone (Termux)
 
-> See the full guide in **[Termux (Android)](docs/TERMUX.md)**.
+> See the full guide in **[Termux (Android)](docs/user-guide/TERMUX.md)**.
 
 ClawBench runs completely on your Android phone inside [Termux](https://f-droid.org/repo/com.termux.app.apk). The pure-Go `linux-arm64` backend, the built-in web frontend, and your AI coding agents all run locally on the phone — no separate PC or server required:
 
@@ -96,13 +96,13 @@ npm install -g @xulongzhe/clawbench
 clawbench
 ```
 
-> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
+> 📡 **Public Access**: To access ClawBench from the public internet (commuting, traveling, etc.), see the **[Public Access Guide](docs/user-guide/PUBLIC_ACCESS.md)**  — supports IPv6 direct connection, FRP tunnel, and EasyTier decentralized networking (no VPS required).
 
 ---
 
 ## Core Features
 
-> The table below is a feature overview. **Per-feature instructions, screenshots, and edge cases live in the [Desktop](docs/user-guid/user-guid.md) / [Mobile](docs/user-guid/user-guid-mobile.md) user guides (Chinese).**
+> The table below is a feature overview. **Per-feature instructions, screenshots, and edge cases live in the [ClawBench User Guide](docs/user-guide/README.md) (Chinese).**
 
 | Module | Highlights |
 |---|---|
@@ -129,7 +129,7 @@ clawbench
 
 ## FAQ
 
-See **[FAQ](docs/FAQ.en.md)** .
+See **[FAQ](docs/user-guide/FAQ.md)** (Chinese).
 
 ---
 

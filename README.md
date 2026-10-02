@@ -22,10 +22,10 @@
   <img src="assets/architecture.zh.svg" alt="ClawBench 部署架构" width="640">
 </p>
 
-- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/TERMUX.md) 在安卓手机上完全运行
+- **支持平台**：浏览器（PC / 平板 / 手机）、Android App、PWA；AI 智能体可在 PC 上运行，也可通过 [Termux](docs/user-guide/TERMUX.md) 在安卓手机上完全运行
 - **AI 后端**：CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、DeepSeek Harness、MiMo-Code、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode
 
-📖 **使用手册**：[桌面端使用说明](docs/user-guid/user-guid.md) · [移动端使用说明](docs/user-guid/user-guid-mobile.md)
+📖 **使用手册**：[ClawBench 使用手册](docs/user-guide/README.md)
 
 ---
 
@@ -82,7 +82,7 @@ docker run -d --restart unless-stopped -p 20000:20000 -v clawbench-data:/data gh
 
 ### 📱 在安卓手机上完全运行（Termux）
 
-> 完整指南见 **[Termux（安卓）](docs/TERMUX.md)** 。
+> 完整指南见 **[Termux（安卓）](docs/user-guide/TERMUX.md)** 。
 
 ClawBench 可在安卓手机的 [Termux](https://f-droid.org/repo/com.termux.app.apk) 终端模拟器中**完全运行**：纯 Go 的 `linux-arm64` 后端、内置 Web 前端、AI 编程智能体全部在手机本地执行，无需额外 PC 或服务器：
 
@@ -92,13 +92,13 @@ npm install -g @xulongzhe/clawbench
 clawbench
 ```
 
-> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、FRP 内网穿透和 EasyTier 去中心化组网（无需 VPS）三种方式。
+> 📡 **公网访问**：如需从外网访问 ClawBench（通勤途中、出差等场景），请参阅 **[公网访问指南](docs/user-guide/PUBLIC_ACCESS.md)** ，支持 IPv6 直连、FRP 内网穿透和 EasyTier 去中心化组网（无需 VPS）三种方式。
 
 ---
 
 ## 核心功能
 
-> 下表是功能概览。**逐项操作说明、截图与边界情况见 [桌面端](docs/user-guid/user-guid.md) / [移动端](docs/user-guid/user-guid-mobile.md) 用户手册。**
+> 下表是功能概览。**逐项操作说明、截图与边界情况见 [ClawBench 使用手册](docs/user-guide/README.md)。**
 
 | 模块 | 能力概要 |
 |---|---|
@@ -125,7 +125,7 @@ clawbench
 
 ## 常见问题
 
-详见 **[FAQ](docs/FAQ.md)** 。
+详见 **[FAQ](docs/user-guide/FAQ.md)** 。
 
 ---
 
