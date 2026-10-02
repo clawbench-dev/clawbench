@@ -1488,6 +1488,16 @@ func testACPResumeThinkingPreserved(t *testing.T, cfg acpTestConfig) {
 	env.storeSID(sessionID, acpSSID)
 
 	// Step 2: Switch thinking effort — use highest available level
+	//
+	// An agent may expose a thought_level config option only for models that
+	// support reasoning variants: OpenCode emits its "effort" option solely
+	// when the selected model declares reasoning_options, and its default
+	// model declares none. When the option is absent there is nothing to
+	// switch or preserve, so skip rather than fail on a missing option — the
+	// same allowance testACPThinkingEffortSwitch makes for a nil effort state.
+	if cachedThinkingEffortState(sessionID) == nil {
+		t.Skipf("Agent %s exposes no thought_level config option for the selected model — nothing to preserve", cfg.ID)
+	}
 	if len(cfg.ThinkingLevels) == 0 {
 		t.Skip("No thinking levels configured for this backend")
 	}
