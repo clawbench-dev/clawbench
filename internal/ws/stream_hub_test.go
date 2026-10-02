@@ -1206,3 +1206,70 @@ func TestSimpleTextPayload_OmitsEmptyThinkID(t *testing.T) {
 	assert.Equal(t, "text", payload["content"])
 	assert.NotContains(t, payload, "think_id")
 }
+
+// Agent Team attribution rides on every payload builder, not just content:
+// thinking, tool_use and tool_result each need member_name/member_color so the
+// frontend can color the right member card even when the parent link is
+// resolved separately. Missing one silently drops attribution for that stream.
+func TestStreamEventToPayload_MemberAttributionOnEveryBuilder(t *testing.T) {
+	member := func() ai.StreamEvent {
+		return ai.StreamEvent{MemberName: "probe-alpha", MemberColor: "blue"}
+	}
+
+	t.Run("thinking_done", func(t *testing.T) {
+		e := member()
+		e.Type = "thinking_done"
+		e.ParentToolCallID = "call_agent"
+		m, ok := StreamEventToPayload(e).(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "probe-alpha", m["member_name"])
+		assert.Equal(t, "blue", m["member_color"])
+	})
+
+	t.Run("thinking", func(t *testing.T) {
+		e := member()
+		e.Type = "thinking"
+		e.Content = "reasoning"
+		m, ok := StreamEventToPayload(e).(map[string]string)
+		require.True(t, ok)
+		assert.Equal(t, "probe-alpha", m["member_name"])
+		assert.Equal(t, "blue", m["member_color"])
+	})
+
+	t.Run("tool_use", func(t *testing.T) {
+		e := member()
+		e.Type = "tool_use"
+		e.Tool = &ai.ToolCall{Name: "Read", ID: "t1"}
+		m, ok := StreamEventToPayload(e).(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "probe-alpha", m["member_name"])
+		assert.Equal(t, "blue", m["member_color"])
+	})
+
+	t.Run("tool_result", func(t *testing.T) {
+		e := member()
+		e.Type = "tool_result"
+		e.Tool = &ai.ToolCall{Name: "Read", ID: "t1"}
+		m, ok := StreamEventToPayload(e).(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, "probe-alpha", m["member_name"])
+		assert.Equal(t, "blue", m["member_color"])
+	})
+}
+
+// An empty member field must stay absent rather than serialize as "" — the
+// frontend distinguishes "unattributed" (no key) from a real empty name, and an
+// empty color would override the fallback palette.
+func TestStreamEventToPayload_OmitsEmptyMemberAttribution(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "content", Content: "hi"})
+	m, ok := payload.(map[string]string)
+	require.True(t, ok)
+	assert.NotContains(t, m, "member_name")
+	assert.NotContains(t, m, "member_color")
+
+	payload = StreamEventToPayload(ai.StreamEvent{Type: "tool_use", Tool: &ai.ToolCall{Name: "Read", ID: "t1"}})
+	tm, ok := payload.(map[string]any)
+	require.True(t, ok)
+	assert.NotContains(t, tm, "member_name")
+	assert.NotContains(t, tm, "member_color")
+}

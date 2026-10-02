@@ -76,12 +76,28 @@ func (e errorFS) ReadFile(string) ([]byte, error) {
 	return []byte("ok"), nil
 }
 
+// dirOnlyFS returns a single directory entry, so writeFiles must skip it rather
+// than try to read a directory as a file.
+type dirOnlyFS struct{}
+
+func (dirOnlyFS) Open(string) (fs.File, error) { return nil, os.ErrNotExist }
+func (dirOnlyFS) ReadDir(string) ([]fs.DirEntry, error) {
+	return []fs.DirEntry{fakeDirEntry{}}, nil
+}
+
 type fakeEntry struct{}
 
 func (fakeEntry) Name() string               { return "a.md" }
 func (fakeEntry) IsDir() bool                { return false }
 func (fakeEntry) Type() fs.FileMode          { return 0 }
 func (fakeEntry) Info() (fs.FileInfo, error) { return nil, errors.New("no info") }
+
+type fakeDirEntry struct{}
+
+func (fakeDirEntry) Name() string               { return "sub" }
+func (fakeDirEntry) IsDir() bool                { return true }
+func (fakeDirEntry) Type() fs.FileMode          { return fs.ModeDir }
+func (fakeDirEntry) Info() (fs.FileInfo, error) { return nil, errors.New("no info") }
 
 // TestWriteFiles_ErrorBranches covers the read failures that would otherwise
 // only surface as an opaque startup warning.
@@ -98,6 +114,49 @@ func TestWriteFiles_ErrorBranches(t *testing.T) {
 	require.NoError(t, writeFiles(errorFS{}, dst))
 	_, statErr := os.Stat(filepath.Join(dst, "a.md"))
 	assert.NoError(t, statErr)
+}
+
+// TestWriteFiles_SkipsDirectories pins that a directory entry in the source is
+// skipped: os.ReadFile on a directory fails, which would abort the whole
+// extraction over a nested folder.
+func TestWriteFiles_SkipsDirectories(t *testing.T) {
+	dst := t.TempDir()
+	require.NoError(t, writeFiles(dirOnlyFS{}, dst))
+
+	entries, err := os.ReadDir(dst)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "a directory entry must not be materialized as a file")
+}
+
+// TestWriteFiles_WriteError covers the destination-write failure branch: a
+// read-only destination makes os.WriteFile fail, which must surface rather than
+// silently produce a partial manual.
+func TestWriteFiles_WriteError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	dst := t.TempDir()
+	require.NoError(t, os.Chmod(dst, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(dst, 0o755) })
+
+	err := writeFiles(errorFS{}, dst)
+	require.Error(t, err)
+}
+
+// TestExtract_TempDirError covers the MkdirTemp failure branch: the versioned
+// parent already exists but is read-only, so the staging dir cannot be created.
+// Extraction must report the error instead of leaving a half-populated tree.
+func TestExtract_TempDirError(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions")
+	}
+	dir := t.TempDir()
+	parent := filepath.Join(dir, "user-guide")
+	require.NoError(t, os.MkdirAll(parent, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(parent, 0o755) })
+
+	_, err := Extract(dir, "v1")
+	require.Error(t, err)
 }
 
 // TestPruneOldVersions_ListError covers the branch where the parent cannot be
