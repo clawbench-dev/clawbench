@@ -469,6 +469,7 @@ export default {
       chatsearchDesc: '搜索聊天历史',
       taskDesc: '管理任务',
       usageDesc: '查看 token 用量',
+      userGuideDesc: '查阅 ClawBench 用户手册',
       btwDesc: '顺便问一句（用摘要模型回答，不打扰当前会话）',
     },
     btw: {

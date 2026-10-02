@@ -20,6 +20,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 
+	"clawbench/docs/user-guide"
 	"clawbench/internal/ai"
 	_ "clawbench/internal/ai/backends"
 	_ "clawbench/internal/ai/backends/antigravity"
@@ -774,6 +775,17 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	}
 	slog.SetDefault(slog.New(multiHandler))
 	slog.Info("server starting")
+
+	// Materialize the embedded user manual under the data directory, versioned
+	// so a new build replaces the old copy. This backs the /cb-user-guide
+	// built-in command, which points the AI at these files. Failure is
+	// non-fatal: the command reports "not available" instead of injecting a
+	// prompt that references files which were never written.
+	if dir, ugErr := userguide.Extract(model.DataDir, version.Get()); ugErr != nil {
+		slog.Warn("failed to extract user guide", "error", ugErr)
+	} else {
+		slog.Info("user guide extracted", "dir", dir, "chapters", len(userguide.Chapters()))
+	}
 
 	// Ensure $SHELL reflects the user's login shell (from /etc/passwd).
 	// On Debian/Ubuntu, $SHELL may be /bin/sh (dash) when started from

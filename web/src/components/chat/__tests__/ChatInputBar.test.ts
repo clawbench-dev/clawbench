@@ -1544,6 +1544,15 @@ describe('ChatInputBar', () => {
     mockSupportsACP.mockReturnValue(false)
   })
 
+  it('offers the /cb-user-guide built-in', async () => {
+    const wrapper = mountBar()
+    wrapper.vm.inputText = '/cb-user'
+    await wrapper.vm.$nextTick()
+    const items = wrapper.findAll('.completion-item--clawbench')
+    expect(items).toHaveLength(1)
+    expect(items[0].find('.completion-label').text()).toContain('/cb-user-guide')
+  })
+
   it('still shows unrelated agent commands', async () => {
     // The dedupe must only drop the ClawBench-owned names, not everything.
     mockSupportsACP.mockReturnValue(true)

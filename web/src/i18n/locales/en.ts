@@ -466,6 +466,7 @@ export default {
       chatsearchDesc: 'Search chat history',
       taskDesc: 'Manage tasks',
       usageDesc: 'View token usage',
+      userGuideDesc: 'Look up the ClawBench user manual',
       btwDesc: 'Ask a side question (answered by the summary model, without disturbing this session)',
     },
     btw: {

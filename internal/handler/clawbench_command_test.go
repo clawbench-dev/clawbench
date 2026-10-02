@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	userguide "clawbench/docs/user-guide"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
@@ -161,11 +162,89 @@ func TestProcessClawbenchCommand_AgentSlashCommandPassesThrough(t *testing.T) {
 	assert.Equal(t, "/compact", result)
 }
 
+// --- /cb-user-guide ---
+
+// withGuideDir points the userguide package at a fixture directory and restores
+// the previous value afterwards.
+func withGuideDir(t *testing.T, dir string) {
+	t.Helper()
+	orig := userguide.Dir()
+	userguide.SetDir(dir)
+	t.Cleanup(func() { userguide.SetDir(orig) })
+}
+
+func TestProcessClawbenchCommand_UserGuideInjects(t *testing.T) {
+	withGuideDir(t, "/data/user-guide/v1.2.3")
+
+	result, err := processClawbenchCommand("/cb-user-guide 怎么归档会话", "/project", "sess-1")
+	require.NoError(t, err)
+
+	// The manual directory is the whole contract: the AI reads the files
+	// directly rather than calling an HTTP endpoint.
+	assert.Contains(t, result, "ClawBench user manual")
+	assert.Contains(t, result, "/data/user-guide/v1.2.3")
+	// The table of contents is rendered from the embedded chapters.
+	assert.Contains(t, result, "README.md")
+	// Concise answers with a source citation are the point of the command.
+	assert.Contains(t, result, "section heading")
+	// No HTTP/auth plumbing is needed for a local-file command.
+	assert.NotContains(t, result, "clawbench_project=")
+	// Returns only the template; the caller prepends the original message.
+	assert.NotContains(t, result, "/cb-user-guide 怎么归档会话")
+}
+
+// TestProcessClawbenchCommand_UserGuideChapters asserts every embedded chapter
+// is listed in the prompt. Without the table of contents the AI would have to
+// read the whole manual to find the relevant file.
+func TestProcessClawbenchCommand_UserGuideChapters(t *testing.T) {
+	withGuideDir(t, "/data/user-guide/v1")
+
+	result, err := processClawbenchCommand("/cb-user-guide settings", "/project", "sess-1")
+	require.NoError(t, err)
+
+	for _, c := range userguide.Chapters() {
+		assert.Containsf(t, result, c.File, "chapter %s must be listed", c.File)
+	}
+}
+
+// TestProcessClawbenchCommand_UserGuideNotExtracted asserts the renderer refuses
+// when no directory is set, instead of injecting a prompt that points the AI at
+// files which do not exist. The queue-drain path calls the renderer directly, so
+// this guard cannot live only in the precheck.
+func TestProcessClawbenchCommand_UserGuideNotExtracted(t *testing.T) {
+	withGuideDir(t, "")
+
+	_, err := processClawbenchCommand("/cb-user-guide anything", "/project", "sess-1")
+	require.Error(t, err)
+}
+
+// TestProcessClawbenchCommand_UserGuideIsRecognizedAsBuiltin guards the routing:
+// IsClawbenchCommand must claim "/cb-user-guide" or it is forwarded to the agent
+// as an ACP slash command and the injection never happens.
+func TestProcessClawbenchCommand_UserGuideIsRecognizedAsBuiltin(t *testing.T) {
+	assert.True(t, IsClawbenchCommand("/cb-user-guide"))
+	assert.True(t, IsClawbenchCommand("/cb-user-guide how to archive"))
+	assert.False(t, IsClawbenchCommand("/cb-user-guidex"))
+	assert.False(t, IsClawbenchCommand("/cb-user"))
+}
+
+// TestProcessClawbenchCommand_UserGuidePlaceholders asserts the injection
+// placeholders are all substituted. A leftover "{{GUIDE_DIR}}" would reach the
+// model verbatim and hide the real path.
+func TestProcessClawbenchCommand_UserGuidePlaceholders(t *testing.T) {
+	withGuideDir(t, "/data/user-guide/v1")
+
+	result, err := processClawbenchCommand("/cb-user-guide x", "/project", "sess-1")
+	require.NoError(t, err)
+	assert.Empty(t, braceTokens(result), "no injection placeholder may survive")
+}
+
 // --- IsClawbenchCommand tests ---
 
 func TestIsClawbenchCommand(t *testing.T) {
 	assert.True(t, IsClawbenchCommand("/cb-chatsearch query"))
 	assert.True(t, IsClawbenchCommand("/cb-task do thing"))
+	assert.True(t, IsClawbenchCommand("/cb-user-guide archive"))
 	// Bare commands (no trailing space) are what the frontend sends after
 	// trimming — they must still be recognized so they are not misrouted to
 	// the ACP slash-command path (regression).
@@ -543,6 +622,23 @@ func TestClawbenchCommandPrecheck(t *testing.T) {
 				"%s has no precondition and must pass", msg)
 			assert.Equalf(t, http.StatusOK, w.Code, "%s must not write an error", msg)
 		}
+	})
+
+	t.Run("user-guide rejects when the manual was not extracted", func(t *testing.T) {
+		withGuideDir(t, "")
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", http.NoBody)
+		assert.False(t, clawbenchCommandPrecheck(w, r, "/cb-user-guide how to archive"),
+			"a missing manual must be refused, not injected")
+		assert.Equal(t, http.StatusServiceUnavailable, w.Code)
+	})
+
+	t.Run("user-guide accepts when the manual is present", func(t *testing.T) {
+		withGuideDir(t, "/data/user-guide/v1")
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/api/ai/chat", http.NoBody)
+		assert.True(t, clawbenchCommandPrecheck(w, r, "/cb-user-guide how to archive"))
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }
 
