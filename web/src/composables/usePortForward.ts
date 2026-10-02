@@ -161,13 +161,20 @@ function hasActivePorts(): boolean {
 // sync with the value usePortForward() exposes.
 const { isAppMode } = useAppMode()
 
-// Guards against overlapping probe rounds. Module-scoped on purpose: it
+// Single-flight state for the reachability probe. Module-scoped on purpose: it
 // protects the module-level `localReachable`, while usePortForward() is called
 // from several places (the panel, App.vue's syncToNative, the localhost
 // annotation handler). A closure-local flag would let two instances probe
 // concurrently — each probe is a synchronous JS-bridge call that can take 500ms
 // on Android, so overlapping rounds double the bridge load.
+//
+// A round requested while one is in flight is QUEUED, not dropped. Dropping it
+// is what left a freshly created mapping red until a manual refresh: the first
+// round runs from registerPort's fire-and-forget loadPorts BEFORE Android's
+// async bind completes, records `false`, and the native success event's
+// re-probe was discarded — so the stale `false` was what the dot rendered.
 let probingReachability = false
+let reprobeRequested = false
 
 /**
  * Ports with their `active` flag corrected for the local device.
@@ -311,26 +318,38 @@ export function usePortForward() {
       if (localReachable.value.size > 0) localReachable.value = new Map()
       return
     }
-    // Probes are sequential and can take 500ms each, while loadPorts() is
-    // called from a 5s poll. Without this guard the rounds overlap and a stale
-    // round can overwrite a newer one's results.
-    if (probingReachability) return
+    // Single-flight with a queued re-run. Probes are sequential and can take
+    // 500ms each, while loadPorts() is called from a 5s poll; running rounds
+    // concurrently would double the bridge load, so an overlapping request is
+    // remembered and honoured as soon as the current round finishes. Dropping
+    // it instead (the old behaviour) let a stale pre-bind result outlive the
+    // success event's re-probe and stick as a red dot.
+    if (probingReachability) {
+      reprobeRequested = true
+      return
+    }
     probingReachability = true
     try {
-      const next = new Map<number, boolean>()
-      for (const p of ports.value) {
-        // Reverse mappings have no local listener — probing would always fail
-        // and paint every reverse entry as tunnel-down.
-        if (!p.enabled || isReversePort(p)) continue
-        try {
-          next.set(p.localPort, (await native.testPortReachable(p.localPort)) === true)
-        } catch {
-          next.set(p.localPort, false)
+      do {
+        // Clear before the round: a request arriving during this round must
+        // schedule the NEXT one, not be swallowed by a stale flag.
+        reprobeRequested = false
+        const next = new Map<number, boolean>()
+        for (const p of ports.value) {
+          // Reverse mappings have no local listener — probing would always fail
+          // and paint every reverse entry as tunnel-down.
+          if (!p.enabled || isReversePort(p)) continue
+          try {
+            next.set(p.localPort, (await native.testPortReachable(p.localPort)) === true)
+          } catch {
+            next.set(p.localPort, false)
+          }
         }
-      }
-      localReachable.value = next
+        localReachable.value = next
+      } while (reprobeRequested)
     } finally {
       probingReachability = false
+      reprobeRequested = false
     }
   }
 

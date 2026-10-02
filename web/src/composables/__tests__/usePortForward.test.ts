@@ -2538,6 +2538,70 @@ describe('usePortForward', () => {
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
         })
+
+        it('does not let a pre-bind probe stick: the success event must re-probe to green', async () => {
+            // Regression: creating a mapping showed a RED dot until the user hit
+            // refresh, even though the forward worked. registerPort's
+            // fire-and-forget loadPorts probes the listener BEFORE Android's
+            // async bind completes, so it records false. The native success
+            // event then calls loadPorts again — and that second round must
+            // actually apply its result, or the stale false is what the dot
+            // renders until a manual refresh.
+            //
+            // The race is only visible when the second round overlaps the first:
+            // refreshLocalReachability() drops an overlapping round outright
+            // (probingReachability), so the good result is discarded and the
+            // stale false survives. The deferred probe below forces that overlap.
+            mockIsAppMode.value = true
+            mockApiPost.mockResolvedValue({ localPort: 3000 })
+            mockApiGet.mockResolvedValue({
+                ports: [{ port: 3000, localPort: 3000, host: '', name: 'App', protocol: 'http', active: true, enabled: true }],
+            })
+            // The FIRST probe (pre-bind) is held open; later probes answer true.
+            let releaseFirst: (v: boolean) => void = () => {}
+            let probes = 0
+            const mockTest = vi.fn(() => {
+                probes += 1
+                if (probes === 1) {
+                    return new Promise<boolean>((resolve) => { releaseFirst = resolve })
+                }
+                return Promise.resolve(true)
+            })
+            ;(window as any).ClawBenchNative = {
+                addForwardedPort: vi.fn().mockResolvedValue(undefined),
+                testPortReachable: mockTest,
+            }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort, localReachable } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            // Let registerPort's loadPorts reach the (held) probe.
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+            expect(probes).toBeGreaterThanOrEqual(1)
+
+            // The native verdict arrives while that probe is still in flight.
+            window.dispatchEvent(new CustomEvent('clawbench-port-forward-result', {
+                detail: { localPort: 3000, success: true },
+            }))
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            // The pre-bind probe now resolves false — it must NOT win.
+            releaseFirst(false)
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(localReachable.value.get(3000)).toBe(true)
+
+            delete (window as any).ClawBenchNative
+            mockIsAppMode.value = false
+        })
     })
 
     describe('poll-driven reconnect', () => {
