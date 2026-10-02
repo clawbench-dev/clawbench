@@ -1863,11 +1863,26 @@ func testACPLongRunningConfigConsistency(t *testing.T, cfg acpTestConfig) {
 // Category E: Cancel / Disconnect / Resume + Conversation Memory
 // ===========================================================================
 
-// sendACPPromptWithCancel starts a prompt and cancels the context after collecting
-// a few events. Returns all collected events. This simulates a user-initiated cancel.
+// sendACPPromptWithCancel starts a prompt, cancels it mid-stream with a single
+// ACP session/cancel, and waits for the turn to settle. Returns all collected
+// events. This simulates a user-initiated cancel.
+//
+// It deliberately does NOT also cancel the Go context. Production cancel
+// (service.CancelSession) relies on the SDK's Prompt() returning ctx.Err() and
+// auto-sending exactly one session/cancel, but that path returns to the caller
+// *before* the agent has settled the turn. Issuing the next prompt from there
+// lands while the agent still considers the previous turn in flight, so it is
+// rejected with "another turn is already in progress" (turn.agent_busy) — seen
+// on kimi-code, and the same sub-100ms window exists on Claude. Sending one
+// explicit session/cancel and waiting for the agent's cancelled response is
+// what actually returns the session to idle.
 func sendACPPromptWithCancel(t *testing.T, backend *ACPBackend, sessionID, prompt string, timeout time.Duration) []StreamEvent {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
+	// Safety net only: in the normal path the stream has already closed by the
+	// time this runs, so cancelling the context is a no-op. It matters when the
+	// settle wait below times out, so the prompt goroutine does not leak.
+	defer cancel()
 
 	ch, err := backend.ExecuteStream(ctx, ChatRequest{
 		Prompt:    prompt,
@@ -1876,24 +1891,17 @@ func sendACPPromptWithCancel(t *testing.T, backend *ACPBackend, sessionID, promp
 	})
 	require.NoError(t, err, "ExecuteStream should not return error")
 
-	// Send ACP CancelTurn first (like CancelSession does), then cancel context
-	conn := GetACPConnManager().GetConn(sessionID)
-	if conn != nil {
-		conn.CancelTurn(context.Background())
-	}
-
 	var events []StreamEvent
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 
-	// Collect a few events, then cancel
+	// Collect a few events, then cancel mid-stream.
 	collectedEnough := false
 	for !collectedEnough {
 		select {
 		case event, ok := <-ch:
 			if !ok {
-				collectedEnough = true
-				break
+				return events
 			}
 			events = append(events, event)
 			if len(events) >= 2 {
@@ -1904,10 +1912,16 @@ func sendACPPromptWithCancel(t *testing.T, backend *ACPBackend, sessionID, promp
 		}
 	}
 
-	// Cancel the context (simulates CancelSession's cancel())
-	cancel()
+	// Exactly one session/cancel — the notification production relies on.
+	// Calling CancelTurn *and* cancelling the context would send two, which
+	// some agents treat as two separate user cancels (CodeBuddy).
+	if conn := GetACPConnManager().GetConn(sessionID); conn != nil {
+		conn.CancelTurn(context.Background())
+	}
 
-	// Collect remaining events after cancel
+	// Wait for the agent to settle: it answers the cancelled prompt with
+	// stopReason=cancelled, which ends the stream. Only then is the session
+	// idle and safe to prompt again.
 	remaining := collectACPEvents(t, ch, 15*time.Second)
 	events = append(events, remaining...)
 	return events
