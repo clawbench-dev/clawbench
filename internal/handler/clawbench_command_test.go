@@ -183,10 +183,11 @@ func TestProcessClawbenchCommand_UserGuideInjects(t *testing.T) {
 	// directly rather than calling an HTTP endpoint.
 	assert.Contains(t, result, "ClawBench user manual")
 	assert.Contains(t, result, "/data/user-guide/v1.2.3")
-	// The table of contents is rendered from the embedded chapters.
-	assert.Contains(t, result, "README.md")
-	// Concise answers with a source citation are the point of the command.
+	// The table of contents lists chapters by absolute path.
+	assert.Contains(t, result, "/data/user-guide/v1.2.3/README.md")
+	// Concise answers with an absolute-path source citation are the point.
 	assert.Contains(t, result, "section heading")
+	assert.Contains(t, result, "absolute file path")
 	// No HTTP/auth plumbing is needed for a local-file command.
 	assert.NotContains(t, result, "clawbench_project=")
 	// Returns only the template; the caller prepends the original message.
@@ -194,16 +195,19 @@ func TestProcessClawbenchCommand_UserGuideInjects(t *testing.T) {
 }
 
 // TestProcessClawbenchCommand_UserGuideChapters asserts every embedded chapter
-// is listed in the prompt. Without the table of contents the AI would have to
-// read the whole manual to find the relevant file.
+// is listed in the prompt by its absolute path. Without the table of contents
+// the AI would have to read the whole manual to find the relevant file, and a
+// bare file name would make the citation unusable.
 func TestProcessClawbenchCommand_UserGuideChapters(t *testing.T) {
-	withGuideDir(t, "/data/user-guide/v1")
+	const dir = "/data/user-guide/v1"
+	withGuideDir(t, dir)
 
 	result, err := processClawbenchCommand("/cb-user-guide settings", "/project", "sess-1")
 	require.NoError(t, err)
 
 	for _, c := range userguide.Chapters() {
-		assert.Containsf(t, result, c.File, "chapter %s must be listed", c.File)
+		assert.Containsf(t, result, dir+"/"+c.File,
+			"chapter %s must be listed by absolute path", c.File)
 	}
 }
 
