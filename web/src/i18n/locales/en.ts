@@ -617,7 +617,12 @@ export default {
     team: {
       title: 'Team',
       active: '{count} active',
+      ended: 'ended',
+      autoTeam: 'auto team',
       tools: 'tools',
+      tokens: 'tokens',
+      contextWindow: 'context',
+      agentType: 'type',
       status: {
         pending: 'pending',
         running: 'running',

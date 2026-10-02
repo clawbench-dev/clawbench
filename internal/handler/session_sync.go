@@ -365,9 +365,9 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// waitForReplaySettled 阻塞直到 LoadSession 回放缓冲在安静窗口内不再增长，或达到
-// 最大等待时间。比固定延时更可靠：长对话/慢 agent 需要更久才能把全部回放通知写入
-// 缓冲，固定延时可能读到不完整历史而漏掉新增消息。
+// waitForReplaySettled 阻塞直到 LoadSession 回放完成。优先使用 CodeBuddy 的显式
+// historyReplay "end" 标记（权威信号，实测存在）；若该标记始终未到（其它后端或
+// 未发送），回退到「缓冲在安静窗口内不再增长」的启发式，再退到最大等待时间。
 func waitForReplaySettled(client *ai.ClawBenchACPClient) {
 	if client == nil {
 		return
@@ -379,6 +379,13 @@ func waitForReplaySettled(client *ai.ClawBenchACPClient) {
 	lastLen := client.GetLoadSessionBufLen()
 	for time.Now().Before(deadline) {
 		time.Sleep(100 * time.Millisecond)
+		// Authoritative signal: the agent said the replay is complete. The
+		// buffer may still receive a few in-flight notifications, so give them
+		// one short grace period before returning.
+		if client.ReplayEndSeen() {
+			time.Sleep(quietWindow)
+			return
+		}
 		cur := client.GetLoadSessionBufLen()
 		if cur != lastLen {
 			lastLen = cur

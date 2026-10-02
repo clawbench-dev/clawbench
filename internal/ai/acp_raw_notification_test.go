@@ -11,6 +11,8 @@ import (
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"clawbench/internal/model"
 )
 
 // recordingACPClient embeds the real client so it satisfies acp.Client while
@@ -181,6 +183,100 @@ func TestSessionUpdateVariantMismatch(t *testing.T) {
 	assert.True(t, sessionUpdateVariantMismatch(si))
 }
 
+// Every known union member must be checked against its own discriminator: a
+// missing case would let a misclassified frame of that shape through as if it
+// were real (e.g. a `plan_removed` parsed into the Plan struct). Table-driven so
+// adding a union member without wiring its guard is caught here.
+//
+// The SDK's fallback matches on field presence, not the discriminator: it picks
+// the first struct whose required keys are all present, so a foreign name over
+// the same fields lands in that struct while SessionUpdate keeps the foreign
+// name. `session_info_update` is the catch-all (it only needs `sessionUpdate`),
+// so it is what swallows most unknown variants.
+func TestSessionUpdateVariantMismatch_EveryUnionMember(t *testing.T) {
+	cases := []struct {
+		name    string
+		genuine string
+		foreign string
+		fields  string // JSON members after the discriminator
+	}{
+		{"user_message_chunk", "user_message_chunk", "user_message_pending", `"content":{"type":"text","text":"hi"}`},
+		{"agent_message_chunk", "agent_message_chunk", "agent_message_pending", `"content":{"type":"text","text":"hi"}`},
+		{"agent_thought_chunk", "agent_thought_chunk", "agent_thought_pending", `"content":{"type":"text","text":"hi"}`},
+		{"tool_call", "tool_call", "tool_call_pending", `"toolCallId":"x","title":"Bash"`},
+		{"tool_call_update", "tool_call_update", "tool_call_update_pending", `"toolCallId":"x","status":"completed"`},
+		{"plan", "plan", "plan_pending", `"entries":[]`},
+		{"plan_update", "plan_update", "plan_update_pending", `"plan":{}`},
+		{"plan_removed", "plan_removed", "plan_removed_pending", `"id":"p1"`},
+		{"available_commands_update", "available_commands_update", "available_commands_pending", `"availableCommands":[]`},
+		{"current_mode_update", "current_mode_update", "current_mode_pending", `"currentModeId":"code"`},
+		{"config_option_update", "config_option_update", "config_option_pending", `"configOptions":[]`},
+		{"session_info_update", "session_info_update", "model_update", `"title":"t"`},
+		{"usage_update", "usage_update", "usage_pending", `"used":1,"size":2`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The genuine variant is not flagged.
+			var ok acp.SessionUpdate
+			require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"`+tc.genuine+`",`+tc.fields+`}`), &ok))
+			assert.False(t, sessionUpdateVariantMismatch(ok),
+				"a genuine %s must not be flagged", tc.name)
+
+			// A foreign discriminator over the same fields is flagged. Which
+			// struct the SDK's field-presence match picks is its own concern;
+			// what must hold is that the mismatch is detected.
+			var foreign acp.SessionUpdate
+			require.NoError(t, json.Unmarshal([]byte(`{"sessionUpdate":"`+tc.foreign+`",`+tc.fields+`}`), &foreign))
+			assert.True(t, sessionUpdateVariantMismatch(foreign),
+				"a %s frame must be flagged as misclassified", tc.foreign)
+		})
+	}
+
+	// An update with no union member set is not a mismatch.
+	assert.False(t, sessionUpdateVariantMismatch(acp.SessionUpdate{}))
+}
+
+// A malformed line (not JSON) is dropped without panicking: it runs on the
+// stdout pump goroutine, so a panic would kill the connection.
+func TestDispatchRawNotification_MalformedLineIgnored(t *testing.T) {
+	c := newRawNotifClient(t)
+	called := false
+	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
+
+	c.DispatchRawNotification([]byte(`{not json`))
+	assert.False(t, called)
+}
+
+// session/update with malformed params must not reach the extension handler —
+// the probe unmarshal fails and the frame is dropped.
+func TestDispatchRawNotification_MalformedSessionUpdateParams(t *testing.T) {
+	c := newRawNotifClient(t)
+	called := false
+	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
+
+	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":"not-an-object"}`))
+	assert.False(t, called)
+}
+
+// An extension notification with no registered handler is a logged no-op, not a
+// panic — the default state before a backend wires its handler.
+func TestDispatchRawNotification_CustomMethodNoHandler(t *testing.T) {
+	c := newRawNotifClient(t)
+	assert.NotPanics(t, func() {
+		c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"_codebuddy.ai/command","params":{}}`))
+	})
+}
+
+// An empty method is not a notification (a response carries id + no method).
+func TestDispatchRawNotification_EmptyMethodIgnored(t *testing.T) {
+	c := newRawNotifClient(t)
+	called := false
+	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
+
+	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	assert.False(t, called)
+}
+
 // The typed callback must IGNORE a misclassified variant so it never emits a
 // bogus tool_use for a frame that is not a tool call.
 func TestSessionUpdate_MisclassifiedVariantIgnored(t *testing.T) {
@@ -261,4 +357,62 @@ func TestDispatchRawNotification_SessionUpdateNotTreatedAsMethod(t *testing.T) {
 		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned"}}}`))
 	assert.True(t, variantCalled)
 	assert.False(t, notifCalled, "session/update must not go to the method handler")
+}
+
+// ---------------------------------------------------------------------------
+// historyReplay end marker
+// ---------------------------------------------------------------------------
+
+// A session_info_update carrying historyReplay:"end" during a LoadSession
+// replay must set the end marker; anything else must not.
+func TestReplayEndMarker_SetOnlyOnEndDuringReplay(t *testing.T) {
+	c := NewClawBenchACPClient()
+	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
+	conn.loadSessionActive.Store(true)
+	c.connRef = conn
+	c.RegisterSession("s1", make(chan StreamEvent, 16))
+	defer c.ResetReplayEnd()
+
+	// start marker → not end
+	start := acp.SessionNotification{
+		SessionId: "s1",
+		Update: acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
+			Meta: map[string]any{metaKeyCodeBuddyHistoryReplay: "start"},
+		}},
+	}
+	require.NoError(t, c.SessionUpdate(context.Background(), start))
+	assert.False(t, c.ReplayEndSeen(), "start must not mark the replay complete")
+
+	// end marker → set
+	end := acp.SessionNotification{
+		SessionId: "s1",
+		Update: acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
+			Meta: map[string]any{metaKeyCodeBuddyHistoryReplay: "end"},
+		}},
+	}
+	require.NoError(t, c.SessionUpdate(context.Background(), end))
+	assert.True(t, c.ReplayEndSeen())
+
+	// Reset clears it (a new replay must judge on its own marker).
+	c.ResetReplayEnd()
+	assert.False(t, c.ReplayEndSeen())
+}
+
+// The marker is only honored during a replay; a live session_info_update with
+// the key must not set it.
+func TestReplayEndMarker_IgnoredWhenNotReplaying(t *testing.T) {
+	c := NewClawBenchACPClient()
+	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
+	// loadSessionActive stays false.
+	c.connRef = conn
+	c.RegisterSession("s1", make(chan StreamEvent, 16))
+	defer c.ResetReplayEnd()
+
+	require.NoError(t, c.SessionUpdate(context.Background(), acp.SessionNotification{
+		SessionId: "s1",
+		Update: acp.SessionUpdate{SessionInfoUpdate: &acp.SessionSessionInfoUpdate{
+			Meta: map[string]any{metaKeyCodeBuddyHistoryReplay: "end"},
+		}},
+	}))
+	assert.False(t, c.ReplayEndSeen(), "a live update must not set the replay marker")
 }

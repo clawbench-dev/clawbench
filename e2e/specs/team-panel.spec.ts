@@ -107,4 +107,48 @@ test.describe('Agent Team Panel', () => {
     })
     await expect(page.locator('.team-member')).toHaveCount(1)
   })
+
+  test('shows an ended chip once no member is live', async ({ page }) => {
+    await injectTeam(page, {
+      type: 'team_idle',
+      teamName: 'clawbench-probe',
+      hasLiveMembers: false,
+      members: [{ name: 'probe-alpha', status: 'completed', activity: 'idle', lifecycle: 'terminated' }],
+    })
+    await expect(page.locator('.team-chip__text')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('.team-chip__text')).toHaveText('clawbench-probe · ended')
+  })
+
+  test('labels an auto team in the expanded header', async ({ page }) => {
+    await injectTeam(page, { ...sampleTeam, isAutoTeam: true })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await expect(page.locator('.team-expanded__auto')).toBeVisible()
+    await expect(page.locator('.team-expanded__auto')).toHaveText('auto team')
+  })
+
+  test('shows member agent type and a metadata tooltip', async ({ page }) => {
+    await injectTeam(page, {
+      type: 'member_status_change',
+      teamName: 'clawbench-probe',
+      hasLiveMembers: true,
+      members: [
+        {
+          name: 'probe-alpha',
+          status: 'running',
+          description: 'runs the probe',
+          agentType: 'general-purpose',
+          tokenUsage: { inputTokens: 100, outputTokens: 20, lastContextWindow: 200000 },
+        },
+      ],
+    })
+    await expect(page.locator('.team-chip')).toBeVisible({ timeout: 5000 })
+    await page.locator('.team-chip').click()
+    await expect(page.locator('.team-member__agent-type')).toHaveText('general-purpose')
+    const title = await page.locator('.team-member').first().getAttribute('title')
+    expect(title).toContain('runs the probe')
+    expect(title).toContain('type: general-purpose')
+    expect(title).toContain('tokens: 100 in / 20 out')
+    expect(title).toContain('context: 200000')
+  })
 })

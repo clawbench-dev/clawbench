@@ -15,13 +15,21 @@
     <div v-else class="team-expanded">
       <div class="team-expanded__header" @click="toggleTeamCollapse()">
         <span class="team-expanded__title">{{ t('chat.team.title') }} · {{ teamName }}</span>
-        <span class="team-expanded__count">{{ t('chat.team.active', { count: activeCount }) }}</span>
+        <span v-if="isAutoTeam" class="team-expanded__auto">{{ t('chat.team.autoTeam') }}</span>
+        <span class="team-expanded__count">{{ headerCount }}</span>
         <ChevronUp :size="12" class="team-expanded__toggle" />
       </div>
       <div class="team-expanded__roster">
-        <div v-for="m in members" :key="m.name" class="team-member" :class="memberRowClass(m)">
+        <div
+          v-for="m in members"
+          :key="m.name"
+          class="team-member"
+          :class="memberRowClass(m)"
+          :title="memberTooltip(m)"
+        >
           <span class="team-member__dot" :class="`team-member__dot--${statusKind(m)}`" />
           <span class="team-member__name" :style="{ color: memberColor(m) }">{{ m.name }}</span>
+          <span v-if="m.agentType" class="team-member__agent-type">{{ m.agentType }}</span>
           <span class="team-member__status">{{ statusLabel(m) }}</span>
           <span class="team-member__tools">{{ toolLabel(m) }}</span>
           <span class="team-member__tokens">{{ tokenLabel(m) }}</span>
@@ -39,7 +47,8 @@ import { useTeamState, type TeamMember } from '@/composables/useTeamState'
 import { teamMemberColorVar } from '@/utils/teamMemberColor'
 
 const { t } = useI18n()
-const { teamCollapsed, hasTeam, teamName, members, activeCount, toggleTeamCollapse } = useTeamState()
+const { teamCollapsed, hasTeam, teamName, members, activeCount, completedCount, isAutoTeam, isEnded, toggleTeamCollapse } =
+  useTeamState()
 
 // Member colour comes from the shared palette so the roster and the permission
 // card agree (see teamMemberColor.ts).
@@ -85,14 +94,46 @@ function toolLabel(m: TeamMember): string {
 
 // Compact token total (input + output), e.g. 85200 -> "85.2k".
 function tokenLabel(m: TeamMember): string {
-  const u = m.tokenUsage
-  if (!u) return ''
-  const total = (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+  const total = tokenTotal(m)
   if (total <= 0) return ''
   return total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total)
 }
 
+function tokenTotal(m: TeamMember): number {
+  const u = m.tokenUsage
+  if (!u) return 0
+  return (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+}
+
+// The wire only gives us `description`, `agentType`, the token split and the
+// last context window — none fit the row (too wide / secondary), so they go in
+// a native tooltip (doc §4.1). Empty lines are dropped so a member without
+// metadata does not get a blank tooltip.
+function memberTooltip(m: TeamMember): string {
+  const lines: string[] = []
+  if (m.description) lines.push(m.description)
+  if (m.agentType) lines.push(`${t('chat.team.agentType')}: ${m.agentType}`)
+  const u = m.tokenUsage
+  if (u) {
+    lines.push(`${t('chat.team.tokens')}: ${u.inputTokens ?? 0} in / ${u.outputTokens ?? 0} out`)
+    if (u.lastContextWindow) {
+      lines.push(`${t('chat.team.contextWindow')}: ${u.lastContextWindow}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+// Header count: while running show "N active"; once the team is over show the
+// completed tally instead, so the panel does not read "0 active" forever.
+const headerCount = computed(() =>
+  isEnded.value
+    ? `${completedCount.value}/${members.value.length}`
+    : t('chat.team.active', { count: activeCount.value }),
+)
+
 const chipText = computed(() => {
+  // Ended: the roster is history — show the team name, not a stale member.
+  if (isEnded.value) return `${teamName.value} · ${t('chat.team.ended')}`
   const working = members.value.find(m => m.status === 'running' || m.activity === 'working')
   if (working) return `${working.name} · ${statusLabel(working)}`
   return teamName.value
@@ -186,6 +227,16 @@ const chipText = computed(() => {
   white-space: nowrap;
 }
 
+.team-expanded__auto {
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #6c757d);
+  border: 1px solid var(--border-color, #dee2e6);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+
 .team-expanded__toggle {
   color: var(--text-muted, #6c757d);
   flex-shrink: 0;
@@ -253,11 +304,20 @@ const chipText = computed(() => {
 
 .team-member__status,
 .team-member__tools,
-.team-member__tokens {
+.team-member__tokens,
+.team-member__agent-type {
   flex-shrink: 0;
   font-size: var(--font-size-xs);
   color: var(--text-muted, #6c757d);
   white-space: nowrap;
+}
+
+/* The agent type is metadata, not identity — cap its width so a long type name
+   cannot push the status/tools columns out of the row. */
+.team-member__agent-type {
+  max-width: 8em;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 @keyframes team-pulse {

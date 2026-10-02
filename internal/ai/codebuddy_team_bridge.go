@@ -45,6 +45,10 @@ const (
 	// metaKeyCodeBuddySubagentType distinguishes an Agent spawn frame from
 	// ordinary member content (only spawn frames carry both keys).
 	metaKeyCodeBuddySubagentType = "codebuddy.ai/subagentType"
+	// metaKeyCodeBuddyHistoryReplay marks a LoadSession history replay boundary:
+	// "start" / "end" (verified against a real process). The "end" marker is the
+	// authoritative end-of-replay signal for the load handler.
+	metaKeyCodeBuddyHistoryReplay = "codebuddy.ai/historyReplay"
 )
 
 // extractTeamMemberName returns the team member that produced a frame, or ""

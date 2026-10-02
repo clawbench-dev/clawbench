@@ -223,6 +223,11 @@ type TeamMember struct {
   故重载后归组不丢。
 - 团队状态在重载后由 loadSession 重放（实测回放帧含 Agent 生成帧的 `memberName`，
   可重建成员列表与映射；teamUpdate 重推本次未观测，需前端容忍"重载后短暂无团队栏"）。
+- **回放完成信号**：CodeBuddy 用 `session_info_update._meta["codebuddy.ai/historyReplay"]`
+  = `"start"`/`"end"` 括起历史回放（实测存在，schema 注明「loadSession 历史回放边界信号」）。
+  `ClawBenchACPClient` 在回放期间记录 `end` 标记（`ReplayEndSeen`，atomic），
+  `session_sync.go` 的 `waitForReplaySettled` 优先据此立即判定回放结束（留一个安静窗口
+  收尾在途帧），未收到标记时回退到原有的「缓冲不再增长」启发式。
 
 ### 3.4 WS 转发（`internal/ws/stream_hub.go`）
 
@@ -248,10 +253,10 @@ type TeamMember struct {
 
 ```
 ┌─────────────────────────────────────────────┐
-│ Team · clawbench-probe         2 active  ⌄  │   ← 标题行可点折叠
+│ Team · clawbench-probe  [自动团队]  2 active ⌄ │   ← 标题行可点折叠
 ├─────────────────────────────────────────────┤
-│ ● probe-alpha   running    Bash×2   85.2k   │   ← 名字用 members[].color 着色
-│ ✓ probe-beta    completed  —        85.2k   │
+│ ● probe-alpha  general-purpose  running  Bash×2  85.2k │   ← 名字用 members[].color 着色
+│ ✓ probe-beta   completed  —  85.2k                    │
 └─────────────────────────────────────────────┘
 ```
 
@@ -263,12 +268,25 @@ type TeamMember struct {
 └─────────────────────────────────────┘
 ```
 
+**已结束态**（`hasLiveMembers:false` 且无 `alive` 成员）：
+
+```
+┌─────────────────────────────────────┐
+│ ● clawbench-probe · 已结束    0/2  ⌃ │
+└─────────────────────────────────────┘
+```
+
 - **名字着色**：wire 的 `members[].color`（`blue`/`green`/…）映射到主题色，与官方 TUI 一致。
 - **状态点复用会话行状态槽语义**（design-guide §动效）：`running` 脉动点、
   `completed` 静止 ✓、`failed` 红 ✗、`killed`/`terminated` 灰 —。
   **不新增环**——「正在推进」已由脉动点表达，同一事实不说两遍。
 - **右侧计量**：`toolCallCount` + `tokenUsage.inputTokens + outputTokens`（缩写 `85.2k`）。
-- **tooltip**：`description`（成员职责）+ 完整 token 明细。
+- **`agentType`** 在名字后以次要色内联显示（有则显示）。
+- **tooltip**（原生 `title`，空则完全不设）：`description` + `agentType` +
+  token 明细（`in/out`）+ `lastContextWindow`。
+- **`isAutoTeam:true`** 在展开标题行显示「自动团队」标签（自动队回合结束即拆，提示用户）。
+- **已结束态**由 `hasLiveMembers:false` + 无 `lifecycle==='alive'` 成员共同判定
+  （`useTeamState.isEnded`）；**缺省 `hasLiveMembers` 不算已结束**（只信显式 false）。
 - **无团队时整块 `v-if` 不渲染**，不占位。
 - 状态来源：`team_update` 事件 → 会话级 composable（仿 `usePlanProgress.ts`）。
 
@@ -289,6 +307,12 @@ type TeamMember struct {
 - 卡标题用 `memberName` + `subagentType`（当前用 `display_name`）。
 - 左边框色用**成员 color** 而非固定 `--subagent-accent`（#ec4899），
   使时间线与状态栏的成员配色一致。
+
+> **实施状态**：方案 B 的**成员配色部分已落地**——`ContentBlock` 携带
+> `member_name`/`member_color`（两种 MarshalJSON 形态都落库，刷新不丢），
+> `ContentBlocks.vue` 的 `memberAccentStyle()` 用成员色覆盖 `--subagent-accent`，
+> 承载时间线的 Agent 卡因此按成员着色。卡标题的成员名展示仍沿用现有
+> `display_name`（未单独改写）。
 
 ### 4.3 权限卡成员徽标
 
@@ -314,7 +338,11 @@ type TeamMember struct {
 | `status` | pending / running / completed / failed / killed | 主状态点 + 状态文字 |
 | `activity` | starting / working / idle | 副标题（"启动中/工作中/空闲"） |
 | `lifecycle` | alive / terminated | `terminated` → 整行降透明度（成员已回收） |
-| 顶层 `hasLiveMembers:false` + `team_idle` | — | 状态栏折叠为「Team · 已结束」或隐藏 |
+| 顶层 `hasLiveMembers` | true / false | `false` + 无 `alive` 成员 ⇒ `isEnded`：chip 显示「· 已结束」，展开头显示 `completed/total` |
+
+> `hasLiveMembers:false` 实测**不只随 `team_idle` 到达**——它在最后一名成员终止后的
+> `member_status_change` 快照上就出现了（实测 1 次）。因此 `isEnded` 的判据是
+> 「显式 `hasLiveMembers===false` 且无 `lifecycle==='alive'` 成员」，而非只认 `team_idle`。
 
 ### 4.5 生命周期行为
 
@@ -322,9 +350,10 @@ type TeamMember struct {
 |------|------|
 | `team_created` | 状态栏出现（可带动效滑入） |
 | `member_status_change` | **就地更新**行状态/计量（不整块重挂载，避免闪帧） |
+| `team_busy` | 空闲→忙碌（在既有团队上开启新回合）：应用完整成员快照，清除 `isEnded` |
 | `team_deleted` | 状态栏淡出；成员时间线**保留**（历史内容不删） |
-| `team_idle` | 折叠为「已结束」，不消失 |
-| loadSession 重载 | 由回放帧重建成员列表；容忍「重载后短暂无状态栏」 |
+| `team_idle` / `hasLiveMembers:false` | chip 折叠为「· 已结束」，展开头显示 `completed/total`，不消失 |
+| loadSession 重载 | 由回放帧重建成员列表；`historyReplay:"end"` 标记作为回放完成信号（见 §3.3） |
 
 ### 4.6 实现约束
 
@@ -346,9 +375,11 @@ type TeamMember struct {
 | P2 | 后端读 `memberEvent` + 建成员↔工具映射 → 回填 `ParentToolCallID` | 同上（含变异验证） | ✅ |
 | P3 | WS 转发 `team_update` + `member_name` | `stream_hub_test.go` | ✅ |
 | P4 | 前端 `TeamPanel.vue`（§4.1/§4.4/§4.5）+ `useTeamState.ts` | `TeamPanel.test.ts` / `useTeamState.test.ts` | ✅ |
-| P5 | 权限卡成员徽标（§4.3）—— 后端已透传 `teamMember`，前端徽标 UI 待做 | 依赖 P0 | 🟡 部分 |
-| P6 | 成员时间线方案 B（§4.2 第二阶段，成员配色） | 视觉回归 | ⬜ 待做 |
-| P7 | E2E：团队面板（bridge 注入） | `e2e/specs/team-panel.spec.ts`（7 passed） | ✅ |
+| P5 | 权限卡成员徽标（§4.3） | `renderToolDetail.test.ts` | ✅ |
+| P6 | 成员时间线方案 B（§4.2，成员配色） | `chatStreamUtils.test.ts` / `teamMemberColor.test.ts` | ✅ |
+| P7 | E2E：团队面板（bridge 注入） | `e2e/specs/team-panel.spec.ts`（10 passed） | ✅ |
+| P8 | 已结束态（`hasLiveMembers`）、自动队标签、成员 tooltip/agentType | Vitest + E2E | ✅ |
+| P9 | `historyReplay:"end"` 回放完成信号 | `acp_raw_notification_test.go`（含变异验证） | ✅ |
 
 **已落地文件**：
 
@@ -362,6 +393,9 @@ type TeamMember struct {
 - 前端：`web/src/composables/useTeamState.ts`、`web/src/components/chat/TeamPanel.vue`、
   `useChatStream.ts`（`team_update` 分支）、`useChatSession.ts`/`App.vue`（会话切换清理）、
   `ChatPanelContent.vue`（挂载）、i18n `chat.team.*`。
+- 回放信号：`internal/ai/acp_client.go`（`replayEndSeen`/`ReplayEndSeen`/`ResetReplayEnd`）、
+  `acp_conn_lifecycle.go`（replay 开始重置）、`internal/handler/session_sync.go`
+  （`waitForReplaySettled` 优先用 end 标记）。
 
 **回归红线**：改动不得影响非团队会话 —— `session_info_update` 分支对无 `teamUpdate`
 的更新（title/updatedAt）必须保持原有行为（已由 `TestMapACPSessionUpdate_SessionInfoNoTeamNoEvent`
@@ -372,8 +406,21 @@ type TeamMember struct {
 
 ## 6. 待办与风险
 
-- **待验证**：`team_busy` 触发条件；`teamResumeIntent` 语义（成员运行中 kill 再 resume）。
-- **风险**：`isAutoTeam` 部分快照缺省；`memberHistoryItemId` 仅部分帧带；
+- **`team_busy`**：触发条件已在 bundle 中定位——`pushTeamIdleSignal("busy")` 在
+  **空闲团队上开启新回合**时发出（idle→busy 跃迁），带完整成员快照。前端已按
+  「应用完整快照 + 清除 `isEnded`」处理（`useTeamState.test.ts` 覆盖）。
+  真机未捕获（既有探针各 phase 均为新回合，未落在 idle→busy 窗口），标注为「代码已验证、
+  真机未观测」。
+- **`teamResumeIntent`**：**不是 agent→client 信号**。实测它是 CodeBuddy 内部对
+  用户消息的**装饰标记**（`providerData["codebuddy.ai/teamResumeIntent"]` + 内容 `_meta`，
+  值形如 `human-<uuid>`），用于在历史回放时识别「人类在团队会话中的 resume 意图」。
+  它不会以扩展通知形式到达客户端，**无需在 ClawBench 侧处理**。
+- **`memberHistoryItemId`**：成员会话历史条目的来源标识（**仅部分帧带**，spawn 阶段
+  116 帧中 13 帧）。用于 codebuddy 侧把成员内容归属到具体历史条目；ClawBench 的归组
+  用成员名 join（§1.3）已足够，**当前不消费**。
+- **`historyReplay`**：已接入——`"end"` 作为 LoadSession 回放完成信号（§3.3 / P9）。
+- **风险**：`isAutoTeam` 部分快照缺省（已按「只信显式 true」处理）；
+  `hasLiveMembers` 部分快照缺省（已按「只信显式 false」处理）；
   `team_idle` 与 `team_deleted` 语义需区分（前者是成员全终止，后者是显式删除）。
 - **多团队**：官方限制每会话仅一个团队，协议未暴露 team 列表，实现按单团队处理。
 - **unsolicitedTurn**：属 multitask，接入 team 不需要；若后续支持 multitask 须单独探针。

@@ -89,6 +89,83 @@ describe('useTeamState', () => {
     expect(members.value).toHaveLength(1)
   })
 
+  it('reports isEnded only when no member is alive and hasLiveMembers is false', () => {
+    const { isEnded } = useTeamState()
+    // Live team.
+    updateTeamState(snapshot())
+    expect(isEnded.value).toBe(false)
+    // Ended: explicit false + every member terminated.
+    updateTeamState(
+      snapshot({
+        type: 'team_idle',
+        hasLiveMembers: false,
+        members: [{ name: 'a', status: 'completed', lifecycle: 'terminated' }],
+      }),
+    )
+    expect(isEnded.value).toBe(true)
+  })
+
+  it('does not report isEnded when hasLiveMembers is merely absent', () => {
+    // A snapshot can omit the flag; absence must not be read as "ended".
+    updateTeamState({
+      type: 'member_status_change',
+      teamName: 't',
+      members: [{ name: 'a', status: 'completed', lifecycle: 'terminated' }],
+    } as TeamState)
+    expect(useTeamState().isEnded.value).toBe(false)
+  })
+
+  it('does not report isEnded while any member is still alive', () => {
+    updateTeamState(
+      snapshot({
+        hasLiveMembers: false, // contradictory wire state
+        members: [{ name: 'a', status: 'running', lifecycle: 'alive' }],
+      }),
+    )
+    expect(useTeamState().isEnded.value).toBe(false)
+  })
+
+  it('exposes isAutoTeam only for an explicit true', () => {
+    const { isAutoTeam } = useTeamState()
+    updateTeamState(snapshot({ isAutoTeam: false }))
+    expect(isAutoTeam.value).toBe(false)
+    updateTeamState(snapshot({ isAutoTeam: true }))
+    expect(isAutoTeam.value).toBe(true)
+    // Absent → not auto.
+    updateTeamState({
+      type: 'member_status_change',
+      teamName: 't',
+      members: [{ name: 'a' }],
+    } as TeamState)
+    expect(isAutoTeam.value).toBe(false)
+  })
+
+  // team_busy is the idle→busy transition (a new turn started on an existing
+  // team). It carries a full member snapshot like any other, so the roster must
+  // update and the ended state must clear.
+  it('applies a team_busy snapshot and clears a previous ended state', () => {
+    updateTeamState(
+      snapshot({
+        type: 'team_idle',
+        hasLiveMembers: false,
+        members: [{ name: 'a', status: 'completed', lifecycle: 'terminated' }],
+      }),
+    )
+    expect(useTeamState().isEnded.value).toBe(true)
+
+    updateTeamState(
+      snapshot({
+        type: 'team_busy',
+        hasLiveMembers: true,
+        members: [{ name: 'a', status: 'running', activity: 'working', lifecycle: 'alive' }],
+      }),
+    )
+    const { isEnded, activeCount, members } = useTeamState()
+    expect(isEnded.value).toBe(false)
+    expect(activeCount.value).toBe(1)
+    expect(members.value).toHaveLength(1)
+  })
+
   it('tolerates a missing members array', () => {
     updateTeamState({ type: 'team_created', teamName: 't' } as TeamState)
     expect(useTeamState().members.value).toEqual([])

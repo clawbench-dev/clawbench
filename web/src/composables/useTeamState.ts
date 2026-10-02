@@ -97,6 +97,19 @@ export function useTeamState() {
   const completedCount = computed(
     () => members.value.filter(m => m.status === 'completed').length,
   )
+  const isAutoTeam = computed(() => teamState.value?.isAutoTeam === true)
+  /**
+   * The team is over. The wire signals this with `hasLiveMembers:false` (it
+   * arrives on a member_status_change, not only on team_idle — verified against
+   * a real process), and no member is still alive. `undefined` means the
+   * snapshot did not say, so we do NOT treat a missing flag as "ended".
+   */
+  const isEnded = computed(
+    () =>
+      hasTeam.value &&
+      teamState.value?.hasLiveMembers === false &&
+      !members.value.some(m => m.lifecycle === 'alive'),
+  )
 
   return {
     teamState,
@@ -106,6 +119,8 @@ export function useTeamState() {
     members,
     activeCount,
     completedCount,
+    isAutoTeam,
+    isEnded,
     updateTeamState,
     clearTeamState,
     toggleTeamCollapse,

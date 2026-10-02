@@ -13,7 +13,12 @@ const i18n = createI18n({
         team: {
           title: 'Team',
           active: '{count} active',
+          ended: 'ended',
+          autoTeam: 'auto team',
           tools: 'tools',
+          tokens: 'tokens',
+          contextWindow: 'context',
+          agentType: 'type',
           status: {
             pending: 'pending',
             running: 'running',
@@ -133,5 +138,118 @@ describe('TeamPanel', () => {
     updateTeamState({ type: 'team_deleted', teamName: 'clawbench-probe', members: [] })
     await wrapper.vm.$nextTick()
     expect(wrapper.find('.team-panel').exists()).toBe(false)
+  })
+
+  // ── Idle / ended state (wire: hasLiveMembers:false, no member alive) ──
+
+  it('shows an ended chip once the team has no live members', async () => {
+    updateTeamState(
+      snapshot({
+        type: 'team_idle',
+        hasLiveMembers: false,
+        members: [{ name: 'probe-alpha', status: 'completed', activity: 'idle', lifecycle: 'terminated' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.team-chip__text').text()).toBe('clawbench-probe · ended')
+  })
+
+  it('does NOT treat a snapshot that omits hasLiveMembers as ended', async () => {
+    // The flag is absent on some snapshots; a missing flag must not fake an
+    // ended state (we only trust an explicit false).
+    updateTeamState({
+      type: 'member_status_change',
+      teamName: 'clawbench-probe',
+      members: [{ name: 'probe-alpha', status: 'completed', activity: 'idle' }],
+    } as TeamState)
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    expect(wrapper.get('.team-chip__text').text()).toBe('clawbench-probe')
+  })
+
+  it('shows the completed tally in the header once ended', async () => {
+    updateTeamState(
+      snapshot({
+        type: 'team_idle',
+        hasLiveMembers: false,
+        members: [
+          { name: 'a', status: 'completed', lifecycle: 'terminated' },
+          { name: 'b', status: 'completed', lifecycle: 'terminated' },
+        ],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    expect(wrapper.get('.team-expanded__count').text()).toBe('2/2')
+  })
+
+  // ── Auto team label ──
+
+  it('labels an auto team in the expanded header', async () => {
+    updateTeamState(snapshot({ isAutoTeam: true }))
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    expect(wrapper.get('.team-expanded__auto').text()).toBe('auto team')
+  })
+
+  it('omits the auto label for an explicit team', async () => {
+    updateTeamState(snapshot({ isAutoTeam: false }))
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    expect(wrapper.find('.team-expanded__auto').exists()).toBe(false)
+  })
+
+  // ── Member metadata: agentType inline + tooltip ──
+
+  it('shows the agent type inline when present', async () => {
+    updateTeamState(
+      snapshot({
+        members: [{ name: 'probe-alpha', status: 'running', agentType: 'general-purpose' }],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    expect(wrapper.get('.team-member__agent-type').text()).toBe('general-purpose')
+  })
+
+  it('builds the member tooltip from description, type, tokens and context', async () => {
+    updateTeamState(
+      snapshot({
+        members: [
+          {
+            name: 'probe-alpha',
+            status: 'running',
+            description: 'runs the probe',
+            agentType: 'general-purpose',
+            tokenUsage: { inputTokens: 100, outputTokens: 20, lastContextWindow: 200000 },
+          },
+        ],
+      }),
+    )
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    const title = wrapper.get('.team-member').attributes('title')
+    expect(title).toContain('runs the probe')
+    expect(title).toContain('type: general-purpose')
+    expect(title).toContain('tokens: 100 in / 20 out')
+    expect(title).toContain('context: 200000')
+  })
+
+  it('omits the tooltip entirely when a member has no metadata', async () => {
+    updateTeamState({
+      type: 'member_status_change',
+      teamName: 't',
+      members: [{ name: 'bare', status: 'running' }],
+    })
+    const wrapper = mountPanel()
+    await wrapper.vm.$nextTick()
+    await wrapper.get('.team-chip').trigger('click')
+    expect(wrapper.get('.team-member').attributes('title')).toBe('')
   })
 })

@@ -420,6 +420,11 @@ func (c *ACPConn) recoverViaLoadSession(ctx context.Context, cwd, loadSID string
 	defer loadCancel()
 
 	c.loadSessionActive.Store(true)
+	if c.client != nil {
+		// Clear any end marker from a previous replay so this replay's
+		// completion is judged on its own marker.
+		c.client.ResetReplayEnd()
+	}
 	loadStart := time.Now()
 	var loadResp acp.LoadSessionResponse
 	var err error

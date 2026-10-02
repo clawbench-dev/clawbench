@@ -49,6 +49,15 @@ type ClawBenchACPClient struct {
 	loadSessionBuf   []acp.SessionNotification
 	loadSessionBufMu sync.Mutex
 
+	// replayEndSeen records whether CodeBuddy's explicit "history replay end"
+	// marker arrived during the current LoadSession replay. CodeBuddy brackets
+	// its replay with session_info_update._meta["codebuddy.ai/historyReplay"] =
+	// "start"/"end" (verified against a real process); the end marker is the
+	// authoritative "replay complete" signal, so the load handler can stop
+	// waiting instead of relying solely on a quiet-window heuristic. Atomic:
+	// written on the SDK notification goroutine, read on the handler goroutine.
+	replayEndSeen atomic.Bool
+
 	// Terminal sessions for ACP terminal/* methods (see acp_terminal.go)
 	termMu    sync.Mutex
 	terminals map[string]*terminalSession // terminalId → session
@@ -141,6 +150,21 @@ func (c *ClawBenchACPClient) GetLoadSessionBufLen() int {
 	c.loadSessionBufMu.Lock()
 	defer c.loadSessionBufMu.Unlock()
 	return len(c.loadSessionBuf)
+}
+
+// ReplayEndSeen reports whether CodeBuddy's explicit "history replay end" marker
+// has arrived since the last ResetReplayEnd. It is the authoritative
+// end-of-replay signal, letting the load handler stop waiting immediately
+// rather than only after a quiet window.
+func (c *ClawBenchACPClient) ReplayEndSeen() bool {
+	return c.replayEndSeen.Load()
+}
+
+// ResetReplayEnd clears the history-replay end marker. Call at the start of a
+// LoadSession replay so a marker from a previous replay cannot be mistaken for
+// this one's.
+func (c *ClawBenchACPClient) ResetReplayEnd() {
+	c.replayEndSeen.Store(false)
 }
 
 // SetLoadSessionBufForTest injects replay notifications for testing.
@@ -258,6 +282,14 @@ func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNot
 	// routing to WS stream channels. The load handler reads them after
 	// the LoadSession RPC returns.
 	if c.IsLoadSessionActive() {
+		// CodeBuddy brackets the replay with historyReplay start/end markers.
+		// Record the end marker so the load handler can stop waiting as soon as
+		// the replay is genuinely complete (see ReplayEndSeen).
+		if n.Update.SessionInfoUpdate != nil {
+			if metaString(n.Update.SessionInfoUpdate.Meta[metaKeyCodeBuddyHistoryReplay]) == "end" {
+				c.replayEndSeen.Store(true)
+			}
+		}
 		c.loadSessionBufMu.Lock()
 		c.loadSessionBuf = append(c.loadSessionBuf, n)
 		c.loadSessionBufMu.Unlock()
