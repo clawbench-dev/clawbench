@@ -821,6 +821,17 @@ public class BackgroundService extends Service {
         super.onCreate();
         isRunning = true;
         instance = this;
+        // The Activity (and its WebView) usually outlive this service: it is
+        // stopped whenever no ports need forwarding and started again on the
+        // next add. updateWebViewRef() only runs from the Activity's
+        // setupWebView(), so without re-seeding here a RECREATED instance has a
+        // null webViewRef forever — notifyPortForwardResult() then silently
+        // skips dispatch, and the UI never learns the bind succeeded (the port
+        // shows red until the user refreshes, even though it works).
+        MainActivity activity = MainActivity.instance;
+        if (activity != null && activity.webView != null) {
+            webViewRef = new WeakReference<>(activity.webView);
+        }
         jsch = new JSch();
         createNotificationChannel();
         // Neutral placeholder: restoreForwardedPorts() runs further down, so at

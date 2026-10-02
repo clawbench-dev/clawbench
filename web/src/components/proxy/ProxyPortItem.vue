@@ -77,6 +77,7 @@ import { useI18n } from 'vue-i18n'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import { buildServerAddress } from '@/utils/portForwardUtils.ts'
+import { diagLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 
@@ -114,6 +115,12 @@ defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabl
 const serverAddress = computed(() => buildServerAddress(props.localPort, props.protocol))
 
 const statusClass = computed(() => {
+  const cls = computeStatusClass()
+  diagLog('PortForward', `dot localPort=${props.localPort} class=${cls} tunnelReady=${String(props.tunnelReady)} active=${props.active} enabled=${props.enabled} connecting=${props.connecting} tunnelDisconnected=${props.tunnelDisconnected}`)
+  return cls
+})
+
+function computeStatusClass() {
   if (!props.enabled) return 'disabled'
   if (props.connecting) return 'connecting'
   // A reverse mapping has no client-side listener, so the local probe is never
@@ -127,7 +134,7 @@ const statusClass = computed(() => {
   if (props.active) return 'active'
   if (props.tunnelDisconnected) return 'tunnel-down'
   return 'inactive'
-})
+}
 
 const statusTitle = computed(() => {
   if (!props.enabled) return t('proxy.portItem.disabled')

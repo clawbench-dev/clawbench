@@ -11,7 +11,7 @@ import { useSessionIdentity } from './useSessionIdentity'
 import { useSettingsConfig } from './useSettingsConfig'
 import { getNative, reconnectTunnel as nativeReconnectTunnel } from '@/utils/clawbenchNative'
 import type { ClawBenchNative } from '@/utils/clawbenchNative'
-import { appLog } from '@/utils/appLog'
+import { appLog, diagLog } from '@/utils/appLog'
 
 const TAG = 'PortForward'
 
@@ -144,6 +144,7 @@ function ensurePortForwardListener() {
   portForwardListenerInitialized = true
 
   window.addEventListener('clawbench-port-forward-result', ((e: CustomEvent) => {
+    diagLog('PortForward', `event received: ${JSON.stringify(e.detail)}`)
     if (onPortForwardResult) {
       const { localPort, success, reason, requestedLocalPort } = e.detail
       onPortForwardResult(localPort, success, reason, requestedLocalPort)
@@ -239,6 +240,7 @@ export function usePortForward() {
       requestedLocalPort?: number,
     ) => {
       const requested = requestedLocalPort ?? localPort
+      diagLog('PortForward', `native result: localPort=${localPort} requested=${requested} success=${success} reason=${reason ?? ''}`)
       // The listener may have moved to a free port when the requested one was
       // occupied. Re-key the server so DELETE/PUT/enable and the UI URL follow
       // it, exactly like the desktop path does from the bind result.
@@ -274,6 +276,7 @@ export function usePortForward() {
     try {
       const data = await apiGet<{ ports: ForwardedPort[] }>('/api/proxy/ports')
       ports.value = data.ports || []
+      diagLog('PortForward', `loadPorts: ${(data.ports || []).map(p => `${p.localPort}(active=${p.active},enabled=${p.enabled},dir=${p.direction || 'forward'})`).join(' ') || '(none)'}`)
       // Clear connectingPorts when backend reports a port as active.
       // In web mode this is the ONLY path (no native callback).
       // In app mode this is a safety net: the native clawbench-port-forward-result
@@ -346,6 +349,11 @@ export function usePortForward() {
           }
         }
         localReachable.value = next
+        diagLog(
+          'PortForward',
+          `probe round: ${[...next.entries()].map(([k, v]) => `${k}=${v}`).join(',') || '(empty)'}` +
+            ` | ports=${ports.value.filter(p => p.enabled && !isReversePort(p)).map(p => p.localPort).join(',') || '(none)'}`,
+        )
       } while (reprobeRequested)
     } finally {
       probingReachability = false
@@ -506,6 +514,7 @@ export function usePortForward() {
     ensurePortForwardListener()
     connectingPorts.value.add(localPort)
     connectingPorts.value = new Set(connectingPorts.value)
+    diagLog('PortForward', `registerPort: localPort=${localPort} target=${port} host=${host || ''} dir=${direction || 'forward'} appMode=${isAppMode.value}`)
     // Register with the native layer: pass localPort, targetPort, host.
     // Await it so we can return the port the listener ACTUALLY bound: when the
     // requested port is taken on this machine the desktop shell binds the next
