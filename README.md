@@ -106,7 +106,7 @@ clawbench
 | 🎨 **代码预览与编辑** | CodeMirror 浏览/编辑双模式、语法高亮、自动补全（11 种语言）、**Sticky Scroll**、VS Code 风格搜索条、文件改动闪烁高亮、**Excalidraw 画布**（`.xdraw` / `.excalidraw`）、路径跳转与行范围导航 |
 | 📝 **Markdown** | 渲染/源码切换、TOC 抽屉、LaTeX 公式、Mermaid 图表、图片灯箱、**代码链接预览浮层**、**自包含 HTML 导出**（KaTeX 字体内联） |
 | 📄 **文档与媒体** | Word / Excel / PowerPoint 原生渲染、PDF 分页缩放、图片/音频/视频内联播放、灯箱放大 |
-| 🤖 **AI 智能体** | **15 个后端**（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、VeCLI、CodeWhale、DeepSeek Harness、MiMo、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）、流式响应、思维过程可见、**子智能体内容分组**、深度思考档位、模型选择持久化、ACP 上下文状态持久化、**跨智能体技能发现**（任意智能体安装的 Skill 对所有智能体可见，含 git 源同步与去重） |
+| 🤖 **AI 智能体** | **15 个后端**（CodeBuddy、Claude Code、OpenCode、Codex、Qoder、VeCLI、CodeWhale、DeepSeek Harness、MiMo、Pi、Copilot、Kimi、Antigravity、Grok Build、ZCode）、流式响应、思维过程可见、**子智能体内容分组**、**多智能体团队面板**（CodeBuddy Agent Teams：成员名册 + 状态 + 工具计数 + token 用量，权限卡带成员徽标）、深度思考档位、模型选择持久化、ACP 上下文状态持久化、**跨智能体技能发现**（任意智能体安装的 Skill 对所有智能体可见，含 git 源同步与去重） |
 | 💬 **AI 对话** | 工具调用可视化、**交互式提问卡**、推荐回复、斜杠命令（合并 ACP 与内置，含 **`/btw` 旁路问答**——由摘要模型基于会话快照作答，不占用当前 agent）、**统一引用卡片**（划词/文件/议题/流水线/消息同一形态，批注可改、可跳回来源；聊天面板不可见时弹出**目标会话选择**，可只添加或添加并打开）、消息队列、断连保护、**异常终止自动继续**、消息回溯（Rewind）与分叉、自动摘要、RAG 结果卡片、输入草稿恢复、完成弹窗 |
 | 📂 **会话管理** | 多会话创建/切换/归档/**移除**、**会话标签**（按项目隔离、哈希配色）、**AI 自动命名**（首条消息后由摘要模型生成标题，与手动「生成标题」同实现）、未读按**条目**计数、按项目恢复上次会话、滑动切换开关、**会话分享**（对话快照的公开只读链接，含目录导航，按项目隔离管理） |
 | ⏰ **任务调度** | 定时（Cron 预设 + 自定义）与**事件触发**（`issue.opened` / `pr.merged` / `pipeline_done`）、可选**前置自定义脚本**（仅定时；静默成功则跳过本次 AI 且不发通知）、对话内 `/cb-task` 创建入口、3 级面包屑导航、执行详情续接对话、完成推送 |

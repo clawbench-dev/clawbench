@@ -15,7 +15,7 @@
 | 摆布局、调头部 / 宽屏 / 安全区 | [布局骨架](#布局骨架) |
 | 做按钮、角标、弹层、菜单 | [组件约定](#组件约定) |
 | 加动画 | [动效](#动效) |
-| **写 CSS 前** | [六条红线](#六条红线先读这节再写-css) |
+| **写 CSS 前** | [七条红线](#七条红线先读这节再写-css) |
 | 提 PR 前自检 | [改动检查清单](#改动检查清单) |
 
 ---
@@ -356,7 +356,7 @@
 
 ---
 
-## 六条红线（先读这节再写 CSS）
+## 七条红线（先读这节再写 CSS）
 
 ### 红线 1：`v-html` 注入的内容匹配不到 scoped 规则
 
@@ -537,6 +537,7 @@ background: color-mix(in srgb, var(--text-primary) 8%, var(--bg-secondary));
 | `assets/__tests__/themePicker.css.test.ts` | 主题选择器中性底 + 色点载体 |
 | `assets/__tests__/annotationButtons.css.test.ts` | 标注按钮全局作用域 |
 | `__tests__/scrollbarNoArrowButtons.test.ts` | `scrollbar-color` 必须关在 `@supports not selector(::-webkit-scrollbar)` 里（否则 Chromium 弃用 `::-webkit-scrollbar-*`，箭头按钮复活） |
+| `__tests__/platformAxes.test.ts` | 三条平台轴保持正交：`isPC` 不得回归、共享宿主谓词不得各组件重声明、iPadOS 陷阱（Macintosh UA + `maxTouchPoints>0`）不得重开 |
 
 **写新守卫时注意两个坑**（都实际栽过）：
 1. **jsdom 不解析 `var()` 和 `color-mix()`**——`getComputedStyle` 会把 `var(--x)` 原样返回。所以 token 类断言必须**读源码**，不能读计算样式。

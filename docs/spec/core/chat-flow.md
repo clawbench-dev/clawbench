@@ -101,6 +101,8 @@ sequenceDiagram
 
 父 Agent 卡片就是那条发起子智能体的工具调用（前端渲染为 Agent 胶囊）。子智能体产出的 thinking/text/tool 全部收进同一张卡片，折叠时只显示步数摘要、展开才挂载并递归复用主渲染组件——这样一条"派发多个子智能体并行探索"的长轨迹不会淹没主对话。归属靠 Agent 在 `_meta` 上打的父工具调用 id 精确判定，不靠时间窗口推断。
 
+**团队（Agent Teams）走同一套分组，但关联键是成员名**：CodeBuddy 的具名团队**不给成员帧打 `parentToolCallId`**（实测 116/116 全无该键），因此后端桥接层（`codebuddy_team_bridge.go`）用**成员名**把成员内容挂到它的派发工具调用上，再回填 `ParentToolCallID`——前端分组逻辑零改动即可生效。团队状态另走 `team_update` 事件驱动一个会话级团队面板（见[AI 后端抽象](ai-backend.md)与前端 `useTeamState` / `TeamPanel`）。
+
 ## 功能与设计要点
 
 ### 功能清单
