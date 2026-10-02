@@ -511,3 +511,56 @@ func TestACPStdoutFilter_NoSinkIsSafe(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), `"status":"ok"`)
 }
+
+// recordingNotifSink captures every line the notification tee delivers.
+type recordingNotifSink struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (s *recordingNotifSink) DispatchRawNotification(line []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, string(line))
+}
+
+func (s *recordingNotifSink) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, len(s.lines))
+	copy(out, s.lines)
+	return out
+}
+
+// The notification tee delivers every method-bearing line (requests and
+// notifications), and still forwards every line to the SDK (tee, not steal).
+// Classification — spec vs custom, request vs notification — is the client's
+// job (DispatchRawNotification), so the filter stays dumb.
+func TestACPStdoutFilter_NotificationTee(t *testing.T) {
+	input := `{"jsonrpc":"2.0","id":1,"result":{"status":"ok"}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned","name":"alpha"}}}
+{"jsonrpc":"2.0","method":"session/request_permission","params":{}}
+{"jsonrpc":"2.0","id":"cb-1","method":"session/steer","params":{}}
+`
+	f := newACPStdoutFilter(strings.NewReader(input))
+	defer f.Close()
+	sink := &recordingNotifSink{}
+	f.SetNotificationSink(sink)
+
+	var buf bytes.Buffer
+	_, err := io.Copy(&buf, f)
+	require.NoError(t, err)
+
+	got := sink.snapshot()
+	// Only the line with a "method" key is teed; the id-only response is not.
+	require.Len(t, got, 3)
+	assert.Contains(t, got[0], "subagent_spawned")
+	assert.Contains(t, got[1], "session/request_permission")
+	assert.Contains(t, got[2], "session/steer")
+
+	// Tee, not steal: all four lines still reach the SDK side.
+	assert.Contains(t, buf.String(), `"id":1`)
+	assert.Contains(t, buf.String(), "subagent_spawned")
+	assert.Contains(t, buf.String(), "session/request_permission")
+	assert.Contains(t, buf.String(), "session/steer")
+}

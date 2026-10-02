@@ -800,6 +800,11 @@ func (c *ACPConn) spawnLocked(ctx context.Context) (err error) {
 	rawRPC := newACPRawRPC(stdinWriter, conn.Done())
 	stdoutFilter.SetRawSink(rawRPC)
 
+	// Notification tee: the SDK's SessionUpdate union misclassifies extension
+	// variants (it re-types an unknown discriminator as SessionInfoUpdate and
+	// drops the payload), so the client reads those straight from the raw line.
+	stdoutFilter.SetNotificationSink(client)
+
 	initCtx, initCancel := context.WithTimeout(ctx, acpInitializeTimeout)
 	defer initCancel()
 

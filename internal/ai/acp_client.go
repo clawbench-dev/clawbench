@@ -53,6 +53,16 @@ type ClawBenchACPClient struct {
 	termMu    sync.Mutex
 	terminals map[string]*terminalSession // terminalId → session
 	termSeq   atomic.Int64                // auto-increment ID for terminal IDs
+
+	// extensionUpdateHandler, when set, receives session/update variants the
+	// SDK's typed union misclassifies (see acp_raw_notification.go). Guarded by
+	// mu. Nil by default: reading a variant is a backend concern, wired per
+	// connection after the client is created.
+	extensionUpdateHandler func(ExtensionUpdate)
+	// extensionNotificationHandler, when set, receives custom agent→client
+	// notification methods the SDK does not dispatch (see
+	// acp_raw_notification.go). Guarded by mu, nil by default.
+	extensionNotificationHandler func(ExtensionNotification)
 }
 
 // NewClawBenchACPClient creates a new ACP client with session routing support.
@@ -203,6 +213,18 @@ func (c *ClawBenchACPClient) MergeCommandsFromScan(pluginCmds []AvailableCommand
 // ACP session ID. If no route is registered (session unregistered or
 // cancelled), the update is silently dropped.
 func (c *ClawBenchACPClient) SessionUpdate(ctx context.Context, n acp.SessionNotification) error {
+	// The SDK's SessionUpdate union misclassifies extension variants: its
+	// fallback blocks match on field presence, so an unknown discriminator can
+	// be parsed into a known struct (e.g. `tool_call_pending` with toolCallId +
+	// title becomes ToolCall) with every payload field wrong. The original name
+	// survives in the variant's SessionUpdate field, so detect the mismatch and
+	// ignore it here — the raw notification path handles these (see
+	// acp_raw_notification.go). Without this the branch below would emit a bogus
+	// tool_use for a frame that is not a tool call at all.
+	if sessionUpdateVariantMismatch(n.Update) {
+		return nil
+	}
+
 	// Cache available commands from the update (before route lookup).
 	// Merge with any pre-scanned plugin commands to avoid losing them
 	// when the first AvailableCommandsUpdate only contains built-in commands
