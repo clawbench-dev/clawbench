@@ -60,7 +60,7 @@ func extractTeamMemberName(meta map[string]any) string {
 // content frames carry `memberEvent`, but the Agent spawn frame that HOSTS the
 // member's timeline carries `memberName` instead (plus `subagentType`). Reading
 // both means the Agent card itself is attributed to its member, which is what
-// lets the frontend colour that card with the member's own colour.
+// lets the frontend color that card with the member's own color.
 func extractTeamMemberNameForTool(meta map[string]any) string {
 	if name := extractTeamMemberName(meta); name != "" {
 		return name
@@ -71,8 +71,8 @@ func extractTeamMemberNameForTool(meta map[string]any) string {
 	return metaString(meta[metaKeyCodeBuddyMemberName])
 }
 
-// memberColorByName returns the display colour for a team member from the
-// latest cached team snapshot, or "" when unknown. Used to colour the member's
+// memberColorByName returns the display color for a team member from the
+// latest cached team snapshot, or "" when unknown. Used to color the member's
 // timeline accent consistently with the roster.
 func memberColorByName(conn *ACPConn, name string) string {
 	if conn == nil || name == "" {
@@ -91,7 +91,7 @@ func memberColorByName(conn *ACPConn, name string) string {
 }
 
 // parseTeamState converts the raw teamUpdate object into a TeamState. It fails
-// closed (nil) when the shape is unrecognisable so a malformed extension never
+// closed (nil) when the shape is unrecognizable so a malformed extension never
 // wipes a live team panel with an empty snapshot.
 func parseTeamState(raw map[string]any) *TeamState {
 	if len(raw) == 0 {
@@ -116,45 +116,60 @@ func parseTeamState(raw map[string]any) *TeamState {
 	if members, ok := raw["members"].([]any); ok {
 		state.Members = make([]TeamMember, 0, len(members))
 		for _, m := range members {
-			mm, ok := m.(map[string]any)
-			if !ok {
-				continue
+			if member, ok := parseTeamMember(m); ok {
+				state.Members = append(state.Members, member)
 			}
-			name := metaString(mm["name"])
-			if name == "" {
-				continue
-			}
-			member := TeamMember{
-				Name:        name,
-				AgentType:   metaString(mm["agentType"]),
-				Color:       metaString(mm["color"]),
-				Description: metaString(mm["description"]),
-				Status:      metaString(mm["status"]),
-				Activity:    metaString(mm["activity"]),
-				Lifecycle:   metaString(mm["lifecycle"]),
-				TaskID:      metaString(mm["taskId"]),
-				SessionID:   metaString(mm["sessionId"]),
-			}
-			if n, ok := mm["toolCallCount"].(float64); ok {
-				member.ToolCallCount = int(n)
-			}
-			if tu, ok := mm["tokenUsage"].(map[string]any); ok {
-				usage := &TeamTokenUsage{}
-				if n, ok := tu["inputTokens"].(float64); ok {
-					usage.InputTokens = int(n)
-				}
-				if n, ok := tu["outputTokens"].(float64); ok {
-					usage.OutputTokens = int(n)
-				}
-				if n, ok := tu["lastContextWindow"].(float64); ok {
-					usage.LastContextWindow = int(n)
-				}
-				member.TokenUsage = usage
-			}
-			state.Members = append(state.Members, member)
 		}
 	}
 	return state
+}
+
+// parseTeamMember converts one entry of the teamUpdate members array. It reports
+// false for entries that are not objects or lack a name, so the caller can skip
+// them without duplicating the shape checks.
+func parseTeamMember(m any) (TeamMember, bool) {
+	mm, ok := m.(map[string]any)
+	if !ok {
+		return TeamMember{}, false
+	}
+	name := metaString(mm["name"])
+	if name == "" {
+		return TeamMember{}, false
+	}
+	member := TeamMember{
+		Name:        name,
+		AgentType:   metaString(mm["agentType"]),
+		Color:       metaString(mm["color"]),
+		Description: metaString(mm["description"]),
+		Status:      metaString(mm["status"]),
+		Activity:    metaString(mm["activity"]),
+		Lifecycle:   metaString(mm["lifecycle"]),
+		TaskID:      metaString(mm["taskId"]),
+		SessionID:   metaString(mm["sessionId"]),
+	}
+	if n, ok := mm["toolCallCount"].(float64); ok {
+		member.ToolCallCount = int(n)
+	}
+	if tu, ok := mm["tokenUsage"].(map[string]any); ok {
+		member.TokenUsage = parseTeamTokenUsage(tu)
+	}
+	return member, true
+}
+
+// parseTeamTokenUsage extracts the token counters from a member's tokenUsage
+// object; absent fields stay zero.
+func parseTeamTokenUsage(tu map[string]any) *TeamTokenUsage {
+	usage := &TeamTokenUsage{}
+	if n, ok := tu["inputTokens"].(float64); ok {
+		usage.InputTokens = int(n)
+	}
+	if n, ok := tu["outputTokens"].(float64); ok {
+		usage.OutputTokens = int(n)
+	}
+	if n, ok := tu["lastContextWindow"].(float64); ok {
+		usage.LastContextWindow = int(n)
+	}
+	return usage
 }
 
 // bridgeCodeBuddyTeamUpdate synthesizes a team_update StreamEvent from a

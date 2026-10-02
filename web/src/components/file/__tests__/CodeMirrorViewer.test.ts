@@ -3,6 +3,13 @@ import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import { ref, nextTick } from 'vue'
 
+// The change-navigation tests drive CodeMirror's async render/measure loop and
+// finish in well under 1s in isolation, but under the coverage gate's full-suite
+// run the worker pool is saturated and the default 5s testTimeout flakes on the
+// marker-flash assertions. Bump this file's timeout only, matching
+// FileManagerContent.test.ts.
+vi.setConfig({ testTimeout: 60_000 })
+
 const i18n = createI18n({
   legacy: false,
   locale: 'en',

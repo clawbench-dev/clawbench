@@ -370,12 +370,12 @@ func TestPermissionMemberAttribution(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Member colour resolution (P6)
+// Member color resolution (P6)
 // ---------------------------------------------------------------------------
 
 func TestMemberColorByName(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")
-	// Seed a team snapshot with a coloured member.
+	// Seed a team snapshot with a colored member.
 	bridgeCodeBuddyTeamUpdate(make(chan StreamEvent, 4), conn, map[string]any{
 		metaKeyCodeBuddyTeamUpdate: mustMeta(t, teamUpdateMemberStatus),
 	})
@@ -401,7 +401,7 @@ func TestExtractTeamMemberNameForTool(t *testing.T) {
 	assert.Equal(t, "", extractTeamMemberNameForTool(nil))
 }
 
-// The spawn frame (memberName) must resolve its colour so the Agent card hosting
+// The spawn frame (memberName) must resolve its color so the Agent card hosting
 // the member's timeline can be tinted.
 func TestMapACPSessionUpdate_SpawnFrameGetsMemberColor(t *testing.T) {
 	conn := newACPConn(&model.Agent{ID: "codebuddy", Backend: "codebuddy"}, "s1")

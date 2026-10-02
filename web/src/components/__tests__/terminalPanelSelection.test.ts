@@ -228,11 +228,12 @@ describe('TerminalPanel xterm selection defaults', () => {
     const source = readTerminalComponent('../terminal/TerminalPanelContent.vue')
 
     // PC tab bar AND the mobile virtual-key toolbar each get the button, so the
-    // action is reachable on every form factor.
-    const pcButton = source.indexOf('class="terminal-tab-add"\n        @click="openCurrentDirInFileManager"')
-    const mobileButton = source.indexOf('btn-func" @click="openCurrentDirInFileManager"')
-    expect(pcButton).toBeGreaterThan(-1)
-    expect(mobileButton).toBeGreaterThan(-1)
+    // action is reachable on every form factor. Count the click bindings rather
+    // than matching a fixed attribute order — the surrounding markup gains
+    // hooks (e.g. data-action) over time and whitespace-based matching silently
+    // rots.
+    const clickBindings = source.match(/@click="openCurrentDirInFileManager"/g) ?? []
+    expect(clickBindings).toHaveLength(2)
 
     // Reuses the shared directory-jump event rather than inventing a new emit,
     // and tags the source so Back returns to the terminal.

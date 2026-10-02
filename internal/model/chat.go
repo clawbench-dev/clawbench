@@ -372,7 +372,7 @@ type ContentBlock struct {
 	ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 	// MemberName / MemberColor attribute content to an Agent Team member (see
 	// internal/ai/codebuddy_team_bridge.go). Members carry no parentToolCallId,
-	// so the member NAME is their join key; the colour lets the frontend render
+	// so the member NAME is their join key; the color lets the frontend render
 	// the member's timeline accent consistently with the roster.
 	MemberName  string `json:"member_name,omitempty"`
 	MemberColor string `json:"member_color,omitempty"`

@@ -88,12 +88,16 @@ vi.mock('@/composables/useTerminalStatus', () => ({
   useTerminalStatus: () => ({ terminalRuntimeEnabled: { value: true } }),
 }))
 const mockIsTouchPrimary = ref(true)
+// HOST axis must be derived from the app-mode mocks, not hardcoded: the
+// Android-gated branches (keyboard shortcuts, folder upload) read isAndroidApp,
+// and the real composable computes it as `isAppMode && !isDesktopApp`. A frozen
+// `ref(false)` would make every Android test take the desktop path.
 vi.mock('@/composables/usePlatformDetect', () => ({
   usePlatformDetect: () => ({
-    isAndroidApp: ref(false),
-    isNativeApp: ref(false),
-    isWebApp: ref(true),
-    isElectron: ref(false),
+    isAndroidApp: computed(() => mockIsAppMode.value && !mockIsDesktopApp.value),
+    isNativeApp: computed(() => mockIsAppMode.value),
+    isWebApp: computed(() => !mockIsAppMode.value),
+    isElectron: computed(() => mockIsDesktopApp.value),
     isTouchPrimary: mockIsTouchPrimary,
   }),
 }))

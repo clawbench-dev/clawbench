@@ -83,18 +83,18 @@ func TestSDKMisclassifiesUnknownSessionUpdateVariant(t *testing.T) {
 // DispatchRawNotification — client-side routing
 // ---------------------------------------------------------------------------
 
-func newRawNotifClient(t *testing.T) (*ClawBenchACPClient, chan StreamEvent) {
+func newRawNotifClient(t *testing.T) *ClawBenchACPClient {
 	t.Helper()
 	c := NewClawBenchACPClient()
 	ch := make(chan StreamEvent, 4)
 	c.RegisterSession("s1", ch)
-	return c, ch
+	return c
 }
 
 // An unknown variant on an active session reaches the handler with its payload
 // intact — the whole point of the bypass.
 func TestDispatchRawNotification_UnknownVariantDelivered(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	var got []ExtensionUpdate
 	c.SetExtensionUpdateHandler(func(u ExtensionUpdate) { got = append(got, u) })
 
@@ -113,7 +113,7 @@ func TestDispatchRawNotification_UnknownVariantDelivered(t *testing.T) {
 // A known variant must NOT be handed to the extension handler: the SDK's typed
 // callback already handles it, and doing both would double-process every frame.
 func TestDispatchRawNotification_KnownVariantIgnored(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	called := false
 	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
 
@@ -125,7 +125,7 @@ func TestDispatchRawNotification_KnownVariantIgnored(t *testing.T) {
 
 // Non-session/update lines are ignored.
 func TestDispatchRawNotification_IgnoresOtherLines(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	called := false
 	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { called = true })
 
@@ -148,7 +148,7 @@ func TestDispatchRawNotification_NoRouteDropped(t *testing.T) {
 
 // With no handler registered the variant is ignored (default off).
 func TestDispatchRawNotification_NoHandler(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	// Should not panic.
 	c.DispatchRawNotification([]byte(`{"jsonrpc":"2.0","method":"session/update","params":{` +
 		`"sessionId":"s1","update":{"sessionUpdate":"subagent_spawned"}}}`))
@@ -204,7 +204,7 @@ func TestSessionUpdate_MisclassifiedVariantIgnored(t *testing.T) {
 // A custom agent→client notification method reaches the handler with its params
 // intact.
 func TestDispatchRawNotification_CustomMethodDelivered(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	var got []ExtensionNotification
 	c.SetExtensionNotificationHandler(func(n ExtensionNotification) { got = append(got, n) })
 
@@ -218,7 +218,7 @@ func TestDispatchRawNotification_CustomMethodDelivered(t *testing.T) {
 
 // Spec client methods are the SDK's job, not the extension handler's.
 func TestDispatchRawNotification_SpecMethodIgnored(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	called := false
 	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
 
@@ -230,7 +230,7 @@ func TestDispatchRawNotification_SpecMethodIgnored(t *testing.T) {
 
 // Requests (with an id) are not notifications and must be ignored here.
 func TestDispatchRawNotification_RequestIgnored(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	called := false
 	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
 
@@ -241,7 +241,7 @@ func TestDispatchRawNotification_RequestIgnored(t *testing.T) {
 
 // Responses (id + result, no method) are ignored.
 func TestDispatchRawNotification_ResponseIgnored(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	called := false
 	c.SetExtensionNotificationHandler(func(ExtensionNotification) { called = true })
 
@@ -252,7 +252,7 @@ func TestDispatchRawNotification_ResponseIgnored(t *testing.T) {
 
 // session/update lines go to the VARIANT handler, not the notification handler.
 func TestDispatchRawNotification_SessionUpdateNotTreatedAsMethod(t *testing.T) {
-	c, _ := newRawNotifClient(t)
+	c := newRawNotifClient(t)
 	notifCalled, variantCalled := false, false
 	c.SetExtensionNotificationHandler(func(ExtensionNotification) { notifCalled = true })
 	c.SetExtensionUpdateHandler(func(ExtensionUpdate) { variantCalled = true })
