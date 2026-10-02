@@ -217,6 +217,33 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+  typecheck-desktop:
+    name: Typecheck (Desktop)
+    # The desktop app is otherwise compiled ONLY by release.yml, at tag time —
+    # so a type error there (e.g. a stale interface member) survives every PR
+    # and only fails after the tag is pushed, taking the whole release down and
+    # skipping the desktop payload publish. tsc is what catches that class: the
+    # desktop vitest run strips types without checking them.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: desktop/package-lock.json
+
+      - name: Install dependencies
+        # --ignore-scripts skips the electron postinstall (a ~100 MB binary
+        # download this job never runs); tsc only needs the type declarations.
+        working-directory: desktop
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        working-directory: desktop
+        run: npm run typecheck
+
   coverage-frontend:
     name: Coverage Gate (Frontend)
     runs-on: ubuntu-latest

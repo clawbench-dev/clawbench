@@ -49,8 +49,6 @@ export interface SplashController {
   cancel(): void
   /** Release the view and timers. Call on window close. */
   destroy(): void
-  /** Whether the overlay is currently shown. */
-  isVisible(): boolean
   /**
    * Replace the loading overlay with the blocking version-mismatch gate. The
    * page renders the client/server versions and two actions (download /
