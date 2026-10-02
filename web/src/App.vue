@@ -583,6 +583,7 @@ import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSe
 import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
+import { clearTeamState } from './composables/useTeamState.ts'
 import { useToast } from './composables/useToast.ts'
 import { buildRenameGenerateOptions } from '@/utils/sessionRename'
 import { useDialog } from './composables/useDialog.ts'
@@ -762,6 +763,7 @@ async function hotSwitchProject(newProjectPath: string, pendingSessionId?: strin
   resetUsageStats()
   resetGitStats()
   clearPlanState()
+  clearTeamState()
   resetTaskTabState()
   resetTabDrawerState()
   resetAllCrudLists()

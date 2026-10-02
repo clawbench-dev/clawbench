@@ -50,7 +50,7 @@ func (d *toolCallDebouncer) handleToolCallUpdate(tcu acp.SessionToolCallUpdate) 
 	if d.conn != nil {
 		backendID = d.conn.BackendID()
 	}
-	event := mapACPToolCallUpdate(tcu, backendID)
+	event := mapACPToolCallUpdate(tcu, backendID, d.conn)
 
 	// Terminal events (completed/failed) flush immediately.
 	if event.Tool != nil && event.Tool.Done {

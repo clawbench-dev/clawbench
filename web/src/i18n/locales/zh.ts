@@ -617,6 +617,18 @@ export default {
       priorityMedium: '中',
       priorityLow: '低',
     },
+    team: {
+      title: '团队',
+      active: '{count} 个进行中',
+      tools: '次工具',
+      status: {
+        pending: '等待中',
+        running: '进行中',
+        completed: '已完成',
+        failed: '失败',
+        terminated: '已结束',
+      },
+    },
     sessionSetting: {
       searchPlaceholder: '搜索模型...',
       refresh: '刷新模型',

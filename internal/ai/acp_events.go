@@ -94,10 +94,13 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		// thinking_done so the frontend can stop the thinking spinner immediately.
 		// Carry the chunk's parent so a sub-agent's completion marks ITS OWN
 		// thinking block — with concurrent sub-agents an unfiltered done lands on
-		// whichever block happens to be last.
+		// whichever block happens to be last. For Agent Team members the parent
+		// is resolved via the member-name join (they carry no parentToolCallId).
+		memberName := extractTeamMemberName(update.AgentMessageChunk.Meta)
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
-			ParentToolCallID: extractParentToolCallID(backendID, update.AgentMessageChunk.Meta),
+			ParentToolCallID: memberParentOrParent(backendID, conn, update.AgentMessageChunk.Meta),
+			MemberName:       memberName,
 		})
 		content := update.AgentMessageChunk.Content
 		// Defensive filter against a codebuddy CLI resume defect: when an ACP
@@ -136,9 +139,9 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 			}
 		}
 		if !replayed {
-			parentID := extractParentToolCallID(backendID, update.AgentMessageChunk.Meta)
+			parentID := memberParentOrParent(backendID, conn, update.AgentMessageChunk.Meta)
 			if content.Text != nil {
-				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID})
+				forwardACPEvent(ch, StreamEvent{Type: "content", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: memberName})
 			}
 			// Per-agent _meta on the chunk (e.g. CodeBuddy OpenAI-style usage +
 			// codebuddy.ai/* trace) — accumulate onto the connection so the
@@ -155,8 +158,8 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 	case update.AgentThoughtChunk != nil:
 		content := update.AgentThoughtChunk.Content
 		if content.Text != nil {
-			parentID := extractParentToolCallID(backendID, update.AgentThoughtChunk.Meta)
-			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID})
+			parentID := memberParentOrParent(backendID, conn, update.AgentThoughtChunk.Meta)
+			forwardACPEvent(ch, StreamEvent{Type: "thinking", Content: content.Text.Text, ParentToolCallID: parentID, MemberName: extractTeamMemberName(update.AgentThoughtChunk.Meta)})
 			if conn != nil {
 				conn.RecordTurnOutput()
 			}
@@ -164,13 +167,20 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 
 	case update.ToolCall != nil:
 		tc := update.ToolCall
+		// An Agent spawn frame for a team member is the only place the member
+		// name and the tool-call id co-occur; record the join so this member's
+		// later content frames can be grouped under this Agent card.
+		if backendID == "codebuddy" {
+			noteCodeBuddyMemberSpawn(conn, tc.Meta, toolCallIDOf(tc.ToolCallId))
+		}
 		// When the agent transitions from thinking to tool use, emit
 		// thinking_done so the frontend can stop the thinking spinner. Scoped to
 		// the tool's own parent so a sub-agent's tool call closes that
 		// sub-agent's thinking block, not another agent's.
 		forwardACPEvent(ch, StreamEvent{
 			Type:             "thinking_done",
-			ParentToolCallID: extractParentToolCallID(backendID, tc.Meta),
+			ParentToolCallID: memberParentOrParent(backendID, conn, tc.Meta),
+			MemberName:       extractTeamMemberName(tc.Meta),
 		})
 		// A tool call is starting — mark it in-flight so the stall watchdog
 		// treats the agent as active while it runs the tool.
@@ -182,7 +192,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		if deb != nil {
 			deb.handleToolCall(*tc)
 		}
-		event := mapACPToolCall(*tc, backendID)
+		event := mapACPToolCall(*tc, backendID, conn)
 		forwardACPEvent(ch, event)
 
 	case update.ToolCallUpdate != nil:
@@ -247,7 +257,7 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 
 		// Fallback: no debouncer, forward directly (original behavior).
-		event := mapACPToolCallUpdate(*tcu, backendID)
+		event := mapACPToolCallUpdate(*tcu, backendID, conn)
 		forwardACPEvent(ch, event)
 
 		// When a think tool completes, also emit thinking_done so the frontend
@@ -399,6 +409,13 @@ func mapACPSessionUpdate(update acp.SessionUpdate, ch chan<- StreamEvent, ctx co
 		}
 
 	case update.SessionInfoUpdate != nil:
+		// CodeBuddy Agent Teams state rides on this standard notification's
+		// _meta. A plain session_info_update (title/updatedAt) carries no
+		// teamUpdate key and is a no-op here, so non-team sessions are
+		// unaffected.
+		if backendID == "codebuddy" {
+			bridgeCodeBuddyTeamUpdate(ch, conn, update.SessionInfoUpdate.Meta)
+		}
 		slog.Debug("acp: session info update")
 
 	case update.UsageUpdate != nil:

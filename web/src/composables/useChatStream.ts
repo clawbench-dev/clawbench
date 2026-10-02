@@ -6,6 +6,7 @@ import { gt } from '@/composables/useLocale'
 import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
+import { updateTeamState } from './useTeamState'
 import { FILE_MODIFYING_TOOLS, forceCleanupStreamingState as _forceCleanupStreamingState, findStreamingMsg, isSubagentToolName, messageText, nextClientSeq, untrackInFlightSend, type ChatMessage, type ChatMessageAction, type ContentBlock, type ContentEventData, type ThinkingEventData, type ToolUseEventData, type QueueEventData, type ErrorEventData } from '@/utils/chatStreamUtils.ts'
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import type { ChatStreamEventData } from '@/utils/chatStreamUtils.ts'
@@ -956,6 +957,14 @@ export function useChatStream(options: UseChatStreamOptions) {
         if (Array.isArray(planData.entries)) {
           updatePlanEntries(planData.entries as import('@/composables/usePlanProgress').PlanEntry[])
         }
+        break
+      }
+
+      case 'team_update': {
+        if (sessionChanged()) return
+        // Full-snapshot replace (the wire always sends the whole roster).
+        // A team_deleted payload clears the panel.
+        updateTeamState(payload as unknown as import('@/composables/useTeamState').TeamState)
         break
       }
 

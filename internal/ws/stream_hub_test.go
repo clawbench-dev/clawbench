@@ -327,6 +327,39 @@ func TestStreamEventToPayload_ThinkingDoneCarriesParent(t *testing.T) {
 	assert.Equal(t, "call_parent_1", m["parent_tool_call_id"])
 }
 
+// Agent Team member content carries member_name so the frontend can attribute
+// it even when the parent link is resolved separately.
+func TestStreamEventToPayload_ContentCarriesMemberName(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:             "content",
+		Content:          "hi",
+		ParentToolCallID: "call_agent",
+		MemberName:       "probe-alpha",
+	})
+	m, ok := payload.(map[string]string)
+	assert.True(t, ok)
+	assert.Equal(t, "probe-alpha", m["member_name"])
+	assert.Equal(t, "call_agent", m["parent_tool_call_id"])
+}
+
+// team_update forwards the whole TeamState as the payload.
+func TestStreamEventToPayload_TeamUpdate(t *testing.T) {
+	team := &ai.TeamState{
+		Type:     "member_status_change",
+		TeamName: "clawbench-probe",
+		HasLive:  true,
+		Members: []ai.TeamMember{
+			{Name: "probe-alpha", Status: "running", Activity: "working"},
+		},
+	}
+	payload := StreamEventToPayload(ai.StreamEvent{Type: "team_update", Team: team})
+	got, ok := payload.(*ai.TeamState)
+	assert.True(t, ok)
+	require.NotNil(t, got)
+	assert.Equal(t, "clawbench-probe", got.TeamName)
+	assert.Len(t, got.Members, 1)
+}
+
 func TestStreamEventToPayload_Done(t *testing.T) {
 	payload := StreamEventToPayload(ai.StreamEvent{Type: "done"})
 	_, ok := payload.(map[string]any)

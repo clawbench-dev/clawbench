@@ -339,19 +339,34 @@ type TeamMember struct {
 
 ## 5. 实施顺序与验证
 
-| 步骤 | 内容 | 验证 |
-|------|------|------|
-| P0 | ~~补探针：成员审批帧 meta~~ ✅ 已完成；剩 `team_busy`、`teamResumeIntent` | 扩展本文件探针 |
-| P1 | 后端解析 `teamUpdate` → `team_update` StreamEvent | 单测 `acp_events_test.go` 用真实载荷夹具 |
-| P2 | 后端读 `memberEvent` + 建成员↔工具映射 → 回填 `ParentToolCallID` | 单测：成员帧归到正确 Agent 卡 |
-| P3 | WS 转发 `team_update` + `member_name` | `stream_hub_test.go` |
-| P4 | 前端 `TeamPanel.vue`（§4.1/§4.4/§4.5）+ `useTeamState.ts` | Vitest + 视觉回归 |
-| P5 | 权限卡成员徽标（§4.3） | 依赖 P0 |
-| P6 | 成员时间线方案 B（§4.2 第二阶段，成员配色） | 视觉回归 |
-| P7 | E2E：真实建队流程 | `e2e/specs/` 新 spec |
+| 步骤 | 内容 | 验证 | 状态 |
+|------|------|------|------|
+| P0 | 补探针：成员审批帧 meta | 扩展本文件探针 | ✅ |
+| P1 | 后端解析 `teamUpdate` → `team_update` StreamEvent | `codebuddy_team_bridge_test.go` | ✅ |
+| P2 | 后端读 `memberEvent` + 建成员↔工具映射 → 回填 `ParentToolCallID` | 同上（含变异验证） | ✅ |
+| P3 | WS 转发 `team_update` + `member_name` | `stream_hub_test.go` | ✅ |
+| P4 | 前端 `TeamPanel.vue`（§4.1/§4.4/§4.5）+ `useTeamState.ts` | `TeamPanel.test.ts` / `useTeamState.test.ts` | ✅ |
+| P5 | 权限卡成员徽标（§4.3）—— 后端已透传 `teamMember`，前端徽标 UI 待做 | 依赖 P0 | 🟡 部分 |
+| P6 | 成员时间线方案 B（§4.2 第二阶段，成员配色） | 视觉回归 | ⬜ 待做 |
+| P7 | E2E：团队面板（bridge 注入） | `e2e/specs/team-panel.spec.ts`（7 passed） | ✅ |
+
+**已落地文件**：
+
+- 后端：`internal/ai/codebuddy_team_bridge.go`（解析 + 成员 join）、
+  `interface.go`（`TeamState`/`TeamMember`/`StreamEvent.Team`/`.MemberName`）、
+  `acp_pool.go`（`cachedTeamState` + `memberToolCallIDs`，stateMu 叶锁）、
+  `acp_events.go`（`session_info_update` 分支 + 成员归因）、
+  `acp_tool.go`/`acp_debounce.go`（tool 映射带 conn）、
+  `acp_backend.go`（重连重放团队状态）、`acp_client.go`（权限帧 `teamMember`）、
+  `internal/ws/stream_hub.go`（`team_update` + `member_name`）。
+- 前端：`web/src/composables/useTeamState.ts`、`web/src/components/chat/TeamPanel.vue`、
+  `useChatStream.ts`（`team_update` 分支）、`useChatSession.ts`/`App.vue`（会话切换清理）、
+  `ChatPanelContent.vue`（挂载）、i18n `chat.team.*`。
 
 **回归红线**：改动不得影响非团队会话 —— `session_info_update` 分支对无 `teamUpdate`
-的更新（title/updatedAt）必须保持原有行为；子代理（非团队）内容仍走 `parentToolCallId`。
+的更新（title/updatedAt）必须保持原有行为（已由 `TestMapACPSessionUpdate_SessionInfoNoTeamNoEvent`
+与 `TestBridgeTeamUpdate_NoopWithoutKey` 钉住）；子代理（非团队）内容仍走 `parentToolCallId`
+（`memberParentOrParent` 优先显式 parent）。
 
 ---
 

@@ -391,7 +391,6 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		Options:    p.Options,
 		Ch:         make(chan acp.RequestPermissionResponse, 1),
 	}
-
 	// Register the pending permission
 	c.mu.Lock()
 	c.pendingPermission[key] = pp
@@ -423,6 +422,13 @@ func (c *ClawBenchACPClient) RequestPermission(ctx context.Context, p acp.Reques
 		"toolName":     toolName,
 		"toolInput":    toolInput,
 		"options":      p.Options,
+	}
+	// Agent Team attribution: when a team member asks for permission, CodeBuddy
+	// stamps the member on the toolCall's _meta (NOT the request's). Without it
+	// concurrent members' approval cards are indistinguishable.
+	// See docs/dev/codebuddy_acp_team_integration.md §1.5.
+	if member := permissionMemberAttribution(p.ToolCall.Meta); member != nil {
+		approvalInput["teamMember"] = member
 	}
 
 	// Check autoApprove mode — if enabled, mark the event

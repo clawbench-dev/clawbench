@@ -614,6 +614,18 @@ export default {
       priorityMedium: 'Med',
       priorityLow: 'Low',
     },
+    team: {
+      title: 'Team',
+      active: '{count} active',
+      tools: 'tools',
+      status: {
+        pending: 'pending',
+        running: 'running',
+        completed: 'completed',
+        failed: 'failed',
+        terminated: 'ended',
+      },
+    },
     sessionSetting: {
       searchPlaceholder: 'Search models...',
       refresh: 'Refresh models',

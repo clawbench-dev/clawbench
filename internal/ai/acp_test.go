@@ -23,7 +23,7 @@ func TestMapACPToolCall_BasicFields(t *testing.T) {
 		Title:      "Read",
 		Kind:       acp.ToolKindRead,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -39,7 +39,7 @@ func TestMapACPToolCall_WithRawInput(t *testing.T) {
 		Kind:       acp.ToolKindEdit,
 		RawInput:   map[string]any{"path": "/tmp/test.txt", "content": "hello"},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "Write", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "path")
@@ -52,7 +52,7 @@ func TestMapACPToolCall_NoTitleUsesKind(t *testing.T) {
 		Title:      "",
 		Kind:       acp.ToolKindRead,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 	// Kind fallback now maps to PascalCase canonical name, not lowercase string(kind)
 	assert.Equal(t, "Read", event.Tool.Name)
 }
@@ -72,7 +72,7 @@ func TestMapACPToolCall_ContentWithTerminal(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "Bash", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "command")
@@ -96,7 +96,7 @@ func TestMapACPToolCall_ContentWithText(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "Bash", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "description")
@@ -119,7 +119,7 @@ func TestMapACPToolCall_RawInputPreferredOverContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "Bash", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "ls -la")
@@ -133,7 +133,7 @@ func TestMapACPToolCall_WithFilePathRawInput(t *testing.T) {
 		Kind:       acp.ToolKindRead,
 		RawInput:   map[string]any{"filePath": "/home/user/project/main.go"},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "Read", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "file_path")
@@ -150,7 +150,7 @@ func TestMapACPToolCallUpdate_Completed(t *testing.T) {
 		Status:     &completed,
 		RawOutput:  map[string]any{"result": "file contents"},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type)
 	require.NotNil(t, event.Tool)
@@ -167,7 +167,7 @@ func TestMapACPToolCallUpdate_Failed(t *testing.T) {
 		Status:     &failed,
 		RawOutput:  map[string]any{"error": "permission denied"},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -180,7 +180,7 @@ func TestMapACPToolCallUpdate_InProgress(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-wip"),
 		Status:     &inProgress,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
@@ -197,7 +197,7 @@ func TestMapACPToolCallUpdate_InProgressIgnoresRawOutput(t *testing.T) {
 		Status:     &inProgress,
 		RawOutput:  "}",
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
@@ -210,7 +210,7 @@ func TestMapACPToolCallUpdate_Pending(t *testing.T) {
 		ToolCallId: acp.ToolCallId("tc-pend"),
 		Status:     &pending,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.False(t, event.Tool.Done)
@@ -231,7 +231,7 @@ func TestMapACPToolCallUpdate_InProgressWithRawInput(t *testing.T) {
 			"subagent_type": "explore",
 		},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type, "in_progress update should emit tool_use")
 	require.NotNil(t, event.Tool)
@@ -262,7 +262,7 @@ func TestMapACPToolCallUpdate_CompletedWithRawInput(t *testing.T) {
 		},
 		RawOutput: map[string]any{"result": "project summary"},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type, "completed update should emit tool_result")
 	require.NotNil(t, event.Tool)
@@ -285,7 +285,7 @@ func TestMapACPToolCallUpdate_CompletedWithTitleNoOverride(t *testing.T) {
 		Title:      &title,
 		RawOutput:  map[string]any{"output": "directory listing"},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type)
 	// Name should remain empty (not overwritten by "cmd/server")
@@ -304,7 +304,7 @@ func TestMapACPToolCallUpdate_InProgressWithTitleUpdate(t *testing.T) {
 		Kind:       &readKind,
 		Title:      &title,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	assert.Equal(t, "Read", event.Tool.Name, "in-progress title should update tool name")
@@ -321,7 +321,7 @@ func TestMapACPToolCallUpdate_InProgressWithDescriptiveTitle(t *testing.T) {
 		Kind:       &executeKind,
 		Title:      &title,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	// Descriptive title for execute kind won't match patterns, but that's OK
@@ -425,7 +425,7 @@ func TestMapACPToolCall_KimiReadFile(t *testing.T) {
 			{Path: "/home/user/project/README.md"},
 		},
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -443,7 +443,7 @@ func TestMapACPToolCall_KimiListDirectory(t *testing.T) {
 		Title:      "cmd/server",
 		Kind:       acp.ToolKindSearch,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -459,7 +459,7 @@ func TestMapACPToolCall_KimiGlob(t *testing.T) {
 		Title:      "'cmd/server/**/*.go'",
 		Kind:       acp.ToolKindSearch,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -475,7 +475,7 @@ func TestMapACPToolCall_KimiShellCommand(t *testing.T) {
 		Title:      "ls -R cmd/server",
 		Kind:       acp.ToolKindExecute,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "tool_use", event.Type)
 	require.NotNil(t, event.Tool)
@@ -491,7 +491,7 @@ func TestMapACPToolCall_KimiReadFileNoLocations(t *testing.T) {
 		Title:      "main.go",
 		Kind:       acp.ToolKindRead,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 
 	assert.Equal(t, "Read", event.Tool.Name)
 	assert.Contains(t, event.Tool.Input, "file_path")
@@ -511,7 +511,7 @@ func TestMapACPToolCallUpdate_KimiCompleted(t *testing.T) {
 		},
 		RawOutput: map[string]any{"result": "file contents here"},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -536,7 +536,7 @@ func TestMapACPToolCallUpdate_KimiCompletedWithContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -560,7 +560,7 @@ func TestMapACPToolCallUpdate_KimiFailedWithContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Equal(t, "tool_result", event.Type)
 	assert.True(t, event.Tool.Done)
@@ -586,7 +586,7 @@ func TestMapACPToolCallUpdate_RawOutputPreferredOverContent(t *testing.T) {
 			},
 		},
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 
 	assert.Contains(t, event.Tool.Output, "from rawOutput")
 	assert.NotContains(t, event.Tool.Output, "from content")
@@ -1969,7 +1969,7 @@ func TestMapACPToolCall_ExecuteKindFallbackToTitle(t *testing.T) {
 		Kind:       acp.ToolKindExecute,
 		// No RawInput, no Content
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 	require.NotNil(t, event.Tool)
 	assert.Contains(t, event.Tool.Input, "command")
 	assert.Contains(t, event.Tool.Input, "echo hello")
@@ -1981,7 +1981,7 @@ func TestMapACPToolCall_ExecuteKindNoTitle(t *testing.T) {
 		Title:      "",
 		Kind:       acp.ToolKindExecute,
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 	require.NotNil(t, event.Tool)
 	assert.Empty(t, event.Tool.Input)
 }
@@ -1993,7 +1993,7 @@ func TestMapACPToolCall_NonExecuteKindNoFallback(t *testing.T) {
 		Kind:       acp.ToolKindRead,
 		// No RawInput, no Content
 	}
-	event := mapACPToolCall(tc, "")
+	event := mapACPToolCall(tc, "", nil)
 	require.NotNil(t, event.Tool)
 	// Read kind should NOT fallback to title as command
 	assert.NotContains(t, event.Tool.Input, "command")
@@ -2011,7 +2011,7 @@ func TestMapACPToolCallUpdate_ExecuteKindFallbackToTitle(t *testing.T) {
 		Kind:       &kind,
 		Status:     &status,
 	}
-	event := mapACPToolCallUpdate(tcu, "")
+	event := mapACPToolCallUpdate(tcu, "", nil)
 	require.NotNil(t, event.Tool)
 	assert.Contains(t, event.Tool.Input, "command")
 	assert.Contains(t, event.Tool.Input, "ls /tmp")

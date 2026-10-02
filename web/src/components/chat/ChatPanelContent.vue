@@ -73,6 +73,9 @@
       @toggle-collapse="togglePlanCollapse"
     />
 
+    <!-- Agent Team roster (CodeBuddy teams) -->
+    <TeamPanel />
+
     <!-- Queued messages — kept OUT of the conversation list; shown and managed
          here, directly above the input. -->
     <QueuedMessageBar
@@ -235,6 +238,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
+import TeamPanel from './TeamPanel.vue'
 import BusyBar from '@/components/common/BusyBar.vue'
 import { usePlanProgress } from '@/composables/usePlanProgress'
 import { useChatRender } from '@/composables/useChatRender.ts'
