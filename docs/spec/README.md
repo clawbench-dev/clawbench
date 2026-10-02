@@ -2,7 +2,7 @@
 
 ClawBench 是移动端交互适配优先、桌面端完整支持的多端 AI 工作台，将多种 AI CLI 工具（CodeBuddy、Claude Code、OpenCode、Codex、Qoder CLI、VeCLI、CodeWhale、Kimi、Copilot、MiMo-Code、Pi、Antigravity、Grok Build、ZCode）包装为 Web 可访问的平台。Go 后端通过 shell 调用 CLI 工具并经 WebSocket 流式输出 JSON，同时支持 ACP（Agent Client Protocol）stdio 传输，提供结构化的模式切换、斜杠命令和权限管理。Vue 3 前端实时渲染流式事件。支持 SSH 隧道端口映射、FRP 公网隧道、任务系统（含 GitHub/GitLab 事件触发）、会话标签、零配置启动引导、聊天自动摘要、钉钉/飞书企业推送、系统资源监控、thinking 惰性加载和消息聚类分析。
 
-> 本目录是**系统设计规格**（面向开发者与 AI 的心智模型）。面向使用者的图文操作手册在 [`docs/user-guid/user-guid.md`](../user-guid/user-guid.md)。
+> 本目录是**系统设计规格**（面向开发者与 AI 的心智模型）。面向使用者的图文操作手册在 [`docs/user-guide/README.md`](../user-guide/README.md)。
 
 ## 模块地图
 
