@@ -287,7 +287,11 @@ func TestStartSSHServer_ClearsReferenceOnBindFailure(t *testing.T) {
 	t.Cleanup(func() { handler.SetSSHServer(origSSH) })
 
 	// Occupy the port so the bind fails, and keep holding it for the whole test.
-	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	// The blocker must bind the SAME wildcard address the server uses (0.0.0.0):
+	// on BSD/macOS a listener sets SO_REUSEADDR, which lets a wildcard bind
+	// succeed even while a specific-address socket holds the port — so a
+	// 127.0.0.1 blocker would not actually make the server's bind fail there.
+	blocker, err := net.Listen("tcp", "0.0.0.0:0")
 	require.NoError(t, err)
 	defer blocker.Close()
 	port := blocker.Addr().(*net.TCPAddr).Port

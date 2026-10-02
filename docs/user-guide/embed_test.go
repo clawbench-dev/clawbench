@@ -5,11 +5,25 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// canUsePermissionDenied reports whether making a directory mode 0o555 will
+// actually deny writes. It does not on Windows (the mode bits are advisory and
+// os.Chmod only toggles the read-only attribute), so the permission-based
+// error-branch tests below are Unix-only. They are skipped, not deleted: the
+// branches still need coverage on the platform CI runs them on (Linux/macOS).
+func canUsePermissionDenied() bool {
+	if runtime.GOOS == "windows" {
+		return false
+	}
+	// Running as root bypasses directory permissions entirely.
+	return os.Geteuid() != 0
+}
 
 // TestExtract_WritesFilesUnderVersion asserts the manual lands at
 // <dataDir>/user-guide/<version>/ with the Markdown files intact. The version
@@ -132,8 +146,8 @@ func TestWriteFiles_SkipsDirectories(t *testing.T) {
 // read-only destination makes os.WriteFile fail, which must surface rather than
 // silently produce a partial manual.
 func TestWriteFiles_WriteError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory permissions")
+	if !canUsePermissionDenied() {
+		t.Skip("chmod 0o555 does not deny writes on Windows, and root bypasses it")
 	}
 	dst := t.TempDir()
 	require.NoError(t, os.Chmod(dst, 0o555))
@@ -147,8 +161,8 @@ func TestWriteFiles_WriteError(t *testing.T) {
 // parent already exists but is read-only, so the staging dir cannot be created.
 // Extraction must report the error instead of leaving a half-populated tree.
 func TestExtract_TempDirError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory permissions")
+	if !canUsePermissionDenied() {
+		t.Skip("chmod 0o555 does not deny writes on Windows, and root bypasses it")
 	}
 	dir := t.TempDir()
 	parent := filepath.Join(dir, "user-guide")
@@ -170,11 +184,11 @@ func TestPruneOldVersions_ListError(t *testing.T) {
 }
 
 // TestPruneOldVersions_RemoveError covers the branch where an old version
-// directory cannot be removed. Running as root bypasses the permission check,
-// so the case is skipped there.
+// directory cannot be removed. chmod 0o555 does not deny writes on Windows and
+// root bypasses it, so the case is skipped there.
 func TestPruneOldVersions_RemoveError(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory permissions")
+	if !canUsePermissionDenied() {
+		t.Skip("chmod 0o555 does not deny writes on Windows, and root bypasses it")
 	}
 	parent := t.TempDir()
 	old := filepath.Join(parent, "old")
