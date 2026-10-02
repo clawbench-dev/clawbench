@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -356,6 +357,86 @@ func (r *ProxyRegistry) UpdatePort(localPort int, port int, host string, name st
 		slog.String("direction", direction),
 	)
 
+	return nil
+}
+
+// Sentinel errors for RebindPort, mapped to distinct HTTP statuses by the
+// handler. A caller that gets ErrRebindTargetTaken can retry with another port;
+// ErrRebindPortNotFound means the mapping vanished (deleted concurrently).
+var (
+	ErrRebindPortNotFound = errors.New("rebind: source local port is not registered")
+	ErrRebindTargetTaken  = errors.New("rebind: target local port is already registered")
+)
+
+// RebindPort moves an existing forward mapping to a different LOCAL listen port,
+// keeping the target (port/host/name/protocol/direction) untouched.
+//
+// This exists because the CLIENT owns the forward's listener: when the requested
+// local port is already occupied on the client's machine, the client binds the
+// next free one and must tell the server, or the registry key (used by DELETE /
+// PUT / enable) and the UI URL would point at a port nothing listens on.
+//
+// The reverse proxy for a non-localhost target listens on the server's loopback
+// at `localPort`, so it is torn down and restarted on the new port — same
+// best-effort policy as startReverseProxyAfterUpdate: a failure is logged, not
+// returned, because the mapping still tunnels with a stale Host header rather
+// than breaking outright.
+func (r *ProxyRegistry) RebindPort(localPort, newLocalPort int) error {
+	if newLocalPort < 1024 || newLocalPort > 65535 {
+		return fmt.Errorf("invalid new local port %d", newLocalPort)
+	}
+	if localPort == newLocalPort {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	entry, ok := r.ports[localPort]
+	if !ok {
+		return ErrRebindPortNotFound
+	}
+	if _, taken := r.ports[newLocalPort]; taken {
+		return ErrRebindTargetTaken
+	}
+
+	// A reverse mapping's localPort is the SERVER-side bind port chosen by
+	// allocateServerPort (which probes the server OS). The client never rebinds
+	// it, so a rebind request for one is a caller bug rather than a conflict.
+	if entry.IsReverse() {
+		return fmt.Errorf("cannot rebind a reverse mapping")
+	}
+
+	// Move the entry. The struct is shared by pointer, so update the field too —
+	// ListPorts() copies *p, and callers key off LocalPort.
+	moved := *entry
+	moved.LocalPort = newLocalPort
+	delete(r.ports, localPort)
+	r.ports[newLocalPort] = &moved
+
+	// The server-side Host-rewriting proxy is bound to the OLD port; move it.
+	if IsNonLocalhostTarget(entry.Host) {
+		r.stopReverseProxy(localPort)
+		if err := r.startReverseProxy(newLocalPort, entry.Port, entry.Host, entry.Protocol); err != nil {
+			slog.Warn(
+				"failed to move reverse proxy after rebind",
+				slog.Int("old_local_port", localPort),
+				slog.Int("new_local_port", newLocalPort),
+				slog.String("err", err.Error()),
+			)
+		}
+	}
+
+	// Persist under the new key.
+	r.deletePortFromDB(localPort)
+	r.savePortToDBWithEnabled(newLocalPort, entry.Port, entry.Host, entry.Name, entry.Protocol, entry.Direction, entry.Enabled)
+
+	slog.Info(
+		"proxy port rebound",
+		slog.Int("old_local_port", localPort),
+		slog.Int("new_local_port", newLocalPort),
+		slog.Int("target_port", entry.Port),
+	)
 	return nil
 }
 

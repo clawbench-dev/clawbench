@@ -75,6 +75,9 @@ vi.mock('@/composables/useSettingsConfig', () => ({
 const mockGetAgent = vi.fn(() => ({ name: 'Agent One' }))
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({ getAgent: mockGetAgent }),
+  // useSessionIdentity (reached transitively via usePortForward) calls this at
+  // module-evaluation time, so the mock must provide it or the import throws.
+  registerIdentityUpdaters: vi.fn(),
 }))
 
 const mockDialogConfirm = vi.fn(() => Promise.resolve(true))

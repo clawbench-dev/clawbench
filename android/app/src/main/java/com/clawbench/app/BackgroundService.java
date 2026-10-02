@@ -1163,6 +1163,35 @@ public class BackgroundService extends Service {
     // --- Port list persistence ---
 
     /**
+     * Move a forward's bookkeeping from the requested port to the one the
+     * listener actually bound.
+     *
+     * <p>The transport moves to a free neighbour when the requested port is
+     * occupied on this device; every local structure keyed by the port
+     * ({@code forwardedPorts}, and the transport's own listener map) must follow
+     * it, or {@code removeLocal}/{@code removeForwardedPort} would name a port
+     * with no listener and leak the real one.
+     *
+     * <p>No-op when the port did not move, and when {@code oldPort} is no longer
+     * present (a concurrent remove won).
+     */
+    private void reKeyForwardedPort(int oldPort, int newPort) {
+        if (oldPort == newPort) return;
+        // Guard the move: a transport that reports a nonsensical port (0, out of
+        // range) must not corrupt the bookkeeping — the mapping stays keyed by
+        // the requested port, which is at least addressable.
+        if (newPort <= 0 || newPort > 65535) {
+            AppLog.w(TAG, "SSH: ignoring invalid rebound port " + newPort + " for " + oldPort);
+            return;
+        }
+        PortInfo info = forwardedPorts.remove(oldPort);
+        if (info == null) return;
+        forwardedPorts.put(newPort, info);
+        saveForwardedPorts();
+        AppLog.i(TAG, "SSH: re-keyed forwarded port " + oldPort + " -> " + newPort);
+    }
+
+    /**
      * Save the current forwarded ports set to SharedPreferences.
      * Format: "localPort:targetPort:host" or "localPort:targetPort" (when host is empty)
      * Backward compat for old format: "localPort" or "localPort:host" (targetPort assumed == localPort)
@@ -1586,6 +1615,10 @@ public class BackgroundService extends Service {
         // The reverse proxy rewrites the Host header so the backend receives the
         // correct hostname instead of "localhost:port".
         int reEstablished = 0;
+        // Ports that had to move to a free neighbour during the replay. Applied
+        // after the loop: re-keying while iterating entrySet() would throw, and
+        // the map is the only record of what to re-establish.
+        java.util.List<int[]> rebound = new java.util.ArrayList<>();
         for (Map.Entry<Integer, PortInfo> entry : forwardedPorts.entrySet()) {
             int localPort = entry.getKey();
             PortInfo info = entry.getValue();
@@ -1600,12 +1633,16 @@ public class BackgroundService extends Service {
                 sshTargetPort = info.targetPort;
             }
             try {
-                activeTransport.addLocal(localPort, sshTargetPort, sshTargetHost);
+                int bound = activeTransport.addLocal(localPort, sshTargetPort, sshTargetHost);
+                if (bound != localPort) rebound.add(new int[]{localPort, bound});
                 reEstablished++;
                 AppLog.i(TAG, "SSH: re-established port forward " + localPort + " -> " + sshTargetHost + ":" + sshTargetPort);
             } catch (Exception e) {
                 AppLog.e(TAG, "SSH: failed to re-establish port forward " + localPort, e);
             }
+        }
+        for (int[] move : rebound) {
+            reKeyForwardedPort(move[0], move[1]);
         }
         AppLog.i(TAG, "SSH: re-established " + reEstablished + "/" + forwardedPorts.size() + " port forwards");
 
@@ -1808,16 +1845,22 @@ public class BackgroundService extends Service {
      */
     private void replayForwardedPortsOnActiveTransport() {
         int reEstablished = 0;
+        // Re-key after the loop (see the SSH replay above for why).
+        java.util.List<int[]> rebound = new java.util.ArrayList<>();
         for (Map.Entry<Integer, PortInfo> entry : forwardedPorts.entrySet()) {
             int localPort = entry.getKey();
             PortInfo info = entry.getValue();
             try {
-                activeTransport.addLocal(localPort, resolveForwardTargetPort(localPort, info),
+                int bound = activeTransport.addLocal(localPort, resolveForwardTargetPort(localPort, info),
                         resolveForwardTargetHost(info));
+                if (bound != localPort) rebound.add(new int[]{localPort, bound});
                 reEstablished++;
             } catch (Exception e) {
                 AppLog.e(TAG, "Tunnel: failed to re-establish port forward " + localPort, e);
             }
+        }
+        for (int[] move : rebound) {
+            reKeyForwardedPort(move[0], move[1]);
         }
         if (!forwardedPorts.isEmpty()) {
             AppLog.i(TAG, "Tunnel: re-established " + reEstablished + "/" + forwardedPorts.size() + " port forwards");
@@ -2046,6 +2089,12 @@ public class BackgroundService extends Service {
         }
 
         boolean success = false;
+        // The port the listener actually bound. Equals `localPort` unless that
+        // port was taken on this device, in which case the transport moved to a
+        // free neighbour and the bookkeeping (and the server registry) must
+        // follow it — otherwise the UI URL and the server's key would point at a
+        // port nothing listens on.
+        int boundLocalPort = localPort;
         try {
             ensureConnection();
 
@@ -2067,28 +2116,37 @@ public class BackgroundService extends Service {
             // was already set up in the re-establish loop and this is a no-op
             // (the SSH adapter treats "already registered" as success).
             PortForwardTransport transport = transportForPortOps();
-            transport.addLocal(localPort, sshTargetPort, sshTargetHost);
-            AppLog.i(TAG, "SSH: setPortForwardingL succeeded for localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
+            boundLocalPort = transport.addLocal(localPort, sshTargetPort, sshTargetHost);
+            AppLog.i(TAG, "SSH: setPortForwardingL succeeded for localhost:" + boundLocalPort + " → " + sshTargetHost + ":" + sshTargetPort);
+
+            if (boundLocalPort != localPort) {
+                // Re-key to the bound port. For a non-localhost target the tunnel
+                // target IS the local port (it names the server's reverse proxy),
+                // so that proxy must be told about the move as well — handled by
+                // the frontend's rebind call; here we only keep this service's own
+                // maps consistent so removeLocal/rebuild use the right key.
+                reKeyForwardedPort(localPort, boundLocalPort);
+            }
 
             // Verify the port is actually reachable before reporting success.
-            boolean reachable = transport.isLocalReachable(localPort);
-            AppLog.i(TAG, "SSH: addPortForward testLocalPort(" + localPort + ") = " + reachable);
+            boolean reachable = transport.isLocalReachable(boundLocalPort);
+            AppLog.i(TAG, "SSH: addPortForward testLocalPort(" + boundLocalPort + ") = " + reachable);
             if (reachable) {
-                AppLog.i(TAG, "SSH: port forward ready and verified: localhost:" + localPort + " → " + sshTargetHost + ":" + sshTargetPort);
+                AppLog.i(TAG, "SSH: port forward ready and verified: localhost:" + boundLocalPort + " → " + sshTargetHost + ":" + sshTargetPort);
                 success = true;
             } else {
                 // Port registered but not reachable yet — wait briefly and retry.
-                AppLog.w(TAG, "SSH: port " + localPort + " registered but not immediately reachable, waiting...");
+                AppLog.w(TAG, "SSH: port " + boundLocalPort + " registered but not immediately reachable, waiting...");
                 for (int i = 0; i < 10; i++) {
                     try { Thread.sleep(200); } catch (InterruptedException ie) { break; }
-                    if (transport.isLocalReachable(localPort)) {
-                        AppLog.i(TAG, "SSH: port forward ready after " + ((i+1)*200) + "ms: localhost:" + localPort);
+                    if (transport.isLocalReachable(boundLocalPort)) {
+                        AppLog.i(TAG, "SSH: port forward ready after " + ((i+1)*200) + "ms: localhost:" + boundLocalPort);
                         success = true;
                         break;
                     }
                 }
                 if (!success) {
-                    AppLog.e(TAG, "SSH: port " + localPort + " still not reachable after 2s, reporting failure");
+                    AppLog.e(TAG, "SSH: port " + boundLocalPort + " still not reachable after 2s, reporting failure");
                 }
             }
 
@@ -2102,11 +2160,12 @@ public class BackgroundService extends Service {
             // tear down the entire SSH session (other ports may be working fine).
             // Just remove this port from the map so it's not retried endlessly.
             forwardedPorts.remove(localPort);
+            forwardedPorts.remove(boundLocalPort);
             saveForwardedPorts();
         }
 
-        AppLog.i(TAG, "SSH: addPortForward EXIT: localPort=" + localPort + ", success=" + success);
-        notifyPortForwardResult(localPort, success);
+        AppLog.i(TAG, "SSH: addPortForward EXIT: localPort=" + localPort + ", bound=" + boundLocalPort + ", success=" + success);
+        notifyPortForwardResult(boundLocalPort, success, localPort, success ? null : "unreachable");
 
         // If addPortForward failed and no ports remain, stop the service.
         // (This replaces the eager stopSelf in onCreate which caused race conditions.)
@@ -2134,6 +2193,14 @@ public class BackgroundService extends Service {
      * Dispatches a 'clawbench-port-forward-result' CustomEvent on the WebView,
      * following the same pattern as clawbench-open-session, clawbench-push-registered, etc.
      *
+     * <p>{@code localPort} is the port the listener ACTUALLY bound, which differs
+     * from {@code requestedLocalPort} when that port was occupied on this device.
+     * The frontend uses the pair to re-key the server registry (so DELETE/PUT/
+     * enable and the UI URL follow the move) and to show the "port changed"
+     * notice. {@code reason} is {@code "conflict"} when no free port could be
+     * bound at all, so the UI can show port-specific copy instead of the
+     * misleading "check the service is running".
+     *
      * Safety measures:
      * - Uses WeakReference<WebView> to avoid NPE when Activity is destroyed
      * - Checks Activity.isDestroyed() / isFinishing() before evaluateJavascript
@@ -2141,6 +2208,13 @@ public class BackgroundService extends Service {
      * - Skips notification during service shutdown (isShuttingDown)
      */
     private void notifyPortForwardResult(int localPort, boolean success) {
+        // Callers with no distinct requested port (reverse forwards, early
+        // validation failures): the bound port equals the requested one, and a
+        // plain failure keeps the generic copy.
+        notifyPortForwardResult(localPort, success, localPort, success ? null : "unreachable");
+    }
+
+    private void notifyPortForwardResult(int localPort, boolean success, int requestedLocalPort, String reason) {
         // Skip all WebView interactions during service shutdown
         if (isShuttingDown) return;
 
@@ -2155,7 +2229,9 @@ public class BackgroundService extends Service {
         try {
             org.json.JSONObject detail = new org.json.JSONObject();
             detail.put("localPort", localPort);
+            detail.put("requestedLocalPort", requestedLocalPort);
             detail.put("success", success);
+            if (reason != null) detail.put("reason", reason);
             // JSON-encode the entire detail string to prevent JS injection.
             // JSONObject.toString() can contain unescaped characters that break JS syntax
             // when interpolated directly into a template string.
@@ -2164,15 +2240,19 @@ public class BackgroundService extends Service {
 
             activity.runOnUiThread(() -> {
                 // Re-check Activity lifecycle state — it may have been destroyed
-                // between the outer check and this lambda execution.
+                // between the outer check and the lambda execution.
                 if (isShuttingDown) return;
                 MainActivity act = MainActivity.instance;
                 if (act == null || act.isFinishing() || act.isDestroyed()) return;
 
-                // Keep Activity's forwardedPorts map in sync with Service's map.
-                // If the port forward failed, remove it from Activity's map too.
+                // Keep Activity's forwardedPorts map in sync with the Service's.
+                // On failure drop the port; on success move the entry when the
+                // listener had to bind a different port.
                 if (!success) {
                     act.forwardedPorts.remove(localPort);
+                } else if (localPort != requestedLocalPort) {
+                    String host = act.forwardedPorts.remove(requestedLocalPort);
+                    act.forwardedPorts.put(localPort, host != null ? host : "");
                 }
 
                 // Use WeakReference to safely access WebView

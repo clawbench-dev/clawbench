@@ -1,5 +1,6 @@
 import Store from 'electron-store'
 import type { ServerEntry } from './types'
+import type { TransportPreference } from './transport'
 import { DEFAULT_THEME_ID } from '../shared/theme'
 
 export interface ServerListSchema {
@@ -28,6 +29,18 @@ export interface ServerListSchema {
   // render OUTSIDE the web page (context-menu labels, the first-run login page)
   // follow the user's choice instead of the OS locale.
   language: string
+  /**
+   * Which tunnel transport the desktop shell uses ('ssh' | 'h2'). The settings
+   * row in the port-forward panel writes this; `initTransportPreference()`
+   * hydrates the tunnel module from it at startup, so the choice survives a
+   * restart.
+   *
+   * Defaults to 'ssh' — the shell's long-standing behaviour. A stored value is
+   * re-validated on read (a hand-edited or downgraded config could hold
+   * anything, including the retired 'both'), and an unrecognized one falls back
+   * to this default rather than reaching the transport dispatch.
+   */
+  tunnelTransport: TransportPreference
 }
 
 const defaults: ServerListSchema = {
@@ -37,6 +50,7 @@ const defaults: ServerListSchema = {
   nativePushEnabled: true,
   theme: DEFAULT_THEME_ID,
   language: '',
+  tunnelTransport: 'ssh',
 }
 
 let store: Store<ServerListSchema> | null = null

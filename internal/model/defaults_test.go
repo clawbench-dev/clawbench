@@ -318,7 +318,15 @@ func TestApplyDefaultsPartialConfig(t *testing.T) {
 	}
 }
 
-func TestApplyDefaultsBoolPresencePortForwardEnabledFalse(t *testing.T) {
+func TestApplyDefaultsPortForwardEnabledIsAlwaysPinned(t *testing.T) {
+	// The SSH tunnel listener is always on. The switch that used to control it
+	// was removed because its scope could not be honest: the transport choice
+	// is client-local, so the server could neither enforce a per-client value
+	// nor let one client's choice avoid breaking another's.
+	//
+	// Explicitly-false configs (hand-edited, or written by an older build) are
+	// converged on load — this is the single repair point, mirroring the
+	// Transport pin below it.
 	cfg := Config{}
 	presence := map[string]bool{
 		"port_forward":         true,
@@ -328,8 +336,8 @@ func TestApplyDefaultsBoolPresencePortForwardEnabledFalse(t *testing.T) {
 
 	ApplyDefaults(&cfg, presence)
 
-	if cfg.PortForward.Enabled {
-		t.Error("PortForward.Enabled should stay false when explicitly set to false")
+	if !cfg.PortForward.Enabled {
+		t.Error("PortForward.Enabled must be pinned true; an explicit false must not survive ApplyDefaults")
 	}
 }
 

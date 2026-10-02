@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -69,7 +70,7 @@ func registerPort(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Port <= 0 || req.Port > 65535 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{"Port": req.Port})
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{jsonKeyPort: req.Port})
 		return
 	}
 
@@ -100,7 +101,7 @@ func updatePort(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.LocalPort <= 0 || req.LocalPort > 65535 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{"Port": req.LocalPort})
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{jsonKeyPort: req.LocalPort})
 		return
 	}
 
@@ -150,7 +151,7 @@ func ServeProxySetPortEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.LocalPort <= 0 || req.LocalPort > 65535 {
-		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{"Port": req.LocalPort})
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{jsonKeyPort: req.LocalPort})
 		return
 	}
 	if !requireProxyRegistry(w, r) {
@@ -161,6 +162,51 @@ func ServeProxySetPortEnabled(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{jsonKeyStatus: "ok"})
+}
+
+// ServeProxyRebind moves a forward mapping to a different local listen port.
+//
+// Body: {"localPort": <current key>, "newLocalPort": <port the client bound>}
+//
+// The client owns a forward's listener, so when its requested port is already
+// occupied locally it binds the next free one and calls this to re-key the
+// registry — otherwise DELETE/PUT/enable (all keyed by localPort) and the UI's
+// URL would point at a port nothing listens on.
+//
+// Status: 400 malformed, 404 source unknown (deleted concurrently), 409 the new
+// port is already a registered mapping (the client retries with another).
+func ServeProxyRebind(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	var req struct {
+		LocalPort    int `json:"localPort"`
+		NewLocalPort int `json:"newLocalPort"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	if req.LocalPort <= 0 || req.LocalPort > 65535 || req.NewLocalPort <= 0 || req.NewLocalPort > 65535 {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidPortNumber", map[string]any{jsonKeyPort: req.LocalPort})
+		return
+	}
+	if !requireProxyRegistry(w, r) {
+		return
+	}
+
+	err := service.ProxyService.RebindPort(req.LocalPort, req.NewLocalPort)
+	switch {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]any{jsonKeyStatus: "ok", "localPort": req.NewLocalPort})
+	case errors.Is(err, service.ErrRebindPortNotFound):
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "FileNotFoundShort")
+	case errors.Is(err, service.ErrRebindTargetTaken):
+		// Distinct status so the client can retry with a different port rather
+		// than treating it as a permanent failure.
+		writeLocalizedErrorf(w, r, http.StatusConflict, "PortAlreadyRegistered")
+	default:
+		writeLocalizedError(w, r, model.Forbidden(err, "AccessDenied"))
+	}
 }
 
 // ServeProxyDetect returns auto-detected listening ports on the server.

@@ -20,6 +20,8 @@ const onHandlers = vi.hoisted(() => new Map<string, (...args: unknown[]) => void
 const tunnelMock = vi.hoisted(() => ({
   getTransportPreference: vi.fn(() => 'both' as string),
   getActiveTransport: vi.fn(() => 'h2' as string),
+  initTransportPreference: vi.fn(),
+  persistTransportPreference: vi.fn(() => true),
 }))
 
 vi.mock('electron', () => ({
@@ -63,6 +65,8 @@ vi.mock('./tunnel', () => ({
   reconnectTunnel: vi.fn(async () => true),
   getTransportPreference: tunnelMock.getTransportPreference,
   getActiveTransport: tunnelMock.getActiveTransport,
+  initTransportPreference: tunnelMock.initTransportPreference,
+  persistTransportPreference: tunnelMock.persistTransportPreference,
 }))
 
 import { registerBridge } from './bridge'
@@ -103,5 +107,28 @@ describe('bridge: tunnel transport IPC', () => {
     // Distinct from the preference: a 'both' client reports whichever won.
     tunnelMock.getActiveTransport.mockReturnValue('h2')
     expect(invoke('native:get-active-tunnel-transport')).toBe('h2')
+  })
+
+  it('hydrates the persisted preference at registration time', () => {
+    // Must run before any window exists, so the first connect already uses the
+    // user's saved choice instead of the SSH default.
+    expect(tunnelMock.initTransportPreference).toHaveBeenCalled()
+  })
+
+  it('registers the setter the settings row writes through', () => {
+    expect(handlers.has('native:set-tunnel-transport')).toBe(true)
+  })
+
+  it('set-tunnel-transport forwards the value to the persisting writer', () => {
+    tunnelMock.persistTransportPreference.mockReturnValue(true)
+    expect(invoke('native:set-tunnel-transport', 'both')).toBe(true)
+    expect(tunnelMock.persistTransportPreference).toHaveBeenCalledWith('both')
+  })
+
+  it('set-tunnel-transport surfaces a rejection instead of pretending success', () => {
+    // The row reverts its optimistic value when this is false, so the handler
+    // must not swallow the writer's answer.
+    tunnelMock.persistTransportPreference.mockReturnValue(false)
+    expect(invoke('native:set-tunnel-transport', 'garbage')).toBe(false)
   })
 })

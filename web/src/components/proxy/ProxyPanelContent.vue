@@ -350,22 +350,22 @@ const { isNativeApp, isAndroidApp, isWebApp } = usePlatformDetect()
 const toast = useToast()
 
 // Human label for the transport currently carrying the tunnel. '' when the
-// host cannot report it (optional bridge methods absent on Android / older
-// Electron), so the row is hidden instead of showing a made-up value.
+// host cannot report it (optional bridge methods absent on older hosts), so the
+// row is hidden instead of showing a made-up value. Only the two concrete wires
+// exist — there is no automatic mode.
 const transportLabel = computed(() => {
   switch (activeTransport.value) {
     case 'ssh': return t('proxy.transportSsh')
     case 'h2': return t('proxy.transportH2')
-    case 'both': return t('proxy.transportAuto')
     default: return ''
   }
 })
 
 // Parenthesized annotation appended to the status banners/toasts once a single
-// wire is known (e.g. `隧道未连接（SSH）`). '' when unknown or 'both', so the
-// wording stays neutral rather than guessing. Wrapped in a computed so the
-// locale is tracked reactively — the composable's function reads the global
-// translator and would not re-run on a language switch.
+// wire is known (e.g. `隧道未连接（SSH）`). '' when unknown, so the wording stays
+// neutral rather than guessing. Wrapped in a computed so the locale is tracked
+// reactively — the composable's function reads the global translator and would
+// not re-run on a language switch.
 const transportSuffix = computed(() => transportAnnotation())
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.

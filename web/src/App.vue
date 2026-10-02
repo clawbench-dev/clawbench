@@ -1475,11 +1475,13 @@ const { syncToNative, sshInfo, loadSSHInfo, transportAllowsH2 } = usePortForward
 const { terminalRuntimeEnabled, platformSupported, loadTerminalStatus } = useTerminalStatus()
 // Port forwarding is unusable only when NEITHER wire can carry it: the SSH
 // listener is off AND the configured transport cannot use h2. Keying off the
-// SSH listener alone (`sshInfo.enabled === false`) hid the port-mapping tab —
-// and the whole h2-only scenario this PR targets — on installs with
-// `port_forward.enabled: false` + `transport: h2|both`, which forward ports over
-// the stream tunnel. Shared predicate so the dock, the watcher and the
-// localhost-URL guards cannot drift apart again.
+// SSH listener alone (`sshInfo.enabled === false`) hid the port-mapping tab on
+// installs that forward ports over the stream tunnel. Shared predicate so the
+// dock, the watcher and the localhost-URL guards cannot drift apart.
+//
+// The listener is now unconditional, so this is normally false; it still
+// matters when the listener failed to bind (the reference is retracted and
+// /api/ssh/info reports enabled:false).
 const isPortForwardUnavailable = computed(() =>
   portForwardUnavailable(sshInfo.value?.enabled, transportAllowsH2.value),
 )

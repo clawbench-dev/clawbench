@@ -882,7 +882,10 @@ func serveConfigGet(w http.ResponseWriter, _ *http.Request) {
 			RetentionDays:  cfg.RAG.RetentionDays,
 		},
 		PortForward: configPortForward{
-			Enabled: cfg.PortForward.Enabled,
+			// Pinned rather than echoed, like Transport below: the listener is
+			// always on (see ApplyDefaults), so reporting a stored false would
+			// only describe a state the runtime cannot be in.
+			Enabled: true,
 			Port:    cfg.PortForward.Port,
 			// Pinned rather than echoed: the field is no longer configurable
 			// (see ApplyDefaults / applyConfigPatch), and the read point is the
@@ -1720,9 +1723,12 @@ func applyConfigPatch(patch map[string]any) { //nolint:gocognit,gocyclo // exhau
 	}
 
 	if pf, ok := patch["port_forward"].(map[string]any); ok {
-		if v, ok := pf["enabled"].(bool); ok {
-			cfg.PortForward.Enabled = v
-		}
+		// port_forward.enabled is deliberately NOT applied: the SSH listener is
+		// always on (see ApplyDefaults). It stays accepted so an older client
+		// that still sends it gets a 200 rather than a 400, and the value is
+		// pinned back to true here so a PATCH cannot leave the runtime — or the
+		// file — disagreeing with the load-time invariant.
+		cfg.PortForward.Enabled = true
 		if v, ok := pf["port"].(float64); ok {
 			cfg.PortForward.Port = int(v)
 		}

@@ -26,6 +26,9 @@ import (
 // jsonKeyStatus is the JSON key "status" used across handler responses (goconst).
 const jsonKeyStatus = "status"
 
+// jsonKeyPort is the template field name for the InvalidPortNumber message.
+const jsonKeyPort = "Port"
+
 // loc returns the Localizer for the current request.
 func loc(r *http.Request) *i18n.Localizer {
 	return middleware.GetLocalizer(r)
@@ -551,6 +554,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// Port forwarding (registration & detection only; actual forwarding uses SSH tunnels)
 	register("/api/proxy/ports", ServeProxyPortAction)
 	register("/api/proxy/ports/enabled", ServeProxySetPortEnabled)
+	register("/api/proxy/ports/rebind", ServeProxyRebind)
 	register("/api/proxy/detect", ServeProxyDetect)
 	// CORS proxy for Swagger UI "Try it out" — forwards API requests to avoid CORS issues
 	register("/api/openapi-proxy", proxy.ServeCORSProxy)

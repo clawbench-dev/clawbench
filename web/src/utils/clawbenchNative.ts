@@ -8,6 +8,21 @@
  */
 import type { ForgeTarget } from '@/composables/useForgeNavigation'
 
+/**
+ * Outcome of binding a forward's local listener (Electron).
+ *
+ * `port` may differ from the requested one when it was already taken on this
+ * machine — the caller must re-key the server registry to it, or the UI URL and
+ * the server's key would point at a port nothing listens on.
+ *
+ * `reason` separates a local bind conflict (retryable on another port) from an
+ * unreachable tunnel (not fixable by changing ports), so the two can show
+ * different copy instead of one misleading "check the service" toast.
+ */
+export type AddForwardResult =
+  | { ok: true; port: number }
+  | { ok: false; reason: 'conflict' | 'unreachable' }
+
 /** Full bridge contract shared by Android and Electron. */
 export interface ClawBenchNative {
   // Sync (preload / JS-interface local values)
@@ -73,9 +88,19 @@ export interface ClawBenchNative {
   /** The transport preference the native layer is currently using. */
   getTunnelTransport?(): Promise<string> | string
   /**
+   * Write the tunnel transport preference ('ssh' | 'h2'). The host validates
+   * the value and persists it; it takes effect on the next reconnect.
+   *
+   * Desktop-only: the Android shell exposes the boolean
+   * `setTunnelTransportH2Enabled` instead, because its transport is a local
+   * SharedPreferences switch. There is no 'auto' mode — the host rejects
+   * anything else, so the type admits only the two wires.
+   */
+  setTunnelTransport?(pref: 'ssh' | 'h2'): Promise<boolean> | boolean
+  /**
    * 'ssh' | 'h2' — the transport that carried the last successful connect.
-   * Distinct from the configured preference (a 'both' client reports whichever
-   * one actually won), which is what a status display wants to show.
+   * Distinct from the configured preference, which is what a status display
+   * wants to show.
    */
   getActiveTunnelTransport?(): Promise<string> | string
   /**
@@ -113,11 +138,21 @@ export interface ClawBenchNative {
   connectToServer(url: string, password: string): Promise<void>
   /**
    * Bind a local forward. The result differs by host:
-   *   - Electron: `Promise<boolean>` — false means the listener could not bind.
+   *   - Electron: a structured result. `{ok:true, port}` carries the port
+   *     ACTUALLY bound, which may differ from `localPort` when that port was
+   *     already taken on this machine; `{ok:false, reason}` says why.
    *   - Android: `undefined` (a synchronous @JavascriptInterface `void` method),
-   *     so a missing/false result must NOT be read as failure there.
+   *     so a missing/false result must NOT be read as failure there — Android
+   *     reports through the `clawbench-port-forward-result` CustomEvent.
+   *
+   * Legacy hosts may still return a bare boolean; the caller treats `false` as
+   * a failure and anything else as success (with no port change).
    */
-  addForwardedPort(localPort: number, targetPort: number, host: string): Promise<boolean | void> | void
+  addForwardedPort(
+    localPort: number,
+    targetPort: number,
+    host: string,
+  ): Promise<AddForwardResult | boolean | void> | AddForwardResult | boolean | void
   removeForwardedPort(localPort: number): Promise<void>
   /**
    * Publish a service running on THIS device on a loopback port of the server

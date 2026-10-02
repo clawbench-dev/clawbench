@@ -114,6 +114,97 @@ func TestProxyRegistry_UnregisterPort_NotRegistered(t *testing.T) {
 	assert.Contains(t, err.Error(), "not registered")
 }
 
+func TestProxyRegistry_RebindPort_MovesKeyAndKeepsFields(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	local, err := r.RegisterPort(5173, "", "Vite Dev", "https", "")
+	assert.NoError(t, err)
+
+	assert.NoError(t, r.RebindPort(local, local+1))
+
+	// Old key gone, new key present.
+	assert.Nil(t, r.ports[local], "the old local port must no longer be registered")
+	moved := r.ports[local+1]
+	assert.NotNil(t, moved)
+	// Target and metadata are untouched — only the listen port moved.
+	assert.Equal(t, 5173, moved.Port)
+	assert.Equal(t, "Vite Dev", moved.Name)
+	assert.Equal(t, "https", moved.Protocol)
+	assert.Equal(t, local+1, moved.LocalPort, "the struct's own field must track the new key")
+}
+
+func TestProxyRegistry_RebindPort_NotFound(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	err := r.RebindPort(9999, 10000)
+	assert.ErrorIs(t, err, ErrRebindPortNotFound)
+}
+
+func TestProxyRegistry_RebindPort_TargetTaken(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	first, err := r.RegisterPort(5173, "", "one", "", "")
+	assert.NoError(t, err)
+	second, err := r.RegisterPort(8080, "", "two", "", "")
+	assert.NoError(t, err)
+
+	// Moving `first` onto `second`'s key must be refused with the retryable
+	// sentinel, not silently overwrite the other mapping.
+	err = r.RebindPort(first, second)
+	assert.ErrorIs(t, err, ErrRebindTargetTaken)
+	// Both entries survive.
+	assert.NotNil(t, r.ports[first])
+	assert.NotNil(t, r.ports[second])
+}
+
+func TestProxyRegistry_RebindPort_SamePortIsNoOp(t *testing.T) {
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	local, err := r.RegisterPort(5173, "", "one", "", "")
+	assert.NoError(t, err)
+	assert.NoError(t, r.RebindPort(local, local))
+	assert.NotNil(t, r.ports[local])
+}
+
+func TestProxyRegistry_RebindPort_RejectsReverse(t *testing.T) {
+	// A reverse mapping's localPort is the SERVER-side bind port chosen by
+	// allocateServerPort; the client never rebinds it, so a request to do so is
+	// a caller bug and must not silently move the server's listener.
+	r := newTestRegistry(t)
+	defer r.Stop()
+
+	local, err := r.RegisterPort(5173, "", "rev", "", model.DirectionReverse)
+	assert.NoError(t, err)
+	err = r.RebindPort(local, local+1)
+	assert.Error(t, err)
+	assert.Nil(t, r.ports[local+1])
+}
+
+func TestProxyRegistry_RebindPort_PersistsUnderNewKey(t *testing.T) {
+	testDB := setupTestDB(t)
+	cleanup := SetDBForTest(testDB, testDB)
+	defer cleanup()
+
+	r := NewProxyRegistry(0)
+	defer r.Stop()
+
+	local, err := r.RegisterPort(5173, "", "Vite Dev", "http", "")
+	assert.NoError(t, err)
+	assert.NoError(t, r.RebindPort(local, local+1))
+
+	// The DB row must move with the registry key, or a restart would resurrect
+	// the stale port and drop the live one.
+	var newCount, oldCount int
+	assert.NoError(t, testDB.QueryRow("SELECT COUNT(*) FROM forwarded_ports WHERE local_port = ?", local+1).Scan(&newCount))
+	assert.NoError(t, testDB.QueryRow("SELECT COUNT(*) FROM forwarded_ports WHERE local_port = ?", local).Scan(&oldCount))
+	assert.Equal(t, 1, newCount)
+	assert.Equal(t, 0, oldCount)
+}
+
 func TestProxyRegistry_ListPorts_Sorted(t *testing.T) {
 	r := newTestRegistry(t)
 	defer r.Stop()

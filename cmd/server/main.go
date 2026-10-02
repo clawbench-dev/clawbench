@@ -1086,29 +1086,24 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 		proxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 
 		// Reverse mappings bind ports on the server, so ClawBench's own HTTP
-		// port must never be handed out. The SSH port is protected only when
-		// SSH is enabled: sshPort == 0 means "none", not "auto" (the SSH
-		// server's own mainPort+1 default is already hard-denied by the h2
-		// guard's SSHPort field — see tunnelGuard).
-		sshPort := 0
-		if cfg.PortForward.Enabled {
-			sshPort = cfg.PortForward.Port
-			if sshPort == 0 {
-				sshPort = port + 1
-			}
+		// port must never be handed out. The SSH port is always reserved: the
+		// listener is always on (see the start below), and reserving a port
+		// that is actually in use is the point — a reverse mapping that took
+		// 20001 would fight the tunnel itself.
+		sshPort := cfg.PortForward.Port
+		if sshPort == 0 {
+			sshPort = port + 1
 		}
 		proxyService.SetReservedPorts(reservedPortsFor(port, sshPort)...)
 		service.ProxyService = proxyService
 		defer proxyService.Stop()
 	}
 
-	if cfg.PortForward.Enabled {
-		sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
-		startSSHServer(sshServerRef)
-		defer func() { sshServerRef.Close() }()
-	} else {
-		slog.Info("SSH tunnel and port forwarding disabled by config")
-	}
+	// The SSH tunnel listener is always on; see ApplyDefaults for why the
+	// switch was removed.
+	sshServerRef = ssh.NewServer(cfg.PortForward, port, cfg.Password, service.ProxyService)
+	startSSHServer(sshServerRef)
+	defer func() { sshServerRef.Close() }()
 
 	// Initialize FRP tunnel (Fast Reverse Proxy for remote access from Android).
 	// FRP is disabled by default; requires user-provided frps server.
@@ -1401,8 +1396,10 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Count tasks
 	taskCount := scheduler.TaskCount()
 
-	// Determine SSH port
-	sshEnabled := cfg.PortForward.Enabled && sshServerRef != nil
+	// Determine SSH port. The listener is always on, so the only question is
+	// whether it actually came up (a bind failure retracts sshServerRef — see
+	// ClearSSHServer).
+	sshEnabled := sshServerRef != nil
 	sshPort := 0
 	if sshEnabled {
 		sshPort = sshServerRef.Port()
@@ -1879,20 +1876,10 @@ func hotReloadSSH(cfg model.Config, port int) {
 		service.ProxyService.SetAllowedPorts(cfg.PortForward.AllowedPorts)
 	}
 
-	if !cfg.PortForward.Enabled {
-		// SSH should be disabled. Close only the SSH listener: the registry
-		// keeps serving the h2 tunnel (see shouldCreateProxyRegistry), and its
-		// reverse mappings stay usable over h2. Only the SSH port stops being
-		// reserved — mainPort stays protected.
-		if sshRef != nil {
-			sshRef.Close()
-			handler.SetSSHServer(nil)
-			slog.Info("hot-reload: SSH tunnel disabled")
-		}
-		reserveSSHPorts(port, 0)
-		return
-	}
-
+	// The SSH listener is always on (cfg.PortForward.Enabled is pinned true in
+	// ApplyDefaults and in the PATCH path), so there is no "disable it" branch
+	// here any more — the listener either needs starting, restarting on a new
+	// port, or just reconfiguring.
 	newPort := cfg.PortForward.Port
 	if newPort == 0 {
 		newPort = port + 1

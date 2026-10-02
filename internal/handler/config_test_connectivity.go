@@ -19,6 +19,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
+	"clawbench/internal/service"
 	"clawbench/internal/speech"
 	"clawbench/internal/summarize"
 )
@@ -539,31 +540,60 @@ func testFeishu(ctx context.Context, values map[string]any) ConnectivityTestResu
 
 // ── Port Forward ─────────────────────────────────────────────
 
+// testPortForward reports whether port forwarding is usable AT ALL, which is
+// not the same question as "is the SSH listener up".
+//
+// Port forwarding has two wires, and an h2-capable install forwards ports even
+// with no SSH listener at all — that is the whole point of the h2 transport
+// (one port, no mainPort+1). Keying this test off the SSH server alone reported
+// "SSH tunnel server is not running" on a perfectly healthy h2-only install
+// (port_forward.enabled: false), the same mistake the port-forward panel's
+// "port forwarding unavailable" banner made.
+//
+// The h2 branch does NOT dial the main port: this handler runs INSIDE that
+// server, so a loopback dial would always succeed and prove nothing. The
+// registry is the real precondition — both /api/tunnel/stream and
+// /api/tunnel/control refuse every request with 503 when it is nil
+// (tunnel_stream.go, tunnel_control.go), and it is created unconditionally at
+// startup (cmd/server/proxy_registry_gate.go).
+//
+// This proves the h2 PRECONDITION, not the h2 data plane: it does not transfer
+// bytes over a duplex h2 stream. That needs a real tunnel client.
 func testPortForward(ctx context.Context, _ map[string]any) ConnectivityTestResult {
-	sshSrv := GetSSHServer()
-	if sshSrv == nil {
-		return ConnectivityTestResult{Success: false, Message: "SSH tunnel server is not running"}
-	}
+	if sshSrv := GetSSHServer(); sshSrv != nil {
+		port := sshSrv.Port()
+		if port == 0 {
+			return ConnectivityTestResult{Success: false, Message: "SSH tunnel server is not listening"}
+		}
 
-	port := sshSrv.Port()
-	if port == 0 {
-		return ConnectivityTestResult{Success: false, Message: "SSH tunnel server is not listening"}
-	}
+		target := fmt.Sprintf("localhost:%d", port)
+		d := net.Dialer{Timeout: 3 * time.Second}
+		conn, err := d.DialContext(ctx, "tcp", target)
+		if err != nil {
+			return ConnectivityTestResult{
+				Success: false,
+				Message: fmt.Sprintf("SSH tunnel server is not listening on port %d", port),
+			}
+		}
+		_ = conn.Close()
 
-	target := fmt.Sprintf("localhost:%d", port)
-	d := net.Dialer{Timeout: 3 * time.Second}
-	conn, err := d.DialContext(ctx, "tcp", target)
-	if err != nil {
 		return ConnectivityTestResult{
-			Success: false,
-			Message: fmt.Sprintf("SSH tunnel server is not listening on port %d", port),
+			Success: true,
+			Message: fmt.Sprintf("SSH tunnel server is listening on port %d", port),
 		}
 	}
-	_ = conn.Close()
+
+	// No SSH listener. Fall back to the h2 wire, which needs only the registry.
+	if service.ProxyService != nil {
+		return ConnectivityTestResult{
+			Success: true,
+			Message: fmt.Sprintf("Port forwarding is available over HTTP/2 on port %d", model.ServerPort),
+		}
+	}
 
 	return ConnectivityTestResult{
-		Success: true,
-		Message: fmt.Sprintf("SSH tunnel server is listening on port %d", port),
+		Success: false,
+		Message: "Port forwarding is not available: no SSH tunnel server and no port registry",
 	}
 }
 

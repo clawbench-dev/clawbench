@@ -40,19 +40,57 @@ public final class SshPortForwardTransport implements PortForwardTransport {
         this.probe = probe;
     }
 
+    /**
+     * How many ports above the requested one to try before giving up. JSch's
+     * {@code setPortForwardingL} returns the port it actually bound, and passing
+     * {@code 0} asks the OS for one — but only the requested/next-neighbour walk
+     * is used here (matching the h2 transport) so a rebind stays predictable.
+     */
+    private static final int LOCAL_PORT_SCAN_LIMIT = 50;
+
     @Override
-    public void addLocal(int localPort, int targetPort, String targetHost) throws Exception {
+    public int addLocal(int localPort, int targetPort, String targetHost) throws Exception {
         Session session = sessions.get();
         if (session == null) throw new JSchException("no SSH session");
-        try {
-            session.setPortForwardingL("127.0.0.1", localPort, targetHost, targetPort);
-        } catch (JSchException e) {
-            if (e.getMessage() != null && e.getMessage().contains("already registered")) {
-                AppLog.d(TAG, "SSH: port " + localPort + " already registered in JSch, treating as success");
-                return;
-            }
-            throw e;
+        // 0 is not a usable forward key (the frontend reaches the forward at
+        // localhost:{localPort}); reject it before walking candidates.
+        if (localPort <= 0 || localPort > 65535) {
+            throw new JSchException("invalid local port: " + localPort);
         }
+        JSchException lastConflict = null;
+        for (int candidate : localPortCandidates(localPort)) {
+            try {
+                // The return value is the local port JSch actually bound, which
+                // equals `candidate` for an explicit port. Capturing it (rather
+                // than discarding it) keeps this correct if a 0 candidate is ever
+                // added, and is what the caller re-keys the registry to.
+                return session.setPortForwardingL("127.0.0.1", candidate, targetHost, targetPort);
+            } catch (JSchException e) {
+                String msg = e.getMessage();
+                if (msg != null && msg.contains("already registered")) {
+                    AppLog.d(TAG, "SSH: port " + candidate + " already registered in JSch, treating as success");
+                    return candidate;
+                }
+                if (msg != null && msg.contains("cannot be bound")) {
+                    // Occupied on this device — try the next candidate.
+                    lastConflict = e;
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw lastConflict != null ? lastConflict : new JSchException("no free local port");
+    }
+
+    /** Requested port, then its next neighbours (see the desktop shell's scan). */
+    private static int[] localPortCandidates(int requested) {
+        int start = Math.max(1, requested);
+        int count = Math.min(start + LOCAL_PORT_SCAN_LIMIT, 65535) - start + 1;
+        int[] out = new int[Math.max(0, count)];
+        for (int i = 0; i < out.length; i++) {
+            out[i] = start + i;
+        }
+        return out;
     }
 
     @Override

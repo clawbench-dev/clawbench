@@ -8,7 +8,7 @@ import { ref } from 'vue'
  *
  * The tunnel may be carried by SSH or the h2 stream tunnel, so status copy is
  * transport-neutral and gets a parenthesized annotation only when a single wire
- * is known. `''` (unknown) and `'both'` (a preference, not a wire) must render
+ * is known. `''` (unknown) must render
  * the bare neutral wording — guessing would be worse than saying nothing.
  */
 
@@ -45,7 +45,6 @@ const i18n = createI18n({
         transportLabel: '传输方式',
         transportSsh: 'SSH',
         transportH2: 'HTTP/2',
-        transportAuto: '自动',
         transportAnnotation: '（{transport}）',
         tunnelDisconnected: '隧道未连接{transport}',
         tunnelDisconnectedDetail: '端口映射将无法使用，请检查网络或重新打开页面',
@@ -130,11 +129,24 @@ vi.mock('@/composables/useToast.ts', () => ({
   useToast: () => ({ show: mockToastShow, dismiss: vi.fn() }),
 }))
 
-vi.mock('@/composables/usePlatformDetect.ts', () => ({
-  isWindowsUA: false,
-  isMacDesktopUA: false,
-  isLinuxDesktopUA: false,
-}))
+// The component reads the host axes through usePlatformDetect, not useAppMode.
+// Real refs (see the sibling transport test): the template binds `isNativeApp`
+// directly, and a bare `{ value }` object would always be truthy.
+vi.mock('@/composables/usePlatformDetect.ts', async () => {
+  const { ref } = await import('vue')
+  return {
+    usePlatformDetect: () => ({
+      isElectron: ref(false),
+      isAndroidApp: ref(isAppMode.value),
+      isWebApp: ref(!isAppMode.value),
+      isNativeApp: ref(isAppMode.value),
+      isTouchPrimary: ref(false),
+    }),
+    isWindowsUA: false,
+    isMacDesktopUA: false,
+    isLinuxDesktopUA: false,
+  }
+})
 
 vi.mock('@/utils/portForwardUtils.ts', async () => {
   // Keep the REAL portForwardUnavailable: the panel's banner gate now uses it,
@@ -208,8 +220,9 @@ describe('ProxyPanelContent transport annotation', () => {
     expect(text).not.toContain('（')
   })
 
-  it('renders the bare neutral wording for the both preference', () => {
-    // 'both' is a preference, not a wire: the winner is not determinable.
+  it('renders the bare neutral wording for a value it cannot label', () => {
+    // The retired 'both' preference is no longer a possible wire, and a future
+    // value this client does not know must not be annotated with a guess.
     activeTransport.value = 'both'
     tunnelStatus.value = 'disconnected'
     const wrapper = mountPanel()
