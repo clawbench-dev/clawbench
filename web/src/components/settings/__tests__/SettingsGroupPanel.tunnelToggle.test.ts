@@ -135,7 +135,7 @@ vi.mock('@/composables/usePortForward', async () => {
   // Web mode's status row reads these instead of the client-tunnel state: with
   // no native tunnel there is nothing client-side to report, so readiness comes
   // from the server (SSH listener up, or an h2-capable transport).
-  const sshInfo = ref<{ enabled: boolean } | null>(null)
+  const sshInfo = ref<{ enabled: boolean; port?: number } | null>(null)
   const transportAllowsH2 = ref(false)
   const loadSSHInfo = vi.fn().mockResolvedValue(undefined)
   Object.assign(mockTunnel, {
@@ -176,6 +176,8 @@ const i18n = createI18n({
           portForwardEnabled: 'SSH 隧道服务器',
           portForwardEnabledDesc: '监听独立端口，供手动 ssh -L 或桌面端连接',
           portForwardPort: 'SSH 隧道端口',
+          portForwardPortAuto: '自动',
+          portForwardPortAutoResolved: '自动（{port}）',
           portForwardTransport: '隧道传输方式',
           portForwardTransportDesc: '选择端口映射使用的传输通道',
           tunnelStatusConnected: '隧道已连接',
@@ -198,7 +200,15 @@ function makePortForwardConfig(): GroupPanelConfig {
     panelId: 'portForward',
     // No enableKey: the SSH listener is always on, so the panel has no switch.
     commonFields: [
-      { labelKey: 'settings.items.portForwardPort', key: 'port_forward.port', type: 'number', source: 'server' },
+      {
+        labelKey: 'settings.items.portForwardPort',
+        key: 'port_forward.port',
+        type: 'number',
+        source: 'server',
+        // Mirrors the real field spec: 0 renders as the localized "auto"
+        // sentinel, never a raw 0. The panel layers the resolved port on top.
+        displayTransform: (v: unknown) => v === 0 ? i18n.global.t('settings.items.portForwardPortAuto') : v,
+      },
     ],
   }
 }
@@ -212,7 +222,7 @@ function mountPanel(config: GroupPanelConfig = makePortForwardConfig()) {
         SettingsItem: {
           name: 'SettingsItem',
           props: ['label', 'description', 'type', 'modelValue', 'options', 'min', 'max', 'step', 'needsRestart', 'disabled', 'forceClose', 'defaultValue', 'displayFormat', 'displayTransform', 'noDivider', 'progress', 'refreshable', 'refreshing'],
-          template: '<div class="mock-settings-item" :data-key="label" :data-type="type" :data-value="modelValue"><button v-if="type === \'switch\'" class="mock-switch" @click="$emit(\'update:modelValue\', !modelValue)">toggle</button></div>',
+          template: '<div class="mock-settings-item" :data-key="label" :data-type="type" :data-value="modelValue" :data-display="displayTransform ? displayTransform(modelValue) : modelValue"><button v-if="type === \'switch\'" class="mock-switch" @click="$emit(\'update:modelValue\', !modelValue)">toggle</button></div>',
           emits: ['update:modelValue', 'editToggle', 'descToggle', 'click', 'refresh'],
         },
         BottomSheet: { template: '<div><slot /></div>' },
@@ -1053,5 +1063,135 @@ describe('transport picker: real Android host contract', () => {
     // Pins that the getter reads the same store the setter writes rather than
     // returning a constant (which would make the row render a stale value).
     expect(src).toContain('BackgroundService.isTunnelTransportH2Enabled(activity)')
+  })
+})
+
+// ── Row order: transport picker above the SSH port row ──
+
+/**
+ * The transport choice decides whether the SSH port row is used at all — an h2
+ * client hides it (sshOnlyFieldsHidden). Rendering the picker first makes that
+ * dependency read top-down instead of bottom-up.
+ */
+describe('port-forward panel row order', () => {
+  it('renders the transport picker before the SSH port row', async () => {
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    const rows = wrapper.findAll('.mock-settings-item')
+    const transportIdx = rows.findIndex(r => r.attributes('data-key') === '隧道传输方式')
+    const portIdx = rows.findIndex(r => r.attributes('data-key') === 'SSH 隧道端口')
+
+    expect(transportIdx).toBeGreaterThanOrEqual(0)
+    expect(portIdx).toBeGreaterThanOrEqual(0)
+    expect(transportIdx).toBeLessThan(portIdx)
+  })
+
+  it('keeps the transport picker visible when the port row is hidden (h2)', async () => {
+    // The picker must never be hidden by its own dependent row, since it is how
+    // the user switches back to SSH.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'h2', setTunnelTransport: vi.fn() }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(findTransportSelect(wrapper)).toBeTruthy()
+    expect(wrapper.findAll('.mock-settings-item').find(r => r.attributes('data-key') === 'SSH 隧道端口')).toBeUndefined()
+  })
+})
+
+// ── Auto port row shows the resolved listening port ──
+
+/**
+ * `port_forward.port: 0` means auto-assign; the server resolves it to a concrete
+ * port (main port + 1). The row must show BOTH facts — that it is automatic and
+ * which port is actually listening — rather than a bare "自动".
+ */
+describe('port-forward panel: auto port display', () => {
+  /** The rendered SSH port row, if any. */
+  function portRow(wrapper: ReturnType<typeof mountPanel>) {
+    return wrapper.findAll('.mock-settings-item').find(r => r.attributes('data-key') === 'SSH 隧道端口')
+  }
+
+  it('shows 自动（<resolved>）when auto and the server reports a port', async () => {
+    mockNative.current = undefined
+    localValues['port_forward.port'] = 0
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: true, port: 20001 }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)!.attributes('data-display')).toBe('自动（20001）')
+  })
+
+  it('degrades to plain 自动 before the probe resolves', async () => {
+    mockNative.current = undefined
+    localValues['port_forward.port'] = 0
+    ;(mockTunnel.sshInfo as { value: unknown }).value = null
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)!.attributes('data-display')).toBe('自动')
+  })
+
+  it('degrades to plain 自动 when SSH is disabled', async () => {
+    mockNative.current = undefined
+    localValues['port_forward.port'] = 0
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: false, port: 0 }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)!.attributes('data-display')).toBe('自动')
+  })
+
+  it('updates to the resolved port when the probe resolves after mount', async () => {
+    // The row mounts before `/api/ssh/info/full` returns, so it must start at
+    // plain "自动" and re-render with the port once sshInfo lands — the
+    // displayTransform closure reads sshInfo.value inside SettingsItem's
+    // displayValue computed, which is what makes it reactive.
+    mockNative.current = undefined
+    localValues['port_forward.port'] = 0
+    ;(mockTunnel.sshInfo as { value: unknown }).value = null
+
+    const wrapper = mountPanel()
+    await flushPromises()
+    expect(portRow(wrapper)!.attributes('data-display')).toBe('自动')
+
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: true, port: 20001 }
+    await flushPromises()
+
+    expect(portRow(wrapper)!.attributes('data-display')).toBe('自动（20001）')
+  })
+
+  it('shows a concrete port verbatim', async () => {
+    mockNative.current = undefined
+    localValues['port_forward.port'] = 2222
+    ;(mockTunnel.sshInfo as { value: unknown }).value = { enabled: true, port: 20001 }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    expect(portRow(wrapper)!.attributes('data-display')).toBe('2222')
+  })
+
+  it('loads SSH info on a native host too (not just web mode)', async () => {
+    // The resolved port comes from the same probe the readiness row uses; the
+    // auto row needs it even when the client tunnel supplies the status.
+    mockAppMode.isAppMode.value = true
+    mockAppMode.isDesktopApp.value = true
+    mockNative.current = { getTunnelTransport: () => 'ssh', setTunnelTransport: vi.fn() }
+
+    mountPanel()
+    await flushPromises()
+
+    expect(mockTunnel.loadSSHInfo as ReturnType<typeof vi.fn>).toHaveBeenCalled()
   })
 })

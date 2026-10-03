@@ -18,6 +18,13 @@
       <button class="header-btn" @click="handleOpenScan" :title="t('proxy.scanTitle')">
         <Search :size="14" />
       </button>
+      <!-- Jump to the port-mapping settings panel. Dispatches an event rather
+           than switching tabs directly so App.vue can record the proxy panel as
+           the return origin — Back (Android hardware / edge swipe) then lands
+           here instead of on whatever tab preceded the jump. -->
+      <button class="header-btn" data-action="proxy-open-settings" :title="t('proxy.openSettings')" @click="handleOpenSettings">
+        <SettingsIcon :size="14" />
+      </button>
       <button class="create-btn" @click="openAddForm" :title="t('proxy.addPort')">
         <Plus :size="16" />
       </button>
@@ -294,7 +301,7 @@
 </template>
 
 <script setup>
-import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
+import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert, Settings as SettingsIcon } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
@@ -395,6 +402,19 @@ function handleOpenScan() {
   if (!hasScanned.value && !scanning.value) {
     detectPorts()
   }
+}
+
+/**
+ * Jump to the port-mapping settings panel.
+ *
+ * Dispatches the same `open-port-forward-settings` event the app already
+ * understands for cross-surface jumps (App.vue records the proxy panel as the
+ * return origin, then switches tabs). Going through the event rather than
+ * calling switchTab directly keeps this component from needing to know how App
+ * wires navigation — and is what makes Back return here.
+ */
+function handleOpenSettings() {
+  window.dispatchEvent(new CustomEvent('open-port-forward-settings'))
 }
 
 // Auto-refresh when the panel becomes the visible one (and on mount if it is

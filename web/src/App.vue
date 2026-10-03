@@ -619,6 +619,7 @@ import { useUpgrade } from './composables/useUpgrade'
 import { useEdgeSwipeBack } from './composables/useEdgeSwipeBack'
 import { handleBackNavigation, canNavigateBack, requestExitConfirm, canNavigateBackOverlay, handleBackNavigationOverlay } from './composables/useBackHandler'
 import { useNavigationContext } from './composables/useNavigationContext'
+import { setPendingSettingsCategory } from './composables/useSettingsNavigation'
 import { useNavigationCoordinator } from './composables/useNavigationCoordinator'
 import { useAndroidBackPress } from './composables/useAndroidBackPress'
 import { useF5Reload } from './composables/useF5Reload'
@@ -1996,6 +1997,7 @@ function registerAppEventListeners() {
   window.addEventListener('open-file-overlay', handleOpenFileOverlay)
   window.addEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
   window.addEventListener('close-file-overlay', handleOverlayClose)
+  window.addEventListener('open-port-forward-settings', handleOpenPortForwardSettings)
   window.addEventListener('navigate-to-commit', handleNavigateToCommit)
   window.addEventListener('quote-sent', playQuoteEmitAnimation)
   window.addEventListener('attach-to-chat', playQuoteEmitAnimation)
@@ -3181,6 +3183,22 @@ function handleOpenFileManager() {
 }
 
 /**
+ * Jump from the port-forwarding dock panel into its settings page.
+ *
+ * Records the proxy panel as the jump origin first so Back (Android hardware /
+ * edge swipe / header) returns there instead of landing on whatever tab
+ * happened to precede the jump — the same pattern as a terminal→file-manager
+ * jump. The settings page itself is reached through the module-level pending
+ * category, because the settings TabPanel is mounted lazily and may not exist
+ * yet when this fires.
+ */
+function handleOpenPortForwardSettings() {
+    beginExternalJump('proxy', surfaceLabel('proxy'))
+    setPendingSettingsCategory('portForward')
+    switchTab('settings')
+}
+
+/**
  * New File from the file manager: open an empty Untitled buffer in the viewer
  * and enter edit mode. No filename is requested and nothing is written to disk
  * — the name is asked for on the first save.
@@ -3672,6 +3690,7 @@ onUnmounted(() => {
     window.removeEventListener('open-file-overlay', handleOpenFileOverlay)
     window.removeEventListener('open-directory-from-context', handleOpenDirectoryFromEvent)
     window.removeEventListener('close-file-overlay', handleOverlayClose)
+    window.removeEventListener('open-port-forward-settings', handleOpenPortForwardSettings)
     window.removeEventListener('navigate-to-commit', handleNavigateToCommit)
     window.removeEventListener('quote-sent', playQuoteEmitAnimation)
     window.removeEventListener('attach-to-chat', playQuoteEmitAnimation)

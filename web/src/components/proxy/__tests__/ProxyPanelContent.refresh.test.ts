@@ -105,6 +105,7 @@ vi.mock('lucide-vue-next', () => {
     Plus: stub('i-plus'), Search: stub('i-search'), Lock: stub('i-lock'),
     Copy: stub('i-copy'), Smartphone: stub('i-phone'), ChevronDown: stub('i-chevron'),
     Network: stub('i-network'), Server: stub('i-server'), CircleAlert: stub('i-circle-alert'),
+    Settings: stub('i-settings'),
   }
 })
 
@@ -175,5 +176,25 @@ describe('ProxyPanelContent refresh', () => {
     await wrapper.setProps({ active: true })
     await nextTick()
     expect(mockRefresh).not.toHaveBeenCalled()
+  })
+
+  it('dispatches open-port-forward-settings from the header config button', async () => {
+    // The button is the only affordance that jumps to the port-mapping settings
+    // panel. It dispatches an event rather than switching tabs directly so
+    // App.vue can record the proxy panel as the return origin (Back lands here).
+    const wrapper = mountPanel(true)
+    const button = wrapper.find('[data-action="proxy-open-settings"]')
+    expect(button.exists()).toBe(true)
+
+    const seen: CustomEvent[] = []
+    const listener = (e: Event) => { seen.push(e as CustomEvent) }
+    window.addEventListener('open-port-forward-settings', listener)
+    try {
+      await button.trigger('click')
+    } finally {
+      window.removeEventListener('open-port-forward-settings', listener)
+    }
+
+    expect(seen).toHaveLength(1)
   })
 })

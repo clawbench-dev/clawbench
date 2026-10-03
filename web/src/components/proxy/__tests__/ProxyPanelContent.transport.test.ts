@@ -134,6 +134,7 @@ vi.mock('lucide-vue-next', () => {
     Plus: stub('i-plus'), Search: stub('i-search'), Lock: stub('i-lock'),
     Copy: stub('i-copy'), Smartphone: stub('i-phone'), ChevronDown: stub('i-chevron'),
     Network: stub('i-network'), Server: stub('i-server'), CircleAlert: stub('i-circle-alert'),
+    Settings: stub('i-settings'),
   }
 })
 

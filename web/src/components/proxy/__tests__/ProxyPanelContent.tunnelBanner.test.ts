@@ -139,6 +139,7 @@ vi.mock('lucide-vue-next', () => {
     Network: stub('i-network'),
     Server: stub('i-server'),
     CircleAlert: stub('i-circle-alert'),
+    Settings: stub('i-settings'),
   }
 })
 

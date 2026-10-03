@@ -143,6 +143,7 @@ export function useNavigationCoordinator(options: NavigationCoordinatorOptions) 
     if (surface === 'forge') return t('file.nav.backToForge')
     if (surface === 'terminal') return t('file.nav.backToTerminal')
     if (surface === 'settings') return t('file.nav.backToSettings')
+    if (surface === 'proxy') return t('file.nav.backToPortForward')
     return t('common.back')
   }
 
