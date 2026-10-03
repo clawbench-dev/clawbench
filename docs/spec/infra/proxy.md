@@ -56,6 +56,8 @@ flowchart TD
 - **`reallocateLocalPort` 只对正向生效**：正向的 `localPort` 是客户端监听端口，目标端口变化时可以跟着改；反向的 `localPort` 是服务器绑定端口，客户端目标变化时移动它等于静默改绑另一个服务器端口
 - **特权端口映射对 Android 必要**：Android 没有 root 权限，无法绑定 1024 以下端口。自动映射到高端口号后，SSH 隧道在 Android 上也能转发 80/443 端口的服务
 - **默认端口剥离**：重写 Host 时按 HTTP 规范剥离默认端口号（80 for HTTP, 443 for HTTPS），避免 `backend:80` 这样的非规范 Host 导致后端匹配失败
+- **面板刷新按「打开」而非「挂载」触发**：端口映射面板由 `v-show` 保活，挂载不等于打开，因此自动刷新挂在 `active` prop 上（`immediate` 覆盖记忆面板恢复的初始态）。刷新轮（`refreshPortForward` → `checkTunnelHealth(silent)`）同时更新端口列表、隧道判定与传输方式行；`silent` 保留已渲染行不闪 loading 占位，`refreshing` 刻意与 `loading` 分离（后者会把列表清成占位），并有单飞守卫防双击与轮询叠轮
+- **问题横幅门控在「有启用映射」上**：隧道 `disconnected` / `degraded` 的红色 / 黄色横幅只在 `ports.some(p => p.enabled)` 时显示——**没有任何端口需要转发时 `disconnected` 是刻意的空闲态**（Android 后台服务在无端口可转发时会按设计自行停止），此时报「隧道未连接…请检查网络」是冗余 + 误导（旁边空状态已说「暂无端口」）。判据与 `syncToNative` 的省电逻辑完全一致
 - **支持自签名证书**：HTTPS 目标跳过证书验证——开发环境常用自签名证书，严格验证会阻断转发
 - **探测目标恒为 loopback，超时必须按此收紧**：探测只连本机端口，真实握手是亚毫秒级，因此建连/握手超时收到 500ms 而非通用的秒级——保留宽超时会让"端口很多"再次退化成超时。并行度与全局并发都要有界：单请求内并行探测，同时用信号量封顶全局并发，避免 N 个并发请求各自扇出
 - **CORS 代理是开发便利工具**：Swagger UI 的"Try it out"从浏览器直接请求后端 API，但本地开发服务通常没有 CORS 头。CORS 代理在服务端转发请求，让用户在预览界面内直接测试 API。默认允许本地地址（`AllowLocalProxy=true`），生产环境应关闭
