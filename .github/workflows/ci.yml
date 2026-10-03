@@ -423,6 +423,13 @@ jobs:
   # is removed and it runs on each PR. It is skipped on `push`: the same commit
   # is already covered by the `pull_request` event.
   #
+  # ONE MATRIX JOB PER BROWSER, run in parallel. The three browsers used to run
+  # serially inside a single job (~33 min of test time + ~3 min of shared setup),
+  # which made the job's wall clock exceed the auto-merge wait window and forced
+  # a manual label re-paste on every merge. Splitting by browser makes the wall
+  # clock ~one browser (~13 min incl. its own setup) instead of three. The cost
+  # is duplicated setup (~3 min per job); the payoff is a merge that auto-completes.
+  #
   # `continue-on-error: true` (matching `android-e2e`) keeps the *workflow run*
   # from turning red when the suite flakes. It is NOT a free pass, though: the
   # job's own check-run still reports `failure` (observed via the API for
@@ -437,13 +444,33 @@ jobs:
   # <spec>`); let CI cover the full matrix.
   # --------------------------------------------------------------------------
   e2e:
-    name: E2E Tests (Playwright)
+    name: E2E Tests (Playwright, ${{ matrix.label }})
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     continue-on-error: true
-    # A hang must fail rather than burn the 6-hour default. The full suite
-    # measures ~33 min; the margin covers a cold Playwright browser install.
+    # A hang must fail rather than burn the 6-hour default. A single browser
+    # measures ~13 min; the margin covers a cold Playwright browser install.
     timeout-minutes: 60
+    strategy:
+      # Let every browser finish: a failure in one must not cancel the others,
+      # or a single flake would hide whether the other two are also broken.
+      fail-fast: false
+      matrix:
+        # `project` must match the Playwright project names in
+        # e2e/playwright.config.ts. `label` is only for the job/artifact name —
+        # the coverage project is called `chromium-coverage` because
+        # coverage.fixture.ts keys V8 collection on that exact name. `browser`
+        # is the name `playwright install` wants (note: not `chromium-coverage`).
+        include:
+          - project: chromium-coverage
+            label: chromium
+            browser: chromium
+          - project: firefox
+            label: firefox
+            browser: firefox
+          - project: webkit
+            label: webkit
+            browser: webkit
     steps:
       - uses: actions/checkout@v4
         with:
@@ -462,7 +489,9 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+        # Only this job's browser: installing all three would make each of the
+        # three parallel jobs pay for the other two.
+        run: npx playwright install --with-deps ${{ matrix.browser }}
 
       - name: Build Excalidraw vendor bundle
         # Same reason as the go:embed steps above: the root `npm run build` does
@@ -498,17 +527,21 @@ jobs:
         run: go build -o acp-mock ./cmd/acp-mock
 
       - name: Run E2E tests
-        run: npx playwright test --config e2e/playwright.config.ts
+        run: npx playwright test --config e2e/playwright.config.ts --project=${{ matrix.project }}
         env:
           E2E_PORT: '20100'
           E2E_PASSWORD: 'e2e-test-password'
 
+      # Coverage is collected ONLY on the chromium project (see
+      # e2e/fixtures/coverage.fixture.ts), so the other two jobs would generate
+      # an empty .nyc_output and just print the script's "no data" warning.
+      # Gate the report/upload on chromium to keep the other jobs' logs clean.
       - name: Generate E2E coverage report
-        if: always()
+        if: always() && matrix.project == 'chromium-coverage'
         run: ./scripts/check-e2e-coverage.sh
 
       - name: Upload E2E coverage
-        if: always()
+        if: always() && matrix.project == 'chromium-coverage'
         uses: actions/upload-artifact@v4
         with:
           name: e2e-coverage
@@ -519,7 +552,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.label }}
           path: playwright-report/
           retention-days: 30
 
@@ -527,7 +560,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results
+          name: playwright-results-${{ matrix.label }}
           path: test-results/
           retention-days: 7
 

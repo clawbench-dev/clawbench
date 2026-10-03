@@ -60,7 +60,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.ADMIN_TOKEN }}
         run: |
-          MAX_ATTEMPTS=40
+          # Wait window for all checks to finish. Must exceed the slowest
+          # blocking job so auto-merge completes without a manual label
+          # re-paste. Measured on PR #522: the Playwright e2e job was ~36 min
+          # when the three browsers ran serially in one job; after splitting it
+          # into one parallel job per browser the slowest e2e job is ~13 min,
+          # and Coverage Gate (Frontend) is ~17 min. 100 x 15s = 25 min covers
+          # both with margin for runner queueing. The job itself has no
+          # timeout-minutes, so it rides GitHub's 360-min default.
+          MAX_ATTEMPTS=100
           INTERVAL=15
 
           while IFS=' ' read -r PR_NUMBER PR_BRANCH; do
