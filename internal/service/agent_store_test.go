@@ -676,7 +676,7 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	// Duplicate
 	clone, err := service.DuplicateAgent("pi", "Pi Copy")
 	require.NoError(t, err)
-	assert.Contains(t, clone.ID, "pi-copy-")
+	assert.Regexp(t, `^pi-[0-9a-f]{8}$`, clone.ID, "copy id is <backend>-<8 hex>")
 	assert.Equal(t, "Pi Copy", clone.Name)
 	assert.Equal(t, "pi", clone.Backend)
 	assert.True(t, clone.AutoApprove, "auto_approve should be copied to the clone")
@@ -685,6 +685,58 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	assert.Len(t, agents, 2)
+}
+
+// Duplicating a copy must not compound the ID suffix. The old scheme built the
+// new ID from the source's ID verbatim ("<sourceID>-copy-<ts>"), so copying a
+// copy produced pi-copy-T1-copy-T2-copy-T3… — growing ~19 chars per generation
+// until it blew past the 128-char limit the API enforces on agent IDs. Deriving
+// the base from the backend instead keeps every generation flat.
+func TestDuplicateAgent_DoesNotCompoundSuffix(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "codebuddy", Name: "Codebuddy", Backend: "codebuddy",
+	}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	// Three generations of copies. DuplicateAgent persists to DB but does not
+	// publish to the in-memory map (the handler does), so reload between
+	// generations to make each copy a valid source for the next.
+	current := "codebuddy"
+	for i := range 3 {
+		clone, err := service.DuplicateAgent(current, "Copy")
+		require.NoError(t, err)
+		assert.Regexp(t, `^codebuddy-[0-9a-f]{8}$`, clone.ID,
+			"generation %d must stay flat, got %q", i+1, clone.ID)
+		assert.NotContains(t, clone.ID, "-copy-",
+			"generation %d must not carry a copy marker", i+1)
+		current = clone.ID
+		require.NoError(t, service.LoadAgentsIntoMemory())
+	}
+}
+
+// Two copies of the same source must get distinct IDs even when minted in the
+// same instant. SaveAgent upserts with ON CONFLICT(id) DO UPDATE, so an
+// identical ID would silently overwrite the first copy instead of creating a
+// second one. A random suffix makes same-millisecond collisions impossible.
+func TestDuplicateAgent_DistinctIDsWhenRapid(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi",
+	}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	seen := map[string]bool{}
+	for range 5 {
+		clone, err := service.DuplicateAgent("pi", "Copy")
+		require.NoError(t, err)
+		require.False(t, seen[clone.ID], "duplicate copy id %q", clone.ID)
+		seen[clone.ID] = true
+	}
+	// 1 source + 5 copies.
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Len(t, agents, 6)
 }
 
 func TestLoadAgentsIntoMemory(t *testing.T) {
