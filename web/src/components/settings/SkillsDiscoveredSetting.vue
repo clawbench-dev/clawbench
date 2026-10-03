@@ -47,7 +47,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertTriangle, FolderOpen } from 'lucide-vue-next'
 import {
@@ -84,6 +84,16 @@ onMounted(async () => {
   await loadSkills(getServerValueWithDefault('skills.enabled') !== false)
   await verifyPaths()
 })
+
+// The configuration card can add a source (a local dir is rescanned by the
+// server on PATCH; a new git repo is synced right after being added), which
+// reloads the shared skills list. Without re-verifying, the new entries' path
+// buttons stay disabled — they were never verified — until the page reopens.
+// Re-run whenever the path set actually changes, not on every list reload.
+watch(
+  () => skills.value.map((s) => s.path).join('\n'),
+  () => { void verifyPaths() },
+)
 
 async function verifyPaths() {
   const paths = skills.value.map((s) => s.path)

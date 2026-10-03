@@ -107,8 +107,11 @@ function load() {
  * Persist the whole repo list. The endpoint replaces the array wholesale, so
  * every mutation sends the full list — including any tokens the user typed in
  * the per-row fields.
+ *
+ * Returns true when the server accepted the list. Callers that add a repo need
+ * this to decide whether to kick a sync (a failed save must not).
  */
-async function saveRepos(next: RepoRow[]) {
+async function saveRepos(next: RepoRow[]): Promise<boolean> {
   reposSaving.value = true
   reposError.value = ''
   try {
@@ -122,8 +125,10 @@ async function saveRepos(next: RepoRow[]) {
     newRepoUrl.value = ''
     newRepoToken.value = ''
     await load()
+    return true
   } catch (err) {
     reposError.value = err instanceof Error ? err.message : String(err)
+    return false
   } finally {
     reposSaving.value = false
   }
@@ -137,7 +142,14 @@ async function addRepo() {
   const next = [...repos.value, { url, slug: '', has_token: newRepoToken.value !== '' }]
   const tokens = { ...repoTokens.value, [next.length - 1]: newRepoToken.value }
   repoTokens.value = tokens
-  await saveRepos(next)
+  const saved = await saveRepos(next)
+  if (!saved) return
+  // A newly added repo has no local checkout yet: the config PATCH only
+  // persists it (the server deliberately does not clone during a PATCH, which
+  // would put network IO behind the config write lock). Sync now so the new
+  // remote is cloned and scanned immediately — same path as the manual button,
+  // so the user gets the spinner and any per-repo error inline.
+  await refresh()
 }
 
 async function removeRepo(idx: number) {

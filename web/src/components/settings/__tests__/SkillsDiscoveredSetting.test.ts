@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
 import SkillsDiscoveredSetting from '@/components/settings/SkillsDiscoveredSetting.vue'
+import { loadSkills } from '@/composables/useSkillsState'
 
 vi.mock('@/utils/appLog', () => ({
   appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
@@ -159,6 +160,30 @@ describe('SkillsDiscoveredSetting', () => {
     // The surface matters: it is what makes Back return to the settings page
     // instead of walking up the directory tree.
     expect(revealInFileManager).toHaveBeenCalledWith('/home/me/.agents/skills/demo/SKILL.md', 'settings')
+  })
+
+  // Adding a source in the configuration card reloads the shared skills list
+  // (a local dir is rescanned by the server on PATCH; a new git repo is synced
+  // right after being added). The newly listed paths were never verified, so
+  // their jump buttons would stay disabled until the page reopened unless the
+  // card re-verifies on change.
+  it('re-verifies paths when the discovered list changes', async () => {
+    const fetchMock = vi.fn(async () => skillsResponse([]))
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountCard()
+    await flushPromises()
+    expect(wrapper.find('.skills-item-path').exists()).toBe(false)
+
+    // Simulate the config card reloading the shared list with a new skill.
+    fetchMock.mockImplementation(async () => skillsResponse([
+      row({ path: '/home/me/.agents/skills/fresh/SKILL.md' }),
+    ]))
+    await loadSkills(true)
+    await flushPromises()
+
+    const btn = wrapper.find('.skills-item-path')
+    expect(btn.exists()).toBe(true)
+    expect(btn.attributes('disabled')).toBeUndefined()
   })
 
   it('disables the jump for a path that does not exist', async () => {

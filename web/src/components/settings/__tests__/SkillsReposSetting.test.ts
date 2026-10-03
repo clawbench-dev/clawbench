@@ -118,6 +118,47 @@ describe('SkillsReposSetting', () => {
     ])
   })
 
+  // Adding a repo has no local checkout yet: the config PATCH only persists it
+  // (the server deliberately keeps network IO out of the config write lock), so
+  // the card must kick a sync itself or the new remote stays undiscovered until
+  // the periodic worker runs hours later.
+  it('triggers a sync immediately after adding a repo', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url === '/api/skills/refresh') {
+        return { ok: true, json: async () => ({ ok: true, skill_count: 1, errors: {} }) } as unknown as Response
+      }
+      return skillsResponse()
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountSetting()
+    await flushPromises()
+
+    await wrapper.find('.skills-repo-add input').setValue('https://github.com/b/two.git')
+    await wrapper.find('.skills-repo-add .fbtn-primary').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/skills/refresh', { method: 'POST' })
+  })
+
+  // A save the server rejected must not start a sync: there is nothing new to
+  // clone, and the user is already looking at the validation error.
+  it('does not sync when the repo list fails to save', async () => {
+    setServerValue.mockRejectedValueOnce(new Error('repo save failed'))
+    const fetchMock = vi.fn(async () => skillsResponse())
+    vi.stubGlobal('fetch', fetchMock)
+
+    const wrapper = mountSetting()
+    await flushPromises()
+
+    await wrapper.find('.skills-repo-add input').setValue('https://github.com/b/two.git')
+    await wrapper.find('.skills-repo-add .fbtn-primary').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/skills/refresh', expect.anything())
+    expect(wrapper.text()).toContain('repo save failed')
+  })
+
   it('removes a repo by patching the remaining array', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => skillsResponse([
       { url: 'https://github.com/a/one.git', slug: 'one-1', has_token: false },

@@ -316,6 +316,59 @@ func TestServeConfig_Patch_SkillsApplied(t *testing.T) {
 	assert.False(t, resp["needs_restart"].(bool))
 }
 
+// Adding a local skill directory must make its skills visible immediately.
+//
+// The PATCH handler invalidates and rescans the registry (settings.go, the
+// skills branch) precisely so a newly configured directory shows up without a
+// restart or a manual sync. Without that rescan the config is persisted, the
+// next GET /api/skills still lists the old sources, and the user sees an empty
+// "已发现的技能" card until the server is restarted.
+//
+// This asserts the end-to-end contract rather than calling ScanAll by hand:
+// PATCH the config, then GET the listing and require the new skill to be there.
+func TestServeConfig_Patch_SkillsDirsTriggersScan(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	isolateSkillGlobals(t)
+
+	root := t.TempDir()
+	model.DataDir = root
+	// Keep the scan deterministic: no native dirs, no shared ~/.agents/skills.
+	setSkillTestHome(t, t.TempDir())
+	model.BackendRegistry = []model.BackendSpec{}
+	model.ReplaceAgents(nil, nil)
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+	skill.ResetForTest()
+
+	// A directory that does not exist yet at PATCH time, so the discovery
+	// cannot have happened before it.
+	newDir := filepath.Join(root, "added")
+	writeSkillMD(t, filepath.Join(newDir, "fresh"), "fresh")
+
+	dirsJSON, err := json.Marshal([]string{newDir})
+	require.NoError(t, err)
+	body := fmt.Sprintf(`{"skills":{"dirs":%s}}`, dirsJSON)
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	require.Equal(t, http.StatusOK, callHandler(ServeConfig, req).Code)
+
+	// No manual ScanAll: the PATCH must have rescanned.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(listReq, model.SessionToken)
+	w := callHandler(ServeSkills, listReq)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	names := make([]string, 0, len(resp.Skills))
+	for _, s := range resp.Skills {
+		names = append(names, s.Name)
+	}
+	assert.Contains(t, names, "fresh",
+		"a directory added via PATCH must be scanned before the response returns")
+}
+
 func TestServeConfig_Patch_SkillsRejectsBadInput(t *testing.T) {
 	cases := []struct {
 		name string
