@@ -221,7 +221,7 @@
 
                 <!-- Proxy Tab -->
                 <TabPanel tabId="proxy" :activeTab="leftPanelActive" :noHeader="true">
-                  <ProxyPanelContent />
+                  <ProxyPanelContent :active="panelIsActive('proxy')" />
                 </TabPanel>
 
                 <!-- Terminal Tab -->

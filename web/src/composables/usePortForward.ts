@@ -73,6 +73,11 @@ const TRANSPORTS: readonly string[] = ['ssh', 'h2']
 const ports = ref<ForwardedPort[]>([])
 const detectedPorts = ref<DetectedPort[]>([])
 const loading = ref(false)
+// Whether a user-triggered refresh (header button / panel open) is in flight.
+// Kept separate from `loading` on purpose: `loading` blanks the list for a
+// "loading" placeholder, which is right on first load but wrong for a refresh
+// of an already-rendered list — the rows should stay put while the round runs.
+const refreshing = ref(false)
 const sshInfo = ref<SSHInfo | null>(null)
 const tunnelStatus = ref<TunnelStatus>('unknown')
 const tunnelMessage = ref('')
@@ -878,6 +883,29 @@ export function usePortForward() {
   }
 
   /**
+   * User-triggered refresh for the port-forward panel: one round that reloads
+   * the port list AND recomputes the tunnel verdict.
+   *
+   * Delegates to `checkTunnelHealth(true)` rather than calling `loadPorts`
+   * directly: the health check always loads the ports (before its SSH/h2 gate)
+   * and additionally refreshes the transport row, so a plain `loadPorts` would
+   * leave the verdict and the transport stale. `silent` keeps the previous
+   * verdict and the existing rows on screen instead of flashing a spinner.
+   *
+   * Guarded so a double-tap (or a refresh racing the 5s recovery poll) cannot
+   * stack rounds — the button's `loading` state is driven by `refreshing`.
+   */
+  async function refreshPortForward() {
+    if (refreshing.value) return
+    refreshing.value = true
+    try {
+      await checkTunnelHealth(true)
+    } finally {
+      refreshing.value = false
+    }
+  }
+
+  /**
    * Query Android native layer for SSH tunnel connection status.
    * Returns true (connected), false (disconnected), or null (unavailable/not app mode).
    */
@@ -1150,6 +1178,7 @@ export function usePortForward() {
     ports,
     detectedPorts,
     loading,
+    refreshing,
     isAppMode,
     sshInfo,
     tunnelStatus,
@@ -1177,6 +1206,7 @@ export function usePortForward() {
     syncToNative,
     loadSSHInfo,
     checkTunnelHealth,
+    refreshPortForward,
     refreshActiveTransport,
     transportAnnotation,
     openPort,

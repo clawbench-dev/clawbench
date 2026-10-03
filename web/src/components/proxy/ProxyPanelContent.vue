@@ -6,6 +6,15 @@
         <NetworkIcon :size="14" />
       </span>
       <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
+      <RefreshButton
+        class="header-btn"
+        data-action="proxy-refresh"
+        :size="14"
+        :loading="refreshing"
+        :disabled="refreshing"
+        :title="t('common.refresh')"
+        @click="refreshPortForward"
+      />
       <button class="header-btn" @click="handleOpenScan" :title="t('proxy.scanTitle')">
         <Search :size="14" />
       </button>
@@ -302,6 +311,15 @@ import { sshInstallHint } from '@/utils/portForwardUtils.ts'
 
 const { t } = useI18n()
 
+// Whether this panel is the visible one. App.vue keeps panels alive with
+// v-show, so mounting alone is not "opened" — the panel must also be the
+// active tab. Used to auto-refresh the port list + tunnel verdict on open.
+// Runtime declaration (not `defineProps<…>()`): this SFC's script block is
+// plain JS, where TS type syntax fails to parse.
+const props = defineProps({
+  active: { type: Boolean, default: false },
+})
+
 // Form state (shared for add & edit)
 const showForm = ref(false)
 const editingLocalPort = ref(null) // null = add mode, number = edit mode
@@ -340,7 +358,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, refreshing, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, refreshPortForward, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 // Host axis (see usePlatformDetect). `isNativeApp` is true for BOTH native
 // hosts; `isAndroidApp` excludes the Electron desktop shell.
 const { isNativeApp, isAndroidApp, isWebApp } = usePlatformDetect()
@@ -378,6 +396,16 @@ function handleOpenScan() {
     detectPorts()
   }
 }
+
+// Auto-refresh when the panel becomes the visible one (and on mount if it is
+// already active — `immediate` covers the remembered-panel restore, where the
+// proxy tab is active before this component is ever mounted). `active` is a
+// prop, not a TabPanel-internal `everOpened`: the panel is kept alive by
+// v-show, so mounting is not the same as being opened, and a transition-only
+// watch would miss the initial active mount.
+watch(() => props.active, (isActive) => {
+  if (isActive) refreshPortForward()
+}, { immediate: true })
 
 // Tunnel guide: per-OS hint for getting a local ssh client when the manual
 // tunnel command is meant to run on this machine (web mode only).

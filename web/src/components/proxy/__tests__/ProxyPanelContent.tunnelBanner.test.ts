@@ -52,6 +52,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     ports: ref([]),
     detectedPorts: ref([]),
     loading: ref(false),
+    refreshing: ref(false),
     // The component reads isAppMode from here (and isDesktopApp from
     // useAppMode); keep both pointing at the same refs.
     isAppMode: host.isAppMode,
@@ -78,6 +79,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     detectPorts: vi.fn(),
     rescanPorts: vi.fn(),
     checkTunnelHealth: vi.fn(),
+    refreshPortForward: vi.fn(),
     openPortWithCheck: vi.fn(),
     openInExternalBrowser: vi.fn(),
     copyServerAddress: vi.fn(),

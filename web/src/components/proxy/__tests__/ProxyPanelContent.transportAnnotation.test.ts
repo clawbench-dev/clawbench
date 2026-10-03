@@ -92,6 +92,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     ports: ref([]),
     detectedPorts: ref([]),
     loading: ref(false),
+    refreshing: ref(false),
     isAppMode,
     sshInfo: ref(null),
     tunnelStatus,
@@ -113,6 +114,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     // The retry handler re-checks health and toasts based on the resulting
     // status; simulate a successful recovery.
     checkTunnelHealth: vi.fn().mockImplementation(async () => { tunnelStatus.value = 'ok' }),
+    refreshPortForward: vi.fn(),
     transportAnnotation,
     openPortWithCheck: vi.fn(),
     openInExternalBrowser: vi.fn(),
@@ -253,7 +255,9 @@ describe('ProxyPanelContent transport annotation', () => {
     tunnelStatus.value = 'disconnected'
     const wrapper = mountPanel()
 
-    await wrapper.find('.rb').trigger('click')
+    // Target the banner's retry button, not the header refresh button — both
+    // render a RefreshButton (same stub class), so `.rb` alone is ambiguous.
+    await wrapper.find('.tunnel-retry-btn').trigger('click')
     await Promise.resolve()
 
     expect(mockToastShow).toHaveBeenCalledWith('隧道已恢复（HTTP/2）', expect.objectContaining({ type: 'success' }))
@@ -264,7 +268,9 @@ describe('ProxyPanelContent transport annotation', () => {
     tunnelStatus.value = 'disconnected'
     const wrapper = mountPanel()
 
-    await wrapper.find('.rb').trigger('click')
+    // Target the banner's retry button, not the header refresh button — both
+    // render a RefreshButton (same stub class), so `.rb` alone is ambiguous.
+    await wrapper.find('.tunnel-retry-btn').trigger('click')
     await Promise.resolve()
 
     expect(mockToastShow).toHaveBeenCalledWith('隧道已恢复', expect.objectContaining({ type: 'success' }))
