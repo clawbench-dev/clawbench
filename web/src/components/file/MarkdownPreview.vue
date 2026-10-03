@@ -538,7 +538,11 @@ watch(bodyRef, (el, old) => {
 /** Re-derive this file's markers from the accumulated baseline. */
 function restoreMarkers() {
     const f = props.file
-    if (f?.path && f.content) syncMarkersFor(f.path, 'markdown', f.content)
+    // `content === ''` is a valid (empty) file, not "not loaded" — `null` is the
+    // not-loaded/binary marker. A truthy check here dropped the markers for a
+    // file that had been edited down to nothing, so switch-away-and-back lost
+    // its "all deleted" marker.
+    if (f?.path && f.content !== null && f.content !== undefined) syncMarkersFor(f.path, 'markdown', f.content)
 }
 
 onMounted(restoreMarkers)

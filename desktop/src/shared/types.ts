@@ -62,3 +62,26 @@ export const WINDOW_STATE_CHANNEL = 'clawbench-window-state'
 export interface WindowState {
   maximized: boolean
 }
+
+/**
+ * Main → renderer channel reporting that a forward's local listener drifted to
+ * a different port than the one the server registry knows about.
+ *
+ * `listenForward` binds the next free port when the requested one is taken, and
+ * the SERVER registry is keyed by the port the renderer registered. The add
+ * path already relays the actually-bound port back through the
+ * `addForwardedPort` return value, but the rebuild path (`rebuildAllForwards`
+ * on reconnect) has no such return to the renderer — so a second drift during a
+ * reconnect left the server keyed to a port nothing was listening on, and the
+ * mapping could not even be deleted from the UI. This event carries the same
+ * information so the renderer can re-key the registry.
+ *
+ * Payload: `{ requested, actual }` — the port the registry used vs. the port
+ * actually bound.
+ */
+export const PORT_REBOUND_CHANNEL = 'clawbench-port-rebound'
+
+export interface PortReboundEvent {
+  requested: number
+  actual: number
+}

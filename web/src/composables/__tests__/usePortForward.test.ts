@@ -2179,6 +2179,40 @@ describe('usePortForward', () => {
             mockIsAppMode.value = false
         })
 
+        it('re-keys the server registry on a desktop port-rebound event', async () => {
+            // Desktop counterpart of the Android re-key test: a reconnect
+            // rebuild can move the local listener to a different port with no
+            // return value reaching the renderer, so the main process relays
+            // `{ requested, actual }` via a CustomEvent. The registry must
+            // follow it, or the UI URL and DELETE would name a dead port.
+            mockApiPost.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports/rebind') return Promise.resolve({ status: 'ok' })
+                return Promise.resolve({ localPort: 3000 })
+            })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            ;(window as any).ClawBenchNative = { addForwardedPort: vi.fn().mockResolvedValue({ ok: true, port: 3000 }) }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            mockApiPost.mockClear()
+            window.dispatchEvent(new CustomEvent('clawbench-port-rebound', {
+                detail: { requested: 3000, actual: 3001 },
+            }))
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports/rebind', { localPort: 3000, newLocalPort: 3001 })
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portRebound',
+                expect.objectContaining({ type: 'info' }),
+            )
+
+            delete (window as any).ClawBenchNative
+        })
+
         it('shows the conflict copy on an Android bind conflict', async () => {
             // The Android host reports `reason: 'conflict'` when no free port
             // could be bound; that must not surface as "check the service".

@@ -382,13 +382,31 @@ describe('transport picker: Android draft + save', () => {
     return wrapper.find('.group-panel__save-btn')
   }
 
+  /**
+   * A fake Android bridge backed by a mutable value, like the real
+   * SharedPreferences: the setter must actually change what the getter returns,
+   * otherwise the new readback verification (WARN-401) treats the write as a
+   * silent failure. `getTunnelTransportH2Enabled` is a plain sync function (the
+   * real @JavascriptInterface method is synchronous), so this is faithful.
+   */
+  function statefulAndroidHost(initial: boolean) {
+    let stored = initial
+    const setTunnelTransportH2Enabled = vi.fn((on: boolean) => { stored = on })
+    return {
+      host: {
+        getTunnelTransportH2Enabled: () => stored,
+        setTunnelTransportH2Enabled,
+      },
+      setTunnelTransportH2Enabled,
+      get stored() { return stored },
+    }
+  }
+
   beforeEach(() => {
     mockAppMode.isAppMode.value = true
     mockAppMode.isDesktopApp.value = false
-    mockNative.current = {
-      getTunnelTransportH2Enabled: () => false,
-      setTunnelTransportH2Enabled: vi.fn(),
-    }
+    const h = statefulAndroidHost(false)
+    mockNative.current = h.host
   })
 
   it('does NOT write on change — the value stays a draft', async () => {
@@ -441,10 +459,8 @@ describe('transport picker: Android draft + save', () => {
     // The inverse mapping: picking 'ssh' must store false, not leave the host
     // on h2. Pins the direction of the conversion (a constant `true` write
     // would pass the h2 case above).
-    mockNative.current = {
-      getTunnelTransportH2Enabled: () => true,
-      setTunnelTransportH2Enabled: vi.fn(),
-    }
+    const h = statefulAndroidHost(true)
+    mockNative.current = h.host
     const wrapper = mountPanel()
     await flushPromises()
 
@@ -452,8 +468,8 @@ describe('transport picker: Android draft + save', () => {
     await saveButton(wrapper).trigger('click')
     await flushPromises()
 
-    const setter = (mockNative.current as { setTunnelTransportH2Enabled: ReturnType<typeof vi.fn> }).setTunnelTransportH2Enabled
-    expect(setter).toHaveBeenCalledWith(false)
+    expect(h.setTunnelTransportH2Enabled).toHaveBeenCalledWith(false)
+    expect(h.stored).toBe(false)
   })
 
   it('does not reconnect when only a server field changed', async () => {
@@ -486,6 +502,31 @@ describe('transport picker: Android draft + save', () => {
     await flushPromises()
 
     expect(setter).toHaveBeenCalledWith(true)
+    expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
+    expect(mockToastShow).not.toHaveBeenCalledWith('配置已保存', expect.anything())
+    expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()
+  })
+
+  it('keeps the draft and warns when the native write is silently dropped', async () => {
+    // Regression (WARN-401): the Android setter is a synchronous void method, so
+    // a no-op write (stubbed context / wrong key) used to be indistinguishable
+    // from success — the panel went clean while the host kept the old value and
+    // the user could not re-trigger the save. The readback must catch it.
+    const setter = vi.fn() // accepts the call, changes nothing
+    mockNative.current = {
+      getTunnelTransportH2Enabled: () => false,
+      setTunnelTransportH2Enabled: setter,
+    }
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await findTransportSelect(wrapper)!.vm.$emit('update:modelValue', 'h2')
+    await saveButton(wrapper).trigger('click')
+    await flushPromises()
+
+    expect(setter).toHaveBeenCalledWith(true)
+    // Still a draft (not committed), and the tunnel was not touched.
     expect(findTransportSelect(wrapper)!.props('modelValue')).toBe('h2')
     expect(mockToastShow).not.toHaveBeenCalledWith('配置已保存', expect.anything())
     expect(mockReconnectTunnel.fn).not.toHaveBeenCalled()

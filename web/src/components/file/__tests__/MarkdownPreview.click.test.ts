@@ -320,8 +320,17 @@ describe('MarkdownPreview — change navigation wiring', () => {
     expect(syncMarkersFor).toHaveBeenCalledWith('/project/b.md', 'markdown', '# B')
   })
 
-  it('does not derive markers when the file has no content yet', async () => {
+  it('re-derives markers for an empty-but-loaded file (content === "")', async () => {
+    // Regression (WARN-601): `content === ''` is a valid empty file, not "not
+    // loaded". The old truthy guard silently skipped it, so a file edited down
+    // to nothing lost its "all deleted" marker on switch-away-and-back.
     mountPreview({ file: { path: '/project/a.md', content: '' } })
+    await nextTick()
+    expect(syncMarkersFor).toHaveBeenCalledWith('/project/a.md', 'markdown', '')
+  })
+
+  it('does not derive markers when the file content is not loaded (null)', async () => {
+    mountPreview({ file: { path: '/project/a.md', content: null } })
     await nextTick()
     expect(syncMarkersFor).not.toHaveBeenCalled()
   })

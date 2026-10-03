@@ -681,7 +681,15 @@ async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
     const setter = native?.setTunnelTransportH2Enabled
     if (typeof setter !== 'function') return false
     await setter.call(native, value === 'h2')
-    return true
+    // Android's setter is a synchronous @JavascriptInterface void method, so a
+    // silent no-op (stubbed context, wrong key) would otherwise look like a
+    // successful write: the panel would report itself clean while the host kept
+    // the old value, and the user could not re-trigger the save. Read back
+    // through the same getter the initial value uses (SharedPreferences.apply
+    // updates the in-memory value synchronously, so this reflects the write).
+    const getter = native?.getTunnelTransportH2Enabled
+    if (typeof getter !== 'function') return false
+    return !!(await getter.call(native)) === (value === 'h2')
   }
   if (isDesktopShell.value) {
     const setter = native?.setTunnelTransport

@@ -51,7 +51,7 @@ import {
   getPendingNavigationJson,
 } from './notification'
 import { markRendererReady, markRendererLoading, resetRendererReady } from './navReady'
-import { NAV_CHANNELS, WINDOW_STATE_CHANNEL } from '../shared/types'
+import { NAV_CHANNELS, WINDOW_STATE_CHANNEL, PORT_REBOUND_CHANNEL } from '../shared/types'
 
 /**
  * The preload cannot import NAV_CHANNELS (sandboxed preloads may not require()
@@ -83,6 +83,12 @@ describe('preload channel list stays in sync', () => {
     // so it hard-codes the channel name. A rename on one side only would make
     // the maximize glyph stop updating with no error anywhere.
     expect(preloadSrc).toContain(`'${WINDOW_STATE_CHANNEL}'`)
+  })
+
+  it('mirrors the port-rebound channel literal', () => {
+    // Same constraint again: a rename on one side only would silently drop the
+    // reconnect drift signal, leaving the server registry keyed to a dead port.
+    expect(preloadSrc).toContain(`'${PORT_REBOUND_CHANNEL}'`)
   })
 })
 

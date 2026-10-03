@@ -393,6 +393,35 @@ describe('useFileRefresh deduplication', () => {
       syncMarkersFor('d.go', 'code', 'v1\n')
       expect(diffMarkers.value).toEqual([])
     })
+
+    it('publishes the all-deleted marker when a file is edited down to empty', () => {
+      // Regression (WARN-601): the markdown branch used to require
+      // `newBlocks.length > 0`, so a non-empty baseline diffed against empty
+      // content was routed to clearDiffMarkers() and the "D" marker never
+      // appeared — a file emptied by an external tool showed no change at all.
+      recordBaseline('emptied.md', '# heading\n\nbody\n')
+      const oldBlocks = [
+        { id: 'b0', tag: 'h1', text: '# heading' },
+        { id: 'b1', tag: 'p', text: 'body' },
+      ]
+      const delAll = [{
+        id: 'del-all',
+        type: 'deleted' as const,
+        label: 'D',
+        blockSelector: ':scope',
+        charDiff: null,
+        ariaLabel: '2 blocks deleted',
+      }]
+      ;(offscreenExtractBlocks as any)
+        .mockReturnValueOnce(oldBlocks)
+        .mockReturnValueOnce([])
+      ;(computeMarkdownDiff as any).mockReturnValueOnce({ markers: delAll, hasChanges: true })
+
+      syncMarkersFor('emptied.md', 'markdown', '')
+
+      expect(computeMarkdownDiff).toHaveBeenCalledWith(oldBlocks, [])
+      expect(diffMarkers.value).toEqual(delAll)
+    })
   })
 })
 

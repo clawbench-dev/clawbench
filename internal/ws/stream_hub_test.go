@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -344,10 +345,11 @@ func TestStreamEventToPayload_ContentCarriesMemberName(t *testing.T) {
 
 // team_update forwards the whole TeamState as the payload.
 func TestStreamEventToPayload_TeamUpdate(t *testing.T) {
+	hasLive := true
 	team := &ai.TeamState{
 		Type:     "member_status_change",
 		TeamName: "clawbench-probe",
-		HasLive:  true,
+		HasLive:  &hasLive,
 		Members: []ai.TeamMember{
 			{Name: "probe-alpha", Status: "running", Activity: "working"},
 		},
@@ -358,6 +360,23 @@ func TestStreamEventToPayload_TeamUpdate(t *testing.T) {
 	require.NotNil(t, got)
 	assert.Equal(t, "clawbench-probe", got.TeamName)
 	assert.Len(t, got.Members, 1)
+}
+
+// An absent HasLive must serialize without the key entirely: the frontend only
+// treats an explicit false as "team ended", so marshaling the absent state as
+// `hasLiveMembers:false` would prematurely end the panel.
+func TestTeamState_HasLiveAbsentOmitsKey(t *testing.T) {
+	team := &ai.TeamState{Type: "member_status_change", TeamName: "t"}
+	b, err := json.Marshal(team)
+	require.NoError(t, err)
+	assert.NotContains(t, string(b), "hasLiveMembers")
+
+	// An explicit false, by contrast, must be present.
+	hasLive := false
+	team.HasLive = &hasLive
+	b, err = json.Marshal(team)
+	require.NoError(t, err)
+	assert.Contains(t, string(b), `"hasLiveMembers":false`)
 }
 
 func TestStreamEventToPayload_Done(t *testing.T) {

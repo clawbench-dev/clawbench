@@ -770,8 +770,15 @@ describe('CodeMirrorViewer — change navigation wiring', () => {
     expect(syncMarkersFor).toHaveBeenCalledWith('/b.ts', 'code', 'bbb\n')
   })
 
-  it('does not derive markers when the file has no content yet', async () => {
+  it('re-derives markers for an empty-but-loaded file (content === "")', async () => {
+    // Regression (WARN-601): see MarkdownPreview.click.test.ts.
     mountNav({ file: { path: '/a.ts', content: '' } })
+    await sleep(80)
+    expect(syncMarkersFor).toHaveBeenCalledWith('/a.ts', 'code', '')
+  })
+
+  it('does not derive markers when the file content is not loaded (null)', async () => {
+    mountNav({ file: { path: '/a.ts', content: null } })
     await sleep(80)
     expect(syncMarkersFor).not.toHaveBeenCalled()
   })
