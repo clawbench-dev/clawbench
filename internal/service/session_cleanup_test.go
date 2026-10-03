@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/rag"
 	"clawbench/internal/store"
 
 	"clawbench/internal/model"
@@ -163,11 +164,15 @@ func TestSessionCleanup_ContinuesPurgeAfterChunkDeletionFails(t *testing.T) {
 
 	w := newSessionCleanupWorkerWithSvc(cfg, mock)
 
-	// Set a failing RAG chunk callback — should not block session purge
-	purgeRAGChunksFn = func(ids []string) (int64, error) {
-		return 0, errors.New("rag error")
-	}
-	defer func() { purgeRAGChunksFn = nil }()
+	// Point the RAG global at a store whose underlying DB is already closed, so
+	// the direct chunk-deletion call fails — it must not block the session purge.
+	brokenStore, err := rag.NewSQLiteStoreForTest(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, brokenStore.Close())
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = brokenStore
+	defer func() { rag.GlobalStore = origStore }()
 
 	w.cleanup()
 
@@ -262,36 +267,43 @@ func TestStartStopReconfigureSessionCleanupWorker(t *testing.T) {
 
 // ---------- PurgeRAGChunksBySessionIDs ----------
 
-func TestPurgeRAGChunksBySessionIDs_NoCallback(t *testing.T) {
-	purgeRAGChunksFn = nil
+func TestPurgeRAGChunksBySessionIDs_NoStore(t *testing.T) {
+	origStore := rag.GlobalStore
+	rag.GlobalStore = nil
+	defer func() { rag.GlobalStore = origStore }()
+
 	count, err := PurgeRAGChunksBySessionIDs([]string{"sess-1"})
 	assert.NoError(t, err)
-	assert.Equal(t, int64(0), count, "should return 0 when no callback is set")
+	assert.Equal(t, int64(0), count, "should return 0 when RAG is not initialized")
 }
 
-func TestPurgeRAGChunksBySessionIDs_WithCallback(t *testing.T) {
-	purgeRAGChunksFn = func(ids []string) (int64, error) {
-		return int64(len(ids)), nil
-	}
-	defer func() { purgeRAGChunksFn = nil }()
+func TestPurgeRAGChunksBySessionIDs_DeletesFromStore(t *testing.T) {
+	testDB, err := sql.Open("sqlite", ":memory:")
+	require.NoError(t, err)
+	testDB.SetMaxOpenConns(1)
+	defer func() { _ = testDB.Close() }()
 
-	count, err := PurgeRAGChunksBySessionIDs([]string{"sess-1", "sess-2"})
+	// A real store over an in-memory DB with a couple of chunks for two sessions.
+	rs, err := rag.NewSQLiteStoreForTest(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = rs.Close() }()
+	require.NoError(t, rs.InsertChunks([]rag.Chunk{
+		{SessionID: "sess-1", MessageID: 1, ChunkText: "a", ChunkTextSegmented: "a", ChunkIndex: 0, TokenCount: 1},
+		{SessionID: "sess-1", MessageID: 2, ChunkText: "b", ChunkTextSegmented: "b", ChunkIndex: 1, TokenCount: 1},
+		{SessionID: "sess-2", MessageID: 3, ChunkText: "c", ChunkTextSegmented: "c", ChunkIndex: 0, TokenCount: 1},
+	}))
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = rs
+	defer func() { rag.GlobalStore = origStore }()
+
+	count, err := PurgeRAGChunksBySessionIDs([]string{"sess-1"})
 	assert.NoError(t, err)
-	assert.Equal(t, int64(2), count)
-}
+	assert.Equal(t, int64(2), count, "should delete the two chunks belonging to sess-1")
 
-func TestSetPurgeRAGChunksFn(t *testing.T) {
-	purgeRAGChunksFn = nil
-	defer func() { purgeRAGChunksFn = nil }()
-
-	SetPurgeRAGChunksFn(func(ids []string) (int64, error) {
-		return int64(len(ids)), nil
-	})
-	assert.NotNil(t, purgeRAGChunksFn, "callback should be stored")
-
-	count, err := purgeRAGChunksFn([]string{"a", "b"})
-	assert.NoError(t, err)
-	assert.Equal(t, int64(2), count)
+	remaining, err := rs.ChunkCount()
+	require.NoError(t, err)
+	assert.Equal(t, 1, remaining, "sess-2's chunk must survive")
 }
 
 // ---------- realSessionCleanupSvc against a real DB ----------

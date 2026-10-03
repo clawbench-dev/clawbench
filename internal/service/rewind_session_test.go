@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/rag"
 	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
@@ -337,12 +338,12 @@ func TestRewindSession_KeepsSessionRecord(t *testing.T) {
 // ---------- Deadlock regression: RAG purge must run AFTER writeMu release ----------
 
 // TestRewindSession_RAGPurgeDoesNotDeadlock reproduces the self-deadlock where
-// TruncateSessionAfterMessage called the RAG purge callback while still holding
+// TruncateSessionAfterMessage must not call the RAG purge while still holding
 // the global writeMu. The real rag.Store serializes on the SAME lock via
-// serviceWriteLocker (store_sqlite.go), so re-acquiring writeMu inside the
-// callback deadlocks on the non-reentrant mutex (froze the whole server for 37
-// minutes in production). The callback below mimics that: it re-takes the
-// service writeMu exactly like rag's serviceWriteLocker.Lock does.
+// serviceWriteLocker (store_sqlite.go), so re-acquiring writeMu inside the purge
+// deadlocks on the non-reentrant mutex (froze the whole server for 37 minutes in
+// production). This test points rag.GlobalStore at a real store whose delete
+// path takes that same writeMu, so a regression deadlocks here.
 func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 	setupDB(t)
 
@@ -354,15 +355,15 @@ func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Q2", nil, false, "")
 	assert.NoError(t, err)
 
-	// Restore the previous callback after the test (package-global).
-	service.SetPurgeRAGChunksAfterMessageFn(func(sessionID string, anchorID int64) (int64, error) {
-		// Mimic rag.Store.DeleteChunksBySessionAfterMessage running under
-		// serviceWriteLocker: it takes the service-global writeMu.
-		store.WriteLock()
-		defer store.WriteUnlock()
-		return 0, nil
-	})
-	t.Cleanup(func() { service.SetPurgeRAGChunksAfterMessageFn(nil) })
+	// A real store: its DeleteChunksBySessionAfterMessage takes store.writeMu,
+	// exactly like production rag.Store does.
+	rs, err := rag.NewSQLiteStoreForTest(":memory:")
+	assert.NoError(t, err)
+	defer func() { _ = rs.Close() }()
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = rs
+	t.Cleanup(func() { rag.GlobalStore = origStore })
 
 	done := make(chan struct{})
 	go func() {
@@ -376,6 +377,6 @@ func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 	case <-done:
 		// Success: truncation finished without deadlocking.
 	case <-time.After(2 * time.Second):
-		t.Fatal("TruncateSessionAfterMessage deadlocked: RAG purge callback ran while writeMu was still held")
+		t.Fatal("TruncateSessionAfterMessage deadlocked: RAG purge ran while writeMu was still held")
 	}
 }

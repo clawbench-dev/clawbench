@@ -1009,27 +1009,9 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Start cleanup worker for archived data
 	rag.StartCleanupWorker(cfg.RAG)
 
-	// Set RAG chunk purge callback for session cleanup worker
-	service.SetPurgeRAGChunksFn(func(sessionIDs []string) (int64, error) {
-		if rag.GlobalStore == nil {
-			return 0, nil
-		}
-		return rag.GlobalStore.DeleteChunksBySessionIDs(sessionIDs)
-	})
-
-	// Set RAG chunk purge callback for in-place history truncation (rewind):
-	// removes chunks whose chat_history rows were deleted so stale search hits
-	// never surface. A range predicate (session_id + message_id > anchor) is used
-	// so chunks the RAG indexer inserted concurrently between the truncation and
-	// this cleanup are covered too.
-	service.SetPurgeRAGChunksAfterMessageFn(func(sessionID string, anchorID int64) (int64, error) {
-		if rag.GlobalStore == nil {
-			return 0, nil
-		}
-		return rag.GlobalStore.DeleteChunksBySessionAfterMessage(sessionID, anchorID)
-	})
-
-	// Start session archive cleanup worker
+	// Start session archive cleanup worker. It purges RAG chunks for expired
+	// sessions directly through internal/rag (no callback indirection): the
+	// service↔rag import cycle that once required injection is gone.
 	service.StartSessionCleanupWorker(cfg)
 
 	// Start the queue reaper: a safety net that recovers user messages left

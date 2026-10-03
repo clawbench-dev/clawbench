@@ -43,6 +43,16 @@ func EmbedderHealthy() bool {
 	return embedderHealthyFlag.Load()
 }
 
+// StoreForCleanup returns the current global store, or nil when RAG is not
+// initialized. It takes mu so a concurrent Reconfigure/Shutdown cannot swap the
+// pointer mid-read. Callers use it for best-effort cleanup paths (e.g. purging
+// chunks for deleted sessions) that must be a no-op when RAG is disabled.
+func StoreForCleanup() *Store {
+	mu.Lock()
+	defer mu.Unlock()
+	return GlobalStore
+}
+
 // SetEmbedderHealthy updates the cached embedder health state.
 func SetEmbedderHealthy(healthy bool) {
 	embedderHealthyFlag.Store(healthy)

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/rag"
 	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
@@ -259,12 +260,16 @@ func TestArchiveSession_EmptySessionHardDelete_RAGPurgeErrorStillDestroys(t *tes
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "rag-err", "claude", "", "default", "chat")
 	require.NoError(t, err)
 
-	// Inject a RAG purge callback that reports an error. The empty-session
-	// hard-delete path must log the warning and still destroy the session.
-	service.SetPurgeRAGChunksFn(func(sessionIDs []string) (int64, error) {
-		return 0, assert.AnError
-	})
-	defer service.SetPurgeRAGChunksFn(nil)
+	// Point the RAG global at a store whose DB is already closed, so the direct
+	// chunk purge fails. The empty-session hard-delete path must log the warning
+	// and still destroy the session.
+	brokenStore, err := rag.NewSQLiteStoreForTest(":memory:")
+	require.NoError(t, err)
+	require.NoError(t, brokenStore.Close())
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = brokenStore
+	defer func() { rag.GlobalStore = origStore }()
 
 	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID+"&backend=claude", nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -288,12 +293,19 @@ func TestArchiveSession_EmptySessionHardDelete_RAGPurgeChunksLogged(t *testing.T
 	sessionID, err := service.CreateSession(env.ProjectDir, "claude", "rag-chunks", "claude", "", "default", "chat")
 	require.NoError(t, err)
 
-	// Inject a RAG purge callback that reports deleted chunks. The hard-delete
-	// path logs the count and still destroys the session.
-	service.SetPurgeRAGChunksFn(func(sessionIDs []string) (int64, error) {
-		return 3, nil
-	})
-	defer service.SetPurgeRAGChunksFn(nil)
+	// A real store with chunks for this session: the hard-delete path purges
+	// them, logs the count, and still destroys the session.
+	rs, err := rag.NewSQLiteStoreForTest(":memory:")
+	require.NoError(t, err)
+	defer func() { _ = rs.Close() }()
+	require.NoError(t, rs.InsertChunks([]rag.Chunk{{
+		SessionID: sessionID, MessageID: 1, ChunkText: "x",
+		ChunkTextSegmented: "x", ChunkIndex: 0, TokenCount: 1,
+	}}))
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = rs
+	defer func() { rag.GlobalStore = origStore }()
 
 	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID+"&backend=claude", nil)
 	req = withProjectCookie(req, env.ProjectDir)
@@ -304,6 +316,10 @@ func TestArchiveSession_EmptySessionHardDelete_RAGPurgeChunksLogged(t *testing.T
 	var result map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, true, result["destroyed"])
+
+	remaining, err := rs.ChunkCount()
+	require.NoError(t, err)
+	assert.Equal(t, 0, remaining, "the session's RAG chunks must be purged")
 
 	count, err := service.GetSessionCount(env.ProjectDir)
 	require.NoError(t, err)
