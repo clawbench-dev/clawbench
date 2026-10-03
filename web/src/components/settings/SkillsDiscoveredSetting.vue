@@ -4,18 +4,39 @@
   <div class="skills-discovered">
     <div class="skills-discovered__head">
       <span class="skills-discovered__count">
-        {{ t('settings.items.skillsDiscovered', { count: skills.length }) }}
+        {{ t('settings.items.skillsDiscovered', { count: filteredSkills.length }) }}
       </span>
+      <!-- Wrapper is required: a fallthrough class on SearchInput merges onto
+           its root (.search-pill), so sizing it directly needs this element. -->
+      <div class="skills-discovered__search">
+        <SearchInput
+          v-model="searchQuery"
+          :placeholder="t('settings.items.skillsSearchPlaceholder')"
+        />
+      </div>
+      <!-- Pure-local rescan (no git IO). The git card owns "sync now"; this
+           card owns "re-read the filesystem" — they are different actions. -->
+      <button class="fbtn skills-discovered__rescan" :disabled="rescanning" @click="rescan">
+        <LoadingIndicator v-if="rescanning" size="sm" inline class="skills-spin" />
+        <RefreshCw v-else :size="13" />
+        {{ rescanning ? t('settings.items.skillsRescanning') : t('settings.items.skillsRescan') }}
+      </button>
     </div>
 
     <div v-if="!skills.length" class="skills-discovered__empty">
       {{ t('settings.items.skillsEmpty') }}
     </div>
+    <div v-else-if="!filteredSkills.length" class="skills-discovered__empty">
+      {{ t('settings.items.skillsNoMatch', { query: searchQuery }) }}
+    </div>
 
-    <div v-for="s in skills" :key="s.path" class="skills-item">
+    <div v-for="s in filteredSkills" :key="s.path" class="skills-item">
       <div class="skills-item-head">
         <span class="skills-item-name">{{ s.name }}</span>
-        <span class="skills-item-source">{{ sourceLabel(s) }}</span>
+        <!-- Native skills name their AI backend(s) on their own line below
+             (icon + name, one chip each); every other source keeps its text
+             label here. -->
+        <span v-if="!s.backends?.length" class="skills-item-source">{{ sourceLabel(s) }}</span>
         <!-- The spec requires the frontmatter name to match the directory name;
              an agent resolves a skill by directory, so a mismatch means this
              skill cannot be offered as a slash command. -->
@@ -26,6 +47,14 @@
         >
           <AlertTriangle :size="12" />
           {{ t('settings.items.skillsNameMismatch') }}
+        </span>
+      </div>
+      <!-- One chip per backend, wrapping when the line runs out of width. No
+           "agent"/"backend" prefix: the icon already says which tool it is. -->
+      <div v-if="s.backends?.length" class="skills-item-backends">
+        <span v-for="b in s.backends" :key="b" class="skills-backend-chip">
+          <AgentIcon :backend="b" :size="12" />
+          {{ getBackendDisplayName(b) }}
         </span>
       </div>
       <div class="skills-item-desc">{{ s.description }}</div>
@@ -47,24 +76,44 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertTriangle, FolderOpen } from 'lucide-vue-next'
+import { AlertTriangle, FolderOpen, RefreshCw } from 'lucide-vue-next'
+import SearchInput from '@/components/common/SearchInput.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
+import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import '@/assets/modal-footer-btn.css'
 import {
   useSkillsState,
   loadSkills,
+  rescanSkills,
   skillSourceLabel,
   type SkillRow,
 } from '@/composables/useSkillsState'
 import { useSettingsConfig } from '@/composables/useSettingsConfig'
+import { getBackendDisplayName } from '@/utils/backendNames'
 import { revealInFileManager, verifyFilePaths } from '@/composables/useFilePathAnnotation'
 
 const { t } = useI18n()
 const { getServerValueWithDefault } = useSettingsConfig()
-const { skills } = useSkillsState()
+const { skills, rescanning } = useSkillsState()
+
+const searchQuery = ref('')
+
+// Case-insensitive substring match on the skill name — the same "narrow the
+// list as you type" behavior as the other search boxes in the app.
+const filteredSkills = computed(() => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return skills.value
+  return skills.value.filter((s) => s.name.toLowerCase().includes(q))
+})
 
 function sourceLabel(s: SkillRow): string {
   return skillSourceLabel(s, t)
+}
+
+async function rescan() {
+  await rescanSkills(getServerValueWithDefault('skills.enabled') !== false)
 }
 
 // ── Path jump ──
@@ -136,7 +185,7 @@ function openPath(p: string) {
 .skills-discovered__head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: var(--space-4);
   padding: var(--space-4) var(--space-7);
   border-bottom: 1px solid var(--border-color);
 }
@@ -144,6 +193,22 @@ function openPath(p: string) {
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
   color: var(--text-secondary);
+  white-space: nowrap;
+}
+/* The search box takes the remaining width; the rescan button stays compact. */
+.skills-discovered__search {
+  flex: 1;
+  min-width: 0;
+}
+.skills-discovered__rescan {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+/* Keep the inline spinner the button's own colour. */
+.skills-spin {
+  --li-color: currentColor;
 }
 .skills-discovered__empty {
   padding: var(--space-6) var(--space-7);
@@ -183,6 +248,24 @@ function openPath(p: string) {
   padding: 0 var(--space-3);
   border-radius: var(--radius-full);
   background: var(--bg-tertiary);
+}
+/* Backend chips sit on their own line and wrap when the row is narrow. Each
+   chip is icon + name with no prefix — the icon identifies the tool. */
+.skills-item-backends {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+.skills-backend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  padding: 1px var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
 }
 .skills-item-warn {
   display: inline-flex;

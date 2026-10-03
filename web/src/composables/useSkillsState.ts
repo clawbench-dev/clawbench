@@ -11,6 +11,13 @@ export interface SkillRow {
   source_kind: 'own' | 'user' | 'git' | 'other'
   source_label: string
   agent_id?: string
+  /**
+   * AI backend IDs whose native directory holds this skill (e.g. ['claude']).
+   * `agent_id` is an AGENT id (a custom agent's id may differ from its backend),
+   * so the UI renders these instead — one icon+name chip per backend. Empty for
+   * non-native sources (user dir, git repo, shared dir), which keep their label.
+   */
+  backends?: string[]
   /** Frontmatter name disagrees with the directory name (spec violation). */
   name_mismatch?: boolean
   /**
@@ -44,6 +51,9 @@ const repos = ref<RepoRow[]>([])
 const skills = ref<SkillRow[]>([])
 const lastSyncAt = ref(0)
 const refreshing = ref(false)
+// Pure-local rescan (no git IO) — separate from `refreshing` so the two buttons
+// in the two cards spin independently.
+const rescanning = ref(false)
 // Sync (the button lives in the git-repos card, so its error belongs there).
 const syncError = ref('')
 const loaded = ref(false)
@@ -134,6 +144,23 @@ export async function refreshSkills(): Promise<void> {
   }
 }
 
+/**
+ * Re-read every local source WITHOUT any network IO, then reload the list.
+ * Backed by POST /api/skills/rescan; use `refreshSkills` to also pull git
+ * remotes. Returns normally on failure — the reload keeps the last good list.
+ */
+export async function rescanSkills(enabledFallback: boolean): Promise<void> {
+  rescanning.value = true
+  try {
+    await fetch('/api/skills/rescan', { method: 'POST' })
+  } catch (err) {
+    appLog.w(TAG, 'rescan failed', err)
+  } finally {
+    rescanning.value = false
+  }
+  await loadSkills(enabledFallback)
+}
+
 /** Shared, read-only view of the skills state for both cards. */
 export function useSkillsState() {
   return {
@@ -143,6 +170,7 @@ export function useSkillsState() {
     skills,
     lastSyncAt,
     refreshing,
+    rescanning,
     syncError,
     dirsError,
     reposError,

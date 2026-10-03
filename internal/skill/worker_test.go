@@ -84,6 +84,32 @@ func TestDoSync_PerRepoErrorIsRecorded(t *testing.T) {
 	assert.NotEmpty(t, model.ConfigInstance.Skills.Repos[0].LastError)
 }
 
+// TestRescanFilesystem_DiscoversWithoutSyncState pins the pure-local rescan:
+// a skill dropped into a directory after the last scan is discovered, and the
+// sync state is left untouched (no network work happened).
+func TestRescanFilesystem_DiscoversWithoutSyncState(t *testing.T) {
+	setupWorkerEnv(t)
+
+	userDir := filepath.Join(model.DataDir, "user")
+	model.ConfigInstance.Skills.Dirs = []string{userDir}
+	// A stale sync outcome that rescan must NOT clear or overwrite.
+	model.ConfigInstance.Skills.LastSyncAt = 123
+	model.ConfigInstance.Skills.LastError = "previous failure"
+
+	// Nothing on disk yet.
+	assert.Equal(t, 0, RescanFilesystem())
+
+	writeSkill(t, userDir, "later", "---\nname: later\ndescription: added later\n---\n")
+
+	n := RescanFilesystem()
+	assert.GreaterOrEqual(t, n, 1, "a skill added after the last scan must be discovered")
+
+	assert.Equal(t, int64(123), model.ConfigInstance.Skills.LastSyncAt,
+		"rescan must not stamp a sync time")
+	assert.Equal(t, "previous failure", model.ConfigInstance.Skills.LastError,
+		"rescan must not clear or overwrite the sync error")
+}
+
 // TestRecordSyncResult_ClearsStalePerRepoError pins that a successful pass
 // clears a previous failure message: a stale error must not outlive its fix.
 func TestRecordSyncResult_ClearsStalePerRepoError(t *testing.T) {

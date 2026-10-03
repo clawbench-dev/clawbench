@@ -112,6 +112,20 @@ func TriggerGitSync() SyncResult {
 	return syncNow()
 }
 
+// RescanFilesystem invalidates the injection cache and rescans every source
+// WITHOUT any network IO — no git clone/pull. It is the "rescan now" action:
+// a skill the user just dropped into a local directory appears immediately,
+// without waiting on (or requiring reachability of) any git remote.
+//
+// It does not touch sync state (LastSyncAt/LastError) or per-repo errors:
+// nothing was fetched, so the previous sync outcome is still the truth.
+// Returns the number of skills discovered after the rescan.
+func RescanFilesystem() int {
+	Global().Invalidate()
+	Global().ScanAll()
+	return len(Global().All())
+}
+
 // syncNow performs one sync pass and returns its result.
 func syncNow() SyncResult {
 	syncMu.Lock()

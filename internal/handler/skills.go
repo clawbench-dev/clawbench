@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"clawbench/internal/model"
@@ -48,6 +49,12 @@ type skillInfoJSON struct {
 	// that happens to read the directory invited the UI to render exactly that
 	// roster (the bug that made shared skills show as "Agent codex,copilot,…").
 	AgentID string `json:"agent_id,omitempty"`
+	// Backends are the AI backend IDs whose native directory this skill lives
+	// in (e.g. "claude", "codex"). The UI renders one icon+name chip per
+	// backend so the user sees the recognizable tool rather than the internal
+	// agent id. Empty for sources that are not an agent's native directory
+	// (user dir, git repo, shared dir) — those keep their own label.
+	Backends []string `json:"backends,omitempty"`
 	// NameMismatch is true when the frontmatter name disagrees with the skill's
 	// directory name. The Agent Skills spec requires them to match, and an agent
 	// resolves a skill by directory — so such a skill is injected (the table
@@ -67,6 +74,37 @@ func agentIDFor(src skill.Source) string {
 		return ""
 	}
 	return src.AgentID
+}
+
+// backendsFor returns the distinct AI backend IDs whose native directory this
+// skill lives in, so the UI can render a recognizable backend icon+name.
+//
+// Source.AgentID carries AGENT ids (a custom agent's id may differ from its
+// backend), so each is resolved through the live agent set. The shared
+// directory is deliberately excluded, matching agentIDFor: its roster describes
+// who reads the directory, not who owns the skill.
+func backendsFor(src skill.Source) []string {
+	if src.Shared || src.AgentID == "" {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, id := range strings.Split(src.AgentID, ",") {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		backend := id
+		if a := model.GetAgent(id); a != nil && a.Backend != "" {
+			backend = a.Backend
+		}
+		if !seen[backend] {
+			seen[backend] = true
+			out = append(out, backend)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // ServeSkills handles GET /api/skills.
@@ -89,6 +127,7 @@ func ServeSkills(w http.ResponseWriter, r *http.Request) {
 			SourceKind:   s.Source.Kind.String(),
 			SourceLabel:  s.Source.Label,
 			AgentID:      agentIDFor(s.Source),
+			Backends:     backendsFor(s.Source),
 			Shared:       s.Source.Shared,
 			NameMismatch: s.NameMismatch,
 		})
@@ -155,6 +194,28 @@ func ServeSkillsRefresh(w http.ResponseWriter, r *http.Request) {
 			Errors:     map[string]string{},
 		})
 	}
+}
+
+// skillsRescanResponse is the payload of POST /api/skills/rescan.
+type skillsRescanResponse struct {
+	OK         bool `json:"ok"`
+	SkillCount int  `json:"skill_count"`
+}
+
+// ServeSkillsRescan handles POST /api/skills/rescan.
+//
+// A pure-local rescan: it re-reads every configured directory (user dirs, git
+// checkouts, native agent dirs) and rebuilds the registry, but performs NO
+// network IO. Use it after dropping a skill into a directory by hand; use
+// /api/skills/refresh when the goal is to fetch the latest from git remotes.
+func ServeSkillsRescan(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodPost) {
+		return
+	}
+	writeJSON(w, http.StatusOK, skillsRescanResponse{
+		OK:         true,
+		SkillCount: skill.RescanFilesystem(),
+	})
 }
 
 // PersistSkillSyncState records the git sync worker's outcome in config. It is
