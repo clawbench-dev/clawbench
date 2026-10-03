@@ -801,3 +801,64 @@ func TestLegacyPromptMigration_DiscardsOldSchemePrompts(t *testing.T) {
 	).Scan(&custom))
 	assert.Equal(t, "keep me", custom)
 }
+
+// A database created by the old scheme carries six dead ACP state columns that
+// no code reads or writes any more. The migration must drop all six while
+// leaving the live schema (including the acp_available_* columns that replaced
+// them) untouched, and must be safe to run repeatedly.
+func TestLegacyAgentCapabilityColumnMigration(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Recreate the legacy shape: the six dead columns exist and hold data.
+	legacyCols := []string{
+		"acp_mode_state", "acp_commands", "acp_thinking_state",
+		"acp_model_list_state", "acp_plan_state", "acp_cached_usage_state",
+	}
+	for _, col := range legacyCols {
+		_, err := db.Exec("ALTER TABLE agents ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''")
+		require.NoError(t, err)
+	}
+	_, err := db.Exec(
+		`INSERT INTO agents (id, name, backend, acp_mode_state, acp_commands,
+			acp_thinking_state, acp_model_list_state, acp_plan_state, acp_cached_usage_state)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"claude", "Claude", "claude",
+		`{"currentModeId":"bypassPermissions"}`, `[{"name":"skill"}]`,
+		`{"currentId":"default"}`, `{"currentModelId":"sonnet"}`,
+		`{"plan":1}`, `{"used":73045,"size":1000000}`,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, service.MigrateLegacyAgentCapabilityColumns())
+
+	// All six dead columns are gone.
+	for _, col := range legacyCols {
+		var exists int
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists))
+		assert.Zero(t, exists, "legacy column %s must be dropped", col)
+	}
+
+	// The live columns that replaced them survive, and the row is intact.
+	for _, col := range []string{"acp_available_modes", "acp_available_models", "acp_config_options", "custom_system_prompt"} {
+		var exists int
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists))
+		assert.Equal(t, 1, exists, "live column %s must survive", col)
+	}
+	var name string
+	require.NoError(t, db.QueryRow("SELECT name FROM agents WHERE id='claude'").Scan(&name))
+	assert.Equal(t, "Claude", name)
+
+	// Idempotent: running again on an already-migrated database is a no-op.
+	require.NoError(t, service.MigrateLegacyAgentCapabilityColumns())
+	for _, col := range legacyCols {
+		var exists int
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists))
+		assert.Zero(t, exists, "legacy column %s must stay dropped", col)
+	}
+}

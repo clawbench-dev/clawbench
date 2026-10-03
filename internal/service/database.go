@@ -1549,6 +1549,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		return err
 	}
 
+	// Migrate: drop the dead ACP state columns from agents (see the function for why).
+	if err := migrateLegacyAgentCapabilityColumns(db); err != nil {
+		return err
+	}
+
 	// Migrate: drop deleted column from chat_history.
 	// Archival is handled at the session level (chat_sessions.archived),
 	// so chat_history.deleted is redundant. Removing it simplifies queries
@@ -2417,6 +2422,60 @@ func migrateLegacyAgentPrompts(d *sql.DB) error {
 		return fmt.Errorf("failed to drop system_prompt column from agents: %w", err)
 	}
 	slog.Info("dropped legacy agents.system_prompt column")
+	return nil
+}
+
+// legacyAgentCapabilityColumns are dead ACP state columns left over from the
+// pre-registry scheme, when each agent's mode/thinking/plan/model state was
+// serialized straight into its own row.
+//
+// That state now lives in the in-memory AgentCapabilityRegistry, persisted via
+// the acp_available_* columns (see internal/ai/agent_capability.go). Nothing
+// reads or writes these six columns any more, so they are pure dead weight —
+// including the JSON blobs (and a cached usage snapshot) they still hold on
+// existing installs.
+var legacyAgentCapabilityColumns = []string{
+	"acp_mode_state",
+	"acp_commands",
+	"acp_thinking_state",
+	"acp_model_list_state",
+	"acp_plan_state",
+	"acp_cached_usage_state",
+}
+
+// MigrateLegacyAgentCapabilityColumns drops the dead ACP state columns on the
+// package database. Exported for tests; InitDB uses
+// migrateLegacyAgentCapabilityColumns so it can act on the handle it is
+// currently opening.
+func MigrateLegacyAgentCapabilityColumns() error {
+	return migrateLegacyAgentCapabilityColumns(db)
+}
+
+// migrateLegacyAgentCapabilityColumns drops the six dead ACP state columns from
+// the agents table (see legacyAgentCapabilityColumns for why).
+//
+// Each column is guarded by its own existence check so the migration is
+// idempotent and tolerates databases that only ever received some of them
+// (the columns were added piecemeal by separate migrations). SQLite refuses
+// "ALTER TABLE ... DROP COLUMN" while an index, trigger, view or constraint
+// references the column; none do here — the only agents indexes are on backend
+// and sort_order — so no index dance is needed.
+func migrateLegacyAgentCapabilityColumns(d *sql.DB) error {
+	for _, col := range legacyAgentCapabilityColumns {
+		var exists int
+		if err := d.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists); err != nil {
+			return fmt.Errorf("check legacy agents.%s column: %w", col, err)
+		}
+		if exists == 0 {
+			continue
+		}
+		if _, err := d.Exec("ALTER TABLE agents DROP COLUMN " + col); err != nil {
+			return fmt.Errorf("failed to drop legacy agents.%s column: %w", col, err)
+		}
+		slog.Info("dropped legacy agents column", slog.String("column", col))
+	}
 	return nil
 }
 
