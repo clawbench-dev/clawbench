@@ -145,7 +145,7 @@ Composable 与组件均按域分组（Chat、Session、Terminal、File、Git、N
 - **改 UI 前先读视觉设计指导手册**：动样式、加组件、加主题、加动效之前必读 [`docs/spec/client/design-guide.md`](docs/spec/client/design-guide.md)——样式三层归属、设计 token（字号/间距/圆角/层级/时长）、36 主题机制与新增步骤、布局骨架，以及七条红线（`v-html` 匹配不到 scoped 规则、共享类基规则也必须全局、`app-region` 豁免只能是控件、对比度不能靠固定跳一档背景、`content-visibility` 滚动跳变、Android WebView 像素怪癖、`scrollbar-color` 弃用 `::-webkit-scrollbar-*`）。改动检查清单与守卫测试索引也在文末。
 - **日志必须用封装**：前端一律 `appLog.d/i/w/e()`（`@/utils/appLog`），禁止原始 `console.*`；Android 一律 `AppLog.d/i/w/e()`，禁止 `android.util.Log`。两者的自身实现与测试除外。Tag 约定：短 PascalCase 模块名。
 - **功能和 Bug 修复必须包含单元测试**：Go 用 `*_test.go`，前端用 `.test.ts`，放在对应代码旁。测试须验证具体行为，非泛化快乐路径。
-- **E2E 测试（`e2e/`，Playwright）**：改动涉及跨组件流程 / 真实后端行为（聊天流式、ACP、终端、文件、任务、排队）时，须在 `e2e/specs/` 补对应 spec。**CI 会在每个 PR 跑全量 3 浏览器**（chromium/firefox/webkit，约 33 分钟）。
+- **E2E 测试（`e2e/`，Playwright）**：改动涉及跨组件流程 / 真实后端行为（聊天流式、ACP、终端、文件、任务、排队）时，须在 `e2e/specs/` 补对应 spec。**CI 会在每个 PR 跑全量 3 浏览器**（chromium/firefox/webkit），但拆成 **3 个并行 job**（每个 `--project=<浏览器>`），墙钟约 13 分钟。
   - **本地默认不跑全量 e2e**：`npx playwright test`（不带 `--project`/`--grep`）会跑 3 浏览器 × 全部 spec，约 33 分钟且与并发 agent 争抢资源。本地只跑**本次新增的 spec** 与**改动设计所涉及的 spec**：
     ```bash
     npx playwright test --config e2e/playwright.config.ts --project=chromium-coverage e2e/specs/<新增或受影响的>.spec.ts
