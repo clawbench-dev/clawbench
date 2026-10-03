@@ -40,7 +40,15 @@
           <span class="tunnel-transport-value">{{ transportLabel }}</span>
         </div>
 
-        <div v-if="tunnelStatus === 'disconnected'" class="tunnel-banner error">
+        <!-- Tunnel problem banners. Gated on there being an enabled mapping to
+             carry: with none, the native service is stopped on purpose (see
+             syncToNative — it would otherwise burn battery for no work), so a
+             "disconnected" verdict describes a deliberate idle state, not a
+             failure. Showing the red error there misleads ("check network or
+             reload") when the empty state right below already says there is
+             nothing to forward. Once a mapping exists the banners are honest
+             and must appear. -->
+        <div v-if="tunnelStatus === 'disconnected' && hasEnabledPorts" class="tunnel-banner error">
           <XCircle :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-title">{{ t('proxy.tunnelDisconnected', { transport: transportSuffix }) }}</span>
@@ -48,7 +56,7 @@
           </div>
           <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
-        <div v-else-if="tunnelStatus === 'degraded'" class="tunnel-banner warning">
+        <div v-else-if="tunnelStatus === 'degraded' && hasEnabledPorts" class="tunnel-banner warning">
           <AlertTriangle :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-title">{{ t('proxy.portsNoResponse') }}</span>
@@ -392,6 +400,14 @@ const transportLabel = computed(() => {
 // reactively — the composable's function reads the global translator and would
 // not re-run on a language switch.
 const transportSuffix = computed(() => transportAnnotation())
+
+/**
+ * Whether any enabled mapping exists — the same predicate `syncToNative` uses
+ * to decide whether the native service should run at all. With none, the
+ * service is stopped deliberately and a "disconnected" verdict is an idle
+ * state, not a failure, so the problem banners stay hidden.
+ */
+const hasEnabledPorts = computed(() => ports.value.some(p => p.enabled))
 
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
 const scanDrawer = useTabDrawer('proxy')

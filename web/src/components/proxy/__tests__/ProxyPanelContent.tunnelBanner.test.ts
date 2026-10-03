@@ -45,11 +45,14 @@ const host = {
 const tunnel = {
   sshInfo: ref<any>(null),
   tunnelStatus: ref<string>('unknown'),
+  // The problem banners are gated on there being an enabled mapping to carry.
+  // Default to none; the gating tests below set this explicitly.
+  ports: ref<any[]>([]),
 }
 
 vi.mock('@/composables/usePortForward.ts', () => ({
   usePortForward: () => ({
-    ports: ref([]),
+    ports: tunnel.ports,
     detectedPorts: ref([]),
     loading: ref(false),
     refreshing: ref(false),
@@ -185,5 +188,70 @@ describe('ProxyPanelContent tunnel banners by host', () => {
     setHost(true, true)
     const wrapper = mountPanel()
     expect(wrapper.text()).not.toContain('后台权限提示（Android 专属）')
+  })
+})
+
+/**
+ * The problem banners describe a tunnel that should be carrying traffic. With
+ * no enabled mapping there is nothing to carry, and the native service is
+ * stopped on purpose (syncToNative) — so a "disconnected" verdict is a
+ * deliberate idle state, not a failure. Rendering the red error there told the
+ * user to "check network or reload" when the empty state right below already
+ * said there was nothing to forward.
+ */
+describe('ProxyPanelContent problem banners require an enabled mapping', () => {
+  beforeEach(() => {
+    setHost(true, false)
+    tunnel.sshInfo.value = { enabled: true, command: 'ssh -L ...' }
+  })
+
+  it('hides the disconnected banner when there are no ports', () => {
+    tunnel.ports.value = []
+    tunnel.tunnelStatus.value = 'disconnected'
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.tunnel-banner.error').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('SSH 隧道未连接')
+  })
+
+  it('hides the disconnected banner when every port is disabled', () => {
+    // Disabled ports are excluded from the verdict AND from the native sync —
+    // same "nothing to carry" state as an empty list.
+    tunnel.ports.value = [
+      { port: 8080, localPort: 8080, enabled: false, active: false, protocol: 'http', host: '', name: '' },
+    ]
+    tunnel.tunnelStatus.value = 'disconnected'
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.tunnel-banner.error').exists()).toBe(false)
+  })
+
+  it('shows the disconnected banner once an enabled port exists', () => {
+    tunnel.ports.value = [
+      { port: 8080, localPort: 8080, enabled: true, active: false, protocol: 'http', host: '', name: '' },
+    ]
+    tunnel.tunnelStatus.value = 'disconnected'
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.tunnel-banner.error').exists()).toBe(true)
+    expect(wrapper.text()).toContain('SSH 隧道未连接')
+  })
+
+  it('hides the degraded banner when there are no ports', () => {
+    tunnel.ports.value = []
+    tunnel.tunnelStatus.value = 'degraded'
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.tunnel-banner.warning').exists()).toBe(false)
+  })
+
+  it('shows the degraded banner once an enabled port exists', () => {
+    tunnel.ports.value = [
+      { port: 8080, localPort: 8080, enabled: true, active: false, protocol: 'http', host: '', name: '' },
+    ]
+    tunnel.tunnelStatus.value = 'degraded'
+    const wrapper = mountPanel()
+
+    expect(wrapper.find('.tunnel-banner.warning').exists()).toBe(true)
   })
 })

@@ -73,6 +73,13 @@ const i18n = createI18n({
 const isAppMode = ref(true)
 const activeTransport = ref('')
 const tunnelStatus = ref('unknown')
+// The problem banners are gated on there being an enabled mapping to carry
+// (with none, the native service is stopped on purpose and "disconnected" is a
+// deliberate idle state). Seed one enabled port so the banners render — which
+// is the state these tests are about.
+const mockPorts = ref<Array<Record<string, unknown>>>([
+  { port: 8080, localPort: 8080, host: '', name: '', protocol: 'http', active: true, enabled: true },
+])
 
 // Mirrors the composable's real transportAnnotation(): resolve the label key for
 // a concrete wire and wrap it via the `proxy.transportAnnotation` message, or
@@ -89,7 +96,7 @@ const mockToastShow = vi.fn()
 
 vi.mock('@/composables/usePortForward.ts', () => ({
   usePortForward: () => ({
-    ports: ref([]),
+    ports: mockPorts,
     detectedPorts: ref([]),
     loading: ref(false),
     refreshing: ref(false),
