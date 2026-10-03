@@ -264,6 +264,24 @@ func RenameProject(oldPath, newPath string) error {
 // because "projectID" is already taken by a local in most call sites.
 func ProjectID2Valid(id int64) bool { return id != GlobalScopeProjectID }
 
+// ForgetProjectPath drops a path→id cache entry after the project's row is
+// deleted.
+//
+// Without this, ProjectIDForPath would keep serving the deleted id from the
+// cache: the path was inserted once and only ever invalidated by RenameProject,
+// so re-registering the same directory after a delete would resolve to a
+// dangling id and every project-scoped write would land on a project that no
+// longer exists.
+func ForgetProjectPath(path string) {
+	canon := NormalizeProjectPath(path)
+	if canon == "" {
+		return
+	}
+	projectIDMu.Lock()
+	delete(projectIDCache, canon)
+	projectIDMu.Unlock()
+}
+
 // ProjectIDForTest resolves a path to its project id, failing the test on error.
 // Exported so external test packages (service_test) can seed project-scoped rows
 // without duplicating the normalization rules.

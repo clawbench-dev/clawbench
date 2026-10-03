@@ -131,6 +131,11 @@ function labelForCategory(cat: string): string {
     const titleKey = getSubPageTitleKey(cat)
     return titleKey ? t(titleKey) : cat
   }
+  // Project detail (project:<id>) is a fixed-label page: the crumb reads
+  // "项目详情" rather than the project name, which is shown inside the page.
+  if (cat.startsWith('project:')) {
+    return t('settings.items.projectDetailTitle')
+  }
   return t(`settings.categories.${cat}`)
 }
 

@@ -49,6 +49,9 @@ var legacyProjectPathTables = []string{
 const (
 	tableTerminalQuickCommands = "terminal_quick_commands"
 	tableChatQuickSend         = "chat_quick_send"
+	tableRecentProjects        = "recent_projects"
+	tableProjectForges         = "project_forges"
+	tableSessionTags           = "session_tags"
 )
 
 // legacyPathTables are the tables whose project_path column converts in place:

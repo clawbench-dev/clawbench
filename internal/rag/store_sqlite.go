@@ -2033,6 +2033,65 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	return affected, nil
 }
 
+// DeleteChunksByProjectID deletes every chunk belonging to a project, used when
+// a project and all its data are removed from the registry.
+//
+// The vec0 (rag_vec) and FTS (rag_chunks_fts) shadow entries are deleted in the
+// same transaction as the rag_chunks rows, mirroring DeleteChunksBySessionIDs.
+// rag_vec is created lazily (only once an embedding dimension is known), so its
+// existence is checked first; deleting from it unconditionally would fail on a
+// fresh database where no vectors were ever written.
+func (s *Store) DeleteChunksByProjectID(projectID int64) (int64, error) {
+	if projectID == 0 {
+		return 0, nil
+	}
+
+	hasVecTable := s.vecTableExists()
+
+	s.writeMu.Lock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("begin delete transaction: %w", err)
+	}
+
+	if hasVecTable {
+		if _, err = tx.Exec(
+			"DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE project_id = ?)",
+			projectID,
+		); err != nil {
+			_ = tx.Rollback()
+			s.writeMu.Unlock()
+			return 0, fmt.Errorf("delete vec entries: %w", err)
+		}
+	}
+
+	if _, err = tx.Exec(
+		"DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE project_id = ?)",
+		projectID,
+	); err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete fts entries: %w", err)
+	}
+
+	result, err := tx.Exec("DELETE FROM rag_chunks WHERE project_id = ?", projectID)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete chunks: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("commit delete: %w", err)
+	}
+	s.writeMu.Unlock()
+
+	return affected, nil
+}
+
 // DeleteChunksBySessionAfterMessage deletes all chunks belonging to the given
 // session whose message_id is strictly greater than anchorID. Used by the
 // rewind/truncate path so orphan chunks never surface as stale search hits

@@ -32,6 +32,10 @@ InvalidPath: invalid path
 PathTraversal: path traversal detected
 InternalError: internal server error
 SessionNotFound: session not found
+ProjectNotFound: project not found
+ProjectDeleteForbidden: this project cannot be deleted
+ProjectHasRunningSessions: the project has running sessions; stop them before deleting
+CannotDeleteCurrentProject: cannot delete the project currently open
 ShareNotFound: share not found
 SummaryModelNotConfigured: AI summary model is not configured
 BtwQuestionRequired: a question is required after /btw

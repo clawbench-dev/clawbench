@@ -53,6 +53,21 @@ func StoreForCleanup() *Store {
 	return GlobalStore
 }
 
+// DeleteProjectData deletes every RAG chunk belonging to a project. Used when a
+// project is removed from the registry, so its indexed content does not surface
+// in search afterwards.
+//
+// Best-effort: a no-op when RAG is not initialized (no store, so nothing was
+// ever indexed).
+func DeleteProjectData(projectID int64) error {
+	rs := StoreForCleanup()
+	if rs == nil {
+		return nil
+	}
+	_, err := rs.DeleteChunksByProjectID(projectID)
+	return err
+}
+
 // SetEmbedderHealthy updates the cached embedder health state.
 func SetEmbedderHealthy(healthy bool) {
 	embedderHealthyFlag.Store(healthy)

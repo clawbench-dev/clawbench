@@ -94,7 +94,7 @@ function confirm(message: string, opts?: Parameters<typeof open>[2]): Promise<bo
   return open('confirm', message, opts) as Promise<boolean>
 }
 
-function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; generateText?: string; onGenerate?: () => Promise<string | null> }): Promise<string | null> {
+function prompt(message: string, opts?: { value?: string; placeholder?: string; title?: string; confirmText?: string; cancelText?: string; dangerous?: boolean; generateText?: string; onGenerate?: () => Promise<string | null> }): Promise<string | null> {
   return open('prompt', message, opts) as Promise<string | null>
 }
 

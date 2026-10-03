@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"clawbench/internal/store"
@@ -436,6 +437,143 @@ func TestServeConversationProjects(t *testing.T) {
 		req := newRequest(t, http.MethodPost, "/api/conversation-projects", nil)
 		w := callHandler(ServeConversationProjects, req)
 
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+func TestServeProjectRegistryList(t *testing.T) {
+	t.Run("GET_ReturnsProjects", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "regproj")
+		require.NoError(t, os.MkdirAll(projectPath, 0o755))
+		_, err := service.CreateSession(projectPath, "claude", "T", "claude", "", "default", "chat")
+		require.NoError(t, err)
+
+		req := newRequest(t, http.MethodGet, "/api/projects/list", nil)
+		w := callHandler(ServeProjectRegistryList, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var resp struct {
+			Projects []service.ProjectListItem `json:"projects"`
+		}
+		decodeRespJSON(t, w.Body, &resp)
+		require.Len(t, resp.Projects, 1)
+		assert.Equal(t, projectPath, resp.Projects[0].Path)
+		assert.Equal(t, 1, resp.Projects[0].SessionCount)
+		assert.True(t, resp.Projects[0].Exists)
+		assert.NotZero(t, resp.Projects[0].ID, "the id is required for the detail route")
+	})
+
+	t.Run("OtherMethod_Returns405", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPost, "/api/projects/list", nil)
+		w := callHandler(ServeProjectRegistryList, req)
+		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	})
+}
+
+func TestServeProjectRegistryDetail(t *testing.T) {
+	t.Run("GET_ReturnsDetail", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "detailproj")
+		require.NoError(t, os.MkdirAll(projectPath, 0o755))
+		id := store.ProjectIDForTest(t, projectPath)
+
+		req := newRequest(t, http.MethodGet, "/api/projects/detail?id="+strconv.FormatInt(id, 10), nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		var detail service.ProjectDetail
+		decodeRespJSON(t, w.Body, &detail)
+		assert.Equal(t, projectPath, detail.Path)
+		assert.True(t, detail.Exists)
+	})
+
+	t.Run("GET_MissingID_Returns400", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/projects/detail", nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("GET_NonNumericID_Returns400", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/projects/detail?id=abc", nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("GET_UnknownID_Returns404", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodGet, "/api/projects/detail?id=424242", nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("DELETE_RemovesProject", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "delproj")
+		require.NoError(t, os.MkdirAll(projectPath, 0o755))
+		id := store.ProjectIDForTest(t, projectPath)
+
+		req := newRequest(t, http.MethodDelete, "/api/projects/detail?id="+strconv.FormatInt(id, 10), nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var n int
+		require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM projects WHERE id = ?", id).Scan(&n))
+		assert.Zero(t, n, "the project row must be gone after a successful delete")
+	})
+
+	t.Run("DELETE_CurrentProject_Returns400", func(t *testing.T) {
+		env, teardown := setupTestEnv(t)
+		defer teardown()
+
+		projectPath := filepath.Join(env.WatchDir, "curproj")
+		require.NoError(t, os.MkdirAll(projectPath, 0o755))
+		id := store.ProjectIDForTest(t, projectPath)
+
+		req := withProjectCookie(
+			newRequest(t, http.MethodDelete, "/api/projects/detail?id="+strconv.FormatInt(id, 10), nil),
+			projectPath,
+		)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+
+		var n int
+		require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM projects WHERE id = ?", id).Scan(&n))
+		assert.Equal(t, 1, n, "refusing the current project must not delete anything")
+	})
+
+	t.Run("DELETE_UnknownID_Returns404", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodDelete, "/api/projects/detail?id=424242", nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	})
+
+	t.Run("OtherMethod_Returns405", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		req := newRequest(t, http.MethodPut, "/api/projects/detail?id=1", nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
 		assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 	})
 }

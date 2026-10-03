@@ -1940,3 +1940,57 @@ func TestSQLiteStore_SearchVectorUnknownProjectReturnsNothing(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, hits, "an unknown project must yield no hits, not every project's hits")
 }
+
+// ---------- DeleteChunksByProjectID ----------
+
+// makeProjectChunk builds a chunk attributed to a specific project path (unlike
+// makeTestChunk, which pins testProjectPath).
+func makeProjectChunk(sessionID string, messageID int64, projectPath, text string) Chunk {
+	c := makeTestChunk(sessionID, messageID, 0, text)
+	c.ProjectPath = model.NormalizeProjectPath(projectPath)
+	return c
+}
+
+func TestSQLiteStore_DeleteChunksByProjectID_OnlyTouchesThatProject(t *testing.T) {
+	store := setupSQLiteStoreWithDim(t)
+
+	chunks := []Chunk{
+		makeProjectChunk("sess-a", 1, "/proj/alpha", "alpha one"),
+		makeProjectChunk("sess-a", 2, "/proj/alpha", "alpha two"),
+		makeProjectChunk("sess-b", 3, "/proj/beta", "beta one"),
+	}
+	require.NoError(t, store.InsertChunks(chunks))
+
+	alphaID, ok, err := store.projectIDForPath("/proj/alpha")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	deleted, err := store.DeleteChunksByProjectID(alphaID)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(2), deleted, "only the alpha project's chunks are removed")
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 1, count, "beta's chunk must survive")
+
+	// FTS must be synced: alpha is gone, beta remains.
+	hits, err := store.SearchFTS("beta", 5, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	require.Len(t, hits, 1)
+	assert.Equal(t, "sess-b", hits[0].SessionID)
+
+	alphaHits, err := store.SearchFTS("alpha", 5, "", "", "", "", "", "", "")
+	require.NoError(t, err)
+	assert.Empty(t, alphaHits, "alpha's FTS entries must be deleted with its chunks")
+}
+
+func TestSQLiteStore_DeleteChunksByProjectID_ZeroIsNoop(t *testing.T) {
+	store := setupSQLiteStore(t)
+	require.NoError(t, store.InsertChunks([]Chunk{makeTestChunk("sess-a", 1, 0, "keep me")}))
+
+	deleted, err := store.DeleteChunksByProjectID(0)
+	assert.NoError(t, err)
+	assert.Equal(t, int64(0), deleted, "project 0 is the global sentinel, never a real delete")
+
+	count, _ := store.ChunkCount()
+	assert.Equal(t, 1, count, "a zero id must not delete anything")
+}

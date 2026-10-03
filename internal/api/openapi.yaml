@@ -649,6 +649,97 @@ paths:
         "200":
           description: 创建结果
 
+  /api/projects/list:
+    get:
+      tags: [Projects]
+      summary: 项目注册表全量列表
+      description: |
+        列出 `projects` 注册表中的**全部**项目，附可从数据库直接取得的统计
+        （会话数、最后活跃时间、创建时间、目录是否存在），按最后活跃时间倒序；
+        无会话的项目回落到创建时间排序。目录已被删除的项目也会列出
+        （`exists=false`）。与 `/api/conversation-projects`（仅含产生过对话的
+        项目）和 `/api/recent-projects`（MRU 窗口，会剔除已删除目录）不同。
+      operationId: projectRegistryList
+      responses:
+        "200":
+          description: 项目列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  projects:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: integer
+                          description: projects 表主键（详情路由使用的稳定身份）
+                        path:
+                          type: string
+                          description: 项目目录的规范化路径（目录可能已被删除）
+                        session_count:
+                          type: integer
+                          description: 该项目当前记录的会话数（仅现存会话）
+                        last_active_at:
+                          type: string
+                          description: 最近一次会话创建时间（UTC，`2006-01-02 15:04:05`）；无会话为空字符串
+                        created_at:
+                          type: string
+                          description: 项目首次注册时间（UTC，`2006-01-02 15:04:05`）
+                        exists:
+                          type: boolean
+                          description: 目录当前是否仍存在于磁盘上
+
+  /api/projects/detail:
+    get:
+      tags: [Projects]
+      summary: 项目详情
+      description: |
+        返回单个项目的详情：列表接口的全部字段，外加仓库类型 `repo_kind`
+        （`main` / `worktree` / `subdir` / `plain`；目录已删除时为 `unknown`）。
+        仓库类型需要读取磁盘 git 元数据，故单独作为详情字段而不进列表。
+      operationId: projectRegistryDetail
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 项目 id（`projects` 表主键）
+      responses:
+        "200":
+          description: 项目详情
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [Projects]
+      summary: 删除项目及其全部数据
+      description: |
+        永久删除该项目及其**全部项目作用域数据**（会话、消息、任务、标签、
+        分享、RAG 索引等）。**不删除磁盘目录**。拒绝删除全局哨兵（id=0）、
+        当前正在使用的项目，以及存在运行中会话的项目。
+      operationId: projectRegistryDelete
+      parameters:
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: integer
+          description: 项目 id（`projects` 表主键）
+      responses:
+        "200":
+          description: 删除结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+
   /api/project:
     get:
       tags: [Projects]

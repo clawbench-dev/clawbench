@@ -26,6 +26,7 @@ import { computed } from 'vue'
 import {
   Palette,
   FolderTree,
+  FolderGit2,
   MessageSquare,
   Bot,
   SquareTerminal,
@@ -62,10 +63,11 @@ const { t } = useI18n()
  */
 const groupDefs = [
   {
-    id: 'appearanceFiles',
+    id: 'projectAppearance',
     items: [
+      { id: 'project', icon: FolderGit2 },
       { id: 'appearance', icon: Palette },
-      { id: 'projectFiles', icon: FolderTree },
+      { id: 'files', icon: FolderTree },
     ],
   },
   {

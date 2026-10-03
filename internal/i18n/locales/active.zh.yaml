@@ -32,6 +32,10 @@ InvalidPath: 无效路径
 PathTraversal: 检测到路径穿越攻击
 InternalError: 内部服务器错误
 SessionNotFound: 会话未找到
+ProjectNotFound: 项目未找到
+ProjectDeleteForbidden: 该项目无法删除
+ProjectHasRunningSessions: 该项目有正在运行的会话，请先停止后再删除
+CannotDeleteCurrentProject: 无法删除当前正在使用的项目
 ShareNotFound: 分享未找到
 SummaryModelNotConfigured: 尚未配置 AI 摘要模型
 BtwQuestionRequired: /btw 后面需要跟随一个问题

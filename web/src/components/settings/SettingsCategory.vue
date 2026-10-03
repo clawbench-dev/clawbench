@@ -10,6 +10,15 @@
     @deleted="$emit('navigate', 'agents')"
     @back="$emit('navigate', 'agents')"
   />
+  <!-- Project detail route (project:<id>): a read-only stats page, not a
+       batch-save panel, so it gets its own component rather than going through
+       subPagePanelMap. -->
+  <ProjectDetailSetting
+    v-else-if="categoryId.startsWith('project:')"
+    :project-id="Number(categoryId.slice(8))"
+    @back="$emit('navigate', 'project')"
+    @deleted="$emit('navigate', 'project')"
+  />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">
     <SettingsGroupPanel
@@ -57,6 +66,14 @@
              rather than being glued to the configuration controls. -->
         <SkillsDiscoveredSetting
           v-if="card.title === t('settings.items.skillsDiscoveredSection')"
+        />
+        <!-- Project registry listing: a live list fetched from the backend,
+             rendered in place of the card's (placeholder-only) rows. Its row
+             clicks drill into project:<id>, so the navigate event must be
+             forwarded up to SettingsPage. -->
+        <ProjectsSetting
+          v-if="card.title === t('settings.items.allProjectsSection')"
+          @navigate="(id: string) => $emit('navigate', id)"
         />
         <SettingsItem
           v-for="item in card.items"
@@ -119,6 +136,8 @@ import SkillsSetting from './SkillsSetting.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
+import ProjectsSetting from './ProjectsSetting.vue'
+import ProjectDetailSetting from './ProjectDetailSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
@@ -306,7 +325,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }
