@@ -51,6 +51,7 @@ describe('useUsageStats', () => {
       const [url, opts] = mockApiGet.mock.calls[0]
       expect(url.startsWith('/api/usage/stats?')).toBe(true)
       const parsed = new URLSearchParams(url.split('?')[1])
+      expect(parsed.get('scope')).toBe('project')
       expect(parsed.get('start')).toBeTruthy()
       expect(parsed.get('end')).toBeTruthy()
       expect(parsed.getAll('dims')).toEqual(['model'])
@@ -105,6 +106,43 @@ describe('useUsageStats', () => {
       expect(calls).toBe(1)
       const parsed = new URLSearchParams(mockApiGet.mock.calls[0][0].split('?')[1])
       expect(parsed.getAll('metrics')).toEqual(['total', 'cost', 'input'])
+    })
+  })
+
+  describe('scope switching', () => {
+    it('sends scope=all and keeps the project dim selectable', async () => {
+      const stats = useUsageStats()
+      mockApiGet.mockResolvedValue(EMPTY_RESPONSE)
+      stats.setScope('all')
+      await Promise.resolve()
+
+      expect(mockApiGet).toHaveBeenCalledTimes(1)
+      const parsed = new URLSearchParams(mockApiGet.mock.calls[0][0].split('?')[1])
+      expect(parsed.get('scope')).toBe('all')
+      // The default dim is preserved (model), and `project` is now allowed.
+      expect(parsed.getAll('dims')).toEqual(['model'])
+    })
+
+    it('prunes dims that are invalid in the new scope and falls back when empty', async () => {
+      const stats = useUsageStats()
+      mockApiGet.mockResolvedValue(EMPTY_RESPONSE)
+      // In scope=all, select only `project`, then switch back to project scope
+      // where `project` is not selectable — the selection must not be empty.
+      stats.setScope('all')
+      stats.setDims(['project'])
+      stats.setScope('project')
+      await Promise.resolve()
+
+      expect(stats.filter.value.dims.length).toBeGreaterThan(0)
+      expect(stats.filter.value.dims).not.toContain('project')
+    })
+
+    it('is a no-op when re-selecting the active scope', async () => {
+      const stats = useUsageStats()
+      mockApiGet.mockResolvedValue(EMPTY_RESPONSE)
+      stats.setScope('project') // already the default
+      await Promise.resolve()
+      expect(mockApiGet).not.toHaveBeenCalled()
     })
   })
 

@@ -73,6 +73,20 @@
           <span>{{ t('stats.filterTitle') }}</span>
         </div>
         <div class="stats-filter-group">
+          <span class="stats-filter-label">{{ t('stats.scopeTitle') }}</span>
+          <div class="stats-chip-scroll">
+            <button
+              v-for="s in scopeOptions"
+              :key="s.id"
+              class="stats-chip"
+              :class="{ active: filter.scope === s.id }"
+              @click="selectScope(s.id)"
+            >
+              {{ t(s.labelKey) }}
+            </button>
+          </div>
+        </div>
+        <div class="stats-filter-group">
           <span class="stats-filter-label">{{ t('stats.dimTitle') }}</span>
           <div class="stats-chip-scroll">
             <button
@@ -200,12 +214,13 @@ import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import UsageChart from '@/components/stats/UsageChart.vue'
 import {
   useUsageStats,
-  USAGE_DIM_IDS,
   USAGE_METRIC_IDS,
+  dimsForScope,
   type UsageDimId,
   type UsageMetricId,
   type UsageChartType,
   type UsageRangeKey,
+  type UsageScope,
 } from '@/composables/useUsageStats'
 import { store } from '@/stores/app'
 import {
@@ -234,7 +249,16 @@ const rangePresets: { key: UsageRangeKey; labelKey: string }[] = [
   { key: '30d', labelKey: 'stats.range30d' },
 ]
 
-const dimOptions: { id: UsageDimId; labelKey: string }[] = USAGE_DIM_IDS.map(id => ({ id, labelKey: dimLabelKey(id) }))
+const scopeOptions: { id: UsageScope; labelKey: string }[] = [
+  { id: 'project', labelKey: 'stats.scopeProject' },
+  { id: 'all', labelKey: 'stats.scopeAll' },
+]
+
+// Dims depend on the scope: `project` only makes sense when aggregating every
+// project (in a single-project query it is a constant column).
+const dimOptions = computed<{ id: UsageDimId; labelKey: string }[]>(() =>
+  dimsForScope(filter.value.scope).map(id => ({ id, labelKey: dimLabelKey(id) })),
+)
 const metricOptions: { id: UsageMetricId; labelKey: string }[] = USAGE_METRIC_IDS.map(id => ({ id, labelKey: metricLabelKey(id) }))
 const chartTypeOptions: { id: UsageChartType; labelKey: string }[] = [
   { id: 'bar', labelKey: 'stats.chartBar' },
@@ -299,6 +323,7 @@ function dimLabelKey(d: UsageDimId): string {
     case 'model': return 'stats.dimModel'
     case 'backend': return 'stats.dimBackend'
     case 'agent': return 'stats.dimAgent'
+    case 'project': return 'stats.dimProject'
   }
 }
 function metricLabelKey(m: UsageMetricId): string {
@@ -362,6 +387,10 @@ function sortByMetric(m: UsageMetricId) {
 
 function selectChartType(c: UsageChartType) {
   stats.setChartType(c)
+}
+
+function selectScope(s: UsageScope) {
+  stats.setScope(s)
 }
 
 // --- Cells / cards ---

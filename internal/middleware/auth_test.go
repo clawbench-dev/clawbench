@@ -226,6 +226,62 @@ func TestAuth_MissingCookie_Returns401(t *testing.T) {
 	})
 }
 
+// --- IsAuthenticated: direct unit coverage ---
+
+// IsAuthenticated is the accept-side of Auth exposed for handlers that grant a
+// capability to a logged-in browser session. It must accept exactly what Auth
+// accepts and nothing more.
+func TestIsAuthenticated(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = "valid-token"
+		model.CookieToken = "instance-key"
+		valid := model.SignAIToken(time.Now())
+
+		cases := []struct {
+			name     string
+			remote   string
+			token    string
+			cookie   string
+			wantAuth bool
+		}{
+			{"session cookie", "192.168.1.100:12345", "", "instance-key", true},
+			{"legacy token cookie is not the key when CookieToken is set", "192.168.1.100:12345", "", "valid-token", false},
+			{"wrong cookie", "192.168.1.100:12345", "", "wrong", false},
+			{"no credentials", "192.168.1.100:12345", "", "", false},
+			{"local AI token", "127.0.0.1:12345", valid, "", true},
+			{"remote AI token replay", "192.168.1.100:12345", valid, "", false},
+		}
+
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+				req.RemoteAddr = tc.remote
+				if tc.token != "" {
+					req.Header.Set(model.AITokenHeader, tc.token)
+				}
+				if tc.cookie != "" {
+					req.AddCookie(&http.Cookie{Name: model.ScopedCookieName(model.SessionCookie), Value: tc.cookie})
+				}
+				assert.Equal(t, tc.wantAuth, middleware.IsAuthenticated(req))
+			})
+		}
+	})
+}
+
+// With no password configured the app is open access, so IsAuthenticated must
+// report true — otherwise a capability gated on it would be unreachable in the
+// default no-password setup.
+func TestIsAuthenticated_NoPassword_True(t *testing.T) {
+	withSavedToken(func() {
+		model.SessionToken = ""
+		model.CookieToken = ""
+
+		req := httptest.NewRequest(http.MethodGet, "/", http.NoBody)
+		req.RemoteAddr = "192.168.1.100:12345"
+		assert.True(t, middleware.IsAuthenticated(req))
+	})
+}
+
 // --- GetProjectFromCookie ---
 
 func TestGetProjectFromCookie_NormalExtraction(t *testing.T) {

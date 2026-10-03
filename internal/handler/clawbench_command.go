@@ -108,7 +108,7 @@ Endpoints:
 Choosing the project — pick exactly one per request:
 - Current project (default): send the cookie "{{PROJECT_COOKIE}}={{PROJECT_PATH}}" and omit scope (it defaults to project). Use this when the user asks about "this project" or names no project.
 - A specific other project: call "GET /api/conversation-projects" to find its exact path, then send the cookie "{{PROJECT_COOKIE}}=<that path>" and omit scope. Match the project the user names by its directory name (the last path segment) or by its full path; if several projects share a name, ask which one rather than guessing. Projects whose directory was deleted are still listed and their recorded usage remains queryable.
-- All projects: send "scope=all" and do NOT send the project cookie. This aggregates every project on this instance and is what the user means by "across projects", "all projects" or "everything". Sending the cookie together with scope=all is rejected as contradictory.
+- All projects: send "scope=all" and do NOT send the project cookie. This aggregates every project on this instance and is what the user means by "across projects", "all projects" or "everything". (The cookie is ignored when scope=all is present, so sending it does no harm — but omitting it keeps the request unambiguous.)
   When the user wants to know which project consumes the most, also pass "dims=project" so rows are grouped per project instead of merged into one total.
 
 Working with time:

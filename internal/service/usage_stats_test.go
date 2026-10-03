@@ -852,14 +852,17 @@ func TestUsageStatsScopeValidation(t *testing.T) {
 		assert.Equal(t, "invalid_scope", vErr.Code)
 	})
 
-	t.Run("scope=all with a project path is contradictory", func(t *testing.T) {
+	t.Run("scope=all ignores a supplied project path", func(t *testing.T) {
 		p := base()
 		p.Scope = service.ScopeAll
 		p.ProjectPath = "/p"
-		_, err := service.UsageStats(context.Background(), p)
-		var vErr *service.UsageStatsError
-		require.ErrorAs(t, err, &vErr)
-		assert.Equal(t, "conflicting_scope", vErr.Code)
+		// The handler blanks the path, but a direct caller may pass one; the
+		// only sane reading of "aggregate everything" is to ignore it. This
+		// must not be an error: the browser panel keeps its project cookie
+		// attached while toggling to "all projects".
+		res, err := service.UsageStats(context.Background(), p)
+		require.NoError(t, err)
+		require.NotNil(t, res)
 	})
 
 	t.Run("empty project still rejected without scope=all", func(t *testing.T) {

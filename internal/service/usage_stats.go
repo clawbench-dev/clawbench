@@ -29,10 +29,10 @@ const (
 	// ScopeProject restricts the aggregate to one project (the default). The
 	// caller supplies the project path — normally from the project cookie.
 	ScopeProject UsageScope = "project"
-	// ScopeAll aggregates every project on the instance. It exists for the
-	// /cb-usage slash command, whose whole point is an instance-wide total;
-	// the handler only grants it to a local AI token, never to a browser
-	// session, so the per-project isolation of the stats panel is unchanged.
+	// ScopeAll aggregates every project on the instance. It is used by the
+	// /cb-usage slash command and by the stats panel's "all projects" toggle;
+	// the handler grants it to any authenticated caller and refuses an
+	// unauthenticated one.
 	ScopeAll UsageScope = "all"
 )
 
@@ -197,13 +197,14 @@ func validateUsageScope(p *UsageParams) error {
 			return usageErr("missing_project", "project path required")
 		}
 	case ScopeAll:
-		// A project path alongside scope=all is contradictory: the caller is
-		// asking for everything and for one project at once. Rejecting is
-		// safer than silently picking one meaning, since a caller that sends
-		// both believes it is getting the narrower answer.
-		if p.ProjectPath != "" {
-			return usageErr("conflicting_scope", "project path must be empty when scope=all")
-		}
+		// A project path is simply ignored in ScopeAll — the query drops the
+		// project predicate entirely. The handler already blanks the path, but
+		// a direct caller (tests, internal use) may pass one; ignoring it is
+		// the only sane reading of "aggregate everything". It is deliberately
+		// NOT an error: the browser panel keeps its project cookie attached
+		// while toggling to "all projects", and rejecting the request there
+		// would make the toggle unusable.
+		p.ProjectPath = ""
 	default:
 		return usageErr("invalid_scope", "invalid scope %q", p.Scope)
 	}
@@ -264,7 +265,8 @@ func validateUsageParams(p *UsageParams) error {
 // whitelisted column expressions.
 //
 // ScopeAll drops the project predicate so the aggregate spans every project.
-// That is a privileged view — the handler only grants it to a local AI token.
+// The handler grants it to any authenticated caller (browser session or local
+// AI token) — see resolveUsageScope.
 func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	if err := validateUsageParams(&p); err != nil {
 		return nil, err

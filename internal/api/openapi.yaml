@@ -236,14 +236,13 @@ paths:
         按维度聚合 `chat_metadata` 的 token / 成本统计。
 
         **项目范围**由 `scope` 决定：
-        - `scope=project`（默认）：限制在项目 Cookie 指定的单个项目内，Cookie
-          必填。浏览器面板走这条路径。Cookie 值可以是任意项目路径。
-        - `scope=all`：聚合实例内**全部项目**，仅授予携带本机 AI 令牌的调用方
-          （`/cb-usage` 斜杠命令）；浏览器会话请求会被拒绝。该模式要求**不**发送
-          项目 Cookie，同时发送两者返回 400。跨项目统计通常配合 `dims=project`。
+        - `scope=project`（默认）：限制在项目 Cookie 指定的单个项目内，Cookie 必填。
+        - `scope=all`：聚合实例内**全部项目**。任何已鉴权调用方均可用（浏览器面板
+          的「所有项目」开关、`/cb-usage` 的本机 AI 令牌）；未鉴权者被拒绝。该项目
+          Cookie 被忽略，跨项目统计通常配合 `dims=project`。
 
-        `dims` 合法值含 `project`，但只在 `scope=all` 下有区分度——单项目范围内
-        所有行项目相同。
+        `dims` 合法值含 `project`，但只在 `scope=all` 下有区分度——单项目范围内所有
+        行项目相同。
 
         **响应结构**：
         - `totals`：所有行的合计，字段 `input` / `output` / `total` / `cacheHit` /
@@ -262,7 +261,8 @@ paths:
           in: query
           description: |
             统计范围。默认 `project`（限制在项目 Cookie 指定的项目内）。
-            `all` 聚合实例内全部项目，仅本机 AI 令牌可用，且必须不带项目 Cookie。
+            `all` 聚合实例内全部项目，任何已鉴权调用方均可用；该模式下项目
+            Cookie 被忽略。
           schema:
             type: string
             enum: [project, all]

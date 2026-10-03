@@ -46,10 +46,14 @@ const zhMessages = {
     cacheHitShort: '缓存命中',
     cacheMissShort: '缓存未命中',
     detailTitle: '维度明细',
+    scopeTitle: '统计范围',
+    scopeProject: '当前项目',
+    scopeAll: '所有项目',
     dimTitle: '分组方式',
     dimModel: '模型',
     dimBackend: 'AI 后端',
     dimAgent: '智能体',
+    dimProject: '项目',
     metricTitle: '数值列',
     colInput: '输入 Tokens',
     colOutput: '输出 Tokens',
@@ -237,6 +241,38 @@ describe('UsageStatsPanel', () => {
     const text = wrapper.text()
     expect(text).not.toContain('所选时间段内暂无用量数据')
     expect(wrapper.findAll('.usage-chart-stub').length).toBeGreaterThan(0)
+  })
+
+  it('renders a scope selector and hides the project dim in project scope', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({ rows: [] }))
+    const wrapper = await mountPanel()
+    const scopeLabels = wrapper.findAll('.stats-chip').map(c => c.text())
+    // Both scope chips are present; current-project is active by default.
+    expect(scopeLabels).toContain('当前项目')
+    expect(scopeLabels).toContain('所有项目')
+    // In project scope the `项目` dim must not be offered. Assert the exact
+    // chip label, not a substring — "所有项目" contains "项目".
+    expect(scopeLabels).not.toContain('项目')
+  })
+
+  it('switching to all projects reveals the project dim and requests scope=all', async () => {
+    mockApiGet.mockResolvedValue(mockResponse({
+      rows: [{ key: { project: '/a' }, input: 0, output: 0, total: 5, cacheHit: 0, cacheMiss: 0, credit: 0, costUsd: 0, messageCnt: 1 }],
+    }))
+    const wrapper = await mountPanel()
+    mockApiGet.mockClear()
+
+    const allBtn = wrapper.findAll('.stats-chip').find(b => b.text() === '所有项目')
+    expect(allBtn).toBeTruthy()
+    await allBtn!.trigger('click')
+    await flushPromises()
+
+    expect(mockApiGet).toHaveBeenCalled()
+    const parsed = new URLSearchParams(mockApiGet.mock.calls[mockApiGet.mock.calls.length - 1][0].split('?')[1])
+    expect(parsed.get('scope')).toBe('all')
+    // The project dim becomes selectable (exact chip label).
+    await nextTick()
+    expect(wrapper.findAll('.stats-chip').map(c => c.text())).toContain('项目')
   })
 
   it('drops zero-value rows from the table (no wasted rows)', async () => {

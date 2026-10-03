@@ -3,8 +3,22 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog'
 
 /** Aggregation dimension ids. Order = table column order. */
-export type UsageDimId = 'model' | 'backend' | 'agent'
+export type UsageDimId = 'model' | 'backend' | 'agent' | 'project'
+/** Dims selectable in every scope. `project` joins only in scope=all — see
+ * dimsForScope — because in a single-project query every row carries the same
+ * project, so grouping by it adds a constant column and no information. */
 export const USAGE_DIM_IDS: UsageDimId[] = ['model', 'backend', 'agent']
+/** Dims selectable in cross-project scope; `project` leads because it is the
+ * headline grouping when aggregating the whole instance. */
+export const USAGE_DIM_IDS_ALL: UsageDimId[] = ['project', 'model', 'backend', 'agent']
+
+/** Which projects a query covers. Mirrors the backend's scope enum. */
+export type UsageScope = 'project' | 'all'
+
+/** The dims a scope may group by. */
+export function dimsForScope(scope: UsageScope): UsageDimId[] {
+  return scope === 'all' ? USAGE_DIM_IDS_ALL : USAGE_DIM_IDS
+}
 
 /** Numeric metric ids (table columns / chart series). */
 export type UsageMetricId = 'input' | 'output' | 'total' | 'cacheHit' | 'credit' | 'cost'
@@ -56,6 +70,7 @@ export interface UsageStatsResponse {
 }
 
 export interface UsageFilter {
+  scope: UsageScope // 'project' (current) | 'all' (instance-wide)
   range: UsageRange
   dims: UsageDimId[] // >= 1
   metrics: UsageMetricId[] // >= 1; default ['total']
@@ -67,6 +82,7 @@ export interface UsageFilter {
 // --- Module-level singleton state ---
 
 const DEFAULT_FILTER: UsageFilter = {
+  scope: 'project',
   range: { rangeKey: '24h' },
   dims: ['model'],
   metrics: ['total'],
@@ -113,6 +129,7 @@ function rangeToISO(range: UsageRange): { start: string; end: string } {
 function buildURL(includeTrend: boolean): string {
   const { start, end } = rangeToISO(filter.value.range)
   const p = new URLSearchParams()
+  p.set('scope', filter.value.scope)
   p.set('start', start)
   p.set('end', end)
   for (const d of filter.value.dims) p.append('dims', d)
@@ -218,6 +235,21 @@ export function useUsageStats() {
     reloadStats()
   }
 
+  /**
+   * Switch between the current project and all projects. Any dim that is not
+   * selectable in the new scope is dropped (the `project` dim only exists in
+   * scope=all), so the request can never carry an invalid combination. If the
+   * prune empties the selection, fall back to the scope's default dims.
+   */
+  function setScope(next: UsageScope) {
+    if (filter.value.scope === next) return
+    filter.value.scope = next
+    const allowed = dimsForScope(next)
+    const kept = filter.value.dims.filter(d => allowed.includes(d))
+    filter.value.dims = kept.length > 0 ? kept : [allowed[0]]
+    void loadStats()
+  }
+
   function setMetrics(next: UsageMetricId[]) {
     if (next.length === 0) return // at least one metric required
     filter.value.metrics = [...next]
@@ -261,6 +293,7 @@ export function useUsageStats() {
     reloadStats,
     resetStatsFilter,
     resetUsageStats,
+    setScope,
     setDims,
     setMetrics,
     setSort,
