@@ -1262,12 +1262,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Migrate: drop the legacy agents.system_prompt column (see the function for why).
-	if err := migrateLegacyAgentPrompts(store.UnsafeDBForTest()); err != nil {
+	if err := migrateLegacyAgentPrompts(store.WriteDBRaw()); err != nil {
 		return err
 	}
 
 	// Migrate: drop the dead ACP state columns from agents (see the function for why).
-	if err := migrateLegacyAgentCapabilityColumns(store.UnsafeDBForTest()); err != nil {
+	if err := migrateLegacyAgentCapabilityColumns(store.WriteDBRaw()); err != nil {
 		return err
 	}
 
@@ -2079,7 +2079,7 @@ func MigrateTaskExecutionSummaries() bool {
 // package database. Exported for tests; InitDB uses migrateLegacyAgentPrompts so
 // it can act on the handle it is currently opening.
 func MigrateLegacyAgentPrompts() error {
-	return migrateLegacyAgentPrompts(store.UnsafeDBForTest())
+	return migrateLegacyAgentPrompts(store.WriteDBRaw())
 }
 
 // migrateLegacyAgentPrompts drops the legacy agents.system_prompt column and
@@ -2104,6 +2104,11 @@ func MigrateLegacyAgentPrompts() error {
 //
 // The outer guard is the column's existence, so this is a no-op once the column
 // is gone.
+//
+// Writes go through the raw *sql.DB rather than store.WriteExec: this runs only
+// from InitDB at startup, before any goroutine can write, so there is no
+// concurrent writer for writeMu to serialize against. (The exported
+// MigrateLegacyAgentPrompts wrapper exists for tests.)
 func migrateLegacyAgentPrompts(d *sql.DB) error {
 	var hasLegacy int
 	if err := d.QueryRow(
@@ -2148,7 +2153,7 @@ var legacyAgentCapabilityColumns = []string{
 // migrateLegacyAgentCapabilityColumns so it can act on the handle it is
 // currently opening.
 func MigrateLegacyAgentCapabilityColumns() error {
-	return migrateLegacyAgentCapabilityColumns(store.UnsafeDBForTest())
+	return migrateLegacyAgentCapabilityColumns(store.WriteDBRaw())
 }
 
 // migrateLegacyAgentCapabilityColumns drops the six dead ACP state columns from

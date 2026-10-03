@@ -1,4 +1,3 @@
-//nolint:noctx,govet,rowserrcheck // legacy queries moved from service/database.go; shadowed err is standard Go pattern
 package store
 
 import "time"
@@ -18,6 +17,8 @@ type UserMessageStat struct {
 // Results are ordered by the latest occurrence timestamp descending (recent first),
 // so clustering prioritizes recent data. The O(n²) comparison in clustering makes
 // large limits impractical — 500 types ≈ 125K comparisons, completes in seconds.
+//
+//nolint:noctx,rowserrcheck // legacy query moved from service; rationale documented at the call site
 func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
 	if limit <= 0 {
 		limit = 500
@@ -63,6 +64,8 @@ type ClusterCacheEntry struct {
 
 // SaveClusterCache deletes old cache and meta rows, inserts new entries,
 // and writes a meta row with progress="done". Uses WriteLock + transaction.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func SaveClusterCache(entries []ClusterCacheEntry, mode string) error {
 	tx, err := WriteBegin()
 	if err != nil {
@@ -99,6 +102,8 @@ func SaveClusterCache(entries []ClusterCacheEntry, mode string) error {
 
 // GetClusterCache returns all cache entries ordered by sort_order,
 // along with the mode and updated_at from the meta row.
+//
+//nolint:govet,noctx,rowserrcheck // legacy query moved from service; rationale documented at the call site
 func GetClusterCache() ([]ClusterCacheEntry, string, time.Time, error) {
 	rows, err := dbRead.Query("SELECT id, representative, variants, total_count, representative_count, sort_order FROM message_clusters_cache ORDER BY sort_order")
 	if err != nil {
@@ -143,6 +148,8 @@ func SaveClusterMeta(progress, mode string, msgCount, clusterCount, elapsedMs in
 }
 
 // SaveClusterMetaError inserts or replaces the meta row with error info.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func SaveClusterMetaError(progress, phase, errMsg string) error {
 	// Preserve existing mode from the meta row
 	var mode string
@@ -168,6 +175,8 @@ type ClusterMeta struct {
 }
 
 // GetClusterMeta returns the meta row values. If no row exists, returns defaults.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func GetClusterMeta() ClusterMeta {
 	var m ClusterMeta
 	err := dbRead.QueryRow(

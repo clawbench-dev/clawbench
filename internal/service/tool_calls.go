@@ -50,7 +50,7 @@ func UpsertToolCall(messageID int64, sessionID, toolID, name string, input json.
 }
 
 // GetToolCall retrieves a tool call record by tool_id and message_id.
-// Returns nil if not found. Uses dbRead for WAL-mode concurrent reads.
+// Returns nil if not found. Uses store.ReadDB() for WAL-mode concurrent reads.
 func GetToolCall(toolID string, messageID int64) (*ToolCallRecord, error) {
 	var r ToolCallRecord
 	var doneInt int

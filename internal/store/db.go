@@ -244,6 +244,15 @@ func UnsafeDBForTest() *sql.DB { return db }
 // Must only be called from _test.go files.
 func UnsafeReadDBForTest() *sql.DB { return dbRead }
 
+// WriteDBRaw returns the raw write *sql.DB handle.
+//
+// Prefer WriteExec/WriteBegin for ordinary writes: this bypasses writeMu and
+// must not be used for concurrent runtime writes. It exists for the schema
+// migration helpers that operate on the handle directly during startup
+// (InitDB), where the process is single-threaded and the callers take
+// *sql.DB for a DDL rebuild.
+func WriteDBRaw() *sql.DB { return db }
+
 // SnapshotDBForTest returns a function that restores the current write and read
 // handles. Use it to save the handles before an operation that replaces them
 // (e.g. service.InitDB), so the test can put its own fixture DB back afterward.
@@ -281,6 +290,10 @@ func SetDBForTest(writeDB, readDB *sql.DB) func() {
 // hazard the old code worked around by reading through the write pool.
 //
 // The caller owns schema creation; Open only establishes connectivity.
+//
+// On any error after the write pool is opened, the write pool is closed before
+// returning, so a failed Open never leaves a half-open handle behind (the
+// handle is left non-nil only on full success).
 func Open(dbPath string) error {
 	Close()
 
@@ -288,6 +301,11 @@ func Open(dbPath string) error {
 	db, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
+	}
+	// From here on, any error must close the write pool we just opened.
+	fail := func(e error) error {
+		_ = db.Close()
+		return e
 	}
 
 	// SQLite concurrency: WAL mode + write mutex + busy_timeout (defense-in-depth)
@@ -303,16 +321,16 @@ func Open(dbPath string) error {
 
 	// Enable WAL mode for concurrent reads during writes
 	if _, err := WriteExec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("failed to set WAL mode: %w", err)
+		return fail(fmt.Errorf("failed to set WAL mode: %w", err))
 	}
 	// Enable foreign key enforcement (required for ON DELETE CASCADE)
 	if _, err := WriteExec("PRAGMA foreign_keys = ON"); err != nil {
-		return fmt.Errorf("failed to enable foreign keys: %w", err)
+		return fail(fmt.Errorf("failed to enable foreign keys: %w", err))
 	}
 
 	// Wait up to 10 seconds when database is locked (defense-in-depth fallback)
 	if _, err := WriteExec("PRAGMA busy_timeout=10000"); err != nil {
-		return fmt.Errorf("failed to set busy_timeout: %w", err)
+		return fail(fmt.Errorf("failed to set busy_timeout: %w", err))
 	}
 
 	// Initialize read connection pool for concurrent reads (WAL mode).
@@ -321,17 +339,17 @@ func Open(dbPath string) error {
 	// Both pools must use WAL mode + busy_timeout for this to work correctly.
 	dbRead, err = sql.Open("sqlite", dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to open read database: %w", err)
+		return fail(fmt.Errorf("failed to open read database: %w", err))
 	}
 	dbRead.SetMaxOpenConns(2)
 	dbRead.SetMaxIdleConns(2)                   // match MaxOpenConns to avoid churn
 	dbRead.SetConnMaxLifetime(0)                // unlimited — SQLite file DB, no reconnection needed
 	dbRead.SetConnMaxIdleTime(30 * time.Minute) // close idle conns after 30min
 	if _, err := dbRead.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("failed to set read DB WAL mode: %w", err)
+		return fail(fmt.Errorf("failed to set read DB WAL mode: %w", err))
 	}
 	if _, err := dbRead.Exec("PRAGMA busy_timeout=10000"); err != nil {
-		return fmt.Errorf("failed to set read DB busy_timeout: %w", err)
+		return fail(fmt.Errorf("failed to set read DB busy_timeout: %w", err))
 	}
 	return nil
 }

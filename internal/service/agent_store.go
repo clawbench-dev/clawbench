@@ -145,7 +145,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		autoApprove = 1
 	}
 
-	_, err = store.WriteExec(`
+	_, err = db.Exec(`
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,

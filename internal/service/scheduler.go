@@ -1830,7 +1830,7 @@ func DeleteTaskExecution(executionID int64) error {
 
 	// Hard-delete the execution row first (conditional on status to prevent TOCTOU race).
 	// This must happen BEFORE archiving the session: if the conditional DELETE fails
-	// (execution became running between the dbRead check and this DELETE), the session
+	// (execution became running between the store.ReadDB() check and this DELETE), the session
 	// must remain intact to avoid inconsistent state.
 	result, err := store.WriteExec("DELETE FROM task_executions WHERE id = ? AND status != 'running'", executionID)
 	if err != nil {

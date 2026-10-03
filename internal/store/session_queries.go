@@ -1,4 +1,3 @@
-//nolint:errcheck,gocyclo,noctx // legacy queries moved from service/chat.go; nolint-only approach for diff stability
 package store
 
 import (
@@ -119,6 +118,8 @@ type RecentSession struct {
 // Cursor pagination: pass the last row's created_at (formatted "2006-01-02
 // 15:04:05") and id to fetch the next page. The returned bool reports whether
 // more rows remain after this page.
+//
+//nolint:errcheck,gocyclo,noctx // legacy query moved from service; rationale documented at the call site
 func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
 	// Browse mode never mixes session types: each selection lists exactly one
 	// type, and "all" means "all conversations" (not "conversations + tasks").
@@ -227,6 +228,8 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter,
 // The match is case-insensitive for ASCII and literal for everything else:
 // SQLite's LIKE folds A-Z only, and a Chinese title has no case.
 // limit <= 0 returns every match.
+//
+//nolint:errcheck,gocyclo,noctx // legacy query moved from service; rationale documented at the call site
 func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiveFilter, typeFilter, fromTime, toTime, sessionID, excludeSessionID string) ([]RecentSession, error) {
 	if len(terms) == 0 {
 		return []RecentSession{}, nil
@@ -322,6 +325,8 @@ func EscapeLikePatternForTest(s string) string { return escapeLikePattern(s) }
 // GetSessionTitlesBatchIncludeArchived fetches titles for multiple sessions
 // including archived ones. Used by RAG search to show titles even for
 // archived sessions whose chunks are still indexed.
+//
+//nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetSessionTitlesBatchIncludeArchived(sessionIDs []string) (map[string]string, error) {
 	if len(sessionIDs) == 0 {
 		return map[string]string{}, nil
@@ -369,6 +374,8 @@ type UnindexedMessage struct {
 
 // GetUnindexedMessages fetches chat messages that have not been indexed by RAG.
 // Returns up to limit messages ordered by creation time DESC (newest first).
+//
+//nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetUnindexedMessages(limit int) ([]UnindexedMessage, error) {
 	rows, err := dbRead.Query(
 		`SELECT h.id, h.content, h.role, h.session_id, COALESCE(p.path, ''), h.backend, h.created_at
@@ -428,6 +435,8 @@ func ResetAllIndexed() (int64, error) {
 }
 
 // UnindexedCount returns the number of messages waiting to be indexed by RAG.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func UnindexedCount() (int, error) {
 	var count int
 	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE indexed = 0 AND streaming = 0").Scan(&count)
@@ -435,6 +444,8 @@ func UnindexedCount() (int, error) {
 }
 
 // TotalMessageCount returns the total number of finalized (non-streaming) messages.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func TotalMessageCount() (int, error) {
 	var count int
 	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE streaming = 0").Scan(&count)
@@ -442,6 +453,8 @@ func TotalMessageCount() (int, error) {
 }
 
 // IndexedMessageCount returns the number of messages that have been indexed by RAG.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func IndexedMessageCount() (int, error) {
 	var count int
 	err := dbRead.QueryRow("SELECT COUNT(*) FROM chat_history WHERE indexed = 1 AND streaming = 0").Scan(&count)
@@ -449,6 +462,8 @@ func IndexedMessageCount() (int, error) {
 }
 
 // MessageIndexCounts returns (total, indexed) message counts in a single query.
+//
+//nolint:noctx // legacy query moved from service; rationale documented at the call site
 func MessageIndexCounts() (total int, indexed int, err error) {
 	err = dbRead.QueryRow(
 		"SELECT COUNT(*), COALESCE(SUM(CASE WHEN indexed = 1 THEN 1 ELSE 0 END), 0) FROM chat_history WHERE streaming = 0",
@@ -458,6 +473,8 @@ func MessageIndexCounts() (total int, indexed int, err error) {
 
 // GetExpiredArchivedSessions returns session IDs of archived sessions
 // whose updated_at (set to archive time) is older than the cutoff.
+//
+//nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
 	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND updated_at < ?", cutoff)
 	if err != nil {
@@ -484,6 +501,8 @@ func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
 // chat_metadata (the usage ledger) is deliberately left untouched — see
 // HardDeleteSession. Its rows have no foreign key to chat_history, so the
 // usage history for purged sessions remains queryable.
+//
+//nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurged int64, err error) {
 	if len(sessionIDs) == 0 {
 		return 0, 0, nil
