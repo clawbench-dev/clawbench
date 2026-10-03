@@ -45,10 +45,6 @@
             v-if="active.projectPath"
             class="completion-notify-project"
           >
-            <span class="completion-notify-project-badge">
-              <ExternalLink :size="10" />
-              <span>{{ gt('chat.popover.external') }}</span>
-            </span>
             <span class="completion-notify-project-name">{{ active.projectName || active.projectPath }}</span>
             <span class="completion-notify-project-path">{{ active.projectPath }}</span>
           </div>
@@ -60,7 +56,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
-import { X, ExternalLink } from 'lucide-vue-next'
+import { X } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import { useCompletionPopover } from '@/composables/useCompletionPopover'
 import { useAgents } from '@/composables/useAgents'
@@ -334,27 +330,6 @@ function markRead(item: NonNullable<typeof active.value>): void {
     background: color-mix(in srgb, var(--accent-color) 8%, var(--bg-primary, #fff));
     border-top: 1px solid color-mix(in srgb, var(--accent-color) 30%, transparent);
     min-width: 0;
-}
-
-/* "外部"徽章：accent 描边小标签，提示这是其他项目的会话。
-   与事件类型标题不同——这个仍是真正的徽章（描边+淡底），字号留在 sm。 */
-.completion-notify-project-badge {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: 1px 6px;
-    font-size: var(--font-size-sm);
-    line-height: var(--line-height-snug);
-    font-weight: var(--font-weight-medium);
-    color: var(--accent-color);
-    background: color-mix(in srgb, var(--accent-color) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--accent-color) 35%, transparent);
-    border-radius: var(--radius-xs);
-}
-
-.completion-notify-project-badge svg {
-    flex-shrink: 0;
 }
 
 /* 项目名：突出显示——加粗 + 正文色，是这行的主信息 */
