@@ -5,12 +5,14 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/assert"
 
 	_ "modernc.org/sqlite"
 )
 
-const uuidTestSchema = ProjectsDDL + `
+const uuidTestSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
 	project_id INTEGER NOT NULL,
@@ -37,7 +39,7 @@ func setupUUIDTestDB(t *testing.T) *sql.DB {
 	if _, err := db.Exec(uuidTestSchema); err != nil {
 		t.Fatalf("failed to create tables: %v", err)
 	}
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,14 +16,14 @@ func TestThinkingCRUD(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-sess-001"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -87,14 +89,14 @@ func TestAppendThinkingSegment_GetThinkingConcat(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-append-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -131,7 +133,7 @@ func TestAppendThinkingSegment_GetThinkingConcat(t *testing.T) {
 		}
 		// Only one row remains after the full-text upsert.
 		var count int
-		if err := db.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = 'th_app1'").Scan(&count); err != nil {
+		if err := store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = 'th_app1'").Scan(&count); err != nil {
 			t.Fatalf("count: %v", err)
 		}
 		if count != 1 {
@@ -148,7 +150,7 @@ func TestAppendThinkingSegment_GetThinkingConcat(t *testing.T) {
 			t.Fatalf("append seq0 retry: %v", err)
 		}
 		var count int
-		if err := db.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = 'th_app2'").Scan(&count); err != nil {
+		if err := store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = 'th_app2'").Scan(&count); err != nil {
 			t.Fatalf("count: %v", err)
 		}
 		if count != 1 {
@@ -163,14 +165,14 @@ func TestGetThinkingBySessionAll(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-all-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -407,7 +409,7 @@ func TestPersistThinkingToDB_ParseErrorFallback(t *testing.T) {
 	if err := initTestDB(dbDir); err != nil {
 		t.Fatalf("initTestDB: %v", err)
 	}
-	defer func() { db.Close(); dbRead.Close() }()
+	defer func() { store.UnsafeDBForTest().Close(); store.UnsafeReadDBForTest().Close() }()
 
 	bad := "not json {"
 	got := persistThinkingToDB(bad, 42, "sess-1")
@@ -457,14 +459,14 @@ func TestReplaceThinkingForMessage(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-batch-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Batch Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -474,7 +476,7 @@ func TestReplaceThinkingForMessage(t *testing.T) {
 	countRows := func(t *testing.T) int {
 		t.Helper()
 		var n int
-		if err := dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n); err != nil {
+		if err := store.ReadDB().QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n); err != nil {
 			t.Fatalf("count: %v", err)
 		}
 		return n
@@ -567,14 +569,14 @@ func TestReplaceThinkingForMessage_AtomicOnFailure(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-atomic-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Atomic Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -585,7 +587,7 @@ func TestReplaceThinkingForMessage_AtomicOnFailure(t *testing.T) {
 	require.NoError(t, UpsertThinking(msgID, sessionID, "th_preexisting", "precious"))
 
 	// Abort any insert carrying the marker text.
-	_, err = db.Exec(`
+	_, err = store.UnsafeDBForTest().Exec(`
 		CREATE TRIGGER fail_marked_insert BEFORE INSERT ON chat_thinking
 		WHEN NEW.text = 'TRIGGER_FAIL'
 		BEGIN SELECT RAISE(ABORT, 'injected failure'); END;
@@ -611,7 +613,7 @@ func TestReplaceThinkingForMessage_AtomicOnFailure(t *testing.T) {
 	}
 
 	var n int
-	require.NoError(t, dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
+	require.NoError(t, store.ReadDB().QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
 	require.Equal(t, 1, n, "only the pre-existing row may remain")
 }
 
@@ -626,14 +628,14 @@ func TestReplaceThinkingForMessage_DuplicateThinkIDLastWins(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-dup-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Dup Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -648,7 +650,7 @@ func TestReplaceThinkingForMessage_DuplicateThinkIDLastWins(t *testing.T) {
 	require.NoError(t, ReplaceThinkingForMessage(msgID, sessionID, recs))
 
 	var n int
-	require.NoError(t, dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
+	require.NoError(t, store.ReadDB().QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
 	require.Equal(t, 2, n, "duplicate think_id must collapse to one row")
 
 	rec, err := GetThinking("th_dup", msgID)
@@ -671,14 +673,14 @@ func TestPersistThinkingToDB_SlimsAndReplacesRows(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "thinking-persist-sess"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Persist Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -705,7 +707,7 @@ func TestPersistThinkingToDB_SlimsAndReplacesRows(t *testing.T) {
 	require.Contains(t, slim, "th_live", "slim block keeps its think_id marker")
 
 	var n int
-	require.NoError(t, dbRead.QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
+	require.NoError(t, store.ReadDB().QueryRow("SELECT count(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&n))
 	require.Equal(t, 2, n, "exactly the two live records")
 
 	if rec, _ := GetThinking("th_retired", msgID); rec != nil {

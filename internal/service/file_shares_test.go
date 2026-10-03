@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -25,12 +27,12 @@ func setupTestDBForFileShares(t *testing.T) *sql.DB {
 
 	// The registry: shares are attributed to a project at creation, so the
 	// resolver needs the table even in a fixture that never lists projects.
-	_, err = db.Exec(service.ProjectsDDL)
+	_, err = db.Exec(store.ProjectsDDL)
 	require.NoError(t, err)
 	_, err = db.Exec(service.FileSharesDDL)
 	require.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db
 }
@@ -261,7 +263,7 @@ func TestFileShares_Upsert_GetByPathReadError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Healthy write handle, closed read handle → GetFileShareByPath errors first.
-	cleanup := service.SetDBForTest(db, closedSQLite(t))
+	cleanup := store.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
 	_, _, err := service.UpsertFileShare("/tmp/err.md", "err.md", "/tmp", testProject)
@@ -274,7 +276,7 @@ func TestFileShares_Upsert_WriteErrorOnInsert(t *testing.T) {
 
 	// Healthy read handle (so GetFileShareByPath succeeds and reports no
 	// existing share), closed write handle → INSERT fails.
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	_, _, err := service.UpsertFileShare("/tmp/err2.md", "err2.md", "/tmp", testProject)
@@ -291,7 +293,7 @@ func TestFileShares_Upsert_RotateWriteError(t *testing.T) {
 	require.NotEmpty(t, token)
 
 	// Now break the write handle → the DELETE (rotate) fails.
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	_, _, err = service.UpsertFileShare("/tmp/rot.md", "rot.md", "/tmp", testProject)
@@ -303,7 +305,7 @@ func TestFileShares_GetByToken_ScanError(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Drop the name column so a SELECT ... name scan fails on a live row.
-	_, err := service.UnsafeDBForTest().Exec("ALTER TABLE file_shares DROP COLUMN name")
+	_, err := store.UnsafeDBForTest().Exec("ALTER TABLE file_shares DROP COLUMN name")
 	require.NoError(t, err)
 	// Insert a row directly (no name column).
 	_, err = db.Exec("INSERT INTO file_shares (token, path) VALUES (?, ?)", "tok1", "/tmp/t.md")
@@ -318,7 +320,7 @@ func TestFileShares_GetByToken_SQLQueryError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(db, closedSQLite(t))
+	cleanup := store.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
 	_, _, _, _, err := service.GetFileShareByToken("abc")
@@ -329,7 +331,7 @@ func TestFileShares_GetByPath_SQLQueryError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(db, closedSQLite(t))
+	cleanup := store.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
 	_, _, _, err := service.GetFileShareByPath("/tmp/x.md")
@@ -340,7 +342,7 @@ func TestFileShares_DeleteByToken_WriteError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	assert.Error(t, service.DeleteFileShareByToken("abc"))
@@ -350,7 +352,7 @@ func TestFileShares_DeleteByPath_WriteError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	assert.Error(t, service.DeleteFileShareByPath("/tmp/x.md"))
@@ -360,7 +362,7 @@ func TestFileShares_DeleteUnderPath_WriteError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	assert.Error(t, service.DeleteFileSharesUnderPath("/tmp/docs"))
@@ -370,7 +372,7 @@ func TestFileShares_DeleteByPaths_WriteError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	assert.Error(t, service.DeleteFileShareByPaths([]string{"/tmp/a.md"}))
@@ -380,7 +382,7 @@ func TestFileShares_DeleteAll_WriteError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(closedSQLite(t), db)
+	cleanup := store.SetDBForTest(closedSQLite(t), db)
 	defer cleanup()
 
 	assert.Error(t, service.DeleteAllFileShares(testProject))
@@ -390,7 +392,7 @@ func TestFileShares_List_QueryError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(db, closedSQLite(t))
+	cleanup := store.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
 	_, err := service.ListFileShares(testProject)
@@ -506,7 +508,7 @@ func TestFileShares_RootDefaultsEmptyForLegacyRows(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	// Simulate a row written before the root column existed.
-	_, err := service.WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO file_shares (token, path, name) VALUES (?, ?, ?)",
 		"legacytoken", "/proj/docs/old.md", "old.md")
 	require.NoError(t, err)
@@ -539,7 +541,7 @@ func TestGetFileShareProjectByToken_ResolvesOwningProject(t *testing.T) {
 	owner, ok, err := service.GetFileShareProjectByToken(token)
 	require.NoError(t, err)
 	assert.True(t, ok, "an existing token must resolve")
-	assert.Equal(t, service.NormalizeProjectPath(testProject), owner)
+	assert.Equal(t, store.NormalizeProjectPath(testProject), owner)
 }
 
 func TestGetFileShareProjectByToken_UnknownToken(t *testing.T) {
@@ -566,7 +568,7 @@ func TestGetFileShareProjectByToken_QueryError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	cleanup := service.SetDBForTest(db, closedSQLite(t))
+	cleanup := store.SetDBForTest(db, closedSQLite(t))
 	defer cleanup()
 
 	_, _, err := service.GetFileShareProjectByToken("anytoken")
@@ -581,9 +583,9 @@ func TestGetFileShareProjectByToken_GlobalScopeRow(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	_, err := service.WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO file_shares (token, path, name, root, project_id) VALUES (?, ?, ?, ?, ?)",
-		"globaltoken", "/tmp/global.md", "global.md", "/tmp", service.GlobalScopeProjectID)
+		"globaltoken", "/tmp/global.md", "global.md", "/tmp", store.GlobalScopeProjectID)
 	require.NoError(t, err)
 
 	owner, ok, err := service.GetFileShareProjectByToken("globaltoken")
@@ -653,8 +655,8 @@ func TestUpsertFileShare_ProjectIDResolutionError(t *testing.T) {
 
 	// Clear the path→id cache so ProjectIDForPath actually hits the DB, then
 	// break the write handle it uses.
-	service.ResetProjectIDCacheForTest()
-	cleanup := service.SetDBForTest(closedSQLite(t), closedSQLite(t))
+	store.ResetProjectIDCacheForTest()
+	cleanup := store.SetDBForTest(closedSQLite(t), closedSQLite(t))
 	defer cleanup()
 
 	_, _, err := service.UpsertFileShare("/tmp/x.md", "x.md", "/tmp", testProject)
@@ -668,8 +670,8 @@ func TestListFileShares_ProjectIDResolutionError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	service.ResetProjectIDCacheForTest()
-	cleanup := service.SetDBForTest(closedSQLite(t), closedSQLite(t))
+	store.ResetProjectIDCacheForTest()
+	cleanup := store.SetDBForTest(closedSQLite(t), closedSQLite(t))
 	defer cleanup()
 
 	_, err := service.ListFileShares(testProject)
@@ -682,8 +684,8 @@ func TestDeleteAllFileShares_ProjectIDResolutionError(t *testing.T) {
 	db := setupTestDBForFileShares(t)
 	defer func() { _ = db.Close() }()
 
-	service.ResetProjectIDCacheForTest()
-	cleanup := service.SetDBForTest(closedSQLite(t), closedSQLite(t))
+	store.ResetProjectIDCacheForTest()
+	cleanup := store.SetDBForTest(closedSQLite(t), closedSQLite(t))
 	defer cleanup()
 
 	assert.Error(t, service.DeleteAllFileShares(testProject))

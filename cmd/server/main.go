@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"clawbench/internal/store"
+
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 
@@ -837,15 +839,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Initialize SQLite database (runFromServer=true: clean up orphaned streaming messages)
 	if err := service.InitDB(true); err != nil {
 		slog.Error("failed to initialize database", slog.String("err", err.Error()))
-		service.CloseDB()
+		store.Close()
 		os.Exit(1) //nolint:gocritic // exitAfterDefer: CloseDB called explicitly above; defer is for normal path
 	}
-	defer service.CloseDB()
+	defer store.Close()
 
 	// Load persisted agent capabilities from DB so mode/thinking/command chips
 	// appear immediately on startup without requiring prefetch.
-	ai.SetRegistryDB(service.WriteDB())
-	ai.GetAgentCapabilityRegistry().LoadFromDB(service.ReadDB())
+	ai.SetRegistryDB(store.WriteDB())
+	ai.GetAgentCapabilityRegistry().LoadFromDB(store.ReadDB())
 
 	// Kill orphan AI subprocesses from a previous server crash.
 	// On Linux, scans /proc for CLAWBENCH_CHILD=1 env marker.
@@ -928,7 +930,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// 必须同步完成的部分：model.Agents / AgentList 要在默认 agent 选择
 	// （下方）与 scheduler.LoadTasksFromDB（其会校验 task.AgentID 是否存在，
 	// 否则静默跳过注册）之前就绪。
-	if _, err := model.RefreshAgents(service.WriteDB(), model.RefreshOptions{
+	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{
 		ConfigDir:     filepath.Dir(configPath),
 		SkipDiscovery: true,
 	}); err != nil {
@@ -1215,7 +1217,7 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	//
 	// withAgentsLock 用 handler.WithConfigLock：后台重载会替换 model.Agents/
 	// AgentList，而 HTTP handler 在同一把锁下读写它们。
-	model.StartModelDiscoveryAsync(service.WriteDB(), handler.WithConfigLock, func() {
+	model.StartModelDiscoveryAsync(store.WriteDB(), handler.WithConfigLock, func() {
 		ws.GetManager().BroadcastEvent(ws.ServerMessage{
 			Type:  ws.MessageTypeEvent,
 			ID:    ws.GenerateEventID(),

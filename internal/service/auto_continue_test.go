@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
@@ -360,7 +362,7 @@ func TestAutoContinueRunner_PersistsRealUserMessage(t *testing.T) {
 	assert.Equal(t, "Continue", gotPrompt)
 
 	var role, content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT role, content FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&role, &content)

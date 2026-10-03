@@ -1,4 +1,4 @@
-package service
+package store
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"clawbench/internal/model"
 )
 
 // ProjectsDDL creates the projects table: the single registry that maps a
@@ -52,6 +54,13 @@ CREATE INDEX IF NOT EXISTS idx_projects_path ON projects(path);
 // the same name coexist and silently break the (name, scope) uniqueness the
 // tag feature relies on.
 const GlobalScopeProjectID int64 = 0
+
+// NormalizeProjectPath canonicalizes a project path. Thin forwarder to
+// model.NormalizeProjectPath, kept here so every consumer in the data layer
+// resolves paths identically.
+func NormalizeProjectPath(p string) string {
+	return model.NormalizeProjectPath(p)
+}
 
 // projectIDCache maps a canonical project path to its id. Only path→id is
 // cached: an id→path cache would reintroduce exactly the staleness this
@@ -161,9 +170,9 @@ func ProjectPathForID(id int64) (string, bool, error) {
 // elsewhere can drop the old path→id entry.
 //
 // A hook rather than a direct call because the RAG store (internal/rag) owns its
-// own path→id cache and imports THIS package, so the dependency cannot be
-// reversed. internal/rag registers its invalidator from rag.Init, which runs
-// after InitDB.
+// own path→id cache; internal/rag registers its invalidator from rag.Init, which
+// runs after service.InitDB. Keeping the registry here (rather than in service)
+// lets rag depend only on this leaf package.
 var (
 	projectRenamedMu    sync.Mutex
 	projectRenamedHooks []func(paths ...string)
@@ -201,7 +210,7 @@ func notifyProjectRenamed(oldPath, newPath string) {
 // NOTE: there is currently NO production caller — no endpoint exposes a
 // rename, so the capability is unreachable today and is exercised only by
 // tests. It is kept because it is the operation the refactor exists to make
-// cheap, and because the caches it invalidates (the service's path→id map and
+// cheap, and because the caches it invalidates (this package's path→id map and
 // the RAG store's, via RegisterProjectRenamedHook) are live. Wire it to an
 // endpoint before claiming the refactor's payoff in user-facing terms.
 //
@@ -250,10 +259,10 @@ func RenameProject(oldPath, newPath string) error {
 	return nil
 }
 
-// projectID2Valid reports whether a project id from ProjectIDByPath denotes a
+// ProjectID2Valid reports whether a project id from ProjectIDByPath denotes a
 // real project (as opposed to the 0 "no project" sentinel). Named awkwardly
 // because "projectID" is already taken by a local in most call sites.
-func projectID2Valid(id int64) bool { return id != GlobalScopeProjectID }
+func ProjectID2Valid(id int64) bool { return id != GlobalScopeProjectID }
 
 // ProjectIDForTest resolves a path to its project id, failing the test on error.
 // Exported so external test packages (service_test) can seed project-scoped rows
@@ -330,4 +339,26 @@ func ResetProjectIDCacheForTest() {
 	projectIDMu.Lock()
 	projectIDCache = map[string]int64{}
 	projectIDMu.Unlock()
+}
+
+// ResetProjectRenamedHooksForTest clears the rename-hook registry. Test-only.
+func ResetProjectRenamedHooksForTest() {
+	projectRenamedMu.Lock()
+	projectRenamedHooks = nil
+	projectRenamedMu.Unlock()
+}
+
+// SeedTestProjectPathsForTest returns a copy of the fixed fixture project paths
+// the seeding helpers register. Test-only.
+func SeedTestProjectPathsForTest() []string {
+	return append([]string{}, seedTestProjectPaths...)
+}
+
+// SetSeedTestProjectPathsForTest replaces the fixture project paths registered
+// by SeedTestProjectsForTest. Returns the previous slice so the caller can
+// restore it. Test-only.
+func SetSeedTestProjectPathsForTest(paths []string) []string {
+	orig := seedTestProjectPaths
+	seedTestProjectPaths = paths
+	return orig
 }

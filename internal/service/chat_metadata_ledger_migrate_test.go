@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -14,16 +16,16 @@ import (
 // before migrateChatMetadataLedger runs in InitDB.
 func setupTestDBForLedgerMigration(t *testing.T) func() {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	memDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("failed to open in-memory db: %v", err)
+		t.Fatalf("failed to open in-memory memDB: %v", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
-	db.Exec("PRAGMA foreign_keys = ON")
+	memDB.SetMaxOpenConns(1)
+	memDB.Exec("PRAGMA journal_mode=WAL")
+	memDB.Exec("PRAGMA busy_timeout=5000")
+	memDB.Exec("PRAGMA foreign_keys = ON")
 
-	_, err = db.Exec(`
+	_, err = memDB.Exec(`
 		CREATE TABLE IF NOT EXISTS projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	path TEXT NOT NULL,
@@ -99,8 +101,8 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
 	}
-	cleanup := SetDBForTest(db, db)
-	return func() { cleanup(); db.Close() }
+	cleanup := store.SetDBForTest(memDB, memDB)
+	return func() { cleanup(); memDB.Close() }
 }
 
 // TestMigrateChatMetadataLedger_RemovesFKAndBackfills covers the core migration:
@@ -110,33 +112,33 @@ func TestMigrateChatMetadataLedger_RemovesFKAndBackfills(t *testing.T) {
 	teardown := setupTestDBForLedgerMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO projects (id, path) VALUES (1, '/proj') ON CONFLICT(id) DO NOTHING")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO projects (id, path) VALUES (1, '/proj') ON CONFLICT(id) DO NOTHING")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES ('s1', 1, 'codebuddy', 'T', 'codebuddy')")
+	_, err = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES ('s1', 1, 'codebuddy', 'T', 'codebuddy')")
 	require.NoError(t, err)
-	res, err := db.Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (1, 'codebuddy', 's1', 'assistant', '{}', 0)",
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
 
 	// Legacy row: attribution columns still empty.
-	_, err = db.Exec("INSERT INTO chat_metadata (message_id, model, total_tokens) VALUES (?, 'glm', 42)", msgID)
+	_, err = store.UnsafeDBForTest().Exec("INSERT INTO chat_metadata (message_id, model, total_tokens) VALUES (?, 'glm', 42)", msgID)
 	require.NoError(t, err)
 
 	var fkBefore int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkBefore))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkBefore))
 	require.Equal(t, 1, fkBefore, "legacy schema must start with the cascade FK")
 
 	require.NoError(t, migrateChatMetadataLedger())
 
 	var fkAfter int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkAfter))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkAfter))
 	assert.Equal(t, 0, fkAfter, "FK must be removed so the ledger is standalone")
 
 	var projectID int64
 	var backend, agentID, clawSID string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT project_id, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
 	).Scan(&projectID, &backend, &agentID, &clawSID))
 	assert.Equal(t, int64(1), projectID)
@@ -146,19 +148,19 @@ func TestMigrateChatMetadataLedger_RemovesFKAndBackfills(t *testing.T) {
 
 	// Row data preserved through the table rebuild.
 	var total int64
-	require.NoError(t, db.QueryRow("SELECT total_tokens FROM chat_metadata WHERE message_id = ?", msgID).Scan(&total))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT total_tokens FROM chat_metadata WHERE message_id = ?", msgID).Scan(&total))
 	assert.Equal(t, int64(42), total)
 
 	// The ledger row now survives deletion of its message.
-	_, err = db.Exec("DELETE FROM chat_history WHERE id = ?", msgID)
+	_, err = store.UnsafeDBForTest().Exec("DELETE FROM chat_history WHERE id = ?", msgID)
 	require.NoError(t, err)
 	var remaining int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = ?", msgID).Scan(&remaining))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = ?", msgID).Scan(&remaining))
 	assert.Equal(t, 1, remaining, "ledger row must survive message deletion after migration")
 
 	// Indexes recreated on the rebuilt table.
 	var idx int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_chat_metadata_project_created'").Scan(&idx))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_chat_metadata_project_created'").Scan(&idx))
 	assert.Equal(t, 1, idx)
 }
 
@@ -168,25 +170,25 @@ func TestMigrateChatMetadataLedger_Idempotent(t *testing.T) {
 	teardown := setupTestDBForLedgerMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES ('s1', 1, 'claude', 'T', 'agent-x')")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES ('s1', 1, 'claude', 'T', 'agent-x')")
 	require.NoError(t, err)
-	res, err := db.Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (1, 'claude', 's1', 'assistant', '{}', 0)",
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
-	_, err = db.Exec("INSERT INTO chat_metadata (message_id, total_tokens) VALUES (?, 7)", msgID)
+	_, err = store.UnsafeDBForTest().Exec("INSERT INTO chat_metadata (message_id, total_tokens) VALUES (?, 7)", msgID)
 	require.NoError(t, err)
 
 	require.NoError(t, migrateChatMetadataLedger())
 	require.NoError(t, migrateChatMetadataLedger())
 
 	var count int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_metadata").Scan(&count))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_metadata").Scan(&count))
 	assert.Equal(t, 1, count, "second run must not duplicate rows")
 
 	var agentID string
-	require.NoError(t, db.QueryRow("SELECT agent_id FROM chat_metadata WHERE message_id = ?", msgID).Scan(&agentID))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT agent_id FROM chat_metadata WHERE message_id = ?", msgID).Scan(&agentID))
 	assert.Equal(t, "agent-x", agentID)
 }
 
@@ -196,7 +198,7 @@ func TestMigrateChatMetadataLedger_NoTableIsNoop(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer func() { cleanup(); db.Close() }()
 
 	assert.NoError(t, migrateChatMetadataLedger())
@@ -236,7 +238,7 @@ func TestMigrateChatMetadataLedger_SkipsBackfillWhenAttributionPresent(t *testin
 	_, err = db.Exec("INSERT INTO chat_metadata (message_id, project_id, backend, agent_id, clawbench_session_id) VALUES (1, 1, 'claude', 'a', 's1')")
 	require.NoError(t, err)
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer func() { cleanup(); db.Close() }()
 
 	assert.NoError(t, migrateChatMetadataLedger())
@@ -256,21 +258,21 @@ func TestMigrateChatMetadataLedger_OrphanRowsStayEmpty(t *testing.T) {
 	// Insert a metadata row with no matching chat_history row. The legacy
 	// schema enforces the FK, so temporarily disable enforcement to simulate a
 	// row orphaned before enforcement existed.
-	_, err := db.Exec("PRAGMA foreign_keys = OFF")
+	_, err := store.UnsafeDBForTest().Exec("PRAGMA foreign_keys = OFF")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_metadata (message_id, total_tokens) VALUES (9999, 11)")
+	_, err = store.UnsafeDBForTest().Exec("INSERT INTO chat_metadata (message_id, total_tokens) VALUES (9999, 11)")
 	require.NoError(t, err)
-	_, err = db.Exec("PRAGMA foreign_keys = ON")
+	_, err = store.UnsafeDBForTest().Exec("PRAGMA foreign_keys = ON")
 	require.NoError(t, err)
 
 	require.NoError(t, migrateChatMetadataLedger())
 
 	var count int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = 9999").Scan(&count))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_metadata WHERE message_id = 9999").Scan(&count))
 	assert.Equal(t, 1, count, "orphan ledger row must survive the rebuild")
 
 	var projectID int64
-	require.NoError(t, db.QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = 9999").Scan(&projectID))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = 9999").Scan(&projectID))
 	assert.Zero(t, projectID, "orphan cannot be attributed")
 }
 
@@ -282,23 +284,23 @@ func TestMigrateChatMetadataLedger_EmptyHistoryProjectNotRescanned(t *testing.T)
 	teardown := setupTestDBForLedgerMigration(t)
 	defer teardown()
 
-	res, err := db.Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (0, 'claude', 's1', 'assistant', '{}', 0)",
 	)
 	require.NoError(t, err)
 	msgID, _ := res.LastInsertId()
-	_, err = db.Exec("INSERT INTO chat_metadata (message_id, total_tokens) VALUES (?, 3)", msgID)
+	_, err = store.UnsafeDBForTest().Exec("INSERT INTO chat_metadata (message_id, total_tokens) VALUES (?, 3)", msgID)
 	require.NoError(t, err)
 
 	require.NoError(t, migrateChatMetadataLedger())
 
 	var projectID int64
-	require.NoError(t, db.QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = ?", msgID).Scan(&projectID))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT project_id FROM chat_metadata WHERE message_id = ?", msgID).Scan(&projectID))
 	assert.Zero(t, projectID, "unattributable row stays empty")
 
 	// The backfill predicate must now exclude this row (h.project_id == 0).
 	var stillNeeds int
-	require.NoError(t, db.QueryRow(`
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(`
 		SELECT COUNT(*) FROM chat_metadata m
 		WHERE m.project_id = 0
 		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_id != 0)

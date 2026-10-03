@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 )
 
@@ -64,11 +66,11 @@ func ReplaceThinkingForMessage(messageID int64, sessionID string, records []Thin
 	if messageID <= 0 || len(records) == 0 {
 		return nil
 	}
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return fmt.Errorf("ReplaceThinkingForMessage begin: %w", err)
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	ctx := context.Background()
@@ -136,11 +138,11 @@ func UpsertThinking(messageID int64, sessionID, thinkID, text string) error {
 	if thinkID == "" || text == "" {
 		return nil
 	}
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return fmt.Errorf("UpsertThinking begin: %w", err)
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	ctx := context.Background()
@@ -165,7 +167,7 @@ func AppendThinkingSegment(messageID int64, sessionID, thinkID string, seq int, 
 	if thinkID == "" || delta == "" {
 		return nil
 	}
-	_, err := WriteExecContext(context.Background(), `
+	_, err := store.WriteExecContext(context.Background(), `
 		INSERT INTO chat_thinking (message_id, session_id, think_id, seq, text)
 		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(think_id, message_id, seq) DO UPDATE SET text = excluded.text
@@ -179,7 +181,7 @@ func AppendThinkingSegment(messageID int64, sessionID, thinkID string, seq int, 
 // DeleteThinkingByMessage removes thinking records for a message.
 // Called before insert in the Finalize write path for idempotency.
 func DeleteThinkingByMessage(messageID int64) error {
-	_, err := WriteExecContext(context.Background(), "DELETE FROM chat_thinking WHERE message_id = ?", messageID)
+	_, err := store.WriteExecContext(context.Background(), "DELETE FROM chat_thinking WHERE message_id = ?", messageID)
 	if err != nil {
 		return fmt.Errorf("DeleteThinkingByMessage: %w", err)
 	}
@@ -198,7 +200,7 @@ func GetThinking(thinkID string, messageID int64) (*ThinkingRecord, error) {
 // concatenates their text in seq order, and returns a single record. Returns
 // (nil, nil) when no rows exist.
 func scanThinkingChunks(thinkID string, messageID int64) (*ThinkingRecord, error) {
-	rows, err := dbRead.QueryContext(context.Background(), `
+	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT id, message_id, session_id, think_id, seq, text, created_at
 		FROM chat_thinking WHERE think_id = ? AND message_id = ?
 		ORDER BY seq ASC
@@ -237,7 +239,7 @@ func scanThinkingChunks(thinkID string, messageID int64) (*ThinkingRecord, error
 // know the exact message_id (mirrors GetToolCallBySession).
 func GetThinkingBySession(thinkID, sessionID string) (*ThinkingRecord, error) {
 	var messageID int64
-	err := dbRead.QueryRowContext(context.Background(), `
+	err := store.ReadDB().QueryRowContext(context.Background(), `
 		SELECT message_id FROM chat_thinking WHERE think_id = ? AND session_id = ?
 		ORDER BY created_at DESC LIMIT 1
 	`, thinkID, sessionID).Scan(&messageID)
@@ -255,7 +257,7 @@ func GetThinkingBySession(thinkID, sessionID string) (*ThinkingRecord, error) {
 // concatenated in seq order. Used by BuildForkContext to batch-fetch thinking
 // text without N+1 queries.
 func GetThinkingBySessionAll(sessionID string) ([]ThinkingRecord, error) {
-	rows, err := dbRead.QueryContext(context.Background(), `
+	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT message_id, think_id, seq, text
 		FROM chat_thinking WHERE session_id = ?
 		ORDER BY message_id ASC, think_id ASC, seq ASC

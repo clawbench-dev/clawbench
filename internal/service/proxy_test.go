@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	_ "modernc.org/sqlite"
@@ -186,7 +188,7 @@ func TestProxyRegistry_RebindPort_RejectsReverse(t *testing.T) {
 
 func TestProxyRegistry_RebindPort_PersistsUnderNewKey(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := NewProxyRegistry(0)
@@ -372,7 +374,7 @@ func setupTestDB(t *testing.T) *sql.DB {
 func TestProxyRegistry_PortPersistence_RegisterAndLoad(t *testing.T) {
 	// Set up in-memory DB and make it available globally
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	// Create registry and register ports — should persist to DB
@@ -405,7 +407,7 @@ func TestProxyRegistry_PortPersistence_RegisterAndLoad(t *testing.T) {
 
 func TestProxyRegistry_SetPortEnabled_PersistsAndReloads(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := NewProxyRegistry(0)
@@ -437,7 +439,7 @@ func TestProxyRegistry_SetPortEnabled_PersistsAndReloads(t *testing.T) {
 
 func TestProxyRegistry_SetPortEnabled_ReEnableRestores(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := NewProxyRegistry(0)
@@ -457,7 +459,7 @@ func TestProxyRegistry_SetPortEnabled_ReEnableRestores(t *testing.T) {
 
 func TestProxyRegistry_SetPortEnabled_NotRegistered(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := NewProxyRegistry(0)
@@ -469,7 +471,7 @@ func TestProxyRegistry_SetPortEnabled_NotRegistered(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_UnregisterDeletesFromDB(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := NewProxyRegistry(0)
@@ -497,7 +499,7 @@ func TestProxyRegistry_PortPersistence_UnregisterDeletesFromDB(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_RestoreOnStartup(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	// First registry: register ports (persists to DB)
@@ -525,7 +527,7 @@ func TestProxyRegistry_PortPersistence_RestoreOnStartup(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_FullLifecycle(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	// Phase 1: Create, register, verify
@@ -568,7 +570,7 @@ func TestProxyRegistry_PortPersistence_FullLifecycle(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_SkipsOutOfAllowedRange(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	// Insert a port directly into DB that is outside the default allowed range (1024-65535)
@@ -586,11 +588,9 @@ func TestProxyRegistry_PortPersistence_SkipsOutOfAllowedRange(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_NoDB(t *testing.T) {
 	// When DB is nil, persistence methods should be no-ops (not panic)
-	origDB := UnsafeDBForTest()
-	origDBRead := dbRead
-	db = nil
-	dbRead = nil
-	defer func() { db = origDB; dbRead = origDBRead }()
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	store.SetDBForTest(nil, nil)
 
 	r := NewProxyRegistry(0)
 	defer r.Stop()
@@ -905,7 +905,7 @@ func TestProxyRegistry_UpdatePort_ChangeTargetPort(t *testing.T) {
 
 func TestProxyRegistry_UpdatePort_WithDB(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := NewProxyRegistry(0)
@@ -929,7 +929,7 @@ func TestProxyRegistry_UpdatePort_WithDB(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_HostSavedAndRestored(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r1 := NewProxyRegistry(0)
@@ -949,7 +949,7 @@ func TestProxyRegistry_PortPersistence_HostSavedAndRestored(t *testing.T) {
 
 func TestProxyRegistry_PortPersistence_DifferentHostsSamePort(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r1 := NewProxyRegistry(0)
@@ -1284,7 +1284,7 @@ func TestDetectTLS_NonTLSListenerReturnsFalse(t *testing.T) {
 
 func TestProxyRegistry_LoadPortsFromDB_NonLocalhostHostStartsReverseProxy(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	port := getFreePort(t)
@@ -1310,7 +1310,7 @@ func TestProxyRegistry_LoadPortsFromDB_NonLocalhostHostStartsReverseProxy(t *tes
 
 func TestProxyRegistry_LoadPortsFromDB_LocalhostHostNoReverseProxy(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	// Insert a port with localhost/empty host
@@ -1500,7 +1500,7 @@ func TestProxyRegistry_DefaultAllowedPorts_CanBeOverriddenToAllowAll(t *testing.
 
 func TestProxyRegistry_LoadPortsFromDB_NonLocalhostReverseProxyStarts(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	port := getFreePort(t)
@@ -1811,7 +1811,7 @@ func TestProxyRegistry_AllocateServerPort_SkipsReserved(t *testing.T) {
 
 func TestProxyRegistry_ReversePersistenceRoundTrip(t *testing.T) {
 	testDB := setupTestDB(t)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 
 	r := newTestRegistry(t)

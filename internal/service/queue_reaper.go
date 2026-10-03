@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"clawbench/internal/store"
 )
 
 // launchConsumerExecution is an indirection over LaunchSessionExecution so
@@ -156,7 +158,7 @@ func (w *QueueReaper) run(stopCh <-chan struct{}, doneCh chan<- struct{}) {
 func (w *QueueReaper) reap() {
 	// Tests tear the DB down between cases; without this guard a reap tick
 	// racing teardown would panic on a nil pool.
-	if !DBReady() {
+	if !store.DBReady() {
 		return
 	}
 
@@ -188,7 +190,7 @@ func (w *QueueReaper) reap() {
 func findStrandedQueuedSessions(grace time.Duration) ([]string, error) {
 	cutoff := time.Now().UTC().Add(-grace).Format("2006-01-02 15:04:05")
 
-	rows, err := dbRead.QueryContext(context.Background(), `
+	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT DISTINCT q.session_id
 		FROM queued_messages q
 		JOIN chat_sessions s ON s.id = q.session_id
@@ -229,7 +231,7 @@ func EnsureConsumer(sessionID string) bool {
 	if sessionID == "" {
 		return false
 	}
-	if !DBReady() {
+	if !store.DBReady() {
 		return false
 	}
 

@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	_ "modernc.org/sqlite"
@@ -20,7 +22,7 @@ func TestServePendingEvents_Empty(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS pending_events (
@@ -69,7 +71,7 @@ func TestServePendingEvents_SuppressNotificationWireName(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS pending_events (
@@ -147,7 +149,7 @@ func TestServePendingEvents_DBError(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close() // close immediately so queries will fail
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	req := httptest.NewRequest("GET", "/api/ai/events/pending", http.NoBody)
@@ -174,7 +176,7 @@ func TestServePendingEvents_WithAfterParam(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS pending_events (

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // SearchMode indicates which search strategy was used.
@@ -181,7 +181,7 @@ func getSessionTitles(sessionIDs map[string]bool) map[string]string {
 	}
 
 	// Check if service DB is available
-	if !service.DBReady() {
+	if !store.DBReady() {
 		return map[string]string{}
 	}
 
@@ -189,7 +189,7 @@ func getSessionTitles(sessionIDs map[string]bool) map[string]string {
 	for id := range sessionIDs {
 		ids = append(ids, id)
 	}
-	titles, err := service.GetSessionTitlesBatchIncludeArchived(ids)
+	titles, err := store.GetSessionTitlesBatchIncludeArchived(ids)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -258,7 +258,7 @@ type SessionSearchResponse struct {
 // list stays cheap, and the detail view lazily fetches the first message on
 // demand.
 func RecentSessions(ctx context.Context, projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) (*SessionSearchResponse, error) {
-	sessions, hasMore, err := service.GetRecentSessions(projectPath, limit, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID)
+	sessions, hasMore, err := store.GetRecentSessions(projectPath, limit, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +301,7 @@ func RecentSessions(ctx context.Context, projectPath string, limit int, archiveF
 // A nil store (RAG not configured) is not an error here: the title channel is
 // pure SQL and still answers, so those installs get name search rather than a
 // 503. The response mode then reports "title" to say no content search ran.
-func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) {
+func RAGSessionSearch(ctx context.Context, ragStore *Store, embedder *EmbeddingClient, params SearchParams, searchLimit int, searchPoolSize int) (*SessionSearchResponse, error) {
 	if params.Query == "" {
 		return &SessionSearchResponse{}, nil
 	}
@@ -309,7 +309,7 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 	// Title channel. Its filters mirror the content channel's, so the two sets
 	// of results are drawn from the same population — including the
 	// single-session and excluded-session scopes.
-	titleMatches, err := service.SearchSessionsByTitle(
+	titleMatches, err := store.SearchSessionsByTitle(
 		params.ProjectPath, titleSearchTerms(params.Query), searchLimit,
 		params.Archived, params.SessionType, params.FromTime, params.ToTime,
 		params.SessionID, params.ExcludeSessionID,
@@ -322,7 +322,7 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 
 	// Content channel. Skipped entirely when RAG is unavailable — the title
 	// channel above is the whole answer in that case.
-	contentSessions, contentMode, err := contentSessionMatches(ctx, store, embedder, params, searchLimit, searchPoolSize)
+	contentSessions, contentMode, err := contentSessionMatches(ctx, ragStore, embedder, params, searchLimit, searchPoolSize)
 	if err != nil {
 		return nil, err
 	}
@@ -363,15 +363,15 @@ func RAGSessionSearch(ctx context.Context, store *Store, embedder *EmbeddingClie
 }
 
 // contentSessionMatches runs the content channel and returns the aggregated
-// sessions plus the mode to report. A nil store means RAG is not configured:
+// sessions plus the mode to report. A nil ragStore means RAG is not configured:
 // there is no content to search, so it returns no sessions and SearchModeTitle
 // to say the title channel is the whole answer.
 //
 // The archive and session-type filters run here, after aggregation, because
 // rag_chunks carries neither column — the predicates can only be applied once
 // each session's DB metadata has been loaded.
-func contentSessionMatches(ctx context.Context, store *Store, embedder *EmbeddingClient, params SearchParams, searchLimit, searchPoolSize int) ([]*SessionSearchResult, SearchMode, error) {
-	if store == nil {
+func contentSessionMatches(ctx context.Context, ragStore *Store, embedder *EmbeddingClient, params SearchParams, searchLimit, searchPoolSize int) ([]*SessionSearchResult, SearchMode, error) {
+	if ragStore == nil {
 		return nil, SearchModeTitle, nil
 	}
 
@@ -385,7 +385,7 @@ func contentSessionMatches(ctx context.Context, store *Store, embedder *Embeddin
 	expandedParams := params
 	expandedParams.Limit = expandedLimit
 
-	result, err := RAGSearch(ctx, store, embedder, expandedParams, expandedLimit, searchPoolSize)
+	result, err := RAGSearch(ctx, ragStore, embedder, expandedParams, expandedLimit, searchPoolSize)
 	if err != nil {
 		return nil, "", err
 	}
@@ -394,9 +394,9 @@ func contentSessionMatches(ctx context.Context, store *Store, embedder *Embeddin
 	enrichSessionMeta(sessions)
 
 	// Filter by archive status now that each session's archived flag is known.
-	archiveFilter := service.NormalizeSessionArchiveFilter(params.Archived)
-	if archiveFilter != service.SessionArchiveFilterAll {
-		wantArchived := archiveFilter == service.SessionArchiveFilterArchived
+	archiveFilter := store.NormalizeSessionArchiveFilter(params.Archived)
+	if archiveFilter != store.SessionArchiveFilterAll {
+		wantArchived := archiveFilter == store.SessionArchiveFilterArchived
 		filtered := sessions[:0]
 		for _, s := range sessions {
 			if s.Archived == wantArchived {
@@ -409,7 +409,7 @@ func contentSessionMatches(ctx context.Context, store *Store, embedder *Embeddin
 	// Filter by session type. A session whose row is missing (or whose stored
 	// type is empty) counts as 'chat' — the schema default — mirroring how a
 	// missing row is treated as active above.
-	if dbType := service.SessionTypeDBValue(params.SessionType); dbType != "" {
+	if dbType := store.SessionTypeDBValue(params.SessionType); dbType != "" {
 		filtered := sessions[:0]
 		for _, s := range sessions {
 			st := s.SessionType
@@ -436,7 +436,7 @@ func contentSessionMatches(ctx context.Context, store *Store, embedder *Embeddin
 // filled in from the DB here. That is also where the title-match offsets are
 // computed: they are rune offsets into the stored title, the same coordinate
 // space the chunk highlighting uses.
-func mergeTitleAndContentMatches(titleMatches []service.RecentSession, contentSessions []*SessionSearchResult, query string) []*SessionSearchResult {
+func mergeTitleAndContentMatches(titleMatches []store.RecentSession, contentSessions []*SessionSearchResult, query string) []*SessionSearchResult {
 	merged := make([]*SessionSearchResult, 0, len(titleMatches)+len(contentSessions))
 	seen := make(map[string]int, len(titleMatches))
 
@@ -615,15 +615,15 @@ func sessionIDSet(sessions []*SessionSearchResult) map[string]bool {
 // the id step keeps the result deterministic, since sort.Slice is not stable and
 // sessions can share both a score and a timestamp.
 func sortSessionResults(sessions []*SessionSearchResult, sortOrder string) {
-	switch service.NormalizeSessionSortOrder(sortOrder) {
-	case service.SessionSortNewest:
+	switch store.NormalizeSessionSortOrder(sortOrder) {
+	case store.SessionSortNewest:
 		sort.Slice(sessions, func(i, j int) bool {
 			if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
 				return sessions[i].CreatedAt.After(sessions[j].CreatedAt)
 			}
 			return sessions[i].SessionID < sessions[j].SessionID
 		})
-	case service.SessionSortOldest:
+	case store.SessionSortOldest:
 		sort.Slice(sessions, func(i, j int) bool {
 			if !sessions[i].CreatedAt.Equal(sessions[j].CreatedAt) {
 				return sessions[i].CreatedAt.Before(sessions[j].CreatedAt)
@@ -663,7 +663,7 @@ type sessionMeta struct {
 // zero value.
 func getSessionMetaBatch(sessionIDs map[string]bool) map[string]sessionMeta {
 	meta := make(map[string]sessionMeta, len(sessionIDs))
-	if !service.DBReady() || len(sessionIDs) == 0 {
+	if !store.DBReady() || len(sessionIDs) == 0 {
 		return meta
 	}
 	ids := make([]string, 0, len(sessionIDs))
@@ -675,7 +675,7 @@ func getSessionMetaBatch(sessionIDs map[string]bool) map[string]sessionMeta {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := service.ReadDB().Query(
+	rows, err := store.ReadDB().Query(
 		"SELECT id, archived, created_at, session_type FROM chat_sessions WHERE id IN ("+placeholders+")", args...,
 	)
 	if err != nil {

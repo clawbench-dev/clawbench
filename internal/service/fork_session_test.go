@@ -4,6 +4,8 @@ import (
 	"strconv"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -41,7 +43,7 @@ func TestForkSession_NormalFlow(t *testing.T) {
 
 	// New session should have source_session_id set
 	var sourceID *string
-	err = service.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&sourceID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&sourceID)
 	assert.NoError(t, err)
 	assert.NotNil(t, sourceID)
 	assert.Equal(t, sessID, *sourceID)
@@ -82,7 +84,7 @@ func TestForkSession_CopiesBtwQuestionsReanchored(t *testing.T) {
 
 	// One marker anchored to the first assistant reply, one to a later message.
 	for _, anchor := range []int64{asstID, laterID} {
-		_, err := service.UnsafeDBForTest().Exec(
+		_, err := store.UnsafeDBForTest().Exec(
 			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer)
 			 VALUES (?, 1, ?, ?, 'a')`,
 			sessID, anchor, "q-"+strconv.FormatInt(anchor, 10),
@@ -296,7 +298,7 @@ func TestForkSession_ForkOfFork(t *testing.T) {
 
 	// fork2's source_session_id should point to fork1, not original
 	var sourceID *string
-	err = service.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", fork2ID).Scan(&sourceID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT source_session_id FROM chat_sessions WHERE id = ?", fork2ID).Scan(&sourceID)
 	assert.NoError(t, err)
 	assert.NotNil(t, sourceID)
 	assert.Equal(t, fork1ID, *sourceID)
@@ -320,7 +322,7 @@ func TestForkSession_SessionTypeIsChat(t *testing.T) {
 	assert.NoError(t, err)
 
 	var sessionType string
-	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", newSessID).Scan(&sessionType)
+	err = store.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", newSessID).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }
@@ -568,7 +570,7 @@ func TestForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 
 	// Get the streaming assistant message ID
 	var streamingID int64
-	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
 	assert.NoError(t, err)
 
 	// Fork from a streaming message should fail
@@ -649,7 +651,7 @@ func TestForkSession_TruncationSkipsDetailRows(t *testing.T) {
 
 	// Only the first exchange's rows are copied into the fork.
 	var toolCount, thinkCount int
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	err = db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls WHERE session_id = ?", newSessID).Scan(&toolCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, toolCount, "only rows before the cut should be copied")
@@ -737,7 +739,7 @@ func TestForkSession_OverrideAgentID(t *testing.T) {
 	// Create source session with agent "claude" and a model
 	sessID := helperCreateSession(t, "/project", "claude", "Original")
 	// Set model on the source session
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET model = 'claude-sonnet-4' WHERE id = ?", sessID)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET model = 'claude-sonnet-4' WHERE id = ?", sessID)
 	assert.NoError(t, err)
 
 	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Hello", nil, false, "")
@@ -754,7 +756,7 @@ func TestForkSession_OverrideAgentID(t *testing.T) {
 
 	// Verify the forked session has the override agent
 	var backend, agentID, agentSource, modelName string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT backend, agent_id, agent_source, model FROM chat_sessions WHERE id = ?", newSessID,
 	).Scan(&backend, &agentID, &agentSource, &modelName)
 	assert.NoError(t, err)
@@ -778,7 +780,7 @@ func TestForkSession_OverrideAgentID_Empty(t *testing.T) {
 	assert.NoError(t, err)
 
 	var backend, agentID, agentSource string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT backend, agent_id, agent_source FROM chat_sessions WHERE id = ?", newSessID,
 	).Scan(&backend, &agentID, &agentSource)
 	assert.NoError(t, err)
@@ -807,7 +809,7 @@ func TestForkSession_OverrideAgentID_Unknown(t *testing.T) {
 	assert.NoError(t, err)
 
 	var backend string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT backend FROM chat_sessions WHERE id = ?", newSessID,
 	).Scan(&backend)
 	assert.NoError(t, err)
@@ -908,7 +910,7 @@ func TestForkSession_TitleSourceIsPlaceholder(t *testing.T) {
 	assert.NoError(t, err)
 
 	var source string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT COALESCE(title_source, '') FROM chat_sessions WHERE id = ?", newSessID,
 	).Scan(&source)
 	assert.NoError(t, err)

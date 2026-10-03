@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -723,7 +725,7 @@ func TestServeSessions_Get_CursorAndCursorID(t *testing.T) {
 	// cursor mix-up (or an ignored cursor) actually produces overlap. Without
 	// this, created_at == updated_at for message-less sessions and the test
 	// cannot distinguish the two cursor fields.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET updated_at = datetime(updated_at, '+1 day') WHERE id = ?", cursorID)
 	require.NoError(t, err)
 
@@ -778,7 +780,7 @@ func TestServeSessionsPaginationWithPinned(t *testing.T) {
 		if i == 0 {
 			oldestID = id
 		}
-		_, err = service.UnsafeDBForTest().Exec(
+		_, err = store.UnsafeDBForTest().Exec(
 			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
 			fmt.Sprintf("2024-0%d-01 00:00:00", i+1), id,
 		)

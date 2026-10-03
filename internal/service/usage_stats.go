@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"clawbench/internal/store"
 )
 
 // UsageDim is an aggregation dimension for usage statistics.
@@ -317,7 +319,7 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	where := "WHERE m.created_at >= ? AND m.created_at < ?"
 	args := []any{startStr, endStr}
 	if p.Scope != ScopeAll {
-		projectID, idErr := ProjectIDForPath(p.ProjectPath)
+		projectID, idErr := store.ProjectIDForPath(p.ProjectPath)
 		if idErr != nil {
 			return nil, idErr
 		}
@@ -327,7 +329,7 @@ func UsageStats(ctx context.Context, p UsageParams) (*UsageStatsResult, error) {
 	res := &UsageStatsResult{}
 
 	// Totals: same filter, no grouping — one aggregate row over the range.
-	totalsRow, err := scanUsageTotalsRow(dbRead.QueryRowContext(ctx, "SELECT "+sums+" "+from+" "+where, args...))
+	totalsRow, err := scanUsageTotalsRow(store.ReadDB().QueryRowContext(ctx, "SELECT "+sums+" "+from+" "+where, args...))
 	if err != nil {
 		return nil, fmt.Errorf("usage totals: %w", err)
 	}
@@ -363,7 +365,7 @@ func queryUsageRows(ctx context.Context, p UsageParams, dimExprs []string, sums,
 		" GROUP BY " + dimCols + " ORDER BY " + sortBy + " " + order + ", " + dimCols +
 		" LIMIT " + fmt.Sprintf("%d", limit)
 
-	rows, err := dbRead.QueryContext(ctx, query, args...)
+	rows, err := store.ReadDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("usage stats query: %w", err)
 	}
@@ -392,7 +394,7 @@ func queryTrendRows(ctx context.Context, p UsageParams, dimExprs []string, sums,
 		" GROUP BY " + strings.Join(dayDims, ", ") +
 		" ORDER BY " + dayDims[0] + " ASC"
 
-	rows, err := dbRead.QueryContext(ctx, query, args...)
+	rows, err := store.ReadDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("usage trend query: %w", err)
 	}

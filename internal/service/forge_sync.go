@@ -1,10 +1,11 @@
-//nolint:noctx // db global singleton, context not applicable
 package service
 
 import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"clawbench/internal/store"
 
 	"clawbench/internal/forge"
 )
@@ -71,10 +72,10 @@ type ForgeRepoKey struct {
 // GetForgeItemSnapshot loads the stored snapshot for an item, or (nil, nil) when
 // none exists (a first sighting).
 func GetForgeItemSnapshot(repo ForgeRepoKey, itemType string, number int) (*ForgeItemSnapshot, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	row := dbRead.QueryRow(
+	row := store.ReadDB().QueryRow(
 		`SELECT platform, host, owner, repo, item_type, number, state, merged,
 		        last_comment_id, last_comment_updated_at, comments_baselined, item_updated_at
 		 FROM forge_items
@@ -102,7 +103,7 @@ func GetForgeItemSnapshot(repo ForgeRepoKey, itemType string, number int) (*Forg
 
 // UpsertForgeItemSnapshot writes the latest observed state for an item.
 func UpsertForgeItemSnapshot(s ForgeItemSnapshot) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
 	merged := 0
@@ -120,7 +121,7 @@ func UpsertForgeItemSnapshot(s ForgeItemSnapshot) error {
 	if !s.ItemUpdatedAt.IsZero() {
 		itemUpdated = s.ItemUpdatedAt.UTC()
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO forge_items
 		   (platform, host, owner, repo, item_type, number, state, merged,
 		    last_comment_id, last_comment_updated_at, comments_baselined, item_updated_at, seen_at)
@@ -143,10 +144,10 @@ func UpsertForgeItemSnapshot(s ForgeItemSnapshot) error {
 // given time, removing items deleted on the remote side and preventing unbounded
 // growth. Callers pass the timestamp of the most recent full scan.
 func PruneForgeItems(repo ForgeRepoKey, seenBefore time.Time) (int64, error) {
-	if db == nil {
+	if !store.DBReady() {
 		return 0, nil
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`DELETE FROM forge_items
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND seen_at < ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, seenBefore.UTC(),
@@ -160,10 +161,10 @@ func PruneForgeItems(repo ForgeRepoKey, seenBefore time.Time) (int64, error) {
 // ListForgeItemSnapshots returns every snapshot row for a repository. Used by
 // tests and by the prune path to reason about the stored set.
 func ListForgeItemSnapshots(repo ForgeRepoKey) ([]ForgeItemSnapshot, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT platform, host, owner, repo, item_type, number, state, merged,
 		        last_comment_id, last_comment_updated_at, item_updated_at
 		 FROM forge_items
@@ -223,14 +224,14 @@ func forgeWatermarkColumn(typ forge.ItemType) (string, bool) {
 // A type with no cursor of its own is a silent no-op: callers pass the types
 // they drained, and the only such type (pipeline) is tracked elsewhere.
 func SetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType, watermark time.Time) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
 	column, ok := forgeWatermarkColumn(typ)
 	if !ok {
 		return nil
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO forge_sync_state (platform, host, owner, repo, `+column+`, updated_at)
 		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
 		 ON CONFLICT(platform, host, owner, repo) DO UPDATE SET
@@ -248,7 +249,7 @@ func SetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType, watermark time
 // migrated from the single-cursor schema start its PR cursor fresh: NULL means
 // "no PR baseline yet", so the first PR pass baselines instead of replaying.
 func GetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType) (time.Time, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return time.Time{}, nil
 	}
 	column, ok := forgeWatermarkColumn(typ)
@@ -256,7 +257,7 @@ func GetForgeSyncWatermark(repo ForgeRepoKey, typ forge.ItemType) (time.Time, er
 		return time.Time{}, nil
 	}
 	var watermark sql.NullTime
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT `+column+` FROM forge_sync_state
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo,
@@ -332,10 +333,10 @@ CREATE INDEX IF NOT EXISTS idx_forge_pipeline_runs_seen ON forge_pipeline_runs(p
 // for a conflict, so the answer cannot go stale between a check and a write. A
 // separate existence query followed by an insert would leave that window open.
 func RecordPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
-	if db == nil {
+	if !store.DBReady() {
 		return false, nil
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`INSERT INTO forge_pipeline_runs
 		   (platform, host, owner, repo, run_id, seen_at)
 		 VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -355,7 +356,7 @@ func RecordPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
 
 	// Already recorded. Refresh seen_at so a run still inside the overlap window
 	// is not pruned while it is still current.
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		`UPDATE forge_pipeline_runs SET seen_at = CURRENT_TIMESTAMP
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND run_id = ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, runID,
@@ -372,11 +373,11 @@ func RecordPipelineRun(repo ForgeRepoKey, runID int64) (bool, error) {
 // item watermark would then answer "no" and dispatch every historical run whose
 // timestamp happens to be newer than that watermark.
 func HasAnyPipelineRun(repo ForgeRepoKey) (bool, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return false, nil
 	}
 	var n int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT COUNT(*) FROM forge_pipeline_runs
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo,
@@ -388,10 +389,10 @@ func HasAnyPipelineRun(repo ForgeRepoKey) (bool, error) {
 // bounding growth. Callers pass the timestamp of the most recent full scan,
 // mirroring PruneForgeItems.
 func PruneForgePipelineRuns(repo ForgeRepoKey, seenBefore time.Time) (int64, error) {
-	if db == nil {
+	if !store.DBReady() {
 		return 0, nil
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`DELETE FROM forge_pipeline_runs
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND seen_at < ?`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo, seenBefore.UTC(),
@@ -405,10 +406,10 @@ func PruneForgePipelineRuns(repo ForgeRepoKey, seenBefore time.Time) (int64, err
 // ListForgePipelineRuns returns every recorded run id for a repository, for
 // tests and diagnostics.
 func ListForgePipelineRuns(repo ForgeRepoKey) ([]int64, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT run_id FROM forge_pipeline_runs
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? ORDER BY run_id`,
 		repo.Platform, repo.Host, repo.Owner, repo.Repo,
@@ -492,10 +493,10 @@ type ForgeEvent struct {
 // InsertForgeEvent persists a derived event, ignoring duplicates by dedupe key.
 // Returns true when the row was newly inserted (i.e. the event is fresh).
 func InsertForgeEvent(e ForgeEvent) (bool, error) {
-	if db == nil {
+	if !store.DBReady() {
 		return false, nil
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`INSERT INTO forge_events
 		   (platform, host, owner, repo, item_type, number, item_key, event_type, dedupe_key, payload)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -524,11 +525,11 @@ func InsertForgeEvent(e ForgeEvent) (bool, error) {
 // The unread count is intentionally independent of the notification toggles: it
 // answers "are there new changes", not "did we notify".
 func CountUnreadForgeEvents(repo ForgeRepoKey) (int, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return 0, nil
 	}
 	var n int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT COUNT(DISTINCT item_key) FROM forge_events
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
 		   AND read_at IS NULL AND item_key != ''`,
@@ -544,10 +545,10 @@ func CountUnreadForgeEvents(repo ForgeRepoKey) (int, error) {
 // dock badge are computed from the same rows and cannot disagree.
 func UnreadForgeItemKeys(repo ForgeRepoKey) (map[string]bool, error) {
 	out := make(map[string]bool)
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return out, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT DISTINCT item_key FROM forge_events
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
 		   AND read_at IS NULL AND item_key != ''`,
@@ -644,7 +645,7 @@ type ForgeActivityItem struct {
 // shows, so the filter must use the same aggregate or the two could disagree).
 func ListForgeActivityItems(repo ForgeRepoKey, filter ForgeActivityFilter, limit int) ([]ForgeActivityItem, error) {
 	out := []ForgeActivityItem{}
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return out, nil
 	}
 	if limit <= 0 {
@@ -663,7 +664,7 @@ func ListForgeActivityItems(repo ForgeRepoKey, filter ForgeActivityFilter, limit
 		having = "HAVING SUM(CASE WHEN read_at IS NULL THEN 1 ELSE 0 END) > 0"
 	}
 
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT e.item_key, e.item_type, e.number, e.event_type, e.payload,
 		        e.created_at, g.event_count, g.unread_count
 		   FROM forge_events e
@@ -722,18 +723,18 @@ func UnreadForgeItems(repo ForgeRepoKey, limit int) ([]ForgeActivityItem, error)
 // touched, so a later event for the same item starts unread again — no watermark
 // bookkeeping is needed to re-arm it.
 func MarkForgeEventsRead(repo ForgeRepoKey, itemKey string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
 	if itemKey == "" {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			`UPDATE forge_events SET read_at = CURRENT_TIMESTAMP
 			 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND read_at IS NULL`,
 			repo.Platform, repo.Host, repo.Owner, repo.Repo,
 		)
 		return err
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`UPDATE forge_events SET read_at = CURRENT_TIMESTAMP
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
 		   AND item_key = ? AND read_at IS NULL`,
@@ -745,10 +746,10 @@ func MarkForgeEventsRead(repo ForgeRepoKey, itemKey string) error {
 // SetForgeEventCreatedAtForTest backdates one item's events so a test can
 // exercise the retention cutoff without waiting. Test-only.
 func SetForgeEventCreatedAtForTest(repo ForgeRepoKey, itemKey string, at time.Time) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`UPDATE forge_events SET created_at = ?
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ? AND item_key = ?`,
 		at, repo.Platform, repo.Host, repo.Owner, repo.Repo, itemKey,
@@ -766,10 +767,10 @@ func SetForgeEventCreatedAtForTest(repo ForgeRepoKey, itemKey string, at time.Ti
 // if the provider still reports the change: deleting the row re-arms that dedupe,
 // which is why the cutoff is far longer than any overlap window.
 func PruneForgeEvents(repo ForgeRepoKey, createdBefore time.Time) (int64, error) {
-	if db == nil {
+	if !store.DBReady() {
 		return 0, nil
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`DELETE FROM forge_events
 		 WHERE platform = ? AND host = ? AND owner = ? AND repo = ?
 		   AND read_at IS NOT NULL AND created_at < ?`,

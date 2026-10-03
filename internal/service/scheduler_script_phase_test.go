@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -22,7 +24,7 @@ import (
 // schedulerScriptSchema is the schema needed for the script-phase executeTask
 // tests. It mirrors schedulerExecSchema but is declared here so the tests can
 // evolve independently.
-const schedulerScriptSchema = ProjectsDDL + `
+const schedulerScriptSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
@@ -111,7 +113,7 @@ func setupSchedulerScriptDB(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(schedulerScriptSchema)
 	require.NoError(t, err)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -202,7 +204,7 @@ func TestExecuteTask_ScriptGateClosed_NoSessionNoEvent(t *testing.T) {
 	// Simulate the cron having just fired: rewind next_run_at into the past so
 	// "advanced" is observable regardless of where in the hour the test runs.
 	firedAt := time.Now().Add(-time.Minute)
-	_, err := WriteExec("UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", firedAt, task.ID)
+	_, err := store.WriteExec("UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", firedAt, task.ID)
 	require.NoError(t, err)
 
 	before, err := GetTaskByID(task.ID)
@@ -216,20 +218,20 @@ func TestExecuteTask_ScriptGateClosed_NoSessionNoEvent(t *testing.T) {
 
 	// No session was created.
 	var sessionCount int
-	require.NoError(t, dbRead.QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ?", ProjectIDForTest(t, task.ProjectPath)).Scan(&sessionCount))
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ?", store.ProjectIDForTest(t, task.ProjectPath)).Scan(&sessionCount))
 	assert.Zero(t, sessionCount, "a gate-closed run must not create a chat session")
 
 	// No chat message was written.
 	var msgCount int
-	require.NoError(t, dbRead.QueryRow("SELECT COUNT(*) FROM chat_history").Scan(&msgCount))
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history").Scan(&msgCount))
 	assert.Zero(t, msgCount, "a gate-closed run must not write any chat message")
 
 	// An execution row with status skipped and an empty session_id exists, and
 	// carries the script's result so the UI can show why the gate closed.
 	var status, sessionID, scriptStdout string
 	var scriptExit int
-	require.NoError(t, dbRead.QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		"SELECT status, session_id, script_exit_code, script_stdout FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
 		task.ID).Scan(&status, &sessionID, &scriptExit, &scriptStdout))
 	assert.Equal(t, "skipped", status)
@@ -291,7 +293,7 @@ func TestExecuteTask_ScriptGateOpen_RunsAI(t *testing.T) {
 	// The AI turn must have started (a session exists) while it blocks on the gate.
 	require.Eventually(t, func() bool {
 		var n int
-		_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_sessions").Scan(&n)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions").Scan(&n)
 		return n > 0
 	}, 2*time.Second, 10*time.Millisecond, "exit 0 must open the gate and create a session")
 
@@ -300,7 +302,7 @@ func TestExecuteTask_ScriptGateOpen_RunsAI(t *testing.T) {
 
 	var status string
 	var scriptExit int
-	require.NoError(t, dbRead.QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		"SELECT status, script_exit_code FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
 		task.ID).Scan(&status, &scriptExit))
 	assert.Equal(t, 0, scriptExit, "the AI-phase row must carry the script's exit code")
@@ -419,7 +421,7 @@ func TestExecuteTask_ScriptPhase_Cancel(t *testing.T) {
 
 	// Recorded as cancelled with no session.
 	var status, sessionID string
-	require.NoError(t, dbRead.QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		"SELECT status, session_id FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1",
 		task.ID).Scan(&status, &sessionID))
 	assert.Equal(t, "cancelled", status)
@@ -479,10 +481,10 @@ func TestExecuteTask_ScriptPhase_CancelWithoutExecutionRow(t *testing.T) {
 
 	// Drop the execution table so AddTaskExecutionWithStatus fails while the
 	// task row itself survives (the scheduler needs it to advance the run).
-	_, err := WriteExec("ALTER TABLE task_executions RENAME TO task_executions_hidden")
+	_, err := store.WriteExec("ALTER TABLE task_executions RENAME TO task_executions_hidden")
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = WriteExec("ALTER TABLE task_executions_hidden RENAME TO task_executions")
+		_, _ = store.WriteExec("ALTER TABLE task_executions_hidden RENAME TO task_executions")
 	})
 
 	done := make(chan struct{})
@@ -552,7 +554,7 @@ func TestExecuteTask_ScriptTemplate_InjectedIntoPrompt(t *testing.T) {
 	// The user message is written before the AI turn blocks on the gate.
 	var content string
 	require.Eventually(t, func() bool {
-		err := dbRead.QueryRow(
+		err := store.ReadDB().QueryRow(
 			"SELECT content FROM chat_history WHERE role = 'user' ORDER BY id DESC LIMIT 1").Scan(&content)
 		return err == nil && content != ""
 	}, 2*time.Second, 10*time.Millisecond, "the user prompt must be persisted")
@@ -653,7 +655,7 @@ func TestExecuteTask_EventTask_IgnoresScript(t *testing.T) {
 	s.executeTask(task, task.ProjectPath, "auto", nil)
 
 	var skipped int
-	require.NoError(t, dbRead.QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM task_executions WHERE task_id = ? AND status = 'skipped'", task.ID).Scan(&skipped))
 	assert.Zero(t, skipped, "an event task must not run the script")
 }
@@ -718,7 +720,7 @@ func TestExecuteTask_ScriptPhase_CancelDoesNotConsumeRun(t *testing.T) {
 
 	// The cancelled execution row is still written, so the user can see it.
 	var status string
-	require.NoError(t, dbRead.QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		"SELECT status FROM task_executions WHERE task_id = ? ORDER BY id DESC LIMIT 1", task.ID).Scan(&status))
 	assert.Equal(t, "cancelled", status)
 }

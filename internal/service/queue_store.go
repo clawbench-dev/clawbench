@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 )
 
@@ -104,7 +106,7 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 
 	// Guard: reject messages to archived sessions, mirroring AddChatMessage.
 	var isArchived int
-	if err := dbRead.QueryRowContext(context.Background(), "SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
+	if err := store.ReadDB().QueryRowContext(context.Background(), "SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&isArchived); err == nil && isArchived == 1 {
 		return 0, fmt.Errorf("cannot add message to archived session %s", sessionID)
 	}
 
@@ -114,11 +116,11 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 		filesJSON = string(data)
 	}
 
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return 0, idErr
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		"INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content, files) VALUES (?, ?, ?, ?, ?, ?)",
 		sessionID, projectID, backend, queueID, content, filesJSON,
 	)
@@ -150,7 +152,7 @@ func AddQueuedMessage(projectPath, backend, sessionID, content string, files []m
 
 // claimQueuedRowTx selects the next queued row for a session and deletes it,
 // inside the caller's transaction. The SELECT and DELETE are guarded by the
-// global write mutex (held by WriteBegin), so two concurrent claimers can never
+// global write mutex (held by store.WriteBegin), so two concurrent claimers can never
 // take the same row.
 //
 // orderClause / whereClause let the three public variants share this body:
@@ -241,11 +243,11 @@ func ClaimByQueueIDAndMaterialize(sessionID, queueID string) (QueuedRow, int64, 
 }
 
 func claimAndMaterialize(sessionID, where string, args []any) (QueuedRow, int64, bool, error) {
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return QueuedRow{}, 0, false, err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	row, ok, err := claimQueuedRowTx(tx, sessionID, where, args...)
@@ -272,11 +274,11 @@ func claimAndMaterialize(sessionID, where string, args []any) (QueuedRow, int64,
 // never answered (the injection was refused), and the drain loop would never
 // pick it up (it only reads queued_messages).
 func RequeueMaterialized(row QueuedRow, msgID int64) error {
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	// Only remove a row that is still a plain user message and not streaming:
@@ -314,14 +316,14 @@ func RequeueMaterialized(row QueuedRow, msgID int64) error {
 // Callers are responsible for emitting the WS event so other devices remove
 // their pending bubbles.
 func ClearQueuedMessages(sessionID string) error {
-	_, err := WriteExec("DELETE FROM queued_messages WHERE session_id = ?", sessionID)
+	_, err := store.WriteExec("DELETE FROM queued_messages WHERE session_id = ?", sessionID)
 	return err
 }
 
 // GetQueuedQueueIDs returns the non-empty queue_ids of a session's queued
 // messages, oldest first. Used to emit queue_cancel with the exact ids.
 func GetQueuedQueueIDs(sessionID string) ([]string, error) {
-	rows, err := dbRead.QueryContext(context.Background(),
+	rows, err := store.ReadDB().QueryContext(context.Background(),
 		"SELECT queue_id FROM queued_messages WHERE session_id = ? AND queue_id != '' ORDER BY id ASC",
 		sessionID,
 	)
@@ -343,13 +345,13 @@ func GetQueuedQueueIDs(sessionID string) ([]string, error) {
 // GetQueuedCount returns the number of queued messages for a session.
 func GetQueuedCount(sessionID string) int {
 	var count int
-	_ = dbRead.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID).Scan(&count)
+	_ = store.ReadDB().QueryRowContext(context.Background(), "SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessionID).Scan(&count)
 	return count
 }
 
 // GetQueuedMessages returns the queued messages of a session, oldest first.
 func GetQueuedMessages(sessionID string) ([]model.QueuedMessage, error) {
-	rows, err := dbRead.QueryContext(context.Background(),
+	rows, err := store.ReadDB().QueryContext(context.Background(),
 		`SELECT q.id, q.session_id, q.project_id, COALESCE(p.path, ''), q.backend, q.queue_id, q.content, q.files, q.created_at
 		   FROM queued_messages q
 		   LEFT JOIN projects p ON p.id = q.project_id
@@ -378,7 +380,7 @@ func GetQueuedMessages(sessionID string) ([]model.QueuedMessage, error) {
 // CancelQueuedMessage deletes a single queued message by queue_id. The row is
 // truly removed so a canceled message can never resurface.
 func CancelQueuedMessage(sessionID, queueID string) error {
-	_, err := WriteExec("DELETE FROM queued_messages WHERE session_id = ? AND queue_id = ?", sessionID, queueID)
+	_, err := store.WriteExec("DELETE FROM queued_messages WHERE session_id = ? AND queue_id = ?", sessionID, queueID)
 	return err
 }
 
@@ -477,11 +479,11 @@ func MergeQueuedMessages(sessionID, queueID string) (merged QueuedRow, oldQueueI
 		queueID = newQueueID()
 	}
 
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return QueuedRow{}, nil, false, err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	// Read the whole queue inside the transaction: the write mutex is held, so
@@ -580,11 +582,11 @@ func UpdateQueuedMessageQuoteNote(sessionID, queueID, quoteID, note string) ([]m
 	if sessionID == "" || queueID == "" || quoteID == "" {
 		return nil, ErrChatQuoteNotFound
 	}
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return nil, err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	var filesJSON sql.NullString

@@ -1,7 +1,9 @@
-package service
+package store
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"log/slog"
 	"math"
 	"regexp"
@@ -13,6 +15,35 @@ import (
 
 	"github.com/stretchr/testify/assert"
 )
+
+// captureLogs redirects the default slog logger into a buffer and returns a
+// reader for what was written. Mirrors the helper used elsewhere in the repo.
+func captureLogs(t *testing.T) func() string {
+	t.Helper()
+	var buf bytes.Buffer
+	orig := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(orig) })
+	return buf.String
+}
+
+// setupInMemoryDB installs a fresh in-memory database as the global handle and
+// restores the previous handles when the test finishes.
+func setupInMemoryDB(t *testing.T) {
+	t.Helper()
+	raw, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open in-memory db: %v", err)
+	}
+	raw.SetMaxOpenConns(1)
+	// A minimal chat_history so the write-instrumentation tests have a real
+	// table to write to (the fast/slow cases issue UPDATE chat_history).
+	if _, err := raw.Exec("CREATE TABLE IF NOT EXISTS chat_history (id INTEGER PRIMARY KEY, content TEXT)"); err != nil {
+		t.Fatalf("create chat_history: %v", err)
+	}
+	restore := SetDBForTest(raw, raw)
+	t.Cleanup(func() { restore(); _ = raw.Close() })
+}
 
 // writeOpLabel must reduce a statement to a short label without leaking any
 // content. A SQL statement here can carry a whole assistant reply as a bound
@@ -114,7 +145,7 @@ func (h *blockingLogHandler) WithGroup(string) slog.Handler      { return h }
 // calls into database/sql. It released the lock only on the returned-error
 // path, so a panic inside db.Begin() (db is nil — the same teardown condition
 // that wedged timedWrite) skipped the unlock entirely. Its callers register
-// `defer writeMu.Unlock()` only AFTER WriteBegin returns, so they cannot cover
+// `defer WriteUnlock()` only AFTER WriteBegin returns, so they cannot cover
 // this window either: the global write mutex stays held forever, every later
 // writer blocks in Lock with no CPU and no error, and the process wedges.
 //
@@ -129,7 +160,7 @@ func TestWriteBegin_ReleasesLockOnPanic(t *testing.T) {
 		_, _ = WriteBegin()
 	})
 
-	if !writeMuAcquirable(2 * time.Second) {
+	if !WriteMuAcquirableForTest(2 * time.Second) {
 		t.Fatal("writeMu is still held after db.Begin() panicked — every later writer would block forever")
 	}
 }
@@ -138,11 +169,11 @@ func TestWriteBegin_ReleasesLockOnPanic(t *testing.T) {
 // multi-statement transaction under it. This is the opposite direction of
 // TestWriteBegin_ReleasesLockOnPanic, and it is the reason the fix uses an
 // ownership flag rather than an unconditional deferred unlock — a plain
-// `defer writeMu.Unlock()` would release the lock before the caller's
+// `defer WriteUnlock()` would release the lock before the caller's
 // transaction commits, silently destroying the mutual exclusion that
 // serializes every write in the process.
 func TestWriteBegin_KeepsLockOnSuccess(t *testing.T) {
-	setupExecutorDB(t)
+	setupInMemoryDB(t)
 
 	tx, err := WriteBegin()
 	if err != nil {
@@ -152,12 +183,12 @@ func TestWriteBegin_KeepsLockOnSuccess(t *testing.T) {
 		t.Fatal("WriteBegin returned a nil tx with a nil error")
 	}
 	// Held if a concurrent acquisition cannot complete.
-	if writeMuAcquirable(300 * time.Millisecond) {
+	if WriteMuAcquirableForTest(300 * time.Millisecond) {
 		t.Fatal("writeMu was released on the success path — the caller's transaction is no longer protected")
 	}
 
 	_ = tx.Rollback()
-	writeMu.Unlock()
+	WriteUnlock()
 }
 
 // WriteBegin must still report a slow wait on the success path.
@@ -169,15 +200,15 @@ func TestWriteBegin_KeepsLockOnSuccess(t *testing.T) {
 // it is the moment a user-cancel's Finalize transaction is stuck — so this
 // pins that the report survives.
 func TestWriteBegin_ReportsSlowWaitOnSuccess(t *testing.T) {
-	setupExecutorDB(t)
+	setupInMemoryDB(t)
 
 	readLogs := captureLogs(t)
 
 	// Hold the lock past the threshold so the BEGIN below records a slow wait.
-	writeMu.Lock()
+	WriteLock()
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		writeMu.Unlock()
+		WriteUnlock()
 	}()
 
 	tx, err := WriteBegin()
@@ -186,7 +217,7 @@ func TestWriteBegin_ReportsSlowWaitOnSuccess(t *testing.T) {
 	}
 	logs := readLogs()
 	_ = tx.Rollback()
-	writeMu.Unlock()
+	WriteUnlock()
 
 	if !strings.Contains(logs, "BEGIN tx") {
 		t.Fatalf("a BEGIN that waited past %v was not reported; logs:\n%s", slowWriteThreshold, logs)
@@ -201,7 +232,7 @@ func TestWriteBegin_ReportsSlowWaitOnSuccess(t *testing.T) {
 // blocks inside the log handler and asserts the lock is free at that moment,
 // which a plain timing assertion cannot establish.
 func TestTimedWrite_ReleasesLockBeforeLogging(t *testing.T) {
-	setupExecutorDB(t)
+	setupInMemoryDB(t)
 
 	handler := &blockingLogHandler{entered: make(chan struct{}), release: make(chan struct{})}
 	orig := slog.Default()
@@ -212,10 +243,10 @@ func TestTimedWrite_ReleasesLockBeforeLogging(t *testing.T) {
 	})
 
 	// Hold the lock long enough for the write below to record a slow wait.
-	writeMu.Lock()
+	WriteLock()
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		writeMu.Unlock()
+		WriteUnlock()
 	}()
 
 	writeDone := make(chan error, 1)
@@ -236,9 +267,9 @@ func TestTimedWrite_ReleasesLockBeforeLogging(t *testing.T) {
 	// acquisition would block until the handler is released.
 	acquired := make(chan struct{})
 	go func() {
-		writeMu.Lock()
+		WriteLock()
 		close(acquired)
-		writeMu.Unlock()
+		WriteUnlock()
 	}()
 	select {
 	case <-acquired:
@@ -254,7 +285,7 @@ func TestTimedWrite_ReleasesLockBeforeLogging(t *testing.T) {
 
 // A fast write must not emit any report, so the log stays useful.
 func TestTimedWrite_FastWriteIsSilent(t *testing.T) {
-	setupExecutorDB(t)
+	setupInMemoryDB(t)
 
 	read := captureLogs(t)
 	if _, err := WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", "x", 1); err != nil {
@@ -267,7 +298,7 @@ func TestTimedWrite_FastWriteIsSilent(t *testing.T) {
 
 // timedWrite must still surface the statement's error while reporting it.
 func TestTimedWrite_ReturnsError(t *testing.T) {
-	setupExecutorDB(t)
+	setupInMemoryDB(t)
 	_, err := WriteExec("UPDATE nonexistent_table_xyz SET a = ?", 1)
 	if err == nil {
 		t.Fatal("expected an error from a write to a missing table")
@@ -332,73 +363,5 @@ func TestTrackWrite_ReportsSlowLockWaitAndSlowExec(t *testing.T) {
 				t.Fatalf("exec = %.2fms, want ~%.2fms", gotExec, wantExec)
 			}
 		})
-	}
-}
-
-// --- finalizeTimer ---
-
-// A fast Finalize must stay silent: it runs on every turn's completion path,
-// so logging it unconditionally would drown the log in normal traffic.
-func TestFinalizeTimer_FastFinalizeIsSilent(t *testing.T) {
-	read := captureLogs(t)
-	ft := newFinalizeTimer("sess-fast")
-	done := ft.phase("drain_events")
-	done()
-	ft.done("user", 10)
-
-	if out := read(); strings.Contains(out, "finalize: slow") {
-		t.Fatalf("expected no log for a fast finalize, got: %s", out)
-	}
-}
-
-// A slow Finalize must log its phase breakdown, so the slow step is
-// identifiable from the log alone.
-func TestFinalizeTimer_SlowFinalizeLogsPhases(t *testing.T) {
-	read := captureLogs(t)
-	ft := newFinalizeTimer("sess-slow")
-	// Backdate the start so the total exceeds the threshold without sleeping.
-	ft.start = time.Now().Add(-2 * time.Second)
-
-	doneDrain := ft.phase("drain_events")
-	doneDrain()
-	doneFinalize := ft.phase("finalize_row")
-	doneFinalize()
-
-	ft.done("user", 42)
-
-	out := read()
-	if !strings.Contains(out, "finalize: slow") {
-		t.Fatalf("expected a slow-finalize log, got: %s", out)
-	}
-	for _, sub := range []string{"session=sess-slow", "cancel_reason=user", "blocks=42", "drain_events=", "finalize_row=", "total="} {
-		if !strings.Contains(out, sub) {
-			t.Fatalf("expected log to contain %q, got: %s", sub, out)
-		}
-	}
-}
-
-// Phases must be reported in execution order: the point of the breakdown is to
-// see where the time went, which requires a stable ordering.
-func TestFinalizeTimer_PhasesKeepExecutionOrder(t *testing.T) {
-	ft := newFinalizeTimer("sess-order")
-	ft.start = time.Now().Add(-2 * time.Second)
-	for _, name := range []string{"drain_events", "flush_pending", "finalize_row"} {
-		done := ft.phase(name)
-		done()
-	}
-
-	if len(ft.phases) != 3 {
-		t.Fatalf("expected 3 phases, got %d", len(ft.phases))
-	}
-	// Each phase is stored as an slog.Attr whose Key is the phase name.
-	want := []string{"drain_events", "flush_pending", "finalize_row"}
-	for i, attr := range ft.phases {
-		a, ok := attr.(slog.Attr)
-		if !ok {
-			t.Fatalf("phase %d is not an slog.Attr: %T", i, attr)
-		}
-		if a.Key != want[i] {
-			t.Fatalf("phase %d = %q, want %q", i, a.Key, want[i])
-		}
 	}
 }

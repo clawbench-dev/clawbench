@@ -1,4 +1,3 @@
-//nolint:noctx // db global singleton, context not applicable
 package service
 
 import (
@@ -7,8 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/forge"
-	"clawbench/internal/model"
 )
 
 // ProjectForgesDDL creates the project_forges table and its indexes.
@@ -66,31 +66,20 @@ func (p ProjectForge) RepoKey() ForgeRepoKey {
 	return ForgeRepoKey{Platform: p.Platform, Host: p.Host, Owner: p.Owner, Repo: p.Repo}
 }
 
-// NormalizeProjectPath canonicalizes a project path so the same project always
-// maps to one binding row. It resolves symlinks when possible, cleans the path,
-// and strips a trailing separator. On any error it falls back to the cleaned
-// path rather than failing the caller.
-//
-// Delegates to model.NormalizeProjectPath so the HTTP boundary (which may only
-// import model) and the service layer share one implementation.
-func NormalizeProjectPath(p string) string {
-	return model.NormalizeProjectPath(p)
-}
-
 // GetProjectForge returns the binding for a project, or (nil, nil) when none
 // exists.
 func GetProjectForge(projectPath string) (*ProjectForge, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	projectID, _, idErr := ProjectIDByPath(projectPath)
+	projectID, _, idErr := store.ProjectIDByPath(projectPath)
 	if idErr != nil {
 		return nil, idErr
 	}
-	if !projectID2Valid(projectID) {
+	if !store.ProjectID2Valid(projectID) {
 		return nil, nil
 	}
-	row := dbRead.QueryRow(
+	row := store.ReadDB().QueryRow(
 		`SELECT f.id, COALESCE(p.path, ''), f.platform, f.host, f.scheme, f.owner, f.repo, f.source, f.created_at, f.updated_at
 		   FROM project_forges f
 		   LEFT JOIN projects p ON p.id = f.project_id
@@ -119,16 +108,16 @@ func scanProjectForge(row interface {
 // UpsertProjectForge creates or replaces the binding for a project. The
 // project_path is normalized first. platform/host/owner/repo must be non-empty.
 func UpsertProjectForge(pf ProjectForge) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	if NormalizeProjectPath(pf.ProjectPath) == "" {
+	if store.NormalizeProjectPath(pf.ProjectPath) == "" {
 		return fmt.Errorf("project_forges: project path is required")
 	}
 	if pf.Platform == "" || pf.Host == "" || pf.Owner == "" || pf.Repo == "" {
 		return fmt.Errorf("project_forges: platform, host, owner and repo are required")
 	}
-	projectID, idErr := ProjectIDForPath(pf.ProjectPath)
+	projectID, idErr := store.ProjectIDForPath(pf.ProjectPath)
 	if idErr != nil {
 		return idErr
 	}
@@ -136,7 +125,7 @@ func UpsertProjectForge(pf ProjectForge) error {
 	if source == "" {
 		source = "manual"
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO project_forges (project_id, platform, host, scheme, owner, repo, source)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(project_id) DO UPDATE SET
@@ -157,17 +146,17 @@ func UpsertProjectForge(pf ProjectForge) error {
 
 // DeleteProjectForge removes a project's binding.
 func DeleteProjectForge(projectPath string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	projectID, ok, idErr := ProjectIDByPath(projectPath)
+	projectID, ok, idErr := store.ProjectIDByPath(projectPath)
 	if idErr != nil {
 		return idErr
 	}
-	if !ok || !projectID2Valid(projectID) {
+	if !ok || !store.ProjectID2Valid(projectID) {
 		return nil
 	}
-	_, err := WriteExec("DELETE FROM project_forges WHERE project_id = ?", projectID)
+	_, err := store.WriteExec("DELETE FROM project_forges WHERE project_id = ?", projectID)
 	return err
 }
 
@@ -185,20 +174,20 @@ func DeleteProjectForge(projectPath string) error {
 //
 // Returns true when this call created the binding.
 func AutoBindProjectForge(projectPath string, remote forge.Remote) (bool, error) {
-	if db == nil {
+	if !store.DBReady() {
 		return false, nil
 	}
-	if NormalizeProjectPath(projectPath) == "" {
+	if store.NormalizeProjectPath(projectPath) == "" {
 		return false, nil
 	}
 	if remote.Platform == "" || remote.Host == "" || remote.Owner == "" || remote.Repo == "" {
 		return false, fmt.Errorf("project_forges: platform, host, owner and repo are required")
 	}
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return false, idErr
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`INSERT INTO project_forges (project_id, platform, host, scheme, owner, repo, source)
 		 SELECT ?, ?, ?, ?, ?, ?, 'auto'
 		 WHERE NOT EXISTS (
@@ -227,22 +216,22 @@ func AutoBindProjectForge(projectPath string, remote forge.Remote) (bool, error)
 // git remote afterwards does not re-enable auto-binding. An explicit POST
 // binding clears it.
 func SetForgeBindOptOut(projectPath string, optedOut bool) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	if NormalizeProjectPath(projectPath) == "" {
+	if store.NormalizeProjectPath(projectPath) == "" {
 		return nil
 	}
 	v := 0
 	if optedOut {
 		v = 1
 	}
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return idErr
 	}
 	// project_meta was folded into projects; the flag is now a column there.
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`UPDATE projects SET forge_bind_opt_out = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
 		v, projectID,
 	)
@@ -252,18 +241,18 @@ func SetForgeBindOptOut(projectPath string, optedOut bool) error {
 // IsForgeBindOptedOut reports whether the user has explicitly unbound this
 // project. A missing row means "not opted out".
 func IsForgeBindOptedOut(projectPath string) (bool, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return false, nil
 	}
-	projectID, _, idErr := ProjectIDByPath(projectPath)
+	projectID, _, idErr := store.ProjectIDByPath(projectPath)
 	if idErr != nil {
 		return false, idErr
 	}
-	if !projectID2Valid(projectID) {
+	if !store.ProjectID2Valid(projectID) {
 		return false, nil
 	}
 	var v int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT forge_bind_opt_out FROM projects WHERE id = ?`, projectID,
 	).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -277,10 +266,10 @@ func IsForgeBindOptedOut(projectPath string) (bool, error) {
 
 // ListProjectForges returns all bindings, newest first.
 func ListProjectForges() ([]ProjectForge, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT f.id, COALESCE(p.path, ''), f.platform, f.host, f.scheme, f.owner, f.repo, f.source, f.created_at, f.updated_at
 		   FROM project_forges f
 		   LEFT JOIN projects p ON p.id = f.project_id
@@ -306,10 +295,10 @@ func ListProjectForges() ([]ProjectForge, error) {
 // across all bindings. Polling is keyed by repo, not by project row, so the
 // same repository bound to two projects is fetched once.
 func UniqueForgeRepos() ([]ForgeRepoRef, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT DISTINCT platform, host, owner, repo FROM project_forges`,
 	)
 	if err != nil {
@@ -359,7 +348,7 @@ func (r ForgeRepoRef) Key() string {
 // FromRemote builds a binding from a parsed remote URL.
 func ProjectForgeFromRemote(projectPath string, remote forge.Remote, source string) ProjectForge {
 	return ProjectForge{
-		ProjectPath: NormalizeProjectPath(projectPath),
+		ProjectPath: store.NormalizeProjectPath(projectPath),
 		Platform:    string(remote.Platform),
 		Host:        remote.Host,
 		Scheme:      remote.Scheme,

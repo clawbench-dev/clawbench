@@ -1,4 +1,3 @@
-//nolint:noctx // DB parameter, context not applicable
 package service
 
 import (
@@ -7,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"clawbench/internal/store"
 
 	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
@@ -49,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_agents_sort ON agents(sort_order);
 
 // LoadAgentsFromDB loads all agents from the database and returns them sorted by ID.
 func LoadAgentsFromDB() ([]*model.Agent, error) {
-	rows, err := dbRead.Query(`
+	rows, err := store.ReadDB().Query(`
 		SELECT id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
@@ -144,7 +145,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		autoApprove = 1
 	}
 
-	_, err = db.Exec(`
+	_, err = store.WriteExec(`
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
@@ -186,8 +187,8 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 // Returns nil even if the agent doesn't exist.
 func DeleteAgent(id string) error {
 	// Ensure foreign keys are enforced for cascade delete
-	_, _ = WriteExec("PRAGMA foreign_keys = ON")
-	_, err := WriteExec("DELETE FROM agents WHERE id = ?", id)
+	_, _ = store.WriteExec("PRAGMA foreign_keys = ON")
+	_, err := store.WriteExec("DELETE FROM agents WHERE id = ?", id)
 	if err != nil {
 		return fmt.Errorf("delete agent %s: %w", id, err)
 	}
@@ -278,7 +279,7 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 	args = append(args, id)
 
 	query := "UPDATE agents SET " + strings.Join(setClauses, ", ") + " WHERE id = ?"
-	_, err := WriteExec(query, args...)
+	_, err := store.WriteExec(query, args...)
 	if err != nil {
 		return fmt.Errorf("patch agent %s: %w", id, err)
 	}
@@ -294,7 +295,7 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 // model.MergeDiscoveredDataDB both did it, with subtly different SQL and prompt
 // handling, and which one took effect depended on call order.
 func LoadAgentsIntoMemory() error {
-	return model.LoadAgentsIntoMemoryFromDB(dbRead)
+	return model.LoadAgentsIntoMemoryFromDB(store.ReadDB())
 }
 
 // newAgentCopyID mints an ID for a duplicated agent: "<backend>-<8-hex>".
@@ -355,7 +356,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 
 	// The composed prompt is not stored; SaveAgent persists the custom text and
 	// the shared prompt is composed at read time.
-	if err := SaveAgent(WriteDB(), clone); err != nil {
+	if err := SaveAgent(store.WriteDB(), clone); err != nil {
 		return nil, fmt.Errorf("save duplicated agent: %w", err)
 	}
 

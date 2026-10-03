@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+
+	"clawbench/internal/store"
 )
 
 // legacyProjectPathIndexes are the indexes that reference a project_path column
@@ -104,24 +106,24 @@ var legacyRebuildTables = []struct {
 // backed by the new projects registry.
 //
 // It runs as ONE transaction, and every statement goes through tx.Exec: the
-// write mutex is already held by WriteBegin, so calling WriteExec/WriteBegin
+// write mutex is already held by store.WriteBegin, so calling store.WriteExec/store.WriteBegin
 // here would deadlock.
 //
 // The path→id mapping cannot be built in SQL alone: canonicalization
-// (NormalizeProjectPath) resolves symlinks and relative segments, which SQLite
+// (store.NormalizeProjectPath) resolves symlinks and relative segments, which SQLite
 // cannot do. So the distinct paths are read out, canonicalized in Go, and
 // written back into a temp table that the per-table backfills join against.
 func migrateProjectsToIDs() error { //nolint:gocyclo // ordered multi-table conversion: index drops, path→id map, in-place conversions, rebuilds, RAG, shares; the sequence is the contract
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	// The projects table does not exist yet on an upgrading database: this runs
 	// before createTables, which is where the DDL normally lives.
-	if _, ddlErr := tx.ExecContext(context.Background(), ProjectsDDL); ddlErr != nil {
+	if _, ddlErr := tx.ExecContext(context.Background(), store.ProjectsDDL); ddlErr != nil {
 		return fmt.Errorf("create projects table: %w", ddlErr)
 	}
 
@@ -236,7 +238,7 @@ func migrateProjectsToIDs() error { //nolint:gocyclo // ordered multi-table conv
 
 	// The cache is keyed by canonical path; nothing is cached yet at startup,
 	// but clear it so a repeated InitDB in tests cannot serve stale ids.
-	ResetProjectIDCacheForTest()
+	store.ResetProjectIDCacheForTest()
 	slog.Info("migrated project paths to project ids")
 	return nil
 }
@@ -269,7 +271,7 @@ func foldProjectMetaIntoProjects(tx *sql.Tx) error {
 	}
 
 	for _, m := range metas {
-		canon := NormalizeProjectPath(m.path)
+		canon := store.NormalizeProjectPath(m.path)
 		if canon == "" {
 			continue
 		}
@@ -297,7 +299,7 @@ func foldProjectMetaIntoProjects(tx *sql.Tx) error {
 // canonicalizes it, registers it in projects, and records the raw-spelling →
 // id mapping in a temp table so each table's backfill is one UPDATE.
 //
-// The temp table is per-connection and WriteBegin pins one connection for the
+// The temp table is per-connection and store.WriteBegin pins one connection for the
 // transaction, so it is visible to every later statement here.
 func buildProjectIDMap(tx *sql.Tx) error {
 	if _, err := tx.ExecContext(context.Background(),
@@ -314,7 +316,7 @@ func buildProjectIDMap(tx *sql.Tx) error {
 	// canon → id, so two raw spellings of one directory share a single row.
 	canonIDs := map[string]int64{}
 	for _, raw := range rawPaths {
-		canon := NormalizeProjectPath(raw)
+		canon := store.NormalizeProjectPath(raw)
 		if canon == "" {
 			continue
 		}

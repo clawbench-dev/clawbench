@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 
@@ -30,7 +32,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 	// Create minimal tables needed for enrichMessagesWithSummaries
 	// The projects registry: the service functions under test resolve paths
 	// through it, so the fixture schema must carry it.
-	_, _ = db.Exec(ProjectsDDL)
+	_, _ = db.Exec(store.ProjectsDDL)
 	_, _ = db.Exec(`
 		CREATE TABLE IF NOT EXISTS chat_sessions (
 			id TEXT PRIMARY KEY,
@@ -93,7 +95,7 @@ func setupTestDBForChatSummary(t *testing.T) (*sql.DB, func()) {
 	// cannot drift from the real table.
 	_, _ = db.Exec(BtwQuestionsDDL)
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	teardown := func() {
 		cleanup()
 		db.Close()
@@ -346,9 +348,9 @@ func TestTriggerChatSummarization_DoesNotBlockOnRecommendation(t *testing.T) {
 	model.ConfigInstance.AISummary.Format = "openai"
 
 	sessionID := "sess-summary-async-rec"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (500, 1, 'user', 'hello', ?, 0)", sessionID)
-	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (501, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The answer is 42.\"}]}', ?, 0)", sessionID)
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, 1, 'claude', 't')", sessionID)
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (500, 1, 'user', 'hello', ?, 0)", sessionID)
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (501, 1, 'assistant', '{\"blocks\":[{\"type\":\"text\",\"text\":\"The answer is 42.\"}]}', ?, 0)", sessionID)
 
 	start := time.Now()
 	triggerChatSummarization(context.Background(), sessionID)

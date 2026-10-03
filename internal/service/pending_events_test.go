@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ws"
 
 	"github.com/coder/websocket"
@@ -73,7 +75,7 @@ func TestPendingEventsTableCreated(t *testing.T) {
 func TestStorePendingEvent(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -89,7 +91,7 @@ func TestStorePendingEvent(t *testing.T) {
 }
 
 func TestStorePendingEventNilDB(t *testing.T) {
-	cleanup := SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	// Should return nil without panic when db is nil
@@ -100,7 +102,7 @@ func TestStorePendingEventNilDB(t *testing.T) {
 func TestStorePendingEventDuplicate(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -119,7 +121,7 @@ func TestStorePendingEventDuplicate(t *testing.T) {
 func TestDeletePendingEvent(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -140,7 +142,7 @@ func TestDeletePendingEvent(t *testing.T) {
 }
 
 func TestDeletePendingEventNilDB(t *testing.T) {
-	cleanup := SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	err := DeletePendingEvent("evt_1")
@@ -150,7 +152,7 @@ func TestDeletePendingEventNilDB(t *testing.T) {
 func TestGetPendingEvents(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -167,7 +169,7 @@ func TestGetPendingEvents(t *testing.T) {
 }
 
 func TestGetPendingEventsNilDB(t *testing.T) {
-	cleanup := SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	events, err := GetPendingEvents("")
@@ -178,7 +180,7 @@ func TestGetPendingEventsNilDB(t *testing.T) {
 func TestGetPendingEventsAfterCursor(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -197,7 +199,7 @@ func TestGetPendingEventsAfterCursor(t *testing.T) {
 func TestGetPendingEventsExpiredCursor(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -217,7 +219,7 @@ func TestGetPendingEventsExpiredCursor(t *testing.T) {
 func TestGetPendingEventsFiltersExpired(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Insert one expired, one not expired
@@ -237,7 +239,7 @@ func TestGetPendingEventsFiltersExpired(t *testing.T) {
 func TestGetPendingEventsCursorAtLastEvent(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -253,7 +255,7 @@ func TestGetPendingEventsCursorAtLastEvent(t *testing.T) {
 func TestGetPendingEventsCursorReturnsNonExpiredAfterCursor(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -276,7 +278,7 @@ func TestGetPendingEventsCursorReturnsNonExpiredAfterCursor(t *testing.T) {
 func TestCleanupPendingEvents(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Insert event with past expires_at (expired)
@@ -292,7 +294,7 @@ func TestCleanupPendingEvents(t *testing.T) {
 }
 
 func TestCleanupPendingEventsNilDB(t *testing.T) {
-	cleanup := SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	// Should not panic
@@ -302,7 +304,7 @@ func TestCleanupPendingEventsNilDB(t *testing.T) {
 func TestCleanupPendingEventsRowCapping(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -328,7 +330,7 @@ func TestCleanupPendingEventsRowCapping(t *testing.T) {
 func TestCleanupPendingEventsKeepsNonExpired(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -442,7 +444,7 @@ func TestIsNotifiableEvent_NonUserMessage(t *testing.T) {
 func TestStoreNotifiableEvent_UserMessage_Disconnected(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// No WS subscriptions → HasDisconnectedClients returns true → should store
@@ -490,7 +492,7 @@ func TestStoreNotifiableEvent_UserMessage_Disconnected(t *testing.T) {
 func TestStoreNotifiableEvent_UserMessage_AllConnected(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -554,7 +556,7 @@ func TestPendingEventExpiresAt_UserMessage(t *testing.T) {
 func TestStoreNotifiableEventUserMessageExpiresAt(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -581,7 +583,7 @@ func TestStoreNotifiableEventUserMessageExpiresAt(t *testing.T) {
 func TestGetPendingEvents_ReturnsUserMessage(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -598,7 +600,7 @@ func TestGetPendingEvents_ReturnsUserMessage(t *testing.T) {
 func TestStoreNotifiableEvent(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Set up a WS manager with no subscriptions → HasDisconnectedClients returns true
@@ -628,7 +630,7 @@ func TestStoreNotifiableEvent(t *testing.T) {
 func TestStoreNotifiableEventNotNotifiable(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -653,7 +655,7 @@ func TestStoreNotifiableEventNotNotifiable(t *testing.T) {
 func TestStoreNotifiableEventNoDisconnectedClients(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Set up a WS manager with nil → GetManager returns nil → skip disconnected check
@@ -678,7 +680,7 @@ func TestStoreNotifiableEventNoDisconnectedClients(t *testing.T) {
 func TestStoreNotifiableEventWithTaskUpdateData(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -710,7 +712,7 @@ func TestStoreNotifiableEventWithTaskUpdateData(t *testing.T) {
 func TestStoreNotifiableEventWithMapData(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -734,7 +736,7 @@ func TestStoreNotifiableEventWithMapData(t *testing.T) {
 func TestStoreNotifiableEventPermPendTTL(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -761,7 +763,7 @@ func TestStoreNotifiableEventPermPendTTL(t *testing.T) {
 func TestStoreNotifiableEventWithMapPermPend(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -788,7 +790,7 @@ func TestStoreNotifiableEventWithMapPermPend(t *testing.T) {
 func TestStoreNotifiableEventUnknownDataType(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -813,7 +815,7 @@ func TestStoreNotifiableEventUnknownDataType(t *testing.T) {
 func TestStoreNotifiableEventMapWithNonStringStatus(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -838,7 +840,7 @@ func TestStoreNotifiableEventMapWithNonStringStatus(t *testing.T) {
 func TestStoreNotifiableEventCancelled(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -862,7 +864,7 @@ func TestStoreNotifiableEventCancelled(t *testing.T) {
 func TestStoreNotifiableEventAllClientsConnected(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -919,7 +921,7 @@ func TestStoreNotifiableEventAllClientsConnected(t *testing.T) {
 func TestStoreNotifiableEventMarshalError(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -949,7 +951,7 @@ func TestGetPendingEventsDBError(t *testing.T) {
 	defer teardown()
 
 	// Set up DB, then close it to cause query errors
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -969,7 +971,7 @@ func TestGetPendingEventsNoCursorDBError(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Close the DB to cause query errors
@@ -984,7 +986,7 @@ func TestCleanupPendingEventsDBError(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Close the DB to cause DELETE errors
@@ -998,7 +1000,7 @@ func TestStoreNotifiableEventStoreError(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -1122,7 +1124,7 @@ func taskEventPayloadWithSession(t *testing.T, executionID, sessionID, status st
 func TestGetPendingEvents_ReadSessionSuppressed(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Session read at "now"; the reply landed before that, so it is read.
@@ -1157,7 +1159,7 @@ func TestGetPendingEvents_ReadSessionSuppressed(t *testing.T) {
 func TestGetPendingEvents_ProjectPathCorrelation(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Session lives in /p and was read one hour ago. The timestamps must be
@@ -1186,7 +1188,7 @@ func TestGetPendingEvents_ProjectPathCorrelation(t *testing.T) {
 func TestGetPendingEvents_UnreadSessionNotifies(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// last_read_at is before the reply, so the reply is unread.
@@ -1210,7 +1212,7 @@ func TestGetPendingEvents_UnreadSessionNotifies(t *testing.T) {
 func TestGetPendingEvents_NeverReadSessionNotifies(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id) VALUES ('s_new', 1)`)
@@ -1230,7 +1232,7 @@ func TestGetPendingEvents_NeverReadSessionNotifies(t *testing.T) {
 func TestGetPendingEvents_PermissionPendingNeverSuppressed(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Fully read session — but permission_pending is exempt from the gate.
@@ -1252,7 +1254,7 @@ func TestGetPendingEvents_PermissionPendingNeverSuppressed(t *testing.T) {
 func TestGetPendingEvents_ReadExecutionSuppressed(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status, read_at)
@@ -1272,7 +1274,7 @@ func TestGetPendingEvents_ReadExecutionSuppressed(t *testing.T) {
 func TestGetPendingEvents_UnreadExecutionNotifies(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO task_executions (id, task_id, session_id, status) VALUES (8, 1, 's_task', 'completed')`)
@@ -1303,7 +1305,7 @@ func TestGetPendingEvents_UnreadExecutionNotifies(t *testing.T) {
 func TestGetPendingEvents_TaskExecutionIsAuthorityOverSession(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Session fully read, with no newer reply after the read.
@@ -1334,7 +1336,7 @@ func TestGetPendingEvents_TaskExecutionIsAuthorityOverSession(t *testing.T) {
 func TestGetPendingEvents_ReadTaskExecutionWithReadSessionSuppressed(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_both2', 1, datetime('now'))`)
@@ -1362,7 +1364,7 @@ func TestGetPendingEvents_ReadTaskExecutionWithReadSessionSuppressed(t *testing.
 func TestGetPendingEvents_TaskEventWithoutExecutionIdNotifies(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_noexec', 1, datetime('now'))`)
@@ -1385,7 +1387,7 @@ func TestGetPendingEvents_TaskEventWithoutExecutionIdNotifies(t *testing.T) {
 func TestGetPendingEvents_CursorAdvancesPastSuppressedEvent(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_read2', 1, datetime('now'))`)
@@ -1417,7 +1419,7 @@ func TestGetPendingEvents_CursorAdvancesPastSuppressedEvent(t *testing.T) {
 func TestGetPendingEvents_UserMessageNotReadGated(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, last_read_at) VALUES ('s_um', 1, datetime('now'))`)
@@ -1439,7 +1441,7 @@ func TestGetPendingEvents_UserMessageNotReadGated(t *testing.T) {
 func TestGetPendingEvents_MalformedPayloadNotSuppressed(t *testing.T) {
 	db, teardown := setupReadGateDB(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1457,7 +1459,7 @@ func TestGetPendingEvents_MalformedPayloadNotSuppressed(t *testing.T) {
 func TestGetPendingEvents_ReadGateMissingTablesIsNonFatal(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t) // only pending_events exists
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
@@ -1505,7 +1507,7 @@ func TestSQLPlaceholders(t *testing.T) {
 func TestStoreNotifiableEvent_ConnectedButNotSubscribed(t *testing.T) {
 	db, teardown := setupTestDBForPendingEvents(t)
 	defer teardown()
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()

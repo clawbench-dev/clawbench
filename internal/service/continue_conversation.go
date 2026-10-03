@@ -1,4 +1,4 @@
-//nolint:noctx,govet,rowserrcheck // db global, context not applicable; shadowed err is acceptable; legacy db.Query pattern
+//nolint:noctx,govet,rowserrcheck // db global, context not applicable; shadowed err is acceptable; legacy store.ReadDB().Query pattern
 package service
 
 import (
@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 )
 
@@ -15,7 +17,7 @@ import (
 // Messages in chat_history are not affected — only the session record needs restoring
 // since session-level archival controls visibility.
 func restoreArchivedSession(sessionID string) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		sessionID,
 	)
@@ -32,7 +34,7 @@ func restoreArchivedSession(sessionID string) error {
 // Returns (exists, sessionID, error).
 func CheckContinueSession(execID int64) (bool, string, error) {
 	var sourceSessionID string
-	err := dbRead.QueryRow("SELECT session_id FROM task_executions WHERE id = ?", execID).Scan(&sourceSessionID)
+	err := store.ReadDB().QueryRow("SELECT session_id FROM task_executions WHERE id = ?", execID).Scan(&sourceSessionID)
 	if err == sql.ErrNoRows {
 		return false, "", fmt.Errorf("execution %d not found", execID)
 	}
@@ -42,7 +44,7 @@ func CheckContinueSession(execID int64) (bool, string, error) {
 
 	var existingID string
 	var existingArchived int
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT id, archived FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY archived ASC, updated_at DESC LIMIT 1",
 		sourceSessionID,
 	).Scan(&existingID, &existingArchived)
@@ -77,7 +79,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	var taskID int64
 	var execStatus string
 	var execCreatedAt time.Time
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT session_id, task_id, status, created_at FROM task_executions WHERE id = ?",
 		execID,
 	).Scan(&sourceSessionID, &taskID, &execStatus, &execCreatedAt)
@@ -96,7 +98,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 3. Get task name and validate project ownership
 	var taskName string
 	var taskProjectID int64
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT name, project_id FROM scheduled_tasks WHERE id = ?",
 		taskID,
 	).Scan(&taskName, &taskProjectID)
@@ -109,7 +111,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 
 	// 4. Validate project ownership (compare ids, not paths, so a renamed
 	//    project directory cannot break the check).
-	callerProjectID, idErr := ProjectIDForPath(projectPath)
+	callerProjectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return "", false, idErr
 	}
@@ -120,7 +122,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 5. Get source session metadata (without archived=0 — archived sessions still have valid metadata)
 	var backend, agentID, agentSource, modelName, externalSessionID string
 	var sessProjectID int64
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		`SELECT s.backend, s.agent_id, s.agent_source, s.model, s.project_id, s.external_session_id
 		   FROM chat_sessions s WHERE s.id = ?`,
 		sourceSessionID,
@@ -135,7 +137,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 6. Dedup check — if a continued session already exists (even archived), restore it
 	var existingID string
 	var existingArchived int
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT id, archived FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY archived ASC, updated_at DESC LIMIT 1",
 		sourceSessionID,
 	).Scan(&existingID, &existingArchived)
@@ -155,7 +157,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// 7. Max session count check
 	if model.SessionMaxCount > 0 {
 		var count int
-		err = dbRead.QueryRow(
+		err = store.ReadDB().QueryRow(
 			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
 			sessProjectID,
 		).Scan(&count)
@@ -177,7 +179,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// same resume flow as a normal session (no special-casing needed).
 	// sort_order stays at its default 0 so the new session lands at the top of the
 	// manual order (#492) via the created_at DESC tiebreak.
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id, external_session_id, last_read_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?, ?, CURRENT_TIMESTAMP)",
 		newSessionID, sessProjectID, backend, displayTitle, agentID, agentSource, modelName, sourceSessionID, externalSessionID,
 	)
@@ -209,7 +211,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// back would break string-based time comparisons (e.g. unread count query uses
 	// h.created_at > s2.last_read_at). Instead, we let the database assign CURRENT_TIMESTAMP,
 	// which guarantees format consistency. Message ordering relies on auto-increment id, not created_at.
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		"SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
 		sourceSessionID,
 	)
@@ -238,7 +240,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// Insert messages and build old ID -> new ID mapping for summaries
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
-		result, err := WriteExec(
+		result, err := store.WriteExec(
 			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
 			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
 		)
@@ -254,7 +256,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// keyed by the assistant message ID, same as interactive sessions).
 	for oldID, newID := range idMap {
 		var summary string
-		err := dbRead.QueryRow(
+		err := store.ReadDB().QueryRow(
 			"SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?",
 			oldID,
 		).Scan(&summary)
@@ -264,7 +266,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		if err != nil {
 			return "", false, fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
-		_, err = WriteExec(
+		_, err = store.WriteExec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)
@@ -288,7 +290,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	var sessProjectID int64
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT s.backend, s.agent_id, s.agent_source, s.model, s.project_id, COALESCE(p.path, '')
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
@@ -319,7 +321,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 
 	// 2. Validate project ownership by id: a renamed project directory must not
 	//    make a session look like it belongs elsewhere.
-	callerProjectID, idErr := ProjectIDForPath(projectPath)
+	callerProjectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return "", idErr
 	}
@@ -332,7 +334,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	if beforeMessageID > 0 {
 		var role string
 		var streaming int
-		err = dbRead.QueryRow(
+		err = store.ReadDB().QueryRow(
 			"SELECT role, streaming FROM chat_history WHERE id = ? AND session_id = ?",
 			beforeMessageID, sourceSessionID,
 		).Scan(&role, &streaming)
@@ -349,7 +351,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 		case roleUser:
 			// User message: find the next non-streaming assistant reply and include it
 			var asstID int64
-			err = dbRead.QueryRow(
+			err = store.ReadDB().QueryRow(
 				"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 AND id > ? ORDER BY id LIMIT 1",
 				sourceSessionID, beforeMessageID,
 			).Scan(&asstID)
@@ -376,7 +378,7 @@ func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int
 	// sort_order stays at its default 0 so the fork lands at the top of the
 	// manual order (#492) via the created_at DESC tiebreak.
 	newSessionID := generateSessionID()
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, source_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, 'chat', ?)",
 		newSessionID, sessProjectID, backend, title, agentID, agentSource, modelName, sourceSessionID,
 	)
@@ -419,12 +421,12 @@ func checkSessionLimit(projectPath string) error {
 	if model.SessionMaxCount <= 0 {
 		return nil
 	}
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return idErr
 	}
 	var count int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
 		projectID,
 	).Scan(&count)
@@ -448,7 +450,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 		args = append(args, beforeMessageID)
 	}
 	query += " ORDER BY id"
-	rows, err := dbRead.Query(query, args...)
+	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query source messages: %w", err)
 	}
@@ -473,7 +475,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
-		result, err := WriteExec(
+		result, err := store.WriteExec(
 			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
 			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
 		)
@@ -490,7 +492,7 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 func copySessionSummaries(idMap map[int64]int64) error {
 	for oldID, newID := range idMap {
 		var summary string
-		err := dbRead.QueryRow(
+		err := store.ReadDB().QueryRow(
 			"SELECT summary FROM summaries WHERE target_type = 'chat_message' AND target_id = ?",
 			oldID,
 		).Scan(&summary)
@@ -500,7 +502,7 @@ func copySessionSummaries(idMap map[int64]int64) error {
 		if err != nil {
 			return fmt.Errorf("failed to query summary for message %d: %w", oldID, err)
 		}
-		_, err = WriteExec(
+		_, err = store.WriteExec(
 			"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			newID, summary,
 		)
@@ -524,7 +526,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 	}
 
 	// chat_tool_calls
-	tcRows, err := dbRead.Query(
+	tcRows, err := store.ReadDB().Query(
 		"SELECT message_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at FROM chat_tool_calls WHERE session_id = ?",
 		sourceSessionID,
 	)
@@ -557,7 +559,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 		if !ok {
 			continue
 		}
-		if _, err := WriteExec(
+		if _, err := store.WriteExec(
 			"INSERT OR REPLACE INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			newID, newSessionID, r.toolID, r.name, r.input, r.output, r.status, r.done, r.summary, r.durationMs, r.createdAt,
 		); err != nil {
@@ -566,7 +568,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 	}
 
 	// chat_thinking
-	thRows, err := dbRead.Query(
+	thRows, err := store.ReadDB().Query(
 		"SELECT message_id, think_id, seq, text, created_at FROM chat_thinking WHERE session_id = ?",
 		sourceSessionID,
 	)
@@ -594,7 +596,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 		if !ok {
 			continue
 		}
-		if _, err := WriteExec(
+		if _, err := store.WriteExec(
 			"INSERT OR REPLACE INTO chat_thinking (message_id, session_id, think_id, seq, text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 			newID, newSessionID, r.thinkID, r.seq, r.text, r.createdAt,
 		); err != nil {
@@ -621,7 +623,7 @@ func copySessionDetailTables(idMap map[int64]int64, sourceSessionID, newSessionI
 // Split out of copySessionDetailTables so that function stays within the
 // cyclomatic-complexity budget; the shape mirrors the tool/thinking copies.
 func copySessionBtwQuestions(idMap map[int64]int64, sourceSessionID, newSessionID string) error {
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		"SELECT anchor_message_id, project_id, question, answer, model, error, created_at FROM btw_questions WHERE session_id = ?",
 		sourceSessionID,
 	)
@@ -656,7 +658,7 @@ func copySessionBtwQuestions(idMap map[int64]int64, sourceSessionID, newSessionI
 		if !ok {
 			continue
 		}
-		if _, err := WriteExec(
+		if _, err := store.WriteExec(
 			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer, model, error, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			newSessionID, r.projectID, newAnchor, r.question, r.answer, r.model, r.errMsg, r.createdAt,
@@ -709,7 +711,7 @@ var (
 func ValidateRewindAnchor(sessionID string, anchorID int64) error {
 	var role string
 	var streaming int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT role, streaming FROM chat_history WHERE id = ? AND session_id = ?",
 		anchorID, sessionID,
 	).Scan(&role, &streaming)
@@ -734,7 +736,7 @@ func ValidateRewindAnchor(sessionID string, anchorID int64) error {
 // cancelling a running session.
 func CountMessagesAfterAnchor(sessionID string, anchorID int64) (int, error) {
 	var trailingCount int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND id > ?",
 		sessionID, anchorID,
 	).Scan(&trailingCount)
@@ -809,7 +811,7 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	//    removed from chat_history but the queue is non-empty, the first queued
 	//    message is the input the user most likely wants back.
 	var removedContent sql.NullString
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND id > ? AND role = 'user' ORDER BY id ASC LIMIT 1",
 		sessionID, anchorID,
 	).Scan(&removedContent)
@@ -826,19 +828,19 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	//    only exists after the InitDB migration, not in the base schema, and the
 	//    established pattern treats these best-effort cleanups as non-fatal. The
 	//    authoritative chat_history delete below carries the real error.
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return res, err
 	}
-	// writeMu is held from WriteBegin until explicitly released below. The RAG
-	// cleanup (step 5) must run AFTER writeMu.Unlock(): rag.Store shares the
+	// writeMu is held from store.WriteBegin until explicitly released below. The RAG
+	// cleanup (step 5) must run AFTER store.WriteUnlock(): rag.Store shares the
 	// service-global writeMu (serviceWriteLocker), so calling it while still
 	// holding the mutex would self-deadlock on a non-reentrant lock.
 	unlocked := false
 	defer func() {
 		_ = tx.Rollback() // no-op after Commit
 		if !unlocked {
-			writeMu.Unlock()
+			store.WriteUnlock()
 		}
 	}()
 
@@ -907,7 +909,7 @@ func TruncateSessionAfterMessage(sessionID string, anchorID int64) (RewindResult
 	// Release the global writeMu BEFORE the RAG cleanup (step 5): rag.Store
 	// serializes on the same lock via serviceWriteLocker, so holding it here
 	// would self-deadlock.
-	writeMu.Unlock()
+	store.WriteUnlock()
 	unlocked = true
 
 	// 5. Best-effort RAG chunk cleanup (separate store, after the DB transaction

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -19,7 +21,7 @@ import (
 // Windows filepath.Abs("/a") yields a drive-rooted path, so the raw literal
 // never matches.
 func canonProject(p string) string {
-	return service.NormalizeProjectPath(p)
+	return store.NormalizeProjectPath(p)
 }
 
 // ensureAgentsTable creates the agents table in the in-memory test DB (the
@@ -72,7 +74,7 @@ func insertUsageSeed(t *testing.T, db *sql.DB, s usageSeed) {
 
 	// Project-scoped columns store an id, so resolve (and register) the path the
 	// seed names; the report resolves it back to a path for the group label.
-	projectID := service.ProjectIDForTest(t, s.project)
+	projectID := store.ProjectIDForTest(t, s.project)
 
 	// Chat session: insert only if not present.
 	var sid string
@@ -475,7 +477,7 @@ func TestUsageStatsSurvivesPurgeArchivedData(t *testing.T) {
 	})
 	require.NoError(t, service.ArchiveSession("/p", "codebuddy", "s-arch"))
 
-	sessionsPurged, _, err := service.PurgeArchivedData([]string{"s-arch"})
+	sessionsPurged, _, err := store.PurgeArchivedData([]string{"s-arch"})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
 
@@ -636,7 +638,7 @@ func TestSaveMetadataAttributionPopulated(t *testing.T) {
 	require.NoError(t, db.QueryRow(
 		"SELECT project_id, backend, agent_id, clawbench_session_id FROM chat_metadata WHERE message_id = ?", msgID,
 	).Scan(&projectID, &backend, &agentID, &clawSID))
-	assert.Equal(t, service.ProjectIDForTest(t, "/proj"), projectID)
+	assert.Equal(t, store.ProjectIDForTest(t, "/proj"), projectID)
 	assert.Equal(t, "codebuddy", backend)
 	assert.Equal(t, "codebuddy", agentID)
 	assert.Equal(t, sid, clawSID)

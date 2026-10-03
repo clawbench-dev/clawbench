@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -96,7 +98,7 @@ func syncViaRealAgent(t *testing.T, agentID, sid string) int {
 func sessionProjectPath(t *testing.T, sid string) string {
 	t.Helper()
 	var p string
-	err := service.ReadDB().QueryRow(`SELECT COALESCE(pj.path, '') FROM chat_sessions s LEFT JOIN projects pj ON pj.id = s.project_id WHERE s.id = ?`, sid).Scan(&p)
+	err := store.ReadDB().QueryRow(`SELECT COALESCE(pj.path, '') FROM chat_sessions s LEFT JOIN projects pj ON pj.id = s.project_id WHERE s.id = ?`, sid).Scan(&p)
 	require.NoError(t, err)
 	return p
 }
@@ -104,7 +106,7 @@ func sessionProjectPath(t *testing.T, sid string) string {
 func countContent(t *testing.T, sid, substr string) int {
 	t.Helper()
 	var n int
-	err := service.ReadDB().QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND content LIKE ?", sid, "%"+substr+"%",
 	).Scan(&n)
 	require.NoError(t, err)
@@ -139,12 +141,12 @@ func TestACPSync_RealAgent_TwoTurnExternalHistory(t *testing.T) {
 	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
 	require.NoError(t, err)
 	service.UpdateExternalSessionID(sid, extSID)
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
 		env.ProjectDir, sid,
 	)
@@ -157,7 +159,7 @@ func TestACPSync_RealAgent_TwoTurnExternalHistory(t *testing.T) {
 
 	// Final session = 2 turns = 4 messages.
 	var total int
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&total)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&total)
 	assert.Equal(t, 4, total, "final session should have 2 rounds (4 messages)")
 
 	// Turn 1 appears exactly once (not duplicated); turn 2 present exactly once.
@@ -212,7 +214,7 @@ func TestACPSync_RealAgent_ExternalAdditionsAfterFirstSync(t *testing.T) {
 	assert.Equal(t, 4, added2, "second sync should pull the 4 externally-added messages")
 
 	var total int
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&total)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&total)
 	assert.Equal(t, 8, total, "final session should have all 8 messages")
 
 	assert.Equal(t, 1, countContent(t, sid, "你叫什么"), "externally-added user message must be synced")

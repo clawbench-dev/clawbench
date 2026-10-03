@@ -13,6 +13,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/store"
+
 	acp "github.com/coder/acp-go-sdk"
 
 	"clawbench/internal/ai"
@@ -257,7 +259,7 @@ func serveAgentsRescan(w http.ResponseWriter, r *http.Request) {
 	// A rescan is an explicit user action, so bypass the discovery cache and
 	// re-probe every backend.
 	model.InvalidateAllDiscoveredModels()
-	if _, err := model.RefreshAgents(service.WriteDB(), model.RefreshOptions{}); err != nil {
+	if _, err := model.RefreshAgents(store.WriteDB(), model.RefreshOptions{}); err != nil {
 		slog.Error("agent rescan failed", "error", err)
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
@@ -723,7 +725,7 @@ func ServeAgentRefreshModels(w http.ResponseWriter, r *http.Request) {
 	agent = updated
 
 	// Update database
-	if err := service.SaveAgent(service.WriteDB(), agent); err != nil {
+	if err := service.SaveAgent(store.WriteDB(), agent); err != nil {
 		slog.Warn("failed to persist model refresh to DB", "agent", agentID, "error", err)
 	}
 
@@ -1343,7 +1345,7 @@ func findExistingACPSessions(acpSessionIDs []string) map[string]bool {
 	args = append(args, vals...)
 	args = append(args, vals...)
 
-	rows, err := service.ReadDB().Query( // background DB query, no request context available in this helper
+	rows, err := store.ReadDB().Query( // background DB query, no request context available in this helper
 		"SELECT source_session_id, external_session_id FROM chat_sessions WHERE source_session_id IN ("+ph+") OR external_session_id IN ("+ph+")",
 		args...,
 	)

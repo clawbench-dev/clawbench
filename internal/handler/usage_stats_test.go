@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -16,10 +18,10 @@ import (
 // model/timestamp, so those are the only behavioral knobs exposed.
 func seedUsageStatsData(t *testing.T, projectPath, sessionID, model, createdAt string, total int64) {
 	t.Helper()
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 
 	// Project-scoped columns store an id; resolve (and register) the path.
-	projectID := service.ProjectIDForTest(t, projectPath)
+	projectID := store.ProjectIDForTest(t, projectPath)
 
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'codebuddy', 't', 'codebuddy')",
@@ -179,7 +181,7 @@ func TestServeUsageStats_DBFailureReturns500(t *testing.T) {
 	closedDB, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	_ = closedDB.Close()
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closedDB)
 	defer cleanup()
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{

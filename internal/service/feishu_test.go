@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +33,7 @@ func setupTestDBForFeishu(t *testing.T) *sql.DB {
 	`)
 	require.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db
 }
@@ -84,7 +86,7 @@ func TestFeishuSubscribers_CRUD(t *testing.T) {
 }
 
 func TestGetFeishuSubscribers_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	subs, err := service.GetFeishuSubscribers()
@@ -93,7 +95,7 @@ func TestGetFeishuSubscribers_NilDB(t *testing.T) {
 }
 
 func TestUpsertFeishuSubscriber_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	err := service.UpsertFeishuSubscriber("ou_user1", "chat1", "name", "stream")
@@ -101,7 +103,7 @@ func TestUpsertFeishuSubscriber_NilDB(t *testing.T) {
 }
 
 func TestDeleteFeishuSubscriber_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	err := service.DeleteFeishuSubscriber("ou_user1")
@@ -117,7 +119,7 @@ func TestDeleteFeishuSubscriber_NotFound(t *testing.T) {
 }
 
 func TestMergeFeishuConfigSubscribers_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	// Should not panic

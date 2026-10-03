@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -25,7 +27,7 @@ func TestServeProjectSet(t *testing.T) {
 		_ = os.MkdirAll(projectPath, 0o755)
 
 		// Set project as default in DB (GET now reads from DB, not cookie)
-		_, err := service.UnsafeDBForTest().Exec("INSERT INTO recent_projects (project_id, is_default) VALUES (?, 1)", service.ProjectIDForTest(t, projectPath))
+		_, err := store.UnsafeDBForTest().Exec("INSERT INTO recent_projects (project_id, is_default) VALUES (?, 1)", store.ProjectIDForTest(t, projectPath))
 		assert.NoError(t, err)
 
 		req := newRequest(t, http.MethodGet, "/api/project", nil)
@@ -66,8 +68,8 @@ func TestServeProjectSet(t *testing.T) {
 		_ = os.MkdirAll(recentPath, 0o755)
 
 		// Insert a recent project directly into the DB
-		_, err := service.UnsafeDBForTest().Exec(
-			"INSERT INTO recent_projects (project_id) VALUES (?)", service.ProjectIDForTest(t, recentPath),
+		_, err := store.UnsafeDBForTest().Exec(
+			"INSERT INTO recent_projects (project_id) VALUES (?)", store.ProjectIDForTest(t, recentPath),
 		)
 		assert.NoError(t, err)
 
@@ -133,7 +135,7 @@ func TestServeProjectSet(t *testing.T) {
 		var isDefault int
 		// The registry stores the canonical path (symlinks resolved), so the
 		// lookup must compare against the same form — on macOS /tmp is a symlink.
-		err := service.UnsafeDBForTest().QueryRow("SELECT is_default FROM recent_projects r JOIN projects p ON p.id = r.project_id WHERE p.path = ?", service.NormalizeProjectPath(projectPath)).Scan(&isDefault)
+		err := store.UnsafeDBForTest().QueryRow("SELECT is_default FROM recent_projects r JOIN projects p ON p.id = r.project_id WHERE p.path = ?", store.NormalizeProjectPath(projectPath)).Scan(&isDefault)
 		assert.NoError(t, err, "project should exist in recent_projects")
 		assert.Equal(t, 1, isDefault, "posted project should be marked as default")
 	})
@@ -271,8 +273,8 @@ func TestServeRecentProjects(t *testing.T) {
 
 		projectPath := filepath.Join(env.WatchDir, "proj1")
 		_ = os.MkdirAll(projectPath, 0o755)
-		_, err := service.UnsafeDBForTest().Exec(
-			"INSERT INTO recent_projects (project_id) VALUES (?)", service.ProjectIDForTest(t, projectPath),
+		_, err := store.UnsafeDBForTest().Exec(
+			"INSERT INTO recent_projects (project_id) VALUES (?)", store.ProjectIDForTest(t, projectPath),
 		)
 		assert.NoError(t, err)
 
@@ -301,8 +303,8 @@ func TestServeRecentProjects(t *testing.T) {
 		require.NoError(t, os.MkdirAll(sub, 0o755))
 		require.NoError(t, os.MkdirAll(filepath.Join(repo, ".git"), 0o755))
 
-		_, err := service.UnsafeDBForTest().Exec(
-			"INSERT INTO recent_projects (project_id) VALUES (?), (?)", service.ProjectIDForTest(t, repo), service.ProjectIDForTest(t, sub),
+		_, err := store.UnsafeDBForTest().Exec(
+			"INSERT INTO recent_projects (project_id) VALUES (?), (?)", store.ProjectIDForTest(t, repo), store.ProjectIDForTest(t, sub),
 		)
 		require.NoError(t, err)
 

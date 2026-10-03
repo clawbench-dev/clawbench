@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -17,7 +19,7 @@ func setupTestDBForMigrations(t *testing.T) {
 	require.NoError(t, err)
 	// 内存库是 per-connection 的，必须限制为单连接。
 	d.SetMaxOpenConns(1)
-	restore := SetDBForTest(d, d)
+	restore := store.SetDBForTest(d, d)
 	t.Cleanup(func() {
 		restore()
 		_ = d.Close()
@@ -55,7 +57,7 @@ func TestIsMigrationApplied_ReturnsFalseOnReadError(t *testing.T) {
 	d, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	d.SetMaxOpenConns(1)
-	restore := SetDBForTest(d, d)
+	restore := store.SetDBForTest(d, d)
 	t.Cleanup(func() {
 		restore()
 		_ = d.Close()
@@ -83,8 +85,8 @@ func TestInitDB_DataMigrationsAreGatedByLedger(t *testing.T) {
 	withTempDataDir(t)
 	// InitDB 打开包级 db/dbRead 池；必须关掉，否则 Windows 上 t.TempDir() 的
 	// RemoveAll 会因文件句柄未释放而失败（modernc 的 VFS 不带 FILE_SHARE_DELETE）。
-	// LIFO：CloseDB 先于 withTempDataDir 注册的 DataDir 还原、再于 TempDir 清理。
-	t.Cleanup(CloseDB)
+	// LIFO：store.Close 先于 withTempDataDir 注册的 DataDir 还原、再于 TempDir 清理。
+	t.Cleanup(store.Close)
 
 	// 第一次启动：空库，4 个迁移无待转换行 → 全部记账。
 	require.NoError(t, InitDB(true))

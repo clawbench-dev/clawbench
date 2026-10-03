@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -175,14 +177,14 @@ func stripSystemInstructions(t string) (string, bool) {
 // 返回实际插入条数。
 func persistReplayMessages(sessionID, projectPath, backend string, messages []replayMessage) int {
 	// Resolved once, outside the loop: every message belongs to the same project.
-	projectID, err := service.ProjectIDForPath(projectPath)
+	projectID, err := store.ProjectIDForPath(projectPath)
 	if err != nil {
 		slog.Error("handler: cannot resolve project for replay messages", "error", err)
 		return 0
 	}
 	inserted := 0
 	for _, msg := range messages {
-		res, err := service.WriteExec(
+		res, err := store.WriteExec(
 			"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, indexed, external_message_id) VALUES (?, ?, ?, ?, ?, 0, 0, ?)",
 			projectID, backend, sessionID, msg.role, msg.content, msg.extMsgID,
 		)
@@ -252,14 +254,14 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 	// 校验会话归属当前项目，并读取 external_session_id
 	// The session stores a project id, so resolve the caller's project to
 	// compare ids (a renamed directory must not break the ownership check).
-	callerProjectID, idErr := service.ProjectIDForPath(projectPath)
+	callerProjectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		model.WriteError(w, model.Internal(idErr))
 		return
 	}
 	var sessProjectID int64
 	var extID string
-	err := service.ReadDB().QueryRowContext(
+	err := store.ReadDB().QueryRowContext(
 		r.Context(),
 		"SELECT project_id, external_session_id FROM chat_sessions WHERE id = ?",
 		req.SessionID,
@@ -329,7 +331,7 @@ func ServeACPSyncSession(w http.ResponseWriter, r *http.Request) {
 
 	// 空回放守卫：外部会话没加载到任何消息时不覆盖，避免误删原会话。
 	var oldCount int
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", req.SessionID).Scan(&oldCount)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", req.SessionID).Scan(&oldCount)
 	if len(messages) == 0 {
 		slog.Info("handler: acp-sync skipped (empty replay)", "session_id", req.SessionID, "acp_sid", acpSID)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "added": 0, "skipped": true})

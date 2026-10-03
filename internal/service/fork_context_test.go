@@ -6,6 +6,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -537,12 +539,12 @@ func TestBuildForkContext_RespectsConfiguredBudget(t *testing.T) {
 
 	sessionID := "fork-budget"
 	// Old message big enough that it cannot fit alongside the newest one.
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"`+strings.Repeat("o", 900)+`"}]}`, sessionID,
 	)
 	require.NoError(t, err)
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"newest question"}]}`, sessionID,
 	)
@@ -568,12 +570,12 @@ func TestBuildForkContext_DropsAssistantWhenBudgetTight(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	sessionID := "fork-budget-asst"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"the user instruction"}]}`, sessionID,
 	)
 	require.NoError(t, err)
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"text","text":"`+strings.Repeat("a", 900)+`"}]}`, sessionID,
 	)

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -83,7 +85,7 @@ func setupRunTurnTest(t *testing.T, events []ai.StreamEvent) (*sql.DB, string) {
 	t.Helper()
 
 	db := setupTestDBForSessionCommand(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	origAgents := model.Agents
 	model.Agents = map[string]*model.Agent{
 		"run-turn-agent": {ID: "run-turn-agent", Name: "Test", Backend: "run-turn-test", Transport: ""},
@@ -100,7 +102,7 @@ func setupRunTurnTest(t *testing.T, events []ai.StreamEvent) (*sql.DB, string) {
 
 	sessionID := "run-turn-sess"
 	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, auto_approve)
-		VALUES (?, (SELECT id FROM projects WHERE path = ?), 'run-turn-test', 'Test', 'run-turn-agent', 'default', '', 'chat', 0)`, sessionID, NormalizeProjectPath("/tmp"))
+		VALUES (?, (SELECT id FROM projects WHERE path = ?), 'run-turn-test', 'Test', 'run-turn-agent', 'default', '', 'chat', 0)`, sessionID, store.NormalizeProjectPath("/tmp"))
 	require.NoError(t, err)
 	return db, sessionID
 }

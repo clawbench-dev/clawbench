@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -104,7 +106,7 @@ func setupSchedulerDB(t *testing.T) *sql.DB { //nolint:unparam // test helper: D
 	db.SetMaxOpenConns(1) // Required for :memory: SQLite — all queries must use the same connection
 	_, err = db.Exec(schedulerSchema)
 	assert.NoError(t, err)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -215,13 +217,13 @@ func TestGetTasks_AllProjects(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj1"), "Task 1", "0 * * * *", "agent1", "prompt1", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj1"), "Task 1", "0 * * * *", "agent1", "prompt1", "", "active", "unlimited", now, now,
 	)
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj2"), "Task 2", "0 * * * *", "agent1", "prompt2", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj2"), "Task 2", "0 * * * *", "agent1", "prompt2", "", "active", "unlimited", now, now,
 	)
 
 	tasks, err := service.GetTasks("")
@@ -239,13 +241,13 @@ func TestGetTasks_OrdersByCreatedAtDesc(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "First", "0 * * * *", "agent1", "p", "", "active", "unlimited", now.Add(-1*time.Hour), now,
+		store.ProjectIDForTest(t, "/proj"), "First", "0 * * * *", "agent1", "p", "", "active", "unlimited", now.Add(-1*time.Hour), now,
 	)
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Second", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Second", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 
 	tasks, err := service.GetTasks("/proj")
@@ -262,9 +264,9 @@ func TestGetTaskByID(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, max_runs, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task 1", "0 * * * *", "agent1", "prompt1", "sess-1", "active", "unlimited", 0, 3, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task 1", "0 * * * *", "agent1", "prompt1", "sess-1", "active", "unlimited", 0, 3, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -272,7 +274,7 @@ func TestGetTaskByID(t *testing.T) {
 	task, err := service.GetTaskByID(taskID)
 	assert.NoError(t, err)
 	assert.Equal(t, taskID, task.ID)
-	assert.Equal(t, service.NormalizeProjectPath("/proj"), task.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/proj"), task.ProjectPath)
 	assert.Equal(t, "Task 1", task.Name)
 	assert.Equal(t, "0 * * * *", task.CronExpr)
 	assert.Equal(t, "agent1", task.AgentID)
@@ -314,7 +316,7 @@ func TestAddTask(t *testing.T) {
 	// The read path resolves the project through the registry, which stores the
 	// canonical path — the input literal is not necessarily canonical (on Windows
 	// filepath.Abs("/test-project") is drive-rooted).
-	assert.Equal(t, service.NormalizeProjectPath(task.ProjectPath), persisted.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath(task.ProjectPath), persisted.ProjectPath)
 }
 
 func TestAddTask_InvalidCronExpr(t *testing.T) {
@@ -441,7 +443,7 @@ func TestNextRunAt_TimeZoneRoundTrip(t *testing.T) {
 	// server timezone.
 	loc := time.FixedZone("CST", 8*60*60)
 	written := time.Date(2026, 12, 31, 8, 0, 0, 0, loc) // 08:00 +0800 == 00:00 UTC
-	_, err := service.WriteExec("UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", written, task.ID)
+	_, err := store.WriteExec("UPDATE scheduled_tasks SET next_run_at = ? WHERE id = ?", written, task.ID)
 	assert.NoError(t, err)
 
 	persisted, err := service.GetTaskByID(task.ID)
@@ -589,13 +591,13 @@ func TestLoadTasksFromDB(t *testing.T) {
 
 	// Insert tasks directly into DB
 	now := time.Now()
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Active Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Active Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", now, now,
 	)
 
 	err := s.LoadTasksFromDB("/proj")
@@ -604,7 +606,7 @@ func TestLoadTasksFromDB(t *testing.T) {
 	// Active task should be loaded; paused task should be skipped
 	// Get the active task's ID
 	var activeID int64
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE status = 'active' AND project_id = (SELECT id FROM projects WHERE path = ?)", service.NormalizeProjectPath("/proj")).Scan(&activeID)
+	store.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE status = 'active' AND project_id = (SELECT id FROM projects WHERE path = ?)", store.NormalizeProjectPath("/proj")).Scan(&activeID)
 
 	// We verify by checking that the active task can be removed without error
 	s.RemoveTask(activeID)
@@ -618,13 +620,13 @@ func TestLoadTasksFromDB_AllProjects(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj1"), "Task 1", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj1"), "Task 1", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj2"), "Task 2", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj2"), "Task 2", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 
 	err := s.LoadTasksFromDB("") // empty = all projects
@@ -632,8 +634,8 @@ func TestLoadTasksFromDB_AllProjects(t *testing.T) {
 
 	// Both tasks should be loaded — verify by getting their IDs and removing them
 	var id1, id2 int64
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = ?)", service.NormalizeProjectPath("/proj1")).Scan(&id1)
-	service.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = ?)", service.NormalizeProjectPath("/proj2")).Scan(&id2)
+	store.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = ?)", store.NormalizeProjectPath("/proj1")).Scan(&id1)
+	store.UnsafeDBForTest().QueryRow("SELECT id FROM scheduled_tasks WHERE project_id = (SELECT id FROM projects WHERE path = ?)", store.NormalizeProjectPath("/proj2")).Scan(&id2)
 
 	s.RemoveTask(id1)
 	s.RemoveTask(id2)
@@ -649,9 +651,9 @@ func TestLoadTasksFromDB_InvalidCronSkipped(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Bad Cron", "invalid", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Bad Cron", "invalid", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 
 	// Should not error — invalid cron tasks are logged and skipped
@@ -675,9 +677,9 @@ func TestAddTaskExecution(t *testing.T) {
 
 	// Insert a task
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -687,12 +689,12 @@ func TestAddTaskExecution(t *testing.T) {
 
 	// Verify the execution was recorded
 	var count int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, count)
 
 	var fetchedSessionID string
-	err = service.UnsafeDBForTest().QueryRow("SELECT session_id FROM task_executions WHERE task_id = ?", taskID).Scan(&fetchedSessionID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT session_id FROM task_executions WHERE task_id = ?", taskID).Scan(&fetchedSessionID)
 	assert.NoError(t, err)
 	assert.Equal(t, "session-abc", fetchedSessionID)
 }
@@ -702,9 +704,9 @@ func TestAddTaskExecution_MultipleExecutions(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -715,7 +717,7 @@ func TestAddTaskExecution_MultipleExecutions(t *testing.T) {
 	assert.NoError(t, err)
 
 	var count int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, count)
 }
@@ -725,9 +727,9 @@ func TestUpdateExecutionStatus(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -737,7 +739,7 @@ func TestUpdateExecutionStatus(t *testing.T) {
 
 	// Verify default status is 'running'
 	var status string
-	err = service.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "session-abc").Scan(&status)
+	err = store.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "session-abc").Scan(&status)
 	assert.NoError(t, err)
 	assert.Equal(t, "running", status)
 
@@ -745,7 +747,7 @@ func TestUpdateExecutionStatus(t *testing.T) {
 	err = service.UpdateExecutionStatus("session-abc", "cancelled")
 	assert.NoError(t, err)
 
-	err = service.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "session-abc").Scan(&status)
+	err = store.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "session-abc").Scan(&status)
 	assert.NoError(t, err)
 	assert.Equal(t, "cancelled", status)
 }
@@ -755,9 +757,9 @@ func TestUpdateTaskStats(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Stats Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Stats Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -783,9 +785,9 @@ func TestUpdateTaskStats_DoesNotOverwritePausedStatus(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", 0, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Paused Task", "0 * * * *", "agent1", "p", "", "paused", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -899,16 +901,16 @@ func TestRunCount_AtomicIncrement(t *testing.T) {
 
 	// Insert a task directly
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "RC Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		store.ProjectIDForTest(t, "/proj"), "RC Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// Run 10 sequential atomic SQL increments.
 	for range 10 {
-		_, err := service.UnsafeDBForTest().Exec("UPDATE scheduled_tasks SET run_count = run_count + 1 WHERE id = ?", taskID)
+		_, err := store.UnsafeDBForTest().Exec("UPDATE scheduled_tasks SET run_count = run_count + 1 WHERE id = ?", taskID)
 		assert.NoError(t, err)
 	}
 
@@ -946,7 +948,7 @@ func TestRemoveTask_CascadeDeletesSessions(t *testing.T) {
 
 	// Verify the session exists
 	var sessionArchived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, sessionArchived, "session should not be archived before RemoveTask")
 
@@ -954,13 +956,13 @@ func TestRemoveTask_CascadeDeletesSessions(t *testing.T) {
 	s.RemoveTask(task.ID)
 
 	// Verify session is archived
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, sessionArchived, "session should be archived after RemoveTask")
 
 	// Verify task_executions rows are deleted
 	var execCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", task.ID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", task.ID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, execCount, "task_executions should be deleted after RemoveTask")
 
@@ -984,7 +986,7 @@ func TestPurgeArchivedData_CleansTaskExecutions(t *testing.T) {
 
 	// Create task_execution
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
 		"/purge-proj", "Purge Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
@@ -996,28 +998,28 @@ func TestPurgeArchivedData_CleansTaskExecutions(t *testing.T) {
 
 	// Verify task_execution exists
 	var execCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE session_id = ?", sessionID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE session_id = ?", sessionID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, execCount)
 
 	// Archive the session and set updated_at to old date
 	service.ArchiveSession("/purge-proj", "claude", sessionID)
 	oldTime := time.Now().Add(-100 * 24 * time.Hour) // 100 days ago
-	_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", oldTime, sessionID)
+	_, _ = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = ? WHERE id = ?", oldTime, sessionID)
 
 	// Get expired sessions and purge
 	cutoff := time.Now().Add(-90 * 24 * time.Hour)
-	expiredIDs, err := service.GetExpiredArchivedSessions(cutoff)
+	expiredIDs, err := store.GetExpiredArchivedSessions(cutoff)
 	assert.NoError(t, err)
 	assert.Contains(t, expiredIDs, sessionID)
 
-	sessionsPurged, messagesPurged, err := service.PurgeArchivedData(expiredIDs)
+	sessionsPurged, messagesPurged, err := store.PurgeArchivedData(expiredIDs)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
 	assert.True(t, messagesPurged >= 1)
 
 	// Verify task_executions rows are also deleted
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE session_id = ?", sessionID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE session_id = ?", sessionID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, execCount, "task_executions should be purged along with the session")
 }
@@ -1030,9 +1032,9 @@ func TestDeleteTaskExecution(t *testing.T) {
 
 	// Create a task
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "DelExec Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
+		store.ProjectIDForTest(t, "/proj"), "DelExec Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1054,7 +1056,7 @@ func TestDeleteTaskExecution(t *testing.T) {
 
 	// Get the execution ID
 	var execID int64
-	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 	assert.NoError(t, err)
 
 	// Delete the execution
@@ -1063,13 +1065,13 @@ func TestDeleteTaskExecution(t *testing.T) {
 
 	// Verify execution is hard-deleted
 	var execCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE id = ?", execID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE id = ?", execID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, execCount, "execution should be hard-deleted")
 
 	// Verify session is archived
 	var sessionArchived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, sessionArchived, "session should be archived")
 
@@ -1094,9 +1096,9 @@ func TestDeleteTaskExecution_RunningExecution(t *testing.T) {
 
 	// Create a task and a running execution
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Running Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Running Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1112,7 +1114,7 @@ func TestDeleteTaskExecution_RunningExecution(t *testing.T) {
 	assert.NoError(t, err)
 
 	var execID int64
-	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 	assert.NoError(t, err)
 
 	// Attempt to delete a running execution should fail
@@ -1122,14 +1124,14 @@ func TestDeleteTaskExecution_RunningExecution(t *testing.T) {
 
 	// Verify execution still exists
 	var execCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE id = ?", execID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE id = ?", execID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, execCount, "running execution should not be deleted")
 
 	// Verify session is NOT archived (operation order fix: DELETE runs first,
 	// so if DELETE fails, session must remain intact)
 	var sessionArchived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&sessionArchived)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, sessionArchived, "session should NOT be archived when execution deletion is rejected")
 
@@ -1145,9 +1147,9 @@ func TestDeleteTaskExecution_RunCountClampToZero(t *testing.T) {
 
 	// Create a task with run_count = 0
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Zero Count", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Zero Count", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1160,7 +1162,7 @@ func TestDeleteTaskExecution_RunCountClampToZero(t *testing.T) {
 	service.UpdateExecutionStatus(sessionID, "completed")
 
 	var execID int64
-	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 	assert.NoError(t, err)
 
 	// Delete the execution — run_count should clamp to 0 (not go negative)
@@ -1180,9 +1182,9 @@ func TestDeleteAllTaskExecutions(t *testing.T) {
 
 	// Create a task with run_count = 3
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "DelAll Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
+		store.ProjectIDForTest(t, "/proj"), "DelAll Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 3, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1199,7 +1201,7 @@ func TestDeleteAllTaskExecutions(t *testing.T) {
 
 	// Verify 3 executions exist
 	var execCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 3, execCount)
 
@@ -1208,7 +1210,7 @@ func TestDeleteAllTaskExecutions(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Verify all executions are deleted
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&execCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&execCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, execCount, "all executions should be deleted")
 
@@ -1223,9 +1225,9 @@ func TestDeleteAllTaskExecutions_PreservesRunning(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Mixed Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 2, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Mixed Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 2, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1245,7 +1247,7 @@ func TestDeleteAllTaskExecutions_PreservesRunning(t *testing.T) {
 
 	// Running execution should still exist
 	var runningCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ? AND status = 'running'", taskID).Scan(&runningCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ? AND status = 'running'", taskID).Scan(&runningCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, runningCount, "running execution should be preserved")
 
@@ -1260,9 +1262,9 @@ func TestDeleteAllTaskExecutions_NoExecutions(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Empty Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Empty Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 0, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1288,9 +1290,9 @@ func TestHasUnreadTasks_NoExecutions(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 
@@ -1304,15 +1306,15 @@ func TestHasUnreadTasks_UnreadExecution(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// Add execution with read_at = NULL (unread)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, ?, ?, ?)",
 		taskID, "session-1", "auto", "completed", now,
 	)
@@ -1328,15 +1330,15 @@ func TestHasUnreadTasks_ReadExecution(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// Add execution with read_at set (read)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, read_at, created_at) VALUES (?, ?, ?, ?, ?, ?)",
 		taskID, "session-1", "auto", "completed", now, now,
 	)
@@ -1353,22 +1355,22 @@ func TestHasUnreadTasks_ScopedByProjectPath(t *testing.T) {
 
 	now := time.Now()
 	// Task in /proj-a with unread execution
-	resultA, err := service.UnsafeDBForTest().Exec(
+	resultA, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj-a"), "Task A", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj-a"), "Task A", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskIDA, _ := resultA.LastInsertId()
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, ?, ?, ?)",
 		taskIDA, "session-a1", "auto", "completed", now,
 	)
 	assert.NoError(t, err)
 
 	// Task in /proj-b with no executions
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj-b"), "Task B", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj-b"), "Task B", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 
@@ -1386,14 +1388,14 @@ func TestHasUnreadTasks_EmptyProjectPath(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, ?, ?, ?)",
 		taskID, "session-1", "auto", "completed", now,
 	)
@@ -1410,15 +1412,15 @@ func TestHasUnreadTasks_RunningExecutionNotUnread(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// Add a running execution — should NOT be counted as unread
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, ?, ?, ?)",
 		taskID, "session-running", "auto", "running", now,
 	)
@@ -1442,15 +1444,15 @@ func TestHasUnreadTasks_SkippedExecutionNotUnread(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// A skipped execution has an empty session_id and must not count as unread.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, '', 'auto', 'skipped', ?)",
 		taskID, now,
 	)
@@ -1471,7 +1473,7 @@ func TestHasUnreadTasks_SkippedExecutionNotUnread(t *testing.T) {
 
 func TestDBRead_Initialized_SchedulerDB(t *testing.T) {
 	_ = setupSchedulerDB(t)
-	assert.NotNil(t, service.ReadDB(), "dbRead should be initialized in test setup")
+	assert.NotNil(t, store.ReadDB(), "dbRead should be initialized in test setup")
 }
 
 // ---------- ISS-200: Cron re-parse failure pauses task ----------
@@ -1487,16 +1489,16 @@ func TestCronReparseFailure_SetsStatusToPaused(t *testing.T) {
 
 	// Insert a task with a valid cron expression and session_id
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, run_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Cron Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Cron Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", 1, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// Simulate what executeTask would do on cron re-parse failure:
 	// Set status to "paused" (the fix for ISS-200)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE scheduled_tasks SET status = ?, next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		"paused", taskID,
 	)
@@ -1518,9 +1520,9 @@ func TestCronReparseFailure_InvalidExprCannotBeResumed(t *testing.T) {
 
 	// Insert a task with an invalid cron expression directly into DB
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Broken Cron", "not-a-valid-cron", "agent1", "p", "", "paused", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Broken Cron", "not-a-valid-cron", "agent1", "p", "", "paused", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
@@ -1793,22 +1795,22 @@ func TestCleanZombieExecutions(t *testing.T) {
 
 	// Create a task
 	now := time.Now()
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Zombie Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Zombie Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := result.LastInsertId()
 
 	// Insert a "running" execution (zombie)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status) VALUES (?, ?, ?, 'running')",
 		taskID, "zombie-session-1", "auto",
 	)
 	assert.NoError(t, err)
 
 	// Insert a "completed" execution (not a zombie)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status) VALUES (?, ?, ?, 'completed')",
 		taskID, "completed-session-1", "auto",
 	)
@@ -1822,13 +1824,13 @@ func TestCleanZombieExecutions(t *testing.T) {
 
 	// Verify the zombie was cleaned up (status changed to "failed")
 	var zombieStatus string
-	err = service.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "zombie-session-1").Scan(&zombieStatus)
+	err = store.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "zombie-session-1").Scan(&zombieStatus)
 	assert.NoError(t, err)
 	assert.Equal(t, "failed", zombieStatus, "zombie execution should be marked as failed")
 
 	// Verify the completed execution was NOT affected
 	var completedStatus string
-	err = service.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "completed-session-1").Scan(&completedStatus)
+	err = store.UnsafeDBForTest().QueryRow("SELECT status FROM task_executions WHERE session_id = ?", "completed-session-1").Scan(&completedStatus)
 	assert.NoError(t, err)
 	assert.Equal(t, "completed", completedStatus, "completed execution should not be affected")
 }
@@ -1839,9 +1841,9 @@ func TestCleanZombieExecutions_NoZombies(t *testing.T) {
 
 	// Insert a task with no executions
 	now := time.Now()
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Clean Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Clean Task", "0 * * * *", "agent1", "p", "", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 
@@ -2023,20 +2025,20 @@ func TestMarkTaskExecutionsRead_PerExecution(t *testing.T) {
 	defer cleanup()
 
 	now := time.Now()
-	res, err := service.UnsafeDBForTest().Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, status, repeat_mode, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := res.LastInsertId()
 
 	// One finished, one still running.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, 'auto', 'completed', ?)",
 		taskID, "sess-1", now,
 	)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, created_at) VALUES (?, ?, 'auto', 'running', ?)",
 		taskID, "sess-2", now,
 	)
@@ -2045,9 +2047,9 @@ func TestMarkTaskExecutionsRead_PerExecution(t *testing.T) {
 	assert.NoError(t, service.MarkTaskExecutionsRead(taskID))
 
 	var finishedRead, runningRead int
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow(
+	assert.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM task_executions WHERE status='completed' AND read_at IS NOT NULL").Scan(&finishedRead))
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow(
+	assert.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM task_executions WHERE status='running' AND read_at IS NOT NULL").Scan(&runningRead))
 
 	assert.Equal(t, 1, finishedRead, "the finished execution must be marked read")
@@ -2063,15 +2065,15 @@ func TestUnread_IgnoresLastReadAtWatermark(t *testing.T) {
 
 	now := time.Now()
 	older := now.Add(-time.Hour)
-	res, err := service.UnsafeDBForTest().Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, session_id, status, repeat_mode, last_read_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, '', ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now, now,
+		store.ProjectIDForTest(t, "/proj"), "Task", "0 * * * *", "agent1", "p", "active", "unlimited", now, now, now,
 	)
 	assert.NoError(t, err)
 	taskID, _ := res.LastInsertId()
 
 	// An execution that finished BEFORE the watermark and was never opened.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status, read_at, created_at) VALUES (?, ?, 'auto', 'completed', NULL, ?)",
 		taskID, "sess-old", older,
 	)

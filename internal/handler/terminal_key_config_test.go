@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	_ "modernc.org/sqlite"
@@ -155,7 +157,7 @@ func TestServeKeyConfig_GetDBError(t *testing.T) {
 	// Close the DB to force an error from GetKeyConfig
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	cleanup := service.SetDBForTest(closedDB, closedDB)
+	cleanup := store.SetDBForTest(closedDB, closedDB)
 	defer cleanup()
 
 	req := newRequest(t, http.MethodGet, "/api/terminal/key-config?type=key", nil)
@@ -170,7 +172,7 @@ func TestServeKeyConfig_PutDBError(t *testing.T) {
 	// Close the DB to force an error from ReplaceKeyConfig
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	cleanup := service.SetDBForTest(closedDB, closedDB)
+	cleanup := store.SetDBForTest(closedDB, closedDB)
 	defer cleanup()
 
 	putBody := map[string]any{

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 )
@@ -160,7 +162,7 @@ func AnswerBtwQuestion(ctx context.Context, sessionID, question string) (BtwQues
 // was looking at when they asked.
 func lastMessageID(sessionID string) int64 {
 	var id int64
-	_ = dbRead.QueryRowContext(context.Background(),
+	_ = store.ReadDB().QueryRowContext(context.Background(),
 		"SELECT COALESCE(MAX(id), 0) FROM chat_history WHERE session_id = ?", sessionID).Scan(&id)
 	return id
 }
@@ -180,12 +182,12 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 		Model:           modelName,
 		Error:           errMsg,
 	}
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		slog.Error("failed to resolve project for btw question", "session_id", sessionID, "err", idErr)
 		return rec
 	}
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer, model, error)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		sessionID, projectID, anchorID, question, answer, modelName, errMsg,
@@ -201,7 +203,7 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 	// back rather than writing a Go time (which would break the string ordering
 	// every other table relies on).
 	if rec.ID > 0 {
-		_ = dbRead.QueryRowContext(context.Background(),
+		_ = store.ReadDB().QueryRowContext(context.Background(),
 			"SELECT created_at FROM btw_questions WHERE id = ?", rec.ID).Scan(&rec.CreatedAt)
 	}
 	return rec
@@ -210,7 +212,7 @@ func persistBtwQuestion(sessionID, projectPath string, anchorID int64, question,
 // ListBtwQuestions returns a session's /btw records in chronological order,
 // oldest first. The chat list groups them by anchor to render its markers.
 func ListBtwQuestions(sessionID string) ([]BtwQuestion, error) {
-	rows, err := dbRead.QueryContext(context.Background(),
+	rows, err := store.ReadDB().QueryContext(context.Background(),
 		`SELECT b.id, b.session_id, COALESCE(p.path, ''), b.anchor_message_id, b.question, b.answer, b.model, b.error, b.created_at
 		   FROM btw_questions b
 		   LEFT JOIN projects p ON p.id = b.project_id

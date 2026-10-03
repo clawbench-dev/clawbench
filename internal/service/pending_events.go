@@ -1,4 +1,4 @@
-//nolint:govet,noctx // db global singleton, context not applicable
+//nolint:govet // db global singleton
 package service
 
 import (
@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"clawbench/internal/store"
 
 	"clawbench/internal/ws"
 )
@@ -101,10 +103,10 @@ func pendingEventExpiresAt(event, status string) string {
 
 // StorePendingEvent persists a notifiable event to the global event log.
 func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT OR IGNORE INTO pending_events (event_id, event_type, payload, expires_at) VALUES (?, ?, ?, ?)`,
 		eventID, eventType, payload, expiresAt,
 	)
@@ -114,10 +116,10 @@ func StorePendingEvent(eventID, eventType, payload, expiresAt string) error {
 // DeletePendingEvent removes a specific event from the pending event log.
 // Used after DingTalk push succeeds to prevent duplicate Android notifications.
 func DeletePendingEvent(eventID string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`DELETE FROM pending_events WHERE event_id = ?`,
 		eventID,
 	)
@@ -134,7 +136,7 @@ func DeletePendingEvent(eventID string) error {
 // forever), but must not raise a notification for a reply the user has seen.
 // See suppressAlreadyReadEvents.
 func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
-	if db == nil || dbRead == nil {
+	if !store.DBReady() || !store.ReadDBReady() {
 		return nil, nil
 	}
 
@@ -144,7 +146,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 		// Check if cursor event still exists; if not, return empty
 		// to signal client to reset cursor
 		var cursorExists int
-		if err := dbRead.QueryRow(
+		if err := store.ReadDB().QueryRow(
 			`SELECT COUNT(*) FROM pending_events WHERE event_id = ?`,
 			afterEventID,
 		).Scan(&cursorExists); err != nil {
@@ -153,7 +155,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 		if cursorExists == 0 {
 			return []PendingEvent{}, nil
 		}
-		rows, err = dbRead.Query(
+		rows, err = store.ReadDB().Query(
 			`SELECT event_id, event_type, payload, expires_at, created_at
 			 FROM pending_events
 			 WHERE expires_at >= datetime('now')
@@ -162,7 +164,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 			afterEventID,
 		)
 	} else {
-		rows, err = dbRead.Query(
+		rows, err = store.ReadDB().Query(
 			`SELECT event_id, event_type, payload, expires_at, created_at
 			 FROM pending_events
 			 WHERE expires_at >= datetime('now')
@@ -218,7 +220,7 @@ func GetPendingEvents(afterEventID string) ([]PendingEvent, error) {
 // (notify) state. Wrongly notifying is the pre-existing behavior and is
 // recoverable; wrongly silencing would lose a real completion.
 func suppressAlreadyReadEvents(events []PendingEvent) {
-	if len(events) == 0 || dbRead == nil {
+	if len(events) == 0 || !store.ReadDBReady() {
 		return
 	}
 
@@ -361,14 +363,14 @@ func anyToString(v any) string {
 // while still notifying, or vice versa.
 func lookupReadSessions(sessionIDs []string) map[string]bool {
 	read := make(map[string]bool, len(sessionIDs))
-	if len(sessionIDs) == 0 || dbRead == nil {
+	if len(sessionIDs) == 0 || !store.ReadDBReady() {
 		return read
 	}
 	args := make([]any, 0, len(sessionIDs))
 	for _, id := range sessionIDs {
 		args = append(args, id)
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT s.id FROM chat_sessions s
 		 WHERE s.id IN (`+sqlPlaceholders(len(sessionIDs))+`)
 		   AND s.last_read_at IS NOT NULL
@@ -406,14 +408,14 @@ func lookupReadSessions(sessionIDs []string) map[string]bool {
 // lookupReadExecutions returns the set of task execution ids that have been read.
 func lookupReadExecutions(executionIDs []string) map[string]bool {
 	read := make(map[string]bool, len(executionIDs))
-	if len(executionIDs) == 0 || dbRead == nil {
+	if len(executionIDs) == 0 || !store.ReadDBReady() {
 		return read
 	}
 	args := make([]any, 0, len(executionIDs))
 	for _, id := range executionIDs {
 		args = append(args, id)
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT id FROM task_executions
 		 WHERE id IN (`+sqlPlaceholders(len(executionIDs))+`)
 		   AND read_at IS NOT NULL`,
@@ -448,17 +450,17 @@ func sqlPlaceholders(n int) string {
 
 // CleanupPendingEvents removes expired events and caps total rows.
 func CleanupPendingEvents() {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
-	result, err := WriteExec(`DELETE FROM pending_events WHERE expires_at < datetime('now')`)
+	result, err := store.WriteExec(`DELETE FROM pending_events WHERE expires_at < datetime('now')`)
 	if err != nil {
 		slog.Warn("pending_events: cleanup failed", "error", err)
 	} else if n, _ := result.RowsAffected(); n > 0 {
 		slog.Debug("pending_events: cleaned up expired", "count", n)
 	}
 	// Cap total rows
-	capResult, capErr := WriteExec(
+	capResult, capErr := store.WriteExec(
 		`DELETE FROM pending_events WHERE id NOT IN (
 			SELECT id FROM pending_events ORDER BY created_at DESC LIMIT ?
 		)`,

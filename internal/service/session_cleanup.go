@@ -5,6 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 )
 
@@ -19,11 +21,11 @@ type sessionCleanupSvc interface {
 type realSessionCleanupSvc struct{}
 
 func (r *realSessionCleanupSvc) GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
-	return GetExpiredArchivedSessions(cutoff)
+	return store.GetExpiredArchivedSessions(cutoff)
 }
 
 func (r *realSessionCleanupSvc) PurgeArchivedData(sessionIDs []string) (int64, int64, error) {
-	return PurgeArchivedData(sessionIDs)
+	return store.PurgeArchivedData(sessionIDs)
 }
 
 // SessionCleanupWorker periodically purges archived sessions that have exceeded

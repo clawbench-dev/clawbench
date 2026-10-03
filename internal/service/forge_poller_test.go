@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -148,7 +150,7 @@ func TestForgePoller_PrunesStaleSnapshots(t *testing.T) {
 		ItemType: "issue", Number: 999, State: "open",
 	}))
 	// Backdate it past the retention cutoff.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`UPDATE forge_items SET seen_at = ? WHERE number = 999`, time.Now().Add(-60*24*time.Hour),
 	)
 	require.NoError(t, err)
@@ -268,7 +270,7 @@ func TestForgeSyncer_WatermarkError(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()

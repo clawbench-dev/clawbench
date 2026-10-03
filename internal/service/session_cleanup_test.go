@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -344,7 +346,7 @@ CREATE TABLE chat_sessions (
 		);
 	`)
 	require.NoError(t, err)
-	cleanup := SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 	defer cleanup()
 	defer testDB.Close()
 

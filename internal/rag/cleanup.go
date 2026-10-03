@@ -5,8 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 )
 
 // cleanupService defines the interface for session cleanup operations.
@@ -150,9 +151,9 @@ func (w *CleanupWorker) cleanup() {
 type realCleanupService struct{}
 
 func (r *realCleanupService) GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
-	return service.GetExpiredArchivedSessions(cutoff)
+	return store.GetExpiredArchivedSessions(cutoff)
 }
 
 func (r *realCleanupService) PurgeArchivedData(sessionIDs []string) (int64, int64, error) {
-	return service.PurgeArchivedData(sessionIDs)
+	return store.PurgeArchivedData(sessionIDs)
 }

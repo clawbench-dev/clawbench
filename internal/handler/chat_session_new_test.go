@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -323,7 +325,7 @@ func TestArchiveSession_CountErrorFallsBackToSoftArchive(t *testing.T) {
 	closedDB, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	_ = closedDB.Close()
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closedDB)
 	defer cleanup()
 
 	req := newRequest(t, http.MethodDelete, "/api/ai/session/archive?session_id="+sessionID+"&backend=claude", nil)
@@ -344,7 +346,7 @@ func TestArchiveSession_CountErrorFallsBackToSoftArchive(t *testing.T) {
 	assert.Equal(t, 1, count, "session content must survive a count failure during archive")
 
 	var archived int
-	require.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived))
 	assert.Equal(t, 1, archived, "session should be soft-archived when the count query fails")
 }
 
@@ -742,7 +744,7 @@ func TestServeSessionsOverview_DBError(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	require.NoError(t, db.Close())
 
 	req := newRequest(t, http.MethodGet, "/api/ai/sessions/overview", nil)
@@ -810,7 +812,7 @@ func TestDestroySession_ClosesACPConnAndHardDeletes(t *testing.T) {
 
 	// DB records are gone (chat_sessions hard-deleted, no orphans in history).
 	var nSessions, nHistory int
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sessionID).Scan(&nSessions))
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID).Scan(&nHistory))
 	assert.Equal(t, 0, nSessions, "chat_sessions row should be hard-deleted")
@@ -970,7 +972,7 @@ func TestNewUnnamedSessionTitle_DBFailureFallsBackToUnnumbered(t *testing.T) {
 	closedDB, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	_ = closedDB.Close()
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closedDB)
 	defer cleanup()
 
 	req := newRequest(t, http.MethodGet, "/api/ai/chat", nil)

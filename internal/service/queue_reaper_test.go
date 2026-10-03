@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 
 	"github.com/stretchr/testify/assert"
@@ -118,7 +120,7 @@ func stubConsumer(t *testing.T) *[]LaunchConfig {
 
 func TestQueueReaper_RecoversStrandedQueuedRow(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -146,7 +148,7 @@ func TestQueueReaper_RecoversStrandedQueuedRow(t *testing.T) {
 
 func TestQueueReaper_SkipsRowWithinGrace(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -162,7 +164,7 @@ func TestQueueReaper_SkipsRowWithinGrace(t *testing.T) {
 
 func TestQueueReaper_SkipsRunningSession(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -183,7 +185,7 @@ func TestQueueReaper_SkipsRunningSession(t *testing.T) {
 
 func TestQueueReaper_SkipsArchivedSession(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -198,7 +200,7 @@ func TestQueueReaper_SkipsArchivedSession(t *testing.T) {
 }
 
 func TestQueueReaper_NoopWhenDBNotReady(t *testing.T) {
-	// Deliberately no SetDBForTest: db is nil, as during teardown.
+	// Deliberately no store.SetDBForTest: db is nil, as during teardown.
 	cleanupAllSessionState()
 
 	calls := stubConsumer(t)
@@ -211,7 +213,7 @@ func TestQueueReaper_NoopWhenDBNotReady(t *testing.T) {
 // pass: exactly the stranded, non-archived, non-running session is recovered.
 func TestQueueReaper_RecoversOnlyEligibleSessions(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -238,7 +240,7 @@ func TestQueueReaper_RecoversOnlyEligibleSessions(t *testing.T) {
 // with no consumer.
 func TestEnsureConsumer_ReleasesClaimWhenQueueEmptied(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -260,7 +262,7 @@ func TestEnsureConsumer_ReleasesClaimWhenQueueEmptied(t *testing.T) {
 // (deleted concurrently). Nothing must be launched.
 func TestEnsureConsumer_SkipsUnknownSession(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -352,7 +354,7 @@ func TestQueueReaper_ConcurrentStartStop(t *testing.T) {
 // abort the pass for other sessions.
 func TestQueueReaper_ReapFnFailureIsNotFatal(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -381,7 +383,7 @@ func TestQueueReaper_ReapFnFailureIsNotFatal(t *testing.T) {
 // (queued=0) and handed to a consumer, exactly once.
 func TestQueueReaper_RecoveredMessageIsClaimedExactlyOnce(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -403,7 +405,7 @@ func TestQueueReaper_RecoveredMessageIsClaimedExactlyOnce(t *testing.T) {
 // receives the session's persisted project/backend/agent, not empty strings.
 func TestEnsureConsumer_BackendInfoIsPassedThrough(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -432,7 +434,7 @@ func TestEnsureConsumer_BackendInfoIsPassedThrough(t *testing.T) {
 // files — no error, just a wrong answer.
 func TestEnsureConsumer_CarriesAttachments(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 
@@ -462,7 +464,7 @@ func TestEnsureConsumer_CarriesAttachments(t *testing.T) {
 // the serialization point: a concurrent consumer wins and the reaper stands down.
 func TestEnsureConsumer_NoDoubleConsumerWhenAlreadyRunning(t *testing.T) {
 	db := setupReaperTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 	cleanupAllSessionState()
 

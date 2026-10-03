@@ -15,6 +15,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/askquestion"
 	"clawbench/internal/model"
@@ -329,12 +331,12 @@ func GetLastUserMessagePlain(ctx context.Context, sessionID string) string {
 // whitespace are collapsed into single spaces, so the quoted message reads
 // as flowing text instead of unexpectedly breaking into multiple lines.
 func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string, hasFiles bool) {
-	if dbRead == nil || sessionID == "" {
+	if !store.ReadDBReady() || sessionID == "" {
 		return "", false
 	}
 	var content string
 	var files string
-	err := dbRead.QueryRowContext(ctx,
+	err := store.ReadDB().QueryRowContext(ctx,
 		"SELECT content, COALESCE(files, '') FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&content, &files)
@@ -421,11 +423,11 @@ func SetSessionRunning(sessionID string, running bool, skipEvent ...bool) {
 // cancelReason is captured at the time SetSessionRunning(false) is called to avoid
 // a race with GetAndClearCancelReason in buildResult clearing the value first.
 func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
-	if db == nil || dbRead == nil {
+	if !store.DBReady() || !store.ReadDBReady() {
 		return
 	}
 	// Find streaming=1 messages for this session
-	rows, err := dbRead.Query( //nolint:noctx // background goroutine, no request context available
+	rows, err := store.ReadDB().Query(
 		"SELECT id, content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sessionID,
 	)
@@ -495,7 +497,7 @@ func finalizeOrphanedStreamingMessages(sessionID string, cancelReason string) {
 		if cancelReason == cancelReasonUser {
 			completedAtSet = "completed_at = NULL"
 		}
-		if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0, "+completedAtSet+" WHERE id = ?", string(updatedContent), m.id); err != nil {
+		if _, err := store.WriteExec("UPDATE chat_history SET content = ?, streaming = 0, "+completedAtSet+" WHERE id = ?", string(updatedContent), m.id); err != nil {
 			slog.Error("failed to finalize orphaned streaming message on session stop",
 				slog.Int64("id", m.id),
 				slog.String("session", sessionID),
@@ -888,7 +890,7 @@ func ForceCancelSession(sessionID string) {
 // used to get a summary and every intermediate reply was skipped. Summarizing
 // each missing message closes that gap.
 func triggerChatSummarization(ctx context.Context, sessionID string) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return
 	}
 	began := time.Now()
@@ -980,13 +982,13 @@ func rawAssistantBlocks(ctx context.Context, messageID int64, viewContent string
 	if blocks, err := parseMessageBlocks(viewContent); err == nil && len(blocks) > 0 {
 		return blocks, nil
 	}
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
 	// Filter streaming = 0 in SQL (matching backfillMissingSummaries) so a
 	// half-persisted placeholder row can never be read as the final answer.
 	var content string
-	if err := dbRead.QueryRowContext(ctx,
+	if err := store.ReadDB().QueryRowContext(ctx,
 		"SELECT content FROM chat_history WHERE id = ? AND streaming = 0",
 		messageID,
 	).Scan(&content); err != nil {
@@ -1092,12 +1094,12 @@ func SaveChatRecommendation(sessionID, projectPath string, messageID int64, reco
 	// project_id is an INTEGER column: binding the path here would store the raw
 	// string (SQLite's INTEGER affinity does not convert non-numeric text), so the
 	// row would be unattributable to any project.
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		slog.Debug("failed to resolve project for chat recommendation", slog.String("session_id", sessionID), slog.String("err", idErr.Error()))
 		return
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_recommendations (session_id, project_id, message_id, recommendation) VALUES (?, ?, ?, ?)",
 		sessionID, projectID, messageID, recommendation,
 	)
@@ -1113,7 +1115,7 @@ func SaveChatRecommendation(sessionID, projectPath string, messageID int64, reco
 // stale recommendation from a previous reply. Returns empty string if none.
 func LatestChatRecommendation(ctx context.Context, sessionID string, messageID int64) string {
 	var rec string
-	err := dbRead.QueryRowContext(
+	err := store.ReadDB().QueryRowContext(
 		ctx,
 		"SELECT recommendation FROM chat_recommendations WHERE session_id = ? AND message_id = ? ORDER BY id DESC LIMIT 1",
 		sessionID, messageID,

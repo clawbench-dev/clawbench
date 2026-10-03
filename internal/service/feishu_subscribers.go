@@ -1,9 +1,10 @@
-//nolint:noctx // db global singleton, context not applicable
 package service
 
 import (
 	"database/sql"
 	"log/slog"
+
+	"clawbench/internal/store"
 )
 
 // FeishuSubscriber represents a Feishu user subscribed to push notifications.
@@ -18,10 +19,10 @@ type FeishuSubscriber struct {
 
 // GetFeishuSubscribers returns all subscribed Feishu users.
 func GetFeishuSubscribers() ([]FeishuSubscriber, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT id, user_id, chat_id, user_name, source, created_at
 		 FROM feishu_subscribers ORDER BY created_at ASC`,
 	)
@@ -44,10 +45,10 @@ func GetFeishuSubscribers() ([]FeishuSubscriber, error) {
 // UpsertFeishuSubscriber inserts or updates a Feishu subscriber.
 // If the user already exists, chat_id and user_name are updated.
 func UpsertFeishuSubscriber(userID, chatID, userName, source string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO feishu_subscribers (user_id, chat_id, user_name, source)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
@@ -64,10 +65,10 @@ func UpsertFeishuSubscriber(userID, chatID, userName, source string) error {
 
 // DeleteFeishuSubscriber removes a subscriber by Feishu open_id.
 func DeleteFeishuSubscriber(userID string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	result, err := WriteExec(`DELETE FROM feishu_subscribers WHERE user_id = ?`, userID)
+	result, err := store.WriteExec(`DELETE FROM feishu_subscribers WHERE user_id = ?`, userID)
 	if err != nil {
 		return err
 	}
@@ -86,11 +87,11 @@ func DeleteFeishuSubscriber(userID string) error {
 // from before the column existed) and the caller must fall back to the "/ls"
 // hint rather than pick a session on the user's behalf.
 func GetFeishuLastSessionID(userID string) (string, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return "", nil
 	}
 	var sessionID string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT last_session_id FROM feishu_subscribers WHERE user_id = ?`, userID,
 	).Scan(&sessionID)
 	if err == sql.ErrNoRows {
@@ -110,10 +111,10 @@ func GetFeishuLastSessionID(userID string) (string, error) {
 // message); a missing row is reported as an error rather than silently
 // inserting a partial subscriber.
 func SetFeishuLastSessionID(userID, sessionID string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	result, err := WriteExec(
+	result, err := store.WriteExec(
 		`UPDATE feishu_subscribers SET last_session_id = ? WHERE user_id = ?`,
 		sessionID, userID,
 	)
@@ -130,12 +131,12 @@ func SetFeishuLastSessionID(userID, sessionID string) error {
 // Users from config are upserted with source='manual'. Users already in DB
 // with source='manual' but no longer in config are removed.
 func MergeFeishuConfigSubscribers(users []string) {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 
 	// Get existing manual subscribers
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT user_id FROM feishu_subscribers WHERE source = 'manual'`,
 	)
 	if err != nil {
@@ -175,7 +176,7 @@ func MergeFeishuConfigSubscribers(users []string) {
 	// Remove manual subscribers no longer in config
 	for _, u := range existingManual {
 		if !configSet[u] {
-			if _, err := WriteExec(`DELETE FROM feishu_subscribers WHERE user_id = ? AND source = 'manual'`, u); err != nil {
+			if _, err := store.WriteExec(`DELETE FROM feishu_subscribers WHERE user_id = ? AND source = 'manual'`, u); err != nil {
 				slog.Warn("feishu_subscribers: merge delete failed", "error", err, "user_id", u)
 			}
 		}

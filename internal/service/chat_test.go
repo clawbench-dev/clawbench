@@ -12,6 +12,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -241,7 +243,7 @@ func setupDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(schema)
 	assert.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -279,8 +281,8 @@ func insertSessionWithTypeAndTime(t *testing.T, projectPath, id, title, sessionT
 	}
 	// The column is an id, but these helpers speak paths: resolve (and register)
 	// the project so rows stay attributable.
-	_, err := service.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
-		id, service.ProjectIDForTest(t, projectPath), title, sessionType, archivedInt, createdAt, createdAt)
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
+		id, store.ProjectIDForTest(t, projectPath), title, sessionType, archivedInt, createdAt, createdAt)
 	require.NoError(t, err)
 }
 
@@ -803,13 +805,13 @@ func TestArchiveSession(t *testing.T) {
 
 	// But the session is archived
 	var archived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sid).Scan(&archived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sid).Scan(&archived)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, archived)
 
 	// updated_at should have been set to the deletion timestamp
 	var updatedAt string
-	err = service.UnsafeDBForTest().QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", sid).Scan(&updatedAt)
+	err = store.UnsafeDBForTest().QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", sid).Scan(&updatedAt)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, updatedAt)
 }
@@ -1302,14 +1304,14 @@ func TestGetSessions_OrderedByCreatedDesc(t *testing.T) {
 	sid2 := helperCreateSession(t, "/project", "claude", "Second")
 
 	// Set explicit created_at timestamps to guarantee ordering (SQLite time precision is seconds)
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now') WHERE id = ?", sid2)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now') WHERE id = ?", sid2)
 	assert.NoError(t, err)
 
 	// A later interaction must NOT reorder the list: update sid1's updated_at to be newest,
 	// yet the list order must remain by created_at.
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
 	sessions, err := service.GetSessions("/project", "claude")
@@ -1432,12 +1434,12 @@ func TestGetMessageIDBeforeTime(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "BeforeTime")
 
 	// Insert messages with known timestamps
-	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/project"), "claude", sid, "user", "msg1", "2025-01-01 10:00:00")
-	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/project"), "claude", sid, "assistant", "msg2", "2025-01-01 10:00:01")
-	service.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		service.ProjectIDForTest(t, "/project"), "claude", sid, "user", "msg3", "2025-01-01 10:00:02")
+	store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		store.ProjectIDForTest(t, "/project"), "claude", sid, "user", "msg1", "2025-01-01 10:00:00")
+	store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		store.ProjectIDForTest(t, "/project"), "claude", sid, "assistant", "msg2", "2025-01-01 10:00:01")
+	store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		store.ProjectIDForTest(t, "/project"), "claude", sid, "user", "msg3", "2025-01-01 10:00:02")
 
 	// Query for messages before 10:00:02 — should return max ID of messages before that time
 	id, err := service.GetMessageIDBeforeTime("/project", "claude", sid, "2025-01-01 10:00:02")
@@ -1452,11 +1454,11 @@ func TestGetMessageIDBeforeTime(t *testing.T) {
 
 // Ensure TestMain-like global DB save/restore works correctly
 func TestGlobalDBPreservedAcrossParallelTests(t *testing.T) {
-	originalDB := service.UnsafeDBForTest()
+	originalDB := store.UnsafeDBForTest()
 	setupDB(t)
-	// Within this test, service.UnsafeDBForTest() is our in-memory DB
-	assert.NotNil(t, service.UnsafeDBForTest())
-	assert.NotEqual(t, originalDB, service.UnsafeDBForTest()) // if originalDB was nil or different
+	// Within this test, store.UnsafeDBForTest() is our in-memory DB
+	assert.NotNil(t, store.UnsafeDBForTest())
+	assert.NotEqual(t, originalDB, store.UnsafeDBForTest()) // if originalDB was nil or different
 }
 
 func TestAddChatMessage_StreamingFalse(t *testing.T) {
@@ -1541,18 +1543,18 @@ func TestGetChatMessageCount_DBError(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Test")
 	service.AddChatMessage("/project", "claude", sid, "user", "Hello", nil, false, "NewSession")
 
-	origDB := service.UnsafeDBForTest()
+	origDB := store.UnsafeDBForTest()
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	closedDB.Close()
-	cleanup := service.SetDBForTest(origDB, closedDB)
+	cleanup := store.SetDBForTest(origDB, closedDB)
 
 	count, err := service.GetChatMessageCount(sid)
 	assert.Error(t, err, "count on a closed DB must surface the error, not silently return 0")
 	assert.Equal(t, 0, count)
 
 	cleanup()
-	assert.Same(t, origDB, service.UnsafeDBForTest(), "DB handles must be restored after the test")
+	assert.Same(t, origDB, store.UnsafeDBForTest(), "DB handles must be restored after the test")
 }
 
 func TestGetFinalizedMessageCount_DBError(t *testing.T) {
@@ -1563,7 +1565,7 @@ func TestGetFinalizedMessageCount_DBError(t *testing.T) {
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	closedDB.Close()
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closedDB)
 	defer cleanup()
 
 	count, err := service.GetFinalizedMessageCount(sid)
@@ -1577,10 +1579,10 @@ func TestUpdateLastRead(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Test")
 	// UpdateLastRead is now synchronous. Test the SQL directly to verify the UPDATE works.
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET last_read_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
 	assert.NoError(t, err)
 	var lastRead sql.NullTime
-	err = service.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
+	err = store.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
 	assert.NoError(t, err)
 	assert.True(t, lastRead.Valid)
 }
@@ -1622,9 +1624,9 @@ func TestUpdateLastRead_AnchorsToNewestAssistantMessage(t *testing.T) {
 	// Insert an assistant message with a fixed created_at so the comparison is
 	// deterministic regardless of second boundaries.
 	const msgCreated = "2025-01-01 10:00:00"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, ?, ?, 'assistant', 'final', 0, ?)",
-		service.ProjectIDForTest(t, "/project"), "claude", sid, msgCreated,
+		store.ProjectIDForTest(t, "/project"), "claude", sid, msgCreated,
 	)
 	assert.NoError(t, err)
 
@@ -1632,7 +1634,7 @@ func TestUpdateLastRead_AnchorsToNewestAssistantMessage(t *testing.T) {
 
 	// The driver reads DATETIME as ISO 8601 UTC — compare semantically via time.
 	var lastRead sql.NullTime
-	err = service.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
+	err = store.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
 	assert.NoError(t, err)
 	require.True(t, lastRead.Valid)
 	msgTime, err := time.Parse("2006-01-02 15:04:05", msgCreated)
@@ -1653,7 +1655,7 @@ func TestUpdateLastRead_FallsBackToNowWithoutMessages(t *testing.T) {
 	service.UpdateLastRead(sid)
 
 	var lastRead sql.NullString
-	err := service.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
+	err := store.UnsafeDBForTest().QueryRow("SELECT last_read_at FROM chat_sessions WHERE id = ?", sid).Scan(&lastRead)
 	assert.NoError(t, err)
 	assert.True(t, lastRead.Valid, "last_read_at should still be set via CURRENT_TIMESTAMP fallback")
 }
@@ -1670,7 +1672,7 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 	sid := helperCreateSession(t, "/project", "claude", "Cancel Turn")
 
 	// Previous turn: a finalized assistant reply from an earlier time.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 10:00:00')",
 		"/project", sid,
 	)
@@ -1678,7 +1680,7 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 
 	// Current turn: user cancelled while the reply row is still streaming=1 —
 	// exactly the state mark-read sees before FinalizeStreamingMessage runs.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial reply', 1, '2025-01-01 10:05:00')",
 		"/project", sid,
 	)
@@ -1687,7 +1689,7 @@ func TestUpdateLastRead_DoesNotAnchorBackwardsDuringStreamingTurn(t *testing.T) 
 	service.UpdateLastRead(sid)
 
 	// The executor finalizes the interrupted reply immediately after.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ? AND streaming = 1", sid,
 	)
 	require.NoError(t, err)
@@ -1718,16 +1720,16 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Mid-turn Read")
 
 	// Previous turn, finalized long ago.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// Current turn starts at 10:00:00 — the streaming placeholder is created
 	// then, so created_at is the TURN START (the bug's premise).
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// The user opens the session mid-turn at 10:00:30. The frontend always marks
@@ -1735,7 +1737,7 @@ func TestUnread_ReplyReadMidTurnStillBecomesUnread(t *testing.T) {
 	// UpdateLastRead itself is exercised, then rewound to the mid-turn moment to
 	// represent the minutes the turn still had left to run.
 	service.UpdateLastRead(sid)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:30' WHERE id = ?", sid)
 	require.NoError(t, err)
 
@@ -1770,13 +1772,13 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Live Run State")
 
 	// A question, then the streaming reply it is waiting on.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'user', 'what is 2+2?', 0)",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'claude', ?, 'assistant', '', 1)",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	msgID, qID, qContent := service.GetLiveRunState(sid)
@@ -1787,7 +1789,7 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 
 	// An idle session reports nothing: emitting a stream_start for it would open
 	// a phantom placeholder on the client.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
 	require.NoError(t, err)
 	idleMsgID, idleQID, _ := service.GetLiveRunState(sid)
@@ -1803,9 +1805,9 @@ func TestUnread_MarkReadAfterCompletionClearsBadge(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Read After Completion")
 
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// The reply lands while the user is viewing the session (the completion
@@ -1835,9 +1837,9 @@ func TestUnread_LegacyRowWithoutCompletedAtFallsBackToCreatedAt(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Legacy Row")
 
 	// Legacy finalized row: completed_at is NULL.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'legacy reply', 0, '2025-01-01 10:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// Never read → unread (last_read_at NULL).
@@ -1861,16 +1863,16 @@ func TestFinalizeStreamingMessage_StampsCompletedAt(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Completed At")
 
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
 	require.NoError(t, err)
 
 	var created, completed sql.NullTime
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT created_at, completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'",
 		sid).Scan(&created, &completed)
 	require.NoError(t, err)
@@ -1896,13 +1898,13 @@ func TestUnread_CancelledTurnTheUserWasWatchingStaysRead(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Cancelled Watching")
 
 	// The interrupted reply, created at turn start (10:00:00).
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', 'partial', 1, '2025-01-01 10:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	// The user cancels at 10:00:05 while watching; the frontend marks read then.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:05' WHERE id = ?", sid)
 	require.NoError(t, err)
 
@@ -1911,7 +1913,7 @@ func TestUnread_CancelledTurnTheUserWasWatchingStaysRead(t *testing.T) {
 	require.NoError(t, err)
 
 	var completed sql.NullTime
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid).Scan(&completed)
 	require.NoError(t, err)
 	assert.False(t, completed.Valid, "a user-cancelled finalize must not stamp completed_at")
@@ -1932,19 +1934,19 @@ func TestUnread_CompletedTurnWhileAwayIsUnread(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Completed While Away")
 
 	// Previous reply, finalized and read.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at, completed_at) VALUES (?, 'claude', ?, 'assistant', 'old', 0, '2025-01-01 09:00:00', '2025-01-01 09:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET last_read_at = '2025-01-01 09:30:00' WHERE id = ?", sid)
 	require.NoError(t, err)
 
 	// A new turn starts at 10:00:00 and the user stays on it briefly, then
 	// switches away. The turn keeps running and only lands at 10:05:00.
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, created_at) VALUES (?, 'claude', ?, 'assistant', '', 1, '2025-01-01 10:00:00')",
-		service.ProjectIDForTest(t, "/project"), sid)
+		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
 	_, err = service.FinalizeStreamingMessage("/project", "claude", sid, `{"blocks":[]}`)
@@ -2086,7 +2088,7 @@ func TestGetExpiredArchivedSessions_NoExpired(t *testing.T) {
 	_ = service.ArchiveSession("/project", "claude", sid2)
 
 	cutoff := time.Now().AddDate(0, 0, -90) // 90 days ago
-	ids, err := service.GetExpiredArchivedSessions(cutoff)
+	ids, err := store.GetExpiredArchivedSessions(cutoff)
 	assert.NoError(t, err)
 	assert.Empty(t, ids)
 }
@@ -2098,11 +2100,11 @@ func TestGetExpiredArchivedSessions_WithExpired(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Old Deleted")
 	_ = service.ArchiveSession("/project", "claude", sid)
 
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	cutoff := time.Now().AddDate(0, 0, -90)
-	ids, err := service.GetExpiredArchivedSessions(cutoff)
+	ids, err := store.GetExpiredArchivedSessions(cutoff)
 	assert.NoError(t, err)
 	assert.Contains(t, ids, sid)
 }
@@ -2112,10 +2114,10 @@ func TestGetExpiredArchivedSessions_ActiveSessionsNotIncluded(t *testing.T) {
 
 	// Create an active session with old updated_at
 	sid := helperCreateSession(t, "/project", "claude", "Old Active")
-	_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
+	_, _ = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
 
 	cutoff := time.Now().AddDate(0, 0, -90)
-	ids, err := service.GetExpiredArchivedSessions(cutoff)
+	ids, err := store.GetExpiredArchivedSessions(cutoff)
 	assert.NoError(t, err)
 	assert.NotContains(t, ids, sid)
 }
@@ -2128,7 +2130,7 @@ func TestGetExpiredArchivedSessions_MultipleExpired(t *testing.T) {
 	for i := range 3 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("Old %d", i))
 		_ = service.ArchiveSession("/project", "claude", sid)
-		_, _ = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
+		_, _ = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", sid)
 		expectedIDs = append(expectedIDs, sid)
 	}
 
@@ -2137,7 +2139,7 @@ func TestGetExpiredArchivedSessions_MultipleExpired(t *testing.T) {
 	_ = service.ArchiveSession("/project", "claude", recentSID)
 
 	cutoff := time.Now().AddDate(0, 0, -90)
-	ids, err := service.GetExpiredArchivedSessions(cutoff)
+	ids, err := store.GetExpiredArchivedSessions(cutoff)
 	assert.NoError(t, err)
 	assert.Len(t, ids, 3)
 	for _, id := range expectedIDs {
@@ -2151,7 +2153,7 @@ func TestGetExpiredArchivedSessions_MultipleExpired(t *testing.T) {
 func TestPurgeArchivedData_EmptyList(t *testing.T) {
 	setupDB(t)
 
-	sessions, messages, err := service.PurgeArchivedData(nil)
+	sessions, messages, err := store.PurgeArchivedData(nil)
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), sessions)
 	assert.Equal(t, int64(0), messages)
@@ -2165,19 +2167,19 @@ func TestPurgeArchivedData_HardDeletesSessions(t *testing.T) {
 	_, _ = service.AddChatMessage("/project", "claude", sid, "assistant", "reply1", nil, false, "NewSession")
 	_ = service.ArchiveSession("/project", "claude", sid)
 
-	sessionsPurged, messagesPurged, err := service.PurgeArchivedData([]string{sid})
+	sessionsPurged, messagesPurged, err := store.PurgeArchivedData([]string{sid})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(1), sessionsPurged)
 	assert.Equal(t, int64(2), messagesPurged)
 
 	// Verify session is completely gone from DB
 	var count int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 
 	// Verify messages are completely gone
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 }
@@ -2195,12 +2197,12 @@ func TestPurgeArchivedData_CleansSessionTagLinks(t *testing.T) {
 	require.NoError(t, service.SetSessionTags(keep, "/project", []service.SessionTagRef{{Name: "bug"}}))
 	_ = service.ArchiveSession("/project", "claude", sid)
 
-	_, _, err := service.PurgeArchivedData([]string{sid})
+	_, _, err := store.PurgeArchivedData([]string{sid})
 	assert.NoError(t, err)
 
 	// No orphan link row for the purged session.
 	var count int
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM session_tag_links WHERE session_id = ?", sid,
 	).Scan(&count)
 	assert.NoError(t, err)
@@ -2224,7 +2226,7 @@ func TestPurgeArchivedData_DoesNotPurgeActiveSession(t *testing.T) {
 	_, _ = service.AddChatMessage("/project", "claude", sid, "user", "msg", nil, false, "NewSession")
 
 	// Try to purge an active (non-archived) session — should not delete it
-	sessionsPurged, messagesPurged, err := service.PurgeArchivedData([]string{sid})
+	sessionsPurged, messagesPurged, err := store.PurgeArchivedData([]string{sid})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), sessionsPurged) // WHERE archived = 1 prevents purge
 	assert.Equal(t, int64(1), messagesPurged) // messages are deleted regardless of archived flag
@@ -2245,7 +2247,7 @@ func TestPurgeArchivedData_MultipleSessions(t *testing.T) {
 	_ = service.ArchiveSession("/project", "claude", sid1)
 	_ = service.ArchiveSession("/project", "claude", sid2)
 
-	sessionsPurged, messagesPurged, err := service.PurgeArchivedData([]string{sid1, sid2})
+	sessionsPurged, messagesPurged, err := store.PurgeArchivedData([]string{sid1, sid2})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), sessionsPurged)
 	assert.Equal(t, int64(2), messagesPurged)
@@ -2254,7 +2256,7 @@ func TestPurgeArchivedData_MultipleSessions(t *testing.T) {
 func TestPurgeArchivedData_NonExistentSessionID(t *testing.T) {
 	setupDB(t)
 
-	sessionsPurged, messagesPurged, err := service.PurgeArchivedData([]string{"non-existent-id"})
+	sessionsPurged, messagesPurged, err := store.PurgeArchivedData([]string{"non-existent-id"})
 	assert.NoError(t, err)
 	assert.Equal(t, int64(0), sessionsPurged)
 	assert.Equal(t, int64(0), messagesPurged)
@@ -2274,9 +2276,9 @@ func TestHardDeleteSession_ActiveSession(t *testing.T) {
 
 	// Verify all data is gone
 	var count int
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
+	assert.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "session should be gone")
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count))
+	assert.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "messages should be gone")
 }
 
@@ -2291,7 +2293,7 @@ func TestHardDeleteSession_ArchivedSession(t *testing.T) {
 	assert.NoError(t, err)
 
 	var count int
-	assert.NoError(t, service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
+	assert.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", sid).Scan(&count))
 	assert.Equal(t, 0, count, "archived session should be gone after hard delete")
 }
 
@@ -2335,7 +2337,7 @@ func TestCreateSession_ScheduledType(t *testing.T) {
 
 	// Verify session_type is stored correctly in DB
 	var sessionType string
-	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
+	err = store.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "scheduled", sessionType)
 }
@@ -2349,7 +2351,7 @@ func TestCreateSession_DefaultsToChatType(t *testing.T) {
 
 	// Verify session_type defaults to 'chat'
 	var sessionType string
-	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
+	err = store.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }
@@ -2470,7 +2472,7 @@ func TestGetRecentSessions_NewestFirstIncludesArchived(t *testing.T) {
 	insertSessionWithTime(t, "/project", "new", "New", "2024-03-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "arch", "Archived", "2024-02-01 10:00:00", true)
 
-	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
+	sessions, _, err := store.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 3)
 	// Reverse chronological order (newest first).
@@ -2490,12 +2492,12 @@ func TestGetRecentSessions_ProjectScopedAndLimited(t *testing.T) {
 	insertSessionWithTime(t, "/other", "c", "C", "2024-01-03 10:00:00", false)
 
 	// Other project must be excluded.
-	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
+	sessions, _, err := store.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 
 	// Limit truncates the newest-first list.
-	sessions, _, err = service.GetRecentSessions("/project", 1, "", "", "", "", "", "", "")
+	sessions, _, err = store.GetRecentSessions("/project", 1, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2508,7 +2510,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 	insertSessionWithTime(t, "/other", "b", "B", "2024-01-02 10:00:00", false)
 
 	// Empty project path → across all projects (CLI global browse).
-	sessions, _, err := service.GetRecentSessions("", 0, "", "", "", "", "", "", "")
+	sessions, _, err := store.GetRecentSessions("", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, sessions, 2)
 	assert.Equal(t, "b", sessions[0].ID)
@@ -2517,7 +2519,7 @@ func TestGetRecentSessions_EmptyProjectBrowsesAll(t *testing.T) {
 func TestGetRecentSessions_NoSessions(t *testing.T) {
 	setupDB(t)
 
-	sessions, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
+	sessions, _, err := store.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, sessions, 0)
 }
@@ -2531,7 +2533,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	insertSessionWithTime(t, "/project", "arch-2", "R2", "2024-04-01 10:00:00", true)
 
 	// Active only.
-	active, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "", "", "", "")
+	active, _, err := store.GetRecentSessions("/project", 0, store.SessionArchiveFilterActive, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, active, 2)
 	for _, s := range active {
@@ -2540,7 +2542,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	assert.Equal(t, "active-2", active[0].ID)
 
 	// Archived only.
-	archived, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, "", "", "", "", "", "")
+	archived, _, err := store.GetRecentSessions("/project", 0, store.SessionArchiveFilterArchived, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, archived, 2)
 	for _, s := range archived {
@@ -2549,7 +2551,7 @@ func TestGetRecentSessions_ArchiveFilter(t *testing.T) {
 	assert.Equal(t, "arch-2", archived[0].ID)
 
 	// All (default) includes both.
-	all, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterAll, "", "", "", "", "", "")
+	all, _, err := store.GetRecentSessions("/project", 0, store.SessionArchiveFilterAll, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, all, 4)
 }
@@ -2561,7 +2563,7 @@ func TestGetRecentSessions_SortOrderOldest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "old", "Old", "2024-01-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "mid", "Mid", "2024-02-01 10:00:00", false)
 
-	oldest, _, err := service.GetRecentSessions("/project", 0, "", "", service.SessionSortOldest, "", "", "", "")
+	oldest, _, err := store.GetRecentSessions("/project", 0, "", "", store.SessionSortOldest, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, oldest, 3)
 	assert.Equal(t, "old", oldest[0].ID)
@@ -2570,32 +2572,32 @@ func TestGetRecentSessions_SortOrderOldest(t *testing.T) {
 }
 
 func TestNormalizeSessionArchiveFilterAndSortOrder(t *testing.T) {
-	assert.Equal(t, "all", service.NormalizeSessionArchiveFilter(""))
-	assert.Equal(t, "all", service.NormalizeSessionArchiveFilter("bogus"))
-	assert.Equal(t, "active", service.NormalizeSessionArchiveFilter(" Active "))
-	assert.Equal(t, "archived", service.NormalizeSessionArchiveFilter("ARCHIVED"))
+	assert.Equal(t, "all", store.NormalizeSessionArchiveFilter(""))
+	assert.Equal(t, "all", store.NormalizeSessionArchiveFilter("bogus"))
+	assert.Equal(t, "active", store.NormalizeSessionArchiveFilter(" Active "))
+	assert.Equal(t, "archived", store.NormalizeSessionArchiveFilter("ARCHIVED"))
 
-	assert.Equal(t, "relevance", service.NormalizeSessionSortOrder(""))
-	assert.Equal(t, "relevance", service.NormalizeSessionSortOrder("bogus"))
-	assert.Equal(t, "newest", service.NormalizeSessionSortOrder("Newest"))
-	assert.Equal(t, "oldest", service.NormalizeSessionSortOrder(" OLDEST "))
+	assert.Equal(t, "relevance", store.NormalizeSessionSortOrder(""))
+	assert.Equal(t, "relevance", store.NormalizeSessionSortOrder("bogus"))
+	assert.Equal(t, "newest", store.NormalizeSessionSortOrder("Newest"))
+	assert.Equal(t, "oldest", store.NormalizeSessionSortOrder(" OLDEST "))
 }
 
 func TestNormalizeSessionTypeFilter(t *testing.T) {
-	assert.Equal(t, "all", service.NormalizeSessionTypeFilter(""))
-	assert.Equal(t, "all", service.NormalizeSessionTypeFilter("bogus"))
-	assert.Equal(t, "chat", service.NormalizeSessionTypeFilter(" CHAT "))
-	assert.Equal(t, "task", service.NormalizeSessionTypeFilter("Task"))
+	assert.Equal(t, "all", store.NormalizeSessionTypeFilter(""))
+	assert.Equal(t, "all", store.NormalizeSessionTypeFilter("bogus"))
+	assert.Equal(t, "chat", store.NormalizeSessionTypeFilter(" CHAT "))
+	assert.Equal(t, "task", store.NormalizeSessionTypeFilter("Task"))
 }
 
 func TestSessionTypeDBValue(t *testing.T) {
 	// "all" must yield the empty string so callers can use it as "no predicate".
-	assert.Equal(t, "", service.SessionTypeDBValue(""))
-	assert.Equal(t, "", service.SessionTypeDBValue("all"))
-	assert.Equal(t, "", service.SessionTypeDBValue("bogus"))
-	assert.Equal(t, "chat", service.SessionTypeDBValue("chat"))
+	assert.Equal(t, "", store.SessionTypeDBValue(""))
+	assert.Equal(t, "", store.SessionTypeDBValue("all"))
+	assert.Equal(t, "", store.SessionTypeDBValue("bogus"))
+	assert.Equal(t, "chat", store.SessionTypeDBValue("chat"))
 	// The user-facing "task" maps onto the DB's 'scheduled'.
-	assert.Equal(t, "scheduled", service.SessionTypeDBValue("task"))
+	assert.Equal(t, "scheduled", store.SessionTypeDBValue("task"))
 }
 
 // TestGetRecentSessions_TypeFilterSeparation locks down the browse-mode rule:
@@ -2608,27 +2610,27 @@ func TestGetRecentSessions_TypeFilterSeparation(t *testing.T) {
 	insertSessionWithTypeAndTime(t, "/project", "job", "Task run", "scheduled", "2024-02-01 10:00:00", false)
 
 	// Default / "all" → conversations only, never tasks.
-	all, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
+	all, _, err := store.GetRecentSessions("/project", 0, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, all, 1)
 	assert.Equal(t, "conv", all[0].ID)
 	assert.Equal(t, "chat", all[0].SessionType)
 
 	// Explicit "chat" behaves like "all".
-	chat, _, err := service.GetRecentSessions("/project", 0, "", service.SessionTypeFilterChat, "", "", "", "", "")
+	chat, _, err := store.GetRecentSessions("/project", 0, "", store.SessionTypeFilterChat, "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, chat, 1)
 	assert.Equal(t, "conv", chat[0].ID)
 
 	// Explicit "task" lists the task execution instead.
-	task, _, err := service.GetRecentSessions("/project", 0, "", service.SessionTypeFilterTask, "", "", "", "", "")
+	task, _, err := store.GetRecentSessions("/project", 0, "", store.SessionTypeFilterTask, "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, task, 1)
 	assert.Equal(t, "job", task[0].ID)
 	assert.Equal(t, "scheduled", task[0].SessionType)
 
 	// The type filter combines with the archive filter rather than replacing it.
-	archivedTask, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterArchived, service.SessionTypeFilterTask, "", "", "", "", "")
+	archivedTask, _, err := store.GetRecentSessions("/project", 0, store.SessionArchiveFilterArchived, store.SessionTypeFilterTask, "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, archivedTask, 0)
 }
@@ -2642,7 +2644,7 @@ func TestSearchSessionsByTitle_MatchesTitleAndOrdersNewestFirst(t *testing.T) {
 	insertSessionWithTime(t, "/project", "b", "数据库迁移记录", "2024-03-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "c", "前端重构", "2024-02-01 10:00:00", false)
 
-	got, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "")
+	got, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, got, 2)
 	// Newest first.
@@ -2660,14 +2662,14 @@ func TestSearchSessionsByTitle_AllTermsMustMatch(t *testing.T) {
 	insertSessionWithTime(t, "/project", "one", "数据库迁移记录", "2024-01-02 10:00:00", false)
 	insertSessionWithTime(t, "/project", "none", "前端重构", "2024-01-03 10:00:00", false)
 
-	got, err := service.SearchSessionsByTitle("/project", []string{"数据库", "优化"}, 0, "", "", "", "", "", "")
+	got, err := store.SearchSessionsByTitle("/project", []string{"数据库", "优化"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "both", got[0].ID)
 
 	// Terms are ANDed, so a term absent from every title yields nothing even
 	// though the first term alone would have matched two rows.
-	got, err = service.SearchSessionsByTitle("/project", []string{"数据库", "不存在"}, 0, "", "", "", "", "", "")
+	got, err = store.SearchSessionsByTitle("/project", []string{"数据库", "不存在"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -2680,21 +2682,21 @@ func TestSearchSessionsByTitle_EscapesLikeWildcards(t *testing.T) {
 	insertSessionWithTime(t, "/project", "pct", "覆盖率 100% 达成", "2024-01-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "other", "覆盖率统计", "2024-01-02 10:00:00", false)
 
-	got, err := service.SearchSessionsByTitle("/project", []string{"100%"}, 0, "", "", "", "", "", "")
+	got, err := store.SearchSessionsByTitle("/project", []string{"100%"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "pct", got[0].ID)
 
 	// A bare "%" must match only titles that literally contain it, not every
 	// title in the project.
-	got, err = service.SearchSessionsByTitle("/project", []string{"%"}, 0, "", "", "", "", "", "")
+	got, err = store.SearchSessionsByTitle("/project", []string{"%"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "pct", got[0].ID)
 
 	// A backslash in the query is matched literally too.
 	insertSessionWithTime(t, "/project", "bs", `路径 C:\temp 记录`, "2024-01-03 10:00:00", false)
-	got, err = service.SearchSessionsByTitle("/project", []string{`C:\temp`}, 0, "", "", "", "", "", "")
+	got, err = store.SearchSessionsByTitle("/project", []string{`C:\temp`}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "bs", got[0].ID)
@@ -2709,7 +2711,7 @@ func TestSearchSessionsByTitle_Filters(t *testing.T) {
 	insertSessionWithTypeAndTime(t, "/project", "task", "数据库任务", "scheduled", "2024-04-01 10:00:00", false)
 
 	// Project scope is always applied.
-	got, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "")
+	got, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	// Conversations only: the task execution is excluded by default.
 	require.Len(t, got, 2)
@@ -2719,30 +2721,30 @@ func TestSearchSessionsByTitle_Filters(t *testing.T) {
 	}
 
 	// Archive filter narrows to one side.
-	active, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, service.SessionArchiveFilterActive, "", "", "", "", "")
+	active, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, store.SessionArchiveFilterActive, "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, active, 1)
 	assert.Equal(t, "active", active[0].ID)
 
-	archived, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, service.SessionArchiveFilterArchived, "", "", "", "", "")
+	archived, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, store.SessionArchiveFilterArchived, "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, archived, 1)
 	assert.Equal(t, "archived", archived[0].ID)
 
 	// Type filter switches to task executions.
-	tasks, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", service.SessionTypeFilterTask, "", "", "", "")
+	tasks, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", store.SessionTypeFilterTask, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, tasks, 1)
 	assert.Equal(t, "task", tasks[0].ID)
 
 	// Time range bounds the creation time.
-	windowed, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "2024-01-15 00:00:00", "2024-03-15 00:00:00", "", "")
+	windowed, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "2024-01-15 00:00:00", "2024-03-15 00:00:00", "", "")
 	assert.NoError(t, err)
 	require.Len(t, windowed, 1)
 	assert.Equal(t, "archived", windowed[0].ID)
 
 	// Limit truncates the newest-first list.
-	limited, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 1, "", "", "", "", "", "")
+	limited, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 1, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, limited, 1)
 	assert.Equal(t, "archived", limited[0].ID)
@@ -2756,11 +2758,11 @@ func TestSearchSessionsByTitle_EmptyTermsMatchNothing(t *testing.T) {
 	// No terms → no matches. Callers wanting the whole project use
 	// GetRecentSessions; returning everything here would silently turn a
 	// title search into a browse.
-	got, err := service.SearchSessionsByTitle("/project", nil, 0, "", "", "", "", "", "")
+	got, err := store.SearchSessionsByTitle("/project", nil, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Empty(t, got)
 
-	got, err = service.SearchSessionsByTitle("/project", []string{}, 0, "", "", "", "", "", "")
+	got, err = store.SearchSessionsByTitle("/project", []string{}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	assert.Empty(t, got)
 }
@@ -2772,7 +2774,7 @@ func TestSearchSessionsByTitle_CaseInsensitiveASCII(t *testing.T) {
 
 	insertSessionWithTime(t, "/project", "a", "Fix RAG Indexer", "2024-01-01 10:00:00", false)
 
-	got, err := service.SearchSessionsByTitle("/project", []string{"rag"}, 0, "", "", "", "", "", "")
+	got, err := store.SearchSessionsByTitle("/project", []string{"rag"}, 0, "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, "a", got[0].ID)
@@ -2789,13 +2791,13 @@ func TestSearchSessionsByTitle_SessionScopes(t *testing.T) {
 	insertSessionWithTime(t, "/project", "s3", "数据库归档", "2024-01-03 10:00:00", false)
 
 	// sessionID narrows to exactly that session.
-	one, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "s2", "")
+	one, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "s2", "")
 	assert.NoError(t, err)
 	require.Len(t, one, 1)
 	assert.Equal(t, "s2", one[0].ID)
 
 	// excludeSessionID drops it, leaving the other two.
-	rest, err := service.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "s2")
+	rest, err := store.SearchSessionsByTitle("/project", []string{"数据库"}, 0, "", "", "", "", "", "s2")
 	assert.NoError(t, err)
 	require.Len(t, rest, 2)
 	for _, s := range rest {
@@ -2806,10 +2808,10 @@ func TestSearchSessionsByTitle_SessionScopes(t *testing.T) {
 func TestEscapeLikePattern(t *testing.T) {
 	// Escaping is what makes the ESCAPE '\' clause meaningful; without it a
 	// query of "%" would match every row.
-	assert.Equal(t, `100\%`, service.EscapeLikePatternForTest("100%"))
-	assert.Equal(t, `a\_b`, service.EscapeLikePatternForTest("a_b"))
-	assert.Equal(t, `C:\\temp`, service.EscapeLikePatternForTest(`C:\temp`))
-	assert.Equal(t, "plain", service.EscapeLikePatternForTest("plain"))
+	assert.Equal(t, `100\%`, store.EscapeLikePatternForTest("100%"))
+	assert.Equal(t, `a\_b`, store.EscapeLikePatternForTest("a_b"))
+	assert.Equal(t, `C:\\temp`, store.EscapeLikePatternForTest(`C:\temp`))
+	assert.Equal(t, "plain", store.EscapeLikePatternForTest("plain"))
 }
 
 func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
@@ -2821,7 +2823,7 @@ func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "s4", "S4", "2024-04-01 10:00:00", false)
 
 	// Page 1: newest first, 2 rows + hasMore.
-	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", "", "", "", "", "")
+	page1, hasMore, err := store.GetRecentSessions("/project", 2, "", "", "", "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 2)
 	assert.True(t, hasMore)
@@ -2830,7 +2832,7 @@ func TestGetRecentSessions_CursorPaginationNewest(t *testing.T) {
 
 	// Page 2: cursor from the last row of page 1.
 	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", "", "", "", cursor, page1[1].ID)
+	page2, hasMore2, err := store.GetRecentSessions("/project", 2, "", "", "", "", "", cursor, page1[1].ID)
 	assert.NoError(t, err)
 	require.Len(t, page2, 2)
 	assert.False(t, hasMore2)
@@ -2853,7 +2855,7 @@ func TestGetRecentSessions_CursorPaginationOldest(t *testing.T) {
 	insertSessionWithTime(t, "/project", "s2", "S2", "2024-02-01 10:00:00", false)
 	insertSessionWithTime(t, "/project", "s3", "S3", "2024-03-01 10:00:00", false)
 
-	page1, hasMore, err := service.GetRecentSessions("/project", 2, "", "", service.SessionSortOldest, "", "", "", "")
+	page1, hasMore, err := store.GetRecentSessions("/project", 2, "", "", store.SessionSortOldest, "", "", "", "")
 	assert.NoError(t, err)
 	require.Len(t, page1, 2)
 	assert.True(t, hasMore)
@@ -2861,7 +2863,7 @@ func TestGetRecentSessions_CursorPaginationOldest(t *testing.T) {
 	assert.Equal(t, "s2", page1[1].ID)
 
 	cursor := page1[len(page1)-1].CreatedAt.Format("2006-01-02 15:04:05")
-	page2, hasMore2, err := service.GetRecentSessions("/project", 2, "", "", service.SessionSortOldest, "", "", cursor, page1[1].ID)
+	page2, hasMore2, err := store.GetRecentSessions("/project", 2, "", "", store.SessionSortOldest, "", "", cursor, page1[1].ID)
 	assert.NoError(t, err)
 	require.Len(t, page2, 1)
 	assert.False(t, hasMore2)
@@ -2880,7 +2882,7 @@ func TestGetRecentSessions_CursorWithSameTimestamp(t *testing.T) {
 	seen := map[string]bool{}
 	cursor, cursorID := "", ""
 	for range 5 {
-		page, hasMore, err := service.GetRecentSessions("/project", 1, "", "", "", "", "", cursor, cursorID)
+		page, hasMore, err := store.GetRecentSessions("/project", 1, "", "", "", "", "", cursor, cursorID)
 		assert.NoError(t, err)
 		if len(page) == 0 {
 			break
@@ -2904,29 +2906,29 @@ func TestGetRecentSessions_TimeRangeFilter(t *testing.T) {
 	insertSessionWithTime(t, "/project", "mar", "Mar", "2024-03-15 10:00:00", false)
 
 	// Inclusive window covering February only.
-	feb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
+	feb, _, err := store.GetRecentSessions("/project", 0, "", "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
 	assert.NoError(t, err)
 	require.Len(t, feb, 1)
 	assert.Equal(t, "feb", feb[0].ID)
 
 	// Lower bound only.
-	fromFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2024-02-01 00:00:00", "", "", "")
+	fromFeb, _, err := store.GetRecentSessions("/project", 0, "", "", "", "2024-02-01 00:00:00", "", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, fromFeb, 2)
 
 	// Upper bound only.
-	toFeb, _, err := service.GetRecentSessions("/project", 0, "", "", "", "", "2024-02-29 23:59:59", "", "")
+	toFeb, _, err := store.GetRecentSessions("/project", 0, "", "", "", "", "2024-02-29 23:59:59", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, toFeb, 2)
 
 	// Window outside the data set → no rows.
-	none, _, err := service.GetRecentSessions("/project", 0, "", "", "", "2025-01-01 00:00:00", "2025-12-31 23:59:59", "", "")
+	none, _, err := store.GetRecentSessions("/project", 0, "", "", "", "2025-01-01 00:00:00", "2025-12-31 23:59:59", "", "")
 	assert.NoError(t, err)
 	assert.Len(t, none, 0)
 
 	// Time range combines with the archive filter rather than replacing it.
 	insertSessionWithTime(t, "/project", "feb-arch", "FebArch", "2024-02-20 10:00:00", true)
-	febActive, _, err := service.GetRecentSessions("/project", 0, service.SessionArchiveFilterActive, "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
+	febActive, _, err := store.GetRecentSessions("/project", 0, store.SessionArchiveFilterActive, "", "", "2024-02-01 00:00:00", "2024-02-29 23:59:59", "", "")
 	assert.NoError(t, err)
 	require.Len(t, febActive, 1)
 	assert.Equal(t, "feb", febActive[0].ID)
@@ -2939,7 +2941,7 @@ func TestGetSessionsPaged_CursorSecondPage(t *testing.T) {
 	for i := range 5 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 		// Stagger created_at so ordering is deterministic
-		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
+		_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -2975,7 +2977,7 @@ func TestGetSessionsPaged_CursorLastPage(t *testing.T) {
 
 	for i := range 5 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
-		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
+		_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (4-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -3051,13 +3053,13 @@ func TestGetSessionsPaged_OrderedByCreatedDesc(t *testing.T) {
 	sid2 := helperCreateSession(t, "/project", "claude", "New")
 
 	// Set explicit created_at timestamps to guarantee ordering (SQLite time precision is seconds)
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', '-60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now') WHERE id = ?", sid2)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now') WHERE id = ?", sid2)
 	assert.NoError(t, err)
 
 	// A later interaction on the older session must NOT change ordering.
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+60 seconds') WHERE id = ?", sid1)
 	assert.NoError(t, err)
 
 	sessions, _, err := service.GetSessionsPaged("/project", "", 10, "", "", nil, nil, "")
@@ -3075,7 +3077,7 @@ func TestGetSessionsPaged_AllPagesCoverAllSessions(t *testing.T) {
 	for i := range 7 {
 		sid := helperCreateSession(t, "/project", "claude", fmt.Sprintf("S%d", i))
 		allIDs = append(allIDs, sid)
-		_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (6-i)*60), sid)
+		_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?", fmt.Sprintf("-%d", (6-i)*60), sid)
 		assert.NoError(t, err)
 	}
 
@@ -3133,11 +3135,11 @@ func TestGetSessionsPaged_SameTimestampTiebreaker(t *testing.T) {
 
 	// Set sid1 and sid2 to the same created_at, sid3 slightly newer
 	baseTime := "2026-01-15 12:00:00"
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = ? WHERE id = ?", baseTime, sid1)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = ? WHERE id = ?", baseTime, sid1)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = ? WHERE id = ?", baseTime, sid2)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = ? WHERE id = ?", baseTime, sid2)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = '2026-01-15 12:01:00' WHERE id = ?", sid3)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET created_at = '2026-01-15 12:01:00' WHERE id = ?", sid3)
 	assert.NoError(t, err)
 
 	// First page: limit=2 — should get sid3 (newest) and one of sid1/sid2
@@ -3180,7 +3182,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	sidMid := helperCreateSession(t, "/project", "claude", "Mid")
 	sidNew := helperCreateSession(t, "/project", "claude", "New")
 	for id, offset := range map[string]int{sidOld: -120, sidMid: -60, sidNew: 0} {
-		_, err := service.UnsafeDBForTest().Exec(
+		_, err := store.UnsafeDBForTest().Exec(
 			"UPDATE chat_sessions SET created_at = datetime('now', ? || ' seconds') WHERE id = ?",
 			fmt.Sprintf("%d", offset), id,
 		)
@@ -3190,7 +3192,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// Push the OLDEST session's updated_at far into the future. If the cursor
 	// were updated_at, page 2 would re-return it (and its neighbors) because
 	// their created_at is < that future timestamp.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"UPDATE chat_sessions SET updated_at = datetime('now', '+1 day') WHERE id = ?", sidOld,
 	)
 	assert.NoError(t, err)
@@ -3214,7 +3216,7 @@ func TestGetSessionsPaged_CursorIsCreatedAtNotUpdatedAt(t *testing.T) {
 	// sidOld.updated_at is +1 day, so `created_at < <that>` matches sidNew —
 	// the exact duplicate-producing behavior this contract guards against.
 	var oldUpdatedAt string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT updated_at FROM chat_sessions WHERE id = ?", sidOld,
 	).Scan(&oldUpdatedAt)
 	require.NoError(t, err)
@@ -3266,7 +3268,7 @@ func TestGetSessionTitlesBatch_ExcludesEmptyTitles(t *testing.T) {
 
 	// Create session with a title, then set it to empty
 	sid := helperCreateSession(t, "/project", "claude", "Has Title")
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	titles, err := service.GetSessionTitlesBatch([]string{sid})
@@ -3311,7 +3313,7 @@ func TestGetSessionTitlesBatchIncludeArchived_IncludesArchivedSessions(t *testin
 	assert.False(t, ok, "GetSessionTitlesBatch should exclude archived sessions")
 
 	// IncludeArchived variant includes archived sessions
-	titlesInc, err := service.GetSessionTitlesBatchIncludeArchived([]string{sid})
+	titlesInc, err := store.GetSessionTitlesBatchIncludeArchived([]string{sid})
 	assert.NoError(t, err)
 	title, ok := titlesInc[sid]
 	assert.True(t, ok, "GetSessionTitlesBatchIncludeArchived should include archived sessions")
@@ -3322,10 +3324,10 @@ func TestGetSessionTitlesBatchIncludeArchived_ExcludesEmptyTitles(t *testing.T) 
 	setupDB(t)
 
 	sid := helperCreateSession(t, "/project", "claude", "Has Title")
-	_, err := service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
+	_, err := store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET title = '' WHERE id = ?", sid)
 	assert.NoError(t, err)
 
-	titles, err := service.GetSessionTitlesBatchIncludeArchived([]string{sid})
+	titles, err := store.GetSessionTitlesBatchIncludeArchived([]string{sid})
 	assert.NoError(t, err)
 	_, ok := titles[sid]
 	assert.False(t, ok, "empty title should not be included even in IncludeArchived variant")
@@ -3334,7 +3336,7 @@ func TestGetSessionTitlesBatchIncludeArchived_ExcludesEmptyTitles(t *testing.T) 
 func TestGetSessionTitlesBatchIncludeArchived_Empty(t *testing.T) {
 	setupDB(t)
 
-	titles, err := service.GetSessionTitlesBatchIncludeArchived([]string{})
+	titles, err := store.GetSessionTitlesBatchIncludeArchived([]string{})
 	assert.NoError(t, err)
 	assert.Empty(t, titles)
 }
@@ -3350,7 +3352,7 @@ func TestGetSessionFullInfo(t *testing.T) {
 	info := service.GetSessionFullInfo(sid)
 	assert.NotNil(t, info)
 	assert.Equal(t, "claude", info.Backend)
-	assert.Equal(t, service.NormalizeProjectPath("/my/project"), info.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/my/project"), info.ProjectPath)
 	assert.Equal(t, "Full Info Test", info.Title)
 	assert.Equal(t, "my-agent", info.AgentID)
 	assert.Equal(t, "gpt-4o", info.Model)
@@ -3756,12 +3758,12 @@ func TestGetSessions_UnreadCount_IgnoresHistoryFromOtherProject(t *testing.T) {
 	insertSessionWithTime(t, "/projectA", "sess-a", "A", "2025-01-01 10:00:00", false)
 
 	// One legitimate unread reply for sess-a, in sess-a's own project.
-	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'real reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectA"), "sess-a")
+	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'real reply', '2025-01-01 10:00:05')", store.ProjectIDForTest(t, "/projectA"), "sess-a")
 	require.NoError(t, err)
 
 	// A stray reply for the SAME session id but tagged with another project.
 	// This is the ISS-420 shape: it must not be attributed to sess-a.
-	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'stray reply', '2025-01-01 10:00:06')", service.ProjectIDForTest(t, "/projectB"), "sess-a")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'stray reply', '2025-01-01 10:00:06')", store.ProjectIDForTest(t, "/projectB"), "sess-a")
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions("/projectA", "")
@@ -3791,13 +3793,13 @@ func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
 	insertSessionWithTime(t, "/projectB", "session-B1", "B1 empty", "2025-01-01 10:00:02", false)
 	insertSessionWithTime(t, "/projectA", "session-archived", "Archived", "2025-01-01 10:00:03", true)
 
-	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'user', 'hello', '2025-01-01 10:00:00')", service.ProjectIDForTest(t, "/projectA"), "session-A1")
+	_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'user', 'hello', '2025-01-01 10:00:00')", store.ProjectIDForTest(t, "/projectA"), "session-A1")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'unread reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectA"), "session-A1")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'unread reply', '2025-01-01 10:00:05')", store.ProjectIDForTest(t, "/projectA"), "session-A1")
 	require.NoError(t, err)
 
 	// A2 is read: assistant message created before last_read_at
-	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', '2025-01-01 10:00:02')", service.ProjectIDForTest(t, "/projectA"), "session-A2")
+	_, err = db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'old reply', '2025-01-01 10:00:02')", store.ProjectIDForTest(t, "/projectA"), "session-A2")
 	require.NoError(t, err)
 	_, err = db.Exec("UPDATE chat_sessions SET last_read_at = '2025-01-01 10:00:10' WHERE id = 'session-A2'")
 	require.NoError(t, err)
@@ -3814,19 +3816,19 @@ func TestGetOverviewSessions_crossProjectUnread(t *testing.T) {
 	// A1: unread assistant message → unread > 0
 	a1, ok := byID["session-A1"]
 	require.True(t, ok, "session-A1 should be present")
-	assert.Equal(t, service.NormalizeProjectPath("/projectA"), a1.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/projectA"), a1.ProjectPath)
 	assert.Equal(t, 1, a1.UnreadCount, "A1 has one unread assistant message")
 
 	// A2: read → unread == 0
 	a2, ok := byID["session-A2"]
 	require.True(t, ok, "session-A2 should be present")
-	assert.Equal(t, service.NormalizeProjectPath("/projectA"), a2.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/projectA"), a2.ProjectPath)
 	assert.Equal(t, 0, a2.UnreadCount, "A2 was read, no unread messages")
 
 	// B1: no messages → unread == 0
 	b1, ok := byID["session-B1"]
 	require.True(t, ok, "session-B1 should be present")
-	assert.Equal(t, service.NormalizeProjectPath("/projectB"), b1.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/projectB"), b1.ProjectPath)
 	assert.Equal(t, 0, b1.UnreadCount, "B1 has no messages")
 
 	// Archived session must not be returned
@@ -3876,12 +3878,12 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 
 	// projectA: 2 unread assistant messages (last_read_at is NULL → all unread)
 	for range 2 {
-		_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'a reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectA"), "shared-session")
+		_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'a reply', '2025-01-01 10:00:05')", store.ProjectIDForTest(t, "/projectA"), "shared-session")
 		require.NoError(t, err)
 	}
 	// projectB: 3 unread assistant messages
 	for range 3 {
-		_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'b reply', '2025-01-01 10:00:05')", service.ProjectIDForTest(t, "/projectB"), "shared-session")
+		_, err := db.Exec("INSERT INTO chat_history (project_id, backend, session_id, role, content, created_at) VALUES (?, 'claude', ?, 'assistant', 'b reply', '2025-01-01 10:00:05')", store.ProjectIDForTest(t, "/projectB"), "shared-session")
 		require.NoError(t, err)
 	}
 
@@ -3895,15 +3897,15 @@ func TestGetOverviewSessions_sameIDAcrossProjects(t *testing.T) {
 	}
 
 	// Same session id appears in both projects
-	assert.Equal(t, "shared-session", byProject[service.NormalizeProjectPath("/projectA")].ID)
-	assert.Equal(t, "shared-session", byProject[service.NormalizeProjectPath("/projectB")].ID)
+	assert.Equal(t, "shared-session", byProject[store.NormalizeProjectPath("/projectA")].ID)
+	assert.Equal(t, "shared-session", byProject[store.NormalizeProjectPath("/projectB")].ID)
 
 	// Unread counts must not leak across projects
-	a, ok := byProject[service.NormalizeProjectPath("/projectA")]
+	a, ok := byProject[store.NormalizeProjectPath("/projectA")]
 	require.True(t, ok, "projectA session should be present")
 	assert.Equal(t, 2, a.UnreadCount, "projectA unread must not include projectB's messages")
 
-	b, ok := byProject[service.NormalizeProjectPath("/projectB")]
+	b, ok := byProject[store.NormalizeProjectPath("/projectB")]
 	require.True(t, ok, "projectB session should be present")
 	assert.Equal(t, 3, b.UnreadCount, "projectB unread must not include projectA's messages")
 }
@@ -3928,7 +3930,7 @@ func TestGetSessionsPaged_UnreadCount(t *testing.T) {
 
 func TestDBRead_Initialized_ChatDB(t *testing.T) {
 	_ = setupDB(t)
-	assert.NotNil(t, service.ReadDB(), "dbRead should be initialized in test setup")
+	assert.NotNil(t, store.ReadDB(), "dbRead should be initialized in test setup")
 }
 
 // ---------- GetRunningSessionIDs ----------
@@ -4018,7 +4020,7 @@ func TestGetLatestSessionID(t *testing.T) {
 
 	// Create another and force its updated_at ahead (SQLite timestamps have second precision)
 	s2, _ := service.CreateSession("/project", "codebuddy", "Second", "codebuddy", "", "default", "chat")
-	service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+1 second') WHERE id = ?", s2)
+	store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET updated_at = datetime('now', '+1 second') WHERE id = ?", s2)
 
 	// Should return the newer one
 	id, backend, err = service.GetLatestSessionID("/project")
@@ -4094,7 +4096,7 @@ func TestCreateSession_ExternalSessionIDPersistedInDB(t *testing.T) {
 	assert.NoError(t, err)
 
 	var extID string
-	err = service.UnsafeDBForTest().QueryRow("SELECT external_session_id FROM chat_sessions WHERE id = ?", sid).Scan(&extID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT external_session_id FROM chat_sessions WHERE id = ?", sid).Scan(&extID)
 	assert.NoError(t, err)
 	assert.Equal(t, "", extID, "external_session_id column should be empty in DB")
 }
@@ -4118,7 +4120,7 @@ func TestArchiveSession_DoesNotModifyChatHistory(t *testing.T) {
 
 	// Verify messages exist before deletion
 	var countBefore int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countBefore)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countBefore)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, countBefore)
 
@@ -4128,7 +4130,7 @@ func TestArchiveSession_DoesNotModifyChatHistory(t *testing.T) {
 
 	// Verify messages are still present with identical content
 	var countAfter int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countAfter)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&countAfter)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, countAfter, "chat_history rows should NOT be modified by ArchiveSession")
 
@@ -4169,7 +4171,7 @@ func TestRestoreDeletedSession_PreservesChatHistory(t *testing.T) {
 	assert.Len(t, msgsAfterDelete, 2, "messages should still exist after session archival")
 
 	// Restore the session by setting archived=0
-	_, err = service.UnsafeDBForTest().Exec("UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
+	_, err = store.UnsafeDBForTest().Exec("UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", sid)
 	assert.NoError(t, err)
 
 	// Verify restored session can be found by GetSessionBackend
@@ -4473,7 +4475,7 @@ func TestGetStreamingMessageID_LiveRow(t *testing.T) {
 func TestGetUnindexedMessages_Empty(t *testing.T) {
 	setupDB(t)
 
-	msgs, err := service.GetUnindexedMessages(10)
+	msgs, err := store.GetUnindexedMessages(10)
 	assert.NoError(t, err)
 	assert.Empty(t, msgs)
 }
@@ -4488,7 +4490,7 @@ func TestGetUnindexedMessages_WithMessages(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "assistant", "world", nil, false, "")
 	assert.NoError(t, err)
 
-	msgs, err := service.GetUnindexedMessages(10)
+	msgs, err := store.GetUnindexedMessages(10)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, msgs)
 }
@@ -4500,12 +4502,12 @@ func TestMarkMessageIndexed(t *testing.T) {
 	msgID, err := service.AddChatMessage("/project", "claude", sid, "user", "hello", nil, false, "")
 	assert.NoError(t, err)
 
-	err = service.MarkMessageIndexed(msgID)
+	err = store.MarkMessageIndexed(msgID)
 	assert.NoError(t, err)
 
 	// Verify the message is now indexed
 	var indexed int
-	err = service.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
+	err = store.UnsafeDBForTest().QueryRow("SELECT indexed FROM chat_history WHERE id = ?", msgID).Scan(&indexed)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, indexed)
 }
@@ -4517,17 +4519,17 @@ func TestMarkMessagesIndexed(t *testing.T) {
 	msg1, _ := service.AddChatMessage("/project", "claude", sid, "user", "hello", nil, false, "")
 	msg2, _ := service.AddChatMessage("/project", "claude", sid, "user", "world", nil, false, "")
 
-	err := service.MarkMessagesIndexed([]int64{msg1, msg2})
+	err := store.MarkMessagesIndexed([]int64{msg1, msg2})
 	assert.NoError(t, err)
 
 	// Verify both messages are indexed
 	var count int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 1", msg1, msg2).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 1", msg1, msg2).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, count)
 
 	// Empty slice should be no-op
-	err = service.MarkMessagesIndexed(nil)
+	err = store.MarkMessagesIndexed(nil)
 	assert.NoError(t, err)
 }
 
@@ -4539,23 +4541,23 @@ func TestResetAllIndexed(t *testing.T) {
 	msg2, _ := service.AddChatMessage("/project", "claude", sid, "user", "world", nil, false, "")
 
 	// Mark both as indexed
-	err := service.MarkMessagesIndexed([]int64{msg1, msg2})
+	err := store.MarkMessagesIndexed([]int64{msg1, msg2})
 	assert.NoError(t, err)
 
 	// Verify both are indexed
 	var indexedCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 1", msg1, msg2).Scan(&indexedCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 1", msg1, msg2).Scan(&indexedCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, indexedCount)
 
 	// Reset all indexed flags
-	affected, err := service.ResetAllIndexed()
+	affected, err := store.ResetAllIndexed()
 	assert.NoError(t, err)
 	assert.Equal(t, int64(2), affected)
 
 	// Verify both are now unindexed
 	var unindexedCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 0", msg1, msg2).Scan(&unindexedCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_history WHERE id IN (?, ?) AND indexed = 0", msg1, msg2).Scan(&unindexedCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 2, unindexedCount)
 }
@@ -4566,7 +4568,7 @@ func TestUnindexedCount(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Count Test")
 
 	// Initially 0
-	count, err := service.UnindexedCount()
+	count, err := store.UnindexedCount()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count)
 
@@ -4574,7 +4576,7 @@ func TestUnindexedCount(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sid, "user", "hello", nil, false, "")
 	assert.NoError(t, err)
 
-	count, err = service.UnindexedCount()
+	count, err = store.UnindexedCount()
 	assert.NoError(t, err)
 	assert.Greater(t, count, 0)
 }
@@ -4585,10 +4587,10 @@ func TestTotalAndIndexedMessageCount(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Count Test")
 
 	// Initially 0
-	total, err := service.TotalMessageCount()
+	total, err := store.TotalMessageCount()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, total)
-	indexed, err := service.IndexedMessageCount()
+	indexed, err := store.IndexedMessageCount()
 	assert.NoError(t, err)
 	assert.Equal(t, 0, indexed)
 
@@ -4597,14 +4599,14 @@ func TestTotalAndIndexedMessageCount(t *testing.T) {
 		id, err := service.AddChatMessage("/project", "claude", sid, "user", fmt.Sprintf("msg %d", i), nil, false, "")
 		assert.NoError(t, err)
 		if i < 2 {
-			assert.NoError(t, service.MarkMessageIndexed(id))
+			assert.NoError(t, store.MarkMessageIndexed(id))
 		}
 	}
 
-	total, err = service.TotalMessageCount()
+	total, err = store.TotalMessageCount()
 	assert.NoError(t, err)
 	assert.Equal(t, 3, total)
-	indexed, err = service.IndexedMessageCount()
+	indexed, err = store.IndexedMessageCount()
 	assert.NoError(t, err)
 	assert.Equal(t, 2, indexed)
 }
@@ -4647,7 +4649,7 @@ func TestGetSessionProjectPath(t *testing.T) {
 	sid := helperCreateSession(t, "/my/project", "claude", "Test")
 
 	path := service.GetSessionProjectPath(sid)
-	assert.Equal(t, service.NormalizeProjectPath("/my/project"), path)
+	assert.Equal(t, store.NormalizeProjectPath("/my/project"), path)
 }
 
 func TestGetSessionProjectPath_NonExistent(t *testing.T) {
@@ -4783,7 +4785,7 @@ func TestAddQueuedMessage_Basic(t *testing.T) {
 	assert.Greater(t, id, int64(0))
 
 	var queueID, content string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT queue_id, content FROM queued_messages WHERE id = ?", id,
 	).Scan(&queueID, &content)
 	assert.NoError(t, err)
@@ -4792,7 +4794,7 @@ func TestAddQueuedMessage_Basic(t *testing.T) {
 
 	// Nothing was written to chat_history at enqueue time.
 	var historyRows int
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid,
 	).Scan(&historyRows))
 	assert.Zero(t, historyRows, "enqueue must not materialize a chat_history row")
@@ -4809,7 +4811,7 @@ func TestAddQueuedMessage_SetsSessionTitleOnFirstMessage(t *testing.T) {
 	assert.Greater(t, id, int64(0))
 
 	var title string
-	err = service.UnsafeDBForTest().QueryRow("SELECT title FROM chat_sessions WHERE id = ?", sid).Scan(&title)
+	err = store.UnsafeDBForTest().QueryRow("SELECT title FROM chat_sessions WHERE id = ?", sid).Scan(&title)
 	assert.NoError(t, err)
 	assert.Equal(t, "help me fix the build", title, "first user message should update session title")
 }
@@ -4841,7 +4843,7 @@ func TestAddQueuedMessage_EmptyQueueID(t *testing.T) {
 	assert.NoError(t, err)
 
 	var queueID string
-	err = service.UnsafeDBForTest().QueryRow("SELECT queue_id FROM queued_messages WHERE id = ?", id).Scan(&queueID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT queue_id FROM queued_messages WHERE id = ?", id).Scan(&queueID)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, queueID, "auto-generated queue_id should not be empty")
 }
@@ -4928,7 +4930,7 @@ func TestClaimNextAndMaterialize_DeletesQueueRow(t *testing.T) {
 
 	assert.Equal(t, 0, service.GetQueuedCount(sid), "claimed row must leave the queue")
 	var historyRows int
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE id = ?", msgID,
 	).Scan(&historyRows))
 	assert.Equal(t, 1, historyRows, "claimed row must be materialized into chat_history")
@@ -5070,7 +5072,7 @@ func TestQueuedMessage_PersistsAcrossRestart(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(schema)
 	require.NoError(t, err)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -5082,13 +5084,13 @@ func TestQueuedMessage_PersistsAcrossRestart(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Simulate restart: close the DB and reopen the same file.
-	service.SetDBForTest(nil, nil)
+	store.SetDBForTest(nil, nil)
 	require.NoError(t, db.Close())
 
 	db2, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	db2.SetMaxOpenConns(1)
-	cleanup2 := service.SetDBForTest(db2, db2)
+	cleanup2 := store.SetDBForTest(db2, db2)
 	t.Cleanup(func() {
 		cleanup2()
 		db2.Close()
@@ -5112,7 +5114,7 @@ func TestQueuedMessage_DrainedAfterRestart(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(schema)
 	require.NoError(t, err)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -5124,13 +5126,13 @@ func TestQueuedMessage_DrainedAfterRestart(t *testing.T) {
 	assert.NoError(t, err)
 
 	// Simulate restart.
-	service.SetDBForTest(nil, nil)
+	store.SetDBForTest(nil, nil)
 	require.NoError(t, db.Close())
 
 	db2, err := sql.Open("sqlite", dbPath)
 	require.NoError(t, err)
 	db2.SetMaxOpenConns(1)
-	cleanup2 := service.SetDBForTest(db2, db2)
+	cleanup2 := store.SetDBForTest(db2, db2)
 	t.Cleanup(func() {
 		cleanup2()
 		db2.Close()
@@ -5144,7 +5146,7 @@ func TestQueuedMessage_DrainedAfterRestart(t *testing.T) {
 
 	// It is now a chat_history row, not a queued row.
 	var content string
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT content FROM chat_history WHERE id = ?", msgID,
 	).Scan(&content))
 	assert.Equal(t, "stale queued", content)
@@ -5160,7 +5162,7 @@ func TestCreateSession_EmptySessionTypeDefaultsToChat(t *testing.T) {
 	assert.NoError(t, err)
 
 	var sessionType string
-	err = service.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
+	err = store.UnsafeDBForTest().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sid).Scan(&sessionType)
 	assert.NoError(t, err)
 	assert.Equal(t, "chat", sessionType)
 }
@@ -5208,7 +5210,7 @@ func TestGetConversationIndex_PrefersStoredSummary(t *testing.T) {
 
 	// Give it a reading summary — that must win over the reply text.
 	var asstID int64
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid,
 	).Scan(&asstID))
 	require.NoError(t, service.SaveSummary("chat_message", asstID, "stored summary"))
@@ -5601,7 +5603,7 @@ func TestGetContextState_MalformedJSON(t *testing.T) {
 	sid := helperCreateSession(t, "/project", "claude", "Test")
 
 	// Directly write malformed JSON
-	_, _ = service.WriteExec("UPDATE chat_sessions SET context_state = '{invalid json' WHERE id = ?", sid)
+	_, _ = store.WriteExec("UPDATE chat_sessions SET context_state = '{invalid json' WHERE id = ?", sid)
 
 	// Should return nil and not crash
 	state := service.GetContextState(sid)
@@ -5778,7 +5780,7 @@ func TestHardDeleteSession_RemovesThinking(t *testing.T) {
 	assert.NoError(t, service.HardDeleteSession(sid))
 
 	var count int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE session_id = ?", sid).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE session_id = ?", sid).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "thinking rows must be purged with the session")
 }
@@ -6312,16 +6314,16 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	s1 := helperCreateSession(t, projectPath, "claude", "First")
 	s2 := helperCreateSession(t, projectPath, "claude", "Second")
 	s3 := helperCreateSession(t, projectPath, "claude", "Third")
-	_, err := service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", s1)
+	_, err := store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", s1)
 	require.NoError(t, err)
-	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", s2)
+	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", s2)
 	require.NoError(t, err)
-	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-03 00:00:00' WHERE id = ?", s3)
+	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-03 00:00:00' WHERE id = ?", s3)
 	require.NoError(t, err)
 
 	// Pin is a UI preference, not session activity: it must not bump updated_at.
 	// Backdate s1's updated_at first so a bump would be visible when it is pinned.
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"UPDATE chat_sessions SET updated_at = '2020-01-01 00:00:00' WHERE id = ?", s1,
 	)
 	require.NoError(t, err)
@@ -6330,7 +6332,7 @@ func TestPinnedSessionSortOrder(t *testing.T) {
 	require.NoError(t, service.UpdateSessionPinned(s1, true))
 
 	var updatedAt string
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", s1).Scan(&updatedAt))
 	assert.Contains(t, updatedAt, "2020-01-01",
 		"pinning must not rewrite updated_at")
@@ -6384,7 +6386,7 @@ func TestReorderSessionsIgnoresPinned(t *testing.T) {
 	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a, pinned}))
 	require.NoError(t, service.UpdateSessionPinned(pinned, true))
 	var before int
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&before))
 
 	// The client (wrongly) posts the pinned row at the bottom. It must be
@@ -6397,7 +6399,7 @@ func TestReorderSessionsIgnoresPinned(t *testing.T) {
 	assert.Equal(t, pinned, sessions[0].ID, "a pinned row cannot be dragged out of the pinned block")
 
 	var after int
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", pinned).Scan(&after))
 	assert.Equal(t, before, after, "a pinned row's sort_order must not be rewritten")
 
@@ -6429,13 +6431,13 @@ func TestReorderSessionsPersistsManualOrder(t *testing.T) {
 	// A foreign-project id must be ignored, not renumbered.
 	require.NoError(t, service.ReorderSessions(projectPath, []string{foreign}))
 	var foreignOrder int
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", foreign).Scan(&foreignOrder))
 	assert.Equal(t, 0, foreignOrder, "another project's session must not be renumbered")
 
 	// The reorder must not touch updated_at (it is a UI preference).
 	var updatedAt string
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT updated_at FROM chat_sessions WHERE id = ?", c).Scan(&updatedAt))
 	assert.NotEmpty(t, updatedAt)
 }
@@ -6455,7 +6457,7 @@ func TestReorderSessionsKeepsUnpostedVisibleRowsBelow(t *testing.T) {
 	for i, title := range []string{"A", "B", "C", "D", "E"} {
 		id := helperCreateSession(t, projectPath, "claude", title)
 		ids = append(ids, id)
-		_, err := service.WriteExec(
+		_, err := store.WriteExec(
 			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
 			fmt.Sprintf("2024-01-%02d 00:00:00", i+1), id,
 		)
@@ -6486,21 +6488,21 @@ func TestReorderSessionsIgnoresArchived(t *testing.T) {
 	visible := helperCreateSession(t, projectPath, "claude", "Visible")
 	archived := helperCreateSession(t, projectPath, "claude", "Archived")
 	// A distinctive sort_order proves the archived row is not rewritten.
-	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 42 WHERE id = ?", archived)
+	_, err := store.WriteExec("UPDATE chat_sessions SET sort_order = 42 WHERE id = ?", archived)
 	require.NoError(t, err)
-	_, err = service.WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", archived)
+	_, err = store.WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", archived)
 	require.NoError(t, err)
 
 	require.NoError(t, service.ReorderSessions(projectPath, []string{visible}))
 
 	var archivedOrder int
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", archived).Scan(&archivedOrder))
 	assert.Equal(t, 42, archivedOrder, "an archived row must not be renumbered")
 
 	// The visible row is numbered from 0 (archived rows do not occupy an index).
 	var visibleOrder int
-	require.NoError(t, service.UnsafeDBForTest().
+	require.NoError(t, store.UnsafeDBForTest().
 		QueryRow("SELECT sort_order FROM chat_sessions WHERE id = ?", visible).Scan(&visibleOrder))
 	assert.Equal(t, 0, visibleOrder)
 }
@@ -6516,16 +6518,16 @@ func TestNewSessionLandsOnTop(t *testing.T) {
 	b := helperCreateSession(t, projectPath, "claude", "B")
 	// Put B on top, then A. Their created_at differs, so pin down the drag order
 	// explicitly by backdating to make the assertion meaningful.
-	_, err := service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", a)
+	_, err := store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-01 00:00:00' WHERE id = ?", a)
 	require.NoError(t, err)
-	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", b)
+	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-01-02 00:00:00' WHERE id = ?", b)
 	require.NoError(t, err)
 	require.NoError(t, service.ReorderSessions(projectPath, []string{b, a}))
 
 	fresh := helperCreateSession(t, projectPath, "claude", "Fresh")
 	// The fresh session defaults to sort_order 0, tied with b; give it a newer
 	// created_at so the tiebreak is deterministic rather than second-precision.
-	_, err = service.WriteExec("UPDATE chat_sessions SET created_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
+	_, err = store.WriteExec("UPDATE chat_sessions SET created_at = '2024-06-01 00:00:00' WHERE id = ?", fresh)
 	require.NoError(t, err)
 
 	sessions, err := service.GetSessions(projectPath, "")
@@ -6551,7 +6553,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	ids := make([]string, 0, 6)
 	for _, title := range []string{"A", "B", "C", "D", "E", "F"} {
 		ids = append(ids, helperCreateSession(t, projectPath, "claude", title))
-		_, err := service.WriteExec(
+		_, err := store.WriteExec(
 			"UPDATE chat_sessions SET created_at = ? WHERE id = ?",
 			fmt.Sprintf("2024-0%d-01 00:00:00", len(ids)+1), ids[len(ids)-1],
 		)
@@ -6561,7 +6563,7 @@ func TestPinnedSessionPaginationNoDuplicates(t *testing.T) {
 	// Force a shared sort_order, which is what an un-dragged list looks like
 	// (and what the migration backfill produces). Ties then fall back to
 	// created_at DESC, id DESC — so the newest session (ids[5]) leads.
-	_, err := service.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projectPath)
+	_, err := store.WriteExec("UPDATE chat_sessions SET sort_order = 0 WHERE project_id = (SELECT id FROM projects WHERE path = ?)", projectPath)
 	require.NoError(t, err)
 
 	// Pin the OLDEST session so the page boundary falls between the pinned block
@@ -6644,7 +6646,7 @@ func TestLookupSessionProjectPathActive_OrphanedSessionIsFound(t *testing.T) {
 	setupDB(t)
 
 	// project_id 0 has no projects row (the table is AUTOINCREMENT).
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
 		 VALUES ('orphan', 0, 'claude', 'orphan', '', 'default', '', 'chat', 0)`)
 	require.NoError(t, err)
@@ -6665,7 +6667,7 @@ func TestLookupSessionProjectPathActive_MissingSession(t *testing.T) {
 func TestLookupSessionProjectPathActive_ArchivedIsMissing(t *testing.T) {
 	setupDB(t)
 	sid := helperCreateSession(t, "/project", "claude", "Test")
-	_, err := service.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET archived = 1 WHERE id = ?`, sid)
+	_, err := store.UnsafeDBForTest().Exec(`UPDATE chat_sessions SET archived = 1 WHERE id = ?`, sid)
 	require.NoError(t, err)
 
 	_, outcome := service.LookupSessionProjectPathActive(sid)
@@ -6679,7 +6681,7 @@ func TestLookupSessionProjectPathActive_DBError(t *testing.T) {
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	closedDB.Close()
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closedDB)
 	defer cleanup()
 
 	_, outcome := service.LookupSessionProjectPathActive("any")

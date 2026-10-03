@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
@@ -320,14 +322,14 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	// The row stores a project id; resolve the caller's project to compare.
 	// Both sides go through the registry so a renamed directory cannot make a
 	// session look like it belongs to another project.
-	callerProjectID, idErr := service.ProjectIDForPath(projectPath)
+	callerProjectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		model.WriteError(w, model.Internal(idErr))
 		return
 	}
 	var sessionProjectID int64
 	var archived int
-	err := service.ReadDB().QueryRowContext(
+	err := store.ReadDB().QueryRowContext(
 		r.Context(),
 		"SELECT project_id, archived FROM chat_sessions WHERE id = ?",
 		req.SessionID,
@@ -351,7 +353,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 	if archived == 1 {
 		if model.SessionMaxCount > 0 {
 			var count int
-			err = service.ReadDB().QueryRowContext(
+			err = store.ReadDB().QueryRowContext(
 				r.Context(),
 				"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
 				sessionProjectID,
@@ -371,7 +373,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Restore the session
-		_, err = service.WriteExecContext(
+		_, err = store.WriteExecContext(
 			r.Context(),
 			"UPDATE chat_sessions SET archived = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			req.SessionID,
@@ -453,7 +455,7 @@ func ServeACPLoadSession(w http.ResponseWriter, r *http.Request) {
 	sourceID := "acp:" + req.AcpSessionID
 	var existingID string
 	var existingArchived int
-	err := service.ReadDB().QueryRow( // r.Context() not easily propagated through ServeACPLoadSession
+	err := store.ReadDB().QueryRow( // r.Context() not easily propagated through ServeACPLoadSession
 		"SELECT id, archived FROM chat_sessions WHERE source_session_id = ? AND session_type = 'chat' ORDER BY archived ASC, updated_at DESC LIMIT 1",
 		sourceID,
 	).Scan(&existingID, &existingArchived)

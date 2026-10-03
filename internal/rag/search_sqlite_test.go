@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	"clawbench/internal/service"
 )
 
 // ---------- RAGSearch strategy selection ----------
@@ -943,7 +943,7 @@ func TestTitleSearchTerms(t *testing.T) {
 // ---------- mergeTitleAndContentMatches ----------
 
 func TestMergeTitleAndContentMatches_OrderAndDedup(t *testing.T) {
-	titleMatches := []service.RecentSession{
+	titleMatches := []store.RecentSession{
 		{ID: "t1", Title: "数据库甲", CreatedAt: time.Date(2024, 3, 1, 10, 0, 0, 0, time.UTC)},
 		{ID: "shared", Title: "数据库乙", CreatedAt: time.Date(2024, 2, 1, 10, 0, 0, 0, time.UTC)},
 	}

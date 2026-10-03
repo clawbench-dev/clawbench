@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -58,7 +60,7 @@ CREATE UNIQUE INDEX idx_forge_events_dedupe ON forge_events(dedupe_key);`)
 // gives pre-existing event rows an item_key.
 func TestMigration_ForgeEventsItemKeyBackfill(t *testing.T) {
 	dataDir := withTempDataDir(t)
-	t.Cleanup(CloseDB)
+	t.Cleanup(store.Close)
 
 	seedLegacyForgeEvents(t, dataDir, [][2]any{
 		{"pipeline", "github|github.com|acme|widgets|0|pipeline|pipeline_done|run:555"},
@@ -67,11 +69,11 @@ func TestMigration_ForgeEventsItemKeyBackfill(t *testing.T) {
 	})
 
 	require.NoError(t, InitDB())
-	t.Cleanup(CloseDB)
+	t.Cleanup(store.Close)
 
 	keys := map[string]string{}
 	readState := map[string]bool{}
-	rows, err := db.Query(`SELECT dedupe_key, item_key, read_at FROM forge_events`)
+	rows, err := store.UnsafeDBForTest().Query(`SELECT dedupe_key, item_key, read_at FROM forge_events`)
 	require.NoError(t, err)
 	defer rows.Close()
 	for rows.Next() {
@@ -98,18 +100,18 @@ func TestMigration_ForgeEventsItemKeyBackfill(t *testing.T) {
 // must not retire rows that were written after the migration.
 func TestMigration_ForgeEventsItemKeyIdempotent(t *testing.T) {
 	withTempDataDir(t)
-	t.Cleanup(CloseDB)
+	t.Cleanup(store.Close)
 
 	require.NoError(t, InitDB())
-	t.Cleanup(CloseDB)
+	t.Cleanup(store.Close)
 
 	var n int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		`SELECT COUNT(*) FROM pragma_table_info('forge_events') WHERE name='item_key'`).Scan(&n))
 	require.Equal(t, 1, n)
 
 	// A live unread row.
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO forge_events (platform, host, owner, repo, item_type, number, item_key, event_type, dedupe_key)
 		 VALUES ('github','github.com','acme','widgets','issue',1,'issue/1','opened','k')`)
 	require.NoError(t, err)
@@ -118,7 +120,7 @@ func TestMigration_ForgeEventsItemKeyIdempotent(t *testing.T) {
 	require.NoError(t, InitDB())
 
 	var unread int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		`SELECT COUNT(*) FROM forge_events WHERE read_at IS NULL AND item_key = 'issue/1'`).Scan(&unread))
 	assert.Equal(t, 1, unread, "re-running the migration must not retire live unread rows")
 }
@@ -129,7 +131,7 @@ func TestMigration_ForgeEventsItemKeyIdempotent(t *testing.T) {
 // script_exit_code" on an upgraded install.
 func TestMigration_TaskExecutionScriptColumns(t *testing.T) {
 	withTempDataDir(t)
-	t.Cleanup(CloseDB)
+	t.Cleanup(store.Close)
 
 	// Build a legacy table that predates the script columns.
 	path := filepath.Join(model.DataDir, "ClawBench.db")
@@ -157,7 +159,7 @@ VALUES (1, 's-legacy', 'auto', 'completed');`)
 
 	for _, col := range []string{"script_exit_code", "script_outcome", "script_stdout", "script_stderr", "script_duration_ms"} {
 		var n int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, store.UnsafeDBForTest().QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?`, col).Scan(&n))
 		assert.Equal(t, 1, n, "the migration must add %s", col)
 	}
@@ -166,7 +168,7 @@ VALUES (1, 's-legacy', 'auto', 'completed');`)
 	// is what marks "no script").
 	var exitCode sql.NullInt64
 	var stdout string
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT script_exit_code, script_stdout FROM task_executions WHERE session_id = 's-legacy'").Scan(&exitCode, &stdout))
 	assert.False(t, exitCode.Valid, "a legacy row has no script result")
 	assert.Equal(t, "", stdout)
@@ -183,11 +185,11 @@ VALUES (1, 's-legacy', 'auto', 'completed');`)
 // the executions that were already unread, and not running ones.
 func TestMigration_TaskUnreadBackfill(t *testing.T) {
 	withTempDataDir(t)
-	t.Cleanup(CloseDB)
+	t.Cleanup(store.Close)
 
 	// Build the pre-migration state by hand, then run InitDB over it.
 	require.NoError(t, InitDB())
-	CloseDB()
+	store.Close()
 
 	path := filepath.Join(model.DataDir, "ClawBench.db")
 	raw, err := sql.Open("sqlite", path)
@@ -229,7 +231,7 @@ func TestMigration_TaskUnreadBackfill(t *testing.T) {
 	read := func(session string) bool {
 		t.Helper()
 		var n int
-		require.NoError(t, db.QueryRow(
+		require.NoError(t, store.UnsafeDBForTest().QueryRow(
 			"SELECT COUNT(*) FROM task_executions WHERE session_id = ? AND read_at IS NOT NULL",
 			session).Scan(&n))
 		return n == 1
@@ -244,13 +246,13 @@ func TestMigration_TaskUnreadBackfill(t *testing.T) {
 
 	// The watermark is retired, which is what makes the backfill one-time.
 	var watermarkLeft int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM scheduled_tasks WHERE last_read_at IS NOT NULL").Scan(&watermarkLeft))
 	assert.Equal(t, 0, watermarkLeft, "the retired watermark must be cleared")
 
 	// And the surviving unread is exactly the after-watermark execution.
 	var unread int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM task_executions WHERE read_at IS NULL AND status != 'running'").Scan(&unread))
 	assert.Equal(t, 1, unread)
 }

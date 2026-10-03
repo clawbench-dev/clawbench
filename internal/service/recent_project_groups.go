@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 )
 
@@ -51,7 +53,7 @@ type recentProjectRow struct {
 func loadRecentProjectRows(ctx context.Context) ([]recentProjectRow, error) {
 	// Joined through projects: recent_projects is keyed by project_id now, while
 	// the grouping/stat/prune logic below still works in paths.
-	rows, err := dbRead.QueryContext(ctx, `
+	rows, err := store.ReadDB().QueryContext(ctx, `
 		SELECT COALESCE(p.path, '')
 		  FROM recent_projects r
 		  JOIN projects p ON p.id = r.project_id

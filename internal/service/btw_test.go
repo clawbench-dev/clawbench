@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -55,7 +57,7 @@ func TestBuildBtwContext_IncludesHistoryAndEnvelope(t *testing.T) {
 
 	insertSessionWithTitle(t, "sess-btw", "t", TitleSourcePlaceholder)
 	insertAutoRenameUserMessage(t, 201, "sess-btw", "为什么并发一高就慢")
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 0)",
 		202, `{"blocks":[{"type":"text","text":"让我查一下连接池"}]}`, "sess-btw",
 	)
@@ -118,7 +120,7 @@ func TestAnswerBtwQuestion_Success(t *testing.T) {
 	assert.NotZero(t, rec.ID, "record must be persisted")
 	assert.Equal(t, int64(301), rec.AnchorMessageID)
 	assert.Equal(t, "sess-answer", rec.SessionID)
-	assert.Equal(t, NormalizeProjectPath("/test"), rec.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/test"), rec.ProjectPath)
 	assert.Empty(t, rec.Error)
 
 	stored, err := ListBtwQuestions("sess-answer")
@@ -185,7 +187,7 @@ func TestListBtwQuestions_Chronological(t *testing.T) {
 
 	insertSessionWithTitle(t, "sess-order", "t", TitleSourcePlaceholder)
 	for i, q := range []string{"第一个", "第二个", "第三个"} {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question, answer)
 			 VALUES (?, 1, ?, ?, 'a')`,
 			"sess-order", 600+i, q,
@@ -207,7 +209,7 @@ func TestListBtwQuestions_ScopedToSession(t *testing.T) {
 	insertSessionWithTitle(t, "sess-a", "t", TitleSourcePlaceholder)
 	insertSessionWithTitle(t, "sess-b", "t", TitleSourcePlaceholder)
 	for _, sid := range []string{"sess-a", "sess-b"} {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question) VALUES (?, 1, 1, ?)`,
 			sid, "q-"+sid,
 		)
@@ -227,7 +229,7 @@ func TestHardDeleteSession_RemovesBtwQuestions(t *testing.T) {
 	defer cleanup()
 
 	insertSessionWithTitle(t, "sess-del", "t", TitleSourcePlaceholder)
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question) VALUES ('sess-del', 1, 1, 'q')`,
 	)
 	require.NoError(t, err)
@@ -235,7 +237,7 @@ func TestHardDeleteSession_RemovesBtwQuestions(t *testing.T) {
 	require.NoError(t, HardDeleteSession("sess-del"))
 
 	var count int
-	require.NoError(t, dbRead.QueryRow("SELECT COUNT(*) FROM btw_questions WHERE session_id = 'sess-del'").Scan(&count))
+	require.NoError(t, store.ReadDB().QueryRow("SELECT COUNT(*) FROM btw_questions WHERE session_id = 'sess-del'").Scan(&count))
 	assert.Equal(t, 0, count, "hard delete must remove btw rows")
 }
 
@@ -247,7 +249,7 @@ func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
 
 	insertSessionWithTitle(t, "sess-rw", "t", TitleSourcePlaceholder)
 	for id := int64(701); id <= 704; id++ {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', '{}', 'sess-rw', 0)",
 			id,
 		)
@@ -255,7 +257,7 @@ func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
 	}
 	// Anchored at the anchor message (701, survives) and at a removed one (703).
 	for _, anchor := range []int64{701, 703} {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			`INSERT INTO btw_questions (session_id, project_id, anchor_message_id, question) VALUES ('sess-rw', 1, ?, 'q')`,
 			anchor,
 		)
@@ -266,7 +268,7 @@ func TestTruncateSessionAfterMessage_RemovesBtwInRemovedRange(t *testing.T) {
 	require.NoError(t, err)
 
 	var anchors []int64
-	rows, err := dbRead.Query("SELECT anchor_message_id FROM btw_questions WHERE session_id = 'sess-rw' ORDER BY anchor_message_id")
+	rows, err := store.ReadDB().Query("SELECT anchor_message_id FROM btw_questions WHERE session_id = 'sess-rw' ORDER BY anchor_message_id")
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
@@ -310,7 +312,7 @@ func TestBuildBtwContext_OmissionNoticeOnOverflow(t *testing.T) {
 	// 120k budget and the rest are dropped.
 	big := strings.Repeat("这是一段很长的历史内容。", 4000)
 	for i := range 5 {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 0)",
 			int64(410+i), `{"blocks":[{"type":"text","text":"`+big+`"}]}`, "sess-big",
 		)

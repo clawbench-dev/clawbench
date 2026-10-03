@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -595,7 +597,7 @@ func TestServeTaskByID_DeleteExecution_Running(t *testing.T) {
 	// Don't mark as completed — stays "running"
 
 	var execID int64
-	_ = service.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
+	_ = store.UnsafeDBForTest().QueryRow("SELECT id FROM task_executions WHERE session_id = ?", sessionID).Scan(&execID)
 
 	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
 		"action":      "deleteExecution",
@@ -919,7 +921,7 @@ func TestServeTaskByID_UpdateReactivatesCompletedTask(t *testing.T) {
 	_ = s.AddTask(task)
 
 	// Mark task as completed by simulating it
-	_, _ = service.UnsafeDBForTest().Exec("UPDATE scheduled_tasks SET status = 'completed', run_count = 1 WHERE id = ?", task.ID)
+	_, _ = store.UnsafeDBForTest().Exec("UPDATE scheduled_tasks SET status = 'completed', run_count = 1 WHERE id = ?", task.ID)
 
 	// Update should reactivate it
 	req := newRequest(t, http.MethodPut, fmt.Sprintf("/api/tasks/%d", task.ID), map[string]any{
@@ -1003,7 +1005,7 @@ func TestServeTaskByID_DeleteOnExecutions_RejectedNotDeletingTask(t *testing.T) 
 	requireTaskExists(t, taskID, "DELETE on /executions must not delete the parent task")
 
 	var execCount int
-	_ = service.UnsafeDBForTest().
+	_ = store.UnsafeDBForTest().
 		QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).
 		Scan(&execCount)
 	assert.Equal(t, 1, execCount, "DELETE on /executions must not touch execution rows either")

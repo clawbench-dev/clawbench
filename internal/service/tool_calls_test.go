@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"github.com/stretchr/testify/require"
 )
@@ -18,17 +20,17 @@ func TestUpsertAndGetToolCall(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	// Create a session and message first (FK dependency)
 	sessionID := "test-session-001"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
 
 	var msgID int64
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -176,14 +178,14 @@ func TestGetToolCallsBySession(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	sessionID := "tc-session-all"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
+	_, _ = store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
 		sessionID, "/test", "test", "Test Session")
-	res, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
+	res, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, ?, ?, ?, ?)",
 		"/test", "assistant", `{"blocks":[]}`, sessionID, "test")
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
@@ -274,12 +276,12 @@ func TestInitDB_MigratesChatToolCallsDurationColumn(t *testing.T) {
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	var hasDuration int
-	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_tool_calls') WHERE name='duration_ms'").Scan(&hasDuration); err != nil {
+	if err := store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_tool_calls') WHERE name='duration_ms'").Scan(&hasDuration); err != nil {
 		t.Fatalf("query column info: %v", err)
 	}
 	if hasDuration != 1 {
@@ -287,19 +289,19 @@ func TestInitDB_MigratesChatToolCallsDurationColumn(t *testing.T) {
 	}
 
 	// New column should default to 0 for pre-existing rows.
-	if _, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s', 1, 'b', 'T')`); err != nil {
+	if _, err := store.UnsafeDBForTest().Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s', 1, 'b', 'T')`); err != nil {
 		t.Fatalf("insert session: %v", err)
 	}
-	res, err := db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', '{}', 's', 'b')`)
+	res, err := store.UnsafeDBForTest().Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (1, 'assistant', '{}', 's', 'b')`)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
 	msgID, _ := res.LastInsertId()
-	if _, err := db.Exec(`INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name) VALUES (?, 's', 't1', 'Read')`, msgID); err != nil {
+	if _, err := store.UnsafeDBForTest().Exec(`INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name) VALUES (?, 's', 't1', 'Read')`, msgID); err != nil {
 		t.Fatalf("insert old-format tool call: %v", err)
 	}
 	var dur int
-	if err := db.QueryRow(`SELECT duration_ms FROM chat_tool_calls WHERE tool_id = 't1'`).Scan(&dur); err != nil {
+	if err := store.UnsafeDBForTest().QueryRow(`SELECT duration_ms FROM chat_tool_calls WHERE tool_id = 't1'`).Scan(&dur); err != nil {
 		t.Fatalf("select duration_ms: %v", err)
 	}
 	if dur != 0 {
@@ -378,13 +380,12 @@ CREATE TABLE chat_sessions (
 		t.Fatalf("initTestDB: %v", err)
 	}
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
-	_ = dbRead
 
 	var hasSeq int
-	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_thinking') WHERE name='seq'").Scan(&hasSeq); err != nil {
+	if err := store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_thinking') WHERE name='seq'").Scan(&hasSeq); err != nil {
 		t.Fatalf("query column info: %v", err)
 	}
 	if hasSeq != 1 {
@@ -393,7 +394,7 @@ CREATE TABLE chat_sessions (
 
 	// Existing row migrated as a seq=0 single chunk, text preserved.
 	var text string
-	if err := db.QueryRow(`SELECT text FROM chat_thinking WHERE think_id = 'th_old1' AND seq = 0`).Scan(&text); err != nil {
+	if err := store.UnsafeDBForTest().QueryRow(`SELECT text FROM chat_thinking WHERE think_id = 'th_old1' AND seq = 0`).Scan(&text); err != nil {
 		t.Fatalf("query migrated thinking: %v", err)
 	}
 	if text != "full thinking text" {
@@ -401,7 +402,7 @@ CREATE TABLE chat_sessions (
 	}
 
 	// New unique constraint allows multiple seq chunks per think_id.
-	if _, err := db.Exec(`INSERT INTO chat_thinking (message_id, session_id, think_id, seq, text) VALUES (1, 's', 'th_old1', 1, 'delta')`); err != nil {
+	if _, err := store.UnsafeDBForTest().Exec(`INSERT INTO chat_thinking (message_id, session_id, think_id, seq, text) VALUES (1, 's', 'th_old1', 1, 'delta')`); err != nil {
 		t.Fatalf("insert seq=1 chunk must succeed under new constraint: %v", err)
 	}
 
@@ -410,7 +411,7 @@ CREATE TABLE chat_sessions (
 		t.Fatalf("second initTestDB: %v", err)
 	}
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM chat_thinking WHERE think_id = 'th_old1'`).Scan(&count); err != nil {
+	if err := store.UnsafeDBForTest().QueryRow(`SELECT COUNT(*) FROM chat_thinking WHERE think_id = 'th_old1'`).Scan(&count); err != nil {
 		t.Fatalf("count chunks: %v", err)
 	}
 	if count != 2 {

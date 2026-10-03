@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -42,7 +44,7 @@ func setupDrainTest(t *testing.T) {
 
 // drainTestSchema is the chat_history/chat_sessions schema used by drain tests
 // (mirrors the main test schema in chat_test.go but lives in package service).
-const drainTestSchema = ProjectsDDL + `
+const drainTestSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
@@ -94,15 +96,15 @@ func setupDrainSession(t *testing.T, sessionID string) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(drainTestSchema)
 	assert.NoError(t, err)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	// The fixture references projects by path literals in SQL subqueries.
-	SeedTestProjectsForTest(t)
+	store.SeedTestProjectsForTest(t)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
 	})
 	_, err = db.Exec(
-		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'Drain')`, sessionID, NormalizeProjectPath("/test"),
+		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'Drain')`, sessionID, store.NormalizeProjectPath("/test"),
 	)
 	assert.NoError(t, err)
 }
@@ -601,7 +603,7 @@ func TestCancelQueuedMessage_DeletesRow(t *testing.T) {
 
 	// The canceled row is gone from queued_messages entirely.
 	var remaining int
-	err = UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ? AND queue_id = ?",
 		sessionID, "q-cancel",
 	).Scan(&remaining)
@@ -638,7 +640,7 @@ func TestClearQueuedMessages_DeletesRows(t *testing.T) {
 
 	assert.Equal(t, 0, GetQueuedCount(sessionID))
 	var remaining int
-	err := UnsafeDBForTest().QueryRow(
+	err := store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ?",
 		sessionID,
 	).Scan(&remaining)

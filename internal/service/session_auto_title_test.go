@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 
@@ -46,13 +48,13 @@ const testProjectID = 1
 // canonicalized because the registry stores canonical paths and the accessors
 // resolve a project_id back to that form — on Windows filepath.Abs("/test") is
 // a drive-rooted path, not "/test".
-var testProjectPath = NormalizeProjectPath("/test")
+var testProjectPath = store.NormalizeProjectPath("/test")
 
 // ensureTestProject registers testProjectPath in the projects registry, so
 // fixtures that store project_id = testProjectID can resolve it back to a path.
 func ensureTestProject(t *testing.T) {
 	t.Helper()
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO projects (id, path) VALUES (?, ?) ON CONFLICT(id) DO NOTHING",
 		testProjectID, testProjectPath,
 	)
@@ -62,7 +64,7 @@ func ensureTestProject(t *testing.T) {
 func insertSessionWithTitle(t *testing.T, sessionID, title, source string) {
 	t.Helper()
 	ensureTestProject(t)
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, title_source) VALUES (?, ?, 'claude', ?, ?)",
 		sessionID, testProjectID, title, source,
 	)
@@ -72,7 +74,7 @@ func insertSessionWithTitle(t *testing.T, sessionID, title, source string) {
 func insertAutoRenameUserMessage(t *testing.T, id int64, sessionID, content string) {
 	t.Helper()
 	ensureTestProject(t)
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, ?, 'user', ?, ?, 0)",
 		id, testProjectID, content, sessionID,
 	)
@@ -82,7 +84,7 @@ func insertAutoRenameUserMessage(t *testing.T, id int64, sessionID, content stri
 func sessionTitleOf(t *testing.T, sessionID string) string {
 	t.Helper()
 	var title string
-	require.NoError(t, dbRead.QueryRow("SELECT title FROM chat_sessions WHERE id = ?", sessionID).Scan(&title))
+	require.NoError(t, store.ReadDB().QueryRow("SELECT title FROM chat_sessions WHERE id = ?", sessionID).Scan(&title))
 	return title
 }
 
@@ -335,7 +337,7 @@ func TestCollectSessionUserMessages_DBErrorReturnsNil(t *testing.T) {
 	closed, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
-	cleanup := SetDBForTest(closed, closed)
+	cleanup := store.SetDBForTest(closed, closed)
 	defer cleanup()
 
 	got := CollectSessionUserMessages("sess-no-db", "extra")
@@ -350,7 +352,7 @@ func TestCollectSessionUserMessages_SkipsNonUserAndEmptyText(t *testing.T) {
 
 	insertSessionWithTitle(t, "sess-filter", "t", TitleSourcePlaceholder)
 	// assistant row — must be skipped by the role filter
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (?, 1, 'assistant', ?, ?, 0)",
 		int64(201), "assistant text", "sess-filter",
 	)
@@ -396,7 +398,7 @@ func TestSetSessionTitleAutoIfNotCustom_DBError(t *testing.T) {
 	closed, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
-	cleanup := SetDBForTest(closed, closed)
+	cleanup := store.SetDBForTest(closed, closed)
 	defer cleanup()
 
 	applied, err := SetSessionTitleAutoIfNotCustom("sess-no-db", "标题")

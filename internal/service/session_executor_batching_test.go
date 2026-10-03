@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
@@ -256,10 +258,10 @@ func TestExecutor_ThinkingFlushedPeriodically(t *testing.T) {
 	// Two chunks now: seq0="part1", seq1="part2" — the flush appends only the
 	// delta grown since the last window instead of rewriting the full text.
 	count := 0
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
 	assert.Equal(t, 2, count, "periodic flush must append incremental segments, not rewrite one row")
 	var seqs []int
-	rows, err := dbRead.Query("SELECT seq FROM chat_thinking WHERE message_id = ? ORDER BY seq", msgID)
+	rows, err := store.ReadDB().Query("SELECT seq FROM chat_thinking WHERE message_id = ? ORDER BY seq", msgID)
 	require.NoError(t, err)
 	defer rows.Close()
 	for rows.Next() {
@@ -320,14 +322,14 @@ func TestExecutor_ThinkingFlush_FinalizeReusesID(t *testing.T) {
 
 	// No duplicate rows for that id.
 	count := 0
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = ?", firstID).Scan(&count)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = ?", firstID).Scan(&count)
 	assert.Equal(t, 1, count)
 
 	// The finalized content's slim thinking block must reference the SAME
 	// periodic-flush think_id, so the frontend's lazy-load (think_id +
 	// message_id) resolves to the row that the periodic flush kept warm.
 	var content string
-	err = dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
+	err = store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
 	require.NoError(t, err)
 	var contentMap map[string]any
 	require.NoError(t, json.Unmarshal([]byte(content), &contentMap))
@@ -418,7 +420,7 @@ func TestExecutor_ContentReset_ClearsThinkingAndLastWritten(t *testing.T) {
 
 	// Stale chat_thinking row removed.
 	var cnt int
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&cnt)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&cnt)
 	assert.Zero(t, cnt, "content_reset must delete stale periodic-flush thinking rows")
 
 	// lastWrittenContent reset so the retry's first flush always writes.
@@ -428,7 +430,7 @@ func TestExecutor_ContentReset_ClearsThinkingAndLastWritten(t *testing.T) {
 
 	// No stale thinking visible for the message.
 	var cntAfter int
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&cntAfter)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&cntAfter)
 	assert.Zero(t, cntAfter, "no thinking rows must reappear after the retry flush with empty blocks")
 }
 
@@ -492,7 +494,7 @@ func TestExecutor_ForceFlush_ThenRateLimitedFlush_KeepsSlimThinking(t *testing.T
 	require.NotNil(t, rec)
 	assert.Equal(t, "sticky reasoning", rec.Text, "no duplicated text after force flush + rate-limited flush")
 	var cnt int
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = ?", firstID).Scan(&cnt)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = ?", firstID).Scan(&cnt)
 	assert.Equal(t, 1, cnt, "force flush rewrote seq=0; rate-limited flush must not append a duplicate chunk")
 }
 
@@ -544,7 +546,7 @@ func TestExecutor_ForceFlush_ThenGrowth_FullRewrite(t *testing.T) {
 
 	// Exactly one chunk: force mode rewrites seq=0 rather than appending.
 	var seqs []int
-	rows, err := dbRead.Query("SELECT seq FROM chat_thinking WHERE think_id = ? ORDER BY seq", firstID)
+	rows, err := store.ReadDB().Query("SELECT seq FROM chat_thinking WHERE think_id = ? ORDER BY seq", firstID)
 	require.NoError(t, err)
 	defer rows.Close()
 	for rows.Next() {
@@ -754,7 +756,7 @@ func TestExecutor_DoneMarkerThenFinalize_NoDuplicates(t *testing.T) {
 	require.NotZero(t, finalized.MsgID)
 
 	var content string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
 	require.NoError(t, err)
 	assert.Contains(t, content, firstID, "finalized slim marker must keep the mid-stream think_id")
 
@@ -771,7 +773,7 @@ func TestExecutor_DoneMarkerThenFinalize_NoDuplicates(t *testing.T) {
 
 	// Exactly one seq=0 row — no duplicate/orphan chunks.
 	count := 0
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = ? AND message_id = ?", firstID, finalized.MsgID).Scan(&count)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE think_id = ? AND message_id = ?", firstID, finalized.MsgID).Scan(&count)
 	assert.Equal(t, 1, count, "Finalize must collapse the streaming chunks into one seq=0 row")
 
 	rec, err := GetThinking(firstID, finalized.MsgID)
@@ -986,7 +988,7 @@ func TestExecutor_ThinkingDoneWithoutDBDoesNotPanic(t *testing.T) {
 	}
 	defer func() { model.Agents = nil }()
 
-	restoreDB := SetDBForTest(nil, nil)
+	restoreDB := store.SetDBForTest(nil, nil)
 	defer restoreDB()
 
 	// The message id is set so that, without the guard, the flush would proceed

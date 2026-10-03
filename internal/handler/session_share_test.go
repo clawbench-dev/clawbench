@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -20,7 +22,7 @@ func seedShareSession(t *testing.T, env *testEnv, sessionID string) (string, []i
 	_, err := env.DB().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, model)
 		 VALUES (?, ?, 'codebuddy', 'Shared chat', 'codebuddy', 'claude-sonnet-4')`,
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	require.NoError(t, err)
 
@@ -32,7 +34,7 @@ func seedShareSession(t *testing.T, env *testEnv, sessionID string) (string, []i
 		res, err := env.DB().Exec(
 			`INSERT INTO chat_history (project_id, session_id, role, content, backend)
 			 VALUES (?, ?, ?, ?, 'codebuddy')`,
-			service.ProjectIDForTest(t, env.ProjectDir), sessionID, m.role, m.content,
+			store.ProjectIDForTest(t, env.ProjectDir), sessionID, m.role, m.content,
 		)
 		require.NoError(t, err)
 		id, err := res.LastInsertId()
@@ -379,7 +381,7 @@ func TestSessionShareManage_NoShareableContent(t *testing.T) {
 
 	_, err := env.DB().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('empty', ?, 'codebuddy', 'Empty')`,
-		service.ProjectIDForTest(t, env.ProjectDir),
+		store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	require.NoError(t, err)
 
@@ -445,7 +447,7 @@ func moveSessionToProject(t *testing.T, env *testEnv, sessionID, projectPath str
 	t.Helper()
 	// Repoint the session (and its messages) at the project id for projectPath,
 	// registering that project if the fixture has not seen it yet.
-	pid, idErr := service.ProjectIDForPath(projectPath)
+	pid, idErr := store.ProjectIDForPath(projectPath)
 	require.NoError(t, idErr)
 	_, err := env.DB().Exec("UPDATE chat_sessions SET project_id = ? WHERE id = ?", pid, sessionID)
 	require.NoError(t, err)

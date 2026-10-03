@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
@@ -23,11 +25,11 @@ func TestServeMessageClusters_CachedResults(t *testing.T) {
 	defer teardown()
 
 	// Pre-populate cluster cache
-	entries := []service.ClusterCacheEntry{
+	entries := []store.ClusterCacheEntry{
 		{Representative: "继续写代码", Variants: "[\"继续写代码\",\"请继续写\"]", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
 		{Representative: "提交代码", Variants: "[\"提交代码\",\"commit\"]", TotalCount: 3, RepresentativeCount: 2, SortOrder: 1},
 	}
-	err := service.SaveClusterCache(entries, "embedding")
+	err := store.SaveClusterCache(entries, "embedding")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
@@ -81,12 +83,12 @@ func TestServeMessageClusters_FiltersLowCount(t *testing.T) {
 	defer teardown()
 
 	// Pre-populate cluster cache with mixed counts
-	entries := []service.ClusterCacheEntry{
+	entries := []store.ClusterCacheEntry{
 		{Representative: "高频消息", Variants: "[\"高频\",\"高频消息\"]", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
 		{Representative: "低频1", Variants: "[\"低频\"]", TotalCount: 2, RepresentativeCount: 1, SortOrder: 1},
 		{Representative: "低频2", Variants: "[\"低频2\"]", TotalCount: 1, RepresentativeCount: 1, SortOrder: 2},
 	}
-	err := service.SaveClusterCache(entries, "fts")
+	err := store.SaveClusterCache(entries, "fts")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
@@ -110,12 +112,12 @@ func TestServeMessageClusters_FiltersShortText(t *testing.T) {
 	defer teardown()
 
 	// Pre-populate cluster cache with short and long representatives
-	entries := []service.ClusterCacheEntry{
+	entries := []store.ClusterCacheEntry{
 		{Representative: "OK", Variants: "[\"ok\",\"OK\"]", TotalCount: 10, RepresentativeCount: 5, SortOrder: 0},
 		{Representative: "好的", Variants: "[\"好\",\"好的\"]", TotalCount: 5, RepresentativeCount: 3, SortOrder: 1},
 		{Representative: "继续写代码", Variants: "[\"继续写\",\"继续写代码\"]", TotalCount: 8, RepresentativeCount: 4, SortOrder: 2},
 	}
-	err := service.SaveClusterCache(entries, "fts")
+	err := store.SaveClusterCache(entries, "fts")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)
@@ -222,7 +224,7 @@ func TestServeMessageClustersComputeStatus_ShowProgress(t *testing.T) {
 	rag.GlobalClusterWorker = worker
 
 	// Write some meta state
-	err := service.SaveClusterMeta("computing", "embedding", 100, 0, 500)
+	err := store.SaveClusterMeta("computing", "embedding", 100, 0, 500)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters/compute/status", nil)
@@ -361,10 +363,10 @@ func TestServeMessageClusters_InvalidVariantsFallback(t *testing.T) {
 
 	// Cache entry with malformed variants JSON — handler should fall back
 	// to the representative text instead of failing the whole request.
-	entries := []service.ClusterCacheEntry{
+	entries := []store.ClusterCacheEntry{
 		{Representative: "继续写代码", Variants: "{not-valid-json", TotalCount: 5, RepresentativeCount: 3, SortOrder: 0},
 	}
-	err := service.SaveClusterCache(entries, "fts")
+	err := store.SaveClusterCache(entries, "fts")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/chat/message-clusters", nil)

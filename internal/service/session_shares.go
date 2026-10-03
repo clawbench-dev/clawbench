@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"clawbench/internal/store"
 )
 
 // SessionSharesDDL creates the session_shares table.
@@ -56,11 +58,11 @@ func UpsertSessionShare(sessionID, title, backend string, messageCount int, payl
 
 	if existing {
 		// Rotate: delete the old row first so the previous token stops working.
-		if _, err := WriteExec("DELETE FROM session_shares WHERE session_id = ?", sessionID); err != nil {
+		if _, err := store.WriteExec("DELETE FROM session_shares WHERE session_id = ?", sessionID); err != nil {
 			return "", false, fmt.Errorf("delete stale session share: %w", err)
 		}
 	}
-	if _, err := WriteExec(
+	if _, err := store.WriteExec(
 		"INSERT INTO session_shares (token, session_id, title, backend, message_count, payload) VALUES (?, ?, ?, ?, ?, ?)",
 		token, sessionID, title, backend, messageCount, payload,
 	); err != nil {
@@ -75,7 +77,7 @@ func GetSessionShareByToken(token string) (payload, title string, messageCount i
 	if token == "" {
 		return "", "", 0, false, nil
 	}
-	row := ReadDB().QueryRow("SELECT payload, title, message_count FROM session_shares WHERE token = ?", token)
+	row := store.ReadDB().QueryRow("SELECT payload, title, message_count FROM session_shares WHERE token = ?", token)
 	if err := row.Scan(&payload, &title, &messageCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", 0, false, nil
@@ -91,7 +93,7 @@ func GetSessionShareBySession(sessionID string) (token string, ok bool, err erro
 	if sessionID == "" {
 		return "", false, nil
 	}
-	row := ReadDB().QueryRow("SELECT token FROM session_shares WHERE session_id = ?", sessionID)
+	row := store.ReadDB().QueryRow("SELECT token FROM session_shares WHERE session_id = ?", sessionID)
 	if err := row.Scan(&token); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", false, nil
@@ -111,7 +113,7 @@ func GetSessionShareProjectByToken(token string) (projectPath string, ok bool, e
 	if token == "" {
 		return "", false, nil
 	}
-	row := ReadDB().QueryRow(
+	row := store.ReadDB().QueryRow(
 		`SELECT COALESCE(p.path, '')
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id
@@ -133,7 +135,7 @@ func DeleteSessionShareByToken(token string) error {
 	if token == "" {
 		return nil
 	}
-	if _, err := WriteExec("DELETE FROM session_shares WHERE token = ?", token); err != nil {
+	if _, err := store.WriteExec("DELETE FROM session_shares WHERE token = ?", token); err != nil {
 		return fmt.Errorf("delete session share by token: %w", err)
 	}
 	return nil
@@ -144,7 +146,7 @@ func DeleteSessionShareBySession(sessionID string) error {
 	if sessionID == "" {
 		return nil
 	}
-	if _, err := WriteExec("DELETE FROM session_shares WHERE session_id = ?", sessionID); err != nil {
+	if _, err := store.WriteExec("DELETE FROM session_shares WHERE session_id = ?", sessionID); err != nil {
 		return fmt.Errorf("delete session share by session: %w", err)
 	}
 	return nil
@@ -167,7 +169,7 @@ func DeleteSessionSharesBySessionIDs(sessionIDs []string) error {
 	for _, id := range clean {
 		args = append(args, id)
 	}
-	if _, err := WriteExec("DELETE FROM session_shares WHERE session_id IN ("+placeholders+")", args...); err != nil {
+	if _, err := store.WriteExec("DELETE FROM session_shares WHERE session_id IN ("+placeholders+")", args...); err != nil {
 		return fmt.Errorf("delete session shares by session ids: %w", err)
 	}
 	return nil
@@ -175,7 +177,7 @@ func DeleteSessionSharesBySessionIDs(sessionIDs []string) error {
 
 // DeleteAllSessionShares revokes every session share link.
 func DeleteAllSessionShares() error {
-	if _, err := WriteExec("DELETE FROM session_shares"); err != nil {
+	if _, err := store.WriteExec("DELETE FROM session_shares"); err != nil {
 		return fmt.Errorf("delete all session shares: %w", err)
 	}
 	return nil
@@ -203,16 +205,16 @@ type SessionShare struct {
 // Scoped by project, unlike ListFileShares: a conversation title is private
 // content, so listing another project's shares would disclose it. The JOIN is
 // an inner one because a share cannot outlive its session — both
-// HardDeleteSession and PurgeArchivedData revoke shares in the same
+// HardDeleteSession and store.PurgeArchivedData revoke shares in the same
 // transaction that removes the session row, so every share has a session to
 // join against. (Archiving is NOT a delete: an archived session keeps both its
 // row and its share.)
 func ListSessionShares(projectPath string) ([]SessionShare, error) {
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return nil, idErr
 	}
-	rows, err := ReadDB().Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT sh.token, sh.session_id, sh.title, sh.backend, sh.message_count, sh.created_at, cs.archived
 		   FROM session_shares sh
 		   JOIN chat_sessions cs ON cs.id = sh.session_id

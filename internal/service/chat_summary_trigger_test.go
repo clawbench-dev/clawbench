@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -84,7 +86,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		t.Fatalf("failed to create tables: %v", err)
 	}
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	teardown := func() {
 		cleanup()
 		db.Close()

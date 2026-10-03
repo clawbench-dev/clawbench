@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -73,7 +75,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	_, _ = db.Exec("PRAGMA busy_timeout=5000")
 
 	// Create tables
-	_, err = db.Exec(service.ProjectsDDL)
+	_, err = db.Exec(store.ProjectsDDL)
 	if err != nil {
 		t.Fatalf("failed to create projects table: %v", err)
 	}
@@ -370,7 +372,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		}
 	}
 
-	service.SetDBForTest(db, db)
+	store.SetDBForTest(db, db)
 
 	// Register mock agents so GetDefaultAgentID() works
 	model.Agents = map[string]*model.Agent{
@@ -386,7 +388,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		OrigToken:       origToken,
 		OrigCookieToken: origCookieToken,
 		OrigRootPaths:   origRootPaths,
-		OrigDB:          service.UnsafeDBForTest(),
+		OrigDB:          store.UnsafeDBForTest(),
 	}
 
 	teardown := func() {
@@ -396,7 +398,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
 		model.DefaultAgentID = origDefaultAgentID
-		service.SetDBForTest(env.OrigDB, env.OrigDB)
+		store.SetDBForTest(env.OrigDB, env.OrigDB)
 		_ = db.Close()
 	}
 

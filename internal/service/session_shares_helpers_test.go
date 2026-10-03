@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -114,7 +116,7 @@ func TestSessionShares_ClosedDBSurfacesErrors(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 
 	_, _, _, _, err = GetSessionShareByToken("t")

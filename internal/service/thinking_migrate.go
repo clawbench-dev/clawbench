@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	"clawbench/internal/store"
 )
 
 // MigrateThinkingFromContent scans assistant messages that contain thinking blocks
@@ -16,7 +18,7 @@ func MigrateThinkingFromContent() bool {
 	// Both compact ("type":"thinking") and spaced ("type": "thinking") JSON are
 	// matched because historical content may contain either.
 	var needed int
-	if err := dbRead.QueryRowContext(context.Background(), `
+	if err := store.ReadDB().QueryRowContext(context.Background(), `
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND (h.content LIKE '%"type":"thinking"%' OR h.content LIKE '%"type": "thinking"%')
@@ -46,7 +48,7 @@ func MigrateThinkingFromContent() bool {
 	failed := 0
 
 	for {
-		rows, err := dbRead.QueryContext(
+		rows, err := store.ReadDB().QueryContext(
 			context.Background(), `
 			SELECT h.id, h.session_id, h.content FROM chat_history h
 			WHERE h.role = 'assistant'
@@ -139,11 +141,11 @@ func migrateThinkingForRow(msgID int64, sessionID, content string) error {
 	if slimContent == content {
 		return nil
 	}
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 	for _, rec := range records {
 		if _, err = tx.ExecContext(context.Background(), `

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -787,7 +789,7 @@ func TestShareLocal_LegacyRowWithoutRootFailsClosed(t *testing.T) {
 	token := createShareViaAPI(t, env, absPath)
 
 	// Blank the root to simulate a pre-migration row.
-	_, err := service.WriteExec("UPDATE file_shares SET root = '' WHERE token = ?", token)
+	_, err := store.WriteExec("UPDATE file_shares SET root = '' WHERE token = ?", token)
 	require.NoError(t, err)
 
 	// Same-directory media still works.
@@ -825,7 +827,7 @@ func TestResolveShareRoot_NoCookieNeverWidensToHome(t *testing.T) {
 
 	// Make GetDefaultProject's first two steps unusable so that, if it were
 	// still consulted, it would reach the home-directory fallback.
-	_, err = service.WriteExec("DELETE FROM recent_projects")
+	_, err = store.WriteExec("DELETE FROM recent_projects")
 	require.NoError(t, err)
 
 	// A project under $HOME — the normal production layout.
@@ -1062,7 +1064,7 @@ func TestShareList_RevokeByToken_OwnershipLookupError(t *testing.T) {
 	closed, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closed)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closed)
 	defer cleanup()
 
 	req := newRequest(t, http.MethodDelete, "/api/share/list",
@@ -1086,7 +1088,7 @@ func TestShareList_RevokeByToken_DeleteError(t *testing.T) {
 	closed, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
-	cleanup := service.SetDBForTest(closed, service.UnsafeDBForTest())
+	cleanup := store.SetDBForTest(closed, store.UnsafeDBForTest())
 	defer cleanup()
 
 	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]string{"token": token})
@@ -1107,7 +1109,7 @@ func TestShareList_DeleteAll_Error(t *testing.T) {
 	closed, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	require.NoError(t, closed.Close())
-	cleanup := service.SetDBForTest(closed, service.UnsafeDBForTest())
+	cleanup := store.SetDBForTest(closed, store.UnsafeDBForTest())
 	defer cleanup()
 
 	clearReq := newRequest(t, http.MethodDelete, "/api/share/list", map[string]any{"all": true})

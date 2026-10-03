@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -26,7 +28,7 @@ func setupTestDBForAgents(t *testing.T) *sql.DB {
 	require.NoError(t, err)
 
 	// Save and replace global DB
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
