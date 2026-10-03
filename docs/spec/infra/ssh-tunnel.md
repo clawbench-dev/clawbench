@@ -95,19 +95,21 @@ sequenceDiagram
 - **自动 host key 是安全权衡**：生产环境应该使用固定 host key 并验证指纹，但 ClawBench 的场景是个人开发工具，自动生成降低了配置门槛——用户首次连接时无法验证 host key 真实性，但对于个人使用场景可接受
 - **指数退避封锁是 IP 级别**：同一 IP 连续失败 5 次后封锁，不是全局封锁——不会因为一个攻击者而影响合法用户
 - **状态查询走 HTTP 而非事件**：SSH 服务器是常驻 goroutine，自身**不发布 WS 事件**。Web UI 通过 `GET /api/ssh/info/full`（需鉴权）定时轮询 `SSHConnectionStats{Connected, ClientCount, ActiveChannels, LastConnectedAt}`。这种轮询模型比事件推送更简单，且 SSH 状态变更频率低，轮询足够
+- **重启必须先释放 SSH 端口，否则映射永久不可用**：`build.sh --restart` 只等主端口 20000 释放就拉起新进程，而旧进程的 SSH 监听若靠一个早期注册的 `defer` 关闭，会因 defer 是 LIFO 而排在所有慢 teardown（terminal / file watcher / IM / frp）之后**最后**才跑——端口被多占数秒（随会话数增长无上界），新进程绑定差之毫秒即失败。因此 shutdown 第 0 步显式 `releaseSSHPortOnShutdown()` 关掉 SSH 监听（引用从 `handler.GetSSHServer()` 读，不用 main 局部变量——热重载换端口/开关后局部变量会指向已关闭的旧 server）。
+- **绑定失败必须清引用，否则死引用永不重试**：启动路径若先 `SetSSHServer(ref)` 再 `ListenAndServe()`，绑定失败只记一条 ERROR 而 ref 仍非 nil，于是 `testPortForward` 拿到引用、拨号被拒、此后**永不重试**（配置未变，hot-reload 只打 "reconfigured" 就返回）。修法是失败即 `ClearSSHServer()`（compare-and-clear，防止异步失败回调把热重载刚装好的健康 server 下线），并由 `listenWithRetry()` 有界重试覆盖 SIGKILL 等不走 shutdown 的情形。重试判据用**任意绑定失败**而非 `errors.Is(err, syscall.EADDRINUSE)`——Go 在 Windows 的 `EADDRINUSE` 是发明值，永不等于真正的 `WSAEADDRINUSE`。
 
 ## 传输方式
 
-端口转发支持两种线缆，配置项 `port_forward.transport` 仍保留三值（`internal/model/port_forward.go`），但**服务端已把它钉死为 `both`**：`internal/model/defaults.go` 的 `ApplyDefaults` 无条件归一（yaml 写 `ssh` / `h2` / `both` / 非法值 / 缺省，最终都是 `both`），PATCH 路径同样忽略传入值。**「服务端只准 ssh」这个状态不存在。**
+端口转发支持两种线缆（SSH 通道 / h2 流隧道），选择**由客户端本地持有**：桌面端存 Electron store（`tunnelTransport`，值 `ssh` | `h2`），Android 存 SharedPreferences（`tunnel_transport_h2_enabled` 布尔）。服务端的 `port_forward.transport` 字段仍保留但**已钉死为 `both`**（`internal/model/defaults.go` 的 `ApplyDefaults` 无条件归一，yaml 写 `ssh` / `h2` / `both` / 非法值 / 缺省最终都是 `both`），PATCH 路径同样忽略传入值。**「服务端只准 ssh」这个状态不存在。**
 
-**为什么钉死**：该字段的消费方已只剩一处——web 端健康检查门控（`web/src/composables/usePortForward.ts` 的 `tunnelTransportAllowsH2()`）。两个原生客户端都不消费它（见下），因此 `transport: ssh` 对客户端**没有约束力**——已开 h2 的客户端照样能走 h2，服务端无法阻止。一个无法执行的设置比没有设置更糟，故直接移除其可配置性（review M5）。
+**为什么服务端钉死、选择放在客户端**：SSH 监听器在服务端（`mainPort+1`），而传输选择在客户端本地——服务端读不到客户端的选择，因此无法据此决定是否监听。于是 SSH 监听器**无条件常开**（`ApplyDefaults` 把 `port_forward.enabled` 也钉死为 `true`；原先的开关已移除——一个客户端关掉监听会连累另一个客户端，包括 web UI 文档里的手动 `ssh -L` 路径），客户端选哪条线是它自己的事。`transport` 字段只剩一个消费者：web 端健康检查门控（`web/src/composables/usePortForward.ts` 的 `tunnelTransportAllowsH2()`，仅 `'h2' | 'both'` 为真）。一个无法执行的设置比没有设置更糟，故直接移除其可配置性（review M5）。
 
-> **⚠️ 字段与 `both` 值必须保留，不能删除**：web 的 `tunnelTransportAllowsH2()` 读 `/api/config` 的 `port_forward.transport`，仅 `'h2' | 'both'` 为真。若字段消失，前端读到 `undefined` → 判为 ssh-only → **反而隐藏 h2 面板与横幅**（与本 PR 的 h2 修复冲突）。所以正确形态是「字段保留、值恒为 `both`」。
+> **⚠️ 字段与 `both` 值必须保留，不能删除**：web 的 `tunnelTransportAllowsH2()` 读 `/api/config` 的 `port_forward.transport`（仅 `'h2' | 'both'` 为真）。若字段消失，前端读到 `undefined` → 判为 ssh-only → `portForwardUnavailable(sshEnabled, transportAllowsH2)` 会在「SSH 未启用」的安装上把端口映射判定为**不可用**，从而隐藏整个端口映射 Dock 页签、禁用 localhost 链接标注、并跳过健康检查与 5s 恢复轮询——**h2-only 的安装会凭空失去端口映射**。所以正确形态是「字段保留、值恒为 `both`」。
 
-> **⚠️ 两个原生客户端本就不消费该值**（原先「客户端读 `/api/config` 后决定探测哪条线」的语义已失效）：
-> - **Electron 写死 SSH**：`desktop/src/main/bridge.ts` 的 `native:set-tunnel-transport` handler **只对 `'ssh'` 调用 `setTransportPreference`**，`'h2'` / `'both'` 被忽略；`tunnel.ts` 的三值能力与测试保持不变。
-> - **Android 用本地开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；Android 侧只有一个本地布尔开关，**没有 `BOTH`**，不做失败回退。
-> - 前端向原生推送 `transport` 的 `syncTunnelTransportToNative` 已删除（连同 `clawbenchNative.ts` 的 `setTunnelTransport?` 声明）。
+> **⚠️ 两个原生客户端各自持有选择，都**不消费**服务端 `port_forward.transport`**：
+> - **Electron 可切换且持久化**：设置页的传输选择器经 `native:set-tunnel-transport` 写 Electron store（`desktop/src/main/tunnel.ts` 的 `persistTransportPreference`，只接受 `'ssh' | 'h2'`，其余拒绝）；`native:get-tunnel-transport` 读偏好，`native:get-active-tunnel-transport` 读**实际承载本次连接**的线缆（`getActiveTransport`，与偏好区分——偏好是意图、active 是事实）。`transport.ts` 的 `TransportPreference` 只有 `'ssh' | 'h2'` 两值，**没有 `both`**；旧存储的 `'both'` 在加载时迁移为 `'h2'`（`both` 的语义是"先探 h2"，故迁移到 h2 而非 ssh）。
+> - **Android 用本地布尔开关**：真相源是 SharedPreferences（key `tunnel_transport_h2_enabled`，默认 `false` = SSH），经 `BackgroundService.isTunnelTransportH2Enabled(Context)` / `setTunnelTransportH2Enabled(Context, boolean)` 读写；桥方法同名（`get/setTunnelTransportH2Enabled`），**没有 `BOTH`**，不做失败回退。
+> - 前端向原生推送 `transport` 的 `syncTunnelTransportToNative` 已删除。设置页的两个原生宿主渲染**同一个 SSH / h2 二选一选择器**，只是桥词汇不同（Electron 用 `get/setTunnelTransport` 字符串，Android 用布尔 `get/setTunnelTransportH2Enabled`）——浏览器两者都没有，但 web 仍能读服务端配置做健康门控。
 
 因此下表描述的是**字段的历史语义**，现已全部收敛为 `both`：
 
@@ -115,11 +117,11 @@ sequenceDiagram
 |---|---|---|
 | `ssh` | 仅 SSH 通道 | **不可达**：`ApplyDefaults` 与 PATCH 均归一为 `both` |
 | `h2` | 仅 h2（h2-over-TLS → h2c） | **不可达**：同上 |
-| `both` | **默认**。优先 h2，失败回退 SSH | **唯一取值** |
+| `both` | **默认**。优先 h2，失败回退 SSH | **唯一取值**（仅服务端字段；客户端已无此语义，选择是显式二选一） |
 
 `transport` 与两个服务端事实的关系：
 
-- **SSH 监听器只由 `port_forward.enabled` 控制**（`cmd/server/main.go` 的 `ssh.NewServer` 分支）。因此 **SSH 仍监听 `mainPort+1`**，与 `transport` 无关。
+- **SSH 监听器无条件常开**（`cmd/server/main.go` 直接 `ssh.NewServer` + `startSSHServer`，`port_forward.enabled` 已被 `ApplyDefaults` 钉死为 `true`）。因此 **SSH 始终监听 `mainPort+1`**，与 `transport` 无关。
 - **h2 的两个端点（`POST /api/tunnel/stream`、`POST /api/tunnel/control`）始终可用**：注册表现在**恒创建**（见下），端点因此不会返回 503。**注意 `POST /api/tunnel/control` 仅接受 HTTP/2**：认领流的作用域是 `Binding.ConnID = r.RemoteAddr`，只有在 h2 上多条流共享同一会话时才正确标识对端；h1 下控制流独占其 TCP 连接，认领流必然另开连接、`RemoteAddr` 不同，认领会被判为「他人 token」而得到 403。服务端因此在 h1 上直接返回 **`426 Upgrade Required`**，而不是等到认领阶段才 403。`-R` 在 HTTP/1.1 下请走 SSH 传输。
 - **注册表恒创建**：`shouldCreateProxyRegistry` 已简化为 `return true`（删除了原先的 `Transport != "ssh"` 比较——`Transport` 恒为 `both`，该比较恒真）。**不再存在让 h2 端点返回 `503 PortForwardUnavailable` 的配置组合**；503 现在只可能来自「手动把 `service.ProxyService` 置 nil」（测试）或进程异常。
 
@@ -143,30 +145,32 @@ fresh-start，每行独立端口 + data-dir。探测目标端口无监听者，�
 
 钉死后的两点结论：
 
-1. **SSH 仍监听 `mainPort+1`**——SSH 监听器只由 `enabled` 控制，与 `transport` 无关。
+1. **SSH 仍监听 `mainPort+1`**——SSH 监听器无条件常开，与 `transport` 无关。
 2. **h2 端点不再有 503 组合**——注册表恒创建，唯一历史 503 单元格（`enabled:false && transport:ssh`）已不可表达。
 
 该语义由 `cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry`（`return true`）与 `cmd/server/proxy_registry_gate_test.go` 的表格测试钉死。
 
-### 传输优先级链
+### 传输选择：二选一，无自动回退
 
-> **⚠️ 当前桌面与 Android 均不按此链探测**：Electron 在 IPC 边界固定 SSH（`'h2'`/`'both'` 被 bridge 忽略），Android 由本地开关在 SSH / h2 之间**二选一**（默认 SSH，无失败回退）。本节描述的「h2-over-TLS → h2c → SSH」链路是 `tunnel.ts` 保留的能力，也是未来若恢复「客户端消费 `transport`」时的目标语义。
+两个原生宿主都让用户**显式二选一**（`ssh` 或 `h2`），**没有 `both` / auto 模式**。曾经的 `both` 语义是"先探 h2、失败静默回退 SSH"，它让用户的选择不可观测（同一个设置可能走任意一条线），并在一条线已知不可用的部署上把连接超时翻倍。现在设置页直接问要哪条线——用户比探测更清楚自己的部署。
 
-`transport: both` 时，**`tunnel.ts` 的候选链**为：首次连接严格按顺序探测 **h2-over-TLS → h2c → SSH**。`transport` 只是把这条链裁剪成子集：`ssh` → 只探测 SSH，`h2` → 只探测 h2-over-TLS → h2c。（如上所述，当前 bridge 只会把该偏好设为 `ssh`，因此实际从不进入 h2 分支。）
+- **Electron**：`TransportPreference = 'ssh' | 'h2'`（`desktop/src/main/transport.ts`），持久化到 Electron store；旧存的 `'both'` 在加载时迁移为 `'h2'`。
+- **Android**：本地布尔开关（`tunnel_transport_h2_enabled`），默认 SSH。
+
+**h2 内部仍有一条候选链**（与上面的 ssh/h2 选择无关）：选定 h2 后，首次连接按 **h2-over-TLS → h2c** 顺序探测，并**记住上次成功的 kind** 供重连复用——明文部署下首次会白付一次 TLS 失败（握手即被拒，很快）。这是 `H2TransportKind` 的偏好，不是自动回退到 SSH。
 
 - **h2-over-TLS**：实例开了 TLS 时，`ServeTLS` 自动协商 ALPN `h2`——即「只要开了 TLS，20000 今天就在跑 h2」，多路复用层无需新端口。
 - **h2c**：明文部署走 prior-knowledge（不做 Upgrade 协商）。
-- **SSH**：前两者都失败时回退到既有 20001 通道。
 
-明文部署下首次连接会白付一次 TLS 失败（很快，握手即被拒），因此客户端**记住上次成功的传输方式**，重连时优先复用；只有首次连接严格按此顺序探测。服务器侧协议开关见 `cmd/server/server_protocols.go` 的 `serverProtocols`：`SetHTTP1(true)` **必须保留**（5 个 `coder/websocket` 端点依赖 `http.Hijacker`，h2 无 hijack），TLS 下加 `SetHTTP2(true)`、明文下加 `SetUnencryptedHTTP2(true)`。
+服务器侧协议开关见 `cmd/server/server_protocols.go` 的 `serverProtocols`：`SetHTTP1(true)` **必须保留**（5 个 `coder/websocket` 端点依赖 `http.Hijacker`，h2 无 hijack），TLS 下加 `SetHTTP2(true)`、明文下加 `SetUnencryptedHTTP2(true)`。
 
 > **浏览器端零改动**：`fetch()` 的 Fetch 规范里 `RequestDuplex` 只有 `"half"`（`"full"` 保留未用），无法全双工；且流式请求体仅 Chromium 支持。因此 h2 隧道只面向 Electron 与 Android 原生客户端，Web 前端不参与。详见设计文档 §2.3。
 
-### `transport` 对客户端已失效 → 服务端已钉死为 `both`
+### 服务端 `transport` 字段：保留但恒为 `both`
 
-`port_forward.transport` 仍保留三值与 `both` 值，但**服务端已无条件归一为 `both`**（`ApplyDefaults` 与 PATCH 路径均如此），`ssh` / `h2` 不再可达。两个原生客户端本就不消费它——Electron 在 bridge 层 clamp 到 `ssh`，Android 用本地 SharedPreferences 开关——因此它只剩一个消费者：web 端健康检查门控（`tunnelTransportAllowsH2()`）。
+`port_forward.transport` 仍保留三值与 `both` 值，但**服务端已无条件归一为 `both`**（`ApplyDefaults` 与 PATCH 路径均如此），`ssh` / `h2` 不再可达。两个原生客户端各自持有本地选择、不消费它，因此它只剩一个消费者：web 端健康检查门控（`tunnelTransportAllowsH2()`）。
 
-**为什么不删除字段**：删掉会让 web 读到 `undefined` → 判为 ssh-only → 隐藏 h2 面板（见上文「传输方式」的警告）。保留字段 + 恒 `both` 是唯一不破坏 web 的形态。
+**为什么不删除字段**：删掉会让 web 读到 `undefined` → 判为 ssh-only → h2-only 安装的端口映射被判为不可用、整个页签消失（见上文「传输方式」的警告）。保留字段 + 恒 `both` 是唯一不破坏 web 的形态。
 
 **为什么钉死而非继续可配**：`transport: ssh` 对客户端无约束力（客户端不读它），服务端也无法据此关闭 h2 端点，所以那是个**不可执行**的设置；保留它只会制造「服务端说 ssh、客户端走 h2」的矛盾（review M5）。钉死后该状态不存在，矛盾自然消失。
 
@@ -344,13 +348,21 @@ sequenceDiagram
 
 ### 端口守卫与注册表门控
 
-- **注册表恒创建**：`ProxyRegistry`（`service.ProxyService`）是**两种传输共用**的白名单 / 保留端口 / `SetReverseBound` 面。`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 现为 `return true`——原先的 `Enabled || transport != "ssh"` 比较已删除（`transport` 恒为 `both`，比较恒真，留着只是伪装成可配置）。**不再存在「不创建注册表」的配置**；否则 `port_forward.enabled=false` 会给隧道请求一个 nil 注册表和 503。创建注册表对 SSH 无副作用：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，**不绑任何端口**（监听仍是 SSH server 的职责，仍受 `Enabled` 门控）。
+- **注册表恒创建**：`ProxyRegistry`（`service.ProxyService`）是**两种传输共用**的白名单 / 保留端口 / `SetReverseBound` 面。`cmd/server/proxy_registry_gate.go` 的 `shouldCreateProxyRegistry` 现为 `return true`——原先的 `Enabled || transport != "ssh"` 比较已删除（`transport` 恒为 `both`，比较恒真，留着只是伪装成可配置）。**不再存在「不创建注册表」的配置**；否则隧道请求会拿到 nil 注册表和 503。创建注册表对 SSH 无副作用：只起一个 5s 健康检查 goroutine 并从 DB 恢复端口行，**不绑任何端口**（监听是 SSH server 的职责，而它无条件常开）。
 - **保留端口**：`reservedPortsFor` 恒保护主 HTTP 端口；SSH 端口仅在 SSH 启用时加入（`sshPort == 0` 表示「无 SSH 端口需保护」，**不**展开为 `mainPort+1`——h2 守卫的 `SSHPort` 字段已硬拒 `mainPort+1`）。
 
 ### h2 设计要点
 
 - **单端口是 h2 传输的核心收益**：SSH 要额外放行 `mainPort+1`，h2 复用 20000，用户只需一条防火墙规则
-- **h2 不取代 SSH**：SSH 保留为优先级链末端的兜底，也用于 h2 被中间设备阻断的场景。当前两个原生客户端里，Electron **固定走 SSH**（不探测 h2），Android 由本地开关在 SSH / h2 间二选一（默认 SSH，**无失败回退**）。
+- **h2 不取代 SSH**：SSH 保留为可选项，也用于 h2 被中间设备阻断的场景。两个原生客户端都让用户显式二选一——Electron 的传输偏好持久化到 store（默认 SSH），Android 用本地布尔开关（默认 SSH），**均无失败自动回退**（选 h2 而 h2 不可用就报错，不会偷偷改走 SSH）。
 - **`-R` 的认领机制是 h2 协议限制的必然结果**，不是设计偏好：服务端不能发起流，只能让客户端主动认领
 - **半关闭差异必须告知使用者**：依赖「target 先 FIN 后仍能持续写入」的协议在 h2 下会在 5s 后丢字节；这类场景应改用 SSH 传输
+
+### 本地监听端口被占用：自动改绑空闲端口
+
+服务端的**反向映射**端口在分配阶段自动改选（见「端口被占用时的处理」）；**客户端本地监听端口**是另一回事——它在客户端 `net.Listen` 时可能已被别的进程占用。两个原生客户端（Electron `listenForward`、Android h2 / SSH 两传输层）都做**候选扫描**：从请求端口起试到 +50，最后再试 `0`（由 OS 分配）。只有真正的「端口已占用」错误（Node `EADDRINUSE` / Android `BindException` / `"cannot be bound"`）才触发改绑，其它错误照常上报。
+
+改绑后**实际端口必须回写到服务端注册表与 UI**（新增 `POST /api/proxy/ports/rebind`：404 源不存在 / 409 新端口被占 / 400 参数非法；被拒时释放刚绑的孤儿监听器）。不变量是「注册表键 == UI URL == 真实监听端口」三者一致——否则 UI 显示的端口与实际不通。
+
+**区分两类失败，避免误导排查**：本地端口冲突弹「端口被占用」提示，隧道不可达才弹「请检查服务是否运行」——此前两者共用同一句文案，用户会往错误方向查。
 

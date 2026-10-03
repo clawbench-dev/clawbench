@@ -718,7 +718,9 @@ watch(() => props.file?.path, (path) => {
 /** Re-derive this file's markers from the accumulated baseline. */
 function restoreMarkers() {
     const f = props.file
-    if (f?.path && f.content) syncMarkersFor(f.path, 'code', f.content)
+    // `content === ''` is a valid (empty) file, not "not loaded" — `null` is the
+    // not-loaded/binary marker. See MarkdownPreview.restoreMarkers.
+    if (f?.path && f.content !== null && f.content !== undefined) syncMarkersFor(f.path, 'code', f.content)
 }
 
 function getValue() {

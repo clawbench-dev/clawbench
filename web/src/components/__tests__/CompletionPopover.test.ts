@@ -442,7 +442,7 @@ describe('CompletionPopover', () => {
 
     // ── 外部项目区隔带（跨项目显著区分）──
 
-    it('renders the external-project strip with badge, name and path', () => {
+    it('renders the external-project strip with name and path', () => {
         mockState.active = ref(makeItem({
             projectPath: '/home/me/other-project',
             projectName: 'other-project',
@@ -451,8 +451,8 @@ describe('CompletionPopover', () => {
 
         const strip = document.querySelector('.completion-notify-project')!
         expect(strip).toBeTruthy()
-        // 「外部」徽章
-        expect(strip.querySelector('.completion-notify-project-badge')).toBeTruthy()
+        // 「外部」徽章已移除，区隔带只保留项目名与路径
+        expect(strip.querySelector('.completion-notify-project-badge')).toBeFalsy()
         // 项目名突出显示（独立元素 + 加粗）
         const name = strip.querySelector('.completion-notify-project-name')!
         expect(name.textContent).toBe('other-project')

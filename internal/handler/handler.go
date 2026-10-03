@@ -442,6 +442,7 @@ func RegisterRoutes(mux *http.ServeMux) {
 	// manual git sync trigger. The settings themselves live in /api/config.
 	register("/api/skills", ServeSkills)
 	register("/api/skills/refresh", ServeSkillsRefresh)
+	register("/api/skills/rescan", ServeSkillsRescan)
 
 	// Public file-share links. Management endpoints are auth-protected; the
 	// public data endpoints (/api/share/{token}/...) and the share SPA page

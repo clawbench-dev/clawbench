@@ -3024,6 +3024,15 @@ paths:
                             该技能所属的智能体 ID（仅当它来自某个**其他智能体自己的**目录时有值）。
                             **共享目录 `.agents/skills` 一律为空**——那类技能不属于任何单一智能体，
                             返回「哪些后端读取了该目录」的名单会诱导前端把它渲染成罗列。
+                        backends:
+                          type: array
+                          items:
+                            type: string
+                          description: |
+                            该技能所在原生目录对应的 **AI 后端 ID** 列表（如 `claude`、`codex`），
+                            供前端渲染「后端图标 + 名称」。`agent_id` 是**智能体** ID，自定义智能体
+                            的 ID 可能与后端不同，故这里单独解析。仅原生目录来源有值；用户目录、
+                            git 仓库、共享目录为空（它们各自有自己的标签）。
                         shared:
                           type: boolean
                           description: |
@@ -3068,6 +3077,32 @@ paths:
                       type: string
         "202":
           description: 同步耗时较长，已受理
+
+  /api/skills/rescan:
+    post:
+      tags: [Skills]
+      summary: 重新扫描本地 Skill 来源（不联网）
+      operationId: skillsRescan
+      description: |
+        重新读取全部已配置目录（用户目录、git 检出目录、各智能体原生目录）并重建注册表，
+        **不执行任何网络 IO**（不 clone/pull）。
+
+        用于手动往目录里放入技能后立即刷新；若目标是拉取 git 远程最新内容，应改用
+        `POST /api/skills/refresh`。不改变同步状态（`last_sync_at` / `last_error` 保持
+        不变，因为本次未获取任何远程内容）。
+      responses:
+        "200":
+          description: 重扫结果
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  skill_count:
+                    type: integer
+                    description: 重扫后发现的技能总数
 
   /api/forge/credentials:
     post:

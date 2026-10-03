@@ -37,6 +37,14 @@ ipcRenderer.on('clawbench-window-state', (_e, detail: unknown) => {
   window.dispatchEvent(new CustomEvent('clawbench-window-state', { detail }))
 })
 
+// A forward's local listener drifted to a different port than the server
+// registry knows about (a reconnect found the previous port taken). Forwarded
+// as a CustomEvent so the renderer can re-key the server registry, matching the
+// Android host's `clawbench-port-forward-result` handling.
+ipcRenderer.on('clawbench-port-rebound', (_e, detail: unknown) => {
+  window.dispatchEvent(new CustomEvent('clawbench-port-rebound', { detail }))
+})
+
 contextBridge.exposeInMainWorld('ClawBenchNative', {
   // sync
   isNativeApp: () => true,

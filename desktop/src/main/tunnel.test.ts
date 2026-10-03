@@ -236,6 +236,16 @@ vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: () => false, encryptString: (s: string) => Buffer.from(s), decryptString: (b: Buffer) => b.toString() },
 }))
 
+// The module notifies the renderer of a port drift through the main window.
+// Capture the sends so a test can assert the rebuild path relays the drift.
+const { sentToRenderer, rendererWindow } = vi.hoisted(() => ({
+  sentToRenderer: [] as Array<{ channel: string; payload: unknown }>,
+  rendererWindow: { current: null as null | { webContents: { send: (c: string, p: unknown) => void }; isDestroyed: () => boolean } },
+}))
+vi.mock('./window', () => ({
+  getMainWindow: () => rendererWindow.current,
+}))
+
 const storeData: Record<string, unknown> = { serverUrl: 'https://127.0.0.1:20000' }
 vi.mock('electron-store', () => ({
   default: class {
@@ -316,6 +326,11 @@ beforeEach(() => {
   FakeClient.instances = []
   storeData.serverUrl = 'https://127.0.0.1:20000'
   listenDelay.ms = 0
+  sentToRenderer.length = 0
+  rendererWindow.current = {
+    webContents: { send: (channel: string, payload: unknown) => { sentToRenderer.push({ channel, payload }) } },
+    isDestroyed: () => false,
+  }
 })
 
 afterEach(() => {
@@ -610,6 +625,35 @@ describe('tunnel: an occupied local port falls back to the next free one', () =>
 
       expect(getForwardedPorts()).toEqual([])
       expect(await testPortReachable(PORT_A + 1)).toBe(false)
+    } finally {
+      await new Promise<void>((r) => squatter.close(() => r()))
+    }
+  })
+
+  it('relays a second drift during a reconnect rebuild to the renderer', async () => {
+    // Regression (WARN-301): the rebuild path (reconnect) had no return value
+    // reaching the renderer, unlike the add path. If the previous port was
+    // taken again while the tunnel was down, the listener moved but the server
+    // registry stayed keyed to the old port — the UI URL pointed at nothing and
+    // the mapping could not be deleted. The rebuild must emit the drift.
+    await connectOnce()
+    expect(await addForwardedPort(PORT_A, 20000, '')).toEqual({ ok: true, port: PORT_A })
+
+    disconnectTunnel()
+    // While the tunnel is down, an unrelated process grabs the previously-bound
+    // port, forcing the rebuild to drift to the next free one.
+    const squatter = await occupy(PORT_A)
+    try {
+      const reconnected = ensureTunnel()
+      await vi.waitFor(() => expect(FakeClient.instances.length).toBeGreaterThan(1))
+      FakeClient.last().emit('ready')
+      await reconnected
+
+      expect(sentToRenderer).toContainEqual({
+        channel: 'clawbench-port-rebound',
+        payload: { requested: PORT_A, actual: PORT_A + 1 },
+      })
+      expect(await testPortReachable(PORT_A + 1)).toBe(true)
     } finally {
       await new Promise<void>((r) => squatter.close(() => r()))
     }

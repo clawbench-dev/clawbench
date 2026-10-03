@@ -145,19 +145,25 @@ ClawBench 是面向手机 / 平板 / 桌面的多端 AI 工作台。本手册同
 
 **详解**：[公网访问 ClawBench](PUBLIC_ACCESS.md) · [在 Termux（Android）上完全运行](TERMUX.md)
 
+## 22. 桌面客户端
+
+Windows / macOS / Linux 的原生桌面版：下载、窗口控制、系统通知、自升级、多服务器登录。
+
+**详解**：[桌面客户端](desktop.md)
+
 ---
 
 # 第四部分：移动端与 Android App
 
 > 本部分仅适用于移动端。桌面端用户可跳过。
 
-## 22. Android App 专有功能
+## 23. Android App 专有功能
 
 只有装了 APK 才有的原生能力：悬浮窗、灵动岛、原生推送、音量键等。
 
 **详解**：[Android App 专有功能](android-app.md)
 
-## 23. 网页移动端：PWA 安装与 APK 下载
+## 24. 网页移动端：PWA 安装与 APK 下载
 
 不想装 App 也能有接近原生的体验：装到主屏幕，或下载 APK。
 

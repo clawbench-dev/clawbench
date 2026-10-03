@@ -371,11 +371,17 @@ type TeamTokenUsage struct {
 // live state (like PlanState/UsageState): the latest snapshot wins, and it is
 // cached on the connection rather than persisted per message.
 type TeamState struct {
-	Type       string       `json:"type"` // team_created|team_deleted|member_status_change|team_idle|team_busy
-	TeamName   string       `json:"teamName"`
-	IsAutoTeam bool         `json:"isAutoTeam,omitempty"`
-	HasLive    bool         `json:"hasLiveMembers"`
-	Members    []TeamMember `json:"members"`
+	Type       string `json:"type"` // team_created|team_deleted|member_status_change|team_idle|team_busy
+	TeamName   string `json:"teamName"`
+	IsAutoTeam bool   `json:"isAutoTeam,omitempty"`
+	// HasLive is a pointer so the "absent" state survives serialization: some
+	// snapshots (notably the first member_status_change) omit hasLiveMembers
+	// entirely, and the frontend only treats an *explicit* false as "team
+	// ended". A plain bool would marshal the zero value as `false`, making an
+	// absent flag indistinguishable from an explicit false and prematurely
+	// ending the panel. Same rationale as IsAutoTeam, opposite direction.
+	HasLive *bool        `json:"hasLiveMembers,omitempty"`
+	Members []TeamMember `json:"members"`
 }
 
 // UsageState carries context window usage information from an ACP UsageUpdate.

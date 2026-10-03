@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ref, computed } from 'vue'
 import { flushPromises } from '@vue/test-utils'
 import { useNavigationContext } from '../useNavigationContext'
+import { surfaceToTab } from '../useNavigationContext'
 import { useFileNavStack, _resetForTesting as resetFileNavStack } from '../useFileNavStack'
 import { useDirectoryReturn, _resetForTesting as resetDirectoryReturn } from '../useDirectoryReturn'
 import { useNavigationCoordinator } from '../useNavigationCoordinator'
@@ -601,6 +602,25 @@ describe('useNavigationCoordinator', () => {
       const genericBack = gt('common.back')
       expect(navigation.origin.value?.label).toBe(backToTerminal)
       expect(navigation.origin.value?.label).not.toBe(genericBack)
+    })
+
+    it('labels a port-forward origin "Back to Port Mapping"', () => {
+      // The port-mapping panel's header config button jumps into settings; Back
+      // must name that panel specifically, not fall through to the generic Back.
+      // The user is ON the proxy tab when they click, so the origin's tab comes
+      // from the live activeTab.
+      activeTab.value = 'proxy'
+      const coord = createCoordinator()
+      coord.beginExternalJump('proxy', coord.surfaceLabel('proxy'))
+
+      expect(navigation.origin.value?.surface).toBe('proxy')
+      expect(navigation.origin.value?.tab).toBe('proxy')
+      expect(navigation.origin.value?.label).toBe(gt('file.nav.backToPortForward'))
+      expect(navigation.origin.value?.label).not.toBe(gt('common.back'))
+    })
+
+    it('resolves the proxy surface to the proxy tab', () => {
+      expect(surfaceToTab('proxy')).toBe('proxy')
     })
 
     it('handles open file overlay with task and history sources', () => {

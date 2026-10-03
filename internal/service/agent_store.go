@@ -2,10 +2,11 @@
 package service
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
@@ -296,8 +297,30 @@ func LoadAgentsIntoMemory() error {
 	return model.LoadAgentsIntoMemoryFromDB(dbRead)
 }
 
+// newAgentCopyID mints an ID for a duplicated agent: "<backend>-<8-hex>".
+//
+// The base is the source's *backend* (a controlled BackendSpec.ID constant
+// such as "codebuddy"), not its ID. Backends never contain a copy suffix and
+// are not user-editable (AgentPatch has no Backend field), so copying a copy
+// cannot compound the name the way "<sourceID>-copy-<ts>" did — that scheme
+// grew the ID by a suffix per generation until it exceeded the 128-char limit
+// the API enforces on agent IDs.
+//
+// The suffix is random rather than a timestamp because SaveAgent upserts with
+// ON CONFLICT(id) DO UPDATE: two copies minted in the same millisecond would
+// share an ID and the second would silently overwrite the first.
+func newAgentCopyID(backend string) string {
+	b := make([]byte, 4)
+	// crypto/rand.Read always fills b or returns an error; a failure here is
+	// unrecoverable, so panic rather than mint a predictable ID.
+	if _, err := rand.Read(b); err != nil {
+		panic("agent copy: crypto/rand.Read failed: " + err.Error())
+	}
+	return backend + "-" + hex.EncodeToString(b)
+}
+
 // DuplicateAgent creates a new agent by cloning an existing one.
-// It generates a unique ID (sourceID-copy-timestamp), copies all configuration
+// It generates a unique ID ("<backend>-<8-hex>"), copies all configuration
 // fields from the source, and saves to DB.
 func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 	source := model.GetAgent(sourceID)
@@ -305,7 +328,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		return nil, fmt.Errorf("source agent %s not found", sourceID)
 	}
 
-	newID := fmt.Sprintf("%s-copy-%d", sourceID, time.Now().UnixMilli())
+	newID := newAgentCopyID(source.Backend)
 
 	clone := &model.Agent{
 		ID:                      newID,

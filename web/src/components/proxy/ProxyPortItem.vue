@@ -77,7 +77,6 @@ import { useI18n } from 'vue-i18n'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import { buildServerAddress } from '@/utils/portForwardUtils.ts'
-import { diagLog } from '@/utils/appLog'
 
 const { t } = useI18n()
 
@@ -114,11 +113,7 @@ defineEmits(['open', 'openExternal', 'reconnect', 'edit', 'remove', 'toggleEnabl
 // element for the parent to flash).
 const serverAddress = computed(() => buildServerAddress(props.localPort, props.protocol))
 
-const statusClass = computed(() => {
-  const cls = computeStatusClass()
-  diagLog('PortForward', `dot localPort=${props.localPort} class=${cls} tunnelReady=${String(props.tunnelReady)} active=${props.active} enabled=${props.enabled} connecting=${props.connecting} tunnelDisconnected=${props.tunnelDisconnected}`)
-  return cls
-})
+const statusClass = computed(() => computeStatusClass())
 
 function computeStatusClass() {
   if (!props.enabled) return 'disabled'

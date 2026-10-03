@@ -38,6 +38,9 @@ function templateClasses(src: string): Set<string> {
 const CARDS = [
   'web/src/components/settings/SkillsDirsSetting.vue',
   'web/src/components/settings/SkillsReposSetting.vue',
+  // The discovered card gained a search box, a rescan button and backend chips;
+  // its scoped styles must stay in the same file (jsdom has no CSS engine).
+  'web/src/components/settings/SkillsDiscoveredSetting.vue',
 ]
 
 describe('skills cards styles', () => {

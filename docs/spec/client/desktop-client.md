@@ -61,7 +61,7 @@ sequenceDiagram
 - **外部链接默认浏览器打开**：白名单协议（`http`/`https`/`mailto`/`tel`）中，指向服务器 Origin 之外的链接交给系统默认浏览器打开；同服务器 Origin 的链接在窗口内导航；白名单之外的协议一律阻止
 - **JS Bridge**：通过 IPC（`native:*`）暴露原生能力——服务器列表与凭据管理、SSH 端口映射、文件下载（保存对话框 + 下载后定位）、分享、系统通知、主题、语言、日志捕获、屏幕常亮。与 Android WebView 共用同一套前端接口（`web/src/utils/clawbenchNative.ts`）
 - **多服务器与凭据**：服务器列表里每个服务端各存各的密码（safeStorage 加密在各自 entry 内，keychain 不可用时降级为带标记的明文），因此在多个实例间切换都能自动登录；连接失败时回退登录页并展示失败原因（认证失败 / 网络不通 / 该服务端没存过密码三种区分）
-- **SSH 端口映射**：桌面端内置 ssh2 客户端，读取服务器公开的 `/api/ssh/info` 获取 SSH 端口与用户名，用 safeStorage 加密存储的密码建立连接，把 localhost 端口映射到服务器端口
+- **SSH / h2 端口映射**：桌面端内置 ssh2 客户端（以及可选的 h2 流隧道，见 [SSH 隧道](../infra/ssh-tunnel.md)），读取服务器公开的 `/api/ssh/info` 获取 SSH 端口与用户名，用 safeStorage 加密存储的密码建立连接，把 localhost 端口映射到服务器端口。设置页提供 **SSH / HTTP/2 二选一**传输选择器（默认 SSH），选择持久化到 Electron store 并在下次重连生效；桥暴露 `native:get-tunnel-transport`（偏好）、`native:get-active-tunnel-transport`（实际承载本次连接的线缆）与 `native:set-tunnel-transport`（只接受 `'ssh' | 'h2'`）
 - **界面缩放**：外观设置里的「自动适配」按钮**点一次**按当前屏幕分辨率算出合适的缩放并写入「界面缩放」滑块（1080p 为基准，上限 200%；已由系统缩放过的屏幕不二次放大），之后倍率是普通存储值、不会随屏幕变动；`Ctrl+滚轮` / `Ctrl+=` / `Ctrl+-` / `Ctrl+0` 走 Electron 原生缩放，比例按站点记忆。光标在终端 / PDF / PPT 预览内时 `Ctrl+滚轮` 缩放的是该内容本身
 - **系统通知**：AI 完成、任务执行、仓库事件通过原生系统通知展示；点击通知恢复窗口并导航到对应会话/任务/仓库详情。冷启动时通知先于页面加载到达，导航载荷暂存，等渲染进程显式握手后再派发
 - **应用自升级**：见下方"自升级"与"分发"两节
@@ -129,7 +129,7 @@ flowchart TD
 - **平台判定只能有一份，且无边框必须配套拖拽区**：无边框窗口默认不可拖动，拖拽要靠 header 的 `-webkit-app-region: drag` 提供——而拖拽豁免（`no-drag`）只能给**控件**，绝不能给会吃掉剩余空间的填空容器（一个 `flex:1` 的容器列进豁免清单会让整条 header 拖不动）。平台判定同样如此：渲染层若自己再写一份"是不是桌面壳/什么系统"的推断，就与主进程的表静默漂移，且 sandboxed preload 拿不到 UA。因此平台相关决策全部落在主进程的纯模块里，渲染层只消费 IPC 结果
 - **桌面端是壳而非重实现**：桌面端只提供 Web 环境之外的桌面能力（窗口、菜单、通知、隧道、保存对话框），业务逻辑全部复用服务器 + Web 前端。同一套 Vue App 在浏览器、PWA、Android、桌面端共享，桌面端不维护自己的功能副本
 - **桌面壳不是"手机 App 模式"**：桌面端与 Android 都通过原生桥被前端识别为"原生环境"，但两者的省电策略截然相反——Android 窗口退到后台会被系统挂起，因此隐藏时主动断开 WebSocket；桌面窗口只是最小化、进程仍在运行，断开 WS 等于自断通知来源。因此前端必须区分 `isDesktopApp`，门控写成 `isAppMode && !isDesktopApp`。这个区分要从 preload 一路贯通到消费点（preload → `useAppMode` → 各分支），任何一层漏掉都会让最小化后的推送静默失效
-- **`isDesktopApp` 还要参与 `isPC` 判定**：Electron 的 preload 上报 `isNativeApp()=true`，而 `isPC` 原先只看 `isAppMode`，于是整个桌面端被判定为移动端——文件快捷预览弹 BottomSheet 而非桌面浮卡，文件管理器点选语义、终端 PC 工具栏、输入框滑动提示等一并走移动分支。Electron 是有物理键盘鼠标的桌面窗口，必须直接判为 PC；Android/iOS/iPadOS 与 Android 原生 App 仍按移动端处理
+- **桌面端靠宿主轴判为桌面，不靠旧的 `isPC`**：平台判定已拆成三条正交轴（HOST / INPUT / VIEWPORT，见 [前端架构](frontend-architecture.md)），旧的混合 `isPC` 已删除。Electron 的 preload 上报 `isNativeApp()=true`，因此宿主轴显式判为 `isElectron`，与 Android WebView（`isAndroidApp`）区分开——否则整个桌面端会走移动分支（文件快捷预览弹 BottomSheet 而非桌面浮卡、点选语义、终端 PC 工具栏、输入框滑动提示）。Electron 是有物理键盘鼠标的桌面窗口，宿主与输入两轴都要按桌面处理；Android/iOS/iPadOS 仍按移动端处理
 - **菜单文案本地化交给操作系统**：剪切/复制/粘贴等标准操作使用 Electron role，由 OS 按系统语言自动提供文案；仅复制链接/复制图片这类无 role 默认值的自定义项才由应用按语言翻译，避免在非中文系统上显示硬编码中文
 - **通知点击的渲染进程就绪要握手，不能靠加载状态猜**：页面 `did-finish-load` 远早于 App 注册监听器（初始化要先 await 项目加载与会话引导），若以 `webContents.isLoading()` 判断可接收，这个窗口内的点击会被发进无监听器的页面而永久丢失。改为渲染进程显式 `rendererReady()` 握手，未就绪则暂存待取
 - **端口映射是 desired 状态，不是快照**：本地 listener 的存在与否必须由一份"期望映射"集合推导，重连后据此重建全部 listener。曾经 `disconnectTunnel()` 直接清空映射表且不重建，于是点刷新（触发重连）后端口必然不可达——而绿点来自服务端对目标端口的探测，与本地 listener 无关，映射已死仍显绿。同时 `ensureTunnel` 需要单飞守卫：并发调用会互相拆台，先到者挂在被废弃的连接上永不 settle

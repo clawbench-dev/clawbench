@@ -249,9 +249,11 @@ export function syncMarkersFor(path: string, surface: ChangeSurface, currentCont
   if (surface === 'markdown') {
     const oldBlocks = offscreenExtractBlocks(baseline)
     const newBlocks = offscreenExtractBlocks(currentContent)
-    // Mirror the historical guard: a baseline that rendered to zero blocks would
-    // otherwise mark the whole document as "added".
-    const result = (oldBlocks.length > 0 && newBlocks.length > 0)
+    // Only require a non-empty OLD baseline: a baseline that rendered to zero
+    // blocks would otherwise mark the whole document as "added". The new side
+    // may legitimately be empty (file edited down to nothing) — that is the
+    // "all deleted" case, which computeMarkdownDiff returns as `del-all`.
+    const result = (oldBlocks.length > 0)
       ? computeMarkdownDiff(oldBlocks, newBlocks)
       : null
     if (result && result.hasChanges) {

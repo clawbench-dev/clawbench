@@ -109,13 +109,14 @@ func parseTeamState(raw map[string]any) *TeamState {
 		Type:     typ,
 		TeamName: metaString(raw["teamName"]),
 	}
-	// isAutoTeam is absent on some snapshots (observed on the first
-	// member_status_change), so only trust an explicit true.
+	// isAutoTeam and hasLiveMembers are both absent on some snapshots (observed
+	// on the first member_status_change), so only trust an explicit bool. Keeping
+	// HasLive as a pointer preserves the absent state through serialization.
 	if v, ok := raw["isAutoTeam"].(bool); ok {
 		state.IsAutoTeam = v
 	}
 	if v, ok := raw["hasLiveMembers"].(bool); ok {
-		state.HasLive = v
+		state.HasLive = &v
 	}
 	if members, ok := raw["members"].([]any); ok {
 		state.Members = make([]TeamMember, 0, len(members))

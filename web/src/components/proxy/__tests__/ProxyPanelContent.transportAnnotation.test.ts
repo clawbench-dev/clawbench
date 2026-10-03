@@ -73,6 +73,13 @@ const i18n = createI18n({
 const isAppMode = ref(true)
 const activeTransport = ref('')
 const tunnelStatus = ref('unknown')
+// The problem banners are gated on there being an enabled mapping to carry
+// (with none, the native service is stopped on purpose and "disconnected" is a
+// deliberate idle state). Seed one enabled port so the banners render — which
+// is the state these tests are about.
+const mockPorts = ref<Array<Record<string, unknown>>>([
+  { port: 8080, localPort: 8080, host: '', name: '', protocol: 'http', active: true, enabled: true },
+])
 
 // Mirrors the composable's real transportAnnotation(): resolve the label key for
 // a concrete wire and wrap it via the `proxy.transportAnnotation` message, or
@@ -89,9 +96,10 @@ const mockToastShow = vi.fn()
 
 vi.mock('@/composables/usePortForward.ts', () => ({
   usePortForward: () => ({
-    ports: ref([]),
+    ports: mockPorts,
     detectedPorts: ref([]),
     loading: ref(false),
+    refreshing: ref(false),
     isAppMode,
     sshInfo: ref(null),
     tunnelStatus,
@@ -113,6 +121,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     // The retry handler re-checks health and toasts based on the resulting
     // status; simulate a successful recovery.
     checkTunnelHealth: vi.fn().mockImplementation(async () => { tunnelStatus.value = 'ok' }),
+    refreshPortForward: vi.fn(),
     transportAnnotation,
     openPortWithCheck: vi.fn(),
     openInExternalBrowser: vi.fn(),
@@ -163,6 +172,7 @@ vi.mock('lucide-vue-next', () => {
     Plus: stub('i-plus'), Search: stub('i-search'), Lock: stub('i-lock'),
     Copy: stub('i-copy'), Smartphone: stub('i-phone'), ChevronDown: stub('i-chevron'),
     Network: stub('i-network'), Server: stub('i-server'), CircleAlert: stub('i-circle-alert'),
+    Settings: stub('i-settings'),
   }
 })
 
@@ -253,7 +263,9 @@ describe('ProxyPanelContent transport annotation', () => {
     tunnelStatus.value = 'disconnected'
     const wrapper = mountPanel()
 
-    await wrapper.find('.rb').trigger('click')
+    // Target the banner's retry button, not the header refresh button — both
+    // render a RefreshButton (same stub class), so `.rb` alone is ambiguous.
+    await wrapper.find('.tunnel-retry-btn').trigger('click')
     await Promise.resolve()
 
     expect(mockToastShow).toHaveBeenCalledWith('隧道已恢复（HTTP/2）', expect.objectContaining({ type: 'success' }))
@@ -264,7 +276,9 @@ describe('ProxyPanelContent transport annotation', () => {
     tunnelStatus.value = 'disconnected'
     const wrapper = mountPanel()
 
-    await wrapper.find('.rb').trigger('click')
+    // Target the banner's retry button, not the header refresh button — both
+    // render a RefreshButton (same stub class), so `.rb` alone is ambiguous.
+    await wrapper.find('.tunnel-retry-btn').trigger('click')
     await Promise.resolve()
 
     expect(mockToastShow).toHaveBeenCalledWith('隧道已恢复', expect.objectContaining({ type: 'success' }))

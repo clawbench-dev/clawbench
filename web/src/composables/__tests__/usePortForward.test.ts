@@ -252,6 +252,71 @@ describe('usePortForward', () => {
         })
     })
 
+    describe('refreshPortForward', () => {
+        it('reloads ports and recomputes the tunnel verdict in one round', async () => {
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return { ports: [{ port: 3000, localPort: 3000, name: 'App', protocol: 'http', active: true, enabled: true }] }
+                if (url === '/api/ssh/info/full') return {
+                    enabled: true, host: 'test', port: 22, username: 'u', fingerprint: 'f', command: 'c',
+                    connectionStats: { connected: true, clientCount: 1, activeChannels: 1 },
+                }
+                return {}
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { refreshPortForward, ports, tunnelStatus, refreshing } = usePortForward()
+
+            await refreshPortForward()
+
+            expect(mockApiGet).toHaveBeenCalledWith('/api/proxy/ports')
+            expect(mockApiGet).toHaveBeenCalledWith('/api/ssh/info/full')
+            expect(ports.value).toHaveLength(1)
+            expect(tunnelStatus.value).toBe('ok')
+            // The in-flight flag is released once the round settles.
+            expect(refreshing.value).toBe(false)
+        })
+
+        it('exposes a refreshing flag while the round is in flight', async () => {
+            let release!: (v: unknown) => void
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return new Promise((r) => { release = r })
+                return { enabled: false, connectionStats: null }
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { refreshPortForward, refreshing } = usePortForward()
+
+            const promise = refreshPortForward()
+            expect(refreshing.value).toBe(true)
+
+            release({ ports: [] })
+            await promise
+            expect(refreshing.value).toBe(false)
+        })
+
+        it('coalesces overlapping calls into a single round', async () => {
+            let release!: (v: unknown) => void
+            mockApiGet.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports') return new Promise((r) => { release = r })
+                return { enabled: false, connectionStats: null }
+            })
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { refreshPortForward } = usePortForward()
+
+            const first = refreshPortForward()
+            // Second call lands while the first is still in flight — it must be
+            // dropped (a double-tap must not stack rounds).
+            await refreshPortForward()
+
+            release({ ports: [] })
+            await first
+
+            const portCalls = mockApiGet.mock.calls.filter(c => c[0] === '/api/proxy/ports')
+            expect(portCalls).toHaveLength(1)
+        })
+    })
+
     describe('checkTunnelHealth', () => {
         it('returns early when SSH is disabled', async () => {
             mockApiGet.mockImplementation((url: string) => {
@@ -2112,6 +2177,40 @@ describe('usePortForward', () => {
 
             delete (window as any).ClawBenchNative
             mockIsAppMode.value = false
+        })
+
+        it('re-keys the server registry on a desktop port-rebound event', async () => {
+            // Desktop counterpart of the Android re-key test: a reconnect
+            // rebuild can move the local listener to a different port with no
+            // return value reaching the renderer, so the main process relays
+            // `{ requested, actual }` via a CustomEvent. The registry must
+            // follow it, or the UI URL and DELETE would name a dead port.
+            mockApiPost.mockImplementation((url: string) => {
+                if (url === '/api/proxy/ports/rebind') return Promise.resolve({ status: 'ok' })
+                return Promise.resolve({ localPort: 3000 })
+            })
+            mockApiGet.mockResolvedValue({ ports: [] })
+            ;(window as any).ClawBenchNative = { addForwardedPort: vi.fn().mockResolvedValue({ ok: true, port: 3000 }) }
+
+            const { usePortForward } = await import('@/composables/usePortForward')
+            const { registerPort } = usePortForward()
+
+            await registerPort(3000, 'App', 'http')
+            mockApiPost.mockClear()
+            window.dispatchEvent(new CustomEvent('clawbench-port-rebound', {
+                detail: { requested: 3000, actual: 3001 },
+            }))
+            await Promise.resolve()
+            await Promise.resolve()
+            await Promise.resolve()
+
+            expect(mockApiPost).toHaveBeenCalledWith('/api/proxy/ports/rebind', { localPort: 3000, newLocalPort: 3001 })
+            expect(mockToastShow).toHaveBeenCalledWith(
+                'portForward.portRebound',
+                expect.objectContaining({ type: 'info' }),
+            )
+
+            delete (window as any).ClawBenchNative
         })
 
         it('shows the conflict copy on an Android bind conflict', async () => {

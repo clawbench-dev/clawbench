@@ -73,6 +73,11 @@ const TRANSPORTS: readonly string[] = ['ssh', 'h2']
 const ports = ref<ForwardedPort[]>([])
 const detectedPorts = ref<DetectedPort[]>([])
 const loading = ref(false)
+// Whether a user-triggered refresh (header button / panel open) is in flight.
+// Kept separate from `loading` on purpose: `loading` blanks the list for a
+// "loading" placeholder, which is right on first load but wrong for a refresh
+// of an already-rendered list — the rows should stay put while the round runs.
+const refreshing = ref(false)
 const sshInfo = ref<SSHInfo | null>(null)
 const tunnelStatus = ref<TunnelStatus>('unknown')
 const tunnelMessage = ref('')
@@ -148,6 +153,27 @@ function ensurePortForwardListener() {
     if (onPortForwardResult) {
       const { localPort, success, reason, requestedLocalPort } = e.detail
       onPortForwardResult(localPort, success, reason, requestedLocalPort)
+    }
+  }) as EventListener)
+}
+
+// Desktop (Electron) counterpart of the Android drift signal above. When a
+// reconnect's rebuild re-binds a forward whose previous port is now taken, the
+// listener lands on a different port than the server registry is keyed by. The
+// main process relays `{ requested, actual }` and we re-key the registry here,
+// exactly as the Android `clawbench-port-forward-result` path does.
+let onPortRebound: ((requested: number, actual: number) => void) | null = null
+let portReboundListenerInitialized = false
+
+function ensurePortReboundListener() {
+  if (portReboundListenerInitialized) return
+  portReboundListenerInitialized = true
+
+  window.addEventListener('clawbench-port-rebound', ((e: CustomEvent) => {
+    const { requested, actual } = e.detail || {}
+    diagLog('PortForward', `port rebound event: requested=${requested} actual=${actual}`)
+    if (onPortRebound && typeof requested === 'number' && typeof actual === 'number') {
+      onPortRebound(requested, actual)
     }
   }) as EventListener)
 }
@@ -268,6 +294,31 @@ export function usePortForward() {
       if (!success) {
         reportForwardFailure(localPort, reason)
       }
+    }
+  }
+
+  // Desktop counterpart: a rebuild after reconnect re-bound a forward on a
+  // different local port. Re-key the server registry and refresh so the UI URL,
+  // delete and enable all follow the port that is actually listening.
+  if (!onPortRebound) {
+    onPortRebound = (requested: number, actual: number) => {
+      diagLog('PortForward', `port rebound: ${requested} -> ${actual}`)
+      void (async () => {
+        if (await rebindServerPort(requested, actual)) {
+          if (connectingPorts.value.delete(requested)) {
+            connectingPorts.value.add(actual)
+            connectingPorts.value = new Set(connectingPorts.value)
+          }
+          const toast = useToast()
+          toast.show(gt('portForward.portRebound', { requested, port: actual }), { icon: '🔀', type: 'info' })
+        } else {
+          // The server refused the new key (another mapping took the port, or
+          // the row was deleted): release the orphaned listener so it is not
+          // left running with no registry entry.
+          removeNativeForward(actual)
+        }
+        loadPorts(true)
+      })()
     }
   }
 
@@ -512,6 +563,7 @@ export function usePortForward() {
     // AFTER the callback arrives, the delete in onPortForwardResult is a
     // no-op and the port gets stuck yellow forever.
     ensurePortForwardListener()
+    ensurePortReboundListener()
     connectingPorts.value.add(localPort)
     connectingPorts.value = new Set(connectingPorts.value)
     diagLog('PortForward', `registerPort: localPort=${localPort} target=${port} host=${host || ''} dir=${direction || 'forward'} appMode=${isAppMode.value}`)
@@ -878,6 +930,29 @@ export function usePortForward() {
   }
 
   /**
+   * User-triggered refresh for the port-forward panel: one round that reloads
+   * the port list AND recomputes the tunnel verdict.
+   *
+   * Delegates to `checkTunnelHealth(true)` rather than calling `loadPorts`
+   * directly: the health check always loads the ports (before its SSH/h2 gate)
+   * and additionally refreshes the transport row, so a plain `loadPorts` would
+   * leave the verdict and the transport stale. `silent` keeps the previous
+   * verdict and the existing rows on screen instead of flashing a spinner.
+   *
+   * Guarded so a double-tap (or a refresh racing the 5s recovery poll) cannot
+   * stack rounds — the button's `loading` state is driven by `refreshing`.
+   */
+  async function refreshPortForward() {
+    if (refreshing.value) return
+    refreshing.value = true
+    try {
+      await checkTunnelHealth(true)
+    } finally {
+      refreshing.value = false
+    }
+  }
+
+  /**
    * Query Android native layer for SSH tunnel connection status.
    * Returns true (connected), false (disconnected), or null (unavailable/not app mode).
    */
@@ -1150,6 +1225,7 @@ export function usePortForward() {
     ports,
     detectedPorts,
     loading,
+    refreshing,
     isAppMode,
     sshInfo,
     tunnelStatus,
@@ -1177,6 +1253,7 @@ export function usePortForward() {
     syncToNative,
     loadSSHInfo,
     checkTunnelHealth,
+    refreshPortForward,
     refreshActiveTransport,
     transportAnnotation,
     openPort,

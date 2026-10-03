@@ -5,6 +5,8 @@ import type { Duplex } from 'node:stream'
 import { Client } from 'ssh2'
 import { getPassword } from './secrets'
 import { getStore } from './store'
+import { getMainWindow } from './window'
+import { PORT_REBOUND_CHANNEL, type PortReboundEvent } from '../shared/types'
 import {
   createH2TunnelTransport,
   type ControlMessage,
@@ -891,18 +893,45 @@ function ensureControlStream(): Promise<ControlStream | null> {
 }
 
 /**
+ * Notify the renderer that a forward's local listener landed on a different
+ * port than the one the server registry is keyed by, so it can re-key the
+ * registry (DELETE/PUT/enable and the UI URL all follow the server key).
+ *
+ * Best-effort: with no window (tests, headless shutdown) there is nothing to
+ * notify, and the renderer also re-syncs from `/api/proxy/ports` on its own.
+ */
+function notifyPortRebound(requested: number, actual: number): void {
+  const win = getMainWindow()
+  if (!win || win.isDestroyed()) return
+  const payload: PortReboundEvent = { requested, actual }
+  win.webContents.send(PORT_REBOUND_CHANNEL, payload)
+}
+
+/**
  * Re-bind every desired forward. Called after the client becomes ready.
  *
  * The snapshot is taken up front and the awaits yield, so a
  * removeForwardedPort() can land mid-rebuild; listenForward() re-checks
  * `state.forwarded` at publish time and refuses to bind a deleted port.
+ *
+ * Each forward is bound by its CURRENT key, which `listenForward` may have
+ * already moved to the actual bound port on an earlier add. A reconnect can
+ * still find that port taken (another process grabbed it while the tunnel was
+ * down), so the bind can drift AGAIN — and unlike the add path there is no
+ * return value reaching the renderer. Relay the drift through
+ * `PORT_REBOUND_CHANNEL` so the server registry is re-keyed; otherwise the UI
+ * would point at a dead port and the mapping could not be deleted.
  */
 async function rebuildAllForwards(): Promise<void> {
   for (const [key, fwd] of [...state.forwarded.entries()]) {
     if (fwd.direction === 'reverse') {
       await listenReverse(key, fwd.targetPort, fwd.host)
     } else {
-      await listenForward(key, fwd.targetPort, fwd.host)
+      const result = await listenForward(key, fwd.targetPort, fwd.host)
+      // listenForward re-keys `state.forwarded` to the bound port itself, so a
+      // result differing from `key` is exactly the drift the registry must
+      // learn about.
+      if (result.ok && result.port !== key) notifyPortRebound(key, result.port)
     }
   }
 }

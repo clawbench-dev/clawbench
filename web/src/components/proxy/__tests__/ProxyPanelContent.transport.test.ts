@@ -61,6 +61,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     ports: ref([]),
     detectedPorts: ref([]),
     loading: ref(false),
+    refreshing: ref(false),
     isAppMode,
     sshInfo: ref(null),
     tunnelStatus: ref('unknown'),
@@ -80,6 +81,7 @@ vi.mock('@/composables/usePortForward.ts', () => ({
     detectPorts: vi.fn(),
     rescanPorts: vi.fn(),
     checkTunnelHealth: vi.fn(),
+    refreshPortForward: vi.fn(),
     openPortWithCheck: vi.fn(),
     openInExternalBrowser: vi.fn(),
     copyServerAddress: vi.fn(),
@@ -132,6 +134,7 @@ vi.mock('lucide-vue-next', () => {
     Plus: stub('i-plus'), Search: stub('i-search'), Lock: stub('i-lock'),
     Copy: stub('i-copy'), Smartphone: stub('i-phone'), ChevronDown: stub('i-chevron'),
     Network: stub('i-network'), Server: stub('i-server'), CircleAlert: stub('i-circle-alert'),
+    Settings: stub('i-settings'),
   }
 })
 

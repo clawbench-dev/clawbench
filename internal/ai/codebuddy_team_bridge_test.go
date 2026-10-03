@@ -68,7 +68,8 @@ func TestParseTeamState_MemberStatusChange(t *testing.T) {
 	assert.Equal(t, "member_status_change", state.Type)
 	assert.Equal(t, "clawbench-probe", state.TeamName)
 	assert.False(t, state.IsAutoTeam)
-	assert.True(t, state.HasLive)
+	require.NotNil(t, state.HasLive)
+	assert.True(t, *state.HasLive)
 	require.Len(t, state.Members, 2)
 
 	a := state.Members[0]
@@ -96,7 +97,19 @@ func TestParseTeamState_CreatedMinimal(t *testing.T) {
 	require.NotNil(t, state)
 	assert.Equal(t, "team_created", state.Type)
 	assert.Empty(t, state.Members)
-	assert.False(t, state.HasLive)
+	// An explicit false must survive as a non-nil pointer (the panel treats it
+	// as "team ended").
+	require.NotNil(t, state.HasLive)
+	assert.False(t, *state.HasLive)
+}
+
+// A missing hasLiveMembers must stay absent (nil) rather than collapsing to an
+// explicit false — otherwise the panel ends the team prematurely. Mirrors
+// TestParseTeamState_MissingIsAutoTeam.
+func TestParseTeamState_MissingHasLiveMembers(t *testing.T) {
+	state := parseTeamState(map[string]any{"type": "member_status_change", "teamName": "t"})
+	require.NotNil(t, state)
+	assert.Nil(t, state.HasLive)
 }
 
 // A missing isAutoTeam (observed on the first member_status_change snapshot)

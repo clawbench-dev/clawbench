@@ -676,7 +676,7 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	// Duplicate
 	clone, err := service.DuplicateAgent("pi", "Pi Copy")
 	require.NoError(t, err)
-	assert.Contains(t, clone.ID, "pi-copy-")
+	assert.Regexp(t, `^pi-[0-9a-f]{8}$`, clone.ID, "copy id is <backend>-<8 hex>")
 	assert.Equal(t, "Pi Copy", clone.Name)
 	assert.Equal(t, "pi", clone.Backend)
 	assert.True(t, clone.AutoApprove, "auto_approve should be copied to the clone")
@@ -685,6 +685,58 @@ func TestDuplicateAgent_Success(t *testing.T) {
 	agents, err := service.LoadAgentsFromDB()
 	require.NoError(t, err)
 	assert.Len(t, agents, 2)
+}
+
+// Duplicating a copy must not compound the ID suffix. The old scheme built the
+// new ID from the source's ID verbatim ("<sourceID>-copy-<ts>"), so copying a
+// copy produced pi-copy-T1-copy-T2-copy-T3… — growing ~19 chars per generation
+// until it blew past the 128-char limit the API enforces on agent IDs. Deriving
+// the base from the backend instead keeps every generation flat.
+func TestDuplicateAgent_DoesNotCompoundSuffix(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "codebuddy", Name: "Codebuddy", Backend: "codebuddy",
+	}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	// Three generations of copies. DuplicateAgent persists to DB but does not
+	// publish to the in-memory map (the handler does), so reload between
+	// generations to make each copy a valid source for the next.
+	current := "codebuddy"
+	for i := range 3 {
+		clone, err := service.DuplicateAgent(current, "Copy")
+		require.NoError(t, err)
+		assert.Regexp(t, `^codebuddy-[0-9a-f]{8}$`, clone.ID,
+			"generation %d must stay flat, got %q", i+1, clone.ID)
+		assert.NotContains(t, clone.ID, "-copy-",
+			"generation %d must not carry a copy marker", i+1)
+		current = clone.ID
+		require.NoError(t, service.LoadAgentsIntoMemory())
+	}
+}
+
+// Two copies of the same source must get distinct IDs even when minted in the
+// same instant. SaveAgent upserts with ON CONFLICT(id) DO UPDATE, so an
+// identical ID would silently overwrite the first copy instead of creating a
+// second one. A random suffix makes same-millisecond collisions impossible.
+func TestDuplicateAgent_DistinctIDsWhenRapid(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{
+		ID: "pi", Name: "Pi", Backend: "pi",
+	}))
+	require.NoError(t, service.LoadAgentsIntoMemory())
+
+	seen := map[string]bool{}
+	for range 5 {
+		clone, err := service.DuplicateAgent("pi", "Copy")
+		require.NoError(t, err)
+		require.False(t, seen[clone.ID], "duplicate copy id %q", clone.ID)
+		seen[clone.ID] = true
+	}
+	// 1 source + 5 copies.
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	assert.Len(t, agents, 6)
 }
 
 func TestLoadAgentsIntoMemory(t *testing.T) {
@@ -800,4 +852,65 @@ func TestLegacyPromptMigration_DiscardsOldSchemePrompts(t *testing.T) {
 		"SELECT custom_system_prompt FROM agents WHERE id='pi2'",
 	).Scan(&custom))
 	assert.Equal(t, "keep me", custom)
+}
+
+// A database created by the old scheme carries six dead ACP state columns that
+// no code reads or writes any more. The migration must drop all six while
+// leaving the live schema (including the acp_available_* columns that replaced
+// them) untouched, and must be safe to run repeatedly.
+func TestLegacyAgentCapabilityColumnMigration(t *testing.T) {
+	db := setupTestDBForAgents(t)
+
+	// Recreate the legacy shape: the six dead columns exist and hold data.
+	legacyCols := []string{
+		"acp_mode_state", "acp_commands", "acp_thinking_state",
+		"acp_model_list_state", "acp_plan_state", "acp_cached_usage_state",
+	}
+	for _, col := range legacyCols {
+		_, err := db.Exec("ALTER TABLE agents ADD COLUMN " + col + " TEXT NOT NULL DEFAULT ''")
+		require.NoError(t, err)
+	}
+	_, err := db.Exec(
+		`INSERT INTO agents (id, name, backend, acp_mode_state, acp_commands,
+			acp_thinking_state, acp_model_list_state, acp_plan_state, acp_cached_usage_state)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"claude", "Claude", "claude",
+		`{"currentModeId":"bypassPermissions"}`, `[{"name":"skill"}]`,
+		`{"currentId":"default"}`, `{"currentModelId":"sonnet"}`,
+		`{"plan":1}`, `{"used":73045,"size":1000000}`,
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, service.MigrateLegacyAgentCapabilityColumns())
+
+	// All six dead columns are gone.
+	for _, col := range legacyCols {
+		var exists int
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists))
+		assert.Zero(t, exists, "legacy column %s must be dropped", col)
+	}
+
+	// The live columns that replaced them survive, and the row is intact.
+	for _, col := range []string{"acp_available_modes", "acp_available_models", "acp_config_options", "custom_system_prompt"} {
+		var exists int
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists))
+		assert.Equal(t, 1, exists, "live column %s must survive", col)
+	}
+	var name string
+	require.NoError(t, db.QueryRow("SELECT name FROM agents WHERE id='claude'").Scan(&name))
+	assert.Equal(t, "Claude", name)
+
+	// Idempotent: running again on an already-migrated database is a no-op.
+	require.NoError(t, service.MigrateLegacyAgentCapabilityColumns())
+	for _, col := range legacyCols {
+		var exists int
+		require.NoError(t, db.QueryRow(
+			"SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name=?", col,
+		).Scan(&exists))
+		assert.Zero(t, exists, "legacy column %s must stay dropped", col)
+	}
 }

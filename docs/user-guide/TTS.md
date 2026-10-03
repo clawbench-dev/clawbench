@@ -26,7 +26,6 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 | 引擎 | 说明 | 网络要求 |
 |------|------|---------|
 | `edge` | 微软 Edge TTS，免费无限制（默认） | 需要网络 |
-| `minimax` | 云端合成，音质最佳 | 需要 mmx CLI + API 配额 |
 | `piper` | 本地离线，速度极快（中文识别较差，推荐英文环境） | 无需网络 |
 | `kokoro` | 本地离线，高质量中文 | 无需网络 |
 | `moss-nano` | 本地离线，多语言，48kHz 音色克隆 | 首次需下载模型，之后无需网络 |
@@ -38,7 +37,9 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 | 后端 | 说明 | 网络要求 |
 |------|------|---------|
 | `simple` | 纯文本清洗（默认），零延迟 | 无 |
-| `api` | 远程 AI API（OpenAI/Anthropic 格式） | 需配置 URL 和 API Key |
+| `api` | 远程 AI API（OpenAI/Anthropic 格式），模型配置复用 `ai_summary` | 需配置 URL 和 API Key |
+
+> **没有云端专用 TTS 引擎**：语音合成引擎只有上表四种（edge / piper / kokoro / moss-nano），全部在本地或通过 Edge 服务完成。需要云端大模型参与时，走的是**总结后端**（`api`）而非 TTS 引擎——它把长文总结成短句后再交给 TTS 朗读，配置见下方「API 总结后端」。
 
 ## 文本处理参数
 
@@ -46,28 +47,6 @@ ClawBench 支持 TTS 语音合成，自动将 AI 回复总结后朗读。需要�
 |------|--------|------|
 | `inline_code_max_len` | 100 | 行内代码保留的最大字符数（rune）；超出则整段删除 |
 | `max_summarize_runes` | 10000 | 总结输入的最大字符数；超出则截取尾部（simple 模式: 1000） |
-
----
-
-## MiniMax（云端，音质最佳）
-
-云端语音合成，音质最好，支持多种音色和语言。
-
-```yaml
-tts:
-  engine: "minimax"
-  voice: "female-chengshu"        # 音色: female-chengshu, male-qn-qingse 等（默认: female-chengshu）
-  tts_model: "speech-2.8-hd"     # 合成模型（默认: speech-2.8-hd）
-  language: "zh"                  # 语言增强: zh, en, ja 等（默认: zh）
-  speed: 1.5                      # 语速倍率，推荐 1.0-2.0（默认: 1.5）
-  format: "mp3"                   # 输出格式: mp3, wav, pcm 等（默认: mp3）
-
-summarize:
-  backend: "mmx-cli"
-  model: "MiniMax-M2.7"
-```
-
-**前置条件**：安装 [mmx CLI](https://github.com/MiniMax-AI/MiniMax-M1) 并配置 API Key。
 
 ---
 

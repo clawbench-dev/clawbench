@@ -1397,12 +1397,16 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	taskCount := scheduler.TaskCount()
 
 	// Determine SSH port. The listener is always on, so the only question is
-	// whether it actually came up (a bind failure retracts sshServerRef — see
-	// ClearSSHServer).
-	sshEnabled := sshServerRef != nil
+	// whether it actually came up. Read the handler, not main's local
+	// sshServerRef: a bind failure only retracts the handler's publication (see
+	// ClearSSHServer), so the local variable stays non-nil and the banner would
+	// claim "SSH enabled" even when nothing is listening. Same rationale as
+	// releaseSSHPortOnShutdown.
+	sshEnabled := false
 	sshPort := 0
-	if sshEnabled {
-		sshPort = sshServerRef.Port()
+	if srv := handler.GetSSHServer(); srv != nil {
+		sshEnabled = true
+		sshPort = srv.Port()
 	}
 
 	startup.PrintBanner(startup.BannerConfig{

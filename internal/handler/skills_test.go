@@ -107,7 +107,85 @@ func TestServeSkills_List(t *testing.T) {
 	// "other" (relative to whom is what InjectedFor decides).
 	assert.Equal(t, "other", resp.Skills[0].SourceKind)
 	assert.Equal(t, "a1", resp.Skills[0].AgentID)
+	// The UI shows the AI backend, not the agent id. Here the agent's backend
+	// is also "a1", so it must be reported as such.
+	assert.Equal(t, []string{"a1"}, resp.Skills[0].Backends)
 	assert.Contains(t, resp.Skills[0].Path, "SKILL.md")
+}
+
+// A custom agent's ID can differ from its backend. The listing must report the
+// BACKEND (what the UI renders as an icon+name), not the agent id.
+func TestServeSkills_BackendsResolveThroughAgent(t *testing.T) {
+	isolateSkillGlobals(t)
+
+	root := t.TempDir()
+	model.DataDir = root
+	setSkillTestHome(t, t.TempDir())
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+
+	native := filepath.Join(root, "native")
+	writeSkillMD(t, filepath.Join(native, "demo"), "demo")
+
+	model.GetBackendRegistry()
+	model.BackendRegistry = []model.BackendSpec{
+		{ID: "my-custom-agent", Backend: "claude", NativeSkillsDirs: []string{native}},
+	}
+	agent := &model.Agent{ID: "my-custom-agent", Backend: "claude"}
+	model.ReplaceAgents(map[string]*model.Agent{"my-custom-agent": agent}, []*model.Agent{agent})
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Skills, 1)
+	assert.Equal(t, "my-custom-agent", resp.Skills[0].AgentID)
+	assert.Equal(t, []string{"claude"}, resp.Skills[0].Backends,
+		"the backend (not the agent id) is what the UI renders")
+}
+
+// A shared (.agents/skills) skill belongs to no single backend, so it must
+// carry neither an agent id nor a backend roster — the UI labels it "generic".
+func TestServeSkills_SharedHasNoBackends(t *testing.T) {
+	isolateSkillGlobals(t)
+
+	root := t.TempDir()
+	model.DataDir = root
+	home := t.TempDir()
+	setSkillTestHome(t, home)
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+
+	shared := filepath.Join(home, skill.SharedSkillsDir)
+	writeSkillMD(t, filepath.Join(shared, "generic"), "generic")
+
+	model.GetBackendRegistry()
+	model.BackendRegistry = []model.BackendSpec{
+		{ID: "claude", Backend: "claude", NativeSkillsDirs: []string{skill.SharedSkillsDir}},
+		{ID: "codex", Backend: "codex", NativeSkillsDirs: []string{skill.SharedSkillsDir}},
+	}
+	model.ReplaceAgents(map[string]*model.Agent{
+		"claude": {ID: "claude", Backend: "claude"},
+		"codex":  {ID: "codex", Backend: "codex"},
+	}, []*model.Agent{{ID: "claude", Backend: "claude"}, {ID: "codex", Backend: "codex"}})
+	skill.ResetForTest()
+	skill.Global().ScanAll()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkills, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Skills, 1)
+	assert.True(t, resp.Skills[0].Shared)
+	assert.Empty(t, resp.Skills[0].AgentID)
+	assert.Empty(t, resp.Skills[0].Backends,
+		"a shared skill must not carry the roster of backends that read the directory")
 }
 
 func TestServeSkills_MethodNotAllowed(t *testing.T) {
@@ -166,6 +244,49 @@ func TestServeSkillsRefresh_MethodNotAllowed(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/skills/refresh", http.NoBody)
 	withAuthCookie(req, model.SessionToken)
 	w := callHandler(ServeSkillsRefresh, req)
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// TestServeSkillsRescan_RescansWithoutNetwork pins the pure-local rescan: a
+// skill dropped into a directory by hand must be discovered immediately, with
+// no git IO. The configured repo points at a path that cannot be a remote, so
+// if rescan tried to clone/pull it would record an error — it must not.
+func TestServeSkillsRescan_RescansWithoutNetwork(t *testing.T) {
+	setupSkillsEnv(t)
+
+	// A repo whose sync would fail; rescan must leave its state untouched.
+	model.ConfigInstance.Skills.Repos = []model.SkillRepo{
+		{URL: "file:///nonexistent/repo.git", Slug: "broken-repo"},
+	}
+
+	// Drop a new skill into the user directory AFTER the initial scan.
+	userDir := model.ConfigInstance.Skills.Dirs[0]
+	writeSkillMD(t, filepath.Join(userDir, "fresh"), "fresh")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/rescan", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkillsRescan, req)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsRescanResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.True(t, resp.OK)
+	assert.GreaterOrEqual(t, resp.SkillCount, 2, "the newly added skill must be discovered")
+
+	// No network IO happened, so no sync state may have been written.
+	assert.Zero(t, model.ConfigInstance.Skills.LastSyncAt,
+		"rescan must not stamp a sync time")
+	assert.Empty(t, model.ConfigInstance.Skills.LastError,
+		"rescan must not record a sync error")
+	assert.Empty(t, model.ConfigInstance.Skills.Repos[0].LastError)
+}
+
+func TestServeSkillsRescan_MethodNotAllowed(t *testing.T) {
+	setupSkillsEnv(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/skills/rescan", http.NoBody)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeSkillsRescan, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
@@ -314,6 +435,59 @@ func TestServeConfig_Patch_SkillsApplied(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.False(t, resp["needs_restart"].(bool))
+}
+
+// Adding a local skill directory must make its skills visible immediately.
+//
+// The PATCH handler invalidates and rescans the registry (settings.go, the
+// skills branch) precisely so a newly configured directory shows up without a
+// restart or a manual sync. Without that rescan the config is persisted, the
+// next GET /api/skills still lists the old sources, and the user sees an empty
+// "已发现的技能" card until the server is restarted.
+//
+// This asserts the end-to-end contract rather than calling ScanAll by hand:
+// PATCH the config, then GET the listing and require the new skill to be there.
+func TestServeConfig_Patch_SkillsDirsTriggersScan(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+	isolateSkillGlobals(t)
+
+	root := t.TempDir()
+	model.DataDir = root
+	// Keep the scan deterministic: no native dirs, no shared ~/.agents/skills.
+	setSkillTestHome(t, t.TempDir())
+	model.BackendRegistry = []model.BackendSpec{}
+	model.ReplaceAgents(nil, nil)
+	model.ConfigInstance = model.Config{Skills: model.SkillsConfig{Enabled: true}}
+	skill.ResetForTest()
+
+	// A directory that does not exist yet at PATCH time, so the discovery
+	// cannot have happened before it.
+	newDir := filepath.Join(root, "added")
+	writeSkillMD(t, filepath.Join(newDir, "fresh"), "fresh")
+
+	dirsJSON, err := json.Marshal([]string{newDir})
+	require.NoError(t, err)
+	body := fmt.Sprintf(`{"skills":{"dirs":%s}}`, dirsJSON)
+	req := httptest.NewRequest(http.MethodPatch, "/api/config", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	withAuthCookie(req, model.SessionToken)
+	require.Equal(t, http.StatusOK, callHandler(ServeConfig, req).Code)
+
+	// No manual ScanAll: the PATCH must have rescanned.
+	listReq := httptest.NewRequest(http.MethodGet, "/api/skills", http.NoBody)
+	withAuthCookie(listReq, model.SessionToken)
+	w := callHandler(ServeSkills, listReq)
+	require.Equal(t, http.StatusOK, w.Code)
+
+	var resp skillsListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	names := make([]string, 0, len(resp.Skills))
+	for _, s := range resp.Skills {
+		names = append(names, s.Name)
+	}
+	assert.Contains(t, names, "fresh",
+		"a directory added via PATCH must be scanned before the response returns")
 }
 
 func TestServeConfig_Patch_SkillsRejectsBadInput(t *testing.T) {

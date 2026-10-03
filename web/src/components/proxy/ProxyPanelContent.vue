@@ -6,8 +6,24 @@
         <NetworkIcon :size="14" />
       </span>
       <span class="proxy-header-title">{{ t('nav.portForward') }}</span>
+      <RefreshButton
+        class="header-btn"
+        data-action="proxy-refresh"
+        :size="14"
+        :loading="refreshing"
+        :disabled="refreshing"
+        :title="t('common.refresh')"
+        @click="refreshPortForward"
+      />
       <button class="header-btn" @click="handleOpenScan" :title="t('proxy.scanTitle')">
         <Search :size="14" />
+      </button>
+      <!-- Jump to the port-mapping settings panel. Dispatches an event rather
+           than switching tabs directly so App.vue can record the proxy panel as
+           the return origin — Back (Android hardware / edge swipe) then lands
+           here instead of on whatever tab preceded the jump. -->
+      <button class="header-btn" data-action="proxy-open-settings" :title="t('proxy.openSettings')" @click="handleOpenSettings">
+        <SettingsIcon :size="14" />
       </button>
       <button class="create-btn" @click="openAddForm" :title="t('proxy.addPort')">
         <Plus :size="16" />
@@ -24,7 +40,15 @@
           <span class="tunnel-transport-value">{{ transportLabel }}</span>
         </div>
 
-        <div v-if="tunnelStatus === 'disconnected'" class="tunnel-banner error">
+        <!-- Tunnel problem banners. Gated on there being an enabled mapping to
+             carry: with none, the native service is stopped on purpose (see
+             syncToNative — it would otherwise burn battery for no work), so a
+             "disconnected" verdict describes a deliberate idle state, not a
+             failure. Showing the red error there misleads ("check network or
+             reload") when the empty state right below already says there is
+             nothing to forward. Once a mapping exists the banners are honest
+             and must appear. -->
+        <div v-if="tunnelStatus === 'disconnected' && hasEnabledPorts" class="tunnel-banner error">
           <XCircle :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-title">{{ t('proxy.tunnelDisconnected', { transport: transportSuffix }) }}</span>
@@ -32,7 +56,7 @@
           </div>
           <RefreshButton icon="RotateCcw" class="tunnel-retry-btn" :loading="tunnelChecking" :disabled="tunnelChecking" :title="t('proxy.retryCheck')" @click="handleRetryTunnel" />
         </div>
-        <div v-else-if="tunnelStatus === 'degraded'" class="tunnel-banner warning">
+        <div v-else-if="tunnelStatus === 'degraded' && hasEnabledPorts" class="tunnel-banner warning">
           <AlertTriangle :size="16" />
           <div class="tunnel-banner-content">
             <span class="tunnel-banner-title">{{ t('proxy.portsNoResponse') }}</span>
@@ -285,7 +309,7 @@
 </template>
 
 <script setup>
-import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert } from 'lucide-vue-next'
+import { XCircle, AlertTriangle, Info, Plus, Search, Lock, Smartphone, ChevronDown, Network as NetworkIcon, Server, CircleAlert, Settings as SettingsIcon } from 'lucide-vue-next'
 import { ref, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import ProxyPortItem from './ProxyPortItem.vue'
@@ -301,6 +325,15 @@ import { usePlatformDetect, isWindowsUA, isMacDesktopUA, isLinuxDesktopUA } from
 import { sshInstallHint } from '@/utils/portForwardUtils.ts'
 
 const { t } = useI18n()
+
+// Whether this panel is the visible one. App.vue keeps panels alive with
+// v-show, so mounting alone is not "opened" — the panel must also be the
+// active tab. Used to auto-refresh the port list + tunnel verdict on open.
+// Runtime declaration (not `defineProps<…>()`): this SFC's script block is
+// plain JS, where TS type syntax fails to parse.
+const props = defineProps({
+  active: { type: Boolean, default: false },
+})
 
 // Form state (shared for add & edit)
 const showForm = ref(false)
@@ -340,7 +373,7 @@ watch(showForm, (val) => {
   }
 })
 
-const { ports, detectedPorts, loading, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
+const { ports, detectedPorts, loading, refreshing, sshInfo, tunnelStatus, tunnelChecking, tunnelError, tunnelErrorType, activeTransport, connectingPorts, localReachable, scanning, hasScanned, scanError, registerPort, updatePort, unregisterPort, setPortEnabled, detectPorts, rescanPorts, checkTunnelHealth, refreshPortForward, transportAnnotation, openPortWithCheck, openInExternalBrowser, reconnectPort } = usePortForward()
 // Host axis (see usePlatformDetect). `isNativeApp` is true for BOTH native
 // hosts; `isAndroidApp` excludes the Electron desktop shell.
 const { isNativeApp, isAndroidApp, isWebApp } = usePlatformDetect()
@@ -368,6 +401,14 @@ const transportLabel = computed(() => {
 // not re-run on a language switch.
 const transportSuffix = computed(() => transportAnnotation())
 
+/**
+ * Whether any enabled mapping exists — the same predicate `syncToNative` uses
+ * to decide whether the native service should run at all. With none, the
+ * service is stopped deliberately and a "disconnected" verdict is an idle
+ * state, not a failure, so the problem banners stay hidden.
+ */
+const hasEnabledPorts = computed(() => ports.value.some(p => p.enabled))
+
 // Scan drawer is bound to the proxy tab: it auto-hides when switching tabs.
 const scanDrawer = useTabDrawer('proxy')
 
@@ -378,6 +419,29 @@ function handleOpenScan() {
     detectPorts()
   }
 }
+
+/**
+ * Jump to the port-mapping settings panel.
+ *
+ * Dispatches the same `open-port-forward-settings` event the app already
+ * understands for cross-surface jumps (App.vue records the proxy panel as the
+ * return origin, then switches tabs). Going through the event rather than
+ * calling switchTab directly keeps this component from needing to know how App
+ * wires navigation — and is what makes Back return here.
+ */
+function handleOpenSettings() {
+  window.dispatchEvent(new CustomEvent('open-port-forward-settings'))
+}
+
+// Auto-refresh when the panel becomes the visible one (and on mount if it is
+// already active — `immediate` covers the remembered-panel restore, where the
+// proxy tab is active before this component is ever mounted). `active` is a
+// prop, not a TabPanel-internal `everOpened`: the panel is kept alive by
+// v-show, so mounting is not the same as being opened, and a transition-only
+// watch would miss the initial active mount.
+watch(() => props.active, (isActive) => {
+  if (isActive) refreshPortForward()
+}, { immediate: true })
 
 // Tunnel guide: per-OS hint for getting a local ssh client when the manual
 // tunnel command is meant to run on this machine (web mode only).

@@ -47,6 +47,7 @@ flowchart TD
 
 - **能力检测优先于平台猜测**：优先使用标准事件和 display-mode，User-Agent 只用于 iOS 等缺少标准能力的场景
 - **原生环境不展示 Web 安装入口**：同一界面运行在 WebView 时应表现为已安装应用
+- **桌面端下载入口用 HOST 轴 + 移动 OS 常量判定，且必须排除 iPadOS**：`useDesktopDownload` 只在「宿主是普通浏览器（`isWebApp`）且不在移动/触屏 OS（`!isMobileOSUA`）」时才提供桌面端下载。**iPadOS 13+ 是这里唯一的陷阱**——它走桌面模式会发 macOS UA（`Macintosh`）且不带 iPhone/iPad 标记，若只用「非 app 模式 + 非 Android UA + 非 iOS UA」判定，iPad 会被判成桌面端、拿到装不上的 `darwin-x64` 安装包。`isMobileOSUA`（Android || iOS || iPadOS）由 `usePlatformDetect` 导出，`detectPlatformKey` 也用它做首行兜底返回 `''`
 - **APK 与前端同版本发布**：APK 通过构建流程嵌入 Go 二进制，下载入口与当前服务版本保持一致
 - **安装必须由用户手势触发**：浏览器安全模型不允许后台自动拉起安装提示
 - **Service Worker 的"不做事"比"做对事"更可靠**：浏览器只在检测到 fetch 处理器时才提示安装，而处理器一旦允许返回缓存，就会把"应用版本"与"缓存内容"解耦——在 ClawBench 这种服务端随时可重建前端的部署形态下，任何缓存策略都会变成 404/403 的来源。因此 worker 只保留安装资格所需的最小形态：用 Static Routing API 把 `/`、`/api/*`、`/share/*`、`/sw.js` 等声明为 network 源（浏览器直接走网络、根本不启动 worker），无该 API 的浏览器跳过（否则 install 抛异常导致永不激活），fetch 处理器保持非空、且只直通 GET。注册侧有五道门（有 API / 安全上下文 / 顶层窗口 / 非原生 App / `HEAD /sw.js` 返回 JS），并带 `updateViaCache:'none'` 保证 worker 自身的修复能下发。manifest 也必须放在构建输出目录而非 Vite 项目根——否则 Vite 会把 `<link rel="manifest">` 重写成带 hash 的 URL，而已安装应用的 manifest URL 是它的身份、必须稳定

@@ -37,6 +37,32 @@
       </div>
     </div>
 
+    <!-- Tunnel transport picker, shared by both native hosts. A dedicated row
+         rather than a commonFields entry: the truth source is the host's own
+         store (Electron store / Android SharedPreferences), so it must not flow
+         through usePanelSnapshot's save routing (which would write localStorage
+         for 'local' or 400 the whole save for 'server'). Two values (ssh / h2) —
+         there is no automatic mode. Rendered only once the async initial value
+         has arrived, and hidden entirely on a host that lacks the bridge methods
+         (see transportPickerVisible). The value is a draft until Save writes it
+         and reconnects.
+
+         Deliberately the FIRST row of the port-forward panel, above the SSH
+         port field: the transport choice decides whether that port is used at
+         all (an h2 client hides the port row — see sshOnlyFieldsHidden), so
+         showing it first makes the dependency read top-down. -->
+    <template v-if="transportPickerVisible">
+      <SettingsItem
+        :label="t('settings.items.portForwardTransport')"
+        :description="t('settings.items.portForwardTransportDesc')"
+        type="select"
+        :model-value="transportPref"
+        :options="transportOptions"
+        :no-divider="sshOnlyFieldsHidden"
+        @update:model-value="onTransportChange"
+      />
+    </template>
+
     <!-- Field list with section headers -->
     <template v-for="(entry, idx) in renderList" :key="entry.key">
       <div v-if="entry.type === 'header'" class="group-panel__section-header">{{ entry.label }}</div>
@@ -58,7 +84,7 @@
         :force-close="activeKey !== null && activeKey !== entry.field.key"
         :default-value="entry.field.defaultValue"
         :display-format="entry.field.displayFormat"
-        :display-transform="entry.field.displayTransform"
+        :display-transform="resolveDisplayTransform(entry.field)"
         :progress="resolveProgress(entry.field)"
         :refreshable="isRagProgressField(entry.field)"
         :refreshing="ragRefreshing"
@@ -87,27 +113,6 @@
           :disabled="true"
         />
       </template>
-    </template>
-
-    <!-- Tunnel transport picker, shared by both native hosts. A dedicated row
-         rather than a commonFields entry: the truth source is the host's own
-         store (Electron store / Android SharedPreferences), so it must not flow
-         through usePanelSnapshot's save routing (which would write localStorage
-         for 'local' or 400 the whole save for 'server'). Two values (ssh / h2) —
-         there is no automatic mode. Rendered only once the async initial value
-         has arrived, and hidden entirely on a host that lacks the bridge methods
-         (see transportPickerVisible). The value is a draft until Save writes it
-         and reconnects. -->
-    <template v-if="transportPickerVisible">
-      <SettingsItem
-        :label="t('settings.items.portForwardTransport')"
-        :description="t('settings.items.portForwardTransportDesc')"
-        type="select"
-        :model-value="transportPref"
-        :options="transportOptions"
-        :no-divider="true"
-        @update:model-value="onTransportChange"
-      />
     </template>
 
     <!-- Tunnel status, shown while the transport controls are on screen.
@@ -372,13 +377,16 @@ onMounted(() => {
   if (props.config.panelId === 'rag') {
     refreshRagStatus()
   }
-  // Web mode's status row has no client tunnel to probe, so seed it from the
-  // server's readiness. Runs after setup (the refs are declared below), which is
-  // the same order the transport picker's own onMounted relies on.
-  if (props.config.panelId === 'portForward' && isWebApp.value) {
-    webStatusChecking.value = true
+  // The port-forward panel needs the server's resolved SSH port in two places:
+  // the readiness row (web mode has no client tunnel to probe) and the auto
+  // port row (0 = auto resolves to a concrete port the server chose). Both read
+  // `sshInfo`, so it is loaded on every host — not just web — while the
+  // "checking" flag stays web-only (native hosts get their status from the
+  // client tunnel via checkTunnelHealth).
+  if (props.config.panelId === 'portForward') {
+    if (isWebApp.value) webStatusChecking.value = true
     loadSSHInfo().finally(() => {
-      webStatusChecking.value = false
+      if (isWebApp.value) webStatusChecking.value = false
     })
   }
 })
@@ -515,6 +523,34 @@ function getLocalValue(field: ItemSpec): unknown {
   // RAG status fields: resolve from polled RAG status
   if (k.startsWith('rag.status.')) return getRagStatusValue(k)
   return field.source === 'server' ? getServerValueWithDefault(k) : settingsLocalConfig[k]
+}
+
+/**
+ * Display transform for a row, with one override.
+ *
+ * `port_forward.port` is the only row whose display depends on live server
+ * state: 0 means "auto-assign", and the server resolves that to a concrete
+ * port (main port + 1). The field spec's own transform can only say "自动"
+ * because it has no access to `/api/ssh/info/full`; here we have `sshInfo`, so
+ * the auto row reads "自动（20001）" — the user sees both that it is automatic
+ * and which port is actually listening. Before the probe resolves (or when SSH
+ * is disabled) it delegates to the field's own transform, which is the single
+ * source for the plain "自动" wording.
+ */
+function resolveDisplayTransform(field: ItemSpec): ((value: unknown) => unknown) | undefined {
+  const base = field.displayTransform
+  if (field.key === 'port_forward.port') {
+    return (value: unknown) => {
+      if (value === 0) {
+        const resolved = sshInfo.value?.enabled ? sshInfo.value.port : 0
+        if (resolved > 0) {
+          return t('settings.items.portForwardPortAutoResolved', { port: resolved })
+        }
+      }
+      return base ? base(value) : value
+    }
+  }
+  return base
 }
 
 // ── RAG status field resolution ──
@@ -681,7 +717,15 @@ async function writeTransportPref(value: 'ssh' | 'h2'): Promise<boolean> {
     const setter = native?.setTunnelTransportH2Enabled
     if (typeof setter !== 'function') return false
     await setter.call(native, value === 'h2')
-    return true
+    // Android's setter is a synchronous @JavascriptInterface void method, so a
+    // silent no-op (stubbed context, wrong key) would otherwise look like a
+    // successful write: the panel would report itself clean while the host kept
+    // the old value, and the user could not re-trigger the save. Read back
+    // through the same getter the initial value uses (SharedPreferences.apply
+    // updates the in-memory value synchronously, so this reflects the write).
+    const getter = native?.getTunnelTransportH2Enabled
+    if (typeof getter !== 'function') return false
+    return !!(await getter.call(native)) === (value === 'h2')
   }
   if (isDesktopShell.value) {
     const setter = native?.setTunnelTransport
