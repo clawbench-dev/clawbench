@@ -1107,7 +1107,9 @@ AND s.session_type IN ('chat', 'group')
 grep -rn "session_type" internal/ | grep -v "_test.go"
 ```
 
-逐处判断"该处是否应显示群"，已知需处理点（不止这三条）：`chat.go:1478,1641,2007,2014,2046,2068`、`continue_conversation.go:48,141,161,430`、`session_command.go:46,71`、`handler/session_resume.go:358,459`、`store/session_queries.go:133,250`。**特别注意 `GetSessionCount`（`chat.go:2046`）喂会话上限门（`chat_session.go:174`）——群应计入还是不计入须决策，否则群绕过上限。**
+逐处判断"该处是否应显示群"，已知需处理点（不止这三条）：`chat.go:1478,1641,2007,2014,2046,2068`、`continue_conversation.go:48,141,161,430`、`session_command.go:46,71`、`handler/session_resume.go:358,459`、`store/session_queries.go:133,250`。
+
+**会话上限（决策 #37：群计入、成员不计）**：所有**计数类**查询（`GetSessionCount`（`chat.go:2046`）、`continue_conversation.go:161,430`、`handler/session_resume.go:358`）改为 `session_type IN ('chat','group')`，使群占 1 个额度、成员不占。**列表/搜索类**查询同样改 `IN ('chat','group')`（群可见）。**关键**：`POST /api/group/create` 也必须自己过这道上限门（`handler/chat_session.go:174` 同款检查），否则新建群绕过上限。补测试：达到 `SessionMaxCount` 时建群返回 409。
 
 **Step 4: 运行确认通过**
 
@@ -1314,7 +1316,7 @@ git commit -m "feat(group): add preemption on human interjection"
 - Test: `internal/handler/group_test.go`
 
 **端点**（字段名从 handler 代码抄，勿望文生义）：
-- `POST /api/group/create` — `{title, hostAgentId}` → `{ok, groupId, hostMemberId}`（标题可空，空则后端用主持人名占位，决策 #28）
+- `POST /api/group/create` — `{title, hostAgentId}` → `{ok, groupId, hostMemberId}`（标题可空，空则后端用主持人名占位，决策 #28；**须过会话上限门**，决策 #37）
 - `POST /api/group/members` — `{groupId, agentId}` → `{ok, memberId}`
 - `DELETE /api/group/members` — `{groupId, memberId}` → `{ok}`
 - `GET /api/group/members?groupId=` → `{ok, members:[{id, agentId, name, backend, left}]}`
@@ -1553,4 +1555,4 @@ git commit -m "test(group): add group chat e2e spec"
 - OpenAPI 与 `internal/api/openapi.yaml` 同步，`TestOpenAPIDrift` 通过。
 - **评审项验收（一轮）**：C2（`agent_id` 可写可读）、C3（群在 list/search/browse/overview 均可见、成员均隐藏）、C4（`failTurn`/metadata 落群）、C5（成员 resume 用 external_session_id）、I4（停止按钮生效）均有对应测试通过。
 - **评审项验收（二轮）**：N1（ACP 成员 `SessionID` 保持池键，仅 CLI 换 extID）、N2（`CancelSession(groupID)` 能停住当前成员回合）、N3（`stream_start` 带发言人）、N4（同 agent 两成员互相可见）、N5（群分享保留归属）、N6（主持人样式按成员行 id）、N7/N8（脚手架与夹具）均有对应测试或明确实现。
-- **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、选主持人复用多选抽屉（#33）、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）均落地。
+- **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、选主持人复用多选抽屉（#33）、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）、**群计入会话上限而成员不计、建群过上限门（#37）**、群设置在成员管理抽屉内（#38）均落地。
