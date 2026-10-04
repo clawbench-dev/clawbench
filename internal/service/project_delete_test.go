@@ -3,8 +3,10 @@ package service
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/rag"
 	"clawbench/internal/store"
 
 	_ "modernc.org/sqlite"
@@ -206,4 +208,38 @@ func TestDeleteProjectData_ForgetsPathCache(t *testing.T) {
 	newID, err := store.ProjectIDForPath(path)
 	require.NoError(t, err)
 	assert.NotEqual(t, id, newID, "the path→id cache must be evicted so re-registration gets a new id")
+}
+
+// TestDeleteProjectData_RAGPurgeDoesNotDeadlock guards the ordering between the
+// DB transaction and the RAG purge. The RAG store opened by rag.Init serializes
+// on the SAME global mutex as store.WriteBegin (via serviceWriteLocker), and
+// that mutex is non-reentrant — so calling rag.DeleteProjectData while the
+// write lock is still held self-deadlocks and wedges every later write in the
+// process. The purge must run only after the lock is released.
+//
+// This needs a store whose locker is the production one: the default
+// NewSQLiteStoreForTest uses a no-op locker and would never reproduce the
+// deadlock, which is exactly how this regression slipped through the other
+// tests (they leave rag.GlobalStore nil, so the purge is a no-op).
+func TestDeleteProjectData_RAGPurgeDoesNotDeadlock(t *testing.T) {
+	setupProjectDeleteDB(t)
+	id := seedProjectRow(t, "/proj/rag-deadlock")
+
+	rs, err := rag.NewSQLiteStore(":memory:") // production locker → store.WriteLock
+	require.NoError(t, err)
+	defer func() { _ = rs.Close() }()
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = rs
+	t.Cleanup(func() { rag.GlobalStore = origStore })
+
+	done := make(chan error, 1)
+	go func() { done <- DeleteProjectData(id) }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("DeleteProjectData deadlocked: the RAG purge ran while the write lock was still held")
+	}
 }
