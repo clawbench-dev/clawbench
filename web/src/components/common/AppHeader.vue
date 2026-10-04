@@ -335,7 +335,7 @@ import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { isDarkTheme, resolveThemeId, THEME_IDS, getThemeLabelKey, getThemePreviewColor } from '@/utils/themeMeta'
-import { applyThemeWithReveal, originFromElement } from '@/utils/themeReveal'
+import { applyThemeWithReveal, headerThemeOrigin } from '@/utils/themeReveal'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import AppMenuPanel from '@/components/common/AppMenuPanel.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
@@ -404,8 +404,10 @@ function onThemeMenuAfterLeave() {
   const value = pendingThemeValue.value
   if (value === null) return
   pendingThemeValue.value = null
+  // Same origin helper as the settings theme grid, so both entry points wipe
+  // from the identical spot.
   applyThemeWithReveal(() => setLocalConfig('theme', value), {
-    origin: originFromElement(themeBtnRef.value),
+    origin: headerThemeOrigin(),
   })
 }
 

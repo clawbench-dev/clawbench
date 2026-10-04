@@ -256,15 +256,29 @@ describe('AppHeader theme picker wiring', () => {
     expect(body![1]).not.toContain('applyThemeWithReveal')
   })
 
-  it('runs the reveal from the after-leave handler with the button as origin', () => {
+  it('runs the reveal from the after-leave handler using the shared origin helper', () => {
     const body = source.match(/function onThemeMenuAfterLeave\(\) \{([\s\S]*?)\n\}/)
     expect(body, 'onThemeMenuAfterLeave not found').not.toBeNull()
     expect(body![1]).toContain('applyThemeWithReveal')
     expect(body![1]).toContain("setLocalConfig('theme', value)")
-    expect(body![1]).toContain('originFromElement(themeBtnRef.value)')
+    // Both entry points must share headerThemeOrigin() so they wipe from the
+    // identical spot (the settings grid uses the same helper).
+    expect(body![1]).toContain('headerThemeOrigin()')
   })
 
   it('wires the popup menu after-leave event to the handler', () => {
     expect(source).toMatch(/<PopupMenu[\s\S]*?@after-leave="onThemeMenuAfterLeave"/)
+  })
+
+  it('shares headerThemeOrigin() with the settings theme grid', () => {
+    // The settings grid is the other entry point; both must resolve the origin
+    // through the same helper or the two reveals would start from different
+    // spots.
+    const settingsItem = readFileSync(
+      resolve(__dirname, '../../components/settings/SettingsItem.vue'),
+      'utf8',
+    )
+    expect(source).toContain('headerThemeOrigin()')
+    expect(settingsItem).toContain('headerThemeOrigin()')
   })
 })

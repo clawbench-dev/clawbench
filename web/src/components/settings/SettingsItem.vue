@@ -270,7 +270,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 // Shared pill button language (.fbtn) used by the row's confirm/retry buttons.
 import '@/assets/modal-footer-btn.css'
@@ -280,6 +280,7 @@ import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import { useTabDrawer } from '@/composables/useTabDrawer'
 import TerminalPreviewCard from '@/components/common/TerminalPreviewCard.vue'
 import { isDarkTheme, resolveThemeId } from '@/utils/themeMeta'
+import { applyThemeWithReveal, headerThemeOrigin } from '@/utils/themeReveal'
 
 const { t } = useI18n()
 
@@ -325,6 +326,13 @@ interface Props {
   /** Retry handler for a failed terminal theme lazy-load. */
   onRetryTerminalThemes?: () => void
   /**
+   * Play the circular theme-reveal when an option is chosen from the theme grid.
+   * Set on the app-theme row only; the reveal starts from the same top-right
+   * spot as the header's quick picker (see utils/themeReveal). Off for every
+   * other select, including the terminal-theme grid.
+   */
+  revealOnSelect?: boolean
+  /**
    * Shared AI-summary-model config status to show as a pill on this row.
    * Absent means "no pill" — only the rows that jump to the AI summary panel
    * set it. The parent resolves the status; this component owns its display.
@@ -348,6 +356,7 @@ const props = withDefaults(defineProps<Props>(), {
   noDivider: false,
   defaultValue: undefined,
   summaryModelStatus: undefined,
+  revealOnSelect: false,
 })
 
 const emit = defineEmits<{
@@ -588,10 +597,21 @@ function handleClick() {
 }
 
 function selectOption(value: unknown) {
-  emit('update:modelValue', value)
   closeSelectPicker()
   themePicker.close()
   emit('editToggle', false)
+  if (props.revealOnSelect) {
+    // Let the sheet disappear before wiping, so it is not captured in the
+    // transition snapshots. The reveal starts from the same top-right spot as
+    // the header's quick picker — identical effect on both entry points.
+    void nextTick().then(() => {
+      applyThemeWithReveal(() => { emit('update:modelValue', value) }, {
+        origin: headerThemeOrigin(),
+      })
+    })
+    return
+  }
+  emit('update:modelValue', value)
 }
 
 function confirmEdit() {

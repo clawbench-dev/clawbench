@@ -87,6 +87,7 @@
           :options="resolveItemOptions(item)"
           :options-filter="resolveOptionsFilter(item)"
           :option-previews="item.key === 'theme' ? themePreviews : undefined"
+          :reveal-on-select="item.key === 'theme'"
           :min="item.min"
           :max="getItemMax(item)"
           :step="item.step"

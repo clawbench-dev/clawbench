@@ -90,6 +90,20 @@ export function originFromElement(el: Element | null | undefined): ThemeRevealOr
 }
 
 /**
+ * Origin for the theme reveal: the app-header quick toggle, so EVERY entry
+ * point (the header menu and the settings theme grid) wipes from the identical
+ * top-right spot. Falls back to the top-right corner when the button has no box
+ * (e.g. a layout without the header).
+ */
+export function headerThemeOrigin(): ThemeRevealOrigin | null {
+  if (typeof document === 'undefined') return null
+  const fromButton = originFromElement(document.querySelector('.theme-quick-toggle'))
+  if (fromButton) return fromButton
+  if (typeof window === 'undefined') return null
+  return { x: window.innerWidth, y: 0 }
+}
+
+/**
  * Apply a theme change, revealing it with a circular wipe from `origin` when
  * possible.
  *
