@@ -37,6 +37,7 @@ vi.mock('@/components/chat/ChatMessageItem.vue', () => ({
         <span class="has-render">{{ typeof chatRender.renderTextBlock }}</span>
         <span class="auto-speech-active">{{ autoSpeech.isActive(1) }}</span>
         <span class="agent-backend">{{ chatSession.getAgentBackend() }}</span>
+        <span class="agent-avatar">[{{ chatSession.getAgentAvatar() }}]</span>
         <button class="emit-toggle-summary" type="button" @click="$emit('toggle-summary', msg.id)">summary</button>
         <button class="emit-show-metadata" type="button" @click="$emit('show-metadata', msg)">meta</button>
         <button class="emit-toggle-tool" type="button" @click="$emit('toggle-tool', 'tool-key-1')">tool</button>
@@ -382,6 +383,10 @@ describe('SessionShareView', () => {
     expect(assistant.find('.auto-speech-active').text()).toBe('false')
     // The agent identity comes from the snapshot, not from /api/agents.
     expect(assistant.find('.agent-backend').text()).toBe('codebuddy')
+    // Custom avatars are not part of the snapshot: the provider must always
+    // return an empty string so the render chain falls back to the built-in
+    // backend icon.
+    expect(assistant.find('.agent-avatar').text()).toBe('[]')
   })
 
   it('shows the not-found state when the token is unknown', async () => {
