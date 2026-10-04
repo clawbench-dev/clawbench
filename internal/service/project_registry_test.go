@@ -107,9 +107,11 @@ func TestListAllProjects_OrdersByLastActiveThenCreatedAt(t *testing.T) {
 	items, err := service.ListAllProjects()
 	require.NoError(t, err)
 	require.Len(t, items, 3)
-	assert.Equal(t, "/proj/recent-active", items[0].Path, "most recent session first")
-	assert.Equal(t, "/proj/old-active", items[1].Path, "second most recent session next")
-	assert.Equal(t, "/proj/new-idle", items[2].Path,
+	// Paths are stored CANONICAL, so the expected value must go through the same
+	// normalization: on Windows "/proj/x" becomes `D:\proj\x`.
+	assert.Equal(t, store.NormalizeProjectPath("/proj/recent-active"), items[0].Path, "most recent session first")
+	assert.Equal(t, store.NormalizeProjectPath("/proj/old-active"), items[1].Path, "second most recent session next")
+	assert.Equal(t, store.NormalizeProjectPath("/proj/new-idle"), items[2].Path,
 		"idle project falls back to its created_at, which predates the other sessions' times here")
 }
 
