@@ -61,7 +61,7 @@
 | G | HTTP API + OpenAPI | E、F |
 | H | 前端：`AgentSelectorDrawer` 多选 | — |
 | I | 前端：建群入口与主持人选择 | G、H |
-| J | 前端：群时间线渲染（发言人气泡/主持人样式） | G |
+| J | 前端：群时间线渲染（发言人气泡/主持人样式/路由卡片 J2） | G |
 | K | 前端：成员头像条 + 增删 | G、H |
 | M | E2E（M0 前置 + M1） | 全部 |
 | ~~L~~ | ~~前端：同轮并发气泡~~ → **v2**（随并行一起做，见头部勘误） | — |
@@ -558,10 +558,11 @@ func BuildHostSystemPrompt(members []string) string {
 	b.WriteString("\n\n[群聊主持人] 你是本次多智能体讨论的主持人。你的职责是控场，而不是代替成员回答问题。\n")
 	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言：\n")
 	b.WriteString("  <clawbench-speaker>成员名</clawbench-speaker> 给该成员的指令\n")
-	b.WriteString("可同时点名多个成员（逗号分隔），他们将并行发言：\n")
+	b.WriteString("可一次点名多个成员（逗号分隔），他们将按顺序依次发言：\n")
 	b.WriteString("  <clawbench-speaker>A,B</clawbench-speaker> 请分别表态\n")
 	b.WriteString("当讨论已充分、可以收敛时，输出结束标签：\n")
 	b.WriteString("  <clawbench-group-end/>\n")
+	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n") // 决策 #32
 	b.WriteString("可选的成员名：")
 	b.WriteString(strings.Join(members, "、"))
 	b.WriteString("。\n")
@@ -1249,7 +1250,7 @@ type groupTurnRunner func(spec groupMemberTurn) groupMemberResult
 
 **Step 1: 写失败测试**
 
-覆盖：主持人输出路由标签 → 选人 → 成员发言 → 落群时间线；**被点名多个成员时按标签顺序依次发言、后者能看到前者本轮发言**；结束信号停止；解析失败回退轮转；最大轮数兜底；成员失败不终止群。
+覆盖：主持人输出路由标签 → 选人 → 成员发言 → 落群时间线；**被点名多个成员时按标签顺序依次发言、后者能看到前者本轮发言**；结束信号停止；解析失败回退轮转；**最大轮数读群设置、达上限强制停**（决策 #31）；**结束后主持人产出汇总**（决策 #32）；成员失败不终止群。
 
 **Step 2: 运行确认失败**
 
@@ -1261,9 +1262,11 @@ Expected: FAIL
 `group_orchestrator.go` 要点（伪代码见设计文档 §5.1，**v1 顺序轮次**）：
 - `RunGroupTurn(ctx, groupID, userMessage)`：写用户消息到群 → 循环。
 - 每轮：主持人发言（注入 + 解析）；解析失败回退轮转；被点名成员**按标签顺序依次**发言（**v1 顺序，非并发**）；每个成员发言前记录高水位 `H`，发言后 `seen_cursor = H`；检查结束/最大轮数/抢占。
+- **最大轮数（决策 #31）**：默认 10，读群行 `context_state` 的配置值（缺省 10）；达上限则强制退出循环并进入汇总。
+- **最终汇总（决策 #32）**：循环结束后（正常结束信号或达上限），**再跑一次主持人回合**产出总结；系统提示要求"结束标签后写结论"。总结作为一条主持人发言（`agent_id=主持人成员行 id`）写入群时间线。
 - 主持人/成员回合都构造 `TurnSpec{SessionID: memberRowID, TimelineSessionID: groupID, ChatReq: ...}`；`ChatReq` 用 **D1 的 `applyMemberResumeOverrides`** 修正（**C5/N1**）。`AgentID` 字段（用于 `stream_start` 发言人，F0b）传**成员行 id**。
 - 主持人回合的系统提示 = 成员系统提示 + `BuildHostSystemPrompt(memberNames)`。
-- **N6（主持人标记机制，须实现时定）**：`content` 由 executor 的 `buildContentJSON`（`session_executor.go:1430`）构建，**编排器没有注入 content 顶层键的钩子**；且前端读的 `ChatMessage.metadata` 是响应元数据字段，**不是** content 信封。因此"在 content 加 `meta.role`"这条**不可行**。v1 采用**可行的替代**：主持人发言与普通成员发言的区分**靠 `agent_id == 主持人成员行 id`**（群的主持人成员行 id 已知），前端据此渲染居中样式。**不引入 content 信封标记**。
+- **N6（主持人标记机制）**：`content` 由 executor 的 `buildContentJSON`（`session_executor.go:1430`）构建，**编排器无注入 content 顶层键的钩子**；"在 content 加 `meta.role`"**不可行**。v1 靠 **`agent_id == 主持人成员行 id`** 区分主持人发言，前端据此渲染居中样式 + 解析路由卡片（决策 #35）。**不引入 content 信封标记**。
 - **I9（游标语义）**：主持人也用 `seen_cursor`，语义与成员一致——**本次发言前**的群时间线高水位；发言后更新为发言前的高水位（不是发言后的最大 id）。F1 的 `buildInjectionText` 对主持人和成员是同一个函数，`self` 传各自**成员行 id**。
 - **顺序不变量（C1 残留）**：串行 `await` 每个成员回合完全结束（含 Finalize）再启动下一个；群回合开始/结束时清理群时间线孤儿 `streaming=1` 行（见设计 §5.6）。
 
@@ -1311,13 +1314,16 @@ git commit -m "feat(group): add preemption on human interjection"
 - Test: `internal/handler/group_test.go`
 
 **端点**（字段名从 handler 代码抄，勿望文生义）：
-- `POST /api/group/create` — `{title, hostAgentId}` → `{ok, groupId, hostMemberId}`
+- `POST /api/group/create` — `{title, hostAgentId}` → `{ok, groupId, hostMemberId}`（标题可空，空则后端用主持人名占位，决策 #28）
 - `POST /api/group/members` — `{groupId, agentId}` → `{ok, memberId}`
 - `DELETE /api/group/members` — `{groupId, memberId}` → `{ok}`
 - `GET /api/group/members?groupId=` → `{ok, members:[{id, agentId, name, backend, left}]}`
+- `PATCH /api/group/settings` — `{groupId, maxRounds}` → `{ok}`（决策 #31）
 - `POST /api/group/chat` — `{groupId, message, ...}` → 触发编排器（可复用 `/api/ai/chat` 语义）。
 
 **Step 1-5:** TDD：先写 handler 测试（`httptest`），确认 404，再注册路由实现。OpenAPI 同步 `internal/api/openapi.yaml`，跑 `go test ./internal/handler/ -run TestOpenAPIDrift`。
+
+> **注意**：`maxRounds` 存群行 `context_state` JSON，写入用 `PatchContextStateMerge`（值须为合法 JSON 数字，见设计 §12 M1）。
 
 **Commit:**
 
@@ -1409,22 +1415,64 @@ git commit -m "feat(group): render speaker attribution and host style in timelin
 
 ---
 
+### Task J2: 前端路由卡片解析（决策 #35）
+
+> **决策 #35**：后端**保留**路由标签（不剥离），前端解析成"主持人 → A、B"卡片。与 Go `internal/grouprouting` **镜像**，由 parity corpus 固化（同 askquestion 约定）。
+
+**Files:**
+- Create: `web/src/utils/groupRouting.ts`（`parseGroupRouting(text)` 镜像 Go）
+- Create/Modify: parity corpus（复用 `internal/grouprouting/testdata/` 或新建，双向固化）
+- Modify: `web/src/components/chat/ChatMessageItem.vue`（主持人气泡内渲染路由卡片）
+- Test: `web/src/utils/__tests__/groupRouting.test.ts` + parity 测试
+
+**Step 1: 写失败测试**
+
+```ts
+import { parseGroupRouting } from '../groupRouting'
+
+test('parses speakers and instruction', () => {
+  const r = parseGroupRouting('<clawbench-speaker>A, B</clawbench-speaker> 请表态')
+  expect(r.found).toBe(true)
+  expect(r.speakers).toEqual(['A', 'B'])
+  expect(r.instruction).toBe('请表态')
+})
+
+test('parses end signal', () => {
+  expect(parseGroupRouting('充分了<clawbench-group-end/>').end).toBe(true)
+})
+```
+
+**Step 3: 实现**：镜像 `internal/grouprouting/grouprouting.go` 的 `Parse`（同样的正则、同样的"不可解析不剥离"契约）；主持人气泡把标签替换为卡片（发言人 chips + 指令），非主持人气泡不动。**parity corpus 双向测试**：同一输入 Go 与 TS 产出同结构（照 `internal/askquestion/parity_test.go` 与 `web/src/utils/askQuestion` 的先例）。
+
+**Commit:**
+
+```bash
+git add web/src/utils/groupRouting.ts web/src/utils/__tests__/groupRouting.test.ts internal/grouprouting/testdata/
+git commit -m "feat(group): frontend routing-card parser mirroring Go"
+```
+
+---
+
 ## 阶段 K：前端成员头像条 + 增删
 
 ### Task K1: 头像条与加成员
 
 **Files:**
 - Create: `web/src/components/chat/GroupMemberBar.vue`
+- Create: `web/src/components/chat/GroupMemberSheet.vue`（成员管理 + 群设置，`BottomSheet`，决策 #34）
 - Modify: `web/src/components/chat/ChatPanelContent.vue`
 - Test: 组件测试
 
-**Step 3: 实现**：头部横向头像条；尾部 `+` 打开 H1 多选抽屉批量加成员；成员管理面板可移除（调 `DELETE /api/group/members`）；"已离场"成员灰显。
+**Step 3: 实现**：
+- 头部横向头像条（决策 #19）；尾部 `+` 打开 **`BottomSheet` 抽屉**（决策 #34）批量加成员（H1 多选）。
+- 抽屉内：成员列表（可移除，调 `DELETE /api/group/members`；"已离场"成员**灰显 + 标注"已离场"**，决策 #29/#34）+ **群设置（最大轮数，决策 #31）**，改后调 `PATCH /api/group/settings`。
+- 成员展示名取自成员行 `title`（决策 #36）。
 
 **Commit:**
 
 ```bash
-git add web/src/components/chat/GroupMemberBar.vue web/src/components/chat/ChatPanelContent.vue
-git commit -m "feat(group): add member avatar bar with add/remove"
+git add web/src/components/chat/GroupMemberBar.vue web/src/components/chat/GroupMemberSheet.vue web/src/components/chat/ChatPanelContent.vue
+git commit -m "feat(group): add member bar, management sheet and group settings"
 ```
 
 ---
@@ -1505,3 +1553,4 @@ git commit -m "test(group): add group chat e2e spec"
 - OpenAPI 与 `internal/api/openapi.yaml` 同步，`TestOpenAPIDrift` 通过。
 - **评审项验收（一轮）**：C2（`agent_id` 可写可读）、C3（群在 list/search/browse/overview 均可见、成员均隐藏）、C4（`failTurn`/metadata 落群）、C5（成员 resume 用 external_session_id）、I4（停止按钮生效）均有对应测试通过。
 - **评审项验收（二轮）**：N1（ACP 成员 `SessionID` 保持池键，仅 CLI 换 extID）、N2（`CancelSession(groupID)` 能停住当前成员回合）、N3（`stream_start` 带发言人）、N4（同 agent 两成员互相可见）、N5（群分享保留归属）、N6（主持人样式按成员行 id）、N7/N8（脚手架与夹具）均有对应测试或明确实现。
+- **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、选主持人复用多选抽屉（#33）、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）均落地。
