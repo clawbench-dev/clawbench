@@ -26,6 +26,8 @@
     "vue-tsc": "^2.2.12"
   },
   "dependencies": {
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
     "@lobehub/icons-static-svg": "^1.94.0",
     "@vitejs/plugin-vue": "^6.0.7",
     "diff": "^9.0.0",

@@ -3746,6 +3746,13 @@ paths:
     patch:
       tags: [Agents]
       summary: 更新 agent
+      description: |
+        部分更新单个 agent（body 含 `id`）。可更新字段：
+        `preferred_model`、`preferred_thinking_effort`、`preferred_mode`、
+        `transport`、`name`、`specialty`、`custom_system_prompt`、`avatar`、
+        `sort_order`、`auto_approve`。
+        `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
+        非空时校验大小上限与 SVG 安全性。
       operationId: agentsUpdate
       responses:
         "200":

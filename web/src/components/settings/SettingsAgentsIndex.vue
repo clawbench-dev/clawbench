@@ -12,7 +12,7 @@
       @click="$emit('navigate', `agents:${agent.id}`)"
     >
       <div class="settings-agents-index__left">
-        <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :size="20" /></span>
+        <span class="settings-agents-index__icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" :size="20" /></span>
         <div class="settings-agents-index__text">
           <div class="settings-agents-index__name-row">
             <span class="settings-agents-index__name">{{ agent.name }}</span>

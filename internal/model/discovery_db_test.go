@@ -39,6 +39,7 @@ func setupTestDBForDiscovery(t *testing.T) *sql.DB {
 			preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 			system_prompt TEXT NOT NULL DEFAULT '',
 			custom_system_prompt TEXT NOT NULL DEFAULT '',
+			avatar TEXT NOT NULL DEFAULT '',
 			models TEXT NOT NULL DEFAULT '[]',
 			models_auto_detected INTEGER NOT NULL DEFAULT 0,
 			sort_order INTEGER NOT NULL DEFAULT 0,

@@ -1,7 +1,7 @@
 <template>
   <BottomSheet :open="open" auto :title="drawerTitle" @close="$emit('close')">
     <template #header>
-      <AgentIcon :backend="backendId" :name="backendDisplayName" :size="18" class="bs-header-icon" />
+      <AgentIcon :backend="backendId" :name="backendDisplayName" :avatar="agentAvatar" :size="18" class="bs-header-icon" />
       <span class="bs-header-title">{{ drawerTitle }}</span>
     </template>
     <div class="acp-session-search-row">
@@ -88,11 +88,12 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { getAgentBackend } = useAgents()
+const { getAgentBackend, getAgentAvatar } = useAgents()
 const resumingId = ref('')
 const searchQuery = ref('')
 
 const backendId = computed(() => getAgentBackend(props.agentId))
+const agentAvatar = computed(() => getAgentAvatar(props.agentId))
 const backendDisplayName = computed(() => getBackendDisplayName(backendId.value))
 const drawerTitle = computed(() => t('chat.acpSession.resumeTitle', { agent: backendDisplayName.value }))
 

@@ -41,7 +41,7 @@ vi.mock('@/composables/useMarkdownRenderer', () => ({
 }))
 
 vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({ getAgentBackend: () => 'acp', getAgentName: () => 'test-agent' }),
+  useAgents: () => ({ getAgentBackend: () => 'acp', getAgentName: () => 'test-agent', getAgentAvatar: () => '' }),
 }))
 
 vi.mock('@/components/common/AgentIcon.vue', () => ({

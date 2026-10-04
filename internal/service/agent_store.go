@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	preferred_model TEXT NOT NULL DEFAULT '',
 	preferred_thinking_effort TEXT NOT NULL DEFAULT '',
 	custom_system_prompt TEXT NOT NULL DEFAULT '',
+	avatar TEXT NOT NULL DEFAULT '',
 	models TEXT NOT NULL DEFAULT '[]',
 	models_auto_detected INTEGER NOT NULL DEFAULT 0,
 	sort_order INTEGER NOT NULL DEFAULT 0,
@@ -54,7 +55,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 		SELECT id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
-			custom_system_prompt, models, models_auto_detected,
+			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve
 		FROM agents ORDER BY id
@@ -74,7 +75,7 @@ func LoadAgentsFromDB() ([]*model.Agent, error) {
 			&a.ID, &a.Name, &a.Specialty, &a.Backend, &a.Command,
 			&a.ThinkingEffort, &levelsJSON,
 			&a.PreferredMode, &a.PreferredModel, &a.PreferredThinkingEffort,
-			&a.CustomSystemPrompt, &modelsJSON, &modelsAutoDetected,
+			&a.CustomSystemPrompt, &a.Avatar, &modelsJSON, &modelsAutoDetected,
 			&a.SortOrder,
 			&a.Transport, &a.AcpCommand, &autoApprove,
 		)
@@ -149,10 +150,10 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
 			preferred_mode, preferred_model, preferred_thinking_effort,
-			custom_system_prompt, models, models_auto_detected,
+			custom_system_prompt, avatar, models, models_auto_detected,
 			sort_order,
 			transport, acp_command, auto_approve)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			specialty = excluded.specialty,
@@ -164,6 +165,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 			preferred_model = excluded.preferred_model,
 			preferred_thinking_effort = excluded.preferred_thinking_effort,
 			custom_system_prompt = excluded.custom_system_prompt,
+			avatar = excluded.avatar,
 			models = excluded.models,
 			models_auto_detected = excluded.models_auto_detected,
 			sort_order = excluded.sort_order,
@@ -174,7 +176,7 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 	`, agent.ID, agent.Name, agent.Specialty, agent.Backend, agent.Command,
 		agent.ThinkingEffort, string(levelsJSON),
 		agent.PreferredMode, agent.PreferredModel, agent.PreferredThinkingEffort,
-		agent.CustomSystemPrompt, string(modelsJSON), modelsAutoDetected,
+		agent.CustomSystemPrompt, agent.Avatar, string(modelsJSON), modelsAutoDetected,
 		sortOrder,
 		transport, agent.AcpCommand, autoApprove)
 	if err != nil {
@@ -217,6 +219,7 @@ type AgentPatch struct {
 	Name                    *string
 	Specialty               *string
 	CustomSystemPrompt      *string
+	Avatar                  *string
 	SortOrder               *int
 	AutoApprove             *bool
 }
@@ -259,6 +262,10 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		// Only the user's own text is stored; the composed prompt is built at
 		// read time. Writing it here would freeze the shared prompt into the row.
 		addSet("custom_system_prompt", *patch.CustomSystemPrompt)
+	}
+	if patch.Avatar != nil {
+		// Raw SVG string (not a data URI); "" clears it back to the built-in icon.
+		addSet("avatar", *patch.Avatar)
 	}
 	if patch.SortOrder != nil {
 		addSet("sort_order", *patch.SortOrder)
@@ -343,6 +350,7 @@ func DuplicateAgent(sourceID, newName string) (*model.Agent, error) {
 		PreferredModel:          source.PreferredModel,
 		PreferredThinkingEffort: source.PreferredThinkingEffort,
 		CustomSystemPrompt:      source.CustomSystemPrompt,
+		Avatar:                  source.Avatar,
 		Transport:               source.Transport,
 		AcpCommand:              source.AcpCommand,
 		SortOrder:               source.SortOrder,

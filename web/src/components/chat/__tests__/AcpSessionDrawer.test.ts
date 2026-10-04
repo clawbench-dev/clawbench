@@ -58,6 +58,7 @@ vi.mock('@/stores/app.ts', () => ({
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     getAgentBackend: () => mockAgentBackend.value,
+    getAgentAvatar: () => '',
   }),
 }))
 

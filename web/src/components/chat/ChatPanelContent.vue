@@ -301,7 +301,7 @@ const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-se
 // ── Singletons ──
 const identity = useSessionIdentity()
 const agentsComposable = useAgents()
-const { agents: agentsList, getAgent, getAgentBackend, getAgentName } = agentsComposable
+const { agents: agentsList, getAgent, getAgentBackend, getAgentName, getAgentAvatar } = agentsComposable
 
 /** Whether the current agent's backend can join a running turn. Drives the
  *  queued bubble's single action: "insert into the current reply" vs
@@ -975,7 +975,7 @@ provide('chatRender', {
   truncate: render.truncate,
   hasImagesInContent: render.hasImagesInContent,
 })
-provide('chatSession', { getAgentBackend, getAgentName, sessionId: () => identity.currentSessionId.value })
+provide('chatSession', { getAgentBackend, getAgentName, getAgentAvatar, sessionId: () => identity.currentSessionId.value })
 // openFilePath (via open-file-overlay / open-file-manager events) already routes to
 // the correct tab (file → view, dir → browse), so this is a no-op to avoid overriding.
 provide('chatUI', { navigateToFileViewer: () => {} })

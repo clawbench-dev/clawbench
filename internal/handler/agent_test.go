@@ -378,6 +378,95 @@ func TestAgentPatch_AutoApprove_InvalidType(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestAgentPatch_Avatar(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// A real DiceBear avatar shape: same-document <use href="#..."> references
+	// and url(#...) fills are legitimate and must be accepted.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><defs><g id="t"><rect width="2" height="2" fill="#123"/></g></defs><use href="#t"/><rect width="2" height="2" fill="url(#t)"/></svg>`
+	body := map[string]any{"id": "codebuddy", "avatar": svg}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, svg, model.Agents["codebuddy"].Avatar)
+
+	var stored string
+	err := store.UnsafeDBForTest().QueryRow("SELECT avatar FROM agents WHERE id = ?", "codebuddy").Scan(&stored)
+	require.NoError(t, err)
+	assert.Equal(t, svg, stored)
+
+	// Empty string clears it back to the built-in icon.
+	body["avatar"] = ""
+	req = newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, model.Agents["codebuddy"].Avatar)
+}
+
+func TestAvatarSVGLooksSafe(t *testing.T) {
+	safe := []string{
+		`<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>`,
+		// Same-document <use href="#..."> — DiceBear's real output shape.
+		`<svg xmlns="http://www.w3.org/2000/svg"><defs><g id="t"/></defs><use href="#t"/></svg>`,
+		// url(#...) fills.
+		`<svg><rect fill="url(#grad)"/></svg>`,
+	}
+	for i, s := range safe {
+		assert.True(t, avatarSVGLooksSafe([]byte(s)), "safe case %d should pass", i)
+	}
+
+	unsafe := []string{
+		``, // empty
+		`not an svg at all`,
+		`<svg><script>alert(1)</script></svg>`,
+		`<svg onload="alert(1)"></svg>`,
+		`<svg><image href="https://evil.example/x.png"/></svg>`,
+		`<svg><use href="https://evil.example/x.svg#a"/></svg>`,
+		`<svg><foreignObject/></svg>`,
+		`<svg><iframe src="x"/></svg>`,
+		`<svg><style>@import url(https://evil.example/x)</style></svg>`,
+		`<svg><a href="javascript:alert(1)"/></svg>`,
+	}
+	for i, s := range unsafe {
+		assert.False(t, avatarSVGLooksSafe([]byte(s)), "unsafe case %d should be rejected", i)
+	}
+}
+
+func TestAgentPatch_Avatar_TooLarge(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	huge := "<svg viewBox=\"0 0 2 2\">" + strings.Repeat(" ", maxAgentAvatarBytes+1) + "</svg>"
+	body := map[string]any{"id": "codebuddy", "avatar": huge}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentPatch_Avatar_Unsafe(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	cases := map[string]string{
+		"script":        `<svg viewBox="0 0 2 2"><script>alert(1)</script></svg>`,
+		"event":         `<svg viewBox="0 0 2 2" onload="alert(1)"></svg>`,
+		"external_href": `<svg viewBox="0 0 2 2"><use href="https://evil.example/x.svg#a"/></svg>`,
+		"image":         `<svg viewBox="0 0 2 2"><image href="https://evil.example/x.png"/></svg>`,
+	}
+	for name, svg := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{"id": "codebuddy", "avatar": svg}
+			req := newRequest(t, http.MethodPatch, "/api/agents", body)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeAgents, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
+}
+
 func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
 	defer setupAgentTestEnv(t)()
 

@@ -288,8 +288,8 @@ func TestAgentSchemaMatchesProduction(t *testing.T) {
 		"id": true, "name": true, "icon": true, "specialty": true, "backend": true,
 		"command": true, "thinking_effort": true, "thinking_effort_levels": true,
 		"preferred_mode": true, "preferred_model": true, "preferred_thinking_effort": true,
-		"custom_system_prompt": true,
-		"models":               true, "models_auto_detected": true, "sort_order": true,
+		"custom_system_prompt": true, "avatar": true,
+		"models": true, "models_auto_detected": true, "sort_order": true,
 		"transport": true, "acp_command": true,
 		"acp_available_modes": true, "acp_available_thinking_efforts": true, "acp_available_commands": true,
 		"acp_available_models": true,
@@ -555,6 +555,28 @@ func TestPatchAgentFields_SortOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, agents, 1)
 	assert.Equal(t, 5, agents[0].SortOrder)
+}
+
+func TestPatchAgentFields_Avatar(t *testing.T) {
+	db := setupTestDBForAgents(t)
+	require.NoError(t, service.SaveAgent(db, &model.Agent{ID: "pi", Name: "Pi", Backend: "pi"}))
+
+	svg := `<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>`
+	err := service.PatchAgentFields("pi", service.AgentPatch{Avatar: &svg})
+	require.NoError(t, err)
+
+	agents, err := service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Equal(t, svg, agents[0].Avatar)
+
+	// Empty string clears the avatar back to the built-in icon.
+	empty := ""
+	require.NoError(t, service.PatchAgentFields("pi", service.AgentPatch{Avatar: &empty}))
+	agents, err = service.LoadAgentsFromDB()
+	require.NoError(t, err)
+	require.Len(t, agents, 1)
+	assert.Empty(t, agents[0].Avatar)
 }
 
 func TestPatchAgentFields_PartialPatch(t *testing.T) {

@@ -1509,6 +1509,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Migrate: add avatar column to agents for user-configured DiceBear avatars
+	// (raw SVG string; "" = use the built-in per-backend icon).
+	var hasAgentAvatar int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='avatar'").Scan(&hasAgentAvatar)
+	if hasAgentAvatar == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN avatar TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add avatar column to agents: %w", err)
+		}
+	}
+
 	// Migrate: ensure the project scope column on the quick-send /
 	// quick-command tables (project-scoped / 仅本项目 items). NULL means global;
 	// a value scopes the item to that project only.

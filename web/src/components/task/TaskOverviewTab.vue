@@ -5,7 +5,7 @@
       <!-- Header section -->
       <div class="task-header">
         <div class="task-title-row">
-          <AgentIcon class="agent-icon" :backend="taskBackend" :name="getAgentName(taskAgentId)" :size="18" />
+          <AgentIcon class="agent-icon" :backend="taskBackend" :name="getAgentName(taskAgentId)" :avatar="taskAvatar" :size="18" />
           <h2 class="task-name">{{ taskName }}</h2>
           <span class="status-badge" :class="taskStatus">
             <span v-if="taskRunningCount > 0" class="status-dot running"></span>
@@ -72,7 +72,7 @@ import { store } from '@/stores/app.ts'
 import '@/assets/task-overview-card.css'
 
 const { t } = useI18n()
-const { getAgentBackend, getAgentName } = useAgents()
+const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 const { verifyFilePaths, openFilePath, readLineTargetFromEl } = useFilePathAnnotation()
 const { handleLocalhostUrlClick } = useLocalhostUrlClickHandler()
 
@@ -86,6 +86,7 @@ const taskId = computed(() => task.value.id as number)
 const taskName = computed(() => task.value.name as string)
 const taskAgentId = computed(() => task.value.agentId as string)
 const taskBackend = computed(() => getAgentBackend(taskAgentId.value))
+const taskAvatar = computed(() => getAgentAvatar(taskAgentId.value))
 const taskStatus = computed(() => task.value.status as string)
 const taskRunningCount = computed(() => task.value.runningCount as number)
 const taskPrompt = computed(() => task.value.prompt as string)

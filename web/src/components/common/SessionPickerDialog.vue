@@ -28,6 +28,7 @@
           <AgentIcon
             :backend="getAgentBackend(session.agentId || '')"
             :name="getAgentName(session.agentId || '')"
+            :avatar="getAgentAvatar(session.agentId || '')"
             :size="16"
           />
           <span class="sp-title">{{ session.title || t('session.unnamed') }}</span>
@@ -141,7 +142,7 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
-const { getAgentBackend, getAgentName } = useAgents()
+const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 const identity = useSessionIdentity()
 const currentSessionId = identity.currentSessionId
 const runningSessionsVersion = identity.runningSessionsVersion

@@ -625,6 +625,7 @@ export async function patchAgentField(agentId: string, field: string, value: str
     preferred_mode: 'preferredMode',
     transport: 'transport',
     custom_system_prompt: 'customSystemPrompt',
+    avatar: 'avatar',
     sort_order: 'sortOrder',
     auto_approve: 'autoApprove',
     // name, specialty map to themselves

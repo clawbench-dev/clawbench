@@ -90,7 +90,7 @@ vi.mock('@/composables/useGlobalEvents', () => ({
   }),
 }))
 vi.mock('@/composables/useAgents', () => ({
-  useAgents: () => ({ getAgentBackend: mockGetAgentBackend, getAgentName: mockGetAgentName }),
+  useAgents: () => ({ getAgentBackend: mockGetAgentBackend, getAgentName: mockGetAgentName, getAgentAvatar: () => '' }),
 }))
 // VueDraggable needs a real DOM root it can measure; in jsdom its mounted hook
 // throws "Root element not found" and takes the whole component down. The stub

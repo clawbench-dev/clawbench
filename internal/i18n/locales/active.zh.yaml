@@ -106,6 +106,7 @@ InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
 InvalidAgentName: 无效的智能体名称
 InvalidAgentSpecialty: 无效的描述
+InvalidAgentAvatar: 无效的头像图片
 InvalidSystemPrompt: 系统提示过长
 SystemPromptOverride: 系统提示包含不安全的覆盖指令
 InvalidSortOrder: 无效的排序值

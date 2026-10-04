@@ -404,6 +404,11 @@ function getAgentBackend(): string {
 function getAgentName(): string {
   return backendLabel.value || t('share.sharedConversation')
 }
+// Custom avatars are not part of the share snapshot; always fall back to the
+// built-in backend icon.
+function getAgentAvatar(): string {
+  return ''
+}
 
 provide('chatRender', {
   renderTextBlock: chatRender.renderTextBlock,
@@ -412,7 +417,7 @@ provide('chatRender', {
   truncate: chatRender.truncate,
   hasImagesInContent: chatRender.hasImagesInContent,
 })
-provide('chatSession', { getAgentBackend, getAgentName })
+provide('chatSession', { getAgentBackend, getAgentName, getAgentAvatar })
 provide('chatUI', { navigateToFileViewer: () => {} })
 // ChatMessageItem injects autoSpeech without a default and reads it during
 // render, so a stub is required. TTS needs auth and is out of scope here.

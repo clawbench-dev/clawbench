@@ -18,7 +18,7 @@
         @keydown.enter="handleSelect(agent.id)"
         @keydown.space.prevent="handleSelect(agent.id)"
       >
-        <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :size="16" /></span>
+        <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" :size="16" /></span>
         <div class="agent-option-detail">
           <span class="agent-option-name">{{ agent.name }}</span>
           <span class="agent-option-specialty">{{ agent.specialty }}</span>

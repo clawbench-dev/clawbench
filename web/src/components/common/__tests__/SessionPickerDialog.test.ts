@@ -21,6 +21,7 @@ vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({
     getAgentBackend: (id: string) => (id === 'a-claude' ? 'claude' : 'codebuddy'),
     getAgentName: (id: string) => (id === 'a-claude' ? 'Claude' : 'CodeBuddy'),
+    getAgentAvatar: () => '',
   }),
 }))
 

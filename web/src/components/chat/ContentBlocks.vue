@@ -87,6 +87,7 @@
           :deleted="!!summaryTaskData[tid]?.deleted"
           :get-agent-backend="getAgentBackend"
           :get-agent-name="getAgentName"
+          :get-agent-avatar="getAgentAvatar"
           @select="$emit('task-card-click', tid)"
         />
       </template>
@@ -246,6 +247,7 @@
                 :truncate="props.truncate"
                 :get-agent-backend="props.getAgentBackend"
                 :get-agent-name="props.getAgentName"
+                :get-agent-avatar="props.getAgentAvatar"
                 :static-block-cache="props.staticBlockCache"
                 :active="props.active"
                 :read-only="props.readOnly"
@@ -314,6 +316,7 @@
           :deleted="!!blockTasks[sKey].deleted"
           :get-agent-backend="getAgentBackend"
           :get-agent-name="getAgentName"
+          :get-agent-avatar="getAgentAvatar"
           @select="$emit('task-card-click', blockTasks[sKey].taskId)"
         />
       </template>
@@ -585,6 +588,7 @@ const props = defineProps({
   truncate: { type: Function as any, default: (s: string) => s },
   getAgentBackend: { type: Function as any, default: () => '' },
   getAgentName: { type: Function as any, default: () => '' },
+  getAgentAvatar: { type: Function as any, default: () => '' },
   // Performance: static block cache from useChatRender (Problem 6)
   staticBlockCache: { type: Object as () => any, default: null },
   active: { type: Boolean, default: true },

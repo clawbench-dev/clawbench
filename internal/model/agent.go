@@ -45,6 +45,13 @@ type Agent struct {
 	// built-in prompt always takes effect and can never corrupt stored text.
 	CustomSystemPrompt string `json:"customSystemPrompt"`
 
+	// Avatar is a user-configured SVG string (generated client-side by DiceBear
+	// in the settings picker). Empty means "use the built-in per-backend brand
+	// icon". Stored raw (not a data URI) so the server can validate the markup
+	// (see handler.avatarSVGLooksSafe). It is a plain persisted column, like
+	// CustomSystemPrompt.
+	Avatar string `json:"avatar"`
+
 	// ModelsAutoDetected indicates whether Models were filled by auto-discovery
 	// rather than user-defined. RefreshAgents uses it to decide which agents
 	// should have their models updated by discovery.

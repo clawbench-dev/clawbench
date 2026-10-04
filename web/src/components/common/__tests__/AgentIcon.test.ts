@@ -85,6 +85,33 @@ describe('AgentIcon', () => {
     })
   })
 
+  describe('custom avatar', () => {
+    it('renders an <img> with an encoded data URI when avatar is set', () => {
+      const svg = '<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>'
+      const wrapper = mountIcon({ avatar: svg })
+      const img = wrapper.find('img.agent-icon-img')
+      expect(img.exists()).toBe(true)
+      // The SVG must be URL-encoded so `#` in fill/url(#id) does not truncate.
+      expect(img.attributes('src')).toBe('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg))
+      expect(img.attributes('src')).toContain('%23') // '#' encoded
+      // Custom avatar takes precedence over the backend SVG.
+      expect(wrapper.find('svg').exists()).toBe(false)
+    })
+
+    it('falls back to the backend icon when avatar is empty', () => {
+      const wrapper = mountIcon({ backend: 'codebuddy', avatar: '' })
+      expect(wrapper.find('img.agent-icon-img').exists()).toBe(false)
+      expect(wrapper.find('svg').exists()).toBe(true)
+    })
+
+    it('applies the size prop to the avatar image', () => {
+      const wrapper = mountIcon({ avatar: '<svg/>', size: 24 })
+      const img = wrapper.find('img.agent-icon-img')
+      expect(img.attributes('style')).toContain('width: 24px')
+      expect(img.attributes('style')).toContain('height: 24px')
+    })
+  })
+
   describe('SVG gradient ID uniqueness', () => {
     it('adds unique suffix to id and url(#...) references', () => {
       const wrapper = mountIcon({ backend: 'codebuddy' })

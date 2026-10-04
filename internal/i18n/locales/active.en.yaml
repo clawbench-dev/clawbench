@@ -105,6 +105,7 @@ InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
 InvalidAgentName: Invalid agent name
 InvalidAgentSpecialty: Invalid description
+InvalidAgentAvatar: Invalid avatar image
 InvalidSystemPrompt: System prompt too long
 SystemPromptOverride: System prompt contains unsafe override instructions
 InvalidSortOrder: Invalid sort order

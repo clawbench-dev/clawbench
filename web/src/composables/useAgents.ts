@@ -48,6 +48,8 @@ interface AgentRecord {
   acpAvailableModes?: Array<{ id: string; name: string }>
   transport?: string
   customSystemPrompt?: string
+  /** Raw SVG string for a user-configured avatar; empty = built-in brand icon. */
+  avatar?: string
   canRefreshModels?: boolean
   supportsCLI?: boolean
   supportsMidTurn?: boolean
@@ -230,6 +232,12 @@ window.addEventListener('clawbench-reconnect', () => {
 function getAgentBackend(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.backend || ''
+}
+
+/** Get an agent's custom avatar SVG string. Returns '' when unset (use built-in icon). */
+function getAgentAvatar(agentId: string): string {
+    const agent = agents.value.find(a => a.id === agentId)
+    return agent?.avatar || ''
 }
 
 function getAgentName(agentId: string): string {
@@ -597,6 +605,7 @@ export function useAgents() {
         loadAgents,
         getAgentBackend,
         getAgentName,
+        getAgentAvatar,
         isDefaultAgent,
         getDefaultModelId,
         getAgentModels,
