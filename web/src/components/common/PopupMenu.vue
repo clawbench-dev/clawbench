@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <Transition name="menu-fade">
+    <Transition name="menu-fade" @after-leave="emit('after-leave')">
       <div v-if="show" class="popup-menu" :class="{ 'popup-menu--app': appSurface }" role="menu" :style="menuStyle" @click.stop="emit('update:show', false)" @keydown.escape="emit('update:show', false)">
         <slot />
       </div>
@@ -29,7 +29,7 @@ const props = defineProps({
   appSurface: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['update:show'])
+const emit = defineEmits(['update:show', 'after-leave'])
 
 // Reactive style — updated manually so we can react to DOM geometry changes
 // (scroll, resize) that Vue's computed cannot track.

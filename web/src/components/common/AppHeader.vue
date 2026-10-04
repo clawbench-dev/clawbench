@@ -209,7 +209,7 @@
     <button ref="themeBtnRef" class="theme-quick-toggle" :title="t('appHeader.themePicker')" :aria-label="t('appHeader.themePicker')" @click="toggleThemeMenu">
       <Palette :size="18" />
     </button>
-    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="1 + THEME_IDS.length" anchor="right" app-surface>
+    <PopupMenu v-model:show="themeMenuOpen" :target-element="themeBtnRef" :max-width="200" :max-height="440" :menu-items-count="1 + THEME_IDS.length" anchor="right" app-surface @after-leave="onThemeMenuAfterLeave">
       <div class="theme-picker app-menu-column">
         <div class="app-menu-title">{{ t('terminal.theme') }}</div>
         <div class="app-menu-scroll">
@@ -335,6 +335,7 @@ import { appLog } from '@/utils/appLog'
 import { getNative } from '@/utils/clawbenchNative'
 import { useWideScreenLayout } from '@/composables/useWideScreenLayout'
 import { isDarkTheme, resolveThemeId, THEME_IDS, getThemeLabelKey, getThemePreviewColor } from '@/utils/themeMeta'
+import { applyThemeWithReveal, originFromElement } from '@/utils/themeReveal'
 import ShortcutTipsDialog from '@/components/common/ShortcutTipsDialog.vue'
 import AppMenuPanel from '@/components/common/AppMenuPanel.vue'
 import type { ShortcutContext } from '@/config/shortcutTips'
@@ -387,9 +388,25 @@ function toggleThemeMenu() {
   themeMenuOpen.value = true
 }
 
+/** Pending theme value to apply once the picker has finished closing. */
+const pendingThemeValue = ref<string | null>(null)
+
 function selectTheme(value: string) {
+  // Close the menu first; the reveal only starts once it has finished leaving
+  // (see onThemeMenuAfterLeave). Starting immediately would put the still-fading
+  // menu into the transition's "new" snapshot and overlap the two animations.
+  pendingThemeValue.value = value
   themeMenuOpen.value = false
-  setLocalConfig('theme', value)
+}
+
+/** PopupMenu emits this after its leave transition completes. */
+function onThemeMenuAfterLeave() {
+  const value = pendingThemeValue.value
+  if (value === null) return
+  pendingThemeValue.value = null
+  applyThemeWithReveal(() => setLocalConfig('theme', value), {
+    origin: originFromElement(themeBtnRef.value),
+  })
 }
 
 /** Deep-link into the full appearance settings (theme grid + fonts + UI scale).
