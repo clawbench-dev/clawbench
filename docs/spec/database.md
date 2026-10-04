@@ -3,6 +3,8 @@
 主库：`{DataDir}/ClawBench.db`（SQLite，WAL 模式，foreign_keys=ON）
 RAG：同一数据库文件，独立连接池
 
+> 项目身份统一为整数 `project_id`（`projects` 表），所有项目作用域表存 id 而非路径——改名/移动目录只需一条 UPDATE。`project_id=0` 是保留哨兵（全局标签、无法归属的分享），故不声明外键。
+
 ## 表定义
 
 ### chat_sessions（聊天会话）
@@ -10,7 +12,7 @@ RAG：同一数据库文件，独立连接池
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
 | id | TEXT | PRIMARY KEY | — | 会话 UUID |
-| project_path | TEXT | NOT NULL | — | 项目根路径 |
+| project_id | INTEGER | NOT NULL | — | 项目 id（逻辑关联 `projects.id`） |
 | backend | TEXT | NOT NULL | — | AI 后端名称 |
 | title | TEXT | NOT NULL | — | 会话显示标题 |
 | agent_id | TEXT | | `''` | 关联的 Agent |
@@ -26,14 +28,14 @@ RAG：同一数据库文件，独立连接池
 | transport | TEXT | | `''` | 传输方式：cli / acp |
 | auto_approve | INTEGER | NOT NULL | `0` | 自动批准模式 |
 
-UNIQUE：`(project_path, backend, id)`
+UNIQUE：`(backend, id)`
 
 ### chat_history（聊天消息）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
 | id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 消息 ID |
-| project_path | TEXT | NOT NULL | — | 项目根路径 |
+| project_id | INTEGER | NOT NULL | — | 项目 id（逻辑关联 `projects.id`） |
 | role | TEXT | NOT NULL, CHECK(role IN ('user','assistant')) | — | 消息角色 |
 | content | TEXT | NOT NULL | — | 消息内容 |
 | files | TEXT | | — | 附件 JSON |
@@ -45,7 +47,7 @@ UNIQUE：`(project_path, backend, id)`
 
 ### chat_metadata（用量台账）
 
-独立用量台账，**无外键**（刻意不与 `chat_history` 级联）。记录真实消耗的 token/费用，会话/消息被删除后仍然保留，避免统计遗漏。`project_path` / `backend` / `agent_id` 在写入时冗余，统计查询无需回连会话表；`agent` 显示名仍通过 `LEFT JOIN agents` 实时解析。
+独立用量台账，**无外键**（刻意不与 `chat_history` 级联）。记录真实消耗的 token/费用，会话/消息被删除后仍然保留，避免统计遗漏。`project_id` / `backend` / `agent_id` 在写入时冗余，统计查询无需回连会话表；`agent` 显示名仍通过 `LEFT JOIN agents` 实时解析。
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
@@ -81,7 +83,7 @@ UNIQUE：`(project_path, backend, id)`
 | finish_reason | TEXT | | `''` | 结束原因 |
 | outcome | TEXT | | `''` | 结果 |
 | agent_phase | TEXT | | `''` | 代理阶段 |
-| project_path | TEXT | | `''` | 冗余：项目路径（会话删除后统计仍可用） |
+| project_id | INTEGER | | `0` | 冗余：项目 id（会话删除后统计仍可用） |
 | backend | TEXT | | `''` | 冗余：AI 后端名称 |
 | agent_id | TEXT | | `''` | 冗余：代理 ID（agent 维度兜底） |
 | clawbench_session_id | TEXT | | `''` | 冗余：ClawBench 会话 ID |
@@ -133,7 +135,7 @@ UNIQUE：`(message_id)`
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
 | id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
-| project_path | TEXT | NOT NULL | — | 项目根路径 |
+| project_id | INTEGER | NOT NULL | — | 项目 id（逻辑关联 `projects.id`） |
 | name | TEXT | NOT NULL | — | 任务名称 |
 | cron_expr | TEXT | NOT NULL | — | Cron 调度表达式 |
 | agent_id | TEXT | NOT NULL | — | FK → agents.id（逻辑关联，无 DB 外键） |
@@ -178,6 +180,7 @@ UNIQUE：`(message_id)`
 | preferred_model | TEXT | NOT NULL | `''` | 首选模型 |
 | preferred_thinking_effort | TEXT | NOT NULL | `''` | 首选思考力度 |
 | custom_system_prompt | TEXT | NOT NULL | `''` | 用户自定义提示词 |
+| avatar | TEXT | NOT NULL | `''` | 用户自选的 DiceBear 头像 SVG（空＝用内置图标）；写入前经 `avatarSVGLooksSafe` 校验 |
 | models | TEXT | NOT NULL | `'[]'` | 可用模型列表 JSON |
 | models_auto_detected | INTEGER | NOT NULL | `0` | 自动检测模型标记 |
 | sort_order | INTEGER | NOT NULL | `0` | 排序顺序 |
@@ -207,12 +210,26 @@ UNIQUE：`(message_id)`
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 | updated_at | DATETIME | | CURRENT_TIMESTAMP | 更新时间 |
 
+### projects（项目注册表）
+
+项目目录到稳定整数 id 的唯一映射。所有项目作用域表存 `project_id` 而非路径，改名/移动目录只需对本表一条 UPDATE。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 项目身份（`0` 是保留哨兵＝全局标签/无法归属的分享，**不是本表的行**） |
+| path | TEXT | UNIQUE NOT NULL | — | 规范化后的绝对项目目录（解析软链 + 清理） |
+| forge_bind_opt_out | INTEGER | NOT NULL | `0` | 是否跳过 forge 绑定提示（由原 `project_meta` 并入） |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 首次登记时间 |
+| updated_at | DATETIME | | CURRENT_TIMESTAMP | 最后更新时间 |
+
+> 本表**不被他表声明外键**：哨兵 `project_id=0` 需要可表示，真实 FK 会要求一行合成的 id=0 项目行。`path` 规范化 + `UNIQUE(path)` 让同一目录的两种写法折叠为一行。
+
 ### recent_projects（最近项目）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
 |---|---|---|---|---|
 | id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
-| project_path | TEXT | UNIQUE NOT NULL | — | 项目根路径 |
+| project_id | INTEGER | UNIQUE NOT NULL | — | 指向 `projects.id`（逻辑关联，无 DB 外键） |
 | accessed_at | DATETIME | | CURRENT_TIMESTAMP | 最后访问时间 |
 | is_default | INTEGER | NOT NULL | `0` | 是否为默认项目 |
 
@@ -300,7 +317,7 @@ UNIQUE：`(type, key_id)`
 | embedding | BLOB | | — | 嵌入向量 |
 | has_embedding | INTEGER | NOT NULL | `0` | 嵌入是否已生成 |
 | embedding_dim | INTEGER | NOT NULL | `0` | 嵌入维度 |
-| project_path | TEXT | NOT NULL | — | 项目根路径 |
+| project_id | INTEGER | NOT NULL | `0` | 项目 id（逻辑关联 `projects.id`；0＝无法归属） |
 | backend | TEXT | NOT NULL | — | AI 后端 |
 | role | TEXT | NOT NULL | — | 消息角色 |
 | created_at | DATETIME | NOT NULL | — | 创建时间 |
@@ -322,6 +339,8 @@ UNIQUE：`(type, key_id)`
 | scheduled_tasks.agent_id | agents.id | — | 逻辑关联（无外键） |
 | rag_chunks.session_id | chat_sessions.id | — | 应用层（独立连接池） |
 | rag_chunks.message_id | chat_history.id | — | 应用层（独立连接池） |
+| recent_projects.project_id | projects.id | — | 逻辑关联（无外键） |
+| 各项目作用域表.project_id | projects.id | — | 逻辑关联（无外键；`project_id=0` 哨兵需可表示，故不声明 FK） |
 
 ## ER 关系图
 
@@ -329,7 +348,7 @@ UNIQUE：`(type, key_id)`
 erDiagram
     chat_sessions {
         TEXT id PK
-        TEXT project_path
+        INTEGER project_id
         TEXT backend
         TEXT title
         TEXT agent_id
@@ -348,7 +367,7 @@ erDiagram
 
     chat_history {
         INTEGER id PK
-        TEXT project_path
+        INTEGER project_id
         TEXT role
         TEXT content
         TEXT files
@@ -373,7 +392,7 @@ erDiagram
         TEXT stop_reason
         INTEGER is_error
         TEXT error_message
-        TEXT project_path
+        INTEGER project_id
         TEXT backend
         TEXT agent_id
         TEXT clawbench_session_id
@@ -411,7 +430,7 @@ erDiagram
 
     scheduled_tasks {
         INTEGER id PK
-        TEXT project_path
+        INTEGER project_id
         TEXT name
         TEXT cron_expr
         TEXT agent_id
@@ -441,9 +460,17 @@ erDiagram
 
     recent_projects {
         INTEGER id PK
-        TEXT project_path
+        INTEGER project_id
         DATETIME accessed_at
         INTEGER is_default
+    }
+
+    projects {
+        INTEGER id PK
+        TEXT path
+        INTEGER forge_bind_opt_out
+        DATETIME created_at
+        DATETIME updated_at
     }
 
     forwarded_ports {
@@ -514,6 +541,7 @@ erDiagram
         TEXT preferred_model
         TEXT preferred_thinking_effort
         TEXT custom_system_prompt
+        TEXT avatar
         TEXT models
         INTEGER models_auto_detected
         INTEGER sort_order
@@ -552,7 +580,7 @@ erDiagram
         BLOB embedding
         INTEGER has_embedding
         INTEGER embedding_dim
-        TEXT project_path
+        INTEGER project_id
         TEXT backend
         TEXT role
         DATETIME created_at
@@ -566,6 +594,8 @@ erDiagram
     scheduled_tasks ||--o{ task_executions : "task_id CASCADE"
     agents ||--o{ agent_api_keys : "agent_id CASCADE"
     agents ||--o{ chat_sessions : "agent_id logical"
+    projects ||--o{ chat_sessions : "project_id logical"
+    projects ||--o{ recent_projects : "project_id logical"
     chat_history ||--o| summaries : "target_type=chat_message app-level"
     task_executions ||--o| summaries : "target_type=task_execution app-level"
 ```
