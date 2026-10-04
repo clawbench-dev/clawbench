@@ -162,6 +162,58 @@ describe('useSettingsNavigation', () => {
         })
     })
 
+    // ── returnToCategory (detail page → its list) ──
+
+    describe('returnToCategory', () => {
+        it('pops the detail entry back to its list (the delete-after-navigate bug)', () => {
+            const { pushNav, returnToCategory, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('project')
+            pushNav('project:42')
+            returnToCategory('project')
+
+            // Must NOT leave ['project','project:42','project'].
+            expect(navStack.value).toEqual(['project'])
+            expect(currentCategory.value).toBe('project')
+        })
+
+        it('lands on the list when the detail was deep-linked (nothing to pop)', () => {
+            const { pushNav, returnToCategory, navStack, currentCategory } = useSettingsNavigation()
+
+            // Deep-link straight into a detail page: no list beneath it. After
+            // the detail goes away the trail must be 设置 › 项目, not still show
+            // the (now deleted) detail.
+            pushNav('project:42')
+            returnToCategory('project')
+
+            expect(navStack.value).toEqual(['project'])
+            expect(currentCategory.value).toBe('project')
+        })
+
+        it('works for agents detail too', () => {
+            const { pushNav, returnToCategory, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('agents')
+            pushNav('agents:abc')
+            returnToCategory('agents')
+
+            expect(navStack.value).toEqual(['agents'])
+            expect(currentCategory.value).toBe('agents')
+        })
+
+        it('does not pop an unrelated detail entry', () => {
+            const { pushNav, returnToCategory, navStack, currentCategory } = useSettingsNavigation()
+
+            pushNav('project')
+            pushNav('project:42')
+            // A stale cross-category call must not pop the project detail.
+            returnToCategory('agents')
+
+            expect(navStack.value).toEqual(['project', 'project:42', 'agents'])
+            expect(currentCategory.value).toBe('agents')
+        })
+    })
+
     // ── resetState ──
 
     describe('resetState', () => {

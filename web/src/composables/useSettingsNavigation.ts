@@ -112,6 +112,29 @@ export function useSettingsNavigation() {
     currentCategory.value = target > 0 ? navStack.value[target - 1] : null
   }
 
+  /**
+   * Return from a detail page (project:<id> / agents:<id>) to its list.
+   *
+   * The detail is a stack entry pushed ON TOP of its list, so returning is a
+   * POP, not a push. Using pushNav here was a real bug: after deleting a
+   * project the stack went ['project','project:42'] → push 'project' →
+   * ['project','project:42','project'], so the breadcrumb read
+   * 设置 › 项目 › 项目详情 › 项目.
+   *
+   * A deep-linked detail (stack = ['project:42'], no list beneath) has nothing
+   * to pop, so the parent is pushed instead. Both paths land the parent
+   * category on top.
+   */
+  function returnToCategory(categoryId: string) {
+    const stack = navStack.value
+    const top = stack[stack.length - 1]
+    // Drop the trailing detail entry for this category, if present.
+    if (top && top.startsWith(categoryId + ':')) stack.pop()
+    // Deep-linked detail (no list beneath) → put the list on top.
+    if (stack[stack.length - 1] !== categoryId) stack.push(categoryId)
+    currentCategory.value = stack[stack.length - 1] ?? null
+  }
+
   function resetState() {
     if (!checkAllGuards()) return  // at least one guard says don't reset
     navStack.value = []
@@ -193,6 +216,7 @@ export function useSettingsNavigation() {
     pushNav,
     popNav,
     truncateNav,
+    returnToCategory,
     resetState,
     restartDialogVisible,
     changedColdFields,

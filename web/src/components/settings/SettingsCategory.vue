@@ -7,17 +7,18 @@
   <SettingsAgentDetail
     v-else-if="categoryId.startsWith('agents:')"
     :agent-id="categoryId.slice(7)"
-    @deleted="$emit('navigate', 'agents')"
-    @back="$emit('navigate', 'agents')"
+    @deleted="$emit('deleted', 'agents')"
+    @back="$emit('back', 'agents')"
   />
   <!-- Project detail route (project:<id>): a read-only stats page, not a
        batch-save panel, so it gets its own component rather than going through
-       subPagePanelMap. -->
+       subPagePanelMap. It has no back button — the breadcrumb crumb is the way
+       back — and on delete it emits `deleted` so the parent pops the detail
+       entry instead of pushing (see returnToCategory). -->
   <ProjectDetailSetting
     v-else-if="categoryId.startsWith('project:')"
     :project-id="Number(categoryId.slice(8))"
-    @back="$emit('navigate', 'project')"
-    @deleted="$emit('navigate', 'project')"
+    @deleted="$emit('deleted', 'project')"
   />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">
@@ -168,6 +169,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   navigate: [categoryId: string]
+  // Return from a detail page (project:<id> / agents:<id>) to its list. Kept
+  // separate from `navigate` because it is a stack POP, not a push.
+  back: [categoryId: string]
+  // The entity was DELETED: the detail page no longer exists, so return to the
+  // list without the unsaved-changes guard (there is nothing to keep editing).
+  deleted: [categoryId: string]
   restartNeeded: [changedFields: string[]]
   restartRequested: []
 }>()

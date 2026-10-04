@@ -1069,7 +1069,7 @@ describe('SettingsCategory', () => {
       expect(wrapper.findComponent({ name: 'SettingsAgentDetail' }).exists()).toBe(true)
     })
 
-    it('emits navigate agents when SettingsAgentDetail emits deleted', async () => {
+    it('emits deleted agents when SettingsAgentDetail emits deleted', async () => {
       const wrapper = mount(SettingsCategory, {
         props: { categoryId: 'agents:test-agent' },
         global: {
@@ -1084,8 +1084,9 @@ describe('SettingsCategory', () => {
       const detail = wrapper.find('[data-test="agent-detail"]')
       if (detail.exists()) {
         await detail.trigger('click')
-        expect(wrapper.emitted('navigate')).toBeTruthy()
-        expect(wrapper.emitted('navigate')![0]).toEqual(['agents'])
+        // `deleted` (not `navigate`): returning to the list is a stack POP.
+        expect(wrapper.emitted('deleted')).toBeTruthy()
+        expect(wrapper.emitted('deleted')![0]).toEqual(['agents'])
       }
     })
   })

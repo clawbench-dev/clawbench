@@ -75,7 +75,7 @@ interface ProjectDetail {
 }
 
 const props = defineProps<{ projectId: number }>()
-const emit = defineEmits<{ back: []; deleted: [] }>()
+const emit = defineEmits<{ deleted: [] }>()
 
 const { t } = useI18n()
 const toast = useToast()
