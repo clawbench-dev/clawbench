@@ -23,23 +23,30 @@ var (
 	ErrProjectHasRunningSessions = errors.New("project has running sessions")
 )
 
-// projectScopedDeleteTables are the tables carrying a project_id column whose
-// rows are removed verbatim. Shared as a package constant (not a literal list at
-// the call site) so goconst does not read each name as a repeated magic string
-// across the package.
+// projectScopedDeleteTables are the tables whose ownership is the project
+// itself (no session linkage), so a plain project_id match is exact.
 var projectScopedDeleteTables = []string{
-	"chat_history",
-	"chat_metadata",
-	"chat_recommendations",
 	tableChatQuickSend,
-	"queued_messages",
 	tableRecentProjects,
 	"file_shares",
 	tableProjectForges,
-	"btw_questions",
 	tableSessionTags,
 	"scheduled_tasks",
 	tableTerminalQuickCommands,
+}
+
+// sessionLinkedDeleteTables carry BOTH session_id and project_id. They are
+// deleted by `session_id IN (project's sessions) OR project_id = ?`: a row's
+// project_id is not guaranteed to equal its session's project (historic rows
+// were persisted under the request cookie's project — see the ISS-420 note on
+// idx_history_sess_unread), so a project_id-only match would leave rows behind
+// while deleting their session. Matching both sides covers either attribution.
+var sessionLinkedDeleteTables = []string{
+	"chat_history",
+	"chat_metadata",
+	"chat_recommendations",
+	"queued_messages",
+	"btw_questions",
 }
 
 // DeleteProjectData permanently removes a project and every row scoped to it.
@@ -68,14 +75,6 @@ func DeleteProjectData(id int64) error {
 		return ErrProjectNotFound
 	}
 
-	hasRunning, err := projectHasRunningSession(id)
-	if err != nil {
-		return fmt.Errorf("check running sessions: %w", err)
-	}
-	if hasRunning {
-		return ErrProjectHasRunningSessions
-	}
-
 	if err := deleteProjectRows(id); err != nil {
 		return err
 	}
@@ -99,6 +98,11 @@ func DeleteProjectData(id int64) error {
 // deleteProjectRows runs every row deletion in one transaction. Split out of
 // DeleteProjectData so the guard clauses and the post-commit cleanup do not
 // share the function's cyclomatic budget.
+//
+// The running-session guard is re-checked HERE, after acquiring the write lock,
+// rather than only in the caller: between the caller's check and this lock a run
+// could have started, and deleting the session rows out from under a live
+// runner is exactly the orphan the guard exists to prevent.
 func deleteProjectRows(id int64) error {
 	tx, err := store.WriteBegin()
 	if err != nil {
@@ -107,24 +111,41 @@ func deleteProjectRows(id int64) error {
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
+	hasRunning, err := projectHasRunningSession(id)
+	if err != nil {
+		return fmt.Errorf("check running sessions: %w", err)
+	}
+	if hasRunning {
+		return ErrProjectHasRunningSessions
+	}
+
 	ctx := context.Background()
+
+	// A chat_history row belongs to the project if EITHER its session does, or
+	// its own project_id says so. The two can disagree (historic rows persisted
+	// under the request cookie's project — see the ISS-420 note on
+	// idx_history_sess_unread), so both sides are matched. This predicate is
+	// reused verbatim for the summaries / tts_summaries deletes below: they key
+	// on chat_history.id, so they must cover EXACTLY the same row set or a
+	// mis-attributed message leaves its summary/TTS behind.
+	const historyPredicate = "session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?) OR project_id = ?"
 
 	// Order matters: every child row that references chat_history / chat_sessions
 	// / scheduled_tasks / session_tags must go before its parent, since the
-	// deletes below are keyed on the parent still existing. All but the tag-link
-	// query take a single id parameter.
-	historyChildren := []string{
-		"DELETE FROM chat_tool_calls WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)",
-		"DELETE FROM chat_thinking WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)",
-		"DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE project_id = ?)",
-		"DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE project_id = ?)",
-		// Children of scheduled_tasks.
-		"DELETE FROM task_executions WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE project_id = ?)",
-		// Session-scoped table without a project_id column.
-		"DELETE FROM session_shares WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)",
+	// deletes below are keyed on the parent still existing.
+	sessionChildren := []struct {
+		query string
+		args  []any
+	}{
+		{"DELETE FROM chat_tool_calls WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)", []any{id}},
+		{"DELETE FROM chat_thinking WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)", []any{id}},
+		{"DELETE FROM summaries WHERE target_type = 'chat_message' AND target_id IN (SELECT id FROM chat_history WHERE " + historyPredicate + ")", []any{id, id}},
+		{"DELETE FROM tts_summaries WHERE message_id IN (SELECT id FROM chat_history WHERE " + historyPredicate + ")", []any{id, id}},
+		{"DELETE FROM task_executions WHERE task_id IN (SELECT id FROM scheduled_tasks WHERE project_id = ?)", []any{id}},
+		{"DELETE FROM session_shares WHERE session_id IN (SELECT id FROM chat_sessions WHERE project_id = ?)", []any{id}},
 	}
-	for _, q := range historyChildren {
-		if _, err := tx.ExecContext(ctx, q, id); err != nil {
+	for _, c := range sessionChildren {
+		if _, err := tx.ExecContext(ctx, c.query, c.args...); err != nil {
 			return fmt.Errorf("delete child rows: %w", err)
 		}
 	}
@@ -139,7 +160,18 @@ func deleteProjectRows(id int64) error {
 		return fmt.Errorf("delete session tag links: %w", err)
 	}
 
-	// Tables carrying project_id directly.
+	// Tables with both a session_id and a project_id: match either attribution.
+	for _, table := range sessionLinkedDeleteTables {
+		if _, err := tx.ExecContext(
+			ctx,
+			"DELETE FROM "+table+" WHERE "+historyPredicate,
+			id, id,
+		); err != nil {
+			return fmt.Errorf("delete from %s: %w", table, err)
+		}
+	}
+
+	// Tables owned by the project directly.
 	for _, table := range projectScopedDeleteTables {
 		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE project_id = ?", id); err != nil {
 			return fmt.Errorf("delete from %s: %w", table, err)

@@ -118,6 +118,24 @@ describe('ProjectDetailSetting', () => {
     expect(wrapper.text()).toContain('Never used')
   })
 
+  it('re-fetches when the project id changes without a remount', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('id=7')) return detailResponse({ id: 7, path: '/home/me/alpha' })
+      return detailResponse({ id: 8, path: '/home/me/beta' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const wrapper = mountDetail(7)
+    await flushPromises()
+    expect(wrapper.text()).toContain('alpha')
+
+    await wrapper.setProps({ projectId: 8 })
+    await flushPromises()
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/detail?id=8')
+    expect(wrapper.text()).toContain('beta')
+    expect(wrapper.text()).not.toContain('alpha')
+  })
+
   it('switches project and lands on the chat tab', async () => {
     const hotSwitch = vi.fn(async () => {})
     const switchTab = vi.fn()

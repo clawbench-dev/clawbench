@@ -559,6 +559,17 @@ func TestServeProjectRegistryDetail(t *testing.T) {
 		assert.Equal(t, 1, n, "refusing the current project must not delete anything")
 	})
 
+	t.Run("DELETE_GlobalSentinel_Returns400", func(t *testing.T) {
+		_, teardown := setupTestEnv(t)
+		defer teardown()
+
+		// id=0 is the reserved global-scope sentinel: not a real project, and
+		// must be reported as forbidden rather than "not found".
+		req := newRequest(t, http.MethodDelete, "/api/projects/detail?id=0", nil)
+		w := callHandler(ServeProjectRegistryDetail, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
 	t.Run("DELETE_UnknownID_Returns404", func(t *testing.T) {
 		_, teardown := setupTestEnv(t)
 		defer teardown()

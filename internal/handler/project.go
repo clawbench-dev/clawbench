@@ -141,44 +141,60 @@ func ServeProjectRegistryDetail(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, detail)
 
 	case http.MethodDelete:
-		id, ok := parseProjectIDQuery(w, r)
-		if !ok {
-			return
-		}
-
-		// Refuse deleting the project the caller currently has open: its
-		// sessions and the SPA's live state reference it, and the registry row
-		// disappearing underneath would leave both dangling.
-		detail, err := service.GetProjectDetail(id)
-		if err != nil {
-			model.WriteError(w, model.Internal(fmt.Errorf("failed to load project detail")))
-			return
-		}
-		if detail == nil {
-			writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
-			return
-		}
-		if cur := middleware.GetProjectFromCookie(r); cur != "" &&
-			store.NormalizeProjectPath(cur) == store.NormalizeProjectPath(detail.Path) {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotDeleteCurrentProject")
-			return
-		}
-
-		switch err := service.DeleteProjectData(id); {
-		case err == nil:
-			writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		case errors.Is(err, service.ErrProjectNotFound):
-			writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
-		case errors.Is(err, service.ErrProjectDeleteForbidden):
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectDeleteForbidden")
-		case errors.Is(err, service.ErrProjectHasRunningSessions):
-			writeLocalizedErrorf(w, r, http.StatusConflict, "ProjectHasRunningSessions")
-		default:
-			model.WriteError(w, model.Internal(fmt.Errorf("failed to delete project")))
-		}
+		deleteProjectRegistryEntry(w, r)
 
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
+}
+
+// deleteProjectRegistryEntry handles DELETE /api/projects/detail?id=.
+//
+// Split from ServeProjectRegistryDetail so the GET branch and the method
+// dispatch do not share its cyclomatic budget.
+func deleteProjectRegistryEntry(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseProjectIDQuery(w, r)
+	if !ok {
+		return
+	}
+
+	// The global-scope sentinel is not a real project, but GetProjectDetail
+	// below reports it as "not found" — which would mask the intended 400.
+	// Reject it explicitly so the caller gets the documented status.
+	if id == store.GlobalScopeProjectID {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectDeleteForbidden")
+		return
+	}
+
+	// Refuse deleting the project the caller currently has open: its sessions
+	// and the SPA's live state reference it, and the registry row disappearing
+	// underneath would leave both dangling.
+	detail, err := service.GetProjectDetail(id)
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load project detail")))
+		return
+	}
+	if detail == nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
+		return
+	}
+	if cur := middleware.GetProjectFromCookie(r); cur != "" &&
+		store.NormalizeProjectPath(cur) == store.NormalizeProjectPath(detail.Path) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotDeleteCurrentProject")
+		return
+	}
+
+	switch err := service.DeleteProjectData(id); {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, service.ErrProjectNotFound):
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
+	case errors.Is(err, service.ErrProjectDeleteForbidden):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectDeleteForbidden")
+	case errors.Is(err, service.ErrProjectHasRunningSessions):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ProjectHasRunningSessions")
+	default:
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to delete project")))
 	}
 }
 

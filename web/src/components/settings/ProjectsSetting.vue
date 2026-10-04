@@ -14,7 +14,7 @@
 
     <div v-if="loading" class="projects-empty">{{ t('common.loading') }}</div>
     <div v-else-if="filtered.length === 0" class="projects-empty">
-      {{ query ? t('settings.items.projectListEmpty') : t('settings.items.projectListEmpty') }}
+      {{ query ? t('settings.items.projectListNoMatch', { query }) : t('settings.items.projectListEmpty') }}
     </div>
     <ul v-else class="projects-list">
       <li

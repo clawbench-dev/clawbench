@@ -27,9 +27,9 @@ const i18n = createI18n({
       settings: {
         items: {
           projectListEmpty: 'No projects',
+          projectListNoMatch: 'No project matches "{query}"',
           projectListSearchPlaceholder: 'Search projects',
           projectListCurrent: 'Current',
-          projectListMissing: 'Directory deleted',
           projectListLoadFailed: 'Failed to load projects',
           projectDetailDirExists: 'Exists',
           projectDetailDirMissing: 'Deleted',
@@ -128,8 +128,21 @@ describe('ProjectsSetting', () => {
     expect(rows[0].text()).toContain('alpha')
   })
 
-  it('emits navigate with project:<id> when a row is clicked', async () => {
+  it('shows a no-match message when the filter excludes everything', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => listResponse([
+      row({ id: 1, path: '/home/me/alpha' }),
+    ])))
+    const wrapper = mountCard()
+    await flushPromises()
+
+    await wrapper.find('.projects-search__input').setValue('zzz')
+    await flushPromises()
+
+    expect(wrapper.findAll('.projects-row')).toHaveLength(0)
+    expect(wrapper.text()).toContain('No project matches "zzz"')
+  })
+
+  it('emits navigate with project:<id> when a row is clicked', async () => {    vi.stubGlobal('fetch', vi.fn(async () => listResponse([
       row({ id: 42, path: '/home/me/alpha' }),
     ])))
     const wrapper = mountCard()

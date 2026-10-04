@@ -52,7 +52,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { store } from '@/stores/app'
 import { useToast } from '@/composables/useToast'
@@ -171,6 +171,12 @@ async function deleteProject() {
 }
 
 onMounted(load)
+
+// Re-fetch when the route's project id changes without a remount (e.g. a
+// deep-link or pendingSettingsCategory navigating project:1 → project:2). The
+// component is keyed by id in the parent, but a watcher keeps it correct even
+// if that ever changes, and avoids rendering the previous project's stats.
+watch(() => props.projectId, load)
 </script>
 
 <style scoped>
