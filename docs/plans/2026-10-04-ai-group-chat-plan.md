@@ -2,6 +2,24 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
+> ## ⚠️ 评审勘误（2026-10-04）— 实现前必读
+>
+> 本计划经 Superpower code-reviewer 评审，发现 **7 Critical / 10 Important**，已逐条核对代码属实。**本计划尚不可直接执行**，须先按设计文档 `2026-10-04-ai-group-chat-design.md` **§12 评审勘误**修订下列阶段：
+>
+> - **C1（致命）**：流式行按"会话内最新一条"定位（`chat.go:2512,2593`），同轮并行 N 成员会互相覆盖。Phase C 必须新增**按消息 id 的写入原语**；L0/L1 不解决此问题。
+> - **C2**：`agent_id` 无写/读路径（`AddChatMessage` 无参数、`model.ChatMessage` 无字段）。Phase A/F/J 需贯穿。
+> - **C3**：`session_type` 影响 17 处（含**参数化**查询 grep 不到）。Phase E2 的 grep 清单错误且不全。
+> - **C4**：Phase C 漏了 `run_turn.go` 的 `failTurn`（`:196`）与 metadata（`:340`）。
+> - **C5**：成员 resume 修法错误（ACP 不读 `Resume`；CLI 会传错 id；`HasConversationHistory` 同病）。Phase D 须重做。
+> - **C6**：`activeStreams` **不得**改时间线 id（会毁优雅关停）。
+> - **C7**：E2E（M1）缺 2 个 agent + acp-mock 路由标签，必失败。
+> - **I1**：`setupTestEnv` 只在 handler 包且签名不同 → Phase A/E 测试编译不过。
+> - **I2**：`internal/ai/stream_event.go` **不存在**（`StreamEvent` 在 `interface.go:414`）。
+> - **I3**：改 `simpleTextPayload` 会打断 12 处 `map[string]string` 断言。
+> - **I4**：runner/running-state 接线全缺 → **停止按钮是 no-op**。
+>
+> **建议**：v1 先做**顺序轮次**（放弃同轮并行），可整体规避 C1/C6/I6/I7（见勘误 M8）。
+
 **Goal:** 让用户在 ClawBench 里创建一个"群"，指定一个智能体当主持人，之后手动加入其他智能体，形成"主持人控场 + AI 决定发言者 + 人类可随时介入"的多智能体辩论式群聊。
 
 **Architecture:** 群是一条 `chat_sessions` 行（`session_type='group'`）并独占时间线；每个成员是一条隐藏的 `chat_sessions` 行（`session_type='group_member'`，`group_id` 指向群），只承载"连接绑定"（agent/transport/external_session_id）。消息**只存一份**，落在群时间线（`chat_history.agent_id` 标记发言人）。新增独立编排器 `internal/service/group_orchestrator.go` 驱动主循环；现有 `run_turn`/ACP 池/runner 只做一处"时间线解耦"（新增 `TimelineSessionID`）。

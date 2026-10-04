@@ -311,6 +311,81 @@
 11. **建群时"选主持人"的组件**：是复用扩展后的多选 `AgentSelectorDrawer`（单选即主持人）还是单独一个单选择人抽屉。
 12. **群标题占位文案**的确切格式（如"成员名 + 的群聊"）。
 13. **成员管理面板**的容器（`BottomSheet` vs 独立组件）与"已离场"标记的确切视觉。
+14. **是否 v1 先做顺序轮次**（放弃同轮并行），以规避评审 C1/C6 的流式行重写（见 §12）。
+
+## 12. 设计评审勘误（2026-10-04，Superpower code-reviewer，已逐条核对代码）
+
+> 架构主干（成员=隐藏会话行、单一群时间线、增量注入游标语义）经代码验证**成立**。但"其余零改动"的乐观判断在若干承重点上是错的。以下为**实现前必须修订**项，已核对到具体代码。
+
+### Critical
+
+**C1 — 流式行定位是「按会话找最新一条」，同轮并行从构造上就是坏的。**
+`UpdateStreamingMessage`（`chat.go:2512`）与 `FinalizeStreamingMessage`（`chat.go:2593`）用
+`WHERE session_id=? AND streaming=1 ORDER BY id DESC LIMIT 1` 定位。§3.1 要求它们用群会话 id ⇒ N 个并发成员**互相覆盖同一条流式行**。§5.1 的"同轮并行"（决策 #22）不成立。
+**修**：新增按消息 id 的原语 `UpdateStreamingMessageByID(id, content)` / `FinalizeStreamingMessageByID(id, content)`（`chat.go:2721` 的 `UpdateMessageContent` 是雏形但不改 `streaming`/`completed_at`），executor 所有内容写入改用 `e.cfg.StreamingMessageID`。**这是 Phase C 的必做任务**。计划 L0/L1 只加 WS 事件 `message_id`（前端路由），**不解决此问题**。
+
+**C2 — `chat_history.agent_id` 无写入路径也无读取路径。**
+`insertChatMessageTx`（`chat.go:764`）INSERT 无该列、`AddChatMessage`（`chat.go:624`）无该参数；`scanMessages`（`chat.go:131`）与所有 SELECT（`chat.go:70,343,361`）未选该列；`model.ChatMessage`（`model/chat.go:124`）**无 `AgentID` 字段**（`ChatSession` 才有，`:278`）。
+**修**：`AddChatMessage`/`insertChatMessageTx` 贯穿 `agentID`；`model.ChatMessage` 加 `AgentID`；所有 SELECT + `scanMessages` + handler JSON 补上；否则 Task F1 的测试无法实现、§9.4 守卫永不过。
+
+**C3 — "只需过滤会话列表"错误；`session_type` 影响面 17 处，且参数化查询 grep 不到。**
+`GetRecentSessions`（`store/session_queries.go:133`）、`SearchSessionsByTitle`（`:250`）是 `WHERE s.session_type = ?` **参数化**的，`grep "session_type = 'chat'"` **找不到**。遗漏点还包括 `chat.go:1478,1641,2007,2014,2046,2068`、`continue_conversation.go:48,141,161,430`、`session_command.go:46,71`、`handler/session_resume.go:358,459`。
+**修**：按 `grep -rn "session_type" internal/`（非字面量）逐一判断"该处是否应显示群"；注意 `GetSessionCount`（`chat.go:2046`）喂会话上限门（`chat_session.go:174`），群会绕过上限。补 search/browse/overview 的守卫测试。
+
+**C4 — Phase C 漏了 `run_turn.go` 两处，错误与 metadata 落进隐藏成员会话。**
+`failTurn`（`run_turn.go:196`）的 `emitDrainEvent` + `AddChatMessage` 用 `s.SessionID`；`runTurnFinalize`（`:340`）的 metadata 广播用 `at.spec.SessionID`。
+**修**：均改 `effectiveTimelineSessionID()`。另需决策 `session_executor.go:797` 的 `chat_tool_calls.session_id` 是否用群 id（否则群导出/分享/fork 上下文取不到工具调用）。
+
+**C5 — 成员 resume 修法错误。**
+- **ACP 根本不读 `ChatRequest.Resume`**：`acp_backend.go` 的 resume 完全由 DB `external_session_id` 经 `GetOrCreateConn`/`ensureAliveWithSession`（`acp_conn_lifecycle.go:280`）驱动 ⇒ 对 ACP 成员"强制 resume"是 no-op。
+- **对 CLI 反而误导**：`resolveResumeSessionID`（`chat_request.go:267`）在 `resume=false` 时返回 `SessionID=memberUUID, Resume=false`；事后翻 `Resume=true` 会让 `BuildBaseStreamArgs`（`common_stream.go:21`）传 `--resume <CLI 没见过的 id>`。修法须**重跑解析**或同时设 `SessionID=GetExternalSessionID(member)`。
+- **兄弟字段同病**：`HasConversationHistory`（`chat_request.go:136` 由 `GetChatMessageCount` 推出）对成员恒 false ⇒ `shouldNewSessionFallback(false)=true`（`acp_backend.go:335`）⇒ ACP 瞬时断连时**静默新建会话丢原生上下文**（正是该字段要防的失忆）。`AssistantMessageCount=0` 还会破坏周期性系统提示重注入。
+**修**：成员回合的请求构造需整体修正（resume + HasConversationHistory + AssistantMessageCount 三处都基于"成员行有 external_session_id"而非 `chat_history`）。
+
+**C6 — 把 `activeStreams` 改成时间线 id 是无谓错误，破坏优雅关停。**
+`activeStreams`（`session_executor.go:25`）是**服务端**注册表（供 `FlushStreamingNow`/`WaitStreamsDrained`），与前端订阅哪个会话无关。改成群 id 后 N 个成员互相覆盖 ⇒ SIGTERM 只 flush 1/N，`WaitSessionStreamDrained(group)` 提前返回。
+**修**：`emitStreamEvent`（`:357`）用时间线 id（对）；**`activeStreams` Store/Delete（`:349,369`）保持 `cfg.SessionID`**（或改复合键）。
+
+**C7 — E2E（M1）按现状必失败。**
+`e2e/helpers/server.ts:148` 只写 1 个 agent（`acp-mock`），`cmd/acp-mock/main.go` 不含任何路由标签（grep=0）。
+**修**：M1 需 (a) ≥2 个 agent YAML，(b) mock 支持产出 `<clawbench-speaker>`/`<clawbench-group-end/>`，(c) 接好人类抢占路径（见 I4）。
+
+### Important
+
+**I1 — Phase A/E 测试脚手架编译不过。** `setupTestEnv` 只在 `internal/handler/testutil_test.go:41`，返回 `(*testEnv, func())`（无 `.Cleanup()`，字段是 `ProjectDir` 非 `ProjectPath`）。service 包测试用 `InitDB()`/`store.SetDBForTest`（参 `schema_migrations_test.go:20`）。
+
+**I2 — `internal/ai/stream_event.go` 不存在。** `StreamEvent` 在 `internal/ai/interface.go:414`。计划 Task L0 的文件路径错误。
+
+**I3 — Task L0 Step 4 "PASS" 为假。** 把 `simpleTextPayload` 从 `map[string]string` 改 `map[string]any` 会打断 `stream_hub_test.go` 的 **12 处** `map[string]string` 断言（`:299,306,340,397,1008,1016,1024,1202,1214,1221,1252,1284`），须一并更新。
+
+**I4 — runner/running-state 接线全缺 → 停止按钮是 no-op。** `runTurn` 不调 `TryClaimSessionRun`/`SetSessionRunning`（在 `handler/chat.go:469,527`）。后果：(a) `IsSessionRunning(memberID)` 恒 false ⇒ ACP 空闲回收（`acp_pool.go:481`）可能杀掉长辩论中的成员连接；(b) 群未注册 running ⇒ 前端对 `groupID` 发 cancel，`CancelSession(groupID)` 找不到 runner，**静默 no-op**；(c) F3 的 `CancelSession(memberRowID)` 同样需成员已注册。
+
+**I5 — 用 `CancelSession(memberRowID)` 抢占对隐藏行有副作用。** 会发终态 `session_update` + push（`session_runtime.go:832`）并 finalize 孤儿消息 → 对隐藏成员是多余通知/误 finalize。需成员感知的取消（跳过 push/broadcast）。
+
+**I6 — Task C3 的"源码守卫"钉错东西。** 断言"调用点用了 `timelineSID()`"在 C1 冲突仍在时照样绿。应改为**行为测试**：两个并发 executor、不同 `StreamingMessageID`、同一时间线，断言两行各自正确 finalize。
+
+**I7 — 前端"单一 streaming 消息"假设远比 `findStreamingMsg` 广。** `useChatStream.ts` 有 **20 处** `findStreamingMsg`（`.find()` 取第一个）。L1 只处理 Map，未覆盖 `rebuildFromDb`/`loadHistory` 切回时的 N 个并发占位合并——正是"切走切回内容消失"类 bug 所在。
+
+**I8 — `triggerChatSummarization(timelineSID=group)` 每个成员回合都跑 ⇒ O(n²)。** 每次扫全群 assistant 消息（`session_runtime.go:892`）。
+
+**I9 — 主持人游标语义自相矛盾。** §5.1 说主持人发言后更新 `seen_cursor`；§5.2/决策 #23 定义游标为**轮次开始高水位** `H`（针对成员）。主持人的游标取什么须显式定。
+
+**I10 — `UpdateLastRead`→时间线 id 会清群未读。** Task C3 要求如此，则任一成员回合 `splitAtSteerBoundary`（`session_executor.go:1143`）都会把群标记已读，群徽章永不亮。
+
+### Minor
+
+- **M1** `PatchContextStateMerge` 用 `json(?)`（`chat.go:2362`），`seen_cursor` 必须传合法 JSON 数字串（如 `"42"`）否则 SQLite 报错被静默丢；`SaveContextState`（`chat.go:2327`）会整列覆盖，未来调用者会抹掉 `seen_cursor`/`host_member_id`。
+- **M2** `grouprouting.Parse` 只在闭标签**之后**取指令；标签前的指令会丢；未知发言人未校验（须编排器校验）。
+- **M3** §5.4 主持人标记（开放 #3）与最大轮数（开放 #1）在 F2 已硬编码，须先定。
+- **M4** `session_type` 无 CHECK 约束，拼错会静默造出未列出的会话；`model/chat.go:284`、`store/session_queries.go:99` 注释仍写 `"chat" | "scheduled"`。
+- **M5** `handler/tts.go:504` 直接 `json.Marshal(event)`，加未打 tag 的 `MessageID int64` 会改其载荷；建议 `json:"-"`。
+- **M6** 群行的 `agent_id`/`backend`（来自主持人）不用于执行（执行走成员行）；`ResolveAgentID(groupID)` 返回主持人，仅展示用，须注释防被"修正"进执行路径。
+- **M7** 计划卫生：C2 无真失败测试（全推给 C3）；F3/G1 缺显式 Step 2/4。
+- **M8** 决策 #22（同轮并行）正是逼出 C1 流式行重写的根源。**v1 若先做顺序轮次，可完全规避 C1/C6**，仍交付"主持人控场+AI 决定发言者+人类可介入"。建议作为**分期决策**而非事后补并行。
+
+### 结论
+
+**不满足直接实现条件。** 架构主干成立，但 Phase C 须重新界定（加"按 id 写入原语"与漏掉的 `run_turn` 两处），Phase D 须重做 resume 机制，Phase F 前须补 runner/running-state 接线。**建议 v1 先做顺序轮次**（M8），把 C1/C6/I6/I7 整体推迟到并行版本，显著降低首版风险。
 
 ## 11. 关键文件索引
 
