@@ -77,17 +77,24 @@
 
 ### 3.1 run_turn 的时间线解耦（唯一的内核改动）
 
-现状：一次回合把消息写进 `spec.SessionID` 指向的会话（`run_turn.go:277`），并把 `stream_start` 广播到该会话（`:300`）。
+**⚠️ 实现前必读：`SessionID` 在 executor 里身兼两职，不是"两处"能改完的。**
 
-群聊需要"**连接解析走成员行，消息写入与广播走群行**"。改动：
+现状：`runTurnStart` 把消息写进 `spec.SessionID`（`run_turn.go:277`）、把 `stream_start` 广播到该会话（`:300`），然后 `RunConfig.SessionID = spec.SessionID`（`:309`）。此后 **`SessionExecutor` 全程用 `e.cfg.SessionID` 同时承担两种语义**：
 
-- `TurnSpec` 增加可选字段 `TimelineSessionID string`；缺省时等于 `SessionID`（保证既有调用方行为不变）。
-- `run_turn.go` 中两处使用 `spec.SessionID` 作为"时间线"的地方改用 `effectiveTimelineSessionID()`：
-  - 落库：`AddChatMessage(..., sessionID, ...)`（`:277`）
-  - 广播：`stream_start` 的 `EmitToSession`（`:300`）
-- 连接解析仍用 `spec.SessionID`（= 成员行 id）。
+- **连接/成员语义**（必须用成员行 id）：`captureExternalSessionID` 写 `external_session_id`（`session_executor.go:851-853`）、`GetCachedStateByClawbenchSID`（`:1403`）、`GetSessionTransport`（`:1412`）、`GetSessionModel`（`:1419`）、`GetExternalSessionID`（`:1423`）、`GetAndClearCancelReason`（`:830`）、`PatchContextStateMerge`（`:986`）。
+- **时间线语义**（必须用群会话 id）：`AddChatMessage`（`run_turn.go:277`）、`UpdateStreamingMessage` / `FinalizeStreamingMessage` / `FinalizeCancelledStreamingMessage`（`:514,1168,1626`）、`persistThinkingToDB` / `AppendThinkingSegment`（`:1054,1249`）、tool-call 持久化（`:914,968`）、`CreateStreamingMessage`（`:1183`）、`triggerChatSummarization`（`:1644`）、`UpdateLastRead`（`:1143`）。
 
-改动集中在两处，且默认值保证向后兼容。
+因此**必须引入第二个字段**，而不是复用 `SessionID`：
+
+- `TurnSpec` 增加 `TimelineSessionID string`；`RunConfig` 增加 `TimelineSessionID string`。两者缺省（空）时等于对应的 `SessionID`——既有调用方行为完全不变（`effectiveTimelineSessionID()` 返回 `SessionID`）。
+- **连接语义**的全部调用点继续用 `cfg.SessionID`（= 成员行 id）。
+- **时间线语义**的全部调用点改用 `cfg.effectiveTimelineSessionID()`（缺省 = `cfg.SessionID`）。
+- `runTurnStart` 里两处（`:277` 落库、`:300` 广播）也改用 `spec.effectiveTimelineSessionID()`。
+- **WS 广播**：`emitStreamEvent`（`:357`）与 `activeStreams` 键（`:349,369`）用**时间线 id**（群），因为前端订阅的是群会话；成员流式必须广播到群。
+
+**实现纪律**：改完必须逐一核对 `session_executor.go` 里每个 `e.cfg.SessionID` 的归属（上表两类），漏改会把成员消息写进成员会话（用户看不到）或把连接状态写到群会话（成员 resume 失效）。这是本设计里**最容易出错、最需要测试钉死**的一处。
+
+向后兼容由"缺省=同值"保证：单会话路径 `TimelineSessionID == SessionID`，所有调用点等价于现状。
 
 ## 4. 数据模型
 
@@ -106,6 +113,12 @@
 - `agent_id` / `backend` / `transport` / `model` / `external_session_id` / `auto_approve` / `context_state` 承载连接与配置。
 - 需要新增一列指向所属群：**`group_id TEXT DEFAULT ''`**（群会话 id；非成员为空）。
 - `context_state` 的 JSON 里额外存**增量注入游标** `seen_cursor`（该成员上次发言时群时间线的最大消息 id）——**零新表**。
+
+**⚠️ 成员会话没有 `chat_history` 行 → resume 判定会失效（实现前必读）。**
+
+消息只存群时间线，成员会话行**没有任何 chat_history 记录**。但 `BuildChatRequest` 用 `SessionHasAssistant(sessionID)`（`chat_request.go:62` → `chat.go:2497`）决定 `resume`；成员行没有 assistant 消息 ⇒ `resume=false` ⇒ **成员每轮都被当成全新会话，原生记忆永远建立不起来**，本设计的"独立持久连接 + 增量注入"全部落空。
+
+修法（编排器/请求构造层，不改判定函数本身）：群成员的回合在 `BuildChatRequest` 之后**强制置 `resume=true`**（ACP 与 CLI 都适用；ACP 用成员行的 ClawBench UUID 走池映射，CLI 用成员行的 `external_session_id`）。判据：成员行 `external_session_id != ""` 或 `SessionHasAssistant` 为真任一成立即 resume。首轮（两者皆空）自然 resume=false，符合预期。此逻辑须在成员回合的请求构造里显式写，并加单测钉住"第二轮成员发言 resume=true"。
 
 ### 4.3 群时间线归属
 
