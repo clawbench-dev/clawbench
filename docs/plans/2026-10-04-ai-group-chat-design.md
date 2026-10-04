@@ -90,7 +90,8 @@
 - **连接语义**的全部调用点继续用 `cfg.SessionID`（= 成员行 id）。
 - **时间线语义**的全部调用点改用 `cfg.effectiveTimelineSessionID()`（缺省 = `cfg.SessionID`）。
 - `runTurnStart` 里两处（`:277` 落库、`:300` 广播）也改用 `spec.effectiveTimelineSessionID()`。
-- **WS 广播**：`emitStreamEvent`（`:357`）与 `activeStreams` 键（`:349,369`）用**时间线 id**（群），因为前端订阅的是群会话；成员流式必须广播到群。
+- **WS 广播**：`emitStreamEvent`（`:357`）用**时间线 id**（群），因为前端订阅的是群会话；成员流式必须广播到群。
+- **`activeStreams` 键（`:349,369`）保持 `cfg.SessionID`（成员行）**——**不要**改成时间线 id（见 §12 C6：它是服务端注册表，供 `FlushStreamingNow`/`WaitStreamsDrained`，与前端订阅无关；改群 id 会让并发成员互相覆盖、优雅关停丢尾部）。
 
 **实现纪律**：改完必须逐一核对 `session_executor.go` 里每个 `e.cfg.SessionID` 的归属（上表两类），漏改会把成员消息写进成员会话（用户看不到）或把连接状态写到群会话（成员 resume 失效）。这是本设计里**最容易出错、最需要测试钉死**的一处。
 
@@ -124,10 +125,11 @@
 
 `chat_history` 新增一列 **`agent_id TEXT DEFAULT ''`**：
 
-- 成员发言写入群会话时，`agent_id` = 该成员的 agent id（前端据此渲染头像/名字）。
-- 主持人发言写入时，`agent_id` = 主持人的 agent id，并以**消息级标记**区分"这是主持人发言"（见 §5.4）。
+- **存"发言人成员行 id"（不是 agent id）**（评审 N4）：同一 agent 可被加进同一群两次，若按 agent id 归属则两条成员无法区分，且增量注入的"作者 ≠ 自己"过滤会失效。列名沿用 `agent_id`，语义为**发言人的成员会话行 id**；前端用群成员列表（头像条已加载）把行 id 解析为 agent 头像/名字。
+- 主持人发言写入时，`agent_id` = 主持人的**成员行 id**，并以**消息级标记**区分"这是主持人发言"（见 §5.4）。
 - 用户消息 `agent_id=''`。
-- 普通单会话消息 `agent_id` 留空（或填会话 agent），不影响既有查询。
+- 普通单会话消息 `agent_id` 留空（或填会话 id），不影响既有查询。
+- **增量注入的"作者 ≠ 自己"按该列（成员行 id）比较**，与 `buildInjectionText(..., selfAgentID, ...)` 的 `self` 参数同源（实现时 `self` 传成员行 id）。
 
 **消息只存一份**——不存在第二份副本，从根上消除一致性问题。
 
@@ -197,10 +199,18 @@
 
 ### 5.5 抢占
 
-- 人类 @ 成员 / 打断 → 取消当前成员的 runner（复用 `CancelSession`，`session_runtime.go:770`）。
+- 人类 @ 成员 / 打断 → 取消当前成员回合。**用成员感知的 `cancelMemberTurn(memberRowID)`**（评审 I5：直接 `CancelSession(memberRowID)` 会给隐藏成员发终态 `session_update` + push 并 finalize 其不存在的历史）。**不**复用 `CancelSession`。
+- **群级停止（评审 N2）**：前端停止按钮对 `groupID` 发 cancel。编排器必须让每个成员回合的 `TurnSpec.Ctx` **派生自编排器自己的可取消 ctx**，这样 `CancelSession(groupID)`（或编排器的 cancel）能传播到当前成员回合；否则停止只取消了群占位 runner，成员回合照跑。
 - 人类消息写入群时间线。
 - 主持人基于新状态重新选人。
 - 被中断的成员发言按现有 `cancel` 路径标记为"中断"而非错误。
+
+### 5.6 顺序执行的流式行不变量（评审 C1 残留）
+
+**必须显式保证**：编排器**串行 await** 每个成员的 `runTurn` 完全结束（含 Finalize）后，才启动下一个成员/主持人回合。这是 `UpdateStreamingMessage` 的 `WHERE session_id=group AND streaming=1 ORDER BY id DESC LIMIT 1` 能命中正确行的**前提**——若任何实现用第二个 goroutine 提前启动下一个发言者，延迟的 Finalize 会打到**下一个发言者的行**。
+
+- **孤儿行清理**：若某成员回合 finalize 失败，群时间线会留下 `streaming=1` 孤儿行，且 `SetSessionRunning` **不会**清理它（`session_runtime.go:406-409`）。编排器需在群回合开始/结束时对群时间线做一次孤儿 finalize（参考 `finalizeOrphanedStreamingMessages`），否则重载时出现幽灵流式气泡。
+- 这两条须各有一条测试钉住（串行 await 纪律 + 孤儿清理）。
 
 ## 6. 错误处理与降级
 
@@ -222,7 +232,8 @@
 
 - **会话列表**：群与普通会话并列，群图标标识；`group_member` 行被过滤（防泄漏到侧边栏）。
 - **群时间线**：成员发言气泡显示头像 + 名字 + 后端标识（复用 `AgentIcon` / `getAgentName`）；主持人发言居中特殊样式。
-- **同轮并发气泡**（决策 #22）：一轮内 N 个成员**同时**流式，群时间线要能渲染 N 个并发占位气泡。这是前端主要新增复杂度——需为每个并发发言维护独立的流式锚点，而非现有"单一 streaming 消息"假设（`useChatStream.ts` 的 `findStreamingMsg`）。
+  - **⚠️ 实时归属缺口（评审 N3）**：`stream_start` 的 payload 只有 `message_id`（`ws/stream_hub.go:373`），`simpleTextPayload`（`:345`）也不带 agent id。所以**流式过程中**前端无法知道当前气泡属于哪个成员——`agent_id` 只在消息落库后由 DB 读回。v1 方案二选一：(a) 在 `stream_start` 增加 `agent_id`（后端小改）；(b) 明确降级为"流式时用通用样式、重载后才显示发言人"。**v1 推荐 (a)**（改动小且体验完整）。
+- **（v2）同轮并发气泡**：一轮内 N 个成员同时流式时的多锚点渲染——**v1 顺序轮次不需要**，见 §12。
 - **顶部横向头像条**（决策 #19）：群会话头部一行成员头像，**发言中高亮/脉动**（可同时多个高亮）；点击可查看成员详情。
 - **人类介入**：输入框支持 @ 成员（走已有 `@` 提及模式），发送即抢占。
 
@@ -277,7 +288,8 @@
 ### 9.1 单元测试（Go）
 
 - `group_orchestrator` 循环逻辑：注入**假 run_turn**（脚本化返回），断言路由解析、增量游标、结束信号、最大轮数兜底、抢占、成员失败不终止群。
-- **多发言者并行**：主持人点名多个成员时，断言同轮并发执行、注入的高水位 `H` 一致、各自 `seen_cursor` 更新为 `H`、且下一轮能注入到同轮同伴的发言。
+- **顺序多发言者（v1）**：主持人点名多个成员时，断言**按标签顺序依次**执行、后者注入能看到前者本轮发言、各自 `seen_cursor` 更新为发言前高水位。
+- **（v2）多发言者并行**：断言同轮并发执行、注入高水位 `H` 一致——**v1 不适用**。
 - 路由标签解析器（`internal/grouprouting/`）：独立叶子包 + parity corpus（含多成员逗号分隔、结束信号、畸形输入）。
 - `run_turn` 的 `TimelineSessionID`：断言"连接用成员、落库/广播用群"，且缺省时行为不变（向后兼容）。
 
@@ -285,8 +297,8 @@
 
 - `agent_id` → 气泡头像/名字渲染。
 - 主持人特殊样式。
-- 顶部头像条状态（空闲/发言中/离线），**多个成员同时发言**时多个高亮。
-- **N 个并发流式气泡**：同一轮 N 个成员流式事件交错到达时，各自渲染到正确的占位气泡（不被"单一 streaming 消息"假设合并）。
+- 顶部头像条状态（空闲/发言中/离线）；v1 顺序轮次同一时刻至多一个发言中。
+- **（v2）N 个并发流式气泡**——v1 不适用。
 
 ### 9.3 E2E（Playwright + `acp-mock`）
 
@@ -308,12 +320,16 @@
 6. **群标题自动生成**（复用 auto-title 还是主持人生成）。
 7. **成员展示名的存放**（`title` vs `context_state`）。
 8. **多群并发**时每个成员的连接是否串扰（每成员独立 session id，预期无串扰，需 E2E 验证）。
-9. **同轮并发的最大成员数上限**（防一次点名过多导致资源峰值；暂定不限，靠最大轮数间接约束）。
-10. **成员并发失败的原子性**：同轮 N 个成员部分成功部分失败时，`seen_cursor` 与轮次推进如何取舍（暂定失败者不更新游标、下一轮可重试）。
+9. **（v2）同轮并发的最大成员数上限**（防一次点名过多导致资源峰值）。
+10. **（v2）成员并发失败的原子性**：同轮 N 个成员部分成功部分失败时，`seen_cursor` 与轮次推进如何取舍。
 11. **建群时"选主持人"的组件**：是复用扩展后的多选 `AgentSelectorDrawer`（单选即主持人）还是单独一个单选择人抽屉。
 12. **群标题占位文案**的确切格式（如"成员名 + 的群聊"）。
 13. **成员管理面板**的容器（`BottomSheet` vs 独立组件）与"已离场"标记的确切视觉。
 14. ~~**是否 v1 先做顺序轮次**~~ → **已决定：v1 顺序轮次**（见 §12 结论）。
+15. **（v1）实时发言人归属**：在 `stream_start` 增加 `agent_id`（推荐）还是降级为"重载后显示发言人"（评审 N3）。
+16. **（v1）成员身份用 member 行 id 而非 agent id**（评审 N4：同一 agent 可被加两次，`agent_id ≠ self` 过滤会失效）。这影响 `chat_history` 存哪个归属列——需在 §4.3 决策。
+17. **（v1）群级孤儿流式行清理**：群时间线的 `streaming=1` 孤儿行由谁 finalize（评审 C1 残留）。
+18. **（v1）群停止如何传播到当前成员回合**：靠编排器 ctx 派生（评审 N2）。
 
 ## 12. 设计评审勘误（2026-10-04，Superpower code-reviewer，已逐条核对代码）
 
@@ -388,6 +404,47 @@
 ### 结论
 
 **已采纳 v1 = 顺序轮次。** 架构主干成立；顺序模式直接消除 C1/C6/I6/I7（并行专属问题）。**实现前仍需修订**：Phase C 须补漏掉的 `run_turn` 两处（C4）并明确 `activeStreams` 保持成员 id（C6）；Phase D 须重做 resume 机制（C5）；Phase F 前须补 runner/running-state 接线（I4）；C2（agent_id 读写路径）、C3（session_type 17 处）须按勘误落实。**L0/L1（并发气泡）整体移出 v1。**
+
+## 12.1 二轮评审勘误（2026-10-04，Superpower code-reviewer，已核对代码）
+
+> 二轮评审验证 C1–C7 的修订是否真正消解，并检查 v1=顺序 是否引入新问题。结论：**2 个新 Critical（N1 是上轮修订新引入的）+ 6 个新 Important**。
+
+### Critical（二轮）
+
+**N1 — Phase D 的 resume 修法会破坏 ACP 池键（上轮修订新引入）。**
+`resolveMemberResume` 在 `extID != ""` 时返回 `SessionID = extID`，而计划要求"覆盖 `ChatRequest.SessionID`"且**无 ACP/CLI 区分**。但 ACP 的 `req.SessionID` 是**连接池键**（`acp_backend.go:61` `GetOrCreateConn(ctx, b.agent, req.SessionID, ...)`；`:126` `getSessionAutoApprove(req.SessionID)`；`acp_pool.go:529` 预填）。覆盖成 ACP session id ⇒ 池里多一个错误条目、`getExternalSessionID(extID)` 查不到、auto-approve 丢失。
+**修**：`SessionID` 覆盖**仅对 CLI**（`!isACP`）；ACP 只覆盖 `Resume`/`HasConversationHistory`/`AssistantMessageCount`，`SessionID` 保持成员行 id。D1 文案自相矛盾（"ACP 的返回 SessionID 被忽略" vs "必须 SessionID=extID"）须改。另 `assistantCount` 参数未用，删。
+
+**C5（二轮复核）— 仍部分未修**，根因同上 N1。
+
+### Important（二轮）
+
+**N2 — 群"停止"到不了当前成员回合。** F0 为 `groupID` 与 `memberRowID` 都注册了运行态，但前端停止对 `groupID` 调 `CancelSession(groupID)`，只取消群占位 runner，**不取消成员的 `runTurn`**。须让每个成员回合的 `TurnSpec.Ctx` 派生自编排器可取消 ctx（见 §5.5）。F0 的测试能抓到，但实现步骤缺失。
+
+**N3 — 实时成员气泡无法归属。** `stream_start` payload 只有 `message_id`（`ws/stream_hub.go:373`），`simpleTextPayload` 无 agent id；`agent_id` 仅落库后有。流式中前端无法渲染"成员头像+名字"。v1 方案见 §7（推荐 `stream_start` 加 `agent_id`）。
+
+**N4 — 同一 agent 加两次会破坏自排除。** 注入按 `agent_id ≠ self` 过滤；若两成员同 agent 则互相看不到。**成员身份改用成员行 id**（见 §4.3 修订）。
+
+**N5 — C2 读路径不全。** 除 A3 已列，遗漏：`GetChatHistory`（`chat.go:34`，fork/RAG）、`GetMessageByID`（`chat.go:260`，TTS/summary/RAG）、`GetSessionMessagesForSelection`（`session_share_payload.go:129`，**群分享丢归属**）、`continue_conversation.go:215,446`（fork/continue 复制丢归属）、`chat.go:2116`（preview）。§9.4 守卫只测主路径，这些遗漏会绿着上线。
+
+**N6 — 主持人标记的写入/读取机制未定义。** F2 说"写群消息时加 `meta.role`"，但 content 由 executor 的 `buildContentJSON`（`session_executor.go:1430`）构建，编排器无注入点；J1 读 `meta.role` 也与 `ChatMessage.metadata`（响应元数据，非 content 信封）不符。须给出机制。
+
+**N7 — I1 只修了一半。** A1/E2 已用 `InitDB()` 模式，但 **A2 Step 1（计划 166-167 行）与 E1 Step 1（922-924 行）仍写 `setupTestEnv(t)` + `env.Cleanup()` + `env.ProjectPath`**（该函数只在 handler 包、字段是 `ProjectDir`）。仍不可编译。
+
+**N8 — A3 测试夹具没有 agent_id 列。** A3 让用 `setupDB(t)`，但 `chat_test.go:29-42` 的 `schema` 常量**不含 `agent_id`**，其 `m.AgentID` 断言会因错误原因失败。A3 须同时给该内存 schema 加列。
+
+### Minor（二轮）
+
+- **N9 设计正文残留过时并行段落**（已在本轮修正）：§7、§9.1、§9.2、§10 #9/#10 曾强制"并发"测试/气泡——v1 不满足。
+- **N10** `GetSessionCount` 计入群的决策仍开放（见 §10 #19，会话上限门 4 处：`chat.go:2046`、`continue_conversation.go:161,430`、`session_resume.go:358`）。
+- **N11** `RegisterSessionTurnCancel` 的键（成员行 id）与群级中断路径不连通（同 N2）。
+- **N12** 顺序游标语义**验证正确**（B 能看到 A 同轮发言，且不重放自己）✅。
+- **N13** I8（summarization O(n) 每成员回合）未被处理：C3 反而把 `triggerChatSummarization` 指向群时间线。损害有界（跳过已摘要），但计划未测未缓解。
+- **M4/M6** 仍未进计划（`session_type` 无 CHECK、群行 `agent_id` 仅展示用）——低优先，可留 v2。
+
+### 二轮结论
+
+**仍不满足直接实现条件（2 Critical）。** 顺序轮次的**定位**判断正确，但 (1) D1 的 `ChatRequest.SessionID` 覆盖须 CLI-gated（否则毁 ACP 池键，N1）；(2) C2 读路径须补全（share/fork/continue/TTS，N5）且 A3 夹具 schema 须加列（N8）。另外 N2（停止传播）、N3（实时归属）、N4（成员身份）、N6（主持人标记机制）须在对应 Phase 落实；设计正文的并行残留（N9）本轮已清。
 
 ## 11. 关键文件索引
 

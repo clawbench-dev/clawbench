@@ -2,21 +2,31 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-> ## ⚠️ 评审勘误（2026-10-04）— 实现前必读
+> ## ⚠️ 评审勘误（2026-10-04，两轮）— 实现前必读
 >
-> 本计划经 Superpower code-reviewer 评审，发现 **7 Critical / 10 Important**，已逐条核对代码属实。
+> 本计划经 **两轮** Superpower code-reviewer 评审，均已逐条核对代码。
 >
-> **✅ v1 决策：顺序轮次。** 放弃同轮并行（决策 #22 修订）。这直接消除 **C1/C6/I6/I7**（全是并行专属问题），并**移除 L0/L1（并发气泡）整个阶段**——被点名者按顺序依次发言，任一时刻只有一条流式行在写群时间线，`UpdateStreamingMessage` 的 `ORDER BY id DESC LIMIT 1` 恰好命中正确行。
+> **✅ v1 决策：顺序轮次。** 放弃同轮并行（决策 #22 修订）。这直接消除 **C1/C6/I6/I7**（并行专属问题），并移除 L0/L1（并发气泡）——被点名者依次发言，任一时刻只有一条流式行在写群时间线。
 >
-> **实现前仍须修订的项**（详见设计文档 §12）：
-> - **C2**：`agent_id` 无写/读路径（`AddChatMessage` 无参数、`model.ChatMessage` 无字段）。Phase A/F/J 需贯穿。
-> - **C3**：`session_type` 影响 17 处（含**参数化**查询 grep 不到）。Phase E2 的 grep 清单错误且不全。
-> - **C4**：Phase C 漏了 `run_turn.go` 的 `failTurn`（`:196`）与 metadata（`:340`）。
-> - **C5**：成员 resume 修法错误（ACP 不读 `Resume`；CLI 会传错 id；`HasConversationHistory` 同病）。Phase D 须重做。
-> - **C7**：E2E（M1）缺 2 个 agent + acp-mock 路由标签，必失败。
-> - **I1**：`setupTestEnv` 只在 handler 包且签名不同 → Phase A/E 测试编译不过。
-> - **I2**：`internal/ai/stream_event.go` **不存在**（`StreamEvent` 在 `interface.go:414`）。
-> - **I4**：runner/running-state 接线全缺 → **停止按钮是 no-op**。
+> **一轮勘误（已写入各 Task）**：
+> - **C2** `agent_id` 无写/读路径 → **Task A3**（含 N5：分享/fork/TTS 等全部读路径）
+> - **C3** `session_type` 17 处含参数化 → **Task E2**
+> - **C4** `run_turn` 漏 `failTurn`/metadata → **Task C2**
+> - **C5** 成员 resume 修法错误 → **Task D1**
+> - **C7** E2E 缺前置 → **Task M0**
+> - **I1** 测试脚手架错 → A/E 已改 `InitDB()` 模式
+> - **I2** `stream_event.go` 不存在 → 指向 `interface.go:414`
+> - **I4** runner 接线缺失 → **Task F0**
+>
+> **二轮新增（设计 §12.1）**：
+> - **N1（Critical，上轮修订新引入）**：Phase D 覆盖 `ChatRequest.SessionID=extID` 会**毁 ACP 池键**。须 **CLI/ACP 分流**——ACP 保持成员行 id。**Task D1 已重做**。
+> - **N2** 群停止传不到成员回合 → **Task F0**（ctx 派生）
+> - **N3** 流式发言人无法归属 → **Task F0b**（`stream_start.agent_id`）
+> - **N4** 同一 agent 加两次破坏自排除 → 归属列存**成员行 id**（§4.3 已改）
+> - **N5** C2 读路径不全（share/fork/continue/TTS）→ **Task A3**
+> - **N6** 主持人标记机制不可行 → 改用 `agentId == 主持人成员行 id`
+> - **N7** A2/E1 脚手架仍错 → 已改
+> - **N8** A3 夹具缺列 → 已注明
 >
 > **v2 候选**：同轮并行（须先按 §12 C1 增加按消息 id 的流式写入原语 + L0/L1）。
 
@@ -45,15 +55,15 @@
 | A | Schema 迁移（`chat_history.agent_id`、`chat_sessions.group_id`） | — |
 | B | 路由标签解析叶子包 `internal/grouprouting` | — |
 | C | `run_turn`/executor 时间线解耦（`TimelineSessionID`） | — |
-| D | 成员 resume 修正 | C |
+| D | 成员 resume 修正（CLI/ACP 分流） | C |
 | E | 群存储与 CRUD（创建群/加成员/删成员/列成员） | A |
-| F | 编排器主循环（**顺序轮次**） | B、C、D、E |
+| F | 编排器主循环（**顺序轮次**，含 F0 运行态/F0b stream_start 发言人） | B、C、D、E |
 | G | HTTP API + OpenAPI | E、F |
 | H | 前端：`AgentSelectorDrawer` 多选 | — |
 | I | 前端：建群入口与主持人选择 | G、H |
 | J | 前端：群时间线渲染（发言人气泡/主持人样式） | G |
 | K | 前端：成员头像条 + 增删 | G、H |
-| M | E2E | 全部 |
+| M | E2E（M0 前置 + M1） | 全部 |
 | ~~L~~ | ~~前端：同轮并发气泡~~ → **v2**（随并行一起做，见头部勘误） | — |
 
 ---
@@ -159,12 +169,22 @@ git commit -m "feat(group): add chat_history.agent_id column for speaker attribu
 
 **Step 1: 写失败测试**
 
-在 `database_group_test.go` 追加：
+在 `database_group_test.go` 追加（**N7 勘误**：同样用 `InitDB()` 模式，**不要**用 `setupTestEnv`——它只在 handler 包）：
 
 ```go
 func TestChatSessionsHasGroupIDColumn(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	if err := InitDB(); err != nil {
+		t.Fatalf("InitDB: %v", err)
+	}
+	defer store.Close()
 
 	var n int
 	err := store.ReadDB().QueryRow(
@@ -235,20 +255,19 @@ git commit -m "feat(group): add chat_sessions.group_id column and index"
 
 **Step 1: 写失败测试**
 
-```go
-func TestAddChatMessagePersistsAgentID(t *testing.T) {
-	// 用 setupDB(t)（chat_test.go:232 的内存 schema）或 InitDB 模式
-	db := setupDB(t)
-	_ = db
-	project := "/tmp/grouptest"
-	_ = InitDB // 视具体夹具而定
+**N8 勘误**：`setupDB(t)`（`chat_test.go:232`）用的是 `chat_test.go:29-42` 的 `schema` 常量，**其中没有 `agent_id` 列**——须先给该内存 schema 加 `agent_id TEXT DEFAULT ''`（与真实迁移一致），否则测试会因缺列失败而非因功能缺失。测试文件用 `package service_test`（与 `chat_test.go` 一致）。
 
+```go
+// 先在 chat_test.go 的 schema 常量 chat_history 定义里加：agent_id TEXT DEFAULT '',
+func TestAddChatMessagePersistsAgentID(t *testing.T) {
+	setupDB(t) // chat_test.go:232，已含 agent_id 列
+	project := "/tmp/grouptest"
 	sid := helperCreateSession(t, project, "codebuddy", "t")
-	id, err := AddChatMessageWithAgent(project, "codebuddy", sid, "assistant", `{"blocks":[]}`, nil, false, "", "agent-x")
+	id, err := service.AddChatMessageWithAgent(project, "codebuddy", sid, "assistant", `{"blocks":[]}`, nil, false, "", "member-row-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	msgs, _, err := GetChatHistoryPaged(project, "codebuddy", sid, 0, 0)
+	msgs, _, err := service.GetChatHistoryPaged(project, "codebuddy", sid, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,8 +275,8 @@ func TestAddChatMessagePersistsAgentID(t *testing.T) {
 	for _, m := range msgs {
 		if m.ID == id {
 			found = true
-			if m.AgentID != "agent-x" {
-				t.Fatalf("AgentID=%q, want agent-x", m.AgentID)
+			if m.AgentID != "member-row-1" {
+				t.Fatalf("AgentID=%q, want member-row-1", m.AgentID)
 			}
 		}
 	}
@@ -267,8 +286,6 @@ func TestAddChatMessagePersistsAgentID(t *testing.T) {
 }
 ```
 
-> 实现时按既有测试夹具（`chat_test.go` 的 `setupDB` + `helperCreateSession`）调整；关键断言是 **`ChatMessage.AgentID` 能写能读**。
-
 **Step 2: 运行确认失败**
 
 Run: `go test ./internal/service/ -run TestAddChatMessagePersistsAgentID -v`
@@ -276,22 +293,32 @@ Expected: FAIL（字段/参数不存在）
 
 **Step 3: 实现**
 
-- `model.ChatMessage` 加 `AgentID string`。
+- `model.ChatMessage` 加 `AgentID string`（**语义 = 发言人成员行 id**，见设计 §4.3/N4）。
 - 新增 `AddChatMessageWithAgent(...agentID string)`，内部把 `agentID` 传给 `insertChatMessageTx`；`AddChatMessage` 保留原签名并转调 `AddChatMessageWithAgent(..., "")`（避免改动所有既有调用点）。
 - `insertChatMessageTx` 的 INSERT 增加 `agent_id` 列与占位符。
-- `GetChatHistoryPaged` 三条 SELECT、`GetMessagesBySessionID`/`Raw`（`chat.go:343,361`）、`scanMessages` 均补 `agent_id` 并写入 `ChatMessage.AgentID`。
-- handler 返回 JSON 已由 `model.ChatMessage` 的 tag 自动带上。
+- `chat_test.go` 的内存 `schema` 常量同步加 `agent_id` 列。
+
+**N5 勘误（读路径必须补全，否则群分享/fork/TTS 静默丢归属）**：除 `GetChatHistoryPaged` 三条 SELECT（`chat.go:89,105,119`）、`GetMessagesBySessionID`/`Raw`（`chat.go:343,361`）、`scanMessages`（`chat.go:131`）外，**还须补**：
+- `GetChatHistory`（`chat.go:34`，fork/RAG 用）
+- `GetMessageByID`（`chat.go:260`，TTS/summary/RAG 用）
+- `GetSessionMessagesForSelection`（`session_share_payload.go:129`，**群分享**）
+- `continue_conversation.go:215,446`（fork/continue 复制消息）
+- `chat.go:2116`（preview 查询）
+
+逐条 `SELECT ... agent_id ...` 并写入 `ChatMessage.AgentID`。**验证方法**：`grep -n "SELECT id, role, content" internal/service/` 找所有列清单，逐个确认已含 `agent_id`。
 
 **Step 4: 运行确认通过**
 
 Run: `go test ./internal/service/ -run TestAddChatMessagePersistsAgentID -v`
 Expected: PASS
 
+**Step 4b: 补一条"群分享保留归属"测试**（否则 N5 的分享路径遗漏会绿着上线）：建群 → 成员发言 → 生成分享 payload → 断言含 `agent_id`。
+
 **Step 5: Commit**
 
 ```bash
-git add internal/model/chat.go internal/service/chat.go internal/service/database_group_test.go
-git commit -m "feat(group): thread agent_id through message write and read paths"
+git add internal/model/chat.go internal/service/chat.go internal/service/session_share_payload.go internal/service/continue_conversation.go internal/service/chat_test.go internal/service/database_group_test.go
+git commit -m "feat(group): thread agent_id through all message read/write paths"
 ```
 
 ---
@@ -817,14 +844,14 @@ git commit -m "feat(group): split timeline vs connection semantics in SessionExe
 
 ## 阶段 D：成员 resume 修正
 
-> ⚠️ 见设计文档 §4.2 与 §12 **C5（Critical）**。原计划"成员回合强制置 `resume=true`"是**错的**，须按下述重做。
+> ⚠️ 见设计文档 §4.2 与 §12 **C5** / §12.1 **N1（Critical，上轮修订新引入）**。原计划"成员回合强制置 `resume=true`"是**错的**；上一轮改成"覆盖 SessionID=extID"也**错**（会毁 ACP 池键）。按下面重做。
 
-### Task D1: 成员回合的请求构造（resume + HasConversationHistory + AssistantMessageCount 三处）
+### Task D1: 成员回合的请求构造（CLI/ACP 分流）
 
-**C5 勘误（必读）**：
-1. **ACP 根本不读 `ChatRequest.Resume`** —— ACP 的 resume 由 DB `external_session_id` 经 `GetOrCreateConn`/`ensureAliveWithSession`（`acp_conn_lifecycle.go:280`）驱动。所以对 ACP 成员，**真正要做的是让成员行的 `external_session_id` 被正确写入/读取**（Phase F 的 `captureExternalSessionID` 走连接语义即自动完成），"强制 resume"是 no-op。
-2. **对 CLI 成员，事后翻 `Resume=true` 会传错 id** —— `resolveResumeSessionID`（`chat_request.go:267`）在 `resume=false` 时返回 `SessionID=memberUUID, Resume=false`；`BuildBaseStreamArgs`（`common_stream.go:21`）会 `--resume <memberUUID>`（CLI 没见过）。**修法**：成员回合的 `ChatRequest` 必须让 `SessionID = GetExternalSessionID(memberRow)`（非空时）且 `Resume = (extID != "")`。
-3. **`HasConversationHistory` 同病**（`chat_request.go:136` 由 `GetChatMessageCount` 推出，成员恒 false）⇒ `shouldNewSessionFallback(false)=true`（`acp_backend.go:335`）⇒ ACP 瞬时断连时静默新建会话丢上下文。成员回合须把 `HasConversationHistory` 置为 `extID != ""`。`AssistantMessageCount` 同理（影响系统提示重注入）。
+**C5 + N1 勘误（必读）**：
+1. **ACP 的 `req.SessionID` 是连接池键**（`acp_backend.go:61` `GetOrCreateConn(ctx, b.agent, req.SessionID, ...)`；`:126` `getSessionAutoApprove(req.SessionID)`；`acp_pool.go:529` 预填 `getExternalSessionID(clawbenchSID)`）。**绝不能**把它覆盖成 ACP session id——否则池里多一个错误条目、auto-approve 丢失、resume 失效。ACP 的 resume 由成员行 `external_session_id` 经池自动完成（Phase F 的连接语义即覆盖）。
+2. **CLI 的 `req.SessionID` 才是传给 `--resume` 的 id**（`common_stream.go:21`）。成员行无 `chat_history` ⇒ `SessionHasAssistant` 恒 false ⇒ `resolveResumeSessionID`（`chat_request.go:267`）返回 `SessionID=memberUUID, Resume=false`；须改成 `SessionID=extID, Resume=(extID!="")`。
+3. **`HasConversationHistory`/`AssistantMessageCount` 同病**（`chat_request.go:136,154` 由 `chat_history` 推出，成员恒 false/0）⇒ `shouldNewSessionFallback(false)=true`（`acp_backend.go:335`）⇒ ACP 瞬时断连静默新建会话。成员回合须覆盖为 `extID != ""`（两者都覆盖；`AssistantMessageCount` 用 1 或真实值均可，仅需 > 0 表达"有历史"）。
 
 **Files:**
 - Create: `internal/service/group_member_request.go`
@@ -837,23 +864,35 @@ package service
 
 import "testing"
 
-func TestResolveMemberResume(t *testing.T) {
-	// First turn: no ext id -> fresh, no resume, empty session id.
-	sid, resume, hasHistory := resolveMemberResume("member-1", "", 0)
-	if resume || hasHistory || sid != "member-1" {
-		t.Fatalf("first turn: sid=%q resume=%v hasHistory=%v", sid, resume, hasHistory)
+func TestApplyMemberResumeOverrides_CLI(t *testing.T) {
+	req := ai.ChatRequest{SessionID: "member-1", Resume: false, HasConversationHistory: false}
+	applyMemberResumeOverrides(&req, "member-1", "ext-9", false /*isACP*/)
+	if req.SessionID != "ext-9" || !req.Resume || !req.HasConversationHistory {
+		t.Fatalf("cli: %+v", req)
 	}
-	// Has ext id -> resume with ext id, history true.
-	sid, resume, hasHistory = resolveMemberResume("member-1", "ext-9", 0)
-	if !resume || !hasHistory || sid != "ext-9" {
-		t.Fatalf("resume turn: sid=%q resume=%v hasHistory=%v", sid, resume, hasHistory)
+	// No ext id -> fresh.
+	req = ai.ChatRequest{SessionID: "member-1"}
+	applyMemberResumeOverrides(&req, "member-1", "", false)
+	if req.SessionID != "member-1" || req.Resume || req.HasConversationHistory {
+		t.Fatalf("cli fresh: %+v", req)
+	}
+}
+
+func TestApplyMemberResumeOverrides_ACPKeepsPoolKey(t *testing.T) {
+	req := ai.ChatRequest{SessionID: "member-1", Resume: false, HasConversationHistory: false}
+	applyMemberResumeOverrides(&req, "member-1", "acp-sid-7", true /*isACP*/)
+	if req.SessionID != "member-1" {
+		t.Fatalf("acp must keep pool key, got %q", req.SessionID)
+	}
+	if !req.Resume || !req.HasConversationHistory {
+		t.Fatalf("acp resume/history must be true: %+v", req)
 	}
 }
 ```
 
 **Step 2: 运行确认失败**
 
-Run: `go test ./internal/service/ -run TestResolveMemberResume -v`
+Run: `go test ./internal/service/ -run TestApplyMemberResumeOverrides -v`
 Expected: FAIL
 
 **Step 3: 实现**
@@ -863,45 +902,52 @@ Expected: FAIL
 ```go
 package service
 
-// resolveMemberResume computes the (SessionID, Resume, HasConversationHistory)
-// triple for a group member's turn.
+import "clawbench/internal/ai"
+
+// applyMemberResumeOverrides fixes the chat_history-derived resume signals on a
+// group member's ChatRequest.
 //
 // Member session rows carry NO chat_history rows (all messages live in the
-// group timeline), so every chat_history-derived signal BuildChatRequest uses
-// is wrong for them:
+// group timeline), so BuildChatRequest derives the wrong values:
 //   - SessionHasAssistant -> false  => Resume=false
 //   - GetChatMessageCount -> 0      => HasConversationHistory=false
 //
 // The member's real memory signal is its own external_session_id (written by
-// captureExternalSessionID on the member row, which uses connection semantics).
+// captureExternalSessionID on the member row, connection semantics).
 //
-// For ACP the returned SessionID is ignored (the pool owns mapping via the
-// member row's ClawBench UUID), but Resume must still be truthful for the
-// executor's bookkeeping. For CLI the SessionID MUST be the external id — an
-// agent that has never seen memberUUID cannot --resume it.
-//
-// assistantCount is the caller's own count if it tracks one (0 for members).
-func resolveMemberResume(memberRowID, externalSessionID string, assistantCount int) (sessionID string, resume, hasConversationHistory bool) {
-	if externalSessionID == "" {
-		return memberRowID, false, false
+// CRITICAL (review N1): req.SessionID is the ACP connection-pool key. For ACP
+// it MUST stay the member row id — overwriting it with the ACP session id would
+// create a second, wrong pool entry, lose auto-approve, and break resume. Only
+// CLI backends need SessionID switched to the external id (that is the value
+// passed to --resume).
+func applyMemberResumeOverrides(req *ai.ChatRequest, memberRowID, externalSessionID string, isACP bool) {
+	hasMemory := externalSessionID != ""
+	req.Resume = hasMemory
+	req.HasConversationHistory = hasMemory
+	if hasMemory {
+		req.AssistantMessageCount = 1 // >0 => "has history" for system-prompt re-injection
 	}
-	return externalSessionID, true, true
+	if !isACP && hasMemory {
+		req.SessionID = externalSessionID
+	}
+	// ACP: leave req.SessionID == memberRowID (pool key).
+	_ = memberRowID
 }
 ```
 
 **Step 4: 运行确认通过**
 
-Run: `go test ./internal/service/ -run TestResolveMemberResume -v`
+Run: `go test ./internal/service/ -run TestApplyMemberResumeOverrides -v`
 Expected: PASS
 
 **Step 5: Commit**
 
 ```bash
 git add internal/service/group_member_request.go internal/service/group_member_request_test.go
-git commit -m "feat(group): add member resume/history resolution"
+git commit -m "feat(group): apply member resume overrides (CLI/ACP split)"
 ```
 
-> **接线（Phase F）**：成员回合构造 `ai.ChatRequest` 后，用 `resolveMemberResume` 的结果覆盖 `ChatRequest.SessionID`/`Resume`/`HasConversationHistory`。主持人回合同理。此覆盖**必须**在 `BuildChatRequest` 之后、`ExecuteStream` 之前。
+> **接线（Phase F）**：成员与主持人回合构造 `ai.ChatRequest` 后（`BuildChatRequest` 之后、`ExecuteStream` 之前），调用 `applyMemberResumeOverrides(&req, memberRowID, GetExternalSessionID(memberRowID), resolveIsACP(agentID, transport))`。`resolveIsACP` 已存在于 `chat_request.go`。
 
 ---
 
@@ -918,10 +964,25 @@ git commit -m "feat(group): add member resume/history resolution"
 覆盖：建群返回群 id + 主持人成员行；加成员返回成员行；列成员按顺序；删成员把成员行 `archived=1`（保留行与历史）；查群的主持人。
 
 ```go
+// N7 勘误：用 InitDB() 模式，不要用 setupTestEnv（只在 handler 包）。
 func TestCreateGroupAndMembers(t *testing.T) {
-	env := setupTestEnv(t)
-	defer env.Cleanup()
-	project := env.ProjectPath
+	tmpDir := t.TempDir()
+	origBinDir, origDataDir := model.BinDir, model.DataDir
+	model.BinDir = tmpDir
+	model.DataDir = filepath.Join(tmpDir, ".clawbench")
+	defer func() { model.BinDir, model.DataDir = origBinDir, origDataDir }()
+
+	restoreDB := store.SnapshotDBForTest()
+	defer restoreDB()
+	if err := InitDB(); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil { // 建 project 行
+		t.Fatal(err)
+	}
 
 	groupID, hostMemberID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host")
 	if err != nil {
@@ -1075,18 +1136,57 @@ git commit -m "feat(group): show groups and hide members across list/search/brow
 - Modify: `internal/service/group_orchestrator.go`（编排器进入成员回合前 `RegisterExternalExecution` / `SetSessionRunning`）
 - Test: `internal/service/group_orchestrator_test.go`
 
-**Step 1: 写失败测试**：启动群回合后断言 `IsSessionRunning(groupID)==true`；回合结束后为 false；对 groupID 调 `CancelSession(groupID)` 返回 true 且真正停住。
+**Step 1: 写失败测试**：启动群回合后断言 `IsSessionRunning(groupID)==true`；回合结束后为 false；**对 groupID 调 `CancelSession(groupID)` 能真正停住正在跑的成员回合**（不只停群占位 runner）。
 
 **Step 3: 实现**：
 - 群回合开始：为 `groupID` 注册运行态（参考 `scheduler.go:1086` 的 `RegisterExternalExecution` + `SetSessionRunning`），结束/异常时 `SetSessionRunning(groupID, false, true)`。
 - 每个成员回合前同样为 `memberRowID` 注册运行态（供 ACP 空闲回收豁免 + F3 取消）。
+- **N2（停止传播，Critical-adjacent）**：每个成员回合的 `TurnSpec.Ctx` 必须**派生自编排器自己的可取消 ctx**（`groupCtx, groupCancel := context.WithCancel(...)`），这样 `CancelSession(groupID)`（经 `RegisterExternalExecution` 挂到群 runner）能**传播到当前成员回合**。否则停止只取消了群占位 runner，成员 `runTurn` 照跑。F0 的测试（"真正停住"）会抓住这点。
 - **I5**：取消隐藏成员时**不要**走会广播终态 `session_update` + push 的 `CancelSession`（`session_runtime.go:832`）——那会给隐藏成员发多余通知并 finalize 其（不存在的）历史。新增 `cancelMemberTurn(memberRowID)`，只取消该成员的 turn cancel、不发终态事件。
 
 **Step 5: Commit**
 
 ```bash
 git add internal/service/group_orchestrator.go internal/service/group_orchestrator_test.go
-git commit -m "feat(group): wire running-state and member-aware cancel"
+git commit -m "feat(group): wire running-state, ctx-derived cancel, member-aware cancel"
+```
+
+---
+
+### Task F0b: `stream_start` 携带发言人（评审 N3）
+
+> **N3**：`stream_start` payload 只有 `message_id`（`ws/stream_hub.go:373`），流式中前端无法知道气泡属于哪个成员。v1 在 `stream_start` 增加发言人（成员行 id）。
+
+**Files:**
+- Modify: `internal/ai/interface.go`（`StreamStartData` 加 `AgentID string`）
+- Modify: `internal/service/run_turn.go`（广播 `stream_start` 时填发言人）
+- Modify: `internal/ws/stream_hub.go`（`streamStartPayload` 加 `agent_id`）
+- Test: `internal/ws/stream_hub_test.go`
+
+**Step 1: 写失败测试**
+
+```go
+func TestStreamStartPayloadCarriesAgentID(t *testing.T) {
+	p := streamStartPayload(ai.StreamEvent{StreamStart: &ai.StreamStartData{MessageID: 7, AgentID: "member-1"}})
+	m, ok := p.(map[string]any)
+	if !ok {
+		t.Fatalf("type %T", p)
+	}
+	if m["message_id"] != int64(7) || m["agent_id"] != "member-1" {
+		t.Fatalf("payload=%v", m)
+	}
+}
+```
+
+**Step 2-4:** 实现后 `go test ./internal/ws/ -run TestStreamStartPayloadCarriesAgentID -v` 须 PASS。
+
+> **注意**：`streamStartPayload` 已返回 `map[string]any`，加字段不会破坏既有断言（与 L0 的 `simpleTextPayload` 不同）。
+
+**Step 5: Commit**
+
+```bash
+git add internal/ai/interface.go internal/service/run_turn.go internal/ws/stream_hub.go internal/ws/stream_hub_test.go
+git commit -m "feat(group): carry speaker id on stream_start"
 ```
 
 ---
@@ -1099,7 +1199,7 @@ git commit -m "feat(group): wire running-state and member-aware cancel"
 
 **Step 1: 写失败测试**
 
-给定群时间线（含 user、成员 A、成员 B、自己 的消息），断言：只含 `id > cursor` 且 `agent_id != self` 的消息；渲染为带发言人名字的文本；主持人指令单独成段。
+给定群时间线（含 user、成员 A、成员 B、自己 的消息），断言：只含 `id > cursor` 且 `agent_id != self` 的消息；渲染为带发言人名字的文本；主持人指令单独成段。**N4**：`self` 与消息的 `agent_id` 都是**成员行 id**（不是 agent id），确保同一 agent 的两个成员也能互相看见。
 
 ```go
 func TestBuildMemberInjection(t *testing.T) {
@@ -1161,10 +1261,11 @@ Expected: FAIL
 `group_orchestrator.go` 要点（伪代码见设计文档 §5.1，**v1 顺序轮次**）：
 - `RunGroupTurn(ctx, groupID, userMessage)`：写用户消息到群 → 循环。
 - 每轮：主持人发言（注入 + 解析）；解析失败回退轮转；被点名成员**按标签顺序依次**发言（**v1 顺序，非并发**）；每个成员发言前记录高水位 `H`，发言后 `seen_cursor = H`；检查结束/最大轮数/抢占。
-- 主持人/成员回合都构造 `TurnSpec{SessionID: memberRowID, TimelineSessionID: groupID, ChatReq: ...}`；`ChatReq` 的 `SessionID`/`Resume`/`HasConversationHistory` 用 **D1 的 `resolveMemberResume`** 覆盖（**C5**）。
+- 主持人/成员回合都构造 `TurnSpec{SessionID: memberRowID, TimelineSessionID: groupID, ChatReq: ...}`；`ChatReq` 用 **D1 的 `applyMemberResumeOverrides`** 修正（**C5/N1**）。`AgentID` 字段（用于 `stream_start` 发言人，F0b）传**成员行 id**。
 - 主持人回合的系统提示 = 成员系统提示 + `BuildHostSystemPrompt(memberNames)`。
-- 主持人发言的消息级标记：在写群消息时把 `agent_id=hostAgentID` 并在 `content` 信封加 `"meta":{"role":"host"}`（见 J 阶段读取）。
-- **I9（游标语义）**：主持人也用 `seen_cursor`，语义与成员一致——**本次发言前**的群时间线高水位；发言后更新为发言前的高水位（不是发言后的最大 id）。F1 的 `buildInjectionText` 对主持人和成员是同一个函数，`selfAgentID` 传各自 agent id。
+- **N6（主持人标记机制，须实现时定）**：`content` 由 executor 的 `buildContentJSON`（`session_executor.go:1430`）构建，**编排器没有注入 content 顶层键的钩子**；且前端读的 `ChatMessage.metadata` 是响应元数据字段，**不是** content 信封。因此"在 content 加 `meta.role`"这条**不可行**。v1 采用**可行的替代**：主持人发言与普通成员发言的区分**靠 `agent_id == 主持人成员行 id`**（群的主持人成员行 id 已知），前端据此渲染居中样式。**不引入 content 信封标记**。
+- **I9（游标语义）**：主持人也用 `seen_cursor`，语义与成员一致——**本次发言前**的群时间线高水位；发言后更新为发言前的高水位（不是发言后的最大 id）。F1 的 `buildInjectionText` 对主持人和成员是同一个函数，`self` 传各自**成员行 id**。
+- **顺序不变量（C1 残留）**：串行 `await` 每个成员回合完全结束（含 Finalize）再启动下一个；群回合开始/结束时清理群时间线孤儿 `streaming=1` 行（见设计 §5.6）。
 
 **Step 4: 运行确认通过**
 
@@ -1294,7 +1395,10 @@ git commit -m "feat(group): create group and switch into it"
 - Modify: `web/src/components/chat/ChatMessageList.vue`
 - Test: 组件测试
 
-**Step 3: 实现**：`agent_id` 非空时气泡显示 `AgentIcon` + 名字（复用 `useAgents` 的 `getAgentName`）；`meta.role==="host"` 时用居中特殊样式。
+**Step 3: 实现**：
+- `agent_id` 非空时气泡显示 `AgentIcon` + 名字（复用 `useAgents` 的 `getAgentName`）。**注意 N4**：`agent_id` 是**成员行 id**，须先用群成员列表（K 阶段加载，或从 `GET /api/group/members`）把行 id 映射为 agent 头像/名字；映射缺失时降级为通用样式。
+- **N6**：主持人特殊样式**靠 `agentId === 群主持人成员行 id`** 判断（**不要**读 `meta.role`——该机制不存在）。群的主持人成员行 id 随群信息一起加载。
+- **N3**：流式中的发言人来自 F0b 的 `stream_start.agent_id`（不是 DB `agentId`）；落库后来自 `ChatMessage.agentId`。两条来源都指向成员行 id。
 
 **Commit:**
 
@@ -1399,4 +1503,5 @@ git commit -m "test(group): add group chat e2e spec"
 - `./scripts/pre-push-checks.sh` 通过。
 - 纯前端改动后 `npm run build` 供用户即时测试。
 - OpenAPI 与 `internal/api/openapi.yaml` 同步，`TestOpenAPIDrift` 通过。
-- **评审项验收**：C2（`agent_id` 可写可读）、C3（群在 list/search/browse/overview 均可见、成员均隐藏）、C4（`failTurn`/metadata 落群）、C5（成员 resume 用 external_session_id）、I4（停止按钮生效）均有对应测试通过。
+- **评审项验收（一轮）**：C2（`agent_id` 可写可读）、C3（群在 list/search/browse/overview 均可见、成员均隐藏）、C4（`failTurn`/metadata 落群）、C5（成员 resume 用 external_session_id）、I4（停止按钮生效）均有对应测试通过。
+- **评审项验收（二轮）**：N1（ACP 成员 `SessionID` 保持池键，仅 CLI 换 extID）、N2（`CancelSession(groupID)` 能停住当前成员回合）、N3（`stream_start` 带发言人）、N4（同 agent 两成员互相可见）、N5（群分享保留归属）、N6（主持人样式按成员行 id）、N7/N8（脚手架与夹具）均有对应测试或明确实现。
