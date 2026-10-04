@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 	"clawbench/internal/speech"
 	"clawbench/internal/summarize"
@@ -893,7 +895,7 @@ func TestTTSGenerate_SaveTTSSummaryByMessageID_DBError(t *testing.T) {
 	defer teardown()
 
 	// Drop the tts_summaries table to force SaveTTSSummaryByMessageID to fail
-	_, _ = service.UnsafeDBForTest().Exec("DROP TABLE tts_summaries")
+	_, _ = store.UnsafeDBForTest().Exec("DROP TABLE tts_summaries")
 
 	text := "这是一段较长的AI回复内容，需要被总结为语音。包含了详细的分析和代码示例，需要提取核心要点。"
 	req := newRequest(t, http.MethodPost, "/api/tts/generate", map[string]any{"text": text, "messageId": 300})
@@ -927,7 +929,7 @@ func TestTTSExtractConclusion_LastAnswerAfterToolUse(t *testing.T) {
 
 	// Insert a message with: text(intro) → tool_use → text(conclusion)
 	content := `{"blocks":[{"type":"text","text":"Let me check the code."},{"type":"tool_use","name":"Read","id":"1","input":{"file_path":"/foo.go"}},{"type":"text","text":"The fix is to add a null check on line 42."}]}`
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-1', 'claude', 0)",
 		content,
 	)
@@ -944,7 +946,7 @@ func TestTTSExtractConclusion_NoToolUse_ReturnsLongestText(t *testing.T) {
 
 	// Message with only text blocks (no tool_use) → longest text block
 	content := `{"blocks":[{"type":"text","text":"Short intro."},{"type":"text","text":"This is the main answer with much more detail and explanation about the fix."}]}`
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-2', 'claude', 0)",
 		content,
 	)
@@ -961,7 +963,7 @@ func TestTTSExtractConclusion_WithAskUserQuestion(t *testing.T) {
 
 	// Message: text(conclusion) → AskUserQuestion
 	content := `{"blocks":[{"type":"text","text":"The fix is done."},{"type":"tool_use","name":"AskUserQuestion","id":"2","input":{"questions":[{"question":"Which approach?","header":"Approach","options":[{"label":"Option A","description":"Fast"},{"label":"Option B","description":"Safe"}]}]}}]}`
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-3', 'claude', 0)",
 		content,
 	)
@@ -981,7 +983,7 @@ func TestTTSExtractConclusion_OnlyAskUserQuestion(t *testing.T) {
 
 	// Message with only AskUserQuestion (no text blocks)
 	content := `{"blocks":[{"type":"tool_use","name":"AskUserQuestion","id":"3","input":{"questions":[{"question":"Proceed?","options":["Yes","No"]}]}}]}`
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-4', 'claude', 0)",
 		content,
 	)
@@ -1006,7 +1008,7 @@ func TestTTSExtractConclusion_EmptyBlocks(t *testing.T) {
 	defer teardown()
 
 	content := `{"blocks":[]}`
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES ('/test', 'assistant', ?, 'sess-tts-5', 'claude', 0)",
 		content,
 	)
@@ -1027,7 +1029,7 @@ func TestTTSGenerate_WithMessageID_UsesConclusionNotFullText(t *testing.T) {
 
 	// Insert a message with intro text + tool_use + conclusion text
 	content := `{"blocks":[{"type":"text","text":"Let me check the file."},{"type":"tool_use","name":"Read","id":"10","input":{"file_path":"/foo.go"}},{"type":"text","text":"The answer is 42."}]}`
-	result, err := service.UnsafeDBForTest().Exec(
+	result, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, 'sess-tts-conc', 'claude', 0)",
 		env.ProjectDir, content,
 	)

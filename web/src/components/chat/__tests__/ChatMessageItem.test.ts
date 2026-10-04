@@ -163,6 +163,7 @@ function createWrapper(props = {}, provideOverrides: Record<string, unknown> = {
         chatSession: {
           getAgentBackend: vi.fn(() => ''),
           getAgentName: vi.fn(() => ''),
+          getAgentAvatar: vi.fn(() => ''),
         },
         ...provideOverrides,
       },
@@ -666,7 +667,7 @@ describe('ChatMessageItem', () => {
               playAudio: vi.fn(), stopAudio: vi.fn(), speakText: vi.fn(), getSummary: vi.fn(() => null), getPhaseLabel: vi.fn(() => ''),
             },
             chatRender: { renderTextBlock: vi.fn(), toolCallSummary: vi.fn(), formatToolInput: vi.fn(), humanizeCron: vi.fn(), repeatLabel: vi.fn(), truncate: vi.fn(), hasImagesInContent: vi.fn(() => false) },
-            chatSession: { getAgentBackend: vi.fn(() => ''), getAgentName: vi.fn(() => '') },
+            chatSession: { getAgentBackend: vi.fn(() => ''), getAgentName: vi.fn(() => ''), getAgentAvatar: vi.fn(() => '') },
           },
         },
         props: { msg: { id: 'st2', role: 'assistant', content: '', blocks: [], summary: 'Summary', streaming: false }, index: 0, active: true },

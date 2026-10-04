@@ -1,4 +1,4 @@
-package rag
+package rag_test
 
 import (
 	"database/sql"
@@ -7,6 +7,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"clawbench/internal/rag"
+	"clawbench/internal/store"
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -94,23 +97,23 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 	require.NoError(t, err)
 	// The projects registry: the service functions under test resolve paths
 	// through it, so the fixture schema must carry it.
-	_, err = testDB.Exec(service.ProjectsDDL)
+	_, err = testDB.Exec(store.ProjectsDDL)
 	require.NoError(t, err)
 
-	cleanup := service.SetDBForTest(testDB, testDB)
+	cleanup := store.SetDBForTest(testDB, testDB)
 
 	// Also set up RAG globals for ClusterMessagesWithEmbeddings
-	origStore := GlobalStore
-	origEmbedder := GlobalEmbedder
-	GlobalStore = nil // no vector store needed for exact/fts mode
-	GlobalEmbedder = nil
+	origStore := rag.GlobalStore
+	origEmbedder := rag.GlobalEmbedder
+	rag.GlobalStore = nil // no vector store needed for exact/fts mode
+	rag.GlobalEmbedder = nil
 
-	// Init segmenter for clustering
-	require.NoError(t, InitSegmenter())
+	// rag.Init segmenter for clustering
+	require.NoError(t, rag.InitSegmenter())
 
 	teardown := func() {
-		GlobalStore = origStore
-		GlobalEmbedder = origEmbedder
+		rag.GlobalStore = origStore
+		rag.GlobalEmbedder = origEmbedder
 		cleanup()
 		_ = testDB.Close()
 	}
@@ -121,7 +124,7 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 func insertTestUserMessages(t *testing.T, sessionID string, contents []string) {
 	t.Helper()
 	for _, c := range contents {
-		_, err := service.UnsafeDBForTest().Exec(
+		_, err := store.UnsafeDBForTest().Exec(
 			"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 			1, c, sessionID,
 		)
@@ -135,7 +138,7 @@ func TestClusterWorker_GetProgress_Initial(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 	progress := cw.GetProgress()
 	assert.Equal(t, "idle", progress.Status)
 	assert.Equal(t, "", progress.Phase)
@@ -152,7 +155,7 @@ func TestClusterWorker_IsRunning(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 	assert.False(t, cw.IsRunning(), "should not be running initially")
 
 	// Insert messages so ComputeOnce actually does work
@@ -190,7 +193,7 @@ func TestClusterWorker_ComputeOnce(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 
 	// Insert messages for clustering
 	insertTestUserMessages(t, "sess-1", []string{
@@ -211,7 +214,7 @@ func TestClusterWorker_ComputeOnce(t *testing.T) {
 	require.Eventually(t, func() bool { return !cw.IsRunning() }, 10*time.Second, 100*time.Millisecond)
 
 	// Verify cache populated
-	cache, mode, _, err := service.GetClusterCache()
+	cache, mode, _, err := store.GetClusterCache()
 	require.NoError(t, err)
 	assert.Equal(t, "fts", mode) // no embedder → FTS mode (always available)
 	assert.Len(t, cache, 3, "should have 3 clusters")
@@ -231,7 +234,7 @@ func TestClusterWorker_ComputeOnce_NoDuplicate(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 
 	insertTestUserMessages(t, "sess-1", []string{"hello", "hello"})
 
@@ -257,7 +260,7 @@ func TestClusterWorker_GetProgress_AfterCompute(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 
 	insertTestUserMessages(t, "sess-1", []string{
 		"hello", "hello",
@@ -285,7 +288,7 @@ func TestClusterWorker_BroadcastProgress(t *testing.T) {
 	mgr := ws.NewManagerForTest()
 	hub := mgr.StreamHub()
 
-	cw := NewClusterWorker(hub)
+	cw := rag.NewClusterWorker(hub)
 
 	insertTestUserMessages(t, "sess-1", []string{
 		"hello", "hello",
@@ -300,7 +303,7 @@ func TestClusterWorker_BroadcastProgress(t *testing.T) {
 	assert.Equal(t, "done", progress.Status)
 
 	// With hub=nil, no broadcast should happen
-	cwNil := NewClusterWorker(nil)
+	cwNil := rag.NewClusterWorker(nil)
 	insertTestUserMessages(t, "sess-nil-hub", []string{"test nil hub"})
 	cwNil.ComputeOnce()
 	require.Eventually(t, func() bool { return !cwNil.IsRunning() }, 10*time.Second, 100*time.Millisecond)
@@ -313,7 +316,7 @@ func TestClusterWorker_ComputeOnce_EmptyMessages(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 
 	// No messages inserted → should still complete gracefully
 	cw.ComputeOnce()
@@ -331,7 +334,7 @@ func TestClusterWorker_Stop(t *testing.T) {
 	teardown := setupTestDBForClusterWorker(t)
 	defer teardown()
 
-	cw := NewClusterWorker(nil)
+	cw := rag.NewClusterWorker(nil)
 
 	// Insert many messages to keep computation running longer
 	longContents := make([]string, 100)
@@ -361,7 +364,7 @@ func TestClusterWorker_Stop(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 }
 
-// ---------- Integration: StartClusterWorker / StopClusterWorker ----------
+// ---------- Integration: rag.StartClusterWorker / rag.StopClusterWorker ----------
 
 func TestStartAndStopClusterWorker(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -371,21 +374,21 @@ func TestStartAndStopClusterWorker(t *testing.T) {
 	model.DataDir = filepath.Join(tmpDir, ".clawbench")
 	defer func() { model.BinDir = origBinDir; model.DataDir = origDataDir }()
 
-	origDB := service.UnsafeDBForTest()
-	defer func() { service.SetDBForTest(origDB, origDB) }()
+	origDB := store.UnsafeDBForTest()
+	defer func() { store.SetDBForTest(origDB, origDB) }()
 
 	require.NoError(t, service.InitDB())
-	defer service.CloseDB()
+	defer store.Close()
 
-	// Init RAG
-	require.NoError(t, Init(model.RAGConfig{}))
-	defer Shutdown()
+	// rag.Init RAG
+	require.NoError(t, rag.Init(model.RAGConfig{}))
+	defer rag.Shutdown()
 
 	// Start cluster worker
-	StartClusterWorker(nil)
-	assert.NotNil(t, GlobalClusterWorker)
+	rag.StartClusterWorker(nil)
+	assert.NotNil(t, rag.GlobalClusterWorker)
 
 	// Stop cluster worker
-	StopClusterWorker()
-	assert.Nil(t, GlobalClusterWorker)
+	rag.StopClusterWorker()
+	assert.Nil(t, rag.GlobalClusterWorker)
 }

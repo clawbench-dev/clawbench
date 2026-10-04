@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -104,7 +106,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		require.NoError(t, err)
 	}
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db
 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
@@ -44,7 +46,7 @@ func newFlushableExecutor(t *testing.T) (*SessionExecutor, int64) {
 func getStreamingMsgIDForTest(t *testing.T, sessionID string) int64 {
 	t.Helper()
 	var id int64
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&id)
@@ -55,7 +57,7 @@ func getStreamingMsgIDForTest(t *testing.T, sessionID string) int64 {
 func readStreamingContent(t *testing.T, msgID int64) map[string]any {
 	t.Helper()
 	var content string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
 	require.NoError(t, err)
 	var m map[string]any
 	require.NoError(t, json.Unmarshal([]byte(content), &m))
@@ -198,7 +200,7 @@ func TestFlushStreamingNow_ConcurrentWithEventLoop(t *testing.T) {
 	// blocks may have flushed before any "tick" landed, so just require a valid
 	// streaming row with our preset text preserved.
 	var content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1 ORDER BY id DESC LIMIT 1",
 		executor.cfg.SessionID,
 	).Scan(&content)

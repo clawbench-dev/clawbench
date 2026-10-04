@@ -1,9 +1,10 @@
-//nolint:noctx // db global singleton, context not applicable
 package service
 
 import (
 	"database/sql"
 	"log/slog"
+
+	"clawbench/internal/store"
 )
 
 // DingTalkSubscriber represents a DingTalk user subscribed to push notifications.
@@ -18,10 +19,10 @@ type DingTalkSubscriber struct {
 
 // GetDingTalkSubscribers returns all subscribed DingTalk users.
 func GetDingTalkSubscribers() ([]DingTalkSubscriber, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, nil
 	}
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT id, user_id, conversation_id, user_name, source, created_at
 		 FROM dingtalk_subscribers ORDER BY created_at ASC`,
 	)
@@ -44,10 +45,10 @@ func GetDingTalkSubscribers() ([]DingTalkSubscriber, error) {
 // UpsertDingTalkSubscriber inserts or updates a DingTalk subscriber.
 // If the user already exists, conversation_id and user_name are updated.
 func UpsertDingTalkSubscriber(userID, conversationID, userName, source string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`INSERT INTO dingtalk_subscribers (user_id, conversation_id, user_name, source)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(user_id) DO UPDATE SET
@@ -64,10 +65,10 @@ func UpsertDingTalkSubscriber(userID, conversationID, userName, source string) e
 
 // DeleteDingTalkSubscriber removes a subscriber by DingTalk userId.
 func DeleteDingTalkSubscriber(userID string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	result, err := WriteExec(`DELETE FROM dingtalk_subscribers WHERE user_id = ?`, userID)
+	result, err := store.WriteExec(`DELETE FROM dingtalk_subscribers WHERE user_id = ?`, userID)
 	if err != nil {
 		return err
 	}
@@ -86,11 +87,11 @@ func DeleteDingTalkSubscriber(userID string) error {
 // from before the column existed) and the caller must fall back to the "/ls"
 // hint rather than pick a session on the user's behalf.
 func GetDingTalkLastSessionID(userID string) (string, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return "", nil
 	}
 	var sessionID string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT last_session_id FROM dingtalk_subscribers WHERE user_id = ?`, userID,
 	).Scan(&sessionID)
 	if err == sql.ErrNoRows {
@@ -110,10 +111,10 @@ func GetDingTalkLastSessionID(userID string) (string, error) {
 // message); a missing row is reported as an error rather than silently
 // inserting a partial subscriber.
 func SetDingTalkLastSessionID(userID, sessionID string) error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
-	result, err := WriteExec(
+	result, err := store.WriteExec(
 		`UPDATE dingtalk_subscribers SET last_session_id = ? WHERE user_id = ?`,
 		sessionID, userID,
 	)
@@ -130,12 +131,12 @@ func SetDingTalkLastSessionID(userID, sessionID string) error {
 // Users from config are upserted with source='manual'. Users already in DB
 // with source='manual' but no longer in config are removed.
 func MergeDingTalkConfigSubscribers(users []string) {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 
 	// Get existing manual subscribers
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT user_id FROM dingtalk_subscribers WHERE source = 'manual'`,
 	)
 	if err != nil {
@@ -175,7 +176,7 @@ func MergeDingTalkConfigSubscribers(users []string) {
 	// Remove manual subscribers no longer in config
 	for _, u := range existingManual {
 		if !configSet[u] {
-			if _, err := WriteExec(`DELETE FROM dingtalk_subscribers WHERE user_id = ? AND source = 'manual'`, u); err != nil {
+			if _, err := store.WriteExec(`DELETE FROM dingtalk_subscribers WHERE user_id = ? AND source = 'manual'`, u); err != nil {
 				slog.Warn("dingtalk_subscribers: merge delete failed", "error", err, "user_id", u)
 			}
 		}

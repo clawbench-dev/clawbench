@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 )
 
@@ -123,7 +125,7 @@ func GetSessionMessagesForSelection(sessionID string) ([]SessionMessagePreview, 
 	if sessionID == "" {
 		return nil, fmt.Errorf("session id is required")
 	}
-	rows, err := ReadDB().Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT id, role, content, streaming, created_at FROM chat_history
 		 WHERE session_id = ? ORDER BY id ASC`,
 		sessionID,
@@ -365,7 +367,7 @@ func loadSummariesForMessages(messageIDs []int64) (map[int64]string, map[int64]*
 	}
 	query += ")"
 
-	rows, err := ReadDB().Query(query, args...)
+	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load session summaries: %w", err)
 	}

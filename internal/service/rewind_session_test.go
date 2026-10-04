@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/rag"
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/service"
 
@@ -97,7 +100,7 @@ func TestRewindSession_AnchorStreaming(t *testing.T) {
 	assert.NoError(t, err)
 
 	var streamingID int64
-	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
 	assert.NoError(t, err)
 
 	_, err = service.TruncateSessionAfterMessage(sessID, streamingID)
@@ -184,7 +187,7 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 	// chat_recommendations is not part of the shared test schema — create it and
 	// seed one row pointing at the to-be-deleted asst2 message plus one pointing
 	// at the preserved asst1 message.
-	db0 := service.UnsafeDBForTest()
+	db0 := store.UnsafeDBForTest()
 	_, err = db0.Exec(`CREATE TABLE IF NOT EXISTS chat_recommendations (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		session_id TEXT NOT NULL,
@@ -205,7 +208,7 @@ func TestRewindSession_DeletesChildRows(t *testing.T) {
 
 	// Child rows for the deleted asst2 message must be gone.
 	var n int
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	err = db.QueryRow("SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?", asst2ID).Scan(&n)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, n)
@@ -287,7 +290,7 @@ func TestRewindSession_DeletesQueuedRowsAfterAnchor(t *testing.T) {
 
 	// No queued rows remain (queued messages live in their own table now).
 	var queuedCount int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessID).Scan(&queuedCount)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM queued_messages WHERE session_id = ?", sessID).Scan(&queuedCount)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, queuedCount)
 
@@ -327,7 +330,7 @@ func TestRewindSession_KeepsSessionRecord(t *testing.T) {
 
 	// Session still present (not a new row).
 	var archived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessID).Scan(&archived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessID).Scan(&archived)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, archived)
 }
@@ -335,12 +338,12 @@ func TestRewindSession_KeepsSessionRecord(t *testing.T) {
 // ---------- Deadlock regression: RAG purge must run AFTER writeMu release ----------
 
 // TestRewindSession_RAGPurgeDoesNotDeadlock reproduces the self-deadlock where
-// TruncateSessionAfterMessage called the RAG purge callback while still holding
+// TruncateSessionAfterMessage must not call the RAG purge while still holding
 // the global writeMu. The real rag.Store serializes on the SAME lock via
-// serviceWriteLocker (store_sqlite.go), so re-acquiring writeMu inside the
-// callback deadlocks on the non-reentrant mutex (froze the whole server for 37
-// minutes in production). The callback below mimics that: it re-takes the
-// service writeMu exactly like rag's serviceWriteLocker.Lock does.
+// serviceWriteLocker (store_sqlite.go), so re-acquiring writeMu inside the purge
+// deadlocks on the non-reentrant mutex (froze the whole server for 37 minutes in
+// production). This test points rag.GlobalStore at a real store whose delete
+// path takes that same writeMu, so a regression deadlocks here.
 func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 	setupDB(t)
 
@@ -352,15 +355,15 @@ func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 	_, err = service.AddChatMessage("/project", "claude", sessID, "user", "Q2", nil, false, "")
 	assert.NoError(t, err)
 
-	// Restore the previous callback after the test (package-global).
-	service.SetPurgeRAGChunksAfterMessageFn(func(sessionID string, anchorID int64) (int64, error) {
-		// Mimic rag.Store.DeleteChunksBySessionAfterMessage running under
-		// serviceWriteLocker: it takes the service-global writeMu.
-		service.WriteLock()
-		defer service.WriteUnlock()
-		return 0, nil
-	})
-	t.Cleanup(func() { service.SetPurgeRAGChunksAfterMessageFn(nil) })
+	// A real store: its DeleteChunksBySessionAfterMessage takes store.writeMu,
+	// exactly like production rag.Store does.
+	rs, err := rag.NewSQLiteStoreForTest(":memory:")
+	assert.NoError(t, err)
+	defer func() { _ = rs.Close() }()
+
+	origStore := rag.GlobalStore
+	rag.GlobalStore = rs
+	t.Cleanup(func() { rag.GlobalStore = origStore })
 
 	done := make(chan struct{})
 	go func() {
@@ -374,6 +377,6 @@ func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 	case <-done:
 		// Success: truncation finished without deadlocking.
 	case <-time.After(2 * time.Second):
-		t.Fatal("TruncateSessionAfterMessage deadlocked: RAG purge callback ran while writeMu was still held")
+		t.Fatal("TruncateSessionAfterMessage deadlocked: RAG purge ran while writeMu was still held")
 	}
 }

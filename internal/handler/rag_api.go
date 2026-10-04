@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
@@ -456,7 +458,7 @@ func ServeRAGStatus(w http.ResponseWriter, r *http.Request) {
 	embedderHealthy := rag.EmbedderHealthy()
 
 	// Progress counters — combined queries to reduce round trips
-	totalMessages, indexedMessages, err := service.MessageIndexCounts()
+	totalMessages, indexedMessages, err := store.MessageIndexCounts()
 	if err != nil {
 		slog.Warn("rag: failed to count messages", slog.String("err", err.Error()))
 	}

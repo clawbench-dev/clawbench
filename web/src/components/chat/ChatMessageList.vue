@@ -40,7 +40,7 @@
       </template>
       <template v-else-if="currentAgent">
         <div class="agent-welcome">
-          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :size="28" /></span>
+          <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" :size="28" /></span>
           <div class="agent-welcome-info">
             <span class="agent-welcome-name">{{ currentAgent.name }}</span>
             <span class="agent-welcome-specialty">{{ currentAgent.specialty }}</span>

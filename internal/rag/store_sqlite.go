@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	_ "modernc.org/sqlite"     // register SQLite driver (pure Go, FTS5 built-in)
 	_ "modernc.org/sqlite/vec" // register sqlite-vec extension for vec0 virtual tables
@@ -72,7 +72,7 @@ type PendingChunk struct {
 }
 
 // WriteLocker abstracts the global write mutex for database writes.
-// In production, this is backed by service.WriteLock/WriteUnlock.
+// In production, this is backed by store.WriteLock/WriteUnlock.
 // In tests, this is a no-op (the test DB has its own connection).
 type WriteLocker interface {
 	Lock()
@@ -85,11 +85,11 @@ type noOpLocker struct{}
 func (noOpLocker) Lock()   {}
 func (noOpLocker) Unlock() {}
 
-// serviceWriteLocker delegates to service.WriteLock/WriteUnlock.
+// serviceWriteLocker delegates to store.WriteLock/WriteUnlock.
 type serviceWriteLocker struct{}
 
-func (serviceWriteLocker) Lock()   { service.WriteLock() }
-func (serviceWriteLocker) Unlock() { service.WriteUnlock() }
+func (serviceWriteLocker) Lock()   { store.WriteLock() }
+func (serviceWriteLocker) Unlock() { store.WriteUnlock() }
 
 // Store manages the SQLite connection and FTS5 index.
 type Store struct {
@@ -258,7 +258,7 @@ func (s *Store) initSchema() error {
 	// so a store opened on its own — a standalone indexer run, or a test fixture
 	// database — still resolves project ids and filters by project instead of
 	// silently degrading to "no project".
-	if _, projErr := s.db.Exec(service.ProjectsDDL); projErr != nil {
+	if _, projErr := s.db.Exec(store.ProjectsDDL); projErr != nil {
 		return fmt.Errorf("create projects table: %w", projErr)
 	}
 
@@ -346,7 +346,7 @@ func (s *Store) addColumnIfMissing(table, column, decl string) error {
 // projectIDForPath resolves a project path to its id through THIS store's
 // connection, creating the projects row when it does not exist yet.
 //
-// Deliberately not service.ProjectIDForPath: the store owns its own *sql.DB on
+// Deliberately not store.ProjectIDForPath: the store owns its own *sql.DB on
 // the same file, and it is also opened standalone (tests, and any embedding-only
 // deployment) where the service package's global handle is nil — calling into it
 // there would dereference nil. Resolving through s.db keeps this package
@@ -368,7 +368,7 @@ func (s *Store) projectIDForPath(path string) (int64, bool, error) {
 
 	// Miss (or no registry): register it, then re-read. ON CONFLICT makes this
 	// race-safe; whoever loses the insert still reads the winner's id.
-	canon := service.NormalizeProjectPath(path)
+	canon := store.NormalizeProjectPath(path)
 	if canon == "" {
 		return 0, false, nil
 	}
@@ -390,7 +390,7 @@ func (s *Store) projectIDForPath(path string) (int64, bool, error) {
 //
 // Returns ok=false when the registry is absent or the path has never been seen.
 func (s *Store) projectIDByPath(path string) (int64, bool, error) {
-	canon := service.NormalizeProjectPath(path)
+	canon := store.NormalizeProjectPath(path)
 	if canon == "" {
 		return 0, false, nil
 	}
@@ -1599,7 +1599,7 @@ func (s *Store) ResetForDimensionMismatch(newDim int) error {
 // high-index tail — old text still searchable. With a full delete there is no
 // tail to leave behind.
 //
-// The caller must also reset chat_history.indexed (service.ResetAllIndexed) so
+// The caller must also reset chat_history.indexed (store.ResetAllIndexed) so
 // the indexer picks the messages up again; this method only clears the RAG side.
 func (s *Store) ResetAllChunksForFullRebuild() (chunks int64, err error) {
 	s.writeMu.Lock()
@@ -2033,6 +2033,65 @@ func (s *Store) DeleteChunksBySessionIDs(sessionIDs []string) (int64, error) {
 	return affected, nil
 }
 
+// DeleteChunksByProjectID deletes every chunk belonging to a project, used when
+// a project and all its data are removed from the registry.
+//
+// The vec0 (rag_vec) and FTS (rag_chunks_fts) shadow entries are deleted in the
+// same transaction as the rag_chunks rows, mirroring DeleteChunksBySessionIDs.
+// rag_vec is created lazily (only once an embedding dimension is known), so its
+// existence is checked first; deleting from it unconditionally would fail on a
+// fresh database where no vectors were ever written.
+func (s *Store) DeleteChunksByProjectID(projectID int64) (int64, error) {
+	if projectID == 0 {
+		return 0, nil
+	}
+
+	hasVecTable := s.vecTableExists()
+
+	s.writeMu.Lock()
+	tx, err := s.db.Begin()
+	if err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("begin delete transaction: %w", err)
+	}
+
+	if hasVecTable {
+		if _, err = tx.Exec(
+			"DELETE FROM rag_vec WHERE rowid IN (SELECT id FROM rag_chunks WHERE project_id = ?)",
+			projectID,
+		); err != nil {
+			_ = tx.Rollback()
+			s.writeMu.Unlock()
+			return 0, fmt.Errorf("delete vec entries: %w", err)
+		}
+	}
+
+	if _, err = tx.Exec(
+		"DELETE FROM rag_chunks_fts WHERE rowid IN (SELECT id FROM rag_chunks WHERE project_id = ?)",
+		projectID,
+	); err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete fts entries: %w", err)
+	}
+
+	result, err := tx.Exec("DELETE FROM rag_chunks WHERE project_id = ?", projectID)
+	if err != nil {
+		_ = tx.Rollback()
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("delete chunks: %w", err)
+	}
+	affected, _ := result.RowsAffected()
+
+	if err := tx.Commit(); err != nil {
+		s.writeMu.Unlock()
+		return 0, fmt.Errorf("commit delete: %w", err)
+	}
+	s.writeMu.Unlock()
+
+	return affected, nil
+}
+
 // DeleteChunksBySessionAfterMessage deletes all chunks belonging to the given
 // session whose message_id is strictly greater than anchorID. Used by the
 // rewind/truncate path so orphan chunks never surface as stale search hits
@@ -2121,7 +2180,7 @@ func (s *Store) InvalidateProjectPathCache(paths ...string) {
 	}
 	s.projectIDsMu.Lock()
 	for _, p := range paths {
-		delete(s.projectIDs, service.NormalizeProjectPath(p))
+		delete(s.projectIDs, store.NormalizeProjectPath(p))
 	}
 	s.projectIDsMu.Unlock()
 }

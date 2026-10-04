@@ -38,19 +38,23 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 		}
 		return service.ScopeProject, projectPath, true
 	case service.ScopeAll:
-		// Cross-project reads are an AI-only capability. The AI token is
-		// loopback + signed, so a remote caller or a browser cannot obtain it;
-		// the loopback address alone is not enough (the FRP tunnel also dials
-		// in from 127.0.0.1), which is why IsAITokenRequest checks both.
-		if !middleware.IsAITokenRequest(r) {
+		// Cross-project reads require an authenticated caller. A logged-in
+		// browser session may request them: it can already read every project's
+		// usage one at a time by switching projects, so the instance-wide
+		// aggregate grants no capability the session did not already have. The
+		// check is IsAuthenticated (session cookie OR local AI token), not
+		// IsLocalhost — the FRP tunnel also dials in from 127.0.0.1, so the
+		// loopback address alone proves nothing.
+		if !middleware.IsAuthenticated(r) {
 			writeLocalizedErrorf(w, r, http.StatusForbidden, "AccessDenied")
 			return "", "", false
 		}
-		// The cookie is deliberately ignored, not merged: a project path
-		// alongside scope=all is contradictory and rejected downstream by
-		// validateUsageParams (conflicting_scope). Passing it through is what
-		// makes that rejection reachable.
-		return service.ScopeAll, projectPath, true
+		// The cookie is deliberately ignored, not merged: scope=all is the
+		// instance-wide view, and the panel keeps its project cookie attached
+		// (the browser sends it automatically on every request). Returning an
+		// empty path drops the project predicate entirely, so a stale cookie
+		// can never silently narrow an "all projects" request.
+		return service.ScopeAll, "", true
 	default:
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest", map[string]any{detailKey: "scope"})
 		return "", "", false
@@ -77,10 +81,11 @@ func resolveUsageScope(w http.ResponseWriter, r *http.Request, rawScope string) 
 //
 // Project scope: by default the range is restricted to the project named by
 // the project cookie, which is required. scope=all aggregates every project on
-// the instance and is granted ONLY to a local AI token (the /cb-usage slash
-// command); a browser session asking for it is refused, so the stats panel
-// keeps its per-project isolation. The cookie must be absent for scope=all —
-// sending both is a contradiction and rejected.
+// the instance and is granted to any authenticated caller — the browser stats
+// panel's "all projects" toggle and the local AI token that drives the
+// /cb-usage slash command both use it. An unauthenticated caller is refused.
+// The project cookie is ignored (not merged) in scope=all, so a stale cookie
+// cannot narrow an instance-wide request.
 func ServeUsageStats(w http.ResponseWriter, r *http.Request) {
 	if !requireMethod(w, r, http.MethodGet) {
 		return

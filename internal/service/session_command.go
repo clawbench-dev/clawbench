@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -33,10 +35,10 @@ type FeishuSessionInfo = DingTalkSessionInfo
 // FindSessionsByPrefix finds non-archived chat sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, fmt.Errorf("database not initialized")
 	}
-	rows, err := dbRead.QueryContext(
+	rows, err := store.ReadDB().QueryContext(
 		context.Background(),
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
@@ -55,13 +57,13 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 
 // ListRecentSessions returns the most recently updated non-archived chat sessions.
 func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, fmt.Errorf("database not initialized")
 	}
 	if limit <= 0 {
 		limit = 10
 	}
-	rows, err := dbRead.QueryContext(
+	rows, err := store.ReadDB().QueryContext(
 		context.Background(),
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
@@ -81,7 +83,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 // FindRunningSessionsByPrefix finds currently-running sessions whose ID starts with the given prefix.
 // Case-insensitive matching.
 func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return nil, fmt.Errorf("database not initialized")
 	}
 	runningIDs := GetRunningSessionIDs()
@@ -110,7 +112,7 @@ func FindRunningSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		args[i] = id
 	}
 
-	rows, err := dbRead.QueryContext(
+	rows, err := store.ReadDB().QueryContext(
 		context.Background(),
 		fmt.Sprintf(
 			`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	_ "modernc.org/sqlite"
@@ -288,16 +290,16 @@ func TestMigrateProjectsToIDs_MergesEquivalentPaths(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var projectCount int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&projectCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM projects").Scan(&projectCount))
 	if projectCount != 1 {
 		t.Fatalf("expected the three spellings to merge into 1 project, got %d", projectCount)
 	}
 
 	var projectID int64
-	requireNoError(t, db.QueryRow("SELECT id FROM projects").Scan(&projectID))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT id FROM projects").Scan(&projectID))
 
 	for _, q := range []struct {
 		label string
@@ -308,7 +310,7 @@ func TestMigrateProjectsToIDs_MergesEquivalentPaths(t *testing.T) {
 		{"scheduled_tasks", "SELECT project_id FROM scheduled_tasks"},
 	} {
 		var got int64
-		if err := db.QueryRow(q.sql).Scan(&got); err != nil {
+		if err := store.UnsafeDBForTest().QueryRow(q.sql).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", q.label, err)
 		}
 		if got != projectID {
@@ -331,7 +333,7 @@ func TestMigrateProjectsToIDs_DropsEveryProjectPathColumn(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	for _, table := range []string{
 		"chat_history", "chat_sessions", "recent_projects", "scheduled_tasks",
@@ -340,7 +342,7 @@ func TestMigrateProjectsToIDs_DropsEveryProjectPathColumn(t *testing.T) {
 		"rag_chunks", "file_shares",
 	} {
 		var n int
-		if err := db.QueryRow(
+		if err := store.UnsafeDBForTest().QueryRow(
 			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", table,
 		).Scan(&n); err != nil {
 			t.Fatalf("inspect %s: %v", table, err)
@@ -349,7 +351,7 @@ func TestMigrateProjectsToIDs_DropsEveryProjectPathColumn(t *testing.T) {
 			t.Errorf("%s still has a project_path column", table)
 		}
 		var hasID int
-		if err := db.QueryRow(
+		if err := store.UnsafeDBForTest().QueryRow(
 			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_id'", table,
 		).Scan(&hasID); err != nil {
 			t.Fatalf("inspect %s: %v", table, err)
@@ -379,13 +381,13 @@ func TestMigrateProjectsToIDs_PreservesRowsAndLateColumns(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var (
 		title, sourceSessionID, transport string
 		autoApprove, pinned, sortOrder    int
 	)
-	requireNoError(t, db.QueryRow(`
+	requireNoError(t, store.UnsafeDBForTest().QueryRow(`
 		SELECT title, source_session_id, transport, auto_approve, pinned, sort_order
 		  FROM chat_sessions WHERE id = 's1'`).Scan(
 		&title, &sourceSessionID, &transport, &autoApprove, &pinned, &sortOrder))
@@ -425,22 +427,22 @@ func TestMigrateProjectsToIDs_KeepsGlobalSessionTagsDistinct(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var globalID, projectID int64
-	requireNoError(t, db.QueryRow(
+	requireNoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT project_id FROM session_tags WHERE scope = 'global'").Scan(&globalID))
-	requireNoError(t, db.QueryRow(
+	requireNoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT project_id FROM session_tags WHERE scope = 'project'").Scan(&projectID))
-	if globalID != GlobalScopeProjectID {
+	if globalID != store.GlobalScopeProjectID {
 		t.Errorf("global tag project_id = %d, want the 0 sentinel", globalID)
 	}
-	if projectID == GlobalScopeProjectID {
+	if projectID == store.GlobalScopeProjectID {
 		t.Error("project tag must not share the global sentinel")
 	}
 
 	// The sentinel must still reject a duplicate global name.
-	if _, err := db.Exec(
+	if _, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO session_tags (name, scope, project_id) VALUES ('bug', 'global', 0)",
 	); err == nil {
 		t.Error("a second global 'bug' tag must be rejected")
@@ -473,16 +475,16 @@ func TestMigrateProjectsToIDs_DeduplicatesMergedTags(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var tagCount int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM session_tags").Scan(&tagCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM session_tags").Scan(&tagCount))
 	if tagCount != 1 {
 		t.Fatalf("expected the duplicate tag to be merged, got %d rows", tagCount)
 	}
 	// Both assignments must survive, now pointing at the one surviving tag.
 	var linkCount int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM session_tag_links").Scan(&linkCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM session_tag_links").Scan(&linkCount))
 	if linkCount != 2 {
 		t.Errorf("tag assignments lost in the merge: got %d, want 2", linkCount)
 	}
@@ -522,10 +524,10 @@ func TestMigrateProjectsToIDs_AttributesFileShares(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var projectID int64
-	requireNoError(t, db.QueryRow("SELECT id FROM projects").Scan(&projectID))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT id FROM projects").Scan(&projectID))
 
 	for _, tc := range []struct {
 		token string
@@ -536,7 +538,7 @@ func TestMigrateProjectsToIDs_AttributesFileShares(t *testing.T) {
 		{"out", projectID, "out-of-project share falls back to the default project"},
 	} {
 		var got int64
-		if err := db.QueryRow("SELECT project_id FROM file_shares WHERE token = ?", tc.token).Scan(&got); err != nil {
+		if err := store.UnsafeDBForTest().QueryRow("SELECT project_id FROM file_shares WHERE token = ?", tc.token).Scan(&got); err != nil {
 			t.Fatalf("%s: %v", tc.label, err)
 		}
 		if got != tc.want {
@@ -558,17 +560,17 @@ func TestMigrateProjectsToIDs_FoldsForgeOptOut(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var optOut int
-	requireNoError(t, db.QueryRow(
-		"SELECT forge_bind_opt_out FROM projects WHERE path = ?", NormalizeProjectPath("/tmp/proj")).Scan(&optOut))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow(
+		"SELECT forge_bind_opt_out FROM projects WHERE path = ?", store.NormalizeProjectPath("/tmp/proj")).Scan(&optOut))
 	if optOut != 1 {
 		t.Errorf("forge_bind_opt_out = %d, want 1", optOut)
 	}
 
 	var metaExists int
-	requireNoError(t, db.QueryRow(
+	requireNoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'").Scan(&metaExists))
 	if metaExists != 0 {
 		t.Error("project_meta must be dropped once folded into projects")
@@ -592,10 +594,10 @@ func TestMigrateProjectsToIDs_DropsRagVec(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var vecExists int
-	requireNoError(t, db.QueryRow(
+	requireNoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='rag_vec'").Scan(&vecExists))
 	if vecExists != 0 {
 		t.Error("rag_vec must be dropped so the RAG store rebuilds it with project_id")
@@ -603,7 +605,7 @@ func TestMigrateProjectsToIDs_DropsRagVec(t *testing.T) {
 
 	// The chunk row survives with its project resolved.
 	var projectID int64
-	requireNoError(t, db.QueryRow("SELECT project_id FROM rag_chunks").Scan(&projectID))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT project_id FROM rag_chunks").Scan(&projectID))
 	if projectID == 0 {
 		t.Error("rag_chunks row lost its project attribution")
 	}
@@ -623,19 +625,19 @@ func TestMigrateProjectsToIDs_IsIdempotent(t *testing.T) {
 
 	requireNoError(t, InitDB(true))
 	var firstID int64
-	requireNoError(t, db.QueryRow("SELECT id FROM projects").Scan(&firstID))
-	CloseDB()
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT id FROM projects").Scan(&firstID))
+	store.Close()
 
 	// Second startup must not re-run the migration nor duplicate the project.
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 	var count int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
 	if count != 1 {
 		t.Errorf("projects rows = %d after a second InitDB, want 1", count)
 	}
 	var secondID int64
-	requireNoError(t, db.QueryRow("SELECT id FROM projects").Scan(&secondID))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT id FROM projects").Scan(&secondID))
 	if secondID != firstID {
 		t.Errorf("project id changed across restarts: %d → %d", firstID, secondID)
 	}
@@ -662,28 +664,28 @@ func TestRenameProject_FollowsEveryTable(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
-	requireNoError(t, RenameProject(oldDir, newDir))
+	requireNoError(t, store.RenameProject(oldDir, newDir))
 
 	// The session is still addressable under the NEW path — the whole point.
-	gotID, ok, err := ProjectIDByPath(newDir)
+	gotID, ok, err := store.ProjectIDByPath(newDir)
 	requireNoError(t, err)
 	if !ok {
 		t.Fatal("project not found under its new path")
 	}
 	var sessionProjectID int64
-	requireNoError(t, db.QueryRow("SELECT project_id FROM chat_sessions WHERE id = 's1'").Scan(&sessionProjectID))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT project_id FROM chat_sessions WHERE id = 's1'").Scan(&sessionProjectID))
 	if sessionProjectID != gotID {
 		t.Errorf("session project_id = %d, want %d", sessionProjectID, gotID)
 	}
 	// And the old path no longer resolves.
-	if _, ok, _ := ProjectIDByPath(oldDir); ok {
+	if _, ok, _ := store.ProjectIDByPath(oldDir); ok {
 		t.Error("the old path must stop resolving after a rename")
 	}
 	// No extra project row was created.
 	var count int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
 	if count != 1 {
 		t.Errorf("projects rows = %d, want 1", count)
 	}
@@ -705,9 +707,9 @@ func TestRenameProject_RejectsCollision(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
-	if err := RenameProject(dirA, dirB); err == nil {
+	if err := store.RenameProject(dirA, dirB); err == nil {
 		t.Error("renaming onto an existing project must fail")
 	}
 }
@@ -754,25 +756,25 @@ func TestMigrateProjectsToIDs_DeduplicatesMergedProjectScopes(t *testing.T) {
 	requireNoError(t, raw.Close())
 
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	var recentCount int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM recent_projects").Scan(&recentCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM recent_projects").Scan(&recentCount))
 	if recentCount != 1 {
 		t.Errorf("merged project must have exactly one recents row, got %d", recentCount)
 	}
 
 	// The newer access is the one worth keeping.
 	var keptDefault int
-	requireNoError(t, db.QueryRow("SELECT is_default FROM recent_projects").Scan(&keptDefault))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT is_default FROM recent_projects").Scan(&keptDefault))
 	if keptDefault != 1 {
 		t.Error("the most recently accessed recents row must survive")
 	}
 
 	var forgeCount int
 	var forgeSource string
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM project_forges").Scan(&forgeCount))
-	requireNoError(t, db.QueryRow("SELECT source FROM project_forges").Scan(&forgeSource))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM project_forges").Scan(&forgeCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT source FROM project_forges").Scan(&forgeSource))
 	if forgeCount != 1 {
 		t.Errorf("merged project must have exactly one forge binding, got %d", forgeCount)
 	}
@@ -782,8 +784,8 @@ func TestMigrateProjectsToIDs_DeduplicatesMergedProjectScopes(t *testing.T) {
 
 	// Both commands survive; only the auto-execute flag is deduplicated.
 	var cmdCount, autoCount int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM terminal_quick_commands").Scan(&cmdCount))
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM terminal_quick_commands WHERE auto_execute = 1").Scan(&autoCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM terminal_quick_commands").Scan(&cmdCount))
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM terminal_quick_commands WHERE auto_execute = 1").Scan(&autoCount))
 	if cmdCount != 2 {
 		t.Errorf("merged quick commands must be kept, not deleted, got %d", cmdCount)
 	}
@@ -797,261 +799,6 @@ func TestMigrateProjectsToIDs_DeduplicatesMergedProjectScopes(t *testing.T) {
 // imported here (it imports this package), so it registers a hook; if the rename
 // stops notifying, that cache keeps serving the pre-rename mapping and a project
 // later created at the freed-up old path resolves to the renamed project's id.
-func TestRenameProject_NotifiesHooks(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	dirA := t.TempDir()
-	dirB := t.TempDir()
-	if _, err := raw.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('a', ?, 'claude', 'a')",
-		dirA,
-	); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	var got []string
-	RegisterProjectRenamedHook(func(paths ...string) { got = append(got, paths...) })
-	defer func() {
-		projectRenamedMu.Lock()
-		projectRenamedHooks = nil
-		projectRenamedMu.Unlock()
-	}()
-
-	requireNoError(t, RenameProject(dirA, dirB))
-
-	want := []string{NormalizeProjectPath(dirA), NormalizeProjectPath(dirB)}
-	if len(got) != len(want) {
-		t.Fatalf("hook got %v, want %v", got, want)
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("hook arg %d = %q, want %q", i, got[i], want[i])
-		}
-	}
-}
-
-// ProjectPathForID is the inverse of ProjectIDByPath and is what lets a
-// project-scoped read report the directory it belongs to. It is deliberately
-// uncached, so it must answer from the registry for a real id and report
-// absence (not an error) for both the 0 sentinel and an unknown id.
-func TestProjectPathForID(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	dir := t.TempDir()
-	if _, err := raw.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', ?, 'claude', 'a')", dir,
-	); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	id, ok, err := ProjectIDByPath(dir)
-	requireNoError(t, err)
-	if !ok {
-		t.Fatal("seeded project did not resolve")
-	}
-
-	gotPath, ok, err := ProjectPathForID(id)
-	requireNoError(t, err)
-	if !ok {
-		t.Fatal("ProjectPathForID reported a real id as absent")
-	}
-	if gotPath != NormalizeProjectPath(dir) {
-		t.Errorf("path = %q, want %q", gotPath, NormalizeProjectPath(dir))
-	}
-
-	// The 0 sentinel is "no project", not an error.
-	if p, ok, err := ProjectPathForID(GlobalScopeProjectID); err != nil || ok || p != "" {
-		t.Errorf("global scope: got (%q, %v, %v), want (\"\", false, nil)", p, ok, err)
-	}
-	// An id that was never registered is absent, not an error.
-	if p, ok, err := ProjectPathForID(999999); err != nil || ok || p != "" {
-		t.Errorf("unknown id: got (%q, %v, %v), want (\"\", false, nil)", p, ok, err)
-	}
-}
-
-// RenameProject validates its inputs before touching the registry: an empty
-// path is a programming error, and an identical path is a no-op (not an error),
-// so a caller that re-applies a rename does not fail.
-func TestRenameProject_InputGuards(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	if err := RenameProject("", "/somewhere"); err == nil {
-		t.Error("an empty old path must be rejected")
-	}
-	if err := RenameProject("/somewhere", ""); err == nil {
-		t.Error("an empty new path must be rejected")
-	}
-
-	dir := t.TempDir()
-	requireNoError(t, RenameProject(dir, dir))
-	if _, ok, err := ProjectIDByPath(dir); err != nil || ok {
-		t.Errorf("renaming to the same path must be a no-op, got ok=%v err=%v", ok, err)
-	}
-}
-
-// RenameProject must report a missing source as an error rather than silently
-// succeeding (a zero RowsAffected UPDATE would otherwise look like success).
-func TestRenameProject_MissingSourceIsError(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	err := RenameProject(t.TempDir(), t.TempDir())
-	if err == nil {
-		t.Fatal("renaming a project that does not exist must fail")
-	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("error = %v, want a not-found message", err)
-	}
-}
-
-// RegisterProjectRenamedHook must ignore a nil hook: callers register
-// conditionally and a nil would panic on the next rename.
-func TestRegisterProjectRenamedHook_IgnoresNil(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	dir := t.TempDir()
-	if _, err := raw.Exec(
-		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', ?, 'claude', 'a')", dir,
-	); err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	// A nil registration must not be stored (and must not panic the rename).
-	RegisterProjectRenamedHook(nil)
-	defer func() {
-		projectRenamedMu.Lock()
-		projectRenamedHooks = nil
-		projectRenamedMu.Unlock()
-	}()
-
-	requireNoError(t, RenameProject(dir, t.TempDir()))
-}
-
-// SeedTestProjectsForTest must register the CANONICAL form of each fixture path.
-// The fixtures look these paths up by their literal spelling inside SQL
-// subqueries; the registry stores canonical paths, so seeding the raw literal
-// would leave the lookup with no row on macOS, where /tmp is a symlink to
-// /private/tmp.
-//
-// The symlinked entry below reproduces that mismatch on any OS, so this test
-// fails wherever the seed stops canonicalizing — not only on macOS.
-func TestSeedTestProjectsForTest_StoresCanonicalPaths(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	target := t.TempDir()
-	link := filepath.Join(t.TempDir(), "link")
-	if err := symlinkOrSkip(t, target, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-
-	orig := seedTestProjectPaths
-	seedTestProjectPaths = append(append([]string{}, orig...), link)
-	t.Cleanup(func() { seedTestProjectPaths = orig })
-
-	SeedTestProjectsForTest(t)
-
-	for _, p := range seedTestProjectPaths {
-		want := NormalizeProjectPath(p)
-		var got string
-		if err := db.QueryRow("SELECT path FROM projects WHERE path = ?", want).Scan(&got); err != nil {
-			t.Fatalf("seeded path %q not found in canonical form %q: %v", p, want, err)
-		}
-		if got != want {
-			t.Errorf("stored path = %q, want canonical %q", got, want)
-		}
-	}
-	// The symlinked spelling must NOT be stored raw: that is the exact row the
-	// fixtures' literal lookups would miss.
-	var rawCount int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects WHERE path = ?", link).Scan(&rawCount))
-	if rawCount != 0 {
-		t.Errorf("the raw symlinked path %q must not be seeded", link)
-	}
-}
-
-// TestRenameProject_OldPathGetsAFreshID is the cache-staleness half of the
-// rename contract that TestRenameProject_FollowsEveryTable does not cover.
-//
-// ProjectIDForPath is lookup-or-create and consults projectIDCache first. If
-// the rename failed to evict the OLD path's key, a project later created at
-// that freed-up path would be handed the RENAMED project's id — silently
-// merging two unrelated directories, with every project-scoped row of the first
-// one now visible from the second.
-func TestRenameProject_OldPathGetsAFreshID(t *testing.T) {
-	raw := openLegacyDB(t)
-	defer func() { _ = raw.Close() }()
-	oldDir := t.TempDir()
-	newDir := t.TempDir()
-	requireNoError(t, raw.Close())
-
-	requireNoError(t, InitDB(true))
-	defer CloseDB()
-
-	// Populate the cache for the old path, then rename away from it.
-	oldID, err := ProjectIDForPath(oldDir)
-	requireNoError(t, err)
-	requireNoError(t, RenameProject(oldDir, newDir))
-
-	// A different directory now lives at the freed-up old path.
-	freshID, err := ProjectIDForPath(oldDir)
-	requireNoError(t, err)
-	if freshID == oldID {
-		t.Fatalf("the reused path resolved to the renamed project's id %d — the cache key was not evicted", oldID)
-	}
-
-	// And the renamed project still owns its own id under the new path.
-	renamedID, err := ProjectIDForPath(newDir)
-	requireNoError(t, err)
-	if renamedID != oldID {
-		t.Errorf("the renamed project's id changed: got %d, want %d", renamedID, oldID)
-	}
-
-	var count int
-	requireNoError(t, db.QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
-	if count != 2 {
-		t.Errorf("projects rows = %d, want 2 (the renamed one plus the recreated old path)", count)
-	}
-}
-
-// ── legacyProjectPathIndexes must all be recreated somewhere ─────────────
-//
-// The migration DROPs these indexes (SQLite refuses to drop a column while an
-// index references it) and relies on the normal schema creation to bring them
-// back. That makes two hand-maintained lists: the drop list here, and the
-// CREATE INDEX statements scattered across the schema owners. Nothing linked
-// them, so adding an index to one side only would either make it vanish
-// silently (added to the drop list, never recreated) or leave it pointing at a
-// dropped column (recreated from the migration's own DDL).
-//
-// The recreation sites are NOT all in database.go: project_forges and the RAG
-// store own their own schema, so this scans the whole module rather than one
-// file. A rename or relocation of a CREATE INDEX is therefore caught too.
 func TestLegacyProjectPathIndexes_AreAllRecreated(t *testing.T) {
 	root := repoRootForTest(t)
 
@@ -1161,7 +908,7 @@ func TestRebuildTables_ProjectScopedUniquenessIsDeduplicated(t *testing.T) {
 	raw := openLegacyDB(t)
 	_ = raw.Close()
 	requireNoError(t, InitDB(true))
-	defer CloseDB()
+	defer store.Close()
 
 	// Tables deduplicated by rebuildSessionTagsAndLinks rather than by
 	// projectScopeSpecs, for the foreign-key reason documented on that function.
@@ -1176,7 +923,7 @@ func TestRebuildTables_ProjectScopedUniquenessIsDeduplicated(t *testing.T) {
 	detected := map[string]bool{}
 	for _, rt := range legacyRebuildTables {
 		var ddl string
-		if err := db.QueryRow(
+		if err := store.UnsafeDBForTest().QueryRow(
 			"SELECT COALESCE(sql,'') FROM sqlite_master WHERE type='table' AND name=?", rt.name,
 		).Scan(&ddl); err != nil {
 			t.Fatalf("read DDL of %s: %v", rt.name, err)
@@ -1209,3 +956,250 @@ func TestRebuildTables_ProjectScopedUniquenessIsDeduplicated(t *testing.T) {
 		t.Fatalf("detected only %d project-scoped UNIQUE constraints, expected at least 2", checked)
 	}
 }
+
+func TestRenameProject_NotifiesHooks(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	dirA := t.TempDir()
+	dirB := t.TempDir()
+	if _, err := raw.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('a', ?, 'claude', 'a')",
+		dirA,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	var got []string
+	store.RegisterProjectRenamedHook(func(paths ...string) { got = append(got, paths...) })
+	defer store.ResetProjectRenamedHooksForTest()
+
+	requireNoError(t, store.RenameProject(dirA, dirB))
+
+	want := []string{store.NormalizeProjectPath(dirA), store.NormalizeProjectPath(dirB)}
+	if len(got) != len(want) {
+		t.Fatalf("hook got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("hook arg %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// store.ProjectPathForID is the inverse of store.ProjectIDByPath and is what lets a
+// project-scoped read report the directory it belongs to. It is deliberately
+// uncached, so it must answer from the registry for a real id and report
+// absence (not an error) for both the 0 sentinel and an unknown id.
+func TestProjectPathForID(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	dir := t.TempDir()
+	if _, err := raw.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', ?, 'claude', 'a')", dir,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	id, ok, err := store.ProjectIDByPath(dir)
+	requireNoError(t, err)
+	if !ok {
+		t.Fatal("seeded project did not resolve")
+	}
+
+	gotPath, ok, err := store.ProjectPathForID(id)
+	requireNoError(t, err)
+	if !ok {
+		t.Fatal("store.ProjectPathForID reported a real id as absent")
+	}
+	if gotPath != store.NormalizeProjectPath(dir) {
+		t.Errorf("path = %q, want %q", gotPath, store.NormalizeProjectPath(dir))
+	}
+
+	// The 0 sentinel is "no project", not an error.
+	if p, ok, err := store.ProjectPathForID(store.GlobalScopeProjectID); err != nil || ok || p != "" {
+		t.Errorf("global scope: got (%q, %v, %v), want (\"\", false, nil)", p, ok, err)
+	}
+	// An id that was never registered is absent, not an error.
+	if p, ok, err := store.ProjectPathForID(999999); err != nil || ok || p != "" {
+		t.Errorf("unknown id: got (%q, %v, %v), want (\"\", false, nil)", p, ok, err)
+	}
+}
+
+// store.RenameProject validates its inputs before touching the registry: an empty
+// path is a programming error, and an identical path is a no-op (not an error),
+// so a caller that re-applies a rename does not fail.
+func TestRenameProject_InputGuards(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	if err := store.RenameProject("", "/somewhere"); err == nil {
+		t.Error("an empty old path must be rejected")
+	}
+	if err := store.RenameProject("/somewhere", ""); err == nil {
+		t.Error("an empty new path must be rejected")
+	}
+
+	dir := t.TempDir()
+	requireNoError(t, store.RenameProject(dir, dir))
+	if _, ok, err := store.ProjectIDByPath(dir); err != nil || ok {
+		t.Errorf("renaming to the same path must be a no-op, got ok=%v err=%v", ok, err)
+	}
+}
+
+// store.RenameProject must report a missing source as an error rather than silently
+// succeeding (a zero RowsAffected UPDATE would otherwise look like success).
+func TestRenameProject_MissingSourceIsError(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	err := store.RenameProject(t.TempDir(), t.TempDir())
+	if err == nil {
+		t.Fatal("renaming a project that does not exist must fail")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error = %v, want a not-found message", err)
+	}
+}
+
+// store.RegisterProjectRenamedHook must ignore a nil hook: callers register
+// conditionally and a nil would panic on the next rename.
+func TestRegisterProjectRenamedHook_IgnoresNil(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	dir := t.TempDir()
+	if _, err := raw.Exec(
+		"INSERT INTO chat_sessions (id, project_path, backend, title) VALUES ('s1', ?, 'claude', 'a')", dir,
+	); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	// A nil registration must not be stored (and must not panic the rename).
+	store.RegisterProjectRenamedHook(nil)
+	defer store.ResetProjectRenamedHooksForTest()
+
+	requireNoError(t, store.RenameProject(dir, t.TempDir()))
+}
+
+// store.SeedTestProjectsForTest must register the CANONICAL form of each fixture path.
+// The fixtures look these paths up by their literal spelling inside SQL
+// subqueries; the registry stores canonical paths, so seeding the raw literal
+// would leave the lookup with no row on macOS, where /tmp is a symlink to
+// /private/tmp.
+//
+// The symlinked entry below reproduces that mismatch on any OS, so this test
+// fails wherever the seed stops canonicalizing — not only on macOS.
+func TestSeedTestProjectsForTest_StoresCanonicalPaths(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	target := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := symlinkOrSkip(t, target, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	orig := store.SetSeedTestProjectPathsForTest(append(store.SeedTestProjectPathsForTest(), link))
+	t.Cleanup(func() { store.SetSeedTestProjectPathsForTest(orig) })
+
+	store.SeedTestProjectsForTest(t)
+
+	for _, p := range store.SeedTestProjectPathsForTest() {
+		want := store.NormalizeProjectPath(p)
+		var got string
+		if err := store.UnsafeDBForTest().QueryRow("SELECT path FROM projects WHERE path = ?", want).Scan(&got); err != nil {
+			t.Fatalf("seeded path %q not found in canonical form %q: %v", p, want, err)
+		}
+		if got != want {
+			t.Errorf("stored path = %q, want canonical %q", got, want)
+		}
+	}
+	// The symlinked spelling must NOT be stored raw: that is the exact row the
+	// fixtures' literal lookups would miss.
+	var rawCount int
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM projects WHERE path = ?", link).Scan(&rawCount))
+	if rawCount != 0 {
+		t.Errorf("the raw symlinked path %q must not be seeded", link)
+	}
+}
+
+// TestRenameProject_OldPathGetsAFreshID is the cache-staleness half of the
+// rename contract that TestRenameProject_FollowsEveryTable does not cover.
+//
+// store.ProjectIDForPath is lookup-or-create and consults projectIDCache first. If
+// the rename failed to evict the OLD path's key, a project later created at
+// that freed-up path would be handed the RENAMED project's id — silently
+// merging two unrelated directories, with every project-scoped row of the first
+// one now visible from the second.
+func TestRenameProject_OldPathGetsAFreshID(t *testing.T) {
+	raw := openLegacyDB(t)
+	defer func() { _ = raw.Close() }()
+	oldDir := t.TempDir()
+	newDir := t.TempDir()
+	requireNoError(t, raw.Close())
+
+	requireNoError(t, InitDB(true))
+	defer store.Close()
+
+	// Populate the cache for the old path, then rename away from it.
+	oldID, err := store.ProjectIDForPath(oldDir)
+	requireNoError(t, err)
+	requireNoError(t, store.RenameProject(oldDir, newDir))
+
+	// A different directory now lives at the freed-up old path.
+	freshID, err := store.ProjectIDForPath(oldDir)
+	requireNoError(t, err)
+	if freshID == oldID {
+		t.Fatalf("the reused path resolved to the renamed project's id %d — the cache key was not evicted", oldID)
+	}
+
+	// And the renamed project still owns its own id under the new path.
+	renamedID, err := store.ProjectIDForPath(newDir)
+	requireNoError(t, err)
+	if renamedID != oldID {
+		t.Errorf("the renamed project's id changed: got %d, want %d", renamedID, oldID)
+	}
+
+	var count int
+	requireNoError(t, store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM projects").Scan(&count))
+	if count != 2 {
+		t.Errorf("projects rows = %d, want 2 (the renamed one plus the recreated old path)", count)
+	}
+}
+
+// ── legacyProjectPathIndexes must all be recreated somewhere ─────────────
+//
+// The migration DROPs these indexes (SQLite refuses to drop a column while an
+// index references it) and relies on the normal schema creation to bring them
+// back. That makes two hand-maintained lists: the drop list here, and the
+// CREATE INDEX statements scattered across the schema owners. Nothing linked
+// them, so adding an index to one side only would either make it vanish
+// silently (added to the drop list, never recreated) or leave it pointing at a
+// dropped column (recreated from the migration's own DDL).
+//
+// The recreation sites are NOT all in database.go: project_forges and the RAG
+// store own their own schema, so this scans the whole module rather than one
+// file. A rename or relocation of a CREATE INDEX is therefore caught too.

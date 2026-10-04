@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -99,7 +101,7 @@ func TestServeForkSession_WithAgentID(t *testing.T) {
 	// Verify the forked session has the override agent
 	newSessID := result["sessionId"].(string)
 	var agentID string
-	err = service.UnsafeDBForTest().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&agentID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT agent_id FROM chat_sessions WHERE id = ?", newSessID).Scan(&agentID)
 	require.NoError(t, err)
 	assert.Equal(t, "codebuddy", agentID)
 }
@@ -368,9 +370,9 @@ func TestServeForkSession_BeforeMessageID_EmptyContentFallsBackToSessionTitle(t 
 	// then delete the message itself. GetMessageContent will return ("", nil) for ErrNoRows.
 	// Then when ForkSession tries to find the message, it also won't find it and
 	// returns "not found in session" error. This tests the InvalidForkPoint error path.
-	_, _ = service.UnsafeDBForTest().Exec("DELETE FROM chat_metadata WHERE message_id = ?", userID)
-	_, _ = service.UnsafeDBForTest().Exec("DELETE FROM chat_tool_calls WHERE message_id = ?", userID)
-	_, _ = service.UnsafeDBForTest().Exec("DELETE FROM chat_history WHERE id = ?", userID)
+	_, _ = store.UnsafeDBForTest().Exec("DELETE FROM chat_metadata WHERE message_id = ?", userID)
+	_, _ = store.UnsafeDBForTest().Exec("DELETE FROM chat_tool_calls WHERE message_id = ?", userID)
+	_, _ = store.UnsafeDBForTest().Exec("DELETE FROM chat_history WHERE id = ?", userID)
 
 	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]any{"sessionId": sessID, "beforeMessageId": userID})
 	req = withProjectCookie(req, env.ProjectDir)
@@ -442,7 +444,7 @@ func TestServeForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 
 	// Get the streaming message ID
 	var streamingID int64
-	err = service.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
+	err = store.UnsafeDBForTest().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND streaming = 1", sessID).Scan(&streamingID)
 	require.NoError(t, err)
 
 	// Fork from a streaming message should return 400

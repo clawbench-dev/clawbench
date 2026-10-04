@@ -8,8 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/rag"
-	"clawbench/internal/service"
 )
 
 // MinClusterTotalCount is the minimum total_count for a cluster to appear
@@ -48,7 +49,7 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 1. Get cached cluster entries + mode + updatedAt
-	entries, mode, updatedAt, err := service.GetClusterCache()
+	entries, mode, updatedAt, err := store.GetClusterCache()
 	if err != nil {
 		slog.Error("failed to get cluster cache", slog.String("error", err.Error()))
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
@@ -57,7 +58,7 @@ func ServeMessageClusters(w http.ResponseWriter, r *http.Request) {
 
 	// 2. Get progress — read from meta table directly for consistency
 	progress := "idle"
-	if metaProgress := service.GetClusterMeta().Progress; metaProgress != "" {
+	if metaProgress := store.GetClusterMeta().Progress; metaProgress != "" {
 		progress = metaProgress
 	}
 
@@ -141,7 +142,7 @@ func ServeMessageClustersComputeCancel(w http.ResponseWriter, r *http.Request) {
 
 	rag.GlobalClusterWorker.Stop()
 	// Preserve current phase in cancelled meta so frontend shows which phase was interrupted
-	_ = service.SaveClusterMetaError("cancelled", service.GetClusterMeta().Phase, "user cancelled")
+	_ = store.SaveClusterMetaError("cancelled", store.GetClusterMeta().Phase, "user cancelled")
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status": "cancelled",

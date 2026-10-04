@@ -5,6 +5,8 @@ import (
 	"net/url"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"github.com/stretchr/testify/assert"
@@ -16,10 +18,10 @@ import (
 // model/timestamp, so those are the only behavioral knobs exposed.
 func seedUsageStatsData(t *testing.T, projectPath, sessionID, model, createdAt string, total int64) {
 	t.Helper()
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 
 	// Project-scoped columns store an id; resolve (and register) the path.
-	projectID := service.ProjectIDForTest(t, projectPath)
+	projectID := store.ProjectIDForTest(t, projectPath)
 
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'codebuddy', 't', 'codebuddy')",
@@ -179,7 +181,7 @@ func TestServeUsageStats_DBFailureReturns500(t *testing.T) {
 	closedDB, err := service.InitInMemoryDB()
 	require.NoError(t, err)
 	_ = closedDB.Close()
-	cleanup := service.SetDBForTest(service.UnsafeDBForTest(), closedDB)
+	cleanup := store.SetDBForTest(store.UnsafeDBForTest(), closedDB)
 	defer cleanup()
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
@@ -290,9 +292,10 @@ func TestServeUsageStats_ScopeAllWithAIToken(t *testing.T) {
 
 // TestServeUsageStats_ScopeAllLoopbackWithoutTokenDenied isolates the handler's
 // own gate by calling it directly (no auth middleware in front). The exemption
-// must come from the token, not the loopback address — otherwise any local
-// process could read every project's usage. The paired positive case is
-// TestServeUsageStats_ScopeAllWithAIToken.
+// must come from authentication (an AI token or a session cookie), not the
+// loopback address — otherwise any local process could read every project's
+// usage. The paired positive cases are TestServeUsageStats_ScopeAllWithAIToken
+// and TestServeUsageStats_ScopeAllIgnoresProjectCookie.
 func TestServeUsageStats_ScopeAllLoopbackWithoutTokenDenied(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
@@ -337,32 +340,63 @@ func TestServeUsageStats_ScopeAllRemoteDenied(t *testing.T) {
 		"a token replayed from off-machine must not get cross-project reads")
 }
 
-// TestServeUsageStats_ScopeAllWithProjectCookieRejected pins the contradiction
-// rule: scope=all plus a project cookie is refused rather than resolved to one
-// of the two meanings. A caller sending both believes it is getting the
-// narrower answer, so silently aggregating everything would leak more than it
-// asked for.
-func TestServeUsageStats_ScopeAllWithProjectCookieRejected(t *testing.T) {
+// TestServeUsageStats_ScopeAllIgnoresProjectCookie pins the cookie semantics
+// for scope=all: the browser panel keeps its project cookie attached while the
+// user toggles to "all projects", so the cookie must be ignored rather than
+// treated as a contradiction. An authenticated session (cookie present) asking
+// for scope=all must get the instance-wide aggregate, not a 400.
+func TestServeUsageStats_ScopeAllIgnoresProjectCookie(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
 	model.CookieToken = "instance-key"
+	seedUsageStatsData(t, env.ProjectDir, "sess-1", "glm-5.1", "2026-01-10 10:00:00", 150)
 
 	req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
 		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
 		"dims": "project", "metrics": "total", "scope": "all",
 	}), nil), env.ProjectDir)
-	req.RemoteAddr = "127.0.0.1:12345"
-	withAIToken(req)
+	// Authenticated browser session — the cookie is what carries auth here.
+	withAuthCookie(req, "instance-key")
 
 	w := callHandler(ServeUsageStats, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusOK, w.Code,
+		"an authenticated session may request scope=all even with a project cookie attached")
 
 	var body struct {
-		Detail map[string]any `json:"detail"`
+		Totals struct {
+			Total int64 `json:"total"`
+		} `json:"totals"`
 	}
 	decodeRespJSON(t, w.Body, &body)
-	assert.Equal(t, "conflicting_scope", body.Detail["reason"])
+	assert.Equal(t, int64(150), body.Totals.Total)
+}
+
+// TestServeUsageStats_ScopeAllUnauthenticatedDenied covers the remaining gate:
+// with a password configured, a request with neither an AI token nor a session
+// cookie must not read cross-project data. This is the case that keeps scope=all
+// from being a blanket public endpoint.
+func TestServeUsageStats_ScopeAllUnauthenticatedDenied(t *testing.T) {
+	_, teardown := setupTestEnv(t)
+	defer teardown()
+
+	model.CookieToken = "instance-key"
+
+	req := newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+		"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+		"dims": "project", "metrics": "total", "scope": "all",
+	}), nil)
+	req.RemoteAddr = "127.0.0.1:12345" // loopback, but no token and no session cookie
+
+	w := callHandler(ServeUsageStats, req)
+	assert.Equal(t, http.StatusForbidden, w.Code,
+		"an unauthenticated caller must not read every project's usage")
+
+	var body struct {
+		MsgKey string `json:"msgKey"`
+	}
+	decodeRespJSON(t, w.Body, &body)
+	assert.Equal(t, "AccessDenied", body.MsgKey)
 }
 
 // TestServeUsageStats_InvalidScopeRejected keeps an unknown scope from silently
@@ -444,5 +478,19 @@ func TestServeUsageStats_ScopeAllEndToEndThroughAuth(t *testing.T) {
 		w := callHandlerWithAuth(ServeUsageStats, req)
 		assert.Equal(t, http.StatusUnauthorized, w.Code,
 			"Auth is the outer gate; no token means 401, not 403")
+	})
+
+	t.Run("browser session cookie gets through and aggregates all projects", func(t *testing.T) {
+		// The stats panel's "all projects" toggle is a browser request: it
+		// carries the session cookie (for Auth) and the project cookie (sent
+		// automatically). Both gates must accept it.
+		req := withProjectCookie(newRequest(t, http.MethodGet, usageStatsURL(map[string]string{
+			"start": "2026-01-01T00:00:00Z", "end": "2026-02-01T00:00:00Z",
+			"dims": "project", "metrics": "total", "scope": "all",
+		}), nil), env.ProjectDir)
+		withAuthCookie(req, "instance-key")
+
+		w := callHandlerWithAuth(ServeUsageStats, req)
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 }

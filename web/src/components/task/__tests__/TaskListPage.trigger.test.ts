@@ -46,6 +46,7 @@ vi.mock('@/composables/useAgents', () => ({
     loadAgents: vi.fn(),
     getAgentBackend: () => 'acp',
     getAgentName: () => 'test-agent',
+    getAgentAvatar: () => '',
   }),
 }))
 

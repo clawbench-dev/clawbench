@@ -1,4 +1,4 @@
-//nolint:noctx,govet,goconst,rowserrcheck // db global, context not applicable; shadowed err is acceptable in sequential blocks; status strings are domain constants; legacy db.Query pattern
+//nolint:govet,goconst,rowserrcheck // shadowed err is acceptable in sequential blocks; status strings are domain constants; legacy store.ReadDB().Query pattern
 package service
 
 import (
@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
@@ -307,7 +309,7 @@ func (s *Scheduler) LoadTasksFromDB(projectPath string) error {
 // marked "running" belongs to a CLI process that died with the previous
 // server instance.
 func (s *Scheduler) cleanZombieExecutions() {
-	result, err := WriteExec("UPDATE task_executions SET status = 'failed' WHERE status = 'running'")
+	result, err := store.WriteExec("UPDATE task_executions SET status = 'failed' WHERE status = 'running'")
 	if err != nil {
 		slog.Error("failed to clean zombie executions", slog.String("err", err.Error()))
 		return
@@ -368,7 +370,7 @@ func (s *Scheduler) RemoveTask(id int64) {
 	s.mu.Unlock()
 
 	// Cascade: archive associated chat sessions
-	rows, err := dbRead.Query(`
+	rows, err := store.ReadDB().Query(`
 		SELECT te.session_id, COALESCE(p.path, ''), cs.backend
 		FROM task_executions te
 		JOIN chat_sessions cs ON cs.id = te.session_id
@@ -408,10 +410,10 @@ func (s *Scheduler) RemoveTask(id int64) {
 	}
 
 	// Delete task_executions rows
-	_, _ = WriteExec("DELETE FROM task_executions WHERE task_id = ?", id)
+	_, _ = store.WriteExec("DELETE FROM task_executions WHERE task_id = ?", id)
 
 	// Hard-delete the task
-	_, _ = WriteExec("DELETE FROM scheduled_tasks WHERE id = ?", id)
+	_, _ = store.WriteExec("DELETE FROM scheduled_tasks WHERE id = ?", id)
 }
 
 // PauseTask removes a task from cron but keeps it in the database as paused.
@@ -425,7 +427,7 @@ func (s *Scheduler) PauseTask(id int64) {
 
 	// Clear next_run_at so a paused task no longer shows a stale "next run"
 	// time in the UI. It is recomputed on ResumeTask (or the next manual trigger).
-	_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'paused', next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+	_, _ = store.WriteExec("UPDATE scheduled_tasks SET status = 'paused', next_run_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 }
 
 // ResumeTask re-registers a paused task with cron.
@@ -441,7 +443,7 @@ func (s *Scheduler) ResumeTask(id int64) error {
 	// Event tasks have no cron entry to restore; flipping the status back to
 	// active is enough (the event matcher reads status from the DB).
 	if task.IsEventTriggered() {
-		_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
+		_, _ = store.WriteExec("UPDATE scheduled_tasks SET status = 'active', updated_at = CURRENT_TIMESTAMP WHERE id = ?", id)
 		task.Status = "active"
 		return nil
 	}
@@ -452,7 +454,7 @@ func (s *Scheduler) ResumeTask(id int64) error {
 	}
 	nextRun := schedule.Next(time.Now())
 
-	_, _ = WriteExec("UPDATE scheduled_tasks SET status = 'active', next_run_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", nextRun, id)
+	_, _ = store.WriteExec("UPDATE scheduled_tasks SET status = 'active', next_run_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", nextRun, id)
 	task.Status = "active"
 
 	return s.registerTask(task)
@@ -727,7 +729,7 @@ func (s *Scheduler) registerTaskLocked(task *model.ScheduledTask) error {
 // See ISS-013.
 func UpdateTaskStats(task *model.ScheduledTask) {
 	now := time.Now()
-	_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+	_, _ = store.WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		now, task.ID)
 }
 
@@ -1348,7 +1350,7 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) string {
 	// there is no next cron run and no repeat-mode exhaustion. They simply record
 	// the run and stay active so the next matching event fires again.
 	if task.IsEventTriggered() {
-		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		_, _ = store.WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, run_count = run_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), task.ID)
 		return task.Status
 	}
@@ -1356,7 +1358,7 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) string {
 	// Read current DB status to avoid overwriting user-initiated changes (e.g. pause).
 	// See ISS-013: using task.Status (in-memory snapshot) can revert "paused" back to "active".
 	var currentStatus string
-	if err := dbRead.QueryRow("SELECT status FROM scheduled_tasks WHERE id = ?", task.ID).Scan(&currentStatus); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT status FROM scheduled_tasks WHERE id = ?", task.ID).Scan(&currentStatus); err != nil {
 		slog.Warn("failed to read current task status, falling back to snapshot", "error", err)
 		currentStatus = task.Status
 	}
@@ -1365,7 +1367,7 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) string {
 	// Check repeat mode — for "limited", read current DB value to decide completion
 	if task.RepeatMode == "limited" {
 		var currentCount int
-		if err := dbRead.QueryRow("SELECT run_count FROM scheduled_tasks WHERE id = ?", task.ID).Scan(&currentCount); err == nil {
+		if err := store.ReadDB().QueryRow("SELECT run_count FROM scheduled_tasks WHERE id = ?", task.ID).Scan(&currentCount); err == nil {
 			if currentCount+1 >= task.MaxRuns {
 				newStatus = "completed"
 			}
@@ -1404,10 +1406,10 @@ func (s *Scheduler) advanceTaskAfterRun(task *model.ScheduledTask) string {
 	}
 
 	if nextRunAt != nil {
-		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, next_run_at = ?, run_count = run_count + 1, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		_, _ = store.WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, next_run_at = ?, run_count = run_count + 1, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), nextRunAt, newStatus, task.ID)
 	} else {
-		_, _ = WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, next_run_at = NULL, run_count = run_count + 1, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+		_, _ = store.WriteExec("UPDATE scheduled_tasks SET last_run_at = ?, next_run_at = NULL, run_count = run_count + 1, status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			time.Now(), newStatus, task.ID)
 	}
 	return newStatus
@@ -1470,10 +1472,10 @@ func maybeWarnPersistentScriptGateFailure(task *model.ScheduledTask, res ScriptR
 //   - The window is bounded (LIMIT 50) so a long-lived task does not scan its
 //     whole history on every tick. A ≥50 streak still reports ≥3.
 func countConsecutiveScriptGateFailures(taskID int64) int {
-	if dbRead == nil {
+	if !store.ReadDBReady() {
 		return 0
 	}
-	rows, err := dbRead.Query(`
+	rows, err := store.ReadDB().Query(`
 		SELECT script_outcome
 		FROM task_executions
 		WHERE task_id = ?
@@ -1614,7 +1616,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 			LEFT JOIN projects p ON p.id = s.project_id
 			ORDER BY s.created_at DESC`
 	} else {
-		projectID, idErr := ProjectIDForPath(projectPath)
+		projectID, idErr := store.ProjectIDForPath(projectPath)
 		if idErr != nil {
 			return nil, idErr
 		}
@@ -1630,7 +1632,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 		args = []interface{}{projectID}
 	}
 
-	rows, err := dbRead.Query(query, args...)
+	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1660,7 +1662,7 @@ func GetTasks(projectPath string) ([]model.ScheduledTask, error) {
 func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 	var t model.ScheduledTask
 	var lastRun, nextRun, lastRead sql.NullTime
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		`SELECT s.id, COALESCE(p.path, ''), s.name, s.cron_expr, s.agent_id, s.prompt, s.script, s.script_timeout, s.session_id,
 		s.trigger_mode, s.event_types,
 		s.status, s.repeat_mode, s.max_runs, s.last_run_at, s.next_run_at, s.run_count,
@@ -1689,11 +1691,11 @@ func GetTaskByID(id int64) (*model.ScheduledTask, error) {
 
 // insertTask inserts a new task into the database and sets the auto-generated ID.
 func insertTask(task *model.ScheduledTask) error {
-	projectID, idErr := ProjectIDForPath(task.ProjectPath)
+	projectID, idErr := store.ProjectIDForPath(task.ProjectPath)
 	if idErr != nil {
 		return idErr
 	}
-	result, err := WriteExec(
+	result, err := store.WriteExec(
 		`INSERT INTO scheduled_tasks (project_id, name, cron_expr, agent_id, prompt, script, script_timeout, session_id, trigger_mode, event_types, status, repeat_mode, max_runs, next_run_at, run_count, created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		projectID, task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.CreatedAt, task.UpdatedAt,
@@ -1711,7 +1713,7 @@ func insertTask(task *model.ScheduledTask) error {
 
 // updateTask updates an existing task in the database.
 func updateTask(task *model.ScheduledTask) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`UPDATE scheduled_tasks SET name=?, cron_expr=?, agent_id=?, prompt=?, script=?, script_timeout=?, session_id=?, trigger_mode=?, event_types=?, status=?, repeat_mode=?, max_runs=?, next_run_at=?, run_count=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`,
 		task.Name, task.CronExpr, task.AgentID, task.Prompt, task.Script, task.ScriptTimeout, task.SessionID, triggerModeOrDefault(task), task.EventTypes, task.Status, task.RepeatMode, task.MaxRuns, task.NextRunAt, task.RunCount, task.ID,
 	)
@@ -1721,7 +1723,7 @@ func updateTask(task *model.ScheduledTask) error {
 // AddTaskExecution records a task execution linked to a chat session.
 // Returns the auto-generated execution ID.
 func AddTaskExecution(taskID int64, sessionID string, triggerType string) (int64, error) {
-	result, err := WriteExec(
+	result, err := store.WriteExec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status) VALUES (?, ?, ?, 'running')",
 		taskID, sessionID, triggerType,
 	)
@@ -1736,7 +1738,7 @@ func AddTaskExecution(taskID int64, sessionID string, triggerType string) (int64
 // skip/cancel paths need: those runs never create a chat session, so the
 // execution row has no session to point at.
 func AddTaskExecutionWithStatus(taskID int64, sessionID, triggerType, status string) (int64, error) {
-	result, err := WriteExec(
+	result, err := store.WriteExec(
 		"INSERT INTO task_executions (task_id, session_id, trigger_type, status) VALUES (?, ?, ?, ?)",
 		taskID, sessionID, triggerType, status,
 	)
@@ -1748,7 +1750,7 @@ func AddTaskExecutionWithStatus(taskID int64, sessionID, triggerType, status str
 
 // UpdateExecutionStatus updates the status of a task execution by session_id.
 func UpdateExecutionStatus(sessionID string, status string) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"UPDATE task_executions SET status = ? WHERE session_id = ?",
 		status, sessionID,
 	)
@@ -1759,7 +1761,7 @@ func UpdateExecutionStatus(sessionID string, status string) error {
 // execution, so a notification can deep-link back to the originating item and
 // the run can be traced to its cause.
 func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary string) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"UPDATE task_executions SET event_url = ?, event_summary = ? WHERE id = ?",
 		eventURL, eventSummary, executionID,
 	)
@@ -1771,7 +1773,7 @@ func SetTaskExecutionEventPayload(executionID int64, eventURL, eventSummary stri
 // without re-running the script or digging through the chat transcript. The
 // stored output is already capped at scriptOutputCap by the capture.
 func SetTaskExecutionScriptResult(executionID int64, res ScriptResult) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`UPDATE task_executions
 		 SET script_exit_code = ?, script_outcome = ?, script_stdout = ?, script_stderr = ?, script_duration_ms = ?
 		 WHERE id = ?`,
@@ -1790,7 +1792,7 @@ func SetTaskExecutionScriptResult(executionID int64, res ScriptResult) error {
 // Running executions are skipped: their outcome is not known yet, and marking
 // them read would hide the completion the user is waiting for.
 func MarkTaskExecutionsRead(taskID int64) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		`UPDATE task_executions SET read_at = CURRENT_TIMESTAMP
 		 WHERE task_id = ? AND read_at IS NULL AND status != 'running'`,
 		taskID,
@@ -1800,7 +1802,7 @@ func MarkTaskExecutionsRead(taskID int64) error {
 
 // MarkExecutionRead marks a single execution as read by setting its read_at timestamp.
 func MarkExecutionRead(executionID string) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"UPDATE task_executions SET read_at = CURRENT_TIMESTAMP WHERE id = ?",
 		executionID,
 	)
@@ -1814,7 +1816,7 @@ func DeleteTaskExecution(executionID int64) error {
 	var sessionID string
 	var taskID int64
 	var status string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT session_id, task_id, status FROM task_executions WHERE id = ?",
 		executionID,
 	).Scan(&sessionID, &taskID, &status)
@@ -1828,9 +1830,9 @@ func DeleteTaskExecution(executionID int64) error {
 
 	// Hard-delete the execution row first (conditional on status to prevent TOCTOU race).
 	// This must happen BEFORE archiving the session: if the conditional DELETE fails
-	// (execution became running between the dbRead check and this DELETE), the session
+	// (execution became running between the store.ReadDB() check and this DELETE), the session
 	// must remain intact to avoid inconsistent state.
-	result, err := WriteExec("DELETE FROM task_executions WHERE id = ? AND status != 'running'", executionID)
+	result, err := store.WriteExec("DELETE FROM task_executions WHERE id = ? AND status != 'running'", executionID)
 	if err != nil {
 		return fmt.Errorf("failed to delete execution: %w", err)
 	}
@@ -1840,7 +1842,7 @@ func DeleteTaskExecution(executionID int64) error {
 
 	// Only archive the associated chat session AFTER successful execution deletion.
 	var projectPath, backend string
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		`SELECT COALESCE(p.path, ''), s.backend FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
 		  WHERE s.id = ?`,
@@ -1857,7 +1859,7 @@ func DeleteTaskExecution(executionID int64) error {
 	}
 
 	// Decrement run_count on the parent task (clamp to 0)
-	_, _ = WriteExec("UPDATE scheduled_tasks SET run_count = MAX(run_count - 1, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?", taskID)
+	_, _ = store.WriteExec("UPDATE scheduled_tasks SET run_count = MAX(run_count - 1, 0), updated_at = CURRENT_TIMESTAMP WHERE id = ?", taskID)
 
 	return nil
 }
@@ -1866,7 +1868,7 @@ func DeleteTaskExecution(executionID int64) error {
 // and archives the associated chat sessions.
 func DeleteAllTaskExecutions(taskID int64) error {
 	// Collect all non-running executions with their session info
-	rows, err := dbRead.Query(`
+	rows, err := store.ReadDB().Query(`
 		SELECT te.id, te.session_id, COALESCE(p.path, ''), cs.backend
 		FROM task_executions te
 		JOIN chat_sessions cs ON cs.id = te.session_id
@@ -1903,12 +1905,12 @@ func DeleteAllTaskExecutions(taskID int64) error {
 	}
 
 	// Hard-delete all non-running execution rows
-	_, _ = WriteExec("DELETE FROM task_executions WHERE task_id = ? AND status != 'running'", taskID)
+	_, _ = store.WriteExec("DELETE FROM task_executions WHERE task_id = ? AND status != 'running'", taskID)
 
 	// Reset run_count to match remaining (running) executions
 	var runningCount int
-	_ = dbRead.QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&runningCount)
-	_, _ = WriteExec("UPDATE scheduled_tasks SET run_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", runningCount, taskID)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM task_executions WHERE task_id = ?", taskID).Scan(&runningCount)
+	_, _ = store.WriteExec("UPDATE scheduled_tasks SET run_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", runningCount, taskID)
 
 	return nil
 }
@@ -1918,17 +1920,17 @@ func HasUnreadTasks(projectPath string) (bool, error) {
 	var count int
 	var err error
 	if projectPath == "" {
-		err = dbRead.QueryRow(
+		err = store.ReadDB().QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE (SELECT COUNT(*) FROM task_executions e
 			      WHERE e.task_id = s.id AND e.read_at IS NULL AND e.status NOT IN ('running', 'skipped')) > 0`,
 		).Scan(&count)
 	} else {
-		projectID, idErr := ProjectIDForPath(projectPath)
+		projectID, idErr := store.ProjectIDForPath(projectPath)
 		if idErr != nil {
 			return false, idErr
 		}
-		err = dbRead.QueryRow(
+		err = store.ReadDB().QueryRow(
 			`SELECT COUNT(*) FROM scheduled_tasks s
 			 WHERE s.project_id = ?
 			 AND (SELECT COUNT(*) FROM task_executions e

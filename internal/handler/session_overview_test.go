@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/service"
 
@@ -24,7 +26,7 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	// the registry's canonical path (which filepath.Join would not match on
 	// Windows, where the separator differs).
 	projectB := canonPath(filepath.Join(env.WatchDir, "project-b"))
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 
 	// projectA: running session A1
 	sessionA1, err := service.CreateSession(env.ProjectDir, "claude", "A1", "claude", "", "default", "chat")
@@ -33,15 +35,15 @@ func TestServeSessionsOverview_groupsAndFilters(t *testing.T) {
 	t.Cleanup(func() { service.SetSessionRunning(sessionA1, false) })
 
 	// projectA: read, completed session A3 — must be filtered out
-	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived, last_read_at) VALUES (?, ?, 'claude', 'A3', 'claude', 'default', '', 'chat', 0, CURRENT_TIMESTAMP)`, "a3-session", service.ProjectIDForTest(t, env.ProjectDir))
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived, last_read_at) VALUES (?, ?, 'claude', 'A3', 'claude', 'default', '', 'chat', 0, CURRENT_TIMESTAMP)`, "a3-session", store.ProjectIDForTest(t, env.ProjectDir))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'read msg', 'a3-session', 'claude', 0)`, service.ProjectIDForTest(t, env.ProjectDir))
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'read msg', 'a3-session', 'claude', 0)`, store.ProjectIDForTest(t, env.ProjectDir))
 	require.NoError(t, err)
 
 	// projectB: unread session B1 — assistant message newer than last_read_at
-	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'B1', 'claude', 'default', '', 'chat', 0)`, "b1-session", service.ProjectIDForTest(t, projectB))
+	_, err = db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived) VALUES (?, ?, 'claude', 'B1', 'claude', 'default', '', 'chat', 0)`, "b1-session", store.ProjectIDForTest(t, projectB))
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread msg', 'b1-session', 'claude', 0)`, service.ProjectIDForTest(t, projectB))
+	_, err = db.Exec(`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', 'unread msg', 'b1-session', 'claude', 0)`, store.ProjectIDForTest(t, projectB))
 	require.NoError(t, err)
 
 	// projectB: pending approval session B2

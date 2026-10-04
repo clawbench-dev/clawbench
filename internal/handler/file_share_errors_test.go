@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,14 +21,14 @@ import (
 // error. Returns a cleanup that restores the original handles.
 func swapClosedWriteDB(t *testing.T, healthyRead *sql.DB) func() {
 	t.Helper()
-	origWrite := service.UnsafeDBForTest()
+	origWrite := store.UnsafeDBForTest()
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, closedDB.Close())
-	cleanup := service.SetDBForTest(closedDB, healthyRead)
+	cleanup := store.SetDBForTest(closedDB, healthyRead)
 	return func() {
 		cleanup()
-		assert.Same(t, origWrite, service.UnsafeDBForTest(), "write handle must be restored")
+		assert.Same(t, origWrite, store.UnsafeDBForTest(), "write handle must be restored")
 	}
 }
 
@@ -39,7 +39,7 @@ func swapClosedReadDB(t *testing.T, healthyWrite *sql.DB) func() {
 	closedDB, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, closedDB.Close())
-	return service.SetDBForTest(healthyWrite, closedDB)
+	return store.SetDBForTest(healthyWrite, closedDB)
 }
 
 // ─── Management endpoints: DB write failures ─────────────────────────────────
@@ -51,7 +51,7 @@ func TestShareManage_Create_UpsertDBError_500(t *testing.T) {
 	absPath := createShareTestFile(t, env, "err/create.md", "hi")
 
 	// Healthy read DB, closed write DB → UpsertFileShare's insert fails.
-	defer swapClosedWriteDB(t, service.UnsafeDBForTest())()
+	defer swapClosedWriteDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodPost, "/api/share", map[string]string{"path": absPath})
 	withProjectCookie(req, env.ProjectDir)
@@ -67,7 +67,7 @@ func TestShareManage_Status_GetShareDBError_500(t *testing.T) {
 	absPath := createShareTestFile(t, env, "err/status.md", "hi")
 
 	// Read failure → GetFileShareByPath errors.
-	defer swapClosedReadDB(t, service.UnsafeDBForTest())()
+	defer swapClosedReadDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodGet, "/api/share?path="+absPath, nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -82,7 +82,7 @@ func TestShareManage_Revoke_DeleteDBError_500(t *testing.T) {
 	absPath := createShareTestFile(t, env, "err/revoke.md", "hi")
 
 	// Write failure → DeleteFileShareByPath errors.
-	defer swapClosedWriteDB(t, service.UnsafeDBForTest())()
+	defer swapClosedWriteDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodDelete, "/api/share?path="+absPath, nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -112,7 +112,7 @@ func TestShareList_ListDBError_500(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	defer swapClosedReadDB(t, service.UnsafeDBForTest())()
+	defer swapClosedReadDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodGet, "/api/share/list", nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -127,7 +127,7 @@ func TestShareList_RevokeAllDBError_500(t *testing.T) {
 	absPath := createShareTestFile(t, env, "err/all.md", "x")
 	_ = absPath
 
-	defer swapClosedWriteDB(t, service.UnsafeDBForTest())()
+	defer swapClosedWriteDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodDelete, "/api/share/list", map[string]any{"all": true})
 	withProjectCookie(req, env.ProjectDir)
@@ -142,7 +142,7 @@ func TestShareList_RevokeByTokenDBError_500(t *testing.T) {
 	absPath := createShareTestFile(t, env, "err/tok.md", "x")
 	_ = absPath
 
-	defer swapClosedWriteDB(t, service.UnsafeDBForTest())()
+	defer swapClosedWriteDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodDelete, "/api/share/list?token=deadbeefdeadbeefdeadbeefdeadbeef", nil)
 	withProjectCookie(req, env.ProjectDir)
@@ -157,7 +157,7 @@ func TestSharePublic_TokenLookupDBError_500(t *testing.T) {
 	defer teardown()
 	_ = env
 
-	defer swapClosedReadDB(t, service.UnsafeDBForTest())()
+	defer swapClosedReadDB(t, store.UnsafeDBForTest())()
 
 	req := newRequest(t, http.MethodGet, "/api/share/deadbeefdeadbeefdeadbeefdeadbeef/file", nil)
 	w := callHandler(ServeSharePublic, req)

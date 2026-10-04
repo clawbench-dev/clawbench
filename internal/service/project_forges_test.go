@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/forge"
 	"clawbench/internal/service"
 
@@ -28,10 +30,10 @@ func setupTestDBForProjectForges(t *testing.T) {
 	require.NoError(t, err)
 	// project_meta was folded into the projects registry (its one live column is
 	// forge_bind_opt_out there now), so the fixture needs the registry instead.
-	_, err = db.Exec(service.ProjectsDDL)
+	_, err = db.Exec(store.ProjectsDDL)
 	require.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -397,8 +399,8 @@ func TestUniqueForgeRepos_DeduplicatesAcrossProjects(t *testing.T) {
 }
 
 func TestNormalizeProjectPath_Empty(t *testing.T) {
-	assert.Equal(t, "", service.NormalizeProjectPath(""))
-	assert.Equal(t, "", service.NormalizeProjectPath("   "))
+	assert.Equal(t, "", store.NormalizeProjectPath(""))
+	assert.Equal(t, "", store.NormalizeProjectPath("   "))
 }
 
 // TestProjectForge_NilDBGuards covers the "no database" branches of every
@@ -406,7 +408,7 @@ func TestNormalizeProjectPath_Empty(t *testing.T) {
 // integration is optional: a build without a DB must still serve the rest of
 // the app.
 func TestProjectForge_NilDBGuards(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	t.Cleanup(cleanup)
 
 	assert.Nil(t, mustGet(t))
@@ -492,7 +494,7 @@ func TestIsForgeBindOptedOut_ErrorPath(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -507,7 +509,7 @@ func TestGetProjectForge_ErrorPath(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -522,7 +524,7 @@ func TestListProjectForges_ErrorPath(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -538,7 +540,7 @@ func TestUniqueForgeRepos_ErrorPath(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()

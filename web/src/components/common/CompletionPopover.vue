@@ -21,7 +21,7 @@
                类别是分类（会话/任务/议题与合并），事件是结果——两者层级不同，
                因此类别保持徽章形态，事件用纯文字标题。 -->
           <div class="completion-notify-header">
-            <AgentIcon v-if="agentBackend" :backend="agentBackend" :size="16" class="completion-notify-icon" />
+            <AgentIcon v-if="agentBackend" :backend="agentBackend" :avatar="agentAvatar" :size="16" class="completion-notify-icon" />
             <span v-if="active.kindLabel" class="completion-notify-category">{{ active.kindLabel }}</span>
             <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
             <button
@@ -64,7 +64,7 @@ import { gt } from '@/composables/useLocale'
 import { usePlatformDetect } from '@/composables/usePlatformDetect'
 
 const { active, dismiss, pauseAutoDismiss, resumeAutoDismiss } = useCompletionPopover()
-const { getAgentBackend } = useAgents()
+const { getAgentBackend, getAgentAvatar } = useAgents()
 const { isTouchPrimary } = usePlatformDetect()
 
 // 桌面端右下角滑入、移动端顶部滑下——两套动效方向相反，靠 Transition 名称切换。
@@ -74,6 +74,12 @@ const agentBackend = computed(() => {
     const agentId = active.value?.agentId
     if (!agentId) return ''
     return getAgentBackend(agentId)
+})
+
+const agentAvatar = computed(() => {
+    const agentId = active.value?.agentId
+    if (!agentId) return ''
+    return getAgentAvatar(agentId)
 })
 
 // 合并后的 forge 条目 chip 改为"N 条新变化"：一次轮询可能派发几十条，

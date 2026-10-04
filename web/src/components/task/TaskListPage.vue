@@ -33,7 +33,7 @@
         >
           <div class="task-item-main">
             <div class="task-item-header">
-              <AgentIcon class="task-item-icon" :backend="getAgentBackend(task.agentId)" :name="getAgentName(task.agentId)" :size="16" />
+              <AgentIcon class="task-item-icon" :backend="getAgentBackend(task.agentId)" :name="getAgentName(task.agentId)" :avatar="getAgentAvatar(task.agentId)" :size="16" />
               <!-- Trigger-type badge. This is the only element that names *what*
                    starts the task: the meta line below is cron-only, and the
                    summary line only ever shows a schedule or a repository. -->
@@ -117,7 +117,7 @@ import { cleanupDragGhost } from '@/utils/attachDrag'
 
 const { t } = useI18n()
 const { loadTasks, markAllTasksRead } = useTaskTab()
-const { loadAgents, getAgentBackend, getAgentName } = useAgents()
+const { loadAgents, getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 
 interface TaskItem {
   id: number

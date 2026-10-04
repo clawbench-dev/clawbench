@@ -3,6 +3,8 @@ package service_test
 import (
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -13,8 +15,8 @@ import (
 // and the accessors resolve it back to the registry's canonical path — on
 // Windows filepath.Abs("/proj/a") is a drive-rooted path, not "/proj/a".
 var (
-	tagProjectA = service.NormalizeProjectPath("/proj/a")
-	tagProjectB = service.NormalizeProjectPath("/proj/b")
+	tagProjectA = store.NormalizeProjectPath("/proj/a")
+	tagProjectB = store.NormalizeProjectPath("/proj/b")
 )
 
 // namesOf is a tiny projection helper so assertions read as tag names.
@@ -544,7 +546,7 @@ func TestListProjectTagsInUse_ExcludesArchivedSession(t *testing.T) {
 	// The link deliberately survives archiving — assert that, so the test keeps
 	// testing the predicate rather than the cleanup.
 	var links int
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM session_tag_links WHERE session_id = ?", archived,
 	).Scan(&links))
 	require.Equal(t, 1, links, "archiving must not unlink; the archived predicate is what excludes it")
@@ -673,11 +675,11 @@ func TestGetSessionsPaged_TagFilterRequiresVisibleDefinition(t *testing.T) {
 	other := helperCreateSession(t, tagProjectB, "codebuddy", "other")
 	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{{Name: "shared"}}))
 	var foreignTagID int64
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_id = ?",
-		service.ProjectIDForTest(t, tagProjectB),
+		store.ProjectIDForTest(t, tagProjectB),
 	).Scan(&foreignTagID))
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO session_tag_links (session_id, tag_id) VALUES (?, ?)", mine, foreignTagID,
 	)
 	require.NoError(t, err)
@@ -807,11 +809,11 @@ func TestFilterSessionsByTag_RequiresVisibleDefinition(t *testing.T) {
 	other := helperCreateSession(t, tagProjectB, "codebuddy", "other")
 	require.NoError(t, service.SetSessionTags(other, tagProjectB, []service.SessionTagRef{{Name: "shared"}}))
 	var foreignTagID int64
-	require.NoError(t, service.UnsafeDBForTest().QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT id FROM session_tags WHERE name = 'shared' AND scope = 'project' AND project_id = ?",
-		service.ProjectIDForTest(t, tagProjectB),
+		store.ProjectIDForTest(t, tagProjectB),
 	).Scan(&foreignTagID))
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO session_tag_links (session_id, tag_id) VALUES (?, ?)", mine, foreignTagID,
 	)
 	require.NoError(t, err)

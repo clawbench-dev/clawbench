@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	_ "clawbench/internal/ai/backends/claude"
 	_ "clawbench/internal/ai/backends/codebuddy"
@@ -36,7 +38,7 @@ func setupAgentTestEnv(t *testing.T) func() {
 	// Init in-memory SQLite
 	db, err := service.InitInMemoryDB()
 	require.NoError(t, err)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 
 	// Set up test agents directly in DB
 	codebuddyAgent := &model.Agent{
@@ -219,7 +221,7 @@ func TestAgentPatch_PreferredModel(t *testing.T) {
 
 	// Verify DB updated
 	var preferredModel string
-	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
+	err := store.UnsafeDBForTest().QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
 	require.NoError(t, err)
 	assert.Equal(t, "glm-4-flash", preferredModel)
 }
@@ -264,7 +266,7 @@ func TestAgentPatch_PreferredModel_ACPReportedModel(t *testing.T) {
 
 	// DB should reflect the update
 	var preferredModel string
-	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
+	err := store.UnsafeDBForTest().QueryRow("SELECT preferred_model FROM agents WHERE id = ?", "codebuddy").Scan(&preferredModel)
 	require.NoError(t, err)
 	assert.Equal(t, "claude-opus-4-5", preferredModel)
 }
@@ -321,7 +323,7 @@ func TestAgentPatch_PreferredThinkingEffort(t *testing.T) {
 
 	// Verify DB updated
 	var preferredThinking string
-	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_thinking_effort FROM agents WHERE id = ?", "codebuddy").Scan(&preferredThinking)
+	err := store.UnsafeDBForTest().QueryRow("SELECT preferred_thinking_effort FROM agents WHERE id = ?", "codebuddy").Scan(&preferredThinking)
 	require.NoError(t, err)
 	assert.Equal(t, "high", preferredThinking)
 }
@@ -345,7 +347,7 @@ func TestAgentPatch_AutoApprove(t *testing.T) {
 
 	// DB updated
 	var autoApprove int
-	err := service.UnsafeDBForTest().QueryRow("SELECT auto_approve FROM agents WHERE id = ?", "codebuddy").Scan(&autoApprove)
+	err := store.UnsafeDBForTest().QueryRow("SELECT auto_approve FROM agents WHERE id = ?", "codebuddy").Scan(&autoApprove)
 	require.NoError(t, err)
 	assert.Equal(t, 1, autoApprove)
 
@@ -356,7 +358,7 @@ func TestAgentPatch_AutoApprove(t *testing.T) {
 	w = callHandler(ServeAgents, req)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.False(t, model.Agents["codebuddy"].AutoApprove)
-	err = service.UnsafeDBForTest().QueryRow("SELECT auto_approve FROM agents WHERE id = ?", "codebuddy").Scan(&autoApprove)
+	err = store.UnsafeDBForTest().QueryRow("SELECT auto_approve FROM agents WHERE id = ?", "codebuddy").Scan(&autoApprove)
 	require.NoError(t, err)
 	assert.Equal(t, 0, autoApprove)
 }
@@ -374,6 +376,95 @@ func TestAgentPatch_AutoApprove_InvalidType(t *testing.T) {
 	w := callHandler(ServeAgents, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentPatch_Avatar(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	// A real DiceBear avatar shape: same-document <use href="#..."> references
+	// and url(#...) fills are legitimate and must be accepted.
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2 2"><defs><g id="t"><rect width="2" height="2" fill="#123"/></g></defs><use href="#t"/><rect width="2" height="2" fill="url(#t)"/></svg>`
+	body := map[string]any{"id": "codebuddy", "avatar": svg}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, svg, model.Agents["codebuddy"].Avatar)
+
+	var stored string
+	err := store.UnsafeDBForTest().QueryRow("SELECT avatar FROM agents WHERE id = ?", "codebuddy").Scan(&stored)
+	require.NoError(t, err)
+	assert.Equal(t, svg, stored)
+
+	// Empty string clears it back to the built-in icon.
+	body["avatar"] = ""
+	req = newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w = callHandler(ServeAgents, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Empty(t, model.Agents["codebuddy"].Avatar)
+}
+
+func TestAvatarSVGLooksSafe(t *testing.T) {
+	safe := []string{
+		`<svg viewBox="0 0 2 2"><rect width="2" height="2" fill="#123"/></svg>`,
+		// Same-document <use href="#..."> — DiceBear's real output shape.
+		`<svg xmlns="http://www.w3.org/2000/svg"><defs><g id="t"/></defs><use href="#t"/></svg>`,
+		// url(#...) fills.
+		`<svg><rect fill="url(#grad)"/></svg>`,
+	}
+	for i, s := range safe {
+		assert.True(t, avatarSVGLooksSafe([]byte(s)), "safe case %d should pass", i)
+	}
+
+	unsafe := []string{
+		``, // empty
+		`not an svg at all`,
+		`<svg><script>alert(1)</script></svg>`,
+		`<svg onload="alert(1)"></svg>`,
+		`<svg><image href="https://evil.example/x.png"/></svg>`,
+		`<svg><use href="https://evil.example/x.svg#a"/></svg>`,
+		`<svg><foreignObject/></svg>`,
+		`<svg><iframe src="x"/></svg>`,
+		`<svg><style>@import url(https://evil.example/x)</style></svg>`,
+		`<svg><a href="javascript:alert(1)"/></svg>`,
+	}
+	for i, s := range unsafe {
+		assert.False(t, avatarSVGLooksSafe([]byte(s)), "unsafe case %d should be rejected", i)
+	}
+}
+
+func TestAgentPatch_Avatar_TooLarge(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	huge := "<svg viewBox=\"0 0 2 2\">" + strings.Repeat(" ", maxAgentAvatarBytes+1) + "</svg>"
+	body := map[string]any{"id": "codebuddy", "avatar": huge}
+	req := newRequest(t, http.MethodPatch, "/api/agents", body)
+	withAuthCookie(req, model.SessionToken)
+	w := callHandler(ServeAgents, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestAgentPatch_Avatar_Unsafe(t *testing.T) {
+	defer setupAgentTestEnv(t)()
+
+	cases := map[string]string{
+		"script":        `<svg viewBox="0 0 2 2"><script>alert(1)</script></svg>`,
+		"event":         `<svg viewBox="0 0 2 2" onload="alert(1)"></svg>`,
+		"external_href": `<svg viewBox="0 0 2 2"><use href="https://evil.example/x.svg#a"/></svg>`,
+		"image":         `<svg viewBox="0 0 2 2"><image href="https://evil.example/x.png"/></svg>`,
+	}
+	for name, svg := range cases {
+		t.Run(name, func(t *testing.T) {
+			body := map[string]any{"id": "codebuddy", "avatar": svg}
+			req := newRequest(t, http.MethodPatch, "/api/agents", body)
+			withAuthCookie(req, model.SessionToken)
+			w := callHandler(ServeAgents, req)
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+		})
+	}
 }
 
 func TestAgentPatch_InvalidPreferredThinkingEffort(t *testing.T) {
@@ -506,7 +597,7 @@ func TestAgentPatch_PreferredMode(t *testing.T) {
 
 	// Verify DB updated
 	var preferredMode string
-	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
+	err := store.UnsafeDBForTest().QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
 	require.NoError(t, err)
 	assert.Equal(t, "code", preferredMode)
 }
@@ -552,7 +643,7 @@ func TestAgentPatch_ClearPreferredMode(t *testing.T) {
 
 	// Verify DB cleared
 	var preferredMode string
-	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
+	err := store.UnsafeDBForTest().QueryRow("SELECT preferred_mode FROM agents WHERE id = ?", "codebuddy").Scan(&preferredMode)
 	require.NoError(t, err)
 	assert.Equal(t, "", preferredMode)
 }
@@ -591,7 +682,7 @@ func TestAgentPatch_BothFields(t *testing.T) {
 
 	// Verify DB updated
 	var preferredModel, preferredThinking string
-	err := service.UnsafeDBForTest().QueryRow("SELECT preferred_model, preferred_thinking_effort FROM agents WHERE id = ?", "claude").Scan(&preferredModel, &preferredThinking)
+	err := store.UnsafeDBForTest().QueryRow("SELECT preferred_model, preferred_thinking_effort FROM agents WHERE id = ?", "claude").Scan(&preferredModel, &preferredThinking)
 	require.NoError(t, err)
 	assert.Equal(t, "claude-sonnet-4-6", preferredModel)
 	assert.Equal(t, "xhigh", preferredThinking)
@@ -1012,7 +1103,7 @@ func TestServeAgentRefreshModels_SaveAgentDBError(t *testing.T) {
 	defer func() { model.DiscoverWithDetail = origDiscover }()
 
 	// Delete agents table to cause SaveAgent to fail
-	_, _ = service.UnsafeDBForTest().Exec("DROP TABLE agents")
+	_, _ = store.UnsafeDBForTest().Exec("DROP TABLE agents")
 
 	req := newRequest(t, http.MethodPost, "/api/agents/codebuddy/refresh-models", nil)
 	withAuthCookie(req, model.SessionToken)
@@ -1036,7 +1127,7 @@ func TestServeAgentRefreshModels_CLINotFoundSpecificError(t *testing.T) {
 		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["fake-cli"])
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["fake-cli"]))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), model.Agents["fake-cli"]))
 
 	// Override discovery to return nil — will hit the "no models" path
 	origDiscover := model.DiscoverWithDetail
@@ -1062,7 +1153,7 @@ func TestAgentPatch_NoThinkingEffortLevels(t *testing.T) {
 		Models:  []model.AgentModel{{ID: "m1", Name: "Model 1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["nolevels"])
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["nolevels"]))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), model.Agents["nolevels"]))
 
 	body := map[string]any{
 		"id":                        "nolevels",
@@ -1085,7 +1176,7 @@ func TestAgentPatch_PatchAgentDBError(t *testing.T) {
 	_ = closedDB.Close()
 
 	// Replace service.DB with the closed DB
-	cleanup := service.SetDBForTest(closedDB, closedDB)
+	cleanup := store.SetDBForTest(closedDB, closedDB)
 	defer cleanup()
 
 	body := map[string]any{
@@ -1120,7 +1211,7 @@ func TestAgentPatch_TransportSwitchToCLI(t *testing.T) {
 
 	// Verify DB updated
 	var transport string
-	err := service.UnsafeDBForTest().QueryRow("SELECT transport FROM agents WHERE id = ?", "claude").Scan(&transport)
+	err := store.UnsafeDBForTest().QueryRow("SELECT transport FROM agents WHERE id = ?", "claude").Scan(&transport)
 	require.NoError(t, err)
 	assert.Equal(t, "cli", transport)
 }
@@ -1152,7 +1243,7 @@ func TestAgentPatch_TransportACPNotAllowedForNoACPAgent(t *testing.T) {
 		Models:  []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["noacp"])
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["noacp"]))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), model.Agents["noacp"]))
 
 	body := map[string]any{
 		"id":        "noacp",
@@ -1180,7 +1271,7 @@ func TestAgentPatch_TransportCLINotAllowedForACPOnlyAgent(t *testing.T) {
 		Models:      []model.AgentModel{{ID: "m1", Name: "M1", Default: true}},
 	}
 	model.AgentList = append(model.AgentList, model.Agents["acp-only"])
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), model.Agents["acp-only"]))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), model.Agents["acp-only"]))
 
 	body := map[string]any{
 		"id":        "acp-only",
@@ -1236,7 +1327,7 @@ func TestServeAgentsGet_ACPStateFromPoolCache(t *testing.T) {
 	}
 	model.Agents["acp-agent"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), acpAgent))
 
 	// Populate agent-level capabilities in the registry
 	ai.GetAgentCapabilityRegistry().UpdateModes("acp-agent", []ai.ModeDef{{ID: "code", Name: "Code"}, {ID: "ask", Name: "Ask"}})
@@ -1330,7 +1421,7 @@ func TestAgentPatch_Name(t *testing.T) {
 	assert.Equal(t, "My Assistant", model.Agents["codebuddy"].Name)
 
 	var name string
-	err := service.UnsafeDBForTest().QueryRow("SELECT name FROM agents WHERE id = ?", "codebuddy").Scan(&name)
+	err := store.UnsafeDBForTest().QueryRow("SELECT name FROM agents WHERE id = ?", "codebuddy").Scan(&name)
 	require.NoError(t, err)
 	assert.Equal(t, "My Assistant", name)
 }
@@ -1417,7 +1508,7 @@ func TestServeAgentsGet_PrefetchACPStateForUncachedAgent(t *testing.T) {
 	}
 	model.Agents["acp-prefetch"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), acpAgent))
 
 	// Ensure the AcpCommand is registered in BackendRegistry so prefetch is triggered
 	spec := model.FindSpecByBackend("acp-prefetch")
@@ -1512,7 +1603,7 @@ func TestServeAgentsGet_ACPModelListIsResolvedIntoModels(t *testing.T) {
 	}
 	model.Agents["acp-ml-override"] = acpAgent
 	model.AgentList = append(model.AgentList, acpAgent)
-	require.NoError(t, service.SaveAgent(service.UnsafeDBForTest(), acpAgent))
+	require.NoError(t, service.SaveAgent(store.UnsafeDBForTest(), acpAgent))
 
 	// Inject agent-level models in the registry (as if ACP had reported them).
 	// "cli-model" is deliberately absent: the ACP runtime says it cannot run it.
@@ -1977,7 +2068,7 @@ func TestAgentRefreshModels_PersistsTheUpdatedList(t *testing.T) {
 
 	// The database row must hold the discovered model, not the pre-refresh list.
 	var modelsJSON string
-	err := service.UnsafeDBForTest().
+	err := store.UnsafeDBForTest().
 		QueryRow("SELECT models FROM agents WHERE id = ?", "codebuddy").Scan(&modelsJSON)
 	require.NoError(t, err)
 

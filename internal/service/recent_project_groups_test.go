@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -214,7 +216,7 @@ func TestGetRecentProjectGroups_DBQueryError(t *testing.T) {
 	// than an empty list (the frontend distinguishes the two).
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	require.NoError(t, db.Close())
 

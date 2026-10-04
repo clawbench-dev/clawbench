@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -173,7 +175,7 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 	sid, err := service.CreateSession(env.ProjectDir, "claude", "Test", agentID, "", "default", "chat")
 	require.NoError(t, err)
 	service.UpdateExternalSessionID(sid, "acp-1")
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', 'existing', 'm1')",
 		env.ProjectDir, sid,
 	)
@@ -205,7 +207,7 @@ func TestServeACPSyncSession_IncrementalMerge(t *testing.T) {
 	assert.Equal(t, 1, resp.Added)
 
 	var cnt int
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
 	assert.Equal(t, 2, cnt)
 }
 
@@ -226,12 +228,12 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 	service.UpdateExternalSessionID(sid, "acp-1")
 
 	// Live-created messages: EMPTY external_message_id.
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'user', '你叫什么名字', '')",
 		env.ProjectDir, sid,
 	)
 	require.NoError(t, err)
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content, external_message_id) VALUES (?, 'claude', ?, 'assistant', '我叫 CodeBuddy Code，你的 AI 编程助手。', '')",
 		env.ProjectDir, sid,
 	)
@@ -273,12 +275,12 @@ func TestServeACPSyncSession_NoDuplicateOfLiveMessages(t *testing.T) {
 
 	// Total = 2 live + 2 new = 4 (no duplicates).
 	var cnt int
-	_ = service.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sid).Scan(&cnt)
 	assert.Equal(t, 4, cnt)
 
 	// The new messages are present.
 	var hasNew int
-	_ = service.ReadDB().QueryRow(
+	_ = store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND content LIKE '%你几岁了%'", sid,
 	).Scan(&hasNew)
 	assert.Equal(t, 1, hasNew)

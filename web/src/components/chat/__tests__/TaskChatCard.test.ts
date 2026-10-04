@@ -69,6 +69,7 @@ function mountCard(props: Record<string, unknown> = {}) {
       deleted: false,
       getAgentBackend: () => 'acp',
       getAgentName: () => 'test-agent',
+      getAgentAvatar: () => '',
       ...props,
     },
     global: {

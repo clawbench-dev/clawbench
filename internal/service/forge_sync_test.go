@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/forge"
 	"clawbench/internal/service"
 
@@ -24,12 +26,12 @@ func setupTestDBForForgeSync(t *testing.T) *sql.DB {
 
 	// ProjectsDDL first: project_forges is keyed by project_id, and the service
 	// functions under test resolve paths through the registry.
-	for _, ddl := range []string{service.ProjectsDDL, service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
+	for _, ddl := range []string{store.ProjectsDDL, service.ProjectForgesDDL, service.ForgeItemsDDL, service.ForgeSyncStateDDL, service.ForgeEventDDL, service.ForgePipelineRunsDDL} {
 		_, err := db.Exec(ddl)
 		require.NoError(t, err)
 	}
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -395,7 +397,7 @@ func TestPruneForgeEvents_KeepsUnread(t *testing.T) {
 // TestSchema_ForgeSyncTablesExist verifies InitDB creates the sync tables.
 func TestSchema_ForgeSyncTablesExist(t *testing.T) {
 	setupTestDBForForgeSync(t)
-	db := service.ReadDB()
+	db := store.ReadDB()
 	for _, table := range []string{"forge_items", "forge_sync_state", "forge_events"} {
 		var name string
 		err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
@@ -407,7 +409,7 @@ func TestSchema_ForgeSyncTablesExist(t *testing.T) {
 // watermark and event accessors. The forge integration is optional, so every
 // one of them must be a silent no-op rather than a panic.
 func TestForgeSync_NilDBGuards(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	t.Cleanup(cleanup)
 
 	repo := testRepoKey()
@@ -455,7 +457,7 @@ func TestForgeSync_QueryErrors(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	db.SetMaxOpenConns(1)
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		_ = db.Close()
@@ -584,7 +586,7 @@ func TestForgeSyncer_WritesItemKey(t *testing.T) {
 	require.NoError(t, syncer.SyncRepo(context.Background(), binding))
 
 	var key string
-	require.NoError(t, service.ReadDB().QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		`SELECT item_key FROM forge_events WHERE number = 1`,
 	).Scan(&key))
 	assert.Equal(t, "issue/1", key,
@@ -617,7 +619,7 @@ func TestForgeSyncer_WritesPipelineItemKey(t *testing.T) {
 	provider.runs = append(provider.runs, pipelineRun(101, forge.PipelineSuccess, t1))
 	require.NoError(t, syncer.SyncRepoWithOptions(context.Background(), testBinding(), pipelineSyncOptions()))
 
-	rows, err := service.ReadDB().Query(
+	rows, err := store.ReadDB().Query(
 		`SELECT item_key FROM forge_events WHERE item_type = 'pipeline' ORDER BY item_key`,
 	)
 	require.NoError(t, err)

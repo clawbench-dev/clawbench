@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -19,7 +21,7 @@ import (
 // symlinked ancestor.
 func canon(t *testing.T, p string) string {
 	t.Helper()
-	return service.NormalizeProjectPath(p)
+	return store.NormalizeProjectPath(p)
 }
 
 // makeRepo creates a normal clone layout: <dir>/.git as a directory.

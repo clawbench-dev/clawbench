@@ -11,6 +11,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/push/dingtalk"
@@ -290,16 +292,16 @@ func TestCancelSession_CancelsContextAndLeavesQueueToTheRun(t *testing.T) {
 	require.NoError(t, err)
 	_, err = db.Exec(drainTestSchema)
 	require.NoError(t, err)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer func() {
 		cleanup()
 		db.Close()
 	}()
 	// The fixture references projects by path literals in SQL subqueries.
-	SeedTestProjectsForTest(t)
+	store.SeedTestProjectsForTest(t)
 
 	sessionID := "session-cancel-queue"
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'Cancel')", sessionID, NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'Cancel')", sessionID, store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	ctx, created := TryClaimSessionRun(sessionID)
@@ -372,7 +374,7 @@ func TestForceCancelSession(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(drainTestSchema)
 	require.NoError(t, err)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer func() {
 		cleanup()
 		_ = db.Close()
@@ -555,7 +557,7 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	// The projects registry: rows below store project ids, and the resolver
 	// registers paths through it.
-	_, err = db.Exec(ProjectsDDL)
+	_, err = db.Exec(store.ProjectsDDL)
 	if err != nil {
 		t.Fatalf("create projects table: %v", err)
 	}
@@ -583,7 +585,7 @@ func setupChatTestDB(t *testing.T) *sql.DB {
 func insertTestMessage(t *testing.T, db *sql.DB, sessionID, role, content string) {
 	t.Helper()
 	_, err := db.Exec("INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, ?, ?, ?, 'claude', 0)",
-		ProjectIDForTest(t, "/test"), role, content, sessionID)
+		store.ProjectIDForTest(t, "/test"), role, content, sessionID)
 	if err != nil {
 		t.Fatalf("insert message: %v", err)
 	}
@@ -591,7 +593,7 @@ func insertTestMessage(t *testing.T, db *sql.DB, sessionID, role, content string
 
 func TestGetSessionResponsePreview_WithTextBlock(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	content := model.ContentBlock{Type: "text", Text: "你好，这是AI的回复内容"}
@@ -606,7 +608,7 @@ func TestGetSessionResponsePreview_WithTextBlock(t *testing.T) {
 
 func TestGetSessionResponsePreview_Truncation(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// responsePreviewMaxRunes+1 runes — should be truncated
@@ -627,7 +629,7 @@ func TestGetSessionResponsePreview_Truncation(t *testing.T) {
 // fallback path truncates when the best text block exceeds responsePreviewMaxRunes.
 func TestGetSessionResponsePreview_FallbackTruncation(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// [text("very long..."), tool_use] — no text AFTER tool_use, falls back to longest text block
@@ -646,7 +648,7 @@ func TestGetSessionResponsePreview_FallbackTruncation(t *testing.T) {
 
 func TestGetSessionResponsePreview_NoAssistantMessage(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	insertTestMessage(t, db, "session-preview-3", "user", "只有用户消息")
@@ -657,7 +659,7 @@ func TestGetSessionResponsePreview_NoAssistantMessage(t *testing.T) {
 
 func TestGetSessionResponsePreview_NoMessages(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	result := getSessionResponsePreview("session-nonexistent")
@@ -666,7 +668,7 @@ func TestGetSessionResponsePreview_NoMessages(t *testing.T) {
 
 func TestGetSessionResponsePreview_SkipsToolUseBlocks(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	toolBlock := model.ContentBlock{Type: "tool_use", Name: "Read", ID: "tool-1"}
@@ -682,7 +684,7 @@ func TestGetSessionResponsePreview_SkipsToolUseBlocks(t *testing.T) {
 
 func TestGetSessionResponsePreview_PrefersTextAfterLastToolUse(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Scenario: [text("Reading file..."), tool_use, text("Here is the analysis")]
@@ -701,7 +703,7 @@ func TestGetSessionResponsePreview_PrefersTextAfterLastToolUse(t *testing.T) {
 
 func TestGetSessionResponsePreview_MultipleToolUses(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Scenario: [tool_use, text("intermediate"), tool_use, text("final answer")]
@@ -721,7 +723,7 @@ func TestGetSessionResponsePreview_MultipleToolUses(t *testing.T) {
 
 func TestGetSessionResponsePreview_OnlyToolUses(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Only tool_use blocks, no text after — should return empty
@@ -738,7 +740,7 @@ func TestGetSessionResponsePreview_OnlyToolUses(t *testing.T) {
 
 func TestGetSessionResponsePreview_TextBeforeToolOnly(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// [text("thinking..."), tool_use] — no text AFTER tool_use, falls back to longest text block
@@ -757,7 +759,7 @@ func TestGetSessionResponsePreview_TextBeforeToolOnly(t *testing.T) {
 
 func TestGetSessionResponsePreview_RealData_TextThenToolThenSummary(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Real pattern from session 93c986e1, message id=1063:
@@ -781,7 +783,7 @@ func TestGetSessionResponsePreview_RealData_TextThenToolThenSummary(t *testing.T
 
 func TestGetSessionResponsePreview_RealData_ToolThenWorktreeReport(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Real pattern from session dd1968cf, message id=1059:
@@ -806,7 +808,7 @@ func TestGetSessionResponsePreview_RealData_ToolThenWorktreeReport(t *testing.T)
 
 func TestGetSessionResponsePreview_RealData_MultiToolInterleavedWithText(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Real pattern from session da4003a0, message id=1047:
@@ -837,7 +839,7 @@ func TestGetSessionResponsePreview_RealData_MultiToolInterleavedWithText(t *test
 
 func TestGetSessionResponsePreview_RealData_ThinkingThenToolThenIssueLink(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Real pattern from session bb92e480, message id=1039:
@@ -858,7 +860,7 @@ func TestGetSessionResponsePreview_RealData_ThinkingThenToolThenIssueLink(t *tes
 
 func TestGetSessionResponsePreview_RealData_ThreeToolsThenWorktreeReport(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Real pattern from session bb92e480, message id=1055:
@@ -884,7 +886,7 @@ func TestGetSessionResponsePreview_RealData_ThreeToolsThenWorktreeReport(t *test
 
 func TestGetSessionResponsePreview_RealData_PureTextSummary(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Real pattern from session id=726 (no tool_use at all):
@@ -906,7 +908,7 @@ func TestGetSessionResponsePreview_RealData_PureTextSummary(t *testing.T) {
 
 func TestGetSessionResponsePreview_UsesLastAssistantMessage(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	firstContent := model.ContentBlock{Type: "text", Text: "第一次回复"}
@@ -927,7 +929,7 @@ func TestGetSessionResponsePreview_UsesLastAssistantMessage(t *testing.T) {
 
 func TestGetSessionResponsePreview_InvalidJSON(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	insertTestMessage(t, db, "session-preview-6", "user", "问题")
@@ -939,7 +941,7 @@ func TestGetSessionResponsePreview_InvalidJSON(t *testing.T) {
 
 func TestGetSessionResponsePreview_NoTextBlocks(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	toolBlock := model.ContentBlock{Type: "tool_use", Name: "Read", ID: "tool-1"}
@@ -954,7 +956,7 @@ func TestGetSessionResponsePreview_NoTextBlocks(t *testing.T) {
 
 func TestGetSessionResponsePreview_ExactMaxRunes(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Exactly responsePreviewMaxRunes runes — should NOT be truncated
@@ -972,7 +974,7 @@ func TestGetSessionResponsePreview_ExactMaxRunes(t *testing.T) {
 
 func TestGetSessionResponsePreview_OneOverMaxRunes(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// responsePreviewMaxRunes+1 runes — should be truncated to maxRunes + …
@@ -1084,7 +1086,7 @@ func TestGetSessionResponsePreviewRaw_SkipsInvalidAndEmptyBlocks(t *testing.T) {
 
 func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Insert assistant message with Markdown content for preview
@@ -1098,7 +1100,7 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
-		"session-emit-1", ProjectIDForTest(t, "/home/user/test-project"), "codebuddy", "Test Session", "agent-1")
+		"session-emit-1", store.ProjectIDForTest(t, "/home/user/test-project"), "codebuddy", "Test Session", "agent-1")
 	require.NoError(t, err)
 
 	// Set up ws manager and a subscriber to capture the event
@@ -1125,13 +1127,13 @@ func TestEmitSessionEvent_CompletedWithPreview(t *testing.T) {
 	assert.Equal(t, "session-emit-1", data.SessionID)
 	assert.Equal(t, "**加粗**和`代码`以及[链接](http://example.com)", data.ResponsePreview)
 	assert.Equal(t, "加粗和代码以及链接", data.ResponsePreviewPlain)
-	assert.Equal(t, NormalizeProjectPath("/home/user/test-project"), data.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/home/user/test-project"), data.ProjectPath)
 	assert.Equal(t, "agent-1", data.AgentID)
 }
 
 func TestEmitSessionEvent_RunningNoPreview(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -1172,7 +1174,7 @@ func TestEmitSessionEvent_NilManager(t *testing.T) {
 // completion path's EmitSessionPushNotification).
 func TestEmitSessionEventWSOnly_BroadcastNoPush(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	mgr := ws.NewManagerForTest()
@@ -1221,7 +1223,7 @@ func TestCancelSession_RunnerWithoutCancelFuncIsCleared(t *testing.T) {
 	db.SetMaxOpenConns(1)
 	_, err = db.Exec(drainTestSchema)
 	require.NoError(t, err)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer func() {
 		cleanup()
 		_ = db.Close()
@@ -1287,14 +1289,14 @@ func TestSetSessionRunning_DoubleStopWithSkipEvent_NoDuplicateBroadcast(t *testi
 
 func TestEmitTaskEvent_WithSessionIDAndProjectPath(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Insert a session row with an agent so the event carries agent_id
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, ?, ?, ?)",
-		"session-task-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "test task", "task-agent-1")
+		"session-task-1", store.ProjectIDForTest(t, "/home/user/project"), "codebuddy", "test task", "task-agent-1")
 	require.NoError(t, err)
 
 	mgr := ws.NewManagerForTest()
@@ -1360,7 +1362,7 @@ func TestEmitTaskEvent_NilManager(t *testing.T) {
 
 // --- executeTask tests (covers emitTaskEvent call sites in scheduler.go) ---
 
-const execTaskSchema = ProjectsDDL + `
+const execTaskSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
@@ -1439,7 +1441,7 @@ func setupExecTaskDB(t *testing.T) *sql.DB {
 	// The fixture references projects by path literals in SQL subqueries. Seeded
 	// on the local handle: this helper returns before any caller installs the DB
 	// globally, so the package-level seeding helper would use a stale handle.
-	SeedTestProjectsOnDB(t, db)
+	store.SeedTestProjectsOnDB(t, db)
 	t.Cleanup(func() { db.Close() })
 	return db
 }
@@ -1447,7 +1449,7 @@ func setupExecTaskDB(t *testing.T) *sql.DB {
 func TestExecuteTask_BackendCreationFailed(t *testing.T) {
 	// Set up DB with scheduler schema
 	db := setupExecTaskDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Set up ws manager to capture events
@@ -1517,7 +1519,7 @@ func TestExecuteTask_ExecuteStreamError(t *testing.T) {
 	// When backend creation succeeds but ExecuteStream fails,
 	// executeTask should emit "failed" events (running + failed) and return.
 	db := setupExecTaskDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Set up ws manager to capture events
@@ -1605,7 +1607,7 @@ func TestExecuteTask_AgentNotFound(t *testing.T) {
 	// When the agent is not found in model.Agents, executeTask should
 	// pause the task and return without creating a session.
 	db := setupExecTaskDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Set up ws manager
@@ -1697,7 +1699,7 @@ func TestExecuteTask_SessionExecutor_CompletedWithTerminalEvent(t *testing.T) {
 		clawbench_session_id TEXT DEFAULT '',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)`)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Create a session for this execution
@@ -1766,7 +1768,7 @@ func TestExecuteTask_SessionExecutor_ChannelCloseNoTerminal(t *testing.T) {
 	// Simulate CLI crash: channel closes without "done"/"error" event.
 	// executeTask checks !ReceivedTerminal → marks as failed (line 726-736).
 	db := setupExecTaskDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID, err := CreateSession("/test-project", "test", "Crash Task", "test", "", "default", "scheduled")
@@ -1808,7 +1810,7 @@ func TestExecuteTask_SessionExecutor_ContextCancelled(t *testing.T) {
 	// Simulate context cancellation during execution.
 	// executeTask checks ctx.Err() == context.Canceled (line 710-720).
 	db := setupExecTaskDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID, err := CreateSession("/test-project", "test", "Cancel Task", "test", "", "default", "scheduled")
@@ -1853,14 +1855,14 @@ func TestExecuteTask_SessionExecutor_ContextCancelled(t *testing.T) {
 
 func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Insert a session row so GetSessionProjectPath can look it up
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
-		"session-pp-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Test Session")
+		"session-pp-1", store.ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Test Session")
 	require.NoError(t, err)
 
 	mgr := ws.NewManagerForTest()
@@ -1886,7 +1888,7 @@ func TestEmitSessionEvent_PermissionPendingWithToolName(t *testing.T) {
 	assert.Equal(t, "session-pp-1", data.SessionID)
 	assert.Equal(t, "WriteTextFile", data.ToolName)
 	assert.Equal(t, `{"command":"echo hello"}`, data.ToolInput)
-	assert.Equal(t, NormalizeProjectPath("/home/user/project"), data.ProjectPath)
+	assert.Equal(t, store.NormalizeProjectPath("/home/user/project"), data.ProjectPath)
 }
 
 // --- triggerChatSummarization with WS broadcast ---
@@ -1905,7 +1907,7 @@ func TestTriggerChatSummarization_BroadcastsWSUpdate(t *testing.T) {
 
 	// Insert session + messages
 	sessionID := "test-simple-broadcast"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, store.NormalizeProjectPath("/test"))
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (200, '/test', 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"Here's the answer."}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (201, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
@@ -1935,7 +1937,7 @@ func TestTriggerChatSummarization_SaveSummaryError(t *testing.T) {
 	_, _ = db.Exec("DROP TABLE summaries")
 
 	sessionID := "test-simple-save-error"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, store.NormalizeProjectPath("/test"))
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (500, '/test', 'user', 'hello', ?, 0)", sessionID)
 	assistantContent := `{"blocks":[{"type":"text","text":"The answer is 42."}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (501, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
@@ -2091,7 +2093,7 @@ func TestGetRunningSessionIDs_AfterRemoval(t *testing.T) {
 // --- finalizeOrphanedStreamingMessages tests ---
 
 func TestFinalizeOrphanedStreamingMessages_NilDB(t *testing.T) {
-	cleanup := SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	// Should return early without panic
@@ -2102,7 +2104,7 @@ func TestFinalizeOrphanedStreamingMessages_NilDB(t *testing.T) {
 
 func TestFinalizeOrphanedStreamingMessages_NoOrphans(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// No streaming messages → should return without error
@@ -2113,7 +2115,7 @@ func TestFinalizeOrphanedStreamingMessages_NoOrphans(t *testing.T) {
 
 func TestFinalizeOrphanedStreamingMessages_WithOrphan(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-1"
@@ -2159,7 +2161,7 @@ func TestFinalizeOrphanedStreamingMessages_WithOrphan(t *testing.T) {
 
 func TestFinalizeOrphanedStreamingMessages_WithAlreadyCancelledContent(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-cancelled"
@@ -2196,7 +2198,7 @@ func TestFinalizeOrphanedStreamingMessages_WithAlreadyCancelledContent(t *testin
 
 func TestFinalizeOrphanedStreamingMessages_WithInvalidJSON(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-bad-json"
@@ -2260,7 +2262,7 @@ func ensureChatThinkingTable(t *testing.T, db *sql.DB) {
 func TestFinalizeOrphanedStreamingMessages_ThinkingBackfilled(t *testing.T) {
 	db := setupChatTestDB(t)
 	ensureChatThinkingTable(t, db)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-thinking"
@@ -2321,7 +2323,7 @@ func TestFinalizeOrphanedStreamingMessages_ThinkingBackfilled(t *testing.T) {
 func TestFinalizeOrphanedStreamingMessages_ThinkingAlreadySlimmed(t *testing.T) {
 	db := setupChatTestDB(t)
 	ensureChatThinkingTable(t, db)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-thinking-slim"
@@ -2370,7 +2372,7 @@ func TestFinalizeOrphanedStreamingMessages_ThinkingAlreadySlimmed(t *testing.T) 
 
 func TestFinalizeOrphanedStreamingMessages_UserCancelNoWarning(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-user-cancel"
@@ -2408,7 +2410,7 @@ func TestFinalizeOrphanedStreamingMessages_UserCancelNoWarning(t *testing.T) {
 
 func TestFinalizeOrphanedStreamingMessages_MultipleOrphans(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-orphan-multi"
@@ -2447,7 +2449,7 @@ func TestSetSessionRunning_False_NoOrphanFinalization(t *testing.T) {
 	defer cleanupActiveSessions()
 
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-no-auto-orphan"
@@ -2481,7 +2483,7 @@ func TestFinalizeOrphanedMessages_ExplicitCall(t *testing.T) {
 	defer cleanupActiveSessions()
 
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-explicit-orphan"
@@ -2514,7 +2516,7 @@ func TestFinalizeOrphanedMessages_UserCancelNoWarning(t *testing.T) {
 	defer cleanupActiveSessions()
 
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	sessionID := "session-user-cancel-explicit"
@@ -2557,7 +2559,7 @@ func TestTriggerChatSummarization_AlwaysExtracts(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-enabled-always"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, store.NormalizeProjectPath("/test"))
 	assistantContent := `{"blocks":[{"type":"text","text":"Answer"}]}`
 	_, _ = db.Exec("INSERT INTO chat_history (id, project_id, role, content, session_id, streaming) VALUES (601, '/test', 'assistant', ?, ?, 0)", assistantContent, sessionID)
 
@@ -2603,7 +2605,7 @@ func TestSummarizeSimple_NilWSManager(t *testing.T) {
 	defer ws.SetManagerForTest(origMgr)
 
 	sessionID := "test-simple-nil-ws"
-	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, NormalizeProjectPath("/test"))
+	_, _ = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'claude', 'test')", sessionID, store.NormalizeProjectPath("/test"))
 
 	blocks := []model.ContentBlock{{Type: "text", Text: "The answer."}}
 
@@ -2637,7 +2639,7 @@ func TestSummarizeSimple_EmptyExtractedText(t *testing.T) {
 
 func TestRespondPermission_SessionNotFound(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// No session in DB — GetSessionAgentID returns ""
@@ -2648,13 +2650,13 @@ func TestRespondPermission_SessionNotFound(t *testing.T) {
 
 func TestRespondPermission_SessionNotRunning(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Create a session with an agent_id
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-1", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-1", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	// No ACP connection — GetConn returns nil
@@ -2670,12 +2672,12 @@ func TestRespondPermission_PermPrefixStripped(t *testing.T) {
 	// but we can verify the prefix stripping by checking the error message
 	// includes the stripped tool call ID.
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-prefix", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	// ToolCallID with perm_ prefix — the function will fail at GetConn (no ACP conn)
@@ -2690,14 +2692,14 @@ func TestRespondPermission_PermPrefixStripped(t *testing.T) {
 
 func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Create a session with a title
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
-		"session-cancelled-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Cancelled Session")
+		"session-cancelled-1", store.ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Cancelled Session")
 	require.NoError(t, err)
 
 	mgr := ws.NewManagerForTest()
@@ -2725,7 +2727,7 @@ func TestEmitSessionEvent_CancelledWithSessionTitle(t *testing.T) {
 
 func TestEmitSessionEvent_Completed_DingTalkStarted(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Create pending_events + chat_sessions tables
@@ -2745,7 +2747,7 @@ func TestEmitSessionEvent_Completed_DingTalkStarted(t *testing.T) {
 	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
-		"session-dt-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "DT Test")
+		"session-dt-1", store.ProjectIDForTest(t, "/home/user/project"), "codebuddy", "DT Test")
 	require.NoError(t, err)
 
 	content := model.ContentBlock{Type: "text", Text: "AI response"}
@@ -2787,7 +2789,7 @@ func setupPushNotificationTest(t *testing.T, sessionID string) *sql.DB {
 	t.Cleanup(func() { terminalPushDone.Delete(sessionID) })
 
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 
 	_, err := db.Exec(`
@@ -3080,7 +3082,7 @@ func TestGetSessionResponsePreview_QueryError(t *testing.T) {
 	require.NoError(t, err)
 	defer db.Close()
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// No chat_history table — query will fail, triggering the slog.Debug path
@@ -3092,7 +3094,7 @@ func TestGetSessionResponsePreview_QueryError(t *testing.T) {
 
 func TestFinalizeOrphanedStreamingMessages_QueryError(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, _ = db.Exec("DROP TABLE chat_history")
@@ -3143,7 +3145,7 @@ func TestFinalizeOrphanedStreamingMessages_ScanError(t *testing.T) {
 	// Instead, let's just verify the function works with normal data and doesn't panic.
 	// The scan error path (207-208) is a defensive check that's hard to trigger with SQLite.
 	// It exists for robustness (e.g., if a migration changes column types).
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	assert.NotPanics(t, func() {
@@ -3184,7 +3186,7 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	cleanup := SetDBForTest(writeDB, readDB)
+	cleanup := store.SetDBForTest(writeDB, readDB)
 	defer cleanup()
 
 	writeDB.Close()
@@ -3198,12 +3200,12 @@ func TestFinalizeOrphanedStreamingMessages_WriteError(t *testing.T) {
 
 func TestRespondPermission_NilClient(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-nil-client", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	mgr := ai.GetACPConnManager()
@@ -3220,12 +3222,12 @@ func TestRespondPermission_NilClient(t *testing.T) {
 
 func TestRespondPermission_EmptyAcpSID(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-acpsid", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3244,12 +3246,12 @@ func TestRespondPermission_EmptyAcpSID(t *testing.T) {
 
 func TestRespondPermission_NoPendingPermission(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-no-pending", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3268,12 +3270,12 @@ func TestRespondPermission_NoPendingPermission(t *testing.T) {
 
 func TestRespondPermission_ShortToolCallID_NoPrefixStrip(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-short-id", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3292,12 +3294,12 @@ func TestRespondPermission_ShortToolCallID_NoPrefixStrip(t *testing.T) {
 
 func TestRespondPermission_PermPrefixStrippedThenNoPending(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-strip", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-strip", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3316,12 +3318,12 @@ func TestRespondPermission_PermPrefixStrippedThenNoPending(t *testing.T) {
 
 func TestRespondPermission_Success(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-ok", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-ok", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3342,12 +3344,12 @@ func TestRespondPermission_Success(t *testing.T) {
 
 func TestRespondPermission_Cancelled(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	_, err := db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
-	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel", NormalizeProjectPath("/test"))
+	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, (SELECT id FROM projects WHERE path = ?), 'codebuddy', 'test', 'codebuddy')", "session-perm-cancel", store.NormalizeProjectPath("/test"))
 	require.NoError(t, err)
 
 	acpClient := ai.NewClawBenchACPClient()
@@ -3370,7 +3372,7 @@ func TestRespondPermission_Cancelled(t *testing.T) {
 
 func TestEmitSessionEvent_Completed_FeishuStarted(t *testing.T) {
 	db := setupChatTestDB(t)
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	defer cleanup()
 
 	// Create pending_events + chat_sessions tables
@@ -3390,7 +3392,7 @@ func TestEmitSessionEvent_Completed_FeishuStarted(t *testing.T) {
 	_, err = db.Exec("CREATE TABLE IF NOT EXISTS chat_sessions (id TEXT PRIMARY KEY, project_id INTEGER, backend TEXT, title TEXT, agent_id TEXT DEFAULT '', external_session_id TEXT DEFAULT '', archived INTEGER NOT NULL DEFAULT 0)")
 	require.NoError(t, err)
 	_, err = db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, ?, ?)",
-		"session-feishu-1", ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Feishu Test")
+		"session-feishu-1", store.ProjectIDForTest(t, "/home/user/project"), "codebuddy", "Feishu Test")
 	require.NoError(t, err)
 
 	content := model.ContentBlock{Type: "text", Text: "AI response"}

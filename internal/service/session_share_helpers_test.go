@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 
 	"github.com/stretchr/testify/assert"
@@ -103,7 +105,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		require.NoError(t, err)
 	}
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db
 }
@@ -530,7 +532,7 @@ func TestSessionShareReads_ClosedDBSurfacesErrors(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 
 	_, err = GetSessionMessagesForSelection("s1")

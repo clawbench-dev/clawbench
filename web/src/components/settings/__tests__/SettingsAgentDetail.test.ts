@@ -89,6 +89,20 @@ vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
+// The picker lazily imports DiceBear; stub the heavy deps so this file does not
+// pull the library (and its ESM/JSON chain) into jsdom.
+vi.mock('@/utils/lazyAvatar', () => ({
+  AVATAR_STYLES: ['bottts', 'identicon'],
+  getAvatarLib: vi.fn().mockResolvedValue({}),
+  renderAvatar: vi.fn().mockResolvedValue('<svg viewBox="0 0 2 2"></svg>'),
+}))
+vi.mock('@/components/common/AgentIcon.vue', () => ({
+  default: { name: 'AgentIcon', props: ['backend', 'name', 'size', 'avatar'], template: '<span class="agent-icon-stub" />' },
+}))
+vi.mock('@/utils/appLog', () => ({
+  appLog: { d: vi.fn(), i: vi.fn(), w: vi.fn(), e: vi.fn() },
+}))
+
 import SettingsAgentDetail from '@/components/settings/SettingsAgentDetail.vue'
 
 const baseAgent = {
@@ -146,6 +160,39 @@ describe('SettingsAgentDetail', () => {
     // The component should render SettingsItem stubs for each item
     const items = wrapper.findAllComponents({ name: 'SettingsItem' })
     expect(items.length).toBeGreaterThan(0)
+  })
+
+  it('renders the avatar row and opens the picker on change', async () => {
+    const wrapper = mountDetail()
+    expect(wrapper.find('.settings-agent-detail__avatar-row').exists()).toBe(true)
+
+    const picker = wrapper.findComponent({ name: 'AgentAvatarPicker' })
+    expect(picker.props('open')).toBe(false)
+
+    await wrapper.find('.settings-agent-detail__avatar-btn').trigger('click')
+    expect(wrapper.findComponent({ name: 'AgentAvatarPicker' }).props('open')).toBe(true)
+  })
+
+  it('saves a new avatar via patchAgentField', async () => {
+    const wrapper = mountDetail()
+    const picker = wrapper.findComponent({ name: 'AgentAvatarPicker' })
+
+    const svg = '<svg viewBox="0 0 2 2"><rect width="2" height="2"/></svg>'
+    await picker.vm.$emit('saved', svg)
+    await vi.waitFor(() => {
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'avatar', svg)
+    })
+    // Dialog closes after a successful save.
+    expect(wrapper.findComponent({ name: 'AgentAvatarPicker' }).props('open')).toBe(false)
+  })
+
+  it('clears the avatar by saving an empty string', async () => {
+    const wrapper = mountDetail({ avatar: '<svg/>' })
+    const picker = wrapper.findComponent({ name: 'AgentAvatarPicker' })
+    await picker.vm.$emit('saved', '')
+    await vi.waitFor(() => {
+      expect(mockPatchAgentField).toHaveBeenCalledWith('test-agent', 'avatar', '')
+    })
   })
 
   it('calls loadAgents then populateACPStateFromCache on mount (Issue #404)', async () => {

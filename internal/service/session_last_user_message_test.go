@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,7 +24,7 @@ func TestGetLastUserMessagePlain_ReturnsLatestUserMessage(t *testing.T) {
 
 	sessionID := "sess-1"
 	insertMsg := func(role, content string) {
-		_, err := WriteExec(
+		_, err := store.WriteExec(
 			"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', ?, ?, 'claude', 0)",
 			sessionID, role, content,
 		)
@@ -43,7 +45,7 @@ func TestGetLastUserMessagePlain_ExtractsPlainTextFromBlocks(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-2"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, `{"blocks":[{"type":"text","text":"带格式的用户消息"}]}`,
 	)
@@ -59,18 +61,18 @@ func TestGetLastUserMessagePlain_SkipsStreamingAndQueued(t *testing.T) {
 
 	sessionID := "sess-3"
 	// 流式中的 user 消息应被跳过
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 1)",
 		sessionID, "流式中消息",
 	)
 	require.NoError(t, err)
 	// 排队消息只存在于 queued_messages，未出队前不进 chat_history
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content) VALUES (?, 'proj', 'claude', 'q-lum-1', ?)",
 		sessionID, "排队消息",
 	)
 	require.NoError(t, err)
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, "最终消息",
 	)
@@ -85,7 +87,7 @@ func TestGetLastUserMessagePlain_EmptyWhenNoUserMessage(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-4"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'assistant', ?, 'claude', 0)",
 		sessionID, `{"blocks":[{"type":"text","text":"只有助手消息"}]}`,
 	)
@@ -100,7 +102,7 @@ func TestGetLastUserMessageMeta_ReturnsPlainAndNoFiles(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-m1"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, '', 'claude', 0)",
 		sessionID, "没有附件的消息",
 	)
@@ -116,7 +118,7 @@ func TestGetLastUserMessageMeta_ReportsFilesWhenPresent(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-m2"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0)",
 		sessionID, "带附件的问题", `[{"path":"/proj/src/main.go","isDir":false}]`,
 	)
@@ -133,7 +135,7 @@ func TestGetLastUserMessageMeta_AttachmentOnlyMessage(t *testing.T) {
 
 	sessionID := "sess-m3"
 	// 纯附件消息：content 为空、files 非空
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, ?, 'claude', 0)",
 		sessionID, "", `[{"path":"/proj/img/logo.png","isDir":false},{"path":"/proj/docs/a.md","isDir":false}]`,
 	)
@@ -149,7 +151,7 @@ func TestGetLastUserMessageMeta_EmptyFilesArrayMeansNoAttachments(t *testing.T) 
 	defer teardown()
 
 	sessionID := "sess-m4"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, '[]', 'claude', 0)",
 		sessionID, "空数组",
 	)
@@ -165,18 +167,18 @@ func TestGetLastUserMessageMeta_SkipsStreamingAndQueued(t *testing.T) {
 	defer teardown()
 
 	sessionID := "sess-m5"
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, files, backend, streaming) VALUES (?, 'proj', 'user', ?, ?, 'claude', 1)",
 		sessionID, "流式中", `[{"path":"/proj/a.go","isDir":false}]`,
 	)
 	require.NoError(t, err)
 	// Queued message with an attachment: it must not leak into the preview.
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO queued_messages (session_id, project_id, backend, queue_id, content, files) VALUES (?, 'proj', 'claude', 'q-lum-2', ?, ?)",
 		sessionID, "排队中", `[{"path":"/proj/b.go","isDir":false}]`,
 	)
 	require.NoError(t, err)
-	_, err = WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, "最终消息",
 	)
@@ -194,7 +196,7 @@ func TestGetLastUserMessageMeta_CollapsesMultiBlockToSingleLine(t *testing.T) {
 	sessionID := "sess-m6"
 	// 用户消息实际是两段话（两个 text block），ExtractPlainText 以 \n\n 连接；
 	// 通知引用块应折叠为单行流动文本（两个段落变"段一 段二"），而不是变成两行。
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, `{"blocks":[{"type":"text","text":"帮我看看这个报错"},{"type":"text","text":"以及怎么处理"}]}`,
 	)
@@ -211,7 +213,7 @@ func TestGetLastUserMessageMeta_FlattensEmbeddedNewlinesToSpaces(t *testing.T) {
 
 	sessionID := "sess-m7"
 	// 纯文本消息内含换行/制表/连续空格——通知预览应折叠为单个空格流
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT INTO chat_history (session_id, project_id, role, content, backend, streaming) VALUES (?, 'proj', 'user', ?, 'claude', 0)",
 		sessionID, "请修复这个bug\t如果方便\n\n谢谢",
 	)

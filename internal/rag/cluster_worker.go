@@ -7,7 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"clawbench/internal/service"
+	"clawbench/internal/store"
+
 	"clawbench/internal/ws"
 )
 
@@ -61,7 +62,7 @@ func (cw *ClusterWorker) ComputeOnce() {
 	cw.mu.Unlock()
 
 	// Write initial meta state immediately so /compute/status is consistent
-	_ = service.SaveClusterMeta("computing", "", 0, 0, 0, "extracting")
+	_ = store.SaveClusterMeta("computing", "", 0, 0, 0, "extracting")
 
 	go cw.compute(ctx, myGen)
 }
@@ -76,7 +77,7 @@ func (cw *ClusterWorker) IsRunning() bool {
 // GetProgress reads the cluster meta from the database and constructs
 // a ClusterProgress snapshot.
 func (cw *ClusterWorker) GetProgress() ClusterProgress {
-	meta := service.GetClusterMeta()
+	meta := store.GetClusterMeta()
 	return ClusterProgress{
 		Status:       meta.Progress,
 		Phase:        meta.Phase,
@@ -143,21 +144,21 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 	}()
 
 	// Phase 1: extracting
-	stats, err := service.GetUserMessageStats(1000)
+	stats, err := store.GetUserMessageStats(1000)
 	if err != nil {
 		elapsedMs := int(time.Since(start).Milliseconds())
-		_ = service.SaveClusterMetaError("error", "extracting", err.Error())
+		_ = store.SaveClusterMetaError("error", "extracting", err.Error())
 		cw.broadcastProgressWithGen(myGen, "error", "extracting", 0, 0, int64(elapsedMs), "")
 		slog.Error("cluster worker: extracting failed", slog.String("err", err.Error()))
 		return
 	}
 	elapsedMs := int(time.Since(start).Milliseconds())
-	_ = service.SaveClusterMeta("computing", "", len(stats), 0, elapsedMs, "extracting")
+	_ = store.SaveClusterMeta("computing", "", len(stats), 0, elapsedMs, "extracting")
 	cw.broadcastProgressWithGen(myGen, "computing", "extracting", len(stats), 0, int64(elapsedMs), "")
 
 	// Check for context cancellation
 	if ctx.Err() != nil {
-		_ = service.SaveClusterMetaError("cancelled", "extracting", "user cancelled")
+		_ = store.SaveClusterMetaError("cancelled", "extracting", "user cancelled")
 		cw.broadcastProgressWithGen(myGen, "cancelled", "extracting", len(stats), 0, int64(elapsedMs), "")
 		slog.Info("cluster worker: cancelled during extracting")
 		return
@@ -189,25 +190,25 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 	// Check for context cancellation after clustering completes
 	if ctx.Err() != nil {
 		elapsedMs = int(time.Since(start).Milliseconds())
-		_ = service.SaveClusterMetaError("cancelled", "clustering", "user cancelled")
+		_ = store.SaveClusterMetaError("cancelled", "clustering", "user cancelled")
 		cw.broadcastProgressWithGen(myGen, "cancelled", "clustering", len(stats), 0, int64(elapsedMs), "")
 		slog.Info("cluster worker: cancelled during clustering")
 		return
 	}
 
 	elapsedMs = int(time.Since(start).Milliseconds())
-	_ = service.SaveClusterMeta("computing", "", len(stats), len(clusters), elapsedMs, "clustering")
+	_ = store.SaveClusterMeta("computing", "", len(stats), len(clusters), elapsedMs, "clustering")
 	cw.broadcastProgressWithGen(myGen, "computing", "clustering", len(stats), len(clusters), int64(elapsedMs), "")
 
 	// Phase 3: saving
-	cacheEntries := make([]service.ClusterCacheEntry, len(clusters))
+	cacheEntries := make([]store.ClusterCacheEntry, len(clusters))
 	for i, c := range clusters {
 		variantsJSON, err := json.Marshal(c.Variants)
 		if err != nil {
 			slog.Error("cluster worker: failed to marshal variants", slog.String("err", err.Error()))
 			variantsJSON = []byte("[]")
 		}
-		cacheEntries[i] = service.ClusterCacheEntry{
+		cacheEntries[i] = store.ClusterCacheEntry{
 			Representative:      c.Representative,
 			Variants:            string(variantsJSON),
 			TotalCount:          c.TotalCount,
@@ -215,9 +216,9 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 			SortOrder:           i,
 		}
 	}
-	if err := service.SaveClusterCache(cacheEntries, mode); err != nil {
+	if err := store.SaveClusterCache(cacheEntries, mode); err != nil {
 		elapsedMs = int(time.Since(start).Milliseconds())
-		_ = service.SaveClusterMetaError("error", "saving", err.Error())
+		_ = store.SaveClusterMetaError("error", "saving", err.Error())
 		cw.broadcastProgressWithGen(myGen, "error", "saving", len(stats), len(clusters), int64(elapsedMs), "")
 		slog.Error("cluster worker: saving failed", slog.String("err", err.Error()))
 		return
@@ -225,7 +226,7 @@ func (cw *ClusterWorker) compute(ctx context.Context, myGen uint64) {
 
 	// Update meta with final counts
 	elapsedMs = int(time.Since(start).Milliseconds())
-	_ = service.SaveClusterMeta("done", mode, len(stats), len(clusters), elapsedMs, "saving")
+	_ = store.SaveClusterMeta("done", mode, len(stats), len(clusters), elapsedMs, "saving")
 	cw.broadcastProgressWithGen(myGen, "done", "saving", len(stats), len(clusters), int64(elapsedMs), mode)
 	slog.Info("cluster worker: computation complete",
 		slog.String("mode", mode),

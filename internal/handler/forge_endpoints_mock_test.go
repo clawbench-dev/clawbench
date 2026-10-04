@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -617,7 +619,7 @@ func TestServeForgeItems_TagsUnreadRows(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, pf, "the mock binding must be stored for this project")
 	host := pf.Host
-	_, err = service.WriteExec(`UPDATE forge_events SET host = ?`, host)
+	_, err = store.WriteExec(`UPDATE forge_events SET host = ?`, host)
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodGet, "/api/forge/items?type=issue&state=open&perPage=10", nil)

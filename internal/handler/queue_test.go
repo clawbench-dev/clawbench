@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 	"clawbench/internal/ws"
@@ -25,17 +27,17 @@ func createQueueSession(t *testing.T, env *testEnv, sessionID string) {
 	_, err := service.CreateSession(env.ProjectDir, "claude", "Queue Session", "", "", "default", "chat")
 	if err != nil {
 		// Fallback: insert directly if CreateSession signature changed
-		_, err2 := service.UnsafeDBForTest().Exec(
+		_, err2 := store.UnsafeDBForTest().Exec(
 			`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, 'claude', 'Queue Session')`,
-			sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+			sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 		)
 		assert.NoError(t, err2)
 		return
 	}
 	// Use the requested session id directly.
-	_, _ = service.UnsafeDBForTest().Exec(
+	_, _ = store.UnsafeDBForTest().Exec(
 		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title) VALUES (?, ?, 'claude', 'Queue Session')`,
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 }
 
@@ -117,7 +119,7 @@ func TestQueueHandler_Get_DBError(t *testing.T) {
 	sessionID := "q-get-db-error"
 	createQueueSession(t, env, sessionID)
 
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	require.NoError(t, db.Close())
 
 	req := newRequest(t, http.MethodGet, "/api/ai/queue?session_id="+sessionID, nil)
@@ -134,7 +136,7 @@ func TestQueueHandler_Delete_QueueID_DBError(t *testing.T) {
 	sessionID := "q-delete-db-error"
 	createQueueSession(t, env, sessionID)
 
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	require.NoError(t, db.Close())
 
 	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID+"&queueId=q-1", nil)
@@ -151,7 +153,7 @@ func TestQueueHandler_Delete_ClearAll_DBError(t *testing.T) {
 	sessionID := "q-clear-db-error"
 	createQueueSession(t, env, sessionID)
 
-	db := service.UnsafeDBForTest()
+	db := store.UnsafeDBForTest()
 	require.NoError(t, db.Close())
 
 	req := newRequest(t, http.MethodDelete, "/api/ai/queue?session_id="+sessionID, nil)
@@ -540,7 +542,7 @@ func TestQueueHandler_Delete_ByQueueID(t *testing.T) {
 	// can never resurface as a formal message. q-2 still queued.
 	assert.Equal(t, 1, service.GetQueuedCount(sessionID))
 	var q1Rows int
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM queued_messages WHERE session_id = ? AND queue_id = ?",
 		sessionID, "q-1",
 	).Scan(&q1Rows)
@@ -548,7 +550,7 @@ func TestQueueHandler_Delete_ByQueueID(t *testing.T) {
 	assert.Zero(t, q1Rows, "canceled queued message must be deleted from the queue table")
 	// The cancel must not have materialized anything into chat_history.
 	var historyRows int
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID,
 	).Scan(&historyRows)
 	require.NoError(t, err)
@@ -574,7 +576,7 @@ func TestQueueHandler_Delete_ClearAll(t *testing.T) {
 	// Clear-all deletes the queued rows outright — they must not remain as
 	// formal messages in the session history.
 	var remaining int
-	err := service.UnsafeDBForTest().QueryRow(
+	err := store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?", sessionID,
 	).Scan(&remaining)
 	require.NoError(t, err)
@@ -618,10 +620,10 @@ func TestQueueHandler_Enqueue_CrossProject_403(t *testing.T) {
 	// Register the foreign project first, then point the session at it: the
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
@@ -643,10 +645,10 @@ func TestQueueHandler_Get_CrossProject_403(t *testing.T) {
 	// Register the foreign project first, then point the session at it: the
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
@@ -667,10 +669,10 @@ func TestQueueHandler_Delete_CrossProject_403(t *testing.T) {
 	// Register the foreign project first, then point the session at it: the
 	// subquery returns NULL for an unknown path and the NOT NULL constraint
 	// would reject the row.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
@@ -774,9 +776,9 @@ func TestQueueHandler_Enqueue_OmittedAgentID_InheritsSessionAgentID(t *testing.T
 	t.Cleanup(func() { service.SetLaunchSessionExecutionForTest(restore) })
 
 	sessionID := "q-enqueue-inherit-agent"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 'Queue Session', 'inherited-agent')`,
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 	defer service.ClearQueuedMessages(sessionID)
@@ -820,9 +822,9 @@ func TestQueueHandler_Enqueue_ExplicitAgentID_NotOverridden(t *testing.T) {
 	t.Cleanup(func() { service.SetLaunchSessionExecutionForTest(restore) })
 
 	sessionID := "q-enqueue-explicit-agent"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT OR IGNORE INTO chat_sessions (id, project_id, backend, title, agent_id) VALUES (?, ?, 'claude', 'Queue Session', 'session-agent')`,
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 	defer service.ClearQueuedMessages(sessionID)
@@ -1369,10 +1371,10 @@ func TestQueueMergeHandler_CrossProject_403(t *testing.T) {
 	defer teardown()
 
 	sessionID := "q-merge-cross-project"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING`)
 	require.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other')`,
 		sessionID,
 	)
@@ -1399,7 +1401,7 @@ func TestQueueMergeHandler_CrossProject_403(t *testing.T) {
 // projects row, reproducing the 0 sentinel an unmappable path leaves behind.
 func createOrphanedSession(t *testing.T, sessionID string) {
 	t.Helper()
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, archived)
 		 VALUES (?, 0, 'claude', 'orphan', '', 'default', '', 'chat', 0)`,
 		sessionID,

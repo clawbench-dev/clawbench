@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 
@@ -100,7 +102,7 @@ func TestSaveChatRecommendation_StoresProjectID(t *testing.T) {
 	).Scan(&storedType))
 	assert.Equal(t, "integer", storedType, "project_id must hold an id, not the path string")
 
-	wantID, err := ProjectIDForPath("/test")
+	wantID, err := store.ProjectIDForPath("/test")
 	require.NoError(t, err)
 	var gotID int64
 	require.NoError(t, db.QueryRow(

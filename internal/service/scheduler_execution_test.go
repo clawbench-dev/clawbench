@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -387,7 +389,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		t.Fatalf("failed to create tables: %v", err)
 	}
 
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	teardown := func() {
 		cleanup()
 		db.Close()
@@ -558,7 +560,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	// happens after the gate closes, so the subscriber is guaranteed to see it.
 	var sessionID string
 	assert.Eventually(t, func() bool {
-		err := dbRead.QueryRow("SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1", NormalizeProjectPath("/tmp")).Scan(&sessionID)
+		err := store.ReadDB().QueryRow("SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1", store.NormalizeProjectPath("/tmp")).Scan(&sessionID)
 		return err == nil && sessionID != ""
 	}, 2*time.Second, 20*time.Millisecond)
 	require.NotEmpty(t, sessionID, "executeTask must create a session")
@@ -594,7 +596,7 @@ func TestScheduler_ExecuteTask_BroadcastsStreamStart(t *testing.T) {
 	// The row is finalized (streaming=0) by the time the fast mock stream ends,
 	// but its id is unchanged — so match by the latest assistant row id.
 	var dbMsgID int64
-	err := dbRead.QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&dbMsgID)
+	err := store.ReadDB().QueryRow("SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' ORDER BY id DESC LIMIT 1", sessionID).Scan(&dbMsgID)
 	require.NoError(t, err, "an assistant row must exist")
 	assert.Equal(t, dbMsgID, payload["message_id"], "stream_start message_id must equal the streaming row id")
 }

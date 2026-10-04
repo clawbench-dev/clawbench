@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -517,7 +519,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 		// Delete stale tool call rows from the first (failed) Prompt.
 		// The retry will re-insert them as fresh entries via upsertToolCallToDB.
 		if e.cfg.StreamingMessageID > 0 {
-			if _, err := WriteExec("DELETE FROM chat_tool_calls WHERE message_id = ?", e.cfg.StreamingMessageID); err != nil {
+			if _, err := store.WriteExec("DELETE FROM chat_tool_calls WHERE message_id = ?", e.cfg.StreamingMessageID); err != nil {
 				slog.Error("failed to delete stale tool calls after content_reset",
 					slog.Int64("message_id", e.cfg.StreamingMessageID),
 					slog.String("err", err.Error()))
@@ -527,7 +529,7 @@ func (e *SessionExecutor) handleNonTerminalEvent(event ai.StreamEvent) {
 			// the stale thinking behind — the frontend would lazy-load it by the
 			// (unchanged) message_id + think_id and show reasoning from the
 			// failed attempt.
-			if _, err := WriteExec("DELETE FROM chat_thinking WHERE message_id = ?", e.cfg.StreamingMessageID); err != nil {
+			if _, err := store.WriteExec("DELETE FROM chat_thinking WHERE message_id = ?", e.cfg.StreamingMessageID); err != nil {
 				slog.Error("failed to delete stale thinking after content_reset",
 					slog.Int64("message_id", e.cfg.StreamingMessageID),
 					slog.String("err", err.Error()))
@@ -1011,7 +1013,7 @@ func (e *SessionExecutor) flushPendingThinking() {
 	// is nothing to persist to. Existing callers are all behind the same guard
 	// in flushStreamingLocked, but the thinking_done path calls this directly, so
 	// the check must live here too or that path panics on a DB-less executor.
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 	if e.cfg.StreamingMessageID == 0 || e.cfg.SessionID == "" {
@@ -1118,7 +1120,7 @@ func (e *SessionExecutor) splitAtSteerBoundary(event ai.StreamEvent) {
 
 	// No DB (bare executor in a unit test): nothing to split, but the event must
 	// still not reach the generic path (it would be accumulated as a block).
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 
@@ -1252,7 +1254,7 @@ func (e *SessionExecutor) flushStreamingMessage() {
 	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
 	// is nothing to persist to. Guarding here keeps the rate-limited streaming
 	// flush safe on every non-terminal event without assuming a DB exists.
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 	e.flushStreamingLocked(false)
@@ -1285,7 +1287,7 @@ func (e *SessionExecutor) flushStreamingLocked(includeThinking bool) {
 	// No DB initialized (e.g. a bare executor in an isolated unit test) — there
 	// is nothing to persist to. Guarding here keeps the forced flush safe on the
 	// graceful-shutdown path without assuming a DB exists.
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 	e.mu.Lock()

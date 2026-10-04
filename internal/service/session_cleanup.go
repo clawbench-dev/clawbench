@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"clawbench/internal/model"
+	"clawbench/internal/rag"
+	"clawbench/internal/store"
 )
 
 // sessionCleanupSvc defines the interface for session cleanup operations.
@@ -19,11 +21,11 @@ type sessionCleanupSvc interface {
 type realSessionCleanupSvc struct{}
 
 func (r *realSessionCleanupSvc) GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
-	return GetExpiredArchivedSessions(cutoff)
+	return store.GetExpiredArchivedSessions(cutoff)
 }
 
 func (r *realSessionCleanupSvc) PurgeArchivedData(sessionIDs []string) (int64, int64, error) {
-	return PurgeArchivedData(sessionIDs)
+	return store.PurgeArchivedData(sessionIDs)
 }
 
 // SessionCleanupWorker periodically purges archived sessions that have exceeded
@@ -179,54 +181,33 @@ func (w *SessionCleanupWorker) cleanup() {
 }
 
 // purgeRAGChunksBySessionIDs deletes RAG chunks for the given session IDs.
+// Best-effort: RAG may not be initialized (GlobalStore nil), in which case
+// there is nothing to purge and this is a no-op.
 func purgeRAGChunksBySessionIDs(sessionIDs []string) (int64, error) {
-	if purgeRAGChunksFn != nil {
-		return purgeRAGChunksFn(sessionIDs)
+	rs := rag.StoreForCleanup()
+	if rs == nil {
+		return 0, nil
 	}
-	return 0, nil
-}
-
-// purgeRAGChunksFn is the callback for deleting RAG chunks by session IDs.
-// Set by main.go during startup. Defaults to nil (RAG chunks not purged).
-var purgeRAGChunksFn func(sessionIDs []string) (int64, error)
-
-// SetPurgeRAGChunksFn sets the callback for deleting RAG chunks by session IDs.
-func SetPurgeRAGChunksFn(fn func(sessionIDs []string) (int64, error)) {
-	purgeRAGChunksFn = fn
+	return rs.DeleteChunksBySessionIDs(sessionIDs)
 }
 
 // PurgeRAGChunksBySessionIDs deletes RAG chunks for the given session IDs.
-// This is a public wrapper around the callback, used by DestroySession handler
-// to clean up RAG data when physically deleting a session.
+// Used by the DestroySession handler to clean up RAG data when physically
+// deleting a session. Best-effort: a no-op when RAG is not initialized.
 func PurgeRAGChunksBySessionIDs(sessionIDs []string) (int64, error) {
-	if purgeRAGChunksFn != nil {
-		return purgeRAGChunksFn(sessionIDs)
-	}
-	return 0, nil
-}
-
-// purgeRAGChunksAfterMessageFn is the callback for deleting RAG chunks of a
-// session whose message_id is greater than an anchor. Set by main.go during
-// startup. Defaults to nil (no-op).
-var purgeRAGChunksAfterMessageFn func(sessionID string, anchorID int64) (int64, error)
-
-// SetPurgeRAGChunksAfterMessageFn sets the callback for deleting RAG chunks
-// whose message_id is greater than an anchor within a session. Used by the
-// rewind/truncate path to remove chunks whose chat_history rows were deleted in
-// place.
-func SetPurgeRAGChunksAfterMessageFn(fn func(sessionID string, anchorID int64) (int64, error)) {
-	purgeRAGChunksAfterMessageFn = fn
+	return purgeRAGChunksBySessionIDs(sessionIDs)
 }
 
 // PurgeRAGChunksAfterMessage deletes RAG chunks for the given session whose
-// message_id is strictly greater than anchorID. Best-effort wrapper around the
-// injected callback — returns 0, nil when no callback was registered (RAG not
-// initialized).
+// message_id is strictly greater than anchorID. Used by the rewind/truncate
+// path to remove chunks whose chat_history rows were deleted in place.
+// Best-effort: a no-op when RAG is not initialized.
 func PurgeRAGChunksAfterMessage(sessionID string, anchorID int64) (int64, error) {
-	if purgeRAGChunksAfterMessageFn != nil {
-		return purgeRAGChunksAfterMessageFn(sessionID, anchorID)
+	rs := rag.StoreForCleanup()
+	if rs == nil {
+		return 0, nil
 	}
-	return 0, nil
+	return rs.DeleteChunksBySessionAfterMessage(sessionID, anchorID)
 }
 
 // StartSessionCleanupWorker starts the global session cleanup worker.

@@ -241,7 +241,7 @@ func TestRebuildCoordinator_FullRebuildClearsChunksAndRequeuesMessages(t *testin
 // This is the regression test for a real panic observed in the full package run:
 // the watcher polled on a 1s ticker and only re-checked a generation flag after
 // waking, so a rebuild that the test did not wait for kept polling after teardown.
-// For the `full` kind that poll calls service.UnindexedCount(), which dereferences
+// For the `full` kind that poll calls store.UnindexedCount(), which dereferences
 // the service package's dbRead — nil once its test harness is torn down — giving
 // "invalid memory address or nil pointer dereference". Cancel must therefore SIGNAL
 // the goroutine, not just flip a flag it happens to read later.

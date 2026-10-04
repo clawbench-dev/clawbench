@@ -5,21 +5,23 @@ import (
 	"encoding/json"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"github.com/stretchr/testify/assert"
 )
 
 func setupTestDBForThinkingMigration(t *testing.T) func() {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	memDB, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("failed to open in-memory db: %v", err)
+		t.Fatalf("failed to open in-memory memDB: %v", err)
 	}
-	db.SetMaxOpenConns(1)
-	db.Exec("PRAGMA journal_mode=WAL")
-	db.Exec("PRAGMA busy_timeout=5000")
-	db.Exec("PRAGMA foreign_keys = ON")
+	memDB.SetMaxOpenConns(1)
+	memDB.Exec("PRAGMA journal_mode=WAL")
+	memDB.Exec("PRAGMA busy_timeout=5000")
+	memDB.Exec("PRAGMA foreign_keys = ON")
 
-	_, err = db.Exec(`
+	_, err = memDB.Exec(`
 		CREATE TABLE IF NOT EXISTS projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	path TEXT NOT NULL,
@@ -68,15 +70,15 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	if err != nil {
 		t.Fatalf("failed to create tables: %v", err)
 	}
-	cleanup := SetDBForTest(db, db)
-	return func() { cleanup(); db.Close() }
+	cleanup := store.SetDBForTest(memDB, memDB)
+	return func() { cleanup(); memDB.Close() }
 }
 
 func TestMigrateThinkingFromContent_ExtractsThinking(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 
 	oldContent := `{
@@ -86,7 +88,7 @@ func TestMigrateThinkingFromContent_ExtractsThinking(t *testing.T) {
 			{"type": "text", "text": "Result"}
 		]
 	}`
-	res, err := db.Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
@@ -96,18 +98,18 @@ func TestMigrateThinkingFromContent_ExtractsThinking(t *testing.T) {
 	MigrateThinkingFromContent()
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 1, count)
 
 	var thinkID, text string
-	err = db.QueryRow("SELECT think_id, text FROM chat_thinking WHERE message_id = ?", msgID).Scan(&thinkID, &text)
+	err = store.UnsafeDBForTest().QueryRow("SELECT think_id, text FROM chat_thinking WHERE message_id = ?", msgID).Scan(&thinkID, &text)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, thinkID)
 	assert.Equal(t, "internal reasoning", text)
 
 	var newContent string
-	err = db.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&newContent)
+	err = store.UnsafeDBForTest().QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&newContent)
 	assert.NoError(t, err)
 	var parsed struct {
 		Blocks []json.RawMessage `json:"blocks"`
@@ -126,10 +128,10 @@ func TestMigrateThinkingFromContent_IdempotentAndSkipsSlim(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","text":"old","done":true},{"type":"text","text":"ok"}]}`
-	_, err = db.Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
@@ -139,17 +141,17 @@ func TestMigrateThinkingFromContent_IdempotentAndSkipsSlim(t *testing.T) {
 	MigrateThinkingFromContent()
 
 	var count int
-	db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
+	store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
 	assert.Equal(t, 1, count, "second run must be idempotent")
 
 	// Streaming message must be skipped.
-	_, err = db.Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 1)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
 	MigrateThinkingFromContent()
-	db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
+	store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
 	assert.Equal(t, 1, count, "streaming message must be skipped")
 }
 
@@ -157,10 +159,10 @@ func TestMigrateThinkingFromContent_EmptyTextThinkingSlimmed(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","done":true}]}`
-	res, err := db.Exec(
+	res, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
@@ -170,18 +172,18 @@ func TestMigrateThinkingFromContent_EmptyTextThinkingSlimmed(t *testing.T) {
 	MigrateThinkingFromContent()
 
 	var count int
-	db.QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
+	store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking WHERE message_id = ?", msgID).Scan(&count)
 	assert.Equal(t, 0, count, "empty-text thinking should not create a row")
 
 	var newContent string
-	err = db.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&newContent)
+	err = store.UnsafeDBForTest().QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&newContent)
 	assert.NoError(t, err)
 	assert.Contains(t, newContent, "think_id")
 	assert.NotContains(t, newContent, "\"text\"")
 
 	// Second run must be a no-op (row now has think_id → excluded).
 	MigrateThinkingFromContent()
-	db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
+	store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
 	assert.Equal(t, 0, count)
 }
 
@@ -189,17 +191,17 @@ func TestMigrateThinkingFromContent_UpsertFailureKeepsContent(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","text":"doomed","done":true}]}`
-	_, err = db.Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 		"/proj", oldContent, "sess-1",
 	)
 	assert.NoError(t, err)
 	// Keep chat_thinking readable (NOT EXISTS count still works) but make every
 	// INSERT fail, forcing the migration's tx.Exec path to error out.
-	_, err = db.Exec(`
+	_, err = store.UnsafeDBForTest().Exec(`
 		CREATE TRIGGER trg_thinking_fail BEFORE INSERT ON chat_thinking
 		BEGIN SELECT RAISE(FAIL, 'forced failure'); END;
 	`)
@@ -208,7 +210,7 @@ func TestMigrateThinkingFromContent_UpsertFailureKeepsContent(t *testing.T) {
 	MigrateThinkingFromContent()
 
 	var content string
-	err = db.QueryRow("SELECT content FROM chat_history WHERE session_id = 'sess-1'").Scan(&content)
+	err = store.UnsafeDBForTest().QueryRow("SELECT content FROM chat_history WHERE session_id = 'sess-1'").Scan(&content)
 	assert.NoError(t, err)
 	assert.Contains(t, content, "\"text\":\"doomed\"", "content must stay full when upsert fails")
 }
@@ -222,13 +224,13 @@ func TestMigrateThinkingFromContent_MoreThanOneBatch(t *testing.T) {
 	teardown := setupTestDBForThinkingMigration(t)
 	defer teardown()
 
-	_, err := db.Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
+	_, err := store.UnsafeDBForTest().Exec("INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('sess-1', 1, 'claude', 'Test')")
 	assert.NoError(t, err)
 	oldContent := `{"blocks":[{"type":"thinking","text":"thought","done":true}]}`
 
 	const total = 450
 	for range total {
-		_, err = db.Exec(
+		_, err = store.UnsafeDBForTest().Exec(
 			"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'assistant', ?, ?, 'claude', 0)",
 			"/proj", oldContent, "sess-1",
 		)
@@ -238,12 +240,12 @@ func TestMigrateThinkingFromContent_MoreThanOneBatch(t *testing.T) {
 	MigrateThinkingFromContent()
 
 	var count int
-	err = db.QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_thinking").Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, total, count, "every old-format row must be migrated, none skipped by OFFSET pagination")
 
 	var unmigrated int
-	err = db.QueryRow(`
+	err = store.UnsafeDBForTest().QueryRow(`
 		SELECT COUNT(*) FROM chat_history
 		WHERE role = 'assistant' AND content LIKE '%"type":"thinking"%' AND content NOT LIKE '%think_id%'
 	`).Scan(&unmigrated)

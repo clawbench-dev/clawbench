@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 
@@ -15,7 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const recentProjectsSchema = service.ProjectsDDL + `
+const recentProjectsSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS recent_projects (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
@@ -29,7 +31,7 @@ CREATE TABLE IF NOT EXISTS recent_projects (
 // assert on paths, but recent_projects is keyed by id, so they need the mapping.
 func projectID(t *testing.T, path string) int64 {
 	t.Helper()
-	id, err := service.ProjectIDForPath(path)
+	id, err := store.ProjectIDForPath(path)
 	assert.NoError(t, err)
 	return id
 }
@@ -48,7 +50,7 @@ func setupRecentProjectsDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(recentProjectsSchema)
 	assert.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -77,7 +79,7 @@ func createTempProjectDir(t *testing.T) string {
 	dir, err := os.MkdirTemp("", "recent-project-test-*")
 	assert.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	return service.NormalizeProjectPath(dir)
+	return store.NormalizeProjectPath(dir)
 }
 
 func TestGetRecentProjects_Empty(t *testing.T) {
@@ -466,7 +468,7 @@ func TestGetRecentProjects_DBQueryError(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 
 	// Close the DB before querying to trigger an error
@@ -491,7 +493,7 @@ func TestGetRecentProjects_RemoveStaleFails(t *testing.T) {
 	// but keep the read DB working for the query
 	closedDB, _ := sql.Open("sqlite", ":memory:")
 	closedDB.Close()
-	cleanup := service.SetDBForTest(closedDB, db)
+	cleanup := store.SetDBForTest(closedDB, db)
 	t.Cleanup(cleanup)
 
 	// GetRecentProjects should still succeed (return valid paths)
@@ -506,7 +508,7 @@ func TestAddRecentProject_DBError(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	assert.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 
 	// Close the DB before operation

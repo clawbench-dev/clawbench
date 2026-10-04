@@ -6,8 +6,9 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 )
 
 // Indexer polls for unindexed chat messages and generates embeddings.
@@ -357,7 +358,7 @@ func (idx *Indexer) checkEmbedderHealth(ctx context.Context) {
 				// message must be re-indexed. Without this the chunks would be
 				// gone but chat_history.indexed would stay 1, permanently
 				// orphaning those messages from search.
-				if _, err := service.ResetAllIndexed(); err != nil {
+				if _, err := store.ResetAllIndexed(); err != nil {
 					slog.Error("rag: failed to reset indexed flags after dimension change", slog.String("err", err.Error()))
 					return
 				}
@@ -382,7 +383,7 @@ func (idx *Indexer) checkEmbedderHealth(ctx context.Context) {
 // requested in a single EmbedBatch call, and all chunks are inserted together.
 // Returns true if more unindexed messages may remain.
 func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
-	messages, err := service.GetUnindexedMessages(idx.cfg.BatchSize)
+	messages, err := store.GetUnindexedMessages(idx.cfg.BatchSize)
 	if err != nil {
 		slog.Error("rag: failed to fetch unindexed messages", slog.String("err", err.Error()))
 		return false
@@ -433,7 +434,7 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 		markIDs = append(markIDs, chunkMsgIDs...)
 	}
 	if len(markIDs) > 0 {
-		if err := service.MarkMessagesIndexed(markIDs); err != nil {
+		if err := store.MarkMessagesIndexed(markIDs); err != nil {
 			slog.Error("rag: failed to batch mark messages indexed", slog.String("err", err.Error()))
 		}
 	}
@@ -461,12 +462,12 @@ func (idx *Indexer) indexNewMessages(ctx context.Context) bool {
 
 // chunkMessages extracts text from messages and chunks them for indexing.
 type msgChunkResult struct {
-	msg    service.UnindexedMessage
+	msg    store.UnindexedMessage
 	text   string
 	chunks []Chunk
 }
 
-func (idx *Indexer) chunkMessages(messages []service.UnindexedMessage) ([]msgChunkResult, []string) {
+func (idx *Indexer) chunkMessages(messages []store.UnindexedMessage) ([]msgChunkResult, []string) {
 	results := make([]msgChunkResult, 0, len(messages))
 	var allTexts []string
 
@@ -494,7 +495,7 @@ func (idx *Indexer) chunkMessages(messages []service.UnindexedMessage) ([]msgChu
 		// Resolved once per message, outside any write transaction: the store
 		// inserts these chunks inside one, and resolving there would re-enter
 		// the write mutex.
-		projectID, idErr := service.ProjectIDForPath(msg.ProjectPath)
+		projectID, idErr := store.ProjectIDForPath(msg.ProjectPath)
 		if idErr != nil {
 			slog.Warn("rag: cannot resolve project for message, skipping",
 				slog.Int64("message_id", msg.ID), slog.String("err", idErr.Error()))

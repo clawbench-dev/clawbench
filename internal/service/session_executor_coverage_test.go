@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
@@ -86,12 +88,8 @@ func TestGetToolCall_ClosedDBError(t *testing.T) {
 	require.True(t, msgID > 0)
 
 	// Use a closed DB to force a query error
-	origDBRead := dbRead
 	closedDB, _ := initClosedDB()
-	dbRead = closedDB
-	t.Cleanup(func() {
-		dbRead = origDBRead
-	})
+	t.Cleanup(store.SetReadDBForTest(closedDB))
 
 	_, err := GetToolCall("toolu_err", msgID)
 	assert.Error(t, err)

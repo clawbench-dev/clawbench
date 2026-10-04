@@ -1,4 +1,4 @@
-//nolint:noctx,goconst,rowserrcheck // db global and platform exec.Command calls, context not applicable; protocol/role strings are domain constants; legacy db.Query pattern
+//nolint:noctx,goconst,rowserrcheck // db global and platform exec.Command calls, context not applicable; protocol/role strings are domain constants; legacy store.ReadDB().Query pattern
 package service
 
 import (
@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"clawbench/internal/store"
 
 	"clawbench/internal/model"
 	"clawbench/internal/proxy"
@@ -1241,11 +1243,11 @@ func isPortInRange(port int, rangeStr string) bool {
 // loadPortsFromDB restores previously persisted forwarded ports from the database.
 // Called once during ProxyRegistry initialization.
 func (r *ProxyRegistry) loadPortsFromDB() {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
 
-	rows, err := dbRead.Query("SELECT local_port, port, host, name, protocol, enabled, direction FROM forwarded_ports")
+	rows, err := store.ReadDB().Query("SELECT local_port, port, host, name, protocol, enabled, direction FROM forwarded_ports")
 	if err != nil {
 		slog.Warn("failed to load persisted ports from DB", slog.String("err", err.Error()))
 		return
@@ -1312,10 +1314,10 @@ func (r *ProxyRegistry) savePortToDB(localPort int, port int, host string, name,
 
 // savePortToDBWithEnabled persists a forwarded port including its enabled state.
 func (r *ProxyRegistry) savePortToDBWithEnabled(localPort int, port int, host string, name, protocol, direction string, enabled bool) {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT OR REPLACE INTO forwarded_ports (local_port, port, host, name, protocol, direction, enabled) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		localPort, port, host, name, protocol, model.NormalizeDirection(direction), enabled,
 	)
@@ -1326,10 +1328,10 @@ func (r *ProxyRegistry) savePortToDBWithEnabled(localPort int, port int, host st
 
 // savePortEnabledToDB updates only the enabled state of a forwarded port.
 func (r *ProxyRegistry) savePortEnabledToDB(localPort int, enabled bool) {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
-	_, err := WriteExec("UPDATE forwarded_ports SET enabled = ? WHERE local_port = ?", enabled, localPort)
+	_, err := store.WriteExec("UPDATE forwarded_ports SET enabled = ? WHERE local_port = ?", enabled, localPort)
 	if err != nil {
 		slog.Error("failed to persist port enabled state to DB", slog.Int("local_port", localPort), slog.String("err", err.Error()))
 	}
@@ -1337,10 +1339,10 @@ func (r *ProxyRegistry) savePortEnabledToDB(localPort int, enabled bool) {
 
 // deletePortFromDB removes a forwarded port from the database.
 func (r *ProxyRegistry) deletePortFromDB(localPort int) {
-	if db == nil {
+	if !store.DBReady() {
 		return
 	}
-	_, err := WriteExec("DELETE FROM forwarded_ports WHERE local_port = ?", localPort)
+	_, err := store.WriteExec("DELETE FROM forwarded_ports WHERE local_port = ?", localPort)
 	if err != nil {
 		slog.Error("failed to delete port from DB", slog.Int("local_port", localPort), slog.String("err", err.Error()))
 	}

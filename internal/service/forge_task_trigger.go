@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/forge"
 	"clawbench/internal/model"
 )
@@ -276,7 +278,7 @@ func (t *ForgeTaskTrigger) matchingTasks(repo ForgeRepoRef, item forge.Item, cha
 	var out []model.ScheduledTask
 	for i := range tasks {
 		task := &tasks[i]
-		if !task.IsEventTriggered() || task.Status != SessionArchiveFilterActive {
+		if !task.IsEventTriggered() || task.Status != store.SessionArchiveFilterActive {
 			continue
 		}
 		if !eventTypeSubscribed(task, item.Type, change.Type) {

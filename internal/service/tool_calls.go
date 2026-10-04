@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"clawbench/internal/store"
 )
 
 // ToolCallRecord represents a row in the chat_tool_calls table.
@@ -30,7 +32,7 @@ type ToolCallRecord struct {
 // non-zero (so intermediate tool_use events never wipe a computed duration),
 // and status/done/summary are always updated.
 func UpsertToolCall(messageID int64, sessionID, toolID, name string, input json.RawMessage, output, status, summary string, done bool, durationMs int) error {
-	_, err := WriteExecContext(context.Background(), `
+	_, err := store.WriteExecContext(context.Background(), `
 		INSERT INTO chat_tool_calls (message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(tool_id, message_id) DO UPDATE SET
@@ -48,12 +50,12 @@ func UpsertToolCall(messageID int64, sessionID, toolID, name string, input json.
 }
 
 // GetToolCall retrieves a tool call record by tool_id and message_id.
-// Returns nil if not found. Uses dbRead for WAL-mode concurrent reads.
+// Returns nil if not found. Uses store.ReadDB() for WAL-mode concurrent reads.
 func GetToolCall(toolID string, messageID int64) (*ToolCallRecord, error) {
 	var r ToolCallRecord
 	var doneInt int
 	var inputStr string
-	err := dbRead.QueryRowContext(context.Background(), `
+	err := store.ReadDB().QueryRowContext(context.Background(), `
 		SELECT id, message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at
 		FROM chat_tool_calls WHERE tool_id = ? AND message_id = ?
 	`, toolID, messageID).Scan(
@@ -74,7 +76,7 @@ func GetToolCall(toolID string, messageID int64) (*ToolCallRecord, error) {
 // GetToolCallsBySession retrieves all tool call records for a session.
 // Used by BuildForkContext to batch-fetch tool details without N+1 queries.
 func GetToolCallsBySession(sessionID string) ([]ToolCallRecord, error) {
-	rows, err := dbRead.QueryContext(context.Background(), `
+	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT id, message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at
 		FROM chat_tool_calls WHERE session_id = ?
 	`, sessionID)
@@ -110,7 +112,7 @@ func GetToolCallBySession(toolID, sessionID string) (*ToolCallRecord, error) {
 	var r ToolCallRecord
 	var doneInt int
 	var inputStr string
-	err := dbRead.QueryRowContext(context.Background(), `
+	err := store.ReadDB().QueryRowContext(context.Background(), `
 		SELECT id, message_id, session_id, tool_id, name, input, output, status, done, summary, duration_ms, created_at
 		FROM chat_tool_calls WHERE tool_id = ? AND session_id = ?
 		ORDER BY created_at DESC LIMIT 1

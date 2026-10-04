@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -185,7 +187,7 @@ func TestInjectQueuedMessage_DeclinedRequeueFailureIsSurfaced(t *testing.T) {
 	t.Cleanup(func() { service.SetInjectMidTurnForTest(orig) })
 	service.SetInjectMidTurnForTest(func(_ context.Context, backendID, sessionID, agentID, content string, files []model.FileEntry, clientUserMessageID string) ai.MidTurnInjectResult {
 		// Simulate the row vanishing (e.g. a concurrent rewind) after the claim.
-		_, delErr := service.WriteExec("DELETE FROM chat_history WHERE session_id = ? AND role = 'user' AND content = ?", sessionID, content)
+		_, delErr := store.WriteExec("DELETE FROM chat_history WHERE session_id = ? AND role = 'user' AND content = ?", sessionID, content)
 		require.NoError(t, delErr)
 		return ai.MidTurnInjectResult{Reason: "idle"} // decline
 	})

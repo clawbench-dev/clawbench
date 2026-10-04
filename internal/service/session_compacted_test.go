@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
@@ -56,12 +58,12 @@ CREATE TABLE chat_sessions (
 
 	require.NoError(t, initTestDB(dbDir))
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
 	var hasCompacted int
-	require.NoError(t, db.QueryRow(
+	require.NoError(t, store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='compacted'",
 	).Scan(&hasCompacted))
 	require.Equal(t, 1, hasCompacted, "InitDB must add the compacted column")
@@ -69,7 +71,7 @@ CREATE TABLE chat_sessions (
 	// A pre-existing row must default to 0 (not compacted) so upgrading users do
 	// not suddenly get an extra prompt injection on their next message.
 	var legacy int
-	require.NoError(t, db.QueryRow("SELECT compacted FROM chat_sessions WHERE id = 'legacy'").Scan(&legacy))
+	require.NoError(t, store.UnsafeDBForTest().QueryRow("SELECT compacted FROM chat_sessions WHERE id = 'legacy'").Scan(&legacy))
 	assert.Equal(t, 0, legacy, "pre-existing sessions must default to not-compacted")
 }
 
@@ -116,7 +118,7 @@ func TestSessionExecutor_CompactDetectedPersistsFlag(t *testing.T) {
 
 	// The internal signal must never appear in the stored message content.
 	var content string
-	require.NoError(t, dbRead.QueryRow(
+	require.NoError(t, store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? ORDER BY id DESC LIMIT 1", sid,
 	).Scan(&content))
 	assert.NotContains(t, content, "compact_detected", "the internal signal must not reach message content")
@@ -178,11 +180,11 @@ func TestMarkAndConsumeSessionCompacted(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dbDir, ".clawbench"), 0o755))
 	require.NoError(t, initTestDB(dbDir))
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s1', 1, 'codebuddy', 'T')`)
+	_, err := store.UnsafeDBForTest().Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('s1', 1, 'codebuddy', 'T')`)
 	require.NoError(t, err)
 
 	// Fresh session: nothing to consume.
@@ -212,11 +214,11 @@ func TestConsumeSessionCompacted_ConcurrentConsumersOnlyOneWins(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Join(dbDir, ".clawbench"), 0o755))
 	require.NoError(t, initTestDB(dbDir))
 	defer func() {
-		db.Close()
-		dbRead.Close()
+		store.UnsafeDBForTest().Close()
+		store.UnsafeReadDBForTest().Close()
 	}()
 
-	_, err := db.Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('race', 1, 'codebuddy', 'T')`)
+	_, err := store.UnsafeDBForTest().Exec(`INSERT INTO chat_sessions (id, project_id, backend, title) VALUES ('race', 1, 'codebuddy', 'T')`)
 	require.NoError(t, err)
 	MarkSessionCompacted("race")
 

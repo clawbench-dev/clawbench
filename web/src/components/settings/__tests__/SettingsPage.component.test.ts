@@ -10,7 +10,7 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { pushNav, popNav, truncateNav, handleRestartNeeded, handleRestart, checkAllGuards, mockNavStack, mockCurrentCategory, mockRestartDialogVisible, mockChangedColdFields, mockNeedsRestart, mockRestarting, mockServerConfig } = vi.hoisted(() => {
+const { pushNav, popNav, truncateNav, returnToCategory, handleRestartNeeded, handleRestart, checkAllGuards, mockNavStack, mockCurrentCategory, mockRestartDialogVisible, mockChangedColdFields, mockNeedsRestart, mockRestarting, mockServerConfig } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { ref } = require('vue')
   const ns = ref<string[]>([])
@@ -24,6 +24,14 @@ const { pushNav, popNav, truncateNav, handleRestartNeeded, handleRestart, checkA
     pushNav: vi.fn((id: string) => { ns.value.push(id) }),
     popNav: vi.fn(() => { ns.value.pop() }),
     truncateNav: vi.fn((depth: number) => { ns.value.splice(depth) }),
+    // Mirrors the real implementation: pop the trailing detail entry, else push
+    // the list. Kept in sync so the breadcrumb assertions are meaningful.
+    returnToCategory: vi.fn((categoryId: string) => {
+      const top = ns.value[ns.value.length - 1]
+      if (top && top.startsWith(categoryId + ':')) ns.value.pop()
+      if (ns.value[ns.value.length - 1] !== categoryId) ns.value.push(categoryId)
+      cc.value = ns.value[ns.value.length - 1] ?? null
+    }),
     handleRestartNeeded: vi.fn(),
     handleRestart: vi.fn(),
     checkAllGuards: vi.fn(() => true),
@@ -54,6 +62,7 @@ vi.mock('@/composables/useSettingsNavigation', async (importOriginal) => {
       pushNav,
       popNav,
       truncateNav,
+      returnToCategory,
       restartDialogVisible: mockRestartDialogVisible,
       changedColdFields: mockChangedColdFields,
       needsRestart: mockNeedsRestart,
@@ -105,7 +114,7 @@ const SettingsIndexStub = defineComponent({
 const SettingsCategoryStub = defineComponent({
   name: 'SettingsCategory',
   props: { categoryId: { default: '' } },
-  emits: ['navigate', 'restart-needed', 'restart-requested'],
+  emits: ['navigate', 'back', 'deleted', 'restart-needed', 'restart-requested'],
   setup() { return {} },
   template: `<div class="settings-category-stub" :data-cat="String(categoryId || '')" @click="$emit('navigate', 'agents:abc')" />`,
 })
@@ -226,6 +235,41 @@ describe('SettingsPage — header', () => {
     await wrapper.findAll('.crumb')[0].trigger('click')
     await flushPromises()
     expect(truncateNav).not.toHaveBeenCalled()
+  })
+
+  it('returns to the list (pop) when a detail page reports a deletion', async () => {
+    // Regression: after deleting a project the breadcrumb read
+    // 设置 › 项目 › 项目详情 › 项目 because the return was wired to pushNav.
+    const deletedStub = defineComponent({
+      name: 'SettingsCategory',
+      props: { categoryId: { default: '' } },
+      emits: ['navigate', 'back', 'deleted', 'restart-needed', 'restart-requested'],
+      setup() { return {} },
+      template: `<div class="deleted-stub" @click="$emit('deleted', 'project')" />`,
+    })
+    mockNavStack.value = ['project', 'project:42']
+    mockCurrentCategory.value = 'project:42'
+    const wrapper = mount(SettingsPage, {
+      props: { active: true },
+      global: {
+        plugins: [i18n],
+        stubs: {
+          SettingsIndex: SettingsIndexStub,
+          SettingsCategory: deletedStub,
+          SettingsRestartDialog: SettingsRestartDialogStub,
+        },
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('.deleted-stub').trigger('click')
+    await flushPromises()
+
+    expect(returnToCategory).toHaveBeenCalledWith('project')
+    // The list is on top — not ['project','project:42','project'].
+    expect(mockNavStack.value).toEqual(['project'])
+    // Deletion bypasses the unsaved-changes guard (the entity is gone).
+    expect(checkAllGuards).not.toHaveBeenCalled()
   })
 })
 

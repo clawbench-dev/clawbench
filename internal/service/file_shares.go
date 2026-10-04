@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"clawbench/internal/store"
 )
 
 // FileSharesDDL creates the file_shares table.
@@ -55,7 +57,7 @@ func GenerateShareToken() (string, error) {
 // same reason root is: the list is project-scoped and a row left on the 0
 // sentinel would be invisible in every project.
 func UpsertFileShare(path, name, root, projectPath string) (token string, created bool, err error) {
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return "", false, idErr
 	}
@@ -72,11 +74,11 @@ func UpsertFileShare(path, name, root, projectPath string) (token string, create
 
 	if existing {
 		// Rotate: delete the old row first so the previous token stops working.
-		if _, err := WriteExec("DELETE FROM file_shares WHERE path = ?", path); err != nil {
+		if _, err := store.WriteExec("DELETE FROM file_shares WHERE path = ?", path); err != nil {
 			return "", false, fmt.Errorf("delete stale share: %w", err)
 		}
 	}
-	if _, err := WriteExec(
+	if _, err := store.WriteExec(
 		"INSERT INTO file_shares (token, path, name, root, project_id) VALUES (?, ?, ?, ?, ?)",
 		token, path, name, root, projectID,
 	); err != nil {
@@ -93,7 +95,7 @@ func GetFileShareByToken(token string) (path, name, root string, ok bool, err er
 	if token == "" {
 		return "", "", "", false, nil
 	}
-	row := ReadDB().QueryRow("SELECT path, name, root FROM file_shares WHERE token = ?", token)
+	row := store.ReadDB().QueryRow("SELECT path, name, root FROM file_shares WHERE token = ?", token)
 	if err := row.Scan(&path, &name, &root); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", "", false, nil
@@ -110,7 +112,7 @@ func GetFileShareProjectByToken(token string) (projectPath string, ok bool, err 
 	if token == "" {
 		return "", false, nil
 	}
-	row := ReadDB().QueryRow(
+	row := store.ReadDB().QueryRow(
 		`SELECT COALESCE(p.path, '')
 		   FROM file_shares fs
 		   LEFT JOIN projects p ON p.id = fs.project_id
@@ -132,7 +134,7 @@ func GetFileShareByPath(path string) (token, name string, ok bool, err error) {
 	if path == "" {
 		return "", "", false, nil
 	}
-	row := ReadDB().QueryRow("SELECT token, name FROM file_shares WHERE path = ?", path)
+	row := store.ReadDB().QueryRow("SELECT token, name FROM file_shares WHERE path = ?", path)
 	if err := row.Scan(&token, &name); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", "", false, nil
@@ -147,7 +149,7 @@ func DeleteFileShareByToken(token string) error {
 	if token == "" {
 		return nil
 	}
-	if _, err := WriteExec("DELETE FROM file_shares WHERE token = ?", token); err != nil {
+	if _, err := store.WriteExec("DELETE FROM file_shares WHERE token = ?", token); err != nil {
 		return fmt.Errorf("delete share by token: %w", err)
 	}
 	return nil
@@ -158,7 +160,7 @@ func DeleteFileShareByPath(path string) error {
 	if path == "" {
 		return nil
 	}
-	if _, err := WriteExec("DELETE FROM file_shares WHERE path = ?", path); err != nil {
+	if _, err := store.WriteExec("DELETE FROM file_shares WHERE path = ?", path); err != nil {
 		return fmt.Errorf("delete share by path: %w", err)
 	}
 	return nil
@@ -177,7 +179,7 @@ func DeleteFileSharesUnderPath(path string) error {
 	// the LIKE runs under `ESCAPE '\'`, so each appended separator must be
 	// escaped exactly like a separator appearing inside the path itself.
 	prefix := escapeLikePrefix(path)
-	if _, err := WriteExec(
+	if _, err := store.WriteExec(
 		"DELETE FROM file_shares WHERE path = ? OR path LIKE ? ESCAPE '\\' OR path LIKE ? ESCAPE '\\'",
 		path, prefix+"\\/%", prefix+"\\\\%",
 	); err != nil {
@@ -209,7 +211,7 @@ func DeleteFileShareByPaths(paths []string) error {
 	for _, p := range clean {
 		args = append(args, p)
 	}
-	if _, err := WriteExec("DELETE FROM file_shares WHERE path IN ("+placeholders+")", args...); err != nil {
+	if _, err := store.WriteExec("DELETE FROM file_shares WHERE path IN ("+placeholders+")", args...); err != nil {
 		return fmt.Errorf("delete shares by paths: %w", err)
 	}
 	return nil
@@ -221,11 +223,11 @@ func DeleteFileShareByPaths(paths []string) error {
 // action is offered from a project's shared-files drawer, so revoking other
 // projects' links would silently break their public URLs.
 func DeleteAllFileShares(projectPath string) error {
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return idErr
 	}
-	if _, err := WriteExec("DELETE FROM file_shares WHERE project_id = ?", projectID); err != nil {
+	if _, err := store.WriteExec("DELETE FROM file_shares WHERE project_id = ?", projectID); err != nil {
 		return fmt.Errorf("delete project file shares: %w", err)
 	}
 	return nil
@@ -246,11 +248,11 @@ type FileShare struct {
 //
 // Returns an empty (non-nil) slice when there are no shares so JSON encodes as [].
 func ListFileShares(projectPath string) ([]FileShare, error) {
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return nil, idErr
 	}
-	rows, err := ReadDB().Query(
+	rows, err := store.ReadDB().Query(
 		"SELECT token, path, name, created_at FROM file_shares WHERE project_id = ? ORDER BY rowid DESC",
 		projectID,
 	)

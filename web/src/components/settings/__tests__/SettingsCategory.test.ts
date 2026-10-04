@@ -201,7 +201,7 @@ const i18n = createI18n({
       common: { ok: '确定' },
       settings: {
         needsRestart: '需重启',
-        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', projectFiles: '项目与文件', about: '关于', android: 'Android', security: '安全', basic: '其他' },
+        categories: { chat: '聊天', agents: '智能体', appearance: '外观', tts: '语音', portForward: '端口映射', push: '推送', terminal: '终端', rag: 'RAG', project: '项目', files: '文件', about: '关于', android: 'Android', security: '安全', basic: '其他' },
         items: {
           defaultAgent: '默认智能体',
           autoSpeech: '自动语音',
@@ -430,6 +430,8 @@ function mountCategory(categoryId: string, { deep = false, attach = false }: { d
             BottomSheet: true,
             ProviderIcon: true,
             PasswordChangeDialog: true,
+            ProjectsSetting: true,
+            ProjectDetailSetting: true,
           },
     },
   })
@@ -589,9 +591,9 @@ describe('SettingsCategory', () => {
   })
 
   // ─── ProjectFiles category ──────────────────────────────
-  describe('projectFiles category', () => {
+  describe('files category', () => {
     it('saves showHidden locally when toggled', async () => {
-      const wrapper = mountCategory('projectFiles')
+      const wrapper = mountCategory('files')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '显示隐藏文件')
       expect(item).toBeTruthy()
@@ -603,7 +605,7 @@ describe('SettingsCategory', () => {
     })
 
     it('PATCHes upload.max_size_mb when changed', async () => {
-      const wrapper = mountCategory('projectFiles')
+      const wrapper = mountCategory('files')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '上传大小上限')
       expect(item).toBeTruthy()
@@ -615,7 +617,7 @@ describe('SettingsCategory', () => {
     })
 
     it('PATCHes upload.max_files when changed', async () => {
-      const wrapper = mountCategory('projectFiles')
+      const wrapper = mountCategory('files')
       const allItems = wrapper.findAllComponents({ name: 'SettingsItem' })
       const item = allItems.find(i => i.props().label === '上传文件上限')
       expect(item).toBeTruthy()
@@ -1067,7 +1069,7 @@ describe('SettingsCategory', () => {
       expect(wrapper.findComponent({ name: 'SettingsAgentDetail' }).exists()).toBe(true)
     })
 
-    it('emits navigate agents when SettingsAgentDetail emits deleted', async () => {
+    it('emits deleted agents when SettingsAgentDetail emits deleted', async () => {
       const wrapper = mount(SettingsCategory, {
         props: { categoryId: 'agents:test-agent' },
         global: {
@@ -1082,8 +1084,9 @@ describe('SettingsCategory', () => {
       const detail = wrapper.find('[data-test="agent-detail"]')
       if (detail.exists()) {
         await detail.trigger('click')
-        expect(wrapper.emitted('navigate')).toBeTruthy()
-        expect(wrapper.emitted('navigate')![0]).toEqual(['agents'])
+        // `deleted` (not `navigate`): returning to the list is a stack POP.
+        expect(wrapper.emitted('deleted')).toBeTruthy()
+        expect(wrapper.emitted('deleted')![0]).toEqual(['agents'])
       }
     })
   })

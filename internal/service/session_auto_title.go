@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/summarize"
 	"clawbench/internal/ws"
@@ -190,7 +192,7 @@ func autoRenameSession(ctx context.Context, sessionID, triggerText string) {
 // in the UPDATE's WHERE clause, not a prior SELECT, so it cannot race a
 // concurrent manual rename. Returns whether the row was updated.
 func SetSessionTitleAutoIfNotCustom(sessionID, title string) (bool, error) {
-	res, err := WriteExec(
+	res, err := store.WriteExec(
 		"UPDATE chat_sessions SET title = ?, title_source = ? WHERE id = ? AND COALESCE(title_source, '') <> ?",
 		title, TitleSourceAuto, sessionID, TitleSourceCustom,
 	)

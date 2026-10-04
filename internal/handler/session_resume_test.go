@@ -11,13 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 )
 
 // --- POST /api/ai/session/resume tests ---
@@ -71,9 +72,9 @@ func TestServeSessionResume_RestoresArchivedSession(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-resume-session"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Test Session', 1)",
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -87,7 +88,7 @@ func TestServeSessionResume_RestoresArchivedSession(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var archived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, archived, "session should be restored (archived=0)")
 }
@@ -97,9 +98,9 @@ func TestServeSessionResume_ActiveSessionPassthrough(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-active-session"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Active Session', 0)",
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -136,9 +137,9 @@ func TestServeSessionResume_SessionCountBelowLimit(t *testing.T) {
 
 	// Create a archived session to resume
 	sessionID := "test-resume-below-limit"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Archived Session', 1)",
-		sessionID, service.ProjectIDForTest(t, env.ProjectDir),
+		sessionID, store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -152,7 +153,7 @@ func TestServeSessionResume_SessionCountBelowLimit(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 
 	var archived int
-	err = service.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived)
+	err = store.UnsafeDBForTest().QueryRow("SELECT archived FROM chat_sessions WHERE id = ?", sessionID).Scan(&archived)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, archived, "session should be restored (archived=0)")
 }
@@ -162,10 +163,10 @@ func TestServeSessionResume_CrossProjectDenied(t *testing.T) {
 	defer teardown()
 
 	sessionID := "test-other-project-session"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO projects (path) VALUES ('/other/project') ON CONFLICT(path) DO NOTHING")
 	assert.NoError(t, err)
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, (SELECT id FROM projects WHERE path = '/other/project'), 'claude', 'Other Session', 0)",
 		sessionID,
 	)
@@ -190,16 +191,16 @@ func TestServeSessionResume_SessionCountLimit(t *testing.T) {
 	defer func() { model.SessionMaxCount = origMax }()
 
 	// Create an active session (fills the 1-slot limit)
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Active', 0)",
-		"existing-session", service.ProjectIDForTest(t, env.ProjectDir),
+		"existing-session", store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
 	// Create a archived session to resume
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, archived) VALUES (?, ?, 'claude', 'Archived', 1)",
-		"archived-session", service.ProjectIDForTest(t, env.ProjectDir),
+		"archived-session", store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	assert.NoError(t, err)
 
@@ -221,7 +222,7 @@ func TestFindExistingACPSessions_FindsActiveSession(t *testing.T) {
 	defer teardown()
 
 	// Insert a session with source_session_id = "acp:test-acp-123"
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id) VALUES (?, ?, 'claude', 'Test', ?)",
 		"cb-session-1", env.ProjectDir, "acp:test-acp-123",
 	)
@@ -238,7 +239,7 @@ func TestFindExistingACPSessions_FindsExternalSessionID(t *testing.T) {
 
 	// A session whose raw backend session id is stored in external_session_id
 	// (the common case for opencode ses_... ids) — no acp: prefix.
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id) VALUES (?, ?, 'opencode', 'Native', ?)",
 		"cb-ext-1", env.ProjectDir, "ses_00c202c74ffeZdhwsMNwtbwPm5",
 	)
@@ -253,7 +254,7 @@ func TestFindExistingACPSessions_FindsArchivedSession(t *testing.T) {
 	defer teardown()
 
 	// Insert a archived session
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, archived) VALUES (?, ?, 'claude', 'Archived', ?, 1)",
 		"cb-session-archived", env.ProjectDir, "acp:archived-acp-123",
 	)
@@ -362,14 +363,14 @@ func TestServeACPLoadSession_ExistingACPSessionHardDeleted(t *testing.T) {
 	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, false, false)
 
 	// Insert an existing session for the ACP session ID
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, session_type) VALUES (?, ?, 'acp-stdio', 'Old', ?, 'chat')",
 		"old-cb-session", env.ProjectDir, "acp:existing-acp-sid",
 	)
 	require.NoError(t, err)
 
 	// Insert a chat_history entry for the old session to verify hard delete
-	_, err = service.UnsafeDBForTest().Exec(
+	_, err = store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, backend, session_id, role, content) VALUES (?, 'acp-stdio', ?, 'user', 'hello')",
 		env.ProjectDir, "old-cb-session",
 	)
@@ -389,7 +390,7 @@ func TestServeACPLoadSession_ExistingACPSessionHardDeleted(t *testing.T) {
 	// existing session should have been hard-deleted before that point.
 	// Verify the old session is gone
 	var count int
-	err = service.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", "old-cb-session").Scan(&count)
+	err = store.UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", "old-cb-session").Scan(&count)
 	assert.NoError(t, err)
 	assert.Equal(t, 0, count, "old session should be hard-deleted")
 
@@ -428,7 +429,7 @@ func TestServeACPLoadSession_LoadSessionFails_GenericError(t *testing.T) {
 
 	// Verify the session created before LoadSession was cleaned up
 	var count int
-	err := service.UnsafeDBForTest().QueryRow(
+	err := store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_sessions WHERE agent_id = ? AND archived = 0", agentID,
 	).Scan(&count)
 	assert.NoError(t, err)
@@ -501,7 +502,7 @@ func TestServeACPLoadSession_SessionMetadataBeforeLoad(t *testing.T) {
 	// Find the session that was created (archived by cleanup on failure).
 	// Query without filtering on archived to find it.
 	var sourceID, transport, extID string
-	err := service.UnsafeDBForTest().QueryRow(
+	err := store.UnsafeDBForTest().QueryRow(
 		"SELECT source_session_id, transport, external_session_id FROM chat_sessions WHERE agent_id = ? ORDER BY created_at DESC LIMIT 1",
 		agentID,
 	).Scan(&sourceID, &transport, &extID)
@@ -689,7 +690,7 @@ func TestServeACPSessions_FilterExistingSessions(t *testing.T) {
 	ai.GetAgentCapabilityRegistry().ForceUpdateIfNeeded(agentID, nil, nil, nil, nil, nil, true, true, false)
 
 	// Pre-create a CB session for one of the ACP sessions
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, source_session_id, session_type) VALUES (?, ?, 'acp-stdio', 'Existing', ?, 'chat')",
 		"cb-existing-1", env.ProjectDir, "acp:acp-session-1",
 	)
@@ -1015,7 +1016,7 @@ func TestServeACPSessions_FilterExistingExternalSessionID(t *testing.T) {
 
 	// A session whose raw backend id (e.g. opencode ses_...) is stored only in
 	// external_session_id — source_session_id stays NULL (the common case).
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, external_session_id, session_type) VALUES (?, ?, 'opencode', 'Native', ?, 'chat')",
 		"cb-ext-1", env.ProjectDir, "ses_00c202c74ffeZdhwsMNwtbwPm5",
 	)
@@ -1192,7 +1193,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 	// Wait for async replay goroutine to complete (it sleeps 500ms + processing)
 	require.Eventually(t, func() bool {
 		var msgCount int
-		err := service.UnsafeDBForTest().QueryRow(
+		err := store.UnsafeDBForTest().QueryRow(
 			"SELECT COUNT(*) FROM chat_history WHERE session_id = ?",
 			sid,
 		).Scan(&msgCount)
@@ -1201,7 +1202,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 
 	// Verify title was set from first user message
 	var title string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT title FROM chat_sessions WHERE id = ?",
 		sid,
 	).Scan(&title)
@@ -1210,7 +1211,7 @@ func TestServeACPLoadSession_SuccessWithReplay(t *testing.T) {
 
 	// Verify external_message_id was persisted from the replay notification's MessageId
 	var stored string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT external_message_id FROM chat_history WHERE session_id = ? LIMIT 1",
 		sid,
 	).Scan(&stored)
@@ -1287,7 +1288,7 @@ func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 	// frontend can render tool details for restored ACP sessions.
 	require.Eventually(t, func() bool {
 		var cnt int
-		err := service.UnsafeDBForTest().QueryRow(
+		err := store.UnsafeDBForTest().QueryRow(
 			"SELECT COUNT(*) FROM chat_tool_calls WHERE session_id = ? AND tool_id = ?",
 			sid, "tc-replay-read",
 		).Scan(&cnt)
@@ -1296,7 +1297,7 @@ func TestServeACPLoadSession_ReplayPersistsToolCalls(t *testing.T) {
 
 	var input, output string
 	var done int
-	err := service.UnsafeDBForTest().QueryRow(
+	err := store.UnsafeDBForTest().QueryRow(
 		"SELECT input, output, done FROM chat_tool_calls WHERE session_id = ? AND tool_id = ?",
 		sid, "tc-replay-read",
 	).Scan(&input, &output, &done)
@@ -1352,7 +1353,7 @@ func TestServeACPLoadSession_SuccessWithEmptyReplay(t *testing.T) {
 
 	// No messages saved since replay buffer was empty
 	var msgCount int
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ?",
 		sid,
 	).Scan(&msgCount)
@@ -1461,7 +1462,7 @@ func TestServeACPLoadSession_ReplayWithTitleTruncation(t *testing.T) {
 	// Wait for async replay goroutine to complete
 	require.Eventually(t, func() bool {
 		var title string
-		err := service.UnsafeDBForTest().QueryRow(
+		err := store.UnsafeDBForTest().QueryRow(
 			"SELECT title FROM chat_sessions WHERE id = ?",
 			sid,
 		).Scan(&title)
@@ -1470,7 +1471,7 @@ func TestServeACPLoadSession_ReplayWithTitleTruncation(t *testing.T) {
 
 	// Verify title was truncated
 	var title string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT title FROM chat_sessions WHERE id = ?",
 		sid,
 	).Scan(&title)
@@ -1536,7 +1537,7 @@ func TestServeACPLoadSession_ReplayTitleSkipsInjectedSystemBlock(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		var title string
-		err := service.UnsafeDBForTest().QueryRow(
+		err := store.UnsafeDBForTest().QueryRow(
 			"SELECT title FROM chat_sessions WHERE id = ?",
 			sid,
 		).Scan(&title)
@@ -1544,7 +1545,7 @@ func TestServeACPLoadSession_ReplayTitleSkipsInjectedSystemBlock(t *testing.T) {
 	}, 3*time.Second, 50*time.Millisecond, "title should be set after replay completes")
 
 	var title string
-	err = service.UnsafeDBForTest().QueryRow(
+	err = store.UnsafeDBForTest().QueryRow(
 		"SELECT title FROM chat_sessions WHERE id = ?",
 		sid,
 	).Scan(&title)

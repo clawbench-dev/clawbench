@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 
 	acp "github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
@@ -53,7 +54,7 @@ func TestServeACPLoadSession_ReplayWriteFail(t *testing.T) {
 	defer teardown()
 
 	// Force chat_history INSERTs to fail so the goroutine hits the continue branch.
-	_, err := service.WriteExec("DROP TABLE chat_history")
+	_, err := store.WriteExec("DROP TABLE chat_history")
 	require.NoError(t, err)
 
 	agentID := setupACPReplayAgent(t)
@@ -91,7 +92,7 @@ func TestServeACPLoadSession_ReplayToolCallPersistFail(t *testing.T) {
 
 	// Keep chat_history (replay message INSERT succeeds) but drop chat_tool_calls
 	// so UpsertToolCall fails.
-	_, err := service.WriteExec("DROP TABLE chat_tool_calls")
+	_, err := store.WriteExec("DROP TABLE chat_tool_calls")
 	require.NoError(t, err)
 
 	agentID := setupACPReplayAgent(t)

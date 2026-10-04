@@ -6,8 +6,9 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
-	"clawbench/internal/service"
 	"clawbench/internal/ws"
 
 	// Blank import registers the sqlite-vec virtual table extension so vec0
@@ -42,6 +43,31 @@ func EmbedderHealthy() bool {
 	return embedderHealthyFlag.Load()
 }
 
+// StoreForCleanup returns the current global store, or nil when RAG is not
+// initialized. It takes mu so a concurrent Reconfigure/Shutdown cannot swap the
+// pointer mid-read. Callers use it for best-effort cleanup paths (e.g. purging
+// chunks for deleted sessions) that must be a no-op when RAG is disabled.
+func StoreForCleanup() *Store {
+	mu.Lock()
+	defer mu.Unlock()
+	return GlobalStore
+}
+
+// DeleteProjectData deletes every RAG chunk belonging to a project. Used when a
+// project is removed from the registry, so its indexed content does not surface
+// in search afterwards.
+//
+// Best-effort: a no-op when RAG is not initialized (no store, so nothing was
+// ever indexed).
+func DeleteProjectData(projectID int64) error {
+	rs := StoreForCleanup()
+	if rs == nil {
+		return nil
+	}
+	_, err := rs.DeleteChunksByProjectID(projectID)
+	return err
+}
+
 // SetEmbedderHealthy updates the cached embedder health state.
 func SetEmbedderHealthy(healthy bool) {
 	embedderHealthyFlag.Store(healthy)
@@ -62,22 +88,22 @@ func Init(cfg model.RAGConfig) error {
 	slog.Info("rag: opening SQLite store", slog.String("path", dbPath))
 
 	// Open SQLite store (uses the same database file as the main app)
-	store, err := NewSQLiteStore(dbPath)
+	ragStore, err := NewSQLiteStore(dbPath)
 	if err != nil {
 		return err
 	}
 
 	mu.Lock()
-	GlobalStore = store
-	// The service package owns RenameProject but cannot import this one (this
-	// package imports it), so it invalidates through this hook instead. Without
-	// it the store would keep serving the pre-rename path→id mapping, and a
-	// later project created at the freed-up old path would be attributed to the
-	// renamed project's id.
+	GlobalStore = ragStore
+	// The store package owns RenameProject but this package cannot depend on
+	// service (it would form a cycle), so it invalidates through this hook
+	// instead. Without it the store would keep serving the pre-rename path→id
+	// mapping, and a later project created at the freed-up old path would be
+	// attributed to the renamed project's id.
 	//
 	// Registered on every Init: a Reconfigure swaps GlobalStore, so the hook must
 	// always point at the store currently in use.
-	service.RegisterProjectRenamedHook(store.InvalidateProjectPathCache)
+	store.RegisterProjectRenamedHook(ragStore.InvalidateProjectPathCache)
 
 	// Initialize embedding client (only when enabled)
 	if cfg.VectorEnabled && cfg.BaseURL != "" && cfg.Model != "" {

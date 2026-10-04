@@ -123,6 +123,10 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		"PathTraversal",
 		"InternalError",
 		"SessionNotFound",
+		"ProjectNotFound",
+		"ProjectDeleteForbidden",
+		"ProjectHasRunningSessions",
+		"CannotDeleteCurrentProject",
 		"SummaryModelNotConfigured",
 		"NoUserMessagesToSummarize",
 		"GenerateTitleFailed",
@@ -140,6 +144,7 @@ func TestT_AllKeysPresentInBothLanguages(t *testing.T) {
 		// Auto-continue is rendered from a background goroutine (no request),
 		// so it is the one key most likely to be added on only one side.
 		"AutoContinue",
+		"InvalidAgentAvatar",
 	}
 
 	for _, key := range keys {

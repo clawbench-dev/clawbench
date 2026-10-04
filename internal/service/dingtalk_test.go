@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	"github.com/stretchr/testify/assert"
@@ -31,7 +33,7 @@ func setupTestDBForDingTalk(t *testing.T) *sql.DB {
 	`)
 	require.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(cleanup)
 	return db
 }
@@ -86,7 +88,7 @@ func TestDingTalkSubscribers_CRUD(t *testing.T) {
 // --- GetDingTalkSubscribers nil db ---
 
 func TestGetDingTalkSubscribers_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	subs, err := service.GetDingTalkSubscribers()
@@ -97,7 +99,7 @@ func TestGetDingTalkSubscribers_NilDB(t *testing.T) {
 // --- UpsertDingTalkSubscriber nil db ---
 
 func TestUpsertDingTalkSubscriber_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	err := service.UpsertDingTalkSubscriber("user1", "conv1", "name", "stream")
@@ -107,7 +109,7 @@ func TestUpsertDingTalkSubscriber_NilDB(t *testing.T) {
 // --- DeleteDingTalkSubscriber nil db ---
 
 func TestDeleteDingTalkSubscriber_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	err := service.DeleteDingTalkSubscriber("user1")
@@ -127,7 +129,7 @@ func TestDeleteDingTalkSubscriber_NotFound(t *testing.T) {
 // --- MergeDingTalkConfigSubscribers ---
 
 func TestMergeDingTalkConfigSubscribers_NilDB(t *testing.T) {
-	cleanup := service.SetDBForTest(nil, nil)
+	cleanup := store.SetDBForTest(nil, nil)
 	defer cleanup()
 
 	// Should not panic

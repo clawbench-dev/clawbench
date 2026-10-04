@@ -19,6 +19,8 @@
         v-else
         :category-id="currentCategory!"
         @navigate="pushNav"
+        @back="handleCategoryBack"
+        @deleted="handleCategoryDeleted"
         @restart-needed="handleRestartNeeded"
         @restart-requested="handleRestart"
       />
@@ -59,7 +61,7 @@ const props = defineProps<{
 
 const {
   t, loadConfig,
-  navStack, currentCategory, pushNav, popNav, truncateNav,
+  navStack, currentCategory, pushNav, popNav, truncateNav, returnToCategory,
   restartDialogVisible, changedColdFields, needsRestart,
   restarting,
   handleRestartNeeded, handleRestart,
@@ -93,6 +95,27 @@ async function confirmDiscardIfDirty(): Promise<boolean> {
 async function handleBack() {
   if (!(await confirmDiscardIfDirty())) return
   popNav()
+}
+
+/**
+ * Return from a detail page (project:<id> / agents:<id>) to its list.
+ *
+ * This is a POP, not a push: the detail was pushed on top of its list, so
+ * pushing again would grow the breadcrumb (设置 › 项目 › 项目详情 › 项目).
+ * The unsaved-changes guard still applies for symmetry with every other exit.
+ */
+async function handleCategoryBack(categoryId: string) {
+  if (!(await confirmDiscardIfDirty())) return
+  returnToCategory(categoryId)
+}
+
+/**
+ * A detail page reported its entity was deleted. Return to the list
+ * unconditionally: the entity no longer exists, so the unsaved-changes guard
+ * must not be able to strand the user on a page for something that is gone.
+ */
+function handleCategoryDeleted(categoryId: string) {
+  returnToCategory(categoryId)
 }
 
 /**
@@ -130,6 +153,11 @@ function labelForCategory(cat: string): string {
   if (isSubPageRoute(cat)) {
     const titleKey = getSubPageTitleKey(cat)
     return titleKey ? t(titleKey) : cat
+  }
+  // Project detail (project:<id>) is a fixed-label page: the crumb reads
+  // "项目详情" rather than the project name, which is shown inside the page.
+  if (cat.startsWith('project:')) {
+    return t('settings.items.projectDetailTitle')
   }
   return t(`settings.categories.${cat}`)
 }

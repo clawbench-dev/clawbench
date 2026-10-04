@@ -11,7 +11,8 @@ const i18n = createI18n({
       settings: {
         categories: {
           appearance: '外观',
-          projectFiles: '项目与文件',
+          project: '项目',
+          files: '文件',
           chat: '聊天',
           agents: 'Agent偏好',
           terminal: '终端',
@@ -26,7 +27,7 @@ const i18n = createI18n({
           about: '关于',
         },
         groups: {
-          appearanceFiles: '外观与文件',
+          projectAppearance: '项目与外观',
           aiChat: 'AI 与对话',
           connectivity: '连接与集成',
           notifySecurity: '通知与安全',
@@ -63,19 +64,20 @@ function mountIndex() {
 }
 
 describe('SettingsIndex', () => {
-  it('renders 17 category rows', () => {
+  it('renders 18 category rows', () => {
     const wrapper = mountIndex()
 
     const rows = wrapper.findAll('.settings-index__row')
-    expect(rows.length).toBe(17)
+    expect(rows.length).toBe(18)
   })
 
   it('renders category labels', () => {
     const wrapper = mountIndex()
 
     const labels = wrapper.findAll('.settings-index__label').map(el => el.text())
+    expect(labels).toContain('项目')
     expect(labels).toContain('外观')
-    expect(labels).toContain('项目与文件')
+    expect(labels).toContain('文件')
     expect(labels).toContain('聊天')
     expect(labels).toContain('端口映射')
     expect(labels).toContain('内网穿透')
@@ -91,7 +93,7 @@ describe('SettingsIndex', () => {
     expect(cards.length).toBe(5)
 
     const titles = wrapper.findAll('.settings-card__header').map(el => el.text())
-    expect(titles).toEqual(['外观与文件', 'AI 与对话', '连接与集成', '通知与安全', '系统与关于'])
+    expect(titles).toEqual(['项目与外观', 'AI 与对话', '连接与集成', '通知与安全', '系统与关于'])
   })
 
   it('distributes every category into exactly one group', () => {
@@ -100,8 +102,8 @@ describe('SettingsIndex', () => {
     const perCard = wrapper.findAll('.settings-card').map(card =>
       card.findAll('.settings-index__row').length,
     )
-    expect(perCard).toEqual([2, 7, 4, 2, 2])
-    expect(perCard.reduce((a, b) => a + b, 0)).toBe(17)
+    expect(perCard).toEqual([3, 7, 4, 2, 2])
+    expect(perCard.reduce((a, b) => a + b, 0)).toBe(18)
   })
 
   it('emits navigate with categoryId when row clicked', async () => {
@@ -111,14 +113,14 @@ describe('SettingsIndex', () => {
     await rows[0].trigger('click')
 
     expect(wrapper.emitted('navigate')).toBeTruthy()
-    expect(wrapper.emitted('navigate')![0]).toEqual(['appearance'])
+    expect(wrapper.emitted('navigate')![0]).toEqual(['project'])
   })
 
   it('emits correct categoryId for each row', async () => {
     const wrapper = mountIndex()
 
     const expectedIds = [
-      'appearance', 'projectFiles',
+      'project', 'appearance', 'files',
       'chat', 'agents', 'skills', 'aiSummary', 'rag', 'tts', 'stt',
       'terminal', 'portForward', 'frp', 'forgeIntegration',
       'notification', 'security',

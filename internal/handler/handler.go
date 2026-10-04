@@ -381,6 +381,8 @@ func RegisterRoutes(mux *http.ServeMux) {
 	register("/api/theme/bing/save-to-gallery", ServeThemeBingSaveToGallery)
 	register("/api/file/theme-wallpaper", ServeThemeWallpaperGet)
 	register("/api/projects", ServeProjects)
+	register("/api/projects/list", ServeProjectRegistryList)
+	register("/api/projects/detail", ServeProjectRegistryDetail)
 	register("/api/project", ServeProjectSet)
 	register("/api/ai/chat", AIChat)
 	register("/api/ai/chat/cancel", CancelChat)

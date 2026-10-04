@@ -36,6 +36,27 @@ html, body {
     transition: background var(--duration-slow), color var(--duration-slow);
 }
 
+/* ── Theme reveal (circular wipe) ─────────────────────────────────────
+   The theme toggle animates the new theme in with a circle growing from the
+   button (see utils/themeReveal.ts). Two pieces are needed here:
+
+   1. Kill the default cross-fade so only our circle wipe is visible. Without
+      this, the whole page would also cross-fade underneath the circle.
+   2. While .theme-reveal-active is set, suppress the html/body colour fade
+      above. The View Transitions snapshot of the new state is taken the moment
+      the theme attribute flips, but the root's own `transition` would still be
+      mid-flight at that instant, so the snapshot would capture the OLD colour
+      and the circle would reveal nothing. */
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation: none;
+}
+
+html.theme-reveal-active,
+html.theme-reveal-active body {
+    transition: none;
+}
+
 /* ── Custom wallpaper layer ──────────────────────────────────────────
    Mounted inside .app-container (fixed) so it only covers the authenticated
    main app — the login view (separate SPA subtree) is never behind it. The

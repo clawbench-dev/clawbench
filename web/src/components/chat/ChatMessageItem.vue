@@ -30,6 +30,7 @@
         :truncate="truncate"
         :getAgentBackend="getAgentBackend"
         :getAgentName="getAgentName"
+        :getAgentAvatar="getAgentAvatar"
         :staticBlockCache="staticBlockCache"
         :active="active"
         :readOnly="readOnly"
@@ -388,7 +389,7 @@ const chatRender = inject('chatRender', {})
 const chatSession = inject('chatSession', {})
 
 const { renderTextBlock, toolCallSummary, formatToolInput, truncate, hasImagesInContent } = chatRender
-const { getAgentBackend, getAgentName } = chatSession
+const { getAgentBackend, getAgentName, getAgentAvatar } = chatSession
 const sessionId = computed(() => chatSession.sessionId?.() || '')
 
 // File changes extraction (Write → created, Edit → modified).

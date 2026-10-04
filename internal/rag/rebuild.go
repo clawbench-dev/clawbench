@@ -6,7 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"clawbench/internal/service"
+	"clawbench/internal/store"
+
 	"clawbench/internal/ws"
 )
 
@@ -175,21 +176,21 @@ func (c *RebuildCoordinator) Start(store *Store, kind RebuildKind) error {
 
 // markStale invalidates the layer the rebuild targets and returns the number of
 // units the indexer must now process (chunks for fts/vector, messages for full).
-func (c *RebuildCoordinator) markStale(store *Store, kind RebuildKind) (int, error) {
+func (c *RebuildCoordinator) markStale(ragStore *Store, kind RebuildKind) (int, error) {
 	switch kind {
 	case RebuildFTS:
-		n, err := store.MarkAllChunksForResegment()
+		n, err := ragStore.MarkAllChunksForResegment()
 		return int(n), err
 	case RebuildVector:
-		n, err := store.ResetVectorOnly(0)
+		n, err := ragStore.ResetVectorOnly(0)
 		return int(n), err
 	case RebuildFull:
-		if _, err := store.ResetAllChunksForFullRebuild(); err != nil {
+		if _, err := ragStore.ResetAllChunksForFullRebuild(); err != nil {
 			return 0, err
 		}
 		// The chunks are gone, so the indexer must re-chunk from the source
 		// messages: clear the indexed flags to put them back in its queue.
-		n, err := service.ResetAllIndexed()
+		n, err := store.ResetAllIndexed()
 		return int(n), err
 	}
 	return 0, fmt.Errorf("unknown rebuild kind %q", kind)
@@ -283,14 +284,14 @@ func (c *RebuildCoordinator) watch(myGen uint64, store *Store, kind RebuildKind,
 }
 
 // remaining returns how many units the rebuild still has to process.
-func (c *RebuildCoordinator) remaining(store *Store, kind RebuildKind) (int, error) {
+func (c *RebuildCoordinator) remaining(ragStore *Store, kind RebuildKind) (int, error) {
 	switch kind {
 	case RebuildFTS:
-		return store.PendingResegmentCount()
+		return ragStore.PendingResegmentCount()
 	case RebuildVector:
-		return store.PendingEmbeddingCount()
+		return ragStore.PendingEmbeddingCount()
 	case RebuildFull:
-		return service.UnindexedCount()
+		return store.UnindexedCount()
 	}
 	return 0, fmt.Errorf("unknown rebuild kind %q", kind)
 }

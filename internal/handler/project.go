@@ -3,18 +3,21 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/platform"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 )
 
 // ServeConversationProjects handles GET /api/conversation-projects — every
@@ -91,6 +94,124 @@ func ServeRecentProjects(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
 	}
+}
+
+// ServeProjectRegistryList handles GET /api/projects/list — every registered
+// project (the `projects` registry), with DB-derived statistics, most recently
+// active first.
+//
+// Distinct from /api/conversation-projects (only projects with history) and
+// /api/recent-projects (an MRU window that drops vanished directories): this
+// lists the full registry, including projects whose directory was deleted and
+// projects that were never used, so the settings panel can show them all.
+func ServeProjectRegistryList(w http.ResponseWriter, r *http.Request) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+	projects, err := service.ListAllProjects()
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to list projects")))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"projects": projects})
+}
+
+// ServeProjectRegistryDetail handles GET (detail) and DELETE (remove project
+// and all its data) for a single registry project, identified by `?id=`.
+//
+// DELETE refuses the global-scope sentinel, an unknown id, the caller's CURRENT
+// project, and any project with a running session. The directory on disk is not
+// touched.
+func ServeProjectRegistryDetail(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		id, ok := parseProjectIDQuery(w, r)
+		if !ok {
+			return
+		}
+		detail, err := service.GetProjectDetail(id)
+		if err != nil {
+			model.WriteError(w, model.Internal(fmt.Errorf("failed to load project detail")))
+			return
+		}
+		if detail == nil {
+			writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
+			return
+		}
+		writeJSON(w, http.StatusOK, detail)
+
+	case http.MethodDelete:
+		deleteProjectRegistryEntry(w, r)
+
+	default:
+		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
+	}
+}
+
+// deleteProjectRegistryEntry handles DELETE /api/projects/detail?id=.
+//
+// Split from ServeProjectRegistryDetail so the GET branch and the method
+// dispatch do not share its cyclomatic budget.
+func deleteProjectRegistryEntry(w http.ResponseWriter, r *http.Request) {
+	id, ok := parseProjectIDQuery(w, r)
+	if !ok {
+		return
+	}
+
+	// The global-scope sentinel is not a real project, but GetProjectDetail
+	// below reports it as "not found" — which would mask the intended 400.
+	// Reject it explicitly so the caller gets the documented status.
+	if id == store.GlobalScopeProjectID {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectDeleteForbidden")
+		return
+	}
+
+	// Refuse deleting the project the caller currently has open: its sessions
+	// and the SPA's live state reference it, and the registry row disappearing
+	// underneath would leave both dangling.
+	detail, err := service.GetProjectDetail(id)
+	if err != nil {
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to load project detail")))
+		return
+	}
+	if detail == nil {
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
+		return
+	}
+	if cur := middleware.GetProjectFromCookie(r); cur != "" &&
+		store.NormalizeProjectPath(cur) == store.NormalizeProjectPath(detail.Path) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "CannotDeleteCurrentProject")
+		return
+	}
+
+	switch err := service.DeleteProjectData(id); {
+	case err == nil:
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	case errors.Is(err, service.ErrProjectNotFound):
+		writeLocalizedErrorf(w, r, http.StatusNotFound, "ProjectNotFound")
+	case errors.Is(err, service.ErrProjectDeleteForbidden):
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "ProjectDeleteForbidden")
+	case errors.Is(err, service.ErrProjectHasRunningSessions):
+		writeLocalizedErrorf(w, r, http.StatusConflict, "ProjectHasRunningSessions")
+	default:
+		model.WriteError(w, model.Internal(fmt.Errorf("failed to delete project")))
+	}
+}
+
+// parseProjectIDQuery reads the required numeric `id` query parameter, writing
+// a 400 and returning false when it is missing or malformed.
+func parseProjectIDQuery(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	raw := r.URL.Query().Get("id")
+	if raw == "" {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return 0, false
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequestBody")
+		return 0, false
+	}
+	return id, true
 }
 
 // ServeProjectSet handles GET (current project) and POST (set project).

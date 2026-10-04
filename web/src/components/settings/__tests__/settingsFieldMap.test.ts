@@ -226,15 +226,24 @@ describe('settingsFieldMap', () => {
     expect(Math.abs(stepsFromZero - Math.round(stepsFromZero))).toBeLessThan(1e-9)
   })
 
-  it('recent_projects.max_count is in projectFiles category items', () => {
-    const projectFilesEntries = categoryItems['projectFiles']
-    const rpEntry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'recent_projects.max_count')
+  it('recent_projects.max_count is in the project category items', () => {
+    const projectEntries = categoryItems['project']
+    const rpEntry = projectEntries.find(e => e.type === 'item' && e.spec.key === 'recent_projects.max_count')
     expect(rpEntry).toBeDefined()
     expect(rpEntry!.type).toBe('item')
     if (rpEntry!.type === 'item') {
       expect(rpEntry!.spec.source).toBe('server')
       expect(rpEntry!.spec.type).toBe('number')
       expect(rpEntry!.spec.min).toBe(1)
+    }
+  })
+
+  it('project category has an all-projects card placeholder', () => {
+    const projectEntries = categoryItems['project']
+    const placeholder = projectEntries.find(e => e.type === 'item' && e.spec.key === 'allProjectsList')
+    expect(placeholder).toBeDefined()
+    if (placeholder!.type === 'item') {
+      expect(placeholder!.spec.sectionHeader).toBe('settings.items.allProjectsSection')
     }
   })
 
@@ -246,7 +255,7 @@ describe('settingsFieldMap', () => {
 
   it('categoryItems covers all expected categories', () => {
     const expectedCategories = [
-      'appearance', 'agents', 'projectFiles', 'chat', 'debug', 'security', 'about',
+      'appearance', 'agents', 'project', 'files', 'chat', 'debug', 'security', 'about',
       'notification',
       'terminal', 'tts', 'tts_engine', 'aiSummary', 'rag', 'portForward', 'frp',
     ]
@@ -686,9 +695,9 @@ describe('settingsFieldMap', () => {
     expect((cfg.hasConnectivityTest as Function)({})).toBe(false)
   })
 
-  it('projectFiles category contains markdownCodeLinkPreview local switch', () => {
-    const projectFilesEntries = categoryItems['projectFiles']
-    const entry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'markdownCodeLinkPreview')
+  it('files category contains markdownCodeLinkPreview local switch', () => {
+    const filesEntries = categoryItems['files']
+    const entry = filesEntries.find(e => e.type === 'item' && e.spec.key === 'markdownCodeLinkPreview')
     expect(entry).toBeDefined()
     if (entry!.type !== 'item') throw new Error('expected item entry')
     expect(entry!.spec.source).toBe('local')
@@ -697,9 +706,9 @@ describe('settingsFieldMap', () => {
     expect(entry!.spec.descriptionKey).toBe('settings.items.markdownCodeLinkPreviewDesc')
   })
 
-  it('projectFiles category contains filePreviewMode local switch', () => {
-    const projectFilesEntries = categoryItems['projectFiles']
-    const entry = projectFilesEntries.find(e => e.type === 'item' && e.spec.key === 'filePreviewMode')
+  it('files category contains filePreviewMode local switch', () => {
+    const filesEntries = categoryItems['files']
+    const entry = filesEntries.find(e => e.type === 'item' && e.spec.key === 'filePreviewMode')
     expect(entry).toBeDefined()
     if (entry!.type !== 'item') throw new Error('expected item entry')
     expect(entry!.spec.source).toBe('local')

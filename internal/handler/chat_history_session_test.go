@@ -9,6 +9,8 @@ import (
 	"os"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -382,7 +384,7 @@ func TestBuildForkContextHandler_PreservesSummarizedAssistant(t *testing.T) {
 
 	// Give the assistant message a reading summary — this used to trigger
 	// content stripping when building the fork context.
-	_, err = service.WriteExec(
+	_, err = store.WriteExec(
 		"INSERT INTO summaries (target_type, target_id, summary) VALUES ('chat_message', ?, 'reading summary')",
 		assistantMsg,
 	)

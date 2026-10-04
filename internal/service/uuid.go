@@ -1,4 +1,3 @@
-//nolint:noctx // db global, context not applicable
 package service
 
 import (
@@ -6,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+
+	"clawbench/internal/store"
 )
 
 // validIdentifier validates SQL identifier (table/column name) to prevent injection.
@@ -34,7 +35,7 @@ func generateUUID(prefix, tableName, column string) string { //nolint:unparam //
 			prefix, b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 
 		var exists bool
-		err := dbRead.QueryRow(
+		err := store.ReadDB().QueryRow(
 			fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s WHERE %s = ?)", tableName, column),
 			uuid,
 		).Scan(&exists)

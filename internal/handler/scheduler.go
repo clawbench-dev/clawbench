@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/service"
 )
@@ -632,7 +634,7 @@ func serveTaskExecutions(w http.ResponseWriter, r *http.Request, taskID int64, p
 		args = append(args, limit+1)
 	}
 
-	rows, err := service.ReadDB().QueryContext(r.Context(), query, args...)
+	rows, err := store.ReadDB().QueryContext(r.Context(), query, args...)
 	if err != nil {
 		model.WriteError(w, model.Internal(fmt.Errorf("failed to load execution history")))
 		return

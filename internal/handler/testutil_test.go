@@ -17,6 +17,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/middleware"
 	"clawbench/internal/model"
 	"clawbench/internal/service"
@@ -73,7 +75,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 	_, _ = db.Exec("PRAGMA busy_timeout=5000")
 
 	// Create tables
-	_, err = db.Exec(service.ProjectsDDL)
+	_, err = db.Exec(store.ProjectsDDL)
 	if err != nil {
 		t.Fatalf("failed to create projects table: %v", err)
 	}
@@ -318,6 +320,46 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(session_id, tag_id)
 		);
+		CREATE TABLE IF NOT EXISTS file_shares (
+			token TEXT PRIMARY KEY,
+			path TEXT NOT NULL,
+			name TEXT NOT NULL,
+			root TEXT NOT NULL DEFAULT '',
+			project_id INTEGER NOT NULL DEFAULT 0,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS project_forges (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			project_id INTEGER NOT NULL,
+			platform TEXT NOT NULL,
+			host TEXT NOT NULL,
+			scheme TEXT NOT NULL DEFAULT '',
+			owner TEXT NOT NULL,
+			repo TEXT NOT NULL,
+			source TEXT NOT NULL DEFAULT 'auto',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS btw_questions (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			project_id INTEGER NOT NULL DEFAULT 0,
+			anchor_message_id INTEGER NOT NULL DEFAULT 0,
+			question TEXT NOT NULL,
+			answer TEXT NOT NULL DEFAULT '',
+			model TEXT NOT NULL DEFAULT '',
+			error TEXT NOT NULL DEFAULT '',
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE TABLE IF NOT EXISTS session_shares (
+			token TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
+			backend TEXT NOT NULL DEFAULT '',
+			message_count INTEGER NOT NULL DEFAULT 0,
+			payload TEXT NOT NULL,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
 		CREATE TABLE IF NOT EXISTS message_clusters_cache (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			representative TEXT NOT NULL,
@@ -370,7 +412,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		}
 	}
 
-	service.SetDBForTest(db, db)
+	store.SetDBForTest(db, db)
 
 	// Register mock agents so GetDefaultAgentID() works
 	model.Agents = map[string]*model.Agent{
@@ -386,7 +428,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		OrigToken:       origToken,
 		OrigCookieToken: origCookieToken,
 		OrigRootPaths:   origRootPaths,
-		OrigDB:          service.UnsafeDBForTest(),
+		OrigDB:          store.UnsafeDBForTest(),
 	}
 
 	teardown := func() {
@@ -396,7 +438,7 @@ func setupTestEnv(t *testing.T) (*testEnv, func()) {
 		model.Agents = origAgents
 		model.AgentList = origAgentList
 		model.DefaultAgentID = origDefaultAgentID
-		service.SetDBForTest(env.OrigDB, env.OrigDB)
+		store.SetDBForTest(env.OrigDB, env.OrigDB)
 		_ = db.Close()
 	}
 

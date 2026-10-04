@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"clawbench/internal/store"
 )
 
 // Session tag scopes. A "project" tag is only visible/selectable inside the
@@ -70,11 +72,11 @@ func normalizeSessionTagScope(scope string) string {
 // The path is resolved back out through projects so the wire type keeps carrying
 // projectPath; a global tag (project_id = 0) has no projects row and reads as ”.
 func ListSessionTags(projectPath string) ([]SessionTag, error) {
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return nil, idErr
 	}
-	rows, err := dbRead.Query(`
+	rows, err := store.ReadDB().Query(`
 		SELECT t.name, t.scope, COALESCE(p.path, ''),
 		       (SELECT COUNT(*) FROM session_tag_links l WHERE l.tag_id = t.id) AS cnt
 		FROM session_tags t
@@ -165,7 +167,7 @@ func GetTagsForSessions(sessionIDs []string) (map[string][]SessionTag, error) {
 		LEFT JOIN projects p ON p.id = t.project_id
 		WHERE l.session_id IN (%s)
 		ORDER BY t.name COLLATE NOCASE`, placeholders)
-	rows, err := dbRead.Query(query, args...)
+	rows, err := store.ReadDB().Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -194,9 +196,9 @@ func GetTagsForSessions(sessionIDs []string) (map[string][]SessionTag, error) {
 // Runs in a single write transaction: a partially-applied tag set would leave
 // the UI showing tags the user removed.
 func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
-	// Resolved before WriteBegin: the tag helpers below run inside the write
+	// Resolved before store.WriteBegin: the tag helpers below run inside the write
 	// transaction and must not resolve (that would re-enter the write mutex).
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return idErr
 	}
@@ -216,11 +218,11 @@ func SetSessionTags(sessionID, projectPath string, refs []SessionTagRef) error {
 		names = append(names, name)
 	}
 
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer WriteUnlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	// Snapshot which definition each name currently resolves to for this
@@ -373,7 +375,7 @@ func findSessionTagIDForDelete(tx *sql.Tx, name string, projectID int64, scope s
 // project_id filter in ListSessionTags.
 func projectIDForScope(scope string, projectID int64) int64 {
 	if scope == SessionTagScopeGlobal {
-		return GlobalScopeProjectID
+		return store.GlobalScopeProjectID
 	}
 	return projectID
 }
@@ -397,18 +399,18 @@ func DeleteSessionTag(name, projectPath, scope string) error {
 	if normalized == "" {
 		return fmt.Errorf("tag name is required")
 	}
-	// Resolved before WriteBegin: findSessionTagIDForDelete runs inside the
+	// Resolved before store.WriteBegin: findSessionTagIDForDelete runs inside the
 	// transaction and must not resolve.
-	projectID, idErr := ProjectIDForPath(projectPath)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return idErr
 	}
 
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer WriteUnlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	tagID, err := findSessionTagIDForDelete(tx, normalized, projectID, scope)
@@ -435,6 +437,6 @@ func DeleteSessionTag(name, projectPath, scope string) error {
 // DeleteSessionTagsForSession removes every link belonging to a session. Called
 // when a session is destroyed so its tags do not linger in the link table.
 func DeleteSessionTagsForSession(sessionID string) error {
-	_, err := WriteExec(`DELETE FROM session_tag_links WHERE session_id = ?`, sessionID)
+	_, err := store.WriteExec(`DELETE FROM session_tag_links WHERE session_id = ?`, sessionID)
 	return err
 }

@@ -1,279 +1,21 @@
-//nolint:noctx,govet,goconst,rowserrcheck // db global singleton, context not applicable; shadowed err is standard Go pattern; JSON/SQL field names are domain strings; legacy db.Query pattern
+//nolint:noctx,govet,goconst,rowserrcheck // db global singleton, context not applicable; shadowed err is standard Go pattern; JSON/SQL field names are domain strings; legacy store.ReadDB().Query pattern
 package service
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
-	"sync"
-	"time"
+
+	"clawbench/internal/store"
 
 	"clawbench/internal/ai"
-	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
 
 	_ "modernc.org/sqlite" // register SQLite driver
 )
-
-var db *sql.DB
-
-// dbRead is the read-only connection pool (MaxOpenConns=2) for SELECT queries.
-// In WAL mode, reads never block writes and vice versa.
-// Unexported to prevent external packages from bypassing the write mutex via dbRead.Exec().
-// External callers should use ReadDB() to access the read pool.
-var dbRead *sql.DB
-
-// writeMu serializes all write operations (INSERT/UPDATE/DELETE/DDL) to prevent
-// SQLITE_BUSY errors under concurrent goroutines. Reads (Query/QueryRow) are NOT
-// locked — WAL mode allows reads and writes to proceed concurrently.
-var writeMu sync.Mutex
-
-// slowWriteThreshold is how long a write may wait for writeMu, or spend
-// executing, before it is reported. Every write in the process serializes on
-// writeMu, so one slow statement stalls every other writer — including the
-// Finalize path a user-cancel must finish before the UI can clear its
-// "stopping" state. Set well above normal SQLite latency so only pathological
-// writes are logged.
-const slowWriteThreshold = 200 * time.Millisecond
-
-// sqlTargetSkip holds the keywords that can sit between a statement's verb and
-// its target (table/index/view) name. writeOpLabel skips them so the label
-// keeps the target — without it "INSERT OR REPLACE INTO summaries" would
-// reduce to "INSERT OR REPLACE", which does not say what was written and so
-// cannot identify the slow statement.
-var sqlTargetSkip = map[string]bool{
-	"OR": true, "REPLACE": true, "IGNORE": true, "INTO": true, "FROM": true,
-	"TABLE": true, "INDEX": true, "VIEW": true, "TRIGGER": true,
-	"IF": true, "NOT": true, "EXISTS": true, "TEMPORARY": true, "TEMP": true,
-	"UNIQUE": true,
-}
-
-// writeOpLabel reduces a SQL statement to a short, log-safe label of the form
-// "<verb> <target>" ("UPDATE chat_history", "INSERT summaries",
-// "PRAGMA journal_mode=WAL"). Only the leading keywords are kept, so a
-// statement carrying user content can never leak it into the logs.
-func writeOpLabel(query string) string {
-	const maxLen = 48
-	fields := strings.Fields(query)
-	if len(fields) == 0 {
-		return ""
-	}
-	verb := fields[0]
-	for _, f := range fields[1:] {
-		if sqlTargetSkip[strings.ToUpper(f)] {
-			continue
-		}
-		label := verb + " " + f
-		if len(label) > maxLen {
-			label = label[:maxLen]
-		}
-		return label
-	}
-	if len(verb) > maxLen {
-		verb = verb[:maxLen]
-	}
-	return verb
-}
-
-// slowWrite captures a write worth reporting: how long it waited for writeMu
-// and how long the statement itself took.
-type slowWrite struct {
-	op   string
-	wait time.Duration
-	exec time.Duration
-}
-
-// reportSlowWrite logs a slow write, distinguishing the two axes: waiting for
-// writeMu means contention (another goroutine holds the global write lock),
-// while a slow exec means the statement itself (e.g. rewriting a
-// multi-megabyte content column). They call for opposite fixes, so a single
-// undifferentiated "slow write" line would not be actionable.
-//
-// Callers must have released writeMu: logging writes to a file, and doing that
-// under the global write lock would add log I/O to the very critical section
-// this instrumentation exists to measure.
-func reportSlowWrite(s slowWrite) {
-	if s.wait < slowWriteThreshold && s.exec < slowWriteThreshold {
-		return
-	}
-	slog.Warn("db: slow write",
-		slog.String("op", s.op),
-		slog.Duration("lock_wait", s.wait),
-		slog.Duration("exec", s.exec),
-	)
-}
-
-// timedWrite runs one write statement under writeMu, reporting it when either
-// the lock wait or the execution exceeds slowWriteThreshold.
-//
-// The unlock is deferred rather than written inline: exec() reaches into
-// database/sql and can panic (a nil *sql.DB dereferences inside db.Exec, which
-// is exactly what the backfill path does when the DB is torn down between
-// tests). An inline Unlock after exec() would be skipped by the panic and leave
-// writeMu held forever, so every later writer blocks on Lock — the whole
-// process wedges with no CPU use and no error, and the run dies on the test
-// timeout instead of surfacing the original panic.
-func timedWrite(query string, exec func() (sql.Result, error)) (sql.Result, error) {
-	// Derived before locking so the label work is not inside the critical
-	// section either.
-	op := writeOpLabel(query)
-
-	waitStart := time.Now()
-	writeMu.Lock()
-	lockedAt := time.Now()
-	defer func() {
-		wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
-		writeMu.Unlock()
-		reportSlowWrite(slowWrite{op: op, wait: wait, exec: execDur})
-	}()
-
-	return exec()
-}
-
-// WriteLock acquires the global write mutex.
-// Callers MUST call WriteUnlock after the write operation completes.
-// Use this for write transactions that span multiple SQL statements:
-//
-//	service.WriteLock()
-//	tx, err := db.Begin()
-//	// ... tx.Exec ...
-//	tx.Commit()
-//	service.WriteUnlock()
-func WriteLock() { writeMu.Lock() }
-
-// WriteUnlock releases the global write mutex.
-func WriteUnlock() { writeMu.Unlock() }
-
-// WriteExec executes a write statement on DB under the write mutex.
-// Use this for all INSERT/UPDATE/DELETE/DDL operations instead of DB.Exec directly.
-func WriteExec(query string, args ...any) (sql.Result, error) {
-	return timedWrite(query, func() (sql.Result, error) { return db.Exec(query, args...) })
-}
-
-// WriteExecContext executes a write statement on DB under the write mutex with context support.
-// Use this instead of DB.ExecContext for writes that may need request-scoped cancellation.
-func WriteExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return timedWrite(query, func() (sql.Result, error) { return db.ExecContext(ctx, query, args...) })
-}
-
-// WriteBegin starts a write transaction on DB under the write mutex.
-// The caller MUST call tx.Commit() or tx.Rollback() to release the mutex.
-// Typical usage:
-//
-//	tx, err := WriteBegin()
-//	if err != nil { return err }
-//	defer writeMu.Unlock() // ensure mutex is released on any return path
-//	// ... tx.Exec, tx.Query ...
-//	if err := tx.Commit(); err != nil { return err }
-//
-// Only the lock wait is reported here: the transaction stays open for as long
-// as the caller keeps the mutex, so its execution time is not measurable at
-// this boundary. A long lock_wait still proves contention — some other writer
-// (or a previous multi-statement transaction) held writeMu.
-func WriteBegin() (*sql.Tx, error) {
-	waitStart := time.Now()
-	writeMu.Lock()
-	lockedAt := time.Now()
-
-	// On success the lock is deliberately LEFT HELD: the caller runs a
-	// multi-statement transaction under it and registers its own
-	// `defer writeMu.Unlock()`. But db.Begin() panics when db is nil (the
-	// teardown condition the summary backfill path hits), and unlocking only on
-	// the returned-error path would skip that panic — leaving the global write
-	// mutex held forever, with every later writer blocked in Lock and no CPU use
-	// or error to explain it. Same wedge timedWrite was fixed for, so the panic
-	// path is covered by a guard that releases the lock unless the caller has
-	// taken ownership of it.
-	//
-	// A slow wait is still reported on the success path (as before): a BEGIN
-	// that queued behind writeMu is the contention worth seeing. It is logged
-	// synchronously and thus while the lock is held — accepted here because this
-	// path runs once per transaction rather than once per statement, so the
-	// added log I/O is not measurable against the wait it describes.
-	callerOwnsLock := false
-	defer func() {
-		if callerOwnsLock {
-			if wait := lockedAt.Sub(waitStart); wait >= slowWriteThreshold {
-				slog.Warn("db: slow write", slog.String("op", "BEGIN tx"), slog.Duration("lock_wait", wait))
-			}
-			return
-		}
-		wait, execDur := lockedAt.Sub(waitStart), time.Since(lockedAt)
-		writeMu.Unlock()
-		reportSlowWrite(slowWrite{op: "BEGIN tx", wait: wait, exec: execDur})
-	}()
-
-	tx, err := db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	callerOwnsLock = true
-	return tx, nil
-}
-
-// DBReady returns true if the database has been initialized.
-func DBReady() bool { return db != nil }
-
-// ReadDB returns the read connection pool as a dbutil.Reader (read-only, no Exec).
-func ReadDB() dbutil.Reader { return dbRead }
-
-// WriteDB returns a dbutil.Writer that acquires writeMu on every Exec/ExecContext call.
-// Query/QueryRow calls use the read pool without the mutex.
-func WriteDB() dbutil.Writer { return mutexDBWriter{} }
-
-// UnsafeDBForTest returns the raw write *sql.DB handle for test code.
-// Must only be called from _test.go files.
-func UnsafeDBForTest() *sql.DB { return db }
-
-// SetDBForTest sets the database handles for test code.
-// It returns a cleanup function that restores the original values.
-// Must only be called from _test.go files.
-func SetDBForTest(writeDB, readDB *sql.DB) func() {
-	origDB, origDBRead := db, dbRead
-	db, dbRead = writeDB, readDB
-	// The path -> id cache is keyed by canonical path, so ids from the previous
-	// database would resolve against the new one and silently address rows that
-	// do not exist. Clear it whenever the handle changes.
-	ResetProjectIDCacheForTest()
-	return func() {
-		db, dbRead = origDB, origDBRead
-		ResetProjectIDCacheForTest()
-	}
-}
-
-// mutexDBWriter implements dbutil.Writer. Exec/ExecContext acquire writeMu
-// and use the write pool (DB). Query/QueryRow use the read pool (dbRead)
-// without the mutex — WAL mode allows concurrent reads during writes.
-type mutexDBWriter struct{}
-
-func (mutexDBWriter) Exec(query string, args ...any) (sql.Result, error) {
-	return timedWrite(query, func() (sql.Result, error) { return db.Exec(query, args...) })
-}
-
-func (mutexDBWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return timedWrite(query, func() (sql.Result, error) { return db.ExecContext(ctx, query, args...) })
-}
-
-func (mutexDBWriter) Query(query string, args ...any) (*sql.Rows, error) {
-	return dbRead.Query(query, args...)
-}
-
-func (mutexDBWriter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return dbRead.QueryContext(ctx, query, args...)
-}
-
-func (mutexDBWriter) QueryRow(query string, args ...any) *sql.Row {
-	return dbRead.QueryRow(query, args...)
-}
-
-func (mutexDBWriter) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return dbRead.QueryRowContext(ctx, query, args...)
-}
 
 // schemaMigrationsDDL 是「已应用迁移」的台账。数据转换类迁移无法用列探针
 // 判断是否已完成（它们的守卫是 LIKE 扫描 + NOT EXISTS，而某些行按设计永远
@@ -306,14 +48,14 @@ var dataMigrationNames = []string{
 
 // ensureSchemaMigrationsTable 幂等建台账表。必须在任何 runOnce 之前调用。
 func ensureSchemaMigrationsTable() error {
-	_, err := WriteExec(schemaMigrationsDDL)
+	_, err := store.WriteExec(schemaMigrationsDDL)
 	return err
 }
 
 // isMigrationApplied 报告某个具名迁移是否已成功记账。
 func isMigrationApplied(name string) bool {
 	var n int
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM schema_migrations WHERE name = ?", name,
 	).Scan(&n); err != nil {
 		// 读失败按「未应用」处理：宁可重跑一次（幂等迁移无副作用），
@@ -326,7 +68,7 @@ func isMigrationApplied(name string) bool {
 
 // markMigrationApplied 记账。INSERT OR IGNORE 使并发/重复调用安全。
 func markMigrationApplied(name string) {
-	if _, err := WriteExec(
+	if _, err := store.WriteExec(
 		"INSERT OR IGNORE INTO schema_migrations (name) VALUES (?)", name,
 	); err != nil {
 		slog.Warn("schema_migrations: mark failed", "name", name, "err", err)
@@ -349,7 +91,7 @@ func runOnce(name string, fn func() bool) {
 
 // ResetSchemaMigrationsForTest 清空台账，让测试能重新走迁移路径。
 func ResetSchemaMigrationsForTest() {
-	_, _ = WriteExec("DELETE FROM schema_migrations")
+	_, _ = store.WriteExec("DELETE FROM schema_migrations")
 }
 
 // InitDB initializes the SQLite database with latest schema.
@@ -363,41 +105,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	dbPath := filepath.Join(dbDir, "ClawBench.db")
-	// Close any previously opened handles before re-opening. InitDB may be
-	// called more than once (migration rerun tests, restart flows); leaking the
-	// old pool keeps the old SQLite file handle open, which blocks file removal
-	// on Windows and wastes descriptors.
-	CloseDB()
+	// Open (or re-open) both connection pools and apply the PRAGMAs. Open closes
+	// any previously opened handles first, so InitDB may be called more than once
+	// (migration rerun tests, restart flows) without leaking the old pool. The
+	// read pool is opened up front so every reader below can use store.ReadDB()
+	// from the first statement.
+	if err := store.Open(dbPath); err != nil {
+		return err
+	}
 	var err error
-	db, err = sql.Open("sqlite", dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// SQLite concurrency: WAL mode + write mutex + busy_timeout (defense-in-depth)
-	// All writes go through WriteExec/WriteBegin which acquire writeMu, serializing
-	// writes at the Go level and preventing SQLITE_BUSY. Reads bypass the mutex entirely
-	// since WAL mode allows concurrent reads during writes.
-	// busy_timeout=10s is kept as a fallback for any code path that bypasses the mutex
-	// (e.g., RAG store which has its own *sql.DB on a separate database file).
-	// MaxOpenConns must be > 1 to avoid deadlocks when iterating rows (which holds
-	// a connection) and performing writes (which needs a separate connection) in the
-	// same loop — e.g., the agent prompt migrations' SELECT + UPDATE pattern.
-	db.SetMaxOpenConns(2)
-
-	// Enable WAL mode for concurrent reads during writes
-	if _, err := WriteExec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("failed to set WAL mode: %w", err)
-	}
-	// Enable foreign key enforcement (required for ON DELETE CASCADE)
-	if _, err := WriteExec("PRAGMA foreign_keys = ON"); err != nil {
-		return fmt.Errorf("failed to enable foreign keys: %w", err)
-	}
-
-	// Wait up to 10 seconds when database is locked (defense-in-depth fallback)
-	if _, err := WriteExec("PRAGMA busy_timeout=10000"); err != nil {
-		return fmt.Errorf("failed to set busy_timeout: %w", err)
-	}
 
 	// 迁移台账：数据转换类迁移按名字记账，只跑一次。
 	if err := ensureSchemaMigrationsTable(); err != nil {
@@ -409,21 +125,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Only apply when the table already exists (upgrading from an older schema).
 	// chat_history.indexed — added for RAG indexing progress tracking
 	var chatHistoryExists int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_history'").Scan(&chatHistoryExists)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_history'").Scan(&chatHistoryExists)
 	if chatHistoryExists > 0 {
 		var hasIndexed int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='indexed'").Scan(&hasIndexed)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='indexed'").Scan(&hasIndexed)
 		if hasIndexed == 0 {
-			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN indexed INTEGER NOT NULL DEFAULT 0"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE chat_history ADD COLUMN indexed INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return fmt.Errorf("failed to add indexed column: %w", err)
 			}
 		}
 
 		// chat_history.external_message_id — external ACP messageId for incremental ACP sync dedup
 		var hasExternalMsgID int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='external_message_id'").Scan(&hasExternalMsgID)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='external_message_id'").Scan(&hasExternalMsgID)
 		if hasExternalMsgID == 0 {
-			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN external_message_id TEXT DEFAULT ''"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE chat_history ADD COLUMN external_message_id TEXT DEFAULT ''"); err != nil {
 				return fmt.Errorf("failed to add external_message_id column: %w", err)
 			}
 		}
@@ -446,9 +162,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		// unread queries fall back to created_at via COALESCE, which is exactly
 		// the old behavior for them.
 		var hasCompletedAt int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='completed_at'").Scan(&hasCompletedAt)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='completed_at'").Scan(&hasCompletedAt)
 		if hasCompletedAt == 0 {
-			if _, err := WriteExec("ALTER TABLE chat_history ADD COLUMN completed_at DATETIME"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE chat_history ADD COLUMN completed_at DATETIME"); err != nil {
 				return fmt.Errorf("failed to add completed_at column: %w", err)
 			}
 		}
@@ -460,9 +176,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// reference the archived column. SQLite RENAME COLUMN also rewrites any
 	// index definitions referencing the old column name.
 	var hasSessionDeleted int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='deleted'").Scan(&hasSessionDeleted)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='deleted'").Scan(&hasSessionDeleted)
 	if hasSessionDeleted > 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions RENAME COLUMN deleted TO archived"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions RENAME COLUMN deleted TO archived"); err != nil {
 			return fmt.Errorf("failed to rename chat_sessions.deleted to archived: %w", err)
 		}
 		slog.Info("renamed chat_sessions.deleted column to archived")
@@ -474,12 +190,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// and the CREATE TABLE (which now includes the column) covers it — hence the
 	// existence guard rather than an unconditional ALTER.
 	var projectMetaExists int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'").Scan(&projectMetaExists)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='project_meta'").Scan(&projectMetaExists)
 	if projectMetaExists > 0 {
 		var hasCol int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_meta') WHERE name='forge_bind_opt_out'").Scan(&hasCol)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_meta') WHERE name='forge_bind_opt_out'").Scan(&hasCol)
 		if hasCol == 0 {
-			if _, err := WriteExec("ALTER TABLE project_meta ADD COLUMN forge_bind_opt_out INTEGER NOT NULL DEFAULT 0"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE project_meta ADD COLUMN forge_bind_opt_out INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return fmt.Errorf("failed to add project_meta.forge_bind_opt_out column: %w", err)
 			}
 		}
@@ -492,12 +208,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// the legacy table untouched — so its index would reference a missing column
 	// and abort the whole Exec.
 	var fileSharesExists int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='file_shares'").Scan(&fileSharesExists)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='file_shares'").Scan(&fileSharesExists)
 	if fileSharesExists > 0 {
 		var hasShareProject int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='project_id'").Scan(&hasShareProject)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='project_id'").Scan(&hasShareProject)
 		if hasShareProject == 0 {
-			if _, err := WriteExec("ALTER TABLE file_shares ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE file_shares ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return fmt.Errorf("failed to add file_shares.project_id column: %w", err)
 			}
 		}
@@ -521,7 +237,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	var hasLegacyProjectPath int
 	for _, tbl := range legacyProjectPathTables {
 		var n int
-		_ = db.QueryRow(
+		_ = store.ReadDB().QueryRow(
 			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='project_path'", tbl).Scan(&n)
 		if n > 0 {
 			hasLegacyProjectPath = 1
@@ -540,7 +256,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// column that does not exist yet and abort the whole multi-statement Exec,
 	// breaking startup. Mirrors the chat_history.indexed handling above.
 	var chatMetadataExists int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&chatMetadataExists)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&chatMetadataExists)
 	if chatMetadataExists > 0 {
 		for _, col := range []struct{ name, ddl string }{
 			{"project_id", "ALTER TABLE chat_metadata ADD COLUMN project_id INTEGER DEFAULT 0"},
@@ -549,9 +265,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			{"clawbench_session_id", "ALTER TABLE chat_metadata ADD COLUMN clawbench_session_id TEXT DEFAULT ''"},
 		} {
 			var hasCol int
-			_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
+			_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
 			if hasCol == 0 {
-				if _, err := WriteExec(col.ddl); err != nil {
+				if _, err := store.WriteExec(col.ddl); err != nil {
 					return fmt.Errorf("failed to add chat_metadata.%s column: %w", col.name, err)
 				}
 			}
@@ -559,7 +275,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 
 	// Create tables with latest schema
-	_, err = WriteExec(`
+	_, err = store.WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
@@ -600,7 +316,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		-- The project registry. Every project-scoped table stores project_id
 		-- (an integer) instead of the project path, so renaming or moving a
 		-- project directory is a single UPDATE here rather than a rewrite of
-		-- every table. path is canonical (see NormalizeProjectPath), and
+		-- every table. path is canonical (see store.NormalizeProjectPath), and
 		-- UNIQUE(path) is what collapses two spellings of one directory.
 		--
 		-- forge_bind_opt_out is folded in from the former project_meta table,
@@ -608,7 +324,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		--
 		-- No foreign key is declared from the other tables: project_id = 0 is a
 		-- reserved sentinel (global tags, unattributable file shares) that has
-		-- no row here. See ProjectsDDL in projects.go.
+		-- no row here. See store.ProjectsDDL in projects.go.
 		CREATE TABLE IF NOT EXISTS projects (
 			id                 INTEGER PRIMARY KEY AUTOINCREMENT,
 			path               TEXT NOT NULL,
@@ -804,7 +520,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 		-- One auto_execute command per project scope: COALESCE(NULL->0) lets a
 		-- single global command and one per project coexist. (0 is the reserved
-		-- global-scope sentinel; see GlobalScopeProjectID.)
+		-- global-scope sentinel; see store.GlobalScopeProjectID.)
 		CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
 			ON terminal_quick_commands(COALESCE(project_id, 0), auto_execute)
 			WHERE auto_execute = 1;
@@ -983,17 +699,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Forge repo bindings (GitHub / GitLab). Defined in project_forges.go as a
 	// constant so tests share one source of truth for the schema.
-	if _, err := WriteExec(ProjectForgesDDL); err != nil {
+	if _, err := store.WriteExec(ProjectForgesDDL); err != nil {
 		return fmt.Errorf("failed to create project_forges table: %w", err)
 	}
 	// Public conversation-share links (capability tokens). Defined in
 	// session_shares.go as a constant so tests share one source of truth.
-	if _, err := WriteExec(SessionSharesDDL); err != nil {
+	if _, err := store.WriteExec(SessionSharesDDL); err != nil {
 		return fmt.Errorf("failed to create session_shares table: %w", err)
 	}
 	// "/btw" side questions. Defined in btw.go as a constant so tests share one
 	// source of truth for the schema.
-	if _, err := WriteExec(BtwQuestionsDDL); err != nil {
+	if _, err := store.WriteExec(BtwQuestionsDDL); err != nil {
 		return fmt.Errorf("failed to create btw_questions table: %w", err)
 	}
 	// project_forges.scheme: the API scheme the binding's host is reached with.
@@ -1006,9 +722,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// and every remote parsed before this change dropped it.
 	{
 		var exists int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_forges') WHERE name='scheme'").Scan(&exists)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('project_forges') WHERE name='scheme'").Scan(&exists)
 		if exists == 0 {
-			if _, err := WriteExec("ALTER TABLE project_forges ADD COLUMN scheme TEXT NOT NULL DEFAULT ''"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE project_forges ADD COLUMN scheme TEXT NOT NULL DEFAULT ''"); err != nil {
 				return fmt.Errorf("failed to add project_forges.scheme column: %w", err)
 			}
 		}
@@ -1016,7 +732,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Forge sync state: snapshot rows, watermark, derived events, and the CI
 	// run ledger.
 	for _, ddl := range []string{ForgeItemsDDL, ForgeSyncStateDDL, ForgeEventDDL, ForgePipelineRunsDDL} {
-		if _, err := WriteExec(ddl); err != nil {
+		if _, err := store.WriteExec(ddl); err != nil {
 			return fmt.Errorf("failed to create forge sync tables: %w", err)
 		}
 	}
@@ -1038,24 +754,24 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// (the repo already relies on this for chat_sessions.deleted → archived).
 	{
 		var hasOld, hasNew int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='watermark'").Scan(&hasOld)
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='issue_watermark'").Scan(&hasNew)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='watermark'").Scan(&hasOld)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='issue_watermark'").Scan(&hasNew)
 		if hasOld > 0 && hasNew == 0 {
-			if _, err := WriteExec("ALTER TABLE forge_sync_state RENAME COLUMN watermark TO issue_watermark"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE forge_sync_state RENAME COLUMN watermark TO issue_watermark"); err != nil {
 				return fmt.Errorf("failed to rename forge_sync_state.watermark: %w", err)
 			}
 		}
 	}
 	{
 		var exists int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='pr_watermark'").Scan(&exists)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_sync_state') WHERE name='pr_watermark'").Scan(&exists)
 		if exists == 0 {
 			// Deliberately NOT backfilled from the old shared watermark. A NULL
 			// pr_watermark means "no PR baseline yet", so the first PR pass
 			// baselines silently instead of dispatching an event for every
 			// already-merged historical PR. Copying the old value here would
 			// open a window over the repository's whole PR history.
-			if _, err := WriteExec("ALTER TABLE forge_sync_state ADD COLUMN pr_watermark DATETIME"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE forge_sync_state ADD COLUMN pr_watermark DATETIME"); err != nil {
 				return fmt.Errorf("failed to add forge_sync_state.pr_watermark column: %w", err)
 			}
 		}
@@ -1068,12 +784,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// unbaselined and are silently absorbed on their next comment pass.
 	{
 		var exists int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_items') WHERE name='comments_baselined'").Scan(&exists)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_items') WHERE name='comments_baselined'").Scan(&exists)
 		if exists == 0 {
-			if _, err := WriteExec("ALTER TABLE forge_items ADD COLUMN comments_baselined INTEGER NOT NULL DEFAULT 0"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE forge_items ADD COLUMN comments_baselined INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return fmt.Errorf("failed to add forge_items.comments_baselined column: %w", err)
 			}
-			if _, err := WriteExec("UPDATE forge_items SET comments_baselined = 1 WHERE last_comment_id > 0"); err != nil {
+			if _, err := store.WriteExec("UPDATE forge_items SET comments_baselined = 1 WHERE last_comment_id > 0"); err != nil {
 				return fmt.Errorf("failed to backfill forge_items.comments_baselined: %w", err)
 			}
 		}
@@ -1090,17 +806,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// the user could never clear by opening anything.
 	{
 		var exists int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_events') WHERE name='item_key'").Scan(&exists)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forge_events') WHERE name='item_key'").Scan(&exists)
 		if exists == 0 {
-			if _, err := WriteExec("ALTER TABLE forge_events ADD COLUMN item_key TEXT NOT NULL DEFAULT ''"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE forge_events ADD COLUMN item_key TEXT NOT NULL DEFAULT ''"); err != nil {
 				return fmt.Errorf("failed to add forge_events.item_key column: %w", err)
 			}
-			if _, err := WriteExec(
+			if _, err := store.WriteExec(
 				"UPDATE forge_events SET item_key = item_type || '/' || number WHERE item_type != 'pipeline'",
 			); err != nil {
 				return fmt.Errorf("failed to backfill forge_events.item_key: %w", err)
 			}
-			if _, err := WriteExec(
+			if _, err := store.WriteExec(
 				`UPDATE forge_events SET item_key = 'pipeline/run:' || substr(dedupe_key, instr(dedupe_key, 'run:') + 4)
 				 WHERE item_type = 'pipeline' AND instr(dedupe_key, 'run:') > 0`,
 			); err != nil {
@@ -1109,7 +825,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			// Rows whose key could not be reconstructed are retired instead of
 			// left with an empty key (they would be invisible to the badge but
 			// permanently unread).
-			if _, err := WriteExec(
+			if _, err := store.WriteExec(
 				"UPDATE forge_events SET read_at = COALESCE(read_at, CURRENT_TIMESTAMP) WHERE item_key = ''",
 			); err != nil {
 				return fmt.Errorf("failed to retire keyless forge_events rows: %w", err)
@@ -1117,20 +833,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 		// The index is created AFTER the column exists (on a fresh database the
 		// column is already in the CREATE TABLE, so this is a no-op there).
-		if _, err := WriteExec(ForgeEventItemIndexDDL); err != nil {
+		if _, err := store.WriteExec(ForgeEventItemIndexDDL); err != nil {
 			return fmt.Errorf("failed to create forge_events item index: %w", err)
 		}
 	}
 
 	// Create agent store tables.
 	// Defined in agent_store.go as AgentDDL constant.
-	if _, err := WriteExec(AgentDDL); err != nil {
+	if _, err := store.WriteExec(AgentDDL); err != nil {
 		return fmt.Errorf("failed to create agent tables: %w", err)
 	}
 
 	// Schema migrations: add columns that may not exist in older databases.
-	// NOTE: Migration reads use db (write pool) directly, NOT dbRead, because
-	// dbRead is not initialized until after all migrations complete.
+	// NOTE: Migration reads go through store.ReadDB(); the read pool is opened by
+	// store.Open before any migration runs, so reads here see the write pool's
+	// committed rows under WAL.
 	// Forge event-triggered tasks: trigger_mode selects cron vs event, and
 	// event_types scopes which forge events fire the task. The watched
 	// repository is always the task project's binding, so no repo column exists.
@@ -1141,18 +858,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"script_timeout", "ALTER TABLE scheduled_tasks ADD COLUMN script_timeout INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name=?", col.name).Scan(&exists)
 		if exists == 0 {
-			if _, err := WriteExec(col.ddl); err != nil {
+			if _, err := store.WriteExec(col.ddl); err != nil {
 				return fmt.Errorf("failed to add scheduled_tasks.%s column: %w", col.name, err)
 			}
 		}
 	}
 
 	var hasReadAt int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='read_at'").Scan(&hasReadAt)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='read_at'").Scan(&hasReadAt)
 	if hasReadAt == 0 {
-		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE task_executions ADD COLUMN read_at DATETIME"); err != nil {
 			return fmt.Errorf("failed to add read_at column: %w", err)
 		}
 	}
@@ -1179,10 +896,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// no watermark to migrate at all (CREATE TABLE IF NOT EXISTS leaves such a
 	// table untouched).
 	var hasTaskLastRead int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='last_read_at'").Scan(&hasTaskLastRead)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('scheduled_tasks') WHERE name='last_read_at'").Scan(&hasTaskLastRead)
 	if hasTaskLastRead > 0 {
 		var pending int
-		if err := db.QueryRow(
+		if err := store.ReadDB().QueryRow(
 			`SELECT COUNT(*) FROM task_executions e
 			 JOIN scheduled_tasks s ON s.id = e.task_id
 			 WHERE e.read_at IS NULL AND e.status != 'running' AND s.last_read_at IS NOT NULL`,
@@ -1190,7 +907,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			return fmt.Errorf("failed to count executions pending the unread migration: %w", err)
 		}
 		if pending > 0 {
-			if _, err := WriteExec(
+			if _, err := store.WriteExec(
 				`UPDATE task_executions SET read_at = CURRENT_TIMESTAMP
 				 WHERE read_at IS NULL AND status != 'running'
 				   AND task_id IN (SELECT id FROM scheduled_tasks WHERE last_read_at IS NOT NULL)
@@ -1198,7 +915,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			); err != nil {
 				return fmt.Errorf("failed to backfill per-execution read state: %w", err)
 			}
-			if _, err := WriteExec(
+			if _, err := store.WriteExec(
 				"UPDATE scheduled_tasks SET last_read_at = NULL WHERE last_read_at IS NOT NULL",
 			); err != nil {
 				return fmt.Errorf("failed to clear the retired last_read_at watermark: %w", err)
@@ -1220,9 +937,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		{"script_duration_ms", "ALTER TABLE task_executions ADD COLUMN script_duration_ms INTEGER NOT NULL DEFAULT 0"},
 	} {
 		var exists int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name=?", col.name).Scan(&exists)
 		if exists == 0 {
-			if _, err := WriteExec(col.ddl); err != nil {
+			if _, err := store.WriteExec(col.ddl); err != nil {
 				return fmt.Errorf("failed to add task_executions.%s column: %w", col.name, err)
 			}
 		}
@@ -1230,18 +947,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add summary column for task execution summarization
 	var hasSummary int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='summary'").Scan(&hasSummary)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('task_executions') WHERE name='summary'").Scan(&hasSummary)
 	if hasSummary == 0 {
-		if _, err := WriteExec("ALTER TABLE task_executions ADD COLUMN summary TEXT"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE task_executions ADD COLUMN summary TEXT"); err != nil {
 			return fmt.Errorf("failed to add summary column: %w", err)
 		}
 	}
 
 	// Migrate: add summary_cards column for structured summary card metadata
 	var hasSummaryCards int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('summaries') WHERE name='summary_cards'").Scan(&hasSummaryCards)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('summaries') WHERE name='summary_cards'").Scan(&hasSummaryCards)
 	if hasSummaryCards == 0 {
-		if _, err := WriteExec("ALTER TABLE summaries ADD COLUMN summary_cards TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE summaries ADD COLUMN summary_cards TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add summary_cards column: %w", err)
 		}
 	}
@@ -1280,9 +997,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	}
 	for _, col := range chatMetaCols {
 		var hasCol int
-		_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_metadata') WHERE name=?", col.name).Scan(&hasCol)
 		if hasCol == 0 {
-			if _, err := WriteExec(col.ddl); err != nil {
+			if _, err := store.WriteExec(col.ddl); err != nil {
 				return fmt.Errorf("failed to add chat_metadata.%s column: %w", col.name, err)
 			}
 		}
@@ -1297,39 +1014,39 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add source_session_id column for "continue conversation" feature
 	var hasSourceSessionID int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='source_session_id'").Scan(&hasSourceSessionID)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='source_session_id'").Scan(&hasSourceSessionID)
 	if hasSourceSessionID == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN source_session_id TEXT DEFAULT NULL"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN source_session_id TEXT DEFAULT NULL"); err != nil {
 			return fmt.Errorf("failed to add source_session_id column: %w", err)
 		}
-		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_source_session ON chat_sessions(source_session_id) WHERE source_session_id IS NOT NULL"); err != nil {
+		if _, err := store.WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_source_session ON chat_sessions(source_session_id) WHERE source_session_id IS NOT NULL"); err != nil {
 			return fmt.Errorf("failed to create source_session_id index: %w", err)
 		}
 	}
 
 	// Migrate: add source_session_id column for "continue conversation" feature
 	var hasTransport int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='transport'").Scan(&hasTransport)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='transport'").Scan(&hasTransport)
 	if hasTransport == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN transport TEXT DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN transport TEXT DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add transport column: %w", err)
 		}
 	}
 
 	// Migrate: add auto_approve column for per-session auto-approve (甩手掌柜) mode
 	var hasAutoApprove int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='auto_approve'").Scan(&hasAutoApprove)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='auto_approve'").Scan(&hasAutoApprove)
 	if hasAutoApprove == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add auto_approve column: %w", err)
 		}
 	}
 
 	// Migrate: add context_state column for persisting session context info (mode, thinking, usage)
 	var hasContextState int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='context_state'").Scan(&hasContextState)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='context_state'").Scan(&hasContextState)
 	if hasContextState == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN context_state TEXT DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN context_state TEXT DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add context_state column: %w", err)
 		}
 	}
@@ -1342,9 +1059,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// The flag is consumed (cleared) by BuildChatRequest, so it never becomes a
 	// permanent per-turn injection.
 	var hasCompacted int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='compacted'").Scan(&hasCompacted)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='compacted'").Scan(&hasCompacted)
 	if hasCompacted == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN compacted INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add compacted column: %w", err)
 		}
 	}
@@ -1353,9 +1070,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// a session, so the first-message auto-title does not overwrite their choice.
 	// DEPRECATED: superseded by title_source below; retained for old readers only.
 	var hasTitleRenamed int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_renamed'").Scan(&hasTitleRenamed)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_renamed'").Scan(&hasTitleRenamed)
 	if hasTitleRenamed == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_renamed INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_renamed INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add title_renamed column: %w", err)
 		}
 	}
@@ -1369,16 +1086,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// first-message auto-title. This replaces title_renamed as the source of
 	// truth (see the deprecation note on title_renamed above).
 	var hasTitleSource int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_source'").Scan(&hasTitleSource)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='title_source'").Scan(&hasTitleSource)
 	if hasTitleSource == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN title_source TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add title_source column: %w", err)
 		}
 		// Backfill existing rows: title_renamed=1 -> custom; otherwise a session
 		// with at least one user message was auto-titled -> auto; a session with
 		// no user messages still holds its creation placeholder -> placeholder.
 		// (title_renamed alone cannot distinguish placeholder from auto.)
-		if _, err := WriteExec(`UPDATE chat_sessions SET title_source = CASE
+		if _, err := store.WriteExec(`UPDATE chat_sessions SET title_source = CASE
 			WHEN title_renamed = 1 THEN 'custom'
 			WHEN EXISTS (SELECT 1 FROM chat_history h WHERE h.session_id = chat_sessions.id AND h.role = 'user') THEN 'auto'
 			ELSE 'placeholder' END`); err != nil {
@@ -1388,16 +1105,16 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add pinned column for session pin-to-top feature
 	var hasPinned int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='pinned'").Scan(&hasPinned)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='pinned'").Scan(&hasPinned)
 	if hasPinned == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add pinned column: %w", err)
 		}
 		// Rebuild covering index to include pinned for optimal ORDER BY pinned DESC, created_at DESC
-		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+		if _, err := store.WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
 			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
 		}
-		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
+		if _, err := store.WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, pinned DESC, created_at DESC, id DESC)"); err != nil {
 			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 		}
 	}
@@ -1420,17 +1137,17 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// referenced by an index — the same reason this index must not gain new
 	// droppable columns.
 	var hasSortOrder int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='sort_order'").Scan(&hasSortOrder)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='sort_order'").Scan(&hasSortOrder)
 	if hasSortOrder == 0 {
 		// ADD COLUMN with a non-null default already backfills every existing
 		// row with that default, so no separate UPDATE is needed.
-		if _, err := WriteExec("ALTER TABLE chat_sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add sort_order column: %w", err)
 		}
-		if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+		if _, err := store.WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
 			return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
 		}
-		if _, err := WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, sort_order ASC, created_at DESC, id DESC)"); err != nil {
+		if _, err := store.WriteExec("CREATE INDEX IF NOT EXISTS idx_sessions_order ON chat_sessions(session_type, project_id, archived, sort_order ASC, created_at DESC, id DESC)"); err != nil {
 			return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 		}
 	}
@@ -1462,7 +1179,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	//
 	// Uniqueness is (name, project_id), NOT name alone: two projects may each
 	// own a label called "bug" without one leaking into the other's candidate
-	// list. Global tags live at project_id = 0 (GlobalScopeProjectID) and
+	// list. Global tags live at project_id = 0 (store.GlobalScopeProjectID) and
 	// therefore never collide with a project row.
 	//
 	// project_id is NOT NULL deliberately. SQLite treats NULLs as distinct in a
@@ -1470,7 +1187,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// "bug" coexist and silently break this uniqueness.
 	// Both tables are created unconditionally (CREATE TABLE IF NOT EXISTS), so
 	// existing databases pick them up on the next startup.
-	if _, err := WriteExec(`
+	if _, err := store.WriteExec(`
 		CREATE TABLE IF NOT EXISTS session_tags (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			name TEXT NOT NULL,
@@ -1494,9 +1211,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add host column to forwarded_ports for custom target host
 	var hasForwardedPortHost int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='host'").Scan(&hasForwardedPortHost)
 	if hasForwardedPortHost == 0 {
-		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN host TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE forwarded_ports ADD COLUMN host TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add host column to forwarded_ports: %w", err)
 		}
 	}
@@ -1504,13 +1221,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add local_port column for auto-assigned local port
 	// For existing rows, local_port = port (backward compatible)
 	var hasForwardedPortLocalPort int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='local_port'").Scan(&hasForwardedPortLocalPort)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='local_port'").Scan(&hasForwardedPortLocalPort)
 	if hasForwardedPortLocalPort == 0 {
-		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN local_port INTEGER"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE forwarded_ports ADD COLUMN local_port INTEGER"); err != nil {
 			return fmt.Errorf("failed to add local_port column to forwarded_ports: %w", err)
 		}
 		// Backfill: local_port = port for existing rows
-		if _, err := WriteExec("UPDATE forwarded_ports SET local_port = port WHERE local_port IS NULL"); err != nil {
+		if _, err := store.WriteExec("UPDATE forwarded_ports SET local_port = port WHERE local_port IS NULL"); err != nil {
 			return fmt.Errorf("failed to backfill local_port in forwarded_ports: %w", err)
 		}
 	}
@@ -1518,9 +1235,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add enabled column for user-controlled enable/disable.
 	// Existing ports default to enabled=true (backward compatible).
 	var hasForwardedPortEnabled int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='enabled'").Scan(&hasForwardedPortEnabled)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='enabled'").Scan(&hasForwardedPortEnabled)
 	if hasForwardedPortEnabled == 0 {
-		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE forwarded_ports ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"); err != nil {
 			return fmt.Errorf("failed to add enabled column to forwarded_ports: %w", err)
 		}
 	}
@@ -1528,29 +1245,29 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add direction column for reverse (ssh -R) port mappings.
 	// Existing rows are classic ssh -L forwards (backward compatible).
 	var hasForwardedPortDirection int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='direction'").Scan(&hasForwardedPortDirection)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('forwarded_ports') WHERE name='direction'").Scan(&hasForwardedPortDirection)
 	if hasForwardedPortDirection == 0 {
-		if _, err := WriteExec("ALTER TABLE forwarded_ports ADD COLUMN direction TEXT NOT NULL DEFAULT 'forward'"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE forwarded_ports ADD COLUMN direction TEXT NOT NULL DEFAULT 'forward'"); err != nil {
 			return fmt.Errorf("failed to add direction column to forwarded_ports: %w", err)
 		}
 	}
 
 	// Migrate: add custom_system_prompt column to agents for user-editable system prompt
 	var hasCustomSystemPrompt int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='custom_system_prompt'").Scan(&hasCustomSystemPrompt)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='custom_system_prompt'").Scan(&hasCustomSystemPrompt)
 	if hasCustomSystemPrompt == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN custom_system_prompt TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN custom_system_prompt TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add custom_system_prompt column to agents: %w", err)
 		}
 	}
 
 	// Migrate: drop the legacy agents.system_prompt column (see the function for why).
-	if err := migrateLegacyAgentPrompts(db); err != nil {
+	if err := migrateLegacyAgentPrompts(store.WriteDBRaw()); err != nil {
 		return err
 	}
 
 	// Migrate: drop the dead ACP state columns from agents (see the function for why).
-	if err := migrateLegacyAgentCapabilityColumns(db); err != nil {
+	if err := migrateLegacyAgentCapabilityColumns(store.WriteDBRaw()); err != nil {
 		return err
 	}
 
@@ -1559,15 +1276,15 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// so chat_history.deleted is redundant. Removing it simplifies queries
 	// and eliminates the need to restore messages when restoring a session.
 	var hasHistoryDeleted int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='deleted'").Scan(&hasHistoryDeleted)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='deleted'").Scan(&hasHistoryDeleted)
 	if hasHistoryDeleted > 0 {
 		// SQLite DROP COLUMN fails if any index references the column.
 		// Drop and recreate idx_history_session_id to avoid the error.
-		_, _ = WriteExec("DROP INDEX IF EXISTS idx_history_session_id")
-		if _, err := WriteExec("ALTER TABLE chat_history DROP COLUMN deleted"); err != nil {
+		_, _ = store.WriteExec("DROP INDEX IF EXISTS idx_history_session_id")
+		if _, err := store.WriteExec("ALTER TABLE chat_history DROP COLUMN deleted"); err != nil {
 			return fmt.Errorf("failed to drop deleted column from chat_history: %w", err)
 		}
-		_, _ = WriteExec("CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at)")
+		_, _ = store.WriteExec("CREATE INDEX IF NOT EXISTS idx_history_session_id ON chat_history(session_id, role, streaming, created_at)")
 		slog.Info("dropped redundant deleted column from chat_history")
 	}
 
@@ -1595,13 +1312,13 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Since we don't do backward compatibility, drop the old table if it exists
 	// and recreate with the new schema.
 	var hasTTSCacheKey int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('tts_summaries') WHERE name='cache_key'").Scan(&hasTTSCacheKey)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('tts_summaries') WHERE name='cache_key'").Scan(&hasTTSCacheKey)
 	if hasTTSCacheKey > 0 {
 		// Old table exists with cache_key — drop and recreate
-		if _, err := WriteExec("DROP TABLE tts_summaries"); err != nil {
+		if _, err := store.WriteExec("DROP TABLE tts_summaries"); err != nil {
 			return fmt.Errorf("failed to drop old tts_summaries table: %w", err)
 		}
-		if _, err := WriteExec(`
+		if _, err := store.WriteExec(`
 			CREATE TABLE tts_summaries (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				message_id   INTEGER NOT NULL,
@@ -1624,11 +1341,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// deliberately NOT run here (a full-file rewrite holding writeMu at startup
 	// would be the very kind of long blocking write this removal is fixing).
 	var hasRawResponses int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'").Scan(&hasRawResponses)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ai_raw_responses'").Scan(&hasRawResponses)
 	if hasRawResponses > 0 {
-		_, _ = WriteExec("DROP INDEX IF EXISTS idx_raw_responses_session")
-		_, _ = WriteExec("DROP INDEX IF EXISTS idx_raw_responses_message")
-		if _, err := WriteExec("DROP TABLE ai_raw_responses"); err != nil {
+		_, _ = store.WriteExec("DROP INDEX IF EXISTS idx_raw_responses_session")
+		_, _ = store.WriteExec("DROP INDEX IF EXISTS idx_raw_responses_message")
+		if _, err := store.WriteExec("DROP TABLE ai_raw_responses"); err != nil {
 			slog.Warn("failed to drop legacy ai_raw_responses table", slog.String("err", err.Error()))
 		} else {
 			slog.Info("dropped legacy ai_raw_responses table")
@@ -1637,9 +1354,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Create new tts_summaries table if it doesn't exist yet (fresh install)
 	var hasTTSSummaries int
-	_ = db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tts_summaries'").Scan(&hasTTSSummaries)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='tts_summaries'").Scan(&hasTTSSummaries)
 	if hasTTSSummaries == 0 {
-		if _, err := WriteExec(`
+		if _, err := store.WriteExec(`
 			CREATE TABLE tts_summaries (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				message_id   INTEGER NOT NULL,
@@ -1652,27 +1369,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
-	// Initialize read connection pool for concurrent reads (WAL mode).
-	// WAL contract: DB (MaxOpenConns=2) serializes writes + avoids deadlocks; DBRead (MaxOpenConns=2)
-	// allows concurrent reads that never block writes and vice versa.
-	// Both pools must use WAL mode + busy_timeout for this to work correctly.
-	dbRead, err = sql.Open("sqlite", dbPath)
-	if err != nil {
-		return fmt.Errorf("failed to open read database: %w", err)
-	}
-	dbRead.SetMaxOpenConns(2)
-	dbRead.SetMaxIdleConns(2)                   // match MaxOpenConns to avoid churn
-	dbRead.SetConnMaxLifetime(0)                // unlimited — SQLite file DB, no reconnection needed
-	dbRead.SetConnMaxIdleTime(30 * time.Minute) // close idle conns after 30min
-	if _, err := dbRead.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		return fmt.Errorf("failed to set read DB WAL mode: %w", err)
-	}
-	if _, err := dbRead.Exec("PRAGMA busy_timeout=10000"); err != nil {
-		return fmt.Errorf("failed to set read DB busy_timeout: %w", err)
-	}
+	// The read connection pool was opened by store.Open before schema creation,
+	// so readers throughout InitDB use store.ReadDB() uniformly.
 	if isServerStartup {
-		// Uses db (write pool) because dbRead is not yet initialized at this point in InitDB.
-		rows, err := db.Query("SELECT id, content FROM chat_history WHERE streaming = 1")
+		rows, err := store.ReadDB().Query("SELECT id, content FROM chat_history WHERE streaming = 1")
 		if err != nil {
 			return fmt.Errorf("failed to query orphaned streaming messages: %w", err)
 		}
@@ -1714,7 +1414,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			// row becomes visible (streaming=0) and the user has not seen it, so
 			// it must be able to register as unread. Falling back to created_at
 			// (turn start, possibly before last_read_at) would hide it.
-			if _, err := WriteExec("UPDATE chat_history SET content = ?, streaming = 0, completed_at = CURRENT_TIMESTAMP WHERE id = ?", string(updatedContent), m.id); err != nil {
+			if _, err := store.WriteExec("UPDATE chat_history SET content = ?, streaming = 0, completed_at = CURRENT_TIMESTAMP WHERE id = ?", string(updatedContent), m.id); err != nil {
 				slog.Error("failed to finalize orphaned streaming message", slog.Int64("id", m.id), slog.String("err", err.Error()))
 			}
 		}
@@ -1725,12 +1425,12 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add ACP transport columns to agents table.
 	var hasTransportCol int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='transport'").Scan(&hasTransportCol)
 	if hasTransportCol == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN transport TEXT NOT NULL DEFAULT 'cli'"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN transport TEXT NOT NULL DEFAULT 'cli'"); err != nil {
 			return fmt.Errorf("failed to add transport column: %w", err)
 		}
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_command TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_command TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add acp_command column: %w", err)
 		}
 	}
@@ -1738,18 +1438,18 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// Migrate: add ACP capability columns to agents table for persistent storage
 	// of agent-level mode/thinking/commands/config state.
 	var hasACPMods int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_modes'").Scan(&hasACPMods)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_modes'").Scan(&hasACPMods)
 	if hasACPMods == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_modes TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_available_modes TEXT NOT NULL DEFAULT '[]'"); err != nil {
 			return fmt.Errorf("failed to add acp_available_modes column: %w", err)
 		}
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_available_thinking_efforts TEXT NOT NULL DEFAULT '[]'"); err != nil {
 			return fmt.Errorf("failed to add acp_available_thinking_efforts column: %w", err)
 		}
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_commands TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_available_commands TEXT NOT NULL DEFAULT '[]'"); err != nil {
 			return fmt.Errorf("failed to add acp_available_commands column: %w", err)
 		}
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_config_options TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_config_options TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add acp_config_options column: %w", err)
 		}
 	}
@@ -1759,41 +1459,41 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// restart (CLI list before the first ACP session, ACP list after) until a new
 	// session repopulates the registry.
 	var hasACPModels int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_models'").Scan(&hasACPModels)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_available_models'").Scan(&hasACPModels)
 	if hasACPModels == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_available_models TEXT NOT NULL DEFAULT '[]'"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_available_models TEXT NOT NULL DEFAULT '[]'"); err != nil {
 			return fmt.Errorf("failed to add acp_available_models column: %w", err)
 		}
 	}
 
 	// Migrate: add ACP LoadSession/ListSessions capability columns to agents table.
 	var hasLoadSessionCol int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_load_session'").Scan(&hasLoadSessionCol)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='acp_load_session'").Scan(&hasLoadSessionCol)
 	if hasLoadSessionCol == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_load_session BOOLEAN NOT NULL DEFAULT false"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_load_session BOOLEAN NOT NULL DEFAULT false"); err != nil {
 			return fmt.Errorf("failed to add acp_load_session column: %w", err)
 		}
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN acp_list_sessions BOOLEAN NOT NULL DEFAULT false"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN acp_list_sessions BOOLEAN NOT NULL DEFAULT false"); err != nil {
 			return fmt.Errorf("failed to add acp_list_sessions column: %w", err)
 		}
 	}
 
 	// Migrate: add is_default column to recent_projects for server-side default project.
 	var hasIsDefault int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('recent_projects') WHERE name='is_default'").Scan(&hasIsDefault)
 	if hasIsDefault == 0 {
-		if _, err := WriteExec("ALTER TABLE recent_projects ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE recent_projects ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add is_default column: %w", err)
 		}
 		// Backfill: set the most recently accessed project as default
-		_, _ = WriteExec("UPDATE recent_projects SET is_default = 1 WHERE id = (SELECT id FROM recent_projects ORDER BY accessed_at DESC LIMIT 1)")
+		_, _ = store.WriteExec("UPDATE recent_projects SET is_default = 1 WHERE id = (SELECT id FROM recent_projects ORDER BY accessed_at DESC LIMIT 1)")
 	}
 
 	// Migrate: add preferred_mode column to agents for user's default ACP mode preference.
 	var hasPreferredMode int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='preferred_mode'").Scan(&hasPreferredMode)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='preferred_mode'").Scan(&hasPreferredMode)
 	if hasPreferredMode == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN preferred_mode TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN preferred_mode TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add preferred_mode column: %w", err)
 		}
 	}
@@ -1802,10 +1502,20 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// new-session auto-approve toggle (front-end default only; the session's
 	// real flag lives in chat_sessions.auto_approve).
 	var hasAgentAutoApprove int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='auto_approve'").Scan(&hasAgentAutoApprove)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='auto_approve'").Scan(&hasAgentAutoApprove)
 	if hasAgentAutoApprove == 0 {
-		if _, err := WriteExec("ALTER TABLE agents ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN auto_approve INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add auto_approve column: %w", err)
+		}
+	}
+
+	// Migrate: add avatar column to agents for user-configured DiceBear avatars
+	// (raw SVG string; "" = use the built-in per-backend icon).
+	var hasAgentAvatar int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='avatar'").Scan(&hasAgentAvatar)
+	if hasAgentAvatar == 0 {
+		if _, err := store.WriteExec("ALTER TABLE agents ADD COLUMN avatar TEXT NOT NULL DEFAULT ''"); err != nil {
+			return fmt.Errorf("failed to add avatar column to agents: %w", err)
 		}
 	}
 
@@ -1818,10 +1528,10 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: drop source column from agents — no longer used for agent origin tracking.
 	var hasAgentSource int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='source'").Scan(&hasAgentSource)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('agents') WHERE name='source'").Scan(&hasAgentSource)
 	if hasAgentSource > 0 {
-		_, _ = WriteExec("DROP INDEX IF EXISTS idx_agents_source")
-		if _, err := WriteExec("ALTER TABLE agents DROP COLUMN source"); err != nil {
+		_, _ = store.WriteExec("DROP INDEX IF EXISTS idx_agents_source")
+		if _, err := store.WriteExec("ALTER TABLE agents DROP COLUMN source"); err != nil {
 			return fmt.Errorf("failed to drop source column from agents: %w", err)
 		}
 		slog.Info("dropped source column from agents table")
@@ -1829,9 +1539,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 
 	// Migrate: add duration_ms column to chat_tool_calls for per-tool execution time.
 	var hasToolCallDuration int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_tool_calls') WHERE name='duration_ms'").Scan(&hasToolCallDuration)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_tool_calls') WHERE name='duration_ms'").Scan(&hasToolCallDuration)
 	if hasToolCallDuration == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_tool_calls ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_tool_calls ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add duration_ms column to chat_tool_calls: %w", err)
 		}
 	}
@@ -1841,9 +1551,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// the client reject stale recommendations (from an earlier reply) instead of
 	// briefly showing the previous reply's recommendation.
 	var hasRecMessageID int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_recommendations') WHERE name='message_id'").Scan(&hasRecMessageID)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_recommendations') WHERE name='message_id'").Scan(&hasRecMessageID)
 	if hasRecMessageID == 0 {
-		if _, err := WriteExec("ALTER TABLE chat_recommendations ADD COLUMN message_id INTEGER NOT NULL DEFAULT 0"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE chat_recommendations ADD COLUMN message_id INTEGER NOT NULL DEFAULT 0"); err != nil {
 			return fmt.Errorf("failed to add message_id column to chat_recommendations: %w", err)
 		}
 	}
@@ -1852,9 +1562,9 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// readers fall back to the shared file's own directory — the safe
 	// direction, since it can only narrow what the link exposes.
 	var hasShareRoot int
-	_ = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='root'").Scan(&hasShareRoot)
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('file_shares') WHERE name='root'").Scan(&hasShareRoot)
 	if hasShareRoot == 0 {
-		if _, err := WriteExec("ALTER TABLE file_shares ADD COLUMN root TEXT NOT NULL DEFAULT ''"); err != nil {
+		if _, err := store.WriteExec("ALTER TABLE file_shares ADD COLUMN root TEXT NOT NULL DEFAULT ''"); err != nil {
 			return fmt.Errorf("failed to add root column to file_shares: %w", err)
 		}
 	}
@@ -1866,11 +1576,11 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 	// to the "/ls" hint rather than guessing a target.
 	for _, tbl := range []string{"dingtalk_subscribers", "feishu_subscribers"} {
 		var exists int
-		_ = db.QueryRow(
+		_ = store.ReadDB().QueryRow(
 			"SELECT COUNT(*) FROM pragma_table_info(?) WHERE name='last_session_id'", tbl,
 		).Scan(&exists)
 		if exists == 0 {
-			if _, err := WriteExec(fmt.Sprintf(
+			if _, err := store.WriteExec(fmt.Sprintf(
 				"ALTER TABLE %s ADD COLUMN last_session_id TEXT NOT NULL DEFAULT ''", tbl,
 			)); err != nil {
 				return fmt.Errorf("failed to add %s.last_session_id column: %w", tbl, err)
@@ -1923,7 +1633,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 // single write transaction — any failure rolls back to the original table.
 func migrateChatMetadataLedger() error {
 	var tableExists int
-	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&tableExists); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_metadata'").Scan(&tableExists); err != nil {
 		return err
 	}
 	if tableExists == 0 {
@@ -1933,7 +1643,7 @@ func migrateChatMetadataLedger() error {
 	// PRAGMA foreign_key_list returns one row per FK; empty means the ledger is
 	// already standalone.
 	var fkCount int
-	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkCount); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_foreign_key_list('chat_metadata')").Scan(&fkCount); err != nil {
 		return err
 	}
 	if fkCount > 0 {
@@ -1950,7 +1660,7 @@ func migrateChatMetadataLedger() error {
 	// project is itself unattributed (0) cannot be recovered, so it must not
 	// match the predicate again (otherwise the UPDATE would re-run every boot).
 	var needsBackfill int
-	if err := db.QueryRow(`
+	if err := store.ReadDB().QueryRow(`
 		SELECT COUNT(*) FROM chat_metadata m
 		WHERE m.project_id = 0
 		  AND EXISTS (SELECT 1 FROM chat_history h WHERE h.id = m.message_id AND h.project_id != 0)
@@ -1961,7 +1671,7 @@ func migrateChatMetadataLedger() error {
 		return nil
 	}
 
-	_, err := WriteExec(`
+	_, err := store.WriteExec(`
 		UPDATE chat_metadata SET
 			project_id = COALESCE((SELECT h.project_id FROM chat_history h WHERE h.id = chat_metadata.message_id), 0),
 			backend = COALESCE((SELECT h.backend FROM chat_history h WHERE h.id = chat_metadata.message_id), ''),
@@ -1989,11 +1699,11 @@ func rebuildChatMetadataWithoutFK() error {
 		"message_request_id, request_model_name, response_model_id, finish_reason, " +
 		"outcome, agent_phase, project_id, backend, agent_id, clawbench_session_id, created_at"
 
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`CREATE TABLE chat_metadata_new (
@@ -2076,25 +1786,25 @@ func rebuildChatMetadataWithoutFK() error {
 func migrateChatThinkingSeq() error {
 	// Only relevant when the table exists (fresh installs create it with seq).
 	var tableExists int
-	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_thinking'").Scan(&tableExists); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_thinking'").Scan(&tableExists); err != nil {
 		return err
 	}
 	if tableExists == 0 {
 		return nil
 	}
 	var hasSeq int
-	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_thinking') WHERE name='seq'").Scan(&hasSeq); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_thinking') WHERE name='seq'").Scan(&hasSeq); err != nil {
 		return err
 	}
 	if hasSeq > 0 {
 		return nil
 	}
 
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`CREATE TABLE chat_thinking_new (
@@ -2152,17 +1862,17 @@ func migrateChatThinkingSeq() error {
 func migrateQuickProjectScope() error {
 	for _, table := range []string{"terminal_quick_commands", "chat_quick_send"} {
 		var hasCol int
-		_ = dbRead.QueryRow("SELECT COUNT(*) FROM pragma_table_info('" + table + "') WHERE name='project_id'").Scan(&hasCol)
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('" + table + "') WHERE name='project_id'").Scan(&hasCol)
 		if hasCol == 0 {
-			if _, err := WriteExec("ALTER TABLE " + table + " ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
+			if _, err := store.WriteExec("ALTER TABLE " + table + " ADD COLUMN project_id INTEGER DEFAULT NULL"); err != nil {
 				return fmt.Errorf("failed to add project_id column to %s: %w", table, err)
 			}
 		}
 	}
 	// Rebuild the auto_execute unique index to be per-project scope. 0 stands in
 	// for the NULL (global) scope so a global row and one per project coexist.
-	_, _ = WriteExec("DROP INDEX IF EXISTS idx_quick_commands_auto_execute")
-	if _, err := WriteExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
+	_, _ = store.WriteExec("DROP INDEX IF EXISTS idx_quick_commands_auto_execute")
+	if _, err := store.WriteExec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_quick_commands_auto_execute
 		ON terminal_quick_commands(COALESCE(project_id, 0), auto_execute)
 		WHERE auto_execute = 1`); err != nil {
 		return fmt.Errorf("failed to rebuild auto_execute index: %w", err)
@@ -2183,7 +1893,7 @@ func migrateQuickProjectScope() error {
 func MigrateMetadataFromContent() bool {
 	// Count how many rows need migration
 	var needed int
-	if err := dbRead.QueryRow(`
+	if err := store.ReadDB().QueryRow(`
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"metadata"%'
@@ -2252,7 +1962,7 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 	Content string
 }, error,
 ) {
-	rows, err := dbRead.Query(
+	rows, err := store.ReadDB().Query(
 		`
 		SELECT h.id, h.content FROM chat_history h
 		WHERE h.role = 'assistant'
@@ -2300,7 +2010,7 @@ func migrateMetadataBatch(batchSize, offset int) ([]struct {
 func MigrateTaskExecutionSummaries() bool {
 	// Check if there are any task_execution summaries to migrate
 	var count int
-	if err := dbRead.QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM summaries WHERE target_type = 'task_execution'").Scan(&count); err != nil {
 		slog.Error("task_execution summary migration: count failed", slog.String("err", err.Error()))
 		return false
 	}
@@ -2313,7 +2023,7 @@ func MigrateTaskExecutionSummaries() bool {
 	// and create a chat_message summary.
 	// Collect all rows first to avoid holding the read connection while writing
 	// (SQLite single-writer lock would deadlock if DBRead and DB share the same conn).
-	rows, err := dbRead.Query(`
+	rows, err := store.ReadDB().Query(`
 		SELECT sm.target_id, sm.summary, te.session_id
 		FROM summaries sm
 		JOIN task_executions te ON te.id = sm.target_id
@@ -2344,13 +2054,13 @@ func MigrateTaskExecutionSummaries() bool {
 	for _, m := range migrations {
 		// Find the last non-streaming assistant message for this session
 		var msgID int64
-		if err := dbRead.QueryRow(
+		if err := store.ReadDB().QueryRow(
 			"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 0 ORDER BY id DESC LIMIT 1",
 			m.SessionID,
 		).Scan(&msgID); err != nil {
 			// No assistant message found — delete the orphaned task_execution summary
 			// to prevent it from sticking around forever (it can never be migrated).
-			_, _ = WriteExec(
+			_, _ = store.WriteExec(
 				"DELETE FROM summaries WHERE target_type = 'task_execution' AND target_id = ?",
 				m.ExecID,
 			)
@@ -2358,13 +2068,13 @@ func MigrateTaskExecutionSummaries() bool {
 		}
 
 		// Insert as chat_message summary (if not already present)
-		_, _ = WriteExec(
+		_, _ = store.WriteExec(
 			"INSERT OR IGNORE INTO summaries (target_type, target_id, summary, created_at) VALUES ('chat_message', ?, ?, CURRENT_TIMESTAMP)",
 			msgID, m.Summary,
 		)
 
 		// Delete the old task_execution summary
-		_, _ = WriteExec(
+		_, _ = store.WriteExec(
 			"DELETE FROM summaries WHERE target_type = 'task_execution' AND target_id = ?",
 			m.ExecID,
 		)
@@ -2379,7 +2089,7 @@ func MigrateTaskExecutionSummaries() bool {
 // package database. Exported for tests; InitDB uses migrateLegacyAgentPrompts so
 // it can act on the handle it is currently opening.
 func MigrateLegacyAgentPrompts() error {
-	return migrateLegacyAgentPrompts(db)
+	return migrateLegacyAgentPrompts(store.WriteDBRaw())
 }
 
 // migrateLegacyAgentPrompts drops the legacy agents.system_prompt column and
@@ -2404,6 +2114,11 @@ func MigrateLegacyAgentPrompts() error {
 //
 // The outer guard is the column's existence, so this is a no-op once the column
 // is gone.
+//
+// Writes go through the raw *sql.DB rather than store.WriteExec: this runs only
+// from InitDB at startup, before any goroutine can write, so there is no
+// concurrent writer for writeMu to serialize against. (The exported
+// MigrateLegacyAgentPrompts wrapper exists for tests.)
 func migrateLegacyAgentPrompts(d *sql.DB) error {
 	var hasLegacy int
 	if err := d.QueryRow(
@@ -2448,7 +2163,7 @@ var legacyAgentCapabilityColumns = []string{
 // migrateLegacyAgentCapabilityColumns so it can act on the handle it is
 // currently opening.
 func MigrateLegacyAgentCapabilityColumns() error {
-	return migrateLegacyAgentCapabilityColumns(db)
+	return migrateLegacyAgentCapabilityColumns(store.WriteDBRaw())
 }
 
 // migrateLegacyAgentCapabilityColumns drops the six dead ACP state columns from
@@ -2498,11 +2213,11 @@ func migrateLegacyAgentCapabilityColumns(d *sql.DB) error {
 // enqueue mints one — but historic rows may) is given a deterministic
 // q-migrated-<id> id so the NOT EXISTS guard can recognize it on a retry.
 func migrateQueuedMessagesToOwnTable() error {
-	if db == nil {
+	if !store.DBReady() {
 		return nil
 	}
 	var hasQueuedCol int
-	if err := db.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='queued'",
 	).Scan(&hasQueuedCol); err != nil {
 		return fmt.Errorf("check chat_history.queued column: %w", err)
@@ -2511,11 +2226,11 @@ func migrateQueuedMessagesToOwnTable() error {
 		return nil // already migrated (or a fresh database)
 	}
 
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.Exec(`
@@ -2569,7 +2284,7 @@ func MigrateToolCallsFromContent() bool {
 	// We detect old-format data by checking for "input" key inside tool_use blocks,
 	// which the slim format does not include.
 	var needed int
-	_ = dbRead.QueryRow(`
+	_ = store.ReadDB().QueryRow(`
 		SELECT COUNT(*) FROM chat_history h
 		WHERE h.role = 'assistant'
 		  AND h.content LIKE '%"tool_use"%'
@@ -2596,7 +2311,7 @@ func MigrateToolCallsFromContent() bool {
 	failed := 0
 
 	for {
-		rows, err := dbRead.Query(
+		rows, err := store.ReadDB().Query(
 			`
 			SELECT h.id, h.session_id, h.content FROM chat_history h
 			WHERE h.role = 'assistant'
@@ -2740,56 +2455,8 @@ func migrateToolCallsForRow(msgID int64, sessionID, content string) error {
 		return fmt.Errorf("marshal slim content: %w", err)
 	}
 
-	_, err = WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", string(newContent), msgID)
+	_, err = store.WriteExec("UPDATE chat_history SET content = ? WHERE id = ?", string(newContent), msgID)
 	return err
-}
-
-// UserMessageStat represents a distinct user message text and its occurrence count.
-type UserMessageStat struct {
-	Text  string `json:"text"`
-	Count int    `json:"count"`
-}
-
-// GetUserMessageStats returns distinct non-empty user messages across all sessions
-// (including archived), grouped by content and ordered by recency + frequency.
-// Messages are filtered to exclude: streaming messages, empty content, long content
-// (>200 chars), file-attached messages, slash/@-prefixed commands, and messages
-// already in quick-send (matched by label OR command).
-// limit caps the number of distinct message types returned (default 500 when limit <= 0).
-// Results are ordered by the latest occurrence timestamp descending (recent first),
-// so clustering prioritizes recent data. The O(n²) comparison in clustering makes
-// large limits impractical — 500 types ≈ 125K comparisons, completes in seconds.
-func GetUserMessageStats(limit int) ([]UserMessageStat, error) {
-	if limit <= 0 {
-		limit = 500
-	}
-	rows, err := dbRead.Query(`
-		SELECT content, COUNT(*) AS cnt
-		FROM chat_history
-		WHERE role = 'user'
-		  AND streaming = 0
-		  AND content != ''
-		  AND LENGTH(content) <= 200
-		  AND (files IS NULL OR files = '')
-		  AND NOT (content LIKE '/%' OR content LIKE '@%')
-		  AND content NOT IN (SELECT label FROM chat_quick_send UNION SELECT command FROM chat_quick_send)
-		GROUP BY content
-		ORDER BY MAX(created_at) DESC, cnt DESC
-		LIMIT ?`, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var stats []UserMessageStat
-	for rows.Next() {
-		var s UserMessageStat
-		if err := rows.Scan(&s.Text, &s.Count); err != nil {
-			return nil, err
-		}
-		stats = append(stats, s)
-	}
-	return stats, nil
 }
 
 // sessionOrderIndexSQL is the desired definition of idx_sessions_order: the
@@ -2813,7 +2480,7 @@ const sessionOrderIndexSQL = "CREATE INDEX idx_sessions_order ON chat_sessions(s
 // stale index would hide a broken migration from every future startup.
 func rebuildSessionOrderIndexIfNeeded() error {
 	var existing string
-	err := db.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT COALESCE(sql, '') FROM sqlite_master WHERE type='index' AND name='idx_sessions_order'",
 	).Scan(&existing)
 	if err == nil && existing == sessionOrderIndexSQL {
@@ -2822,23 +2489,13 @@ func rebuildSessionOrderIndexIfNeeded() error {
 	if err != nil && err != sql.ErrNoRows {
 		return fmt.Errorf("failed to read idx_sessions_order definition: %w", err)
 	}
-	if _, err := WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
+	if _, err := store.WriteExec("DROP INDEX IF EXISTS idx_sessions_order"); err != nil {
 		return fmt.Errorf("failed to drop old idx_sessions_order: %w", err)
 	}
-	if _, err := WriteExec(sessionOrderIndexSQL); err != nil {
+	if _, err := store.WriteExec(sessionOrderIndexSQL); err != nil {
 		return fmt.Errorf("failed to create new idx_sessions_order: %w", err)
 	}
 	return nil
-}
-
-// CloseDB closes both write and read database connections.
-func CloseDB() {
-	if db != nil {
-		_ = db.Close()
-	}
-	if dbRead != nil {
-		_ = dbRead.Close()
-	}
 }
 
 // GetSummary looks up a reading summary by target type and target ID.
@@ -2859,7 +2516,7 @@ func SaveSummary(targetType string, targetID int64, summary string) error {
 func GetSummaryWithCards(targetType string, targetID int64) (string, *model.SummaryCards, bool) {
 	var summary string
 	var cardsJSON string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT summary, COALESCE(summary_cards, '') FROM summaries WHERE target_type = ? AND target_id = ?",
 		targetType, targetID,
 	).Scan(&summary, &cardsJSON)
@@ -2886,7 +2543,7 @@ func SaveSummaryWithCards(targetType string, targetID int64, summary string, car
 		}
 		cardsJSON = string(raw)
 	}
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT OR REPLACE INTO summaries (target_type, target_id, summary, summary_cards, created_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)",
 		targetType, targetID, summary, cardsJSON,
 	)
@@ -2897,7 +2554,7 @@ func SaveSummaryWithCards(targetType string, targetID int64, summary string, car
 // Returns (ttsSummary, found).
 func GetTTSSummaryByMessageID(messageID int64) (string, bool) {
 	var ttsSummary string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT tts_summary FROM tts_summaries WHERE message_id = ?",
 		messageID,
 	).Scan(&ttsSummary)
@@ -2909,7 +2566,7 @@ func GetTTSSummaryByMessageID(messageID int64) (string, bool) {
 
 // SaveTTSSummaryByMessageID persists a TTS summary for a chat message.
 func SaveTTSSummaryByMessageID(messageID int64, ttsSummary string) error {
-	_, err := WriteExec(
+	_, err := store.WriteExec(
 		"INSERT OR REPLACE INTO tts_summaries (message_id, tts_summary, created_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
 		messageID, ttsSummary,
 	)
@@ -3006,17 +2663,17 @@ func (h crudHelpers[T, E]) list(projectPath string) ([]T, error) {
 	var err error
 	if projectPath == "" {
 		query += " WHERE project_id IS NULL ORDER BY sort_order"
-		rows, err = dbRead.Query(query)
+		rows, err = store.ReadDB().Query(query)
 	} else {
 		// Resolve path -> id WITHOUT creating a row: a read must not register a
 		// project as a side effect. An unknown project has no scoped rows, so it
 		// sees the global ones only — the same as before the id refactor.
-		projectID, _, idErr := ProjectIDByPath(projectPath)
+		projectID, _, idErr := store.ProjectIDByPath(projectPath)
 		if idErr != nil {
 			return nil, idErr
 		}
 		query += " WHERE project_id IS NULL OR project_id = ? ORDER BY sort_order"
-		rows, err = dbRead.Query(query, projectID)
+		rows, err = store.ReadDB().Query(query, projectID)
 	}
 	if err != nil {
 		return nil, err
@@ -3048,7 +2705,7 @@ func extraProjectPath(e any) string {
 // the global scope (so the column stays NULL and the partial unique index's
 // COALESCE treats it as its own scope), otherwise the resolved id.
 //
-// This is a WRITE path, so it registers an unknown project (ProjectIDForPath
+// This is a WRITE path, so it registers an unknown project (store.ProjectIDForPath
 // upserts). That matters for the quick-command/quick-send tables: scoping a row
 // to a project that has never had a session must still work, and the read side
 // resolves the id back to a path through the same registry.
@@ -3056,7 +2713,7 @@ func projectIDArg(projectPath string) (any, error) {
 	if projectPath == "" {
 		return nil, nil
 	}
-	return ProjectIDForPath(projectPath)
+	return store.ProjectIDForPath(projectPath)
 }
 
 // clearAutoExecuteForScope clears the auto_execute flag on other rows in the
@@ -3069,17 +2726,17 @@ func clearAutoExecuteForScope(table string, excludeID int64, projectPath string)
 	}
 	if projectID == nil {
 		if excludeID > 0 {
-			_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id IS NULL AND id != ?", excludeID)
+			_, err := store.WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id IS NULL AND id != ?", excludeID)
 			return err
 		}
-		_, err := WriteExec("UPDATE " + table + " SET auto_execute = 0 WHERE auto_execute = 1 AND project_id IS NULL")
+		_, err := store.WriteExec("UPDATE " + table + " SET auto_execute = 0 WHERE auto_execute = 1 AND project_id IS NULL")
 		return err
 	}
 	if excludeID > 0 {
-		_, err := WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id = ? AND id != ?", projectID, excludeID)
+		_, err := store.WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id = ? AND id != ?", projectID, excludeID)
 		return err
 	}
-	_, err = WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id = ?", projectID)
+	_, err = store.WriteExec("UPDATE "+table+" SET auto_execute = 0 WHERE auto_execute = 1 AND project_id = ?", projectID)
 	return err
 }
 
@@ -3097,7 +2754,7 @@ func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 		}
 	}
 	var maxOrder sql.NullInt64
-	_ = dbRead.QueryRow("SELECT MAX(sort_order) FROM " + h.table).Scan(&maxOrder)
+	_ = store.ReadDB().QueryRow("SELECT MAX(sort_order) FROM " + h.table).Scan(&maxOrder)
 	if maxOrder.Valid {
 		sortOrder = int(maxOrder.Int64) + 1
 	}
@@ -3111,7 +2768,7 @@ func (h crudHelpers[T, E]) insert(item T) (int64, error) {
 	} else {
 		args = []any{label, command, sortOrder, projectArg}
 	}
-	result, err := WriteExec(h.insertSQL, args...)
+	result, err := store.WriteExec(h.insertSQL, args...)
 	if err != nil {
 		return 0, err
 	}
@@ -3139,23 +2796,23 @@ func (h crudHelpers[T, E]) update(id int64, item T) error {
 	} else {
 		args = []any{label, command, projectArg, id}
 	}
-	_, err = WriteExec(h.updateSQL, args...)
+	_, err = store.WriteExec(h.updateSQL, args...)
 	return err
 }
 
 // delete removes a row by id.
 func (h crudHelpers[T, E]) delete(id int64) error {
-	_, err := WriteExec("DELETE FROM "+h.table+" WHERE id = ?", id)
+	_, err := store.WriteExec("DELETE FROM "+h.table+" WHERE id = ?", id)
 	return err
 }
 
 // reorder updates sort_order for all rows matching the given id list.
 func (h crudHelpers[T, E]) reorder(ids []int64) error {
-	tx, err := WriteBegin() //nolint:noctx // DB global, context not applicable
+	tx, err := store.WriteBegin() //nolint:noctx // DB global, context not applicable
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	for i, id := range ids {
 		if _, err := tx.Exec("UPDATE "+h.table+" SET sort_order = ? WHERE id = ?", i, id); err != nil {
 			_ = tx.Rollback()
@@ -3243,137 +2900,9 @@ func ReorderChatQuickSend(ids []int64) error {
 	return ChatQuickSendHelpers.reorder(ids)
 }
 
-// ClusterCacheEntry represents a row in message_clusters_cache.
-type ClusterCacheEntry struct {
-	ID                  int64  `json:"id"`
-	Representative      string `json:"representative"`
-	Variants            string `json:"variants"` // JSON array stored as string
-	TotalCount          int    `json:"total_count"`
-	RepresentativeCount int    `json:"representative_count"`
-	SortOrder           int    `json:"sort_order"`
-}
-
-// SaveClusterCache deletes old cache and meta rows, inserts new entries,
-// and writes a meta row with progress="done". Uses WriteLock + transaction.
-func SaveClusterCache(entries []ClusterCacheEntry, mode string) error {
-	tx, err := WriteBegin()
-	if err != nil {
-		return err
-	}
-	defer writeMu.Unlock()
-
-	if _, err := tx.Exec("DELETE FROM message_clusters_cache"); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	if _, err := tx.Exec("DELETE FROM message_clusters_meta"); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	for _, e := range entries {
-		if _, err := tx.Exec(
-			"INSERT INTO message_clusters_cache (representative, variants, total_count, representative_count, sort_order) VALUES (?, ?, ?, ?, ?)",
-			e.Representative, e.Variants, e.TotalCount, e.RepresentativeCount, e.SortOrder,
-		); err != nil {
-			_ = tx.Rollback()
-			return err
-		}
-	}
-	if _, err := tx.Exec(
-		"INSERT INTO message_clusters_meta (id, mode, progress, msg_count, cluster_count, elapsed_ms) VALUES (1, ?, 'done', ?, ?, 0)",
-		mode, 0, len(entries),
-	); err != nil {
-		_ = tx.Rollback()
-		return err
-	}
-	return tx.Commit()
-}
-
-// GetClusterCache returns all cache entries ordered by sort_order,
-// along with the mode and updated_at from the meta row.
-func GetClusterCache() ([]ClusterCacheEntry, string, time.Time, error) {
-	rows, err := dbRead.Query("SELECT id, representative, variants, total_count, representative_count, sort_order FROM message_clusters_cache ORDER BY sort_order")
-	if err != nil {
-		return nil, "", time.Time{}, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var entries []ClusterCacheEntry
-	for rows.Next() {
-		var e ClusterCacheEntry
-		if err := rows.Scan(&e.ID, &e.Representative, &e.Variants, &e.TotalCount, &e.RepresentativeCount, &e.SortOrder); err != nil {
-			return nil, "", time.Time{}, err
-		}
-		entries = append(entries, e)
-	}
-
-	var mode string
-	var updatedAt time.Time
-	err = dbRead.QueryRow("SELECT mode, updated_at FROM message_clusters_meta WHERE id = 1").Scan(&mode, &updatedAt)
-	if err != nil {
-		// No meta row → return empty mode and zero time
-		return entries, "", time.Time{}, nil
-	}
-	return entries, mode, updatedAt, nil
-}
-
-// SaveClusterMeta inserts or replaces the meta row with computation progress info.
-// If mode is empty string, the previous mode value is preserved (useful during
-// computing phases when the final mode is not yet known).
-// If phase is empty string, the previous phase value is preserved.
-func SaveClusterMeta(progress, mode string, msgCount, clusterCount, elapsedMs int, phase ...string) error {
-	p := ""
-	if len(phase) > 0 {
-		p = phase[0]
-	}
-	_, err := WriteExec(
-		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) "+
-			"VALUES (1, COALESCE(NULLIF(?, ''), (SELECT mode FROM message_clusters_meta WHERE id = 1), ''), ?, COALESCE(NULLIF(?, ''), (SELECT phase FROM message_clusters_meta WHERE id = 1), ''), ?, ?, ?, '', CURRENT_TIMESTAMP)",
-		mode, progress, p, msgCount, clusterCount, elapsedMs,
-	)
-	return err
-}
-
-// SaveClusterMetaError inserts or replaces the meta row with error info.
-func SaveClusterMetaError(progress, phase, errMsg string) error {
-	// Preserve existing mode from the meta row
-	var mode string
-	_ = dbRead.QueryRow("SELECT mode FROM message_clusters_meta WHERE id = 1").Scan(&mode)
-
-	_, err := WriteExec(
-		"INSERT OR REPLACE INTO message_clusters_meta (id, mode, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg, updated_at) VALUES (1, ?, ?, ?, 0, 0, 0, ?, CURRENT_TIMESTAMP)",
-		mode, progress, phase, errMsg,
-	)
-	return err
-}
-
-// ClusterMeta is the persisted message-clusters computation metadata row.
-type ClusterMeta struct {
-	Mode         string
-	UpdatedAt    time.Time
-	Progress     string
-	Phase        string
-	MsgCount     int
-	ClusterCount int
-	ElapsedMs    int
-	ErrorMsg     string
-}
-
-// GetClusterMeta returns the meta row values. If no row exists, returns defaults.
-func GetClusterMeta() ClusterMeta {
-	var m ClusterMeta
-	err := dbRead.QueryRow(
-		"SELECT mode, updated_at, progress, phase, msg_count, cluster_count, elapsed_ms, error_msg FROM message_clusters_meta WHERE id = 1",
-	).Scan(&m.Mode, &m.UpdatedAt, &m.Progress, &m.Phase, &m.MsgCount, &m.ClusterCount, &m.ElapsedMs, &m.ErrorMsg)
-	if err != nil {
-		return ClusterMeta{Progress: "idle"}
-	}
-	return m
-}
-
 // GetQuickSendCommands returns all command strings from chat_quick_send ordered by sort_order.
 func GetQuickSendCommands() []string {
-	rows, err := dbRead.Query("SELECT command FROM chat_quick_send ORDER BY sort_order")
+	rows, err := store.ReadDB().Query("SELECT command FROM chat_quick_send ORDER BY sort_order")
 	if err != nil {
 		return nil
 	}
@@ -3400,7 +2929,7 @@ type KeyConfigItem struct {
 
 // GetKeyConfig returns all key config items of the given type, ordered by sort_order.
 func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
-	rows, err := dbRead.Query("SELECT id, type, key_id, sort_order FROM terminal_key_config WHERE type = ? ORDER BY sort_order", typeFilter)
+	rows, err := store.ReadDB().Query("SELECT id, type, key_id, sort_order FROM terminal_key_config WHERE type = ? ORDER BY sort_order", typeFilter)
 	if err != nil {
 		return nil, err
 	}
@@ -3419,11 +2948,11 @@ func GetKeyConfig(typeFilter string) ([]KeyConfigItem, error) {
 // ReplaceKeyConfig replaces all items of the given type with the provided key IDs.
 // The sort_order is set by the position in the slice.
 func ReplaceKeyConfig(typeVal string, keyIDs []string) error {
-	tx, err := WriteBegin()
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return err
 	}
-	defer writeMu.Unlock()
+	defer store.WriteUnlock()
 	if _, err := tx.Exec("DELETE FROM terminal_key_config WHERE type = ?", typeVal); err != nil {
 		_ = tx.Rollback()
 		return err

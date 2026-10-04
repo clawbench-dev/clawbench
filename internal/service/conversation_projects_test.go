@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/service"
 
 	_ "modernc.org/sqlite"
@@ -48,7 +50,7 @@ func setupConversationProjectsDB(t *testing.T) *sql.DB {
 	_, err = db.Exec(conversationProjectsSchema)
 	require.NoError(t, err)
 
-	cleanup := service.SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -60,7 +62,7 @@ func insertSessionRow(t *testing.T, db *sql.DB, projectPath, id, createdAt strin
 	t.Helper()
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, created_at) VALUES (?, ?, ?)",
-		id, service.ProjectIDForTest(t, projectPath), createdAt,
+		id, store.ProjectIDForTest(t, projectPath), createdAt,
 	)
 	require.NoError(t, err)
 }
@@ -69,7 +71,7 @@ func insertMetadataRow(t *testing.T, db *sql.DB, projectPath, createdAt string) 
 	t.Helper()
 	_, err := db.Exec(
 		"INSERT INTO chat_metadata (project_id, created_at) VALUES (?, ?)",
-		service.ProjectIDForTest(t, projectPath), createdAt,
+		store.ProjectIDForTest(t, projectPath), createdAt,
 	)
 	require.NoError(t, err)
 }

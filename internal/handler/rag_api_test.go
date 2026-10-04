@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/model"
 	"clawbench/internal/rag"
 	"clawbench/internal/service"
@@ -148,7 +150,7 @@ func TestServeRAGSearch_EmptyResultsArray(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Setup a real SQLite store + mock embedder
+	// Setup a real SQLite ragStore + mock embedder
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
 	t.Cleanup(func() {
@@ -156,8 +158,8 @@ func TestServeRAGSearch_EmptyResultsArray(t *testing.T) {
 		rag.GlobalEmbedder = origEmbedder
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	// Use a mock server that returns valid embeddings
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
@@ -323,7 +325,7 @@ func TestServeRAGSearch_CrossProjectIsolation(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Setup a real SQLite store + mock embedder
+	// Setup a real SQLite ragStore + mock embedder
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
 	t.Cleanup(func() {
@@ -331,8 +333,8 @@ func TestServeRAGSearch_CrossProjectIsolation(t *testing.T) {
 		rag.GlobalEmbedder = origEmbedder
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
 
@@ -353,7 +355,7 @@ func TestServeRAGSearch_LocalhostGlobalSearch(t *testing.T) {
 	_, teardown := setupTestEnv(t)
 	defer teardown()
 
-	// Setup a real SQLite store + mock embedder
+	// Setup a real SQLite ragStore + mock embedder
 	origStore := rag.GlobalStore
 	origEmbedder := rag.GlobalEmbedder
 	t.Cleanup(func() {
@@ -361,8 +363,8 @@ func TestServeRAGSearch_LocalhostGlobalSearch(t *testing.T) {
 		rag.GlobalEmbedder = origEmbedder
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
 
@@ -549,8 +551,8 @@ func TestServeRAGMessageIndexStatus_WithRAGStore(t *testing.T) {
 
 	origStore := rag.GlobalStore
 	t.Cleanup(func() { rag.GlobalStore = origStore })
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 
 	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello", nil, false, "NewSession")
 	require.NoError(t, err)
@@ -628,7 +630,7 @@ func TestServeRAGStatus_VectorDisabled(t *testing.T) {
 	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	require.NoError(t, err)
-	// Nil store: mode="none" (config-based — RAG not initialized)
+	// Nil ragStore: mode="none" (config-based — RAG not initialized)
 	assert.Equal(t, "none", result["mode"])
 	assert.Equal(t, false, result["has_vec_data"])
 	assert.Equal(t, false, result["embedder_healthy"])
@@ -694,8 +696,8 @@ func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
 		model.ConfigInstance.RAG.VectorEnabled = origVectorEnabled
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	rag.GlobalEmbedder = setupWorkingMockEmbedder(t)
 	model.ConfigInstance.RAG.VectorEnabled = true
 	rag.SetEmbedderHealthy(true)
@@ -707,7 +709,7 @@ func TestServeRAGStatus_WithStore_HybridMode(t *testing.T) {
 	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	require.NoError(t, err)
-	// Config-based mode: store + VectorEnabled + embedder healthy → "hybrid"
+	// Config-based mode: ragStore + VectorEnabled + embedder healthy → "hybrid"
 	assert.Equal(t, "hybrid", result["mode"])
 	assert.Contains(t, result, "embedded_messages")
 }
@@ -727,8 +729,8 @@ func TestServeRAGStatus_WithStore_FtsOnlyMode(t *testing.T) {
 		rag.SetEmbedderHealthy(origEmbedderHealthy)
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	rag.GlobalEmbedder = nil
 	model.ConfigInstance.RAG.VectorEnabled = false
 	rag.SetEmbedderHealthy(false)
@@ -740,7 +742,7 @@ func TestServeRAGStatus_WithStore_FtsOnlyMode(t *testing.T) {
 	var result map[string]any
 	err := json.Unmarshal(w.Body.Bytes(), &result)
 	require.NoError(t, err)
-	// Config-based mode: store + !VectorEnabled → "fts"
+	// Config-based mode: ragStore + !VectorEnabled → "fts"
 	assert.Equal(t, "fts", result["mode"])
 	assert.Equal(t, false, result["embedder_healthy"])
 }
@@ -970,7 +972,7 @@ func TestServeRAGSessionSearch_BrowseOmitsMessageContent(t *testing.T) {
 	defer teardown()
 
 	insertSession(t, env.ProjectDir, "sess-c", "Session", "2024-01-01 10:00:00", false, "")
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'First message here', ?, 'claude')",
 		env.ProjectDir, "sess-c",
 	)
@@ -1026,11 +1028,11 @@ func TestServeRAGSessionFirstMessage_ReturnsEarliestMessage(t *testing.T) {
 	defer teardown()
 
 	insertSession(t, env.ProjectDir, "sess-fm", "Session", "2024-01-01 10:00:00", false, "")
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO chat_history (project_id, role, content, session_id, backend, created_at) VALUES
 		 (?, 'assistant', 'second', 'sess-fm', 'claude', '2024-01-02 10:00:00'),
 		 (?, 'user', 'first', 'sess-fm', 'claude', '2024-01-01 10:00:00')`,
-		service.ProjectIDForTest(t, env.ProjectDir), service.ProjectIDForTest(t, env.ProjectDir),
+		store.ProjectIDForTest(t, env.ProjectDir), store.ProjectIDForTest(t, env.ProjectDir),
 	)
 	require.NoError(t, err)
 
@@ -1053,7 +1055,7 @@ func TestServeRAGSessionFirstMessage_ArchivedSessionAllowed(t *testing.T) {
 	defer teardown()
 
 	insertSession(t, env.ProjectDir, "sess-arch", "Archived", "2024-01-01 10:00:00", true, "")
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend) VALUES (?, 'user', 'hello', 'sess-arch', 'claude')",
 		env.ProjectDir,
 	)
@@ -1122,7 +1124,7 @@ func TestServeRAGSessionSearch_BrowseModeDBError(t *testing.T) {
 
 	// Drop chat_sessions so GetRecentSessions fails → RecentSessions returns an
 	// error → the handler responds 503.
-	_, err := service.UnsafeDBForTest().Exec("DROP TABLE chat_sessions")
+	_, err := store.UnsafeDBForTest().Exec("DROP TABLE chat_sessions")
 	require.NoError(t, err)
 
 	req := newRequest(t, http.MethodPost, "/api/rag/session-search", map[string]any{})
@@ -1141,7 +1143,7 @@ func TestServeRAGSessionSearch_RemoteNoProjectDenied(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-// A nil store means RAG is not configured, not that search is impossible: the
+// A nil ragStore means RAG is not configured, not that search is impossible: the
 // title channel is plain SQL and still answers, so the request succeeds with
 // title matches instead of a 503.
 func TestServeRAGSessionSearch_NilStoreFallsBackToTitleSearch(t *testing.T) {
@@ -1246,8 +1248,8 @@ func TestServeRAGSessionSearch_EmptyResultsArray(t *testing.T) {
 		rag.GlobalEmbedder = origEmbedder
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
 
@@ -1275,8 +1277,8 @@ func TestServeRAGSessionSearch_LocalhostGlobalSearch(t *testing.T) {
 		rag.GlobalEmbedder = origEmbedder
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	embedder := setupWorkingMockEmbedder(t)
 	rag.GlobalEmbedder = embedder
 
@@ -1503,7 +1505,7 @@ func TestServeRAGRebuild_NilStoreReturns503(t *testing.T) {
 // TestServeRAGRebuild_AcceptedWithoutBlocking is the core contract: the trigger
 // must return 202 immediately instead of performing the rebuild inline.
 //
-// An inline rebuild takes minutes on a real store and exceeds the frontend's 10s
+// An inline rebuild takes minutes on a real ragStore and exceeds the frontend's 10s
 // request timeout, which previously made a successful rebuild report as failure.
 func TestServeRAGRebuild_AcceptedWithoutBlocking(t *testing.T) {
 	env, teardown := setupTestEnv(t)
@@ -1516,20 +1518,20 @@ func TestServeRAGRebuild_AcceptedWithoutBlocking(t *testing.T) {
 		rag.GlobalRebuildCoordinator = origCoord
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 
 	// Insert a message + chunk so the rebuild has real work.
 	msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "hello world", nil, false, "NewSession")
 	require.NoError(t, err)
-	require.NoError(t, service.MarkMessageIndexed(msgID))
-	require.NoError(t, store.InsertChunks([]rag.Chunk{{
+	require.NoError(t, store.MarkMessageIndexed(msgID))
+	require.NoError(t, ragStore.InsertChunks([]rag.Chunk{{
 		SessionID: "sess-1", MessageID: msgID, ChunkText: "hello world",
 		ChunkTextSegmented: rag.SegmentText("hello world"), ChunkIndex: 0, TokenCount: 2,
 		ProjectPath: env.ProjectDir, Backend: "claude", Role: "user",
 	}}))
 
-	idx := rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
+	idx := rag.NewIndexer(ragStore, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
 	coord := rag.NewRebuildCoordinator(nil)
 	coord.SetIndexer(idx)
 	rag.GlobalRebuildCoordinator = coord
@@ -1567,13 +1569,13 @@ func TestServeRAGRebuild_KindSelection(t *testing.T) {
 				rag.GlobalRebuildCoordinator = origCoord
 			})
 
-			store := setupRAGStore(t)
-			rag.GlobalStore = store
+			ragStore := setupRAGStore(t)
+			rag.GlobalStore = ragStore
 			msgID, err := service.AddChatMessage(env.ProjectDir, "claude", "", "user", "kind test", nil, false, "NewSession")
 			require.NoError(t, err)
-			require.NoError(t, service.MarkMessageIndexed(msgID))
+			require.NoError(t, store.MarkMessageIndexed(msgID))
 
-			idx := rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
+			idx := rag.NewIndexer(ragStore, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
 			coord := rag.NewRebuildCoordinator(nil)
 			coord.SetIndexer(idx)
 			rag.GlobalRebuildCoordinator = coord
@@ -1605,10 +1607,10 @@ func TestServeRAGRebuild_UnknownKindRejected(t *testing.T) {
 		rag.GlobalRebuildCoordinator = origCoord
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 	coord := rag.NewRebuildCoordinator(nil)
-	coord.SetIndexer(rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
+	coord.SetIndexer(rag.NewIndexer(ragStore, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
 	rag.GlobalRebuildCoordinator = coord
 
 	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", map[string]string{"kind": "bogus"})
@@ -1632,15 +1634,15 @@ func TestServeRAGRebuild_ConcurrencyConflict(t *testing.T) {
 		rag.GlobalRebuildCoordinator = origCoord
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
 
-	idx := rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
+	idx := rag.NewIndexer(ragStore, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"})
 	coord := rag.NewRebuildCoordinator(nil)
 	coord.SetIndexer(idx)
 	rag.GlobalRebuildCoordinator = coord
 
-	require.NoError(t, coord.Start(store, rag.RebuildFTS), "first rebuild must start")
+	require.NoError(t, coord.Start(ragStore, rag.RebuildFTS), "first rebuild must start")
 
 	// A DIFFERENT kind must also be rejected: one rebuild at a time, globally.
 	req := newRequest(t, http.MethodPost, "/api/rag/rebuild", map[string]string{"kind": "vector"})
@@ -1667,15 +1669,15 @@ func TestServeRAGRebuild_SegmenterUnavailable(t *testing.T) {
 		rag.RestoreSegmenterForTest(nil)
 	})
 
-	store := setupRAGStore(t)
-	rag.GlobalStore = store
-	require.NoError(t, store.InsertChunks([]rag.Chunk{{
+	ragStore := setupRAGStore(t)
+	rag.GlobalStore = ragStore
+	require.NoError(t, ragStore.InsertChunks([]rag.Chunk{{
 		SessionID: "s", MessageID: 1, ChunkText: "hello", ChunkTextSegmented: "hello",
 		ChunkIndex: 0, TokenCount: 1, ProjectPath: "/p", Backend: "claude", Role: "user",
 	}}))
 
 	coord := rag.NewRebuildCoordinator(nil)
-	coord.SetIndexer(rag.NewIndexer(store, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
+	coord.SetIndexer(rag.NewIndexer(ragStore, nil, model.RAGConfig{ChunkSize: 512, BatchSize: 50, PollInterval: "1h"}))
 	rag.GlobalRebuildCoordinator = coord
 	rag.RestoreSegmenterForTest(nil)
 
@@ -1690,7 +1692,7 @@ func TestServeRAGRebuild_SegmenterUnavailable(t *testing.T) {
 	assert.False(t, coord.IsRunning(), "a refused trigger must not start a rebuild")
 
 	// Nothing may have been queued: the refusal must precede the marking step.
-	pending, err := store.PendingResegmentCount()
+	pending, err := ragStore.PendingResegmentCount()
 	require.NoError(t, err)
 	assert.Equal(t, 0, pending, "a refused rebuild must not mark chunks stale")
 }
@@ -1739,7 +1741,7 @@ func TestServeRAGRebuildStatus_NoCoordinatorReportsIdle(t *testing.T) {
 	assert.Equal(t, "idle", status["status"])
 }
 
-// setupRAGStore creates a temporary SQLite store for handler tests.
+// setupRAGStore creates a temporary SQLite ragStore for handler tests.
 //
 // The gse segmenter is a package-level global in the rag package and is normally
 // installed at startup (rag.go), so handler tests must install it explicitly.
@@ -1749,10 +1751,10 @@ func setupRAGStore(t *testing.T) *rag.Store {
 	if err := rag.InitSegmenter(); err != nil {
 		t.Logf("Warning: gse segmenter not available: %v", err)
 	}
-	store, err := rag.NewSQLiteStore(":memory:")
+	ragStore, err := rag.NewSQLiteStore(":memory:")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	return store
+	t.Cleanup(func() { _ = ragStore.Close() })
+	return ragStore
 }
 
 // insertSession inserts a chat session row for session-search browse tests.
@@ -1766,9 +1768,9 @@ func insertSession(t *testing.T, projectPath, id, title, createdAt string, archi
 	if sessionType == "" {
 		sessionType = "chat"
 	}
-	_, err := service.UnsafeDBForTest().Exec(
+	_, err := store.UnsafeDBForTest().Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, ?, ?, ?, ?)",
-		id, service.ProjectIDForTest(t, projectPath), title, sessionType, archivedInt, createdAt, createdAt,
+		id, store.ProjectIDForTest(t, projectPath), title, sessionType, archivedInt, createdAt, createdAt,
 	)
 	require.NoError(t, err)
 }

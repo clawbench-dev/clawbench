@@ -49,6 +49,8 @@
     "@codincod/codemirror-lang-scala": "^0.2.1",
     "@codincod/codemirror-lang-shell": "^0.2.2",
     "@codincod/codemirror-lang-swift": "^0.1.2",
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
     "@intlify/unplugin-vue-i18n": "^6.0.8",
     "@lobehub/icons-static-svg": "^1.94.0",
     "@replit/codemirror-lang-csharp": "^6.2.0",

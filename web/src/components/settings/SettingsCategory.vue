@@ -7,8 +7,18 @@
   <SettingsAgentDetail
     v-else-if="categoryId.startsWith('agents:')"
     :agent-id="categoryId.slice(7)"
-    @deleted="$emit('navigate', 'agents')"
-    @back="$emit('navigate', 'agents')"
+    @deleted="$emit('deleted', 'agents')"
+    @back="$emit('back', 'agents')"
+  />
+  <!-- Project detail route (project:<id>): a read-only stats page, not a
+       batch-save panel, so it gets its own component rather than going through
+       subPagePanelMap. It has no back button — the breadcrumb crumb is the way
+       back — and on delete it emits `deleted` so the parent pops the detail
+       entry instead of pushing (see returnToCategory). -->
+  <ProjectDetailSetting
+    v-else-if="categoryId.startsWith('project:')"
+    :project-id="Number(categoryId.slice(8))"
+    @deleted="$emit('deleted', 'project')"
   />
   <!-- Sub-page routes (data-driven: any colon-separated ID except agents) -->
   <div v-else-if="subPagePanel" class="settings-category">
@@ -58,6 +68,14 @@
         <SkillsDiscoveredSetting
           v-if="card.title === t('settings.items.skillsDiscoveredSection')"
         />
+        <!-- Project registry listing: a live list fetched from the backend,
+             rendered in place of the card's (placeholder-only) rows. Its row
+             clicks drill into project:<id>, so the navigate event must be
+             forwarded up to SettingsPage. -->
+        <ProjectsSetting
+          v-if="card.title === t('settings.items.allProjectsSection')"
+          @navigate="(id: string) => $emit('navigate', id)"
+        />
         <SettingsItem
           v-for="item in card.items"
           :key="item.key"
@@ -69,6 +87,7 @@
           :options="resolveItemOptions(item)"
           :options-filter="resolveOptionsFilter(item)"
           :option-previews="item.key === 'theme' ? themePreviews : undefined"
+          :reveal-on-select="item.key === 'theme'"
           :min="item.min"
           :max="getItemMax(item)"
           :step="item.step"
@@ -119,6 +138,8 @@ import SkillsSetting from './SkillsSetting.vue'
 import SkillsDirsSetting from './SkillsDirsSetting.vue'
 import SkillsReposSetting from './SkillsReposSetting.vue'
 import SkillsDiscoveredSetting from './SkillsDiscoveredSetting.vue'
+import ProjectsSetting from './ProjectsSetting.vue'
+import ProjectDetailSetting from './ProjectDetailSetting.vue'
 import PasswordChangeDialog from './PasswordChangeDialog.vue'
 import UpgradeDialog from './UpgradeDialog.vue'
 import SettingsAgentsIndex from './SettingsAgentsIndex.vue'
@@ -149,6 +170,12 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   navigate: [categoryId: string]
+  // Return from a detail page (project:<id> / agents:<id>) to its list. Kept
+  // separate from `navigate` because it is a stack POP, not a push.
+  back: [categoryId: string]
+  // The entity was DELETED: the detail page no longer exists, so return to the
+  // list without the unsaved-changes guard (there is nothing to keep editing).
+  deleted: [categoryId: string]
   restartNeeded: [changedFields: string[]]
   restartRequested: []
 }>()
@@ -306,7 +333,7 @@ const cards = computed<RenderCard[]>(() => {
         //   - panelOpacity   → rendered inside WallpaperSetting
         //   - skillsCard     → supplies the description, rendered by SkillsSetting
         //   - skillsDiscovered → rendered by SkillsDiscoveredSetting
-        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered'])
+        const PLACEHOLDER_ITEMS = new Set(['panelOpacity', 'skillsCard', 'skillsDirs', 'skillsRepos', 'skillsDiscovered', 'allProjectsList'])
         if (!PLACEHOLDER_ITEMS.has(entry.spec.key)) {
           cur.items.push(entry.spec)
         }

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 
@@ -399,7 +401,7 @@ func TestSessionExecutor_Finalize_UserCancelLeavesCompletedAtNull(t *testing.T) 
 	}
 
 	var completed sql.NullTime
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT completed_at FROM chat_history WHERE session_id = ? AND role = 'assistant'", sid).Scan(&completed); err != nil {
 		t.Fatalf("query completed_at: %v", err)
 	}
@@ -470,7 +472,7 @@ func TestSessionExecutor_FlushStreamingMessage_NilBlocks(t *testing.T) {
 
 	// Verify the streaming message was updated (with empty blocks array)
 	var content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -1113,7 +1115,7 @@ func TestSessionExecutor_Finalize_ExternalSessionIDInjected(t *testing.T) {
 
 	// The persisted content JSON must also carry the external session ID.
 	var content string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
 	if err != nil {
 		t.Fatalf("failed to read finalized content: %v", err)
 	}
@@ -1164,7 +1166,7 @@ func TestSessionExecutor_FlushStreamingMessage(t *testing.T) {
 
 	// Verify the streaming message was updated with blocks
 	var content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -1202,7 +1204,7 @@ func TestSessionExecutor_FlushStreamingMessage_WithMetadata(t *testing.T) {
 
 	// Verify the streaming message was updated with metadata
 	var content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -1256,7 +1258,7 @@ func TestSessionExecutor_Finalize_WithDB(t *testing.T) {
 
 	// Verify the message was finalized in DB
 	var streaming int
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT streaming FROM chat_history WHERE id = ?",
 		runResult.MsgID,
 	).Scan(&streaming)
@@ -1884,7 +1886,7 @@ Pick one
 		t.Fatal("expected non-zero message ID after Finalize")
 	}
 	var content string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", msgID).Scan(&content)
 	if err != nil {
 		t.Fatalf("failed to read content from DB: %v", err)
 	}
@@ -2066,7 +2068,7 @@ func TestSessionExecutor_Finalize_FinalizeStreamingMessageError(t *testing.T) {
 	}
 
 	// Drop chat_history to make FinalizeStreamingMessage fail
-	_, _ = WriteExec("DROP TABLE chat_history")
+	_, _ = store.WriteExec("DROP TABLE chat_history")
 
 	// Should not panic
 	finalized := executor.Finalize(result, nil)
@@ -2102,7 +2104,7 @@ func TestSessionExecutor_Finalize_SaveMetadataError(t *testing.T) {
 	}
 
 	// Drop summaries table to make SaveMetadata fail
-	_, _ = WriteExec("DROP TABLE summaries")
+	_, _ = store.WriteExec("DROP TABLE summaries")
 
 	// Should not panic
 	finalized := executor.Finalize(result, nil)
@@ -2178,7 +2180,7 @@ Which one?
 
 	// Verify: DB content should also have the converted block
 	var content string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&content)
 	if err != nil {
 		t.Fatalf("failed to read finalized message from DB: %v", err)
 	}
@@ -2277,7 +2279,7 @@ func TestSessionExecutor_ContentReset_DBReset(t *testing.T) {
 
 	// Find the streaming message ID created by setupExecutorSession
 	var streamingMsgID int64
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
 		sid,
 	).Scan(&streamingMsgID)
@@ -2311,7 +2313,7 @@ func TestSessionExecutor_ContentReset_DBReset(t *testing.T) {
 
 	// Verify stale content in DB
 	var content string
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -2324,7 +2326,7 @@ func TestSessionExecutor_ContentReset_DBReset(t *testing.T) {
 
 	// Verify stale tool call row exists
 	var toolCount int
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?",
 		streamingMsgID,
 	).Scan(&toolCount)
@@ -2344,7 +2346,7 @@ func TestSessionExecutor_ContentReset_DBReset(t *testing.T) {
 	}
 
 	// Verify DB was reset to empty blocks
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -2359,7 +2361,7 @@ func TestSessionExecutor_ContentReset_DBReset(t *testing.T) {
 	}
 
 	// Verify stale tool call rows were deleted
-	err = dbRead.QueryRow(
+	err = store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_tool_calls WHERE message_id = ?",
 		streamingMsgID,
 	).Scan(&toolCount)
@@ -2502,7 +2504,7 @@ func TestSessionExecutor_Finalize_SlimsThinkingToDB(t *testing.T) {
 
 	// DB content must be slim (thinking block has think_id, no text).
 	var dbContent string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&dbContent)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", finalized.MsgID).Scan(&dbContent)
 	if err != nil {
 		t.Fatalf("read db content: %v", err)
 	}
@@ -2619,7 +2621,7 @@ func TestSessionExecutor_FlushSkipsThinking(t *testing.T) {
 	// Streaming flush must NOT persist the thinking block.
 	executor.flushStreamingMessage()
 	var content string
-	err := dbRead.QueryRow("SELECT content FROM chat_history WHERE id = ?", streamingMsgID).Scan(&content)
+	err := store.ReadDB().QueryRow("SELECT content FROM chat_history WHERE id = ?", streamingMsgID).Scan(&content)
 	if err != nil {
 		t.Fatalf("read streaming content: %v", err)
 	}
@@ -2638,7 +2640,7 @@ func TestSessionExecutor_FlushSkipsThinking(t *testing.T) {
 	}
 
 	var thinkIDs []string
-	rows, err := dbRead.Query("SELECT think_id, text FROM chat_thinking WHERE message_id = ?", finalized.MsgID)
+	rows, err := store.ReadDB().Query("SELECT think_id, text FROM chat_thinking WHERE message_id = ?", finalized.MsgID)
 	if err != nil {
 		t.Fatalf("query chat_thinking: %v", err)
 	}
@@ -2665,7 +2667,7 @@ func TestSessionExecutor_FlushSkipsThinking(t *testing.T) {
 func assertStreamingContentContains(t *testing.T, sid, want string) {
 	t.Helper()
 	var content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -2680,7 +2682,7 @@ func assertStreamingContentContains(t *testing.T, sid, want string) {
 func assertStreamingContentNotContains(t *testing.T, sid, notWant string) {
 	t.Helper()
 	var content string
-	err := dbRead.QueryRow(
+	err := store.ReadDB().QueryRow(
 		"SELECT content FROM chat_history WHERE session_id = ? AND streaming = 1",
 		sid,
 	).Scan(&content)
@@ -2813,7 +2815,7 @@ func TestSessionExecutor_SteerBoundary_SplitsReply(t *testing.T) {
 	// No streaming row may be left behind (GetStreamingMessageID falls back to
 	// the latest finalized row, so query the flag directly).
 	var stillStreaming int
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1",
 		sid,
 	).Scan(&stillStreaming); err != nil {
@@ -2850,7 +2852,7 @@ func TestSessionExecutor_SteerBoundary_KeepsSessionRead(t *testing.T) {
 	// message while the reply was still streaming. Anchor last_read_at to a time
 	// BEFORE the split so the completed_at stamp the split writes would
 	// otherwise overtake it.
-	if _, err := WriteExec(
+	if _, err := store.WriteExec(
 		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid); err != nil {
 		t.Fatalf("failed to set last_read_at: %v", err)
 	}
@@ -2909,7 +2911,7 @@ func TestSessionExecutor_SteerBoundary_KeepsSessionRead(t *testing.T) {
 func assertSessionHasNoUnread(t *testing.T, sid, when string) {
 	t.Helper()
 	var unread int
-	if err := dbRead.QueryRow(`
+	if err := store.ReadDB().QueryRow(`
 		SELECT COUNT(*) FROM chat_history h
 		JOIN chat_sessions s ON s.id = h.session_id
 		WHERE h.session_id = ? AND h.role = 'assistant' AND h.streaming = 0
@@ -2954,13 +2956,13 @@ func TestSessionExecutor_SteerBoundary_DegradedSplitStillReanchors(t *testing.T)
 
 	// Anchor last_read_at in the past so the finalize's completed_at stamp would
 	// overtake it and produce a spurious unread row.
-	if _, err := WriteExec(
+	if _, err := store.WriteExec(
 		"UPDATE chat_sessions SET last_read_at = '2020-01-01 00:00:00' WHERE id = ?", sid); err != nil {
 		t.Fatalf("failed to set last_read_at: %v", err)
 	}
 
 	// Archiving makes the "after" row's insert fail, forcing the degraded path.
-	if _, err := WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", sid); err != nil {
+	if _, err := store.WriteExec("UPDATE chat_sessions SET archived = 1 WHERE id = ?", sid); err != nil {
 		t.Fatalf("failed to archive session: %v", err)
 	}
 
@@ -2994,7 +2996,7 @@ func TestSessionExecutor_SteerBoundary_DegradedSplitStillReanchors(t *testing.T)
 	// Precondition: the split really did degrade. If the after-row had been
 	// created, this test would be silently exercising the happy path instead.
 	var queueIDs int
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND queue_id = ?",
 		sid, "pending-inject-degraded").Scan(&queueIDs); err != nil {
 		t.Fatalf("failed to count after-half rows: %v", err)

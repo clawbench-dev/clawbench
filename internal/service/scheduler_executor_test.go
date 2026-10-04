@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"clawbench/internal/store"
+
 	"clawbench/internal/ai"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
@@ -19,7 +21,7 @@ import (
 )
 
 // schedulerExecSchema is the DB schema needed for scheduler executor tests.
-const schedulerExecSchema = ProjectsDDL + `
+const schedulerExecSchema = store.ProjectsDDL + `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
@@ -195,7 +197,7 @@ func setupSchedulerExecDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to exec schema: %v", err)
 	}
-	cleanup := SetDBForTest(db, db)
+	cleanup := store.SetDBForTest(db, db)
 	t.Cleanup(func() {
 		cleanup()
 		db.Close()
@@ -285,7 +287,7 @@ func TestScheduledExecution_NormalCompletion(t *testing.T) {
 	// Verify execution status was updated
 	_ = UpdateExecutionStatus(sid, "completed")
 	var status string
-	if err := dbRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
 		t.Fatalf("failed to query execution status: %v", err)
 	}
 	if status != "completed" {
@@ -350,7 +352,7 @@ func TestScheduledExecution_CancelledContext(t *testing.T) {
 	// Verify execution status was set to "cancelled"
 	_ = UpdateExecutionStatus(sid, "cancelled")
 	var status string
-	if err := dbRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
 		t.Fatalf("failed to query execution status: %v", err)
 	}
 	if status != "cancelled" {
@@ -411,7 +413,7 @@ func TestScheduledExecution_CrashedProcess(t *testing.T) {
 	// Verify execution status was set to "failed"
 	_ = UpdateExecutionStatus(sid, "failed")
 	var status string
-	if err := dbRead.QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
+	if err := store.ReadDB().QueryRow("SELECT status FROM task_executions WHERE id = ?", executionID).Scan(&status); err != nil {
 		t.Fatalf("failed to query execution status: %v", err)
 	}
 	if status != "failed" {
@@ -616,9 +618,9 @@ func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
 	}
 
 	var sessionID string
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1",
-		NormalizeProjectPath("/tmp"),
+		store.NormalizeProjectPath("/tmp"),
 	).Scan(&sessionID); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
@@ -627,7 +629,7 @@ func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
 	// succeeded, and there must be exactly ONE execution row: the retry reuses
 	// it rather than creating a second (which would double-count the run).
 	var status string
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT status FROM task_executions WHERE session_id = ?", sessionID,
 	).Scan(&status); err != nil {
 		t.Fatalf("query execution status: %v", err)
@@ -637,7 +639,7 @@ func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
 	}
 
 	var execCount int
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM task_executions WHERE session_id = ?", sessionID,
 	).Scan(&execCount); err != nil {
 		t.Fatalf("count executions: %v", err)
@@ -648,7 +650,7 @@ func TestScheduler_ExecuteTask_AutoContinuesCrashedTurn(t *testing.T) {
 
 	// The auto-sent continue must be a real user row in the transcript.
 	var continueCount int
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role = 'user' AND content = 'Continue'",
 		sessionID,
 	).Scan(&continueCount); err != nil {
@@ -713,14 +715,14 @@ func TestScheduler_ExecuteTask_AutoContinueHonorsExactRetryBudget(t *testing.T) 
 	}
 
 	var sessionID string
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1",
-		NormalizeProjectPath("/tmp"),
+		store.NormalizeProjectPath("/tmp"),
 	).Scan(&sessionID); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
 	var status string
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT status FROM task_executions WHERE session_id = ?", sessionID,
 	).Scan(&status); err != nil {
 		t.Fatalf("query execution status: %v", err)
@@ -744,15 +746,15 @@ func TestScheduler_ExecuteTask_NoAutoContinueWhenDisabled(t *testing.T) {
 	}
 
 	var sessionID string
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT id FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) ORDER BY created_at DESC LIMIT 1",
-		NormalizeProjectPath("/tmp"),
+		store.NormalizeProjectPath("/tmp"),
 	).Scan(&sessionID); err != nil {
 		t.Fatalf("query session: %v", err)
 	}
 
 	var status string
-	if err := dbRead.QueryRow(
+	if err := store.ReadDB().QueryRow(
 		"SELECT status FROM task_executions WHERE session_id = ?", sessionID,
 	).Scan(&status); err != nil {
 		t.Fatalf("query execution status: %v", err)
@@ -774,7 +776,7 @@ func TestScheduler_ExecuteTask_NoAutoContinueWhenDisabled(t *testing.T) {
 // exit code alone cannot distinguish a failure from a cancel (both are -1).
 func insertScriptRun(t *testing.T, taskID int64, status, outcome string, exitCode sql.NullInt64) {
 	t.Helper()
-	if _, err := db.Exec(
+	if _, err := store.UnsafeDBForTest().Exec(
 		`INSERT INTO task_executions (task_id, session_id, trigger_type, status, script_exit_code, script_outcome)
 		 VALUES (?, '', 'auto', ?, ?, ?)`,
 		taskID, status, exitCode, outcome,
