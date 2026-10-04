@@ -12,11 +12,19 @@ func TestNormalizeProjectPath(t *testing.T) {
 	// The forwarder must agree with the model implementation it wraps: an
 	// absolute, cleaned path for a real directory, empty for empty input.
 	dir := t.TempDir()
+	// The canonical form resolves symlinks, so on macOS (where t.TempDir() sits
+	// under /var, a symlink to /private/var) the expected value must be resolved
+	// too — comparing against the raw path would fail there.
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+
 	assert.Equal(t, "", NormalizeProjectPath(""))
 	assert.Equal(t, "", NormalizeProjectPath("   "))
-	assert.Equal(t, dir, NormalizeProjectPath(dir))
+	assert.Equal(t, resolved, NormalizeProjectPath(dir))
 	// A trailing separator is cleaned away.
-	assert.Equal(t, dir, NormalizeProjectPath(dir+string(filepath.Separator)))
+	assert.Equal(t, resolved, NormalizeProjectPath(dir+string(filepath.Separator)))
+	// Normalization is idempotent: re-normalizing the canonical form is stable.
+	assert.Equal(t, resolved, NormalizeProjectPath(resolved))
 }
 
 // An empty path is the "no project" scope and resolves to the sentinel id

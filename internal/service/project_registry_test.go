@@ -141,8 +141,12 @@ func TestListAllProjects_ExistsReflectsDisk(t *testing.T) {
 	for _, it := range items {
 		byPath[it.Path] = it.Exists
 	}
-	assert.True(t, byPath[dir], "existing directory must be flagged exists")
-	assert.False(t, byPath[filepath.Join(dir, "gone")], "missing directory must be flagged not-exists")
+	// The registry stores the CANONICAL path (symlinks resolved), so the lookup
+	// keys must be normalized too — on macOS t.TempDir() sits under /var, a
+	// symlink to /private/var, and the raw path would never match a stored row.
+	canon := store.NormalizeProjectPath(dir)
+	assert.True(t, byPath[canon], "existing directory must be flagged exists")
+	assert.False(t, byPath[store.NormalizeProjectPath(filepath.Join(dir, "gone"))], "missing directory must be flagged not-exists")
 }
 
 func TestGetProjectDetail_UnknownID(t *testing.T) {
