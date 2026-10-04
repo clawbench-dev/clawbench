@@ -2473,6 +2473,7 @@ export default {
       projectDelete: '删除项目',
       projectDeleteConfirmTitle: '删除项目',
       projectDeleteConfirmPrompt: '此操作将永久删除该项目的全部数据（会话、消息、任务、标签、分享、索引等），且不可恢复。请输入项目名称 {name} 以确认：',
+      projectDeleteConfirmPromptMissing: '「{name}」的目录已删除，此操作将永久删除该项目残留的全部数据（会话、消息、任务、标签、分享、索引等），且不可恢复。确认删除？',
       projectDeleteNameMismatch: '项目名称不匹配',
       projectDeleteFailed: '删除项目失败',
       projectLoadFailed: '加载项目详情失败',

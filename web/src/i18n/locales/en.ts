@@ -2476,6 +2476,7 @@ export default {
       projectDelete: 'Delete project',
       projectDeleteConfirmTitle: 'Delete project',
       projectDeleteConfirmPrompt: 'This permanently deletes all data for this project (sessions, messages, tasks, tags, shares, index, etc.) and cannot be undone. Type the project name {name} to confirm:',
+      projectDeleteConfirmPromptMissing: 'The directory for "{name}" is already gone. This permanently deletes all remaining data for this project (sessions, messages, tasks, tags, shares, index, etc.) and cannot be undone. Delete it?',
       projectDeleteNameMismatch: 'Project name does not match',
       projectDeleteFailed: 'Failed to delete project',
       projectLoadFailed: 'Failed to load project detail',

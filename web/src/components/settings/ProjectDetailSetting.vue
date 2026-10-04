@@ -141,18 +141,35 @@ async function switchToProject() {
 async function deleteProject() {
   if (!detail.value || isCurrent.value) return
   const name = baseName(detail.value.path)
-  const input = await dialog.prompt(
-    t('settings.items.projectDeleteConfirmPrompt', { name }),
-    {
-      title: t('settings.items.projectDeleteConfirmTitle'),
-      confirmText: t('settings.items.projectDelete'),
-      dangerous: true,
-    },
-  )
-  if (input === null) return
-  if (input.trim() !== name) {
-    toast.show(t('settings.items.projectDeleteNameMismatch'), { icon: '⚠️', type: 'error', duration: 3000 })
-    return
+
+  // A project whose directory is already gone needs only a confirmation: the
+  // typed-name step exists to stop someone nuking a live project by misclick,
+  // and there is nothing live left here to protect. A still-present directory
+  // keeps the stricter typed-name gate.
+  if (!detail.value.exists) {
+    const ok = await dialog.confirm(
+      t('settings.items.projectDeleteConfirmPromptMissing', { name }),
+      {
+        title: t('settings.items.projectDeleteConfirmTitle'),
+        confirmText: t('settings.items.projectDelete'),
+        dangerous: true,
+      },
+    )
+    if (!ok) return
+  } else {
+    const input = await dialog.prompt(
+      t('settings.items.projectDeleteConfirmPrompt', { name }),
+      {
+        title: t('settings.items.projectDeleteConfirmTitle'),
+        confirmText: t('settings.items.projectDelete'),
+        dangerous: true,
+      },
+    )
+    if (input === null) return
+    if (input.trim() !== name) {
+      toast.show(t('settings.items.projectDeleteNameMismatch'), { icon: '⚠️', type: 'error', duration: 3000 })
+      return
+    }
   }
 
   try {

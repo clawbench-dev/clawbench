@@ -13,10 +13,15 @@ vi.mock('@/composables/useToast', () => ({
 }))
 
 // The confirm dialog returns whatever the test sets here (the typed project
-// name, or null for cancel).
+// name, or null for cancel). `confirm` is the boolean variant used when the
+// directory is already gone.
 const mockPrompt = vi.fn()
+const mockConfirm = vi.fn()
 vi.mock('@/composables/useDialog', () => ({
-  useDialog: () => ({ prompt: (...a: unknown[]) => mockPrompt(...a) }),
+  useDialog: () => ({
+    prompt: (...a: unknown[]) => mockPrompt(...a),
+    confirm: (...a: unknown[]) => mockConfirm(...a),
+  }),
 }))
 
 vi.mock('@/stores/app', () => ({
@@ -51,6 +56,7 @@ const i18n = createI18n({
           projectDelete: 'Delete project',
           projectDeleteConfirmTitle: 'Delete project',
           projectDeleteConfirmPrompt: 'Type {name} to confirm',
+          projectDeleteConfirmPromptMissing: 'Directory for {name} is gone. Delete?',
           projectDeleteNameMismatch: 'Project name does not match',
           projectDeleteFailed: 'Failed to delete project',
           projectSwitchFailed: 'Failed to switch project',
@@ -213,6 +219,69 @@ describe('ProjectDetailSetting', () => {
     await wrapper.find('.project-detail__btn--danger').trigger('click')
     await flushPromises()
 
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/projects/detail?id=7', { method: 'DELETE' })
+  })
+
+  // A project whose directory is already gone only needs a confirmation — the
+  // typed-name gate exists to protect a live project from a misclick, and there
+  // is nothing live left here.
+  it('deletes a missing-directory project after a plain confirmation (no name typing)', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'DELETE') return { ok: true, json: async () => ({ ok: true }) } as unknown as Response
+      return detailResponse({ exists: false, repo_kind: 'unknown' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mockConfirm.mockResolvedValue(true)
+
+    const wrapper = mountDetail(7)
+    await flushPromises()
+
+    await wrapper.find('.project-detail__btn--danger').trigger('click')
+    await flushPromises()
+
+    // Uses confirm(), never the typed-name prompt.
+    expect(mockConfirm).toHaveBeenCalled()
+    expect(mockPrompt).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledWith('/api/projects/detail?id=7', { method: 'DELETE' })
+    expect(wrapper.emitted('deleted')).toBeTruthy()
+  })
+
+  it('does not delete a missing-directory project when the confirmation is declined', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'DELETE') return { ok: true, json: async () => ({}) } as unknown as Response
+      return detailResponse({ exists: false, repo_kind: 'unknown' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mockConfirm.mockResolvedValue(false)
+
+    const wrapper = mountDetail(7)
+    await flushPromises()
+
+    await wrapper.find('.project-detail__btn--danger').trigger('click')
+    await flushPromises()
+
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/projects/detail?id=7', { method: 'DELETE' })
+    expect(wrapper.emitted('deleted')).toBeFalsy()
+  })
+
+  // An existing directory still requires the typed name — the relaxed path must
+  // not leak into the live-project case.
+  it('still requires the typed name for a live project', async () => {
+    const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
+      if (opts?.method === 'DELETE') return { ok: true, json: async () => ({}) } as unknown as Response
+      return detailResponse({ exists: true })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    mockPrompt.mockResolvedValue('wrong-name')
+
+    const wrapper = mountDetail(7)
+    await flushPromises()
+
+    await wrapper.find('.project-detail__btn--danger').trigger('click')
+    await flushPromises()
+
+    expect(mockPrompt).toHaveBeenCalled()
+    expect(mockConfirm).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalledWith('/api/projects/detail?id=7', { method: 'DELETE' })
   })
 })
