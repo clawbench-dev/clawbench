@@ -2,22 +2,22 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-> ## ⚠️ 评审勘误（2026-10-04，四轮）— 实现前必读
+> ## ⚠️ 评审勘误（2026-10-04，五轮）— 实现前必读
 >
-> 本计划经 **四轮** Superpower code-reviewer 评审，均已逐条核对代码。**四轮专门追查"修复引入新 bug"**（前三轮已两次出现）。
+> 本计划经 **五轮** Superpower code-reviewer 评审（以代码片段为唯一判据），均已逐条核对代码。
 >
 > **✅ v1 决策：顺序轮次。** 放弃同轮并行（决策 #22 修订）。移除 L0/L1（并发气泡）。
 >
-> **四轮 Critical（三轮修复引入的回归，必须先修）**：
-> - **N-1**：C2 片段把 `agentID`（真实 agent id）传给 `AddChatMessageWithAgent` —— 该调用是 `chat_history.agent_id` 的**唯一写入点**，须传 `spec.SpeakerID`（成员行 id）。**C-1 只改了字段名没改这里。**
-> - **N-2**：执行顺序 F2 排在 F1 前，但 F2 依赖 F1 的 `buildInjectionText`。**正确顺序 F0b → F1 → F2 → F0 → F3。**
-> - **N-3**：A3 改 SELECT 会打挂 **~25 个自带 `chat_history` DDL 的测试夹具**（含 `handler/testutil_test.go`）。须全部补 `agent_id` 列。
+> **五轮 Critical（四轮修复暴露的"声明/文件清单滞后"，必须先修）**：
+> - **R-1**：`SpeakerID` 在 **C1 的片段**里声明（C2 早于 F0b 用它，须先有声明）。**已改 C1。**
+> - **R-2**：G1 的 Files/commit 须含 **`internal/handler/chat.go`**（`AIChat` 委派落点）。**已改 G1。**
+> - **R-3**：A3 改了 `insertChatMessageTx` 签名，须同步 **`queue_store.go:217`**（第二调用者）。**已改 A3。**
 >
-> **四轮 Important**：N-4（两标签同现时结束标签泄漏进 Instruction）、N-5（缺 `GetSessionType` reader + 委派点须在 claim 前）、N-6（parity corpus 无人建）、N-7（`CreateStreamingMessage` split 丢归属）、N-8（`SetSessionGroupID` 不存在）、N-9（`GetGroupHost` 与 `GetGroupHostMember` 重叠）。
+> **五轮 Important**：R-4（设计 §3.1 `UpdateLastRead` 须保持成员 id）、R-5（设计 §8 补 `GET /api/group/members`）、R-6（`GroupMember` 类型须声明）、R-7（E2 须含 `handler/session_resume.go`）、R-8（fork/continue 的 INSERT 也须写归属）、R-9（parity 语料唯一 + both-tag 断言 instruction）、R-10（store/rag 夹具不能共享 service 常量，逐文件改）。
 >
-> **一轮**：C2→A3、C3→E2、C4→C2、C5→D1、C7→M0、I1/I2/I4。
-> **二轮**：N1（ACP 池键，D1 重做）、N2（F0 ctx）、N3（F0b）、N4（成员行 id）、N5（A3 读路径）、N6（agentId 判主持人）、N7/N8。
-> **三轮**：C-1（SpeakerID）、C-2（汇总两路径）、C-3（AIChat 委派）、C-4（A3 独立文件）、C-5（顺序）。
+> **前四轮**：C2→A3、C3→E2、C4→C2、C5→D1、C7→M0；N1（ACP 池键）、N2（F0 ctx）、N3（F0b）、N4（成员行 id）、N5（A3 读路径）、N6（agentId 判主持人）；C-1（SpeakerID）、C-2（汇总两路径）、C-3（AIChat 委派）、C-4（A3 独立文件）、C-5（顺序）。
+>
+> **⚠️ 实现方式建议（五轮评审结论）**：五轮 Critical **无一来自架构或核心机制**，全是文档内部一致性。**以代码片段为准、逐 Task `go build`/`go test` 验证**——剩余问题会在编译期即时暴露，比再评审一轮更快更准。勘误文字仅作背景。
 >
 > **v2 候选**：同轮并行（须先按 §12 C1 增加按消息 id 的流式写入原语 + L0/L1）。
 
@@ -242,6 +242,8 @@ git commit -m "feat(group): add chat_sessions.group_id column and index"
 **Files:**
 - Modify: `internal/model/chat.go`（`ChatMessage` 加 `AgentID string \`json:"agentId,omitempty"\``）
 - Modify: `internal/service/chat.go`（`AddChatMessage`/`insertChatMessageTx` 贯穿 agentID；所有 SELECT + `scanMessages` 补列）
+- Modify: **`internal/service/queue_store.go`**（**R-3**：`insertChatMessageTx` 的**第二个调用者**在 `:217`（`materializeQueuedRowTx`）；Go 无默认参数，改了签名不同步这里必编译失败）
+- Modify: **`internal/service/continue_conversation.go`**（**R-8**：fork/continue 的 **INSERT** 路径 `:244,:479` 也须写 `agent_id`——只改 SELECT 不够，否则 fork 出的群丢失归属）
 - Test: **`internal/service/chat_agent_id_test.go`（独立文件，`package service_test`）** —— **C-4 勘误**：A1 的 `database_group_test.go` 是 `package service`，A3 需要 `helperCreateSession` + `service.*` 故必须 `package service_test`；**一个文件不能既是 `service` 又是 `service_test`**，故 A3 用独立文件。
 
 **Step 1: 写失败测试**
@@ -308,7 +310,7 @@ Expected: FAIL（字段/参数不存在）
 - `internal/rag/indexer_failure_test.go`、`cluster_worker_test.go`
 - `internal/store/store_test_helpers_test.go`、`perf_instrumentation_test.go`
 
-**做法（推荐）**：不要逐个手改 25 处——抽一个**共享的 `chat_history` DDL 常量**（如 `internal/service/testdata` 或包内 helper），让各夹具引用它；或至少统一在每处 DDL 加 `agent_id TEXT DEFAULT ''`。**验收**：`go test ./internal/... -run TestNothing` 前先 `go vet ./...`，再全量 `go test ./internal/...`（隔离跑）确认无 "no such column"。
+**做法（推荐）**：`internal/service` 内的夹具可抽**包内共享 DDL 常量**让各文件引用；或统一在每处 DDL 加 `agent_id TEXT DEFAULT ''`。**R-10 勘误**：**不能**用"从 `service` 导出的共享常量"给 `internal/store`/`internal/rag` 用——`internal/service` **imports** `internal/store`，反向导入成环。**`internal/store/*_test.go` 与 `internal/rag/*_test.go` 必须逐文件各自加列**（这两个包只有 `store_test_helpers_test.go`/`perf_instrumentation_test.go` 与 `indexer_failure_test.go`/`cluster_worker_test.go` 四个文件）。**另**：部分文件（如 `database_test.go:820,861` 的旧 schema 夹具、`projects_migrate_test.go`）走 `InitDB()`，迁移会自动 `ALTER` 加列，**无需改**。**验收**：`go vet ./...` 后全量 `go test ./internal/...`（隔离跑）确认无 "no such column"。
 
 **Step 4: 运行确认通过**
 
@@ -518,7 +520,7 @@ func splitSpeakers(s string) []string {
 **Step 4: 运行确认通过**
 
 Run: `go test ./internal/grouprouting/ -v`
-Expected: PASS（5 个测试）
+Expected: PASS（6 个测试）
 
 **Step 5: Commit**
 
@@ -683,6 +685,14 @@ func TestRunConfigEffectiveTimeline(t *testing.T) {
 		t.Fatalf("got %q, want s", got)
 	}
 }
+
+// R-1：SpeakerID 与 AgentID 是不同字段，编译期须能分别设置。
+func TestTurnSpecSpeakerIDIsSeparateFromAgentID(t *testing.T) {
+	spec := TurnSpec{SessionID: "member-1", AgentID: "agent-real", SpeakerID: "member-1"}
+	if spec.SpeakerID != "member-1" || spec.AgentID != "agent-real" {
+		t.Fatalf("SpeakerID=%q AgentID=%q", spec.SpeakerID, spec.AgentID)
+	}
+}
 ```
 
 **Step 2: 运行确认失败**
@@ -692,7 +702,7 @@ Expected: FAIL（方法未定义）
 
 **Step 3: 实现**
 
-在 `TurnSpec` 的 `SessionID` 字段后加：
+在 `TurnSpec` 的 `SessionID` 字段后加（**R-1：`SpeakerID` 声明必须在这里，不能拖到 F0b**——C2 的片段读 `spec.SpeakerID`，而 Phase C 早于 Phase F）：
 
 ```go
 	// TimelineSessionID, when non-empty, redirects message persistence and WS
@@ -703,6 +713,14 @@ Expected: FAIL（方法未定义）
 	// Empty means "same as SessionID" — every pre-existing caller keeps its
 	// exact behavior.
 	TimelineSessionID string
+
+	// SpeakerID is the member session row id of whoever produced this turn's
+	// output. It is written to chat_history.agent_id (speaker attribution) and
+	// broadcast on stream_start. Empty for ordinary single-agent turns.
+	//
+	// It is DISTINCT from AgentID (the real agent id used for backend
+	// resolution): never pass SpeakerID where AgentID is expected.
+	SpeakerID string
 ```
 
 在 `run_turn.go` 加：
@@ -718,13 +736,16 @@ func (s TurnSpec) effectiveTimelineSessionID() string {
 }
 ```
 
-在 `RunConfig` 的 `SessionID` 后加：
+在 `RunConfig` 的 `SessionID` 后加（**注意：`RunConfig` 在 `session_executor.go`，不是 `run_turn.go`**）：
 
 ```go
 	// TimelineSessionID mirrors TurnSpec.TimelineSessionID: the session whose
 	// timeline (chat_history rows, WS broadcast) this run writes to. Empty
 	// means SessionID.
 	TimelineSessionID string
+
+	// SpeakerID mirrors TurnSpec.SpeakerID (member row id) for attribution.
+	SpeakerID string
 ```
 
 在 `session_executor.go` 加：
@@ -1092,10 +1113,11 @@ Expected: FAIL
 **Step 3: 实现**
 
 新建 `internal/service/group_store.go`。复用 `CreateSession`（`chat.go:1822`，`sessionType` 参数可传 `"group"` / `"group_member"`）。要点：
+- **R-6 勘误**：须定义 **`type GroupMember struct { ID, AgentID, Name, Backend string; Left bool }`**（`ListGroupMembers` 的返回元素类型）——测试里的 `countActiveMembers(members []GroupMember)` 依赖它，但全仓/计划此前都没声明过。
 - **N-8 勘误**：**`SetSessionGroupID` 在仓库中不存在**——须一并实现（`UPDATE chat_sessions SET group_id=? WHERE id=?`）并列入本 Task 交付物；或直接内联 UPDATE。
 - `CreateGroup(project, title, backend, hostAgentID)` → `CreateSession(..., "group")`，然后为主持人建成员行 `CreateSession(..., "group_member")`（`title` = 主持人 agent 名），`SetSessionGroupID(hostMemberID, groupID)`，写 `host_member_id` 到群行 `context_state`，返回 `(groupID, hostMemberID, err)`。
 - `AddGroupMember(project, groupID, backend, agentID, displayName)` —— **I-7**：加 `displayName` 参数写入成员行 `title`（决策 #36）。
-- `ListGroupMembers(groupID)` → `SELECT id, agent_id, backend, title, archived FROM chat_sessions WHERE group_id=? AND session_type='group_member' ORDER BY created_at ASC`（**含 archived=1**）。
+- `ListGroupMembers(groupID) []GroupMember` → `SELECT id, agent_id, backend, title, archived FROM chat_sessions WHERE group_id=? AND session_type='group_member' ORDER BY created_at ASC`（**含 archived=1**，映射为 `GroupMember{..., Left: archived==1}`）。
 - `RemoveGroupMember(groupID, memberID)` → `UPDATE chat_sessions SET archived=1 WHERE id=? AND group_id=?`（**保留行**，历史发言在群里不受影响）。
 - **N-9 勘误**：**只保留 `GetGroupHostMember(groupID) string` / `SetGroupHostMember(groupID, memberID)`**（返回/写入**成员行 id**）——删掉旧草稿里的 `GetGroupHost(groupID)`（它描述为"返回 agent id"，与 §4.3/N4/I-5 矛盾，且与 `GetGroupHostMember` 重叠）。读用 `json_extract(context_state,'$.host_member_id')`，写用 `PatchContextStateMerge`。
 - `GetGroupMaxRounds(groupID) int` —— `json_extract(context_state,'$.maxRounds')`，缺省/空返回 **10**（**I-10**，决策 #31）。
@@ -1121,6 +1143,9 @@ git commit -m "feat(group): add group and member store CRUD"
 
 **Files:**
 - Modify: `internal/service/chat.go`（`sessionsQueryBase:1201`、`overviewSessionsQuery:1209`、`pagedSessionsQueryBase:1218`）
+- Modify: `internal/store/session_queries.go`（参数化查询 `:133,:250`）
+- Modify: `internal/service/continue_conversation.go`（计数 `:161,:430`）
+- Modify: **`internal/handler/session_resume.go`**（**R-7**：计数 `:358` 是 #37"4 处"之一，此前 Files/commit 漏列）
 - Test: `internal/service/group_store_test.go`
 
 **Step 1: 写失败测试**（**I1 勘误**：service 包用 `InitDB()`/`store.SnapshotDBForTest()` 模式，非 `setupTestEnv`）
@@ -1196,7 +1221,7 @@ Expected: PASS
 **Step 5: Commit**
 
 ```bash
-git add internal/service/chat.go internal/store/session_queries.go internal/service/continue_conversation.go internal/service/group_store_test.go
+git add internal/service/chat.go internal/store/session_queries.go internal/service/continue_conversation.go internal/handler/session_resume.go internal/service/group_store_test.go
 git commit -m "feat(group): show groups and hide members across list/search/browse/overview"
 ```
 
@@ -1337,6 +1362,19 @@ git commit -m "feat(group): add incremental context injection builder"
 ```go
 // groupTurnRunner runs one member's turn. Production wires it to runTurn with
 // a TurnSpec whose SessionID is the member row and TimelineSessionID the group.
+**M-3' 勘误**：`groupMemberTurn` / `groupMemberResult` 类型须在本 Task 声明（此前被引用却无定义）：
+
+```go
+type groupMemberTurn struct {
+	MemberRowID string
+	Prompt      string
+}
+type groupMemberResult struct {
+	Err error
+}
+
+// groupTurnRunner runs one member's turn. Production wires it to runTurn with
+// a TurnSpec whose SessionID is the member row and TimelineSessionID the group.
 type groupTurnRunner func(spec groupMemberTurn) groupMemberResult
 ```
 
@@ -1405,6 +1443,7 @@ git commit -m "feat(group): add preemption on human interjection"
 
 **Files:**
 - Create: `internal/handler/group.go`
+- Modify: **`internal/handler/chat.go`**（**R-2**：`AIChat` 在 `:30`；POST 分支加群会话委派，见下 C-3/N-5。此前 Files/commit 漏列此文件，导致 C-3 无落点）
 - Modify: `internal/handler/handler.go`（`RegisterRoutes`）
 - Modify: `internal/api/openapi.yaml`
 - Test: `internal/handler/group_test.go`
@@ -1420,7 +1459,7 @@ git commit -m "feat(group): add preemption on human interjection"
 **C-3 勘误（Critical，群发送链路必须接通）**：仅有 `POST /api/group/chat` 端点**不够**——前端 `sendMessage` 现在发的是 `/api/ai/chat`（`useChatSession.ts`），无人会调新端点。**采用方案 A（推荐）**：在 `AIChat`（`handler/chat.go:30`）的 **POST 分支**判断该 session 的 `session_type == 'group'` → 委派 `service.RunGroupTurn(...)`，**前端不改**。须在 G1 显式实现并加测试（往群 session POST → 走编排器而非普通单智能体回合）。
 
 **N-5 勘误（四轮，C-3 的两个未定义依赖）**：
-1. **须新增 session 类型 reader**：判断 `session_type == 'group'` 需要读 `chat_sessions.session_type`，但**全仓没有这个 reader**（只有 `store.NormalizeSessionTypeFilter`/`SessionTypeDBValue` 两个**过滤器映射**，非读取）。G1 须新增如 `service.GetSessionType(sessionID) string`（或复用 `GetSessionFullInfo`，`chat.go:2453`——它已返回会话信息；确认其含 type）。
+1. **须新增 session 类型 reader**：判断 `session_type == 'group'` 需要读 `chat_sessions.session_type`，但**全仓没有这个 reader**（只有 `store.NormalizeSessionTypeFilter`/`SessionTypeDBValue` 两个**过滤器映射**，非读取）。**M-2' 勘误**：`GetSessionFullInfo`（`chat.go:2453`）的 `SessionInfo` **不含 `session_type`**（只有 Title/Backend/AgentID/Model/Transport/AutoApprove/ProjectPath），**不是死路复用**——G1 须**新增** `service.GetSessionType(sessionID) string`（E1 已列）。
 2. **委派点必须明确在 `TryClaimSessionRun` 之前**：`AIChat` POST 现有顺序是 文件校验 → `TryClaimSessionRun`（`chat.go:469`）→ `AddChatMessage`（用户消息，`:525`）→ `user_message` WS 广播（`:535`）→ 起 goroutine。而 F2 的 `RunGroupTurn` **自己也写用户消息**。故必须**在 ownership 检查之后、`TryClaimSessionRun`/`AddChatMessage` 之前**委派，否则用户消息写两次、或编排器发现会话已被 claim。须在 G1 显式列出"编排器接管哪几项职责"（文件校验 / claim / 用户消息 insert / `user_message` 广播 / running-state）。
 3. **群 POST body 语义**：前端 POST 带 `agentId/modelId/transport/thinkingEffort`（`chat.go:293-304`），在群里这些是**每成员**的、非每群——须明确**忽略**。`RunGroupTurn` 的签名与 `userMessage` 类型（string？含 files 的结构体？）须定义。
 
@@ -1433,8 +1472,8 @@ git commit -m "feat(group): add preemption on human interjection"
 **Commit:**
 
 ```bash
-git add internal/handler/group.go internal/handler/handler.go internal/api/openapi.yaml internal/handler/group_test.go
-git commit -m "feat(group): add group HTTP endpoints and OpenAPI docs"
+git add internal/handler/group.go internal/handler/chat.go internal/handler/handler.go internal/api/openapi.yaml internal/handler/group_test.go
+git commit -m "feat(group): add group HTTP endpoints, AIChat delegation and OpenAPI docs"
 ```
 
 ---
@@ -1664,4 +1703,5 @@ git commit -m "test(group): add group chat e2e spec"
 - **评审项验收（一轮）**：C2（`agent_id` 可写可读）、C3（群在 list/search/browse/overview 均可见、成员均隐藏）、C4（`failTurn`/metadata 落群）、C5（成员 resume 用 external_session_id）、I4（停止按钮生效）均有对应测试通过。
 - **评审项验收（二轮）**：N1（ACP 成员 `SessionID` 保持池键，仅 CLI 换 extID）、N2（`CancelSession(groupID)` 能停住当前成员回合）、N3（`stream_start` 带发言人）、N4（同 agent 两成员互相可见）、N5（群分享保留归属）、N6（主持人样式按成员行 id）、N7/N8（脚手架与夹具）均有对应测试或明确实现。
 - **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、选主持人复用多选抽屉（#33）、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）、**群计入会话上限而成员不计、建群过上限门（#37）**、群设置在成员管理抽屉内（#38）均落地。
-- **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 F2→F0→F1→F3）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
+- **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 **F0b→F1→F2→F0→F3**）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
+- **评审项验收（四/五轮）**：R-1（`SpeakerID` 在 C1 声明，先于 C2 使用）、R-2（G1 Files 含 `handler/chat.go`）、R-3（A3 含 `queue_store.go:217` 第二调用者）、R-4（设计 §3.1 `UpdateLastRead` 保持成员 id）、R-5（设计 §8 含 `GET /api/group/members`）、R-6（`GroupMember` 类型已声明）、R-7（E2 含 `session_resume.go`）、R-8（fork/continue INSERT 写归属）均落地。

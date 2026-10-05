@@ -90,7 +90,8 @@
 现状：`runTurnStart` 把消息写进 `spec.SessionID`（`run_turn.go:277`）、把 `stream_start` 广播到该会话（`:300`），然后 `RunConfig.SessionID = spec.SessionID`（`:309`）。此后 **`SessionExecutor` 全程用 `e.cfg.SessionID` 同时承担两种语义**：
 
 - **连接/成员语义**（必须用成员行 id）：`captureExternalSessionID` 写 `external_session_id`（`session_executor.go:851-853`）、`GetCachedStateByClawbenchSID`（`:1403`）、`GetSessionTransport`（`:1412`）、`GetSessionModel`（`:1419`）、`GetExternalSessionID`（`:1423`）、`GetAndClearCancelReason`（`:830`）、`PatchContextStateMerge`（`:986`）。
-- **时间线语义**（必须用群会话 id）：`AddChatMessage`（`run_turn.go:277`）、`UpdateStreamingMessage` / `FinalizeStreamingMessage` / `FinalizeCancelledStreamingMessage`（`:514,1168,1626`）、`persistThinkingToDB` / `AppendThinkingSegment`（`:1054,1249`）、tool-call 持久化（`:914,968`）、`CreateStreamingMessage`（`:1183`）、`triggerChatSummarization`（`:1644`）、`UpdateLastRead`（`:1143`）。
+- **时间线语义**（必须用群会话 id）：`AddChatMessage`（`run_turn.go:277`）、`UpdateStreamingMessage` / `FinalizeStreamingMessage` / `FinalizeCancelledStreamingMessage`（`:514,1168,1626`）、`persistThinkingToDB` / `AppendThinkingSegment`（`:1054,1249`）、tool-call 持久化（`:914,968`）、`CreateStreamingMessage`（`:1183`）、`triggerChatSummarization`（`:1644`）。
+- **⚠️ `UpdateLastRead`（`:1143`）例外——保持 `cfg.SessionID`（成员行 id），不是时间线 id**（评审三轮 I10 / 五轮 R-4）：改时间线 id 会让任一成员回合把**群**标记已读，群徽章永不亮。此点与上面的时间线语义相反，勿混。
 
 因此**必须引入第二个字段**，而不是复用 `SessionID`：
 
@@ -290,9 +291,10 @@
 
 新增（需同步 `internal/api/openapi.yaml`）：
 
-- `POST /api/group/create` — 建群（标题 + **主持人 agent**；成员建群后再加）。
-- `POST /api/group/members` — 增成员（批量）。
+- `POST /api/group/create` — 建群（标题 + **主持人 agent**；成员建群后再加；须过会话上限门，决策 #37）。
+- `POST /api/group/members` — 增成员（批量 `{groupId, agentIds:[]}`）。
 - `DELETE /api/group/members` — 删成员。
+- `GET /api/group/members?groupId=` — 列成员，**含 `isHost` 标志**（决策 #34/I-5；J1/K1 依赖它识别主持人）。
 - `PATCH /api/group/settings` — 群设置（最大轮数，决策 #31）。
 - 群消息发送：**复用 `/api/ai/chat`**——`AIChat` POST 分支检测到群会话（`session_type='group'`）即委派编排器 `RunGroupTurn`，**前端不改**（决策见 §12.2 C-3；**不新增** `/api/group/chat`，避免双入口）。
 - 群回合取消：复用现有 cancel（须经编排器 ctx 传播，见 §5.5）。
@@ -368,7 +370,7 @@
 `insertChatMessageTx`（`chat.go:764`）INSERT 无该列、`AddChatMessage`（`chat.go:624`）无该参数；`scanMessages`（`chat.go:131`）与所有 SELECT（`chat.go:70,343,361`）未选该列；`model.ChatMessage`（`model/chat.go:124`）**无 `AgentID` 字段**（`ChatSession` 才有，`:278`）。
 **修**：`AddChatMessage`/`insertChatMessageTx` 贯穿 `agentID`；`model.ChatMessage` 加 `AgentID`；所有 SELECT + `scanMessages` + handler JSON 补上；否则 Task F1 的测试无法实现、§9.4 守卫永不过。
 
-**C3 — "只需过滤会话列表"错误；`session_type` 影响面 17 处，且参数化查询 grep 不到。**
+**C3 — "只需过滤会话列表"错误；`session_type` 影响面 17 处（历史计数，实际以计划 E2 的逐处清单为准），且参数化查询 grep 不到。**
 `GetRecentSessions`（`store/session_queries.go:133`）、`SearchSessionsByTitle`（`:250`）是 `WHERE s.session_type = ?` **参数化**的，`grep "session_type = 'chat'"` **找不到**。遗漏点还包括 `chat.go:1478,1641,2007,2014,2046,2068`、`continue_conversation.go:48,141,161,430`、`session_command.go:46,71`、`handler/session_resume.go:358,459`。
 **修**：按 `grep -rn "session_type" internal/`（非字面量）逐一判断"该处是否应显示群"；注意 `GetSessionCount`（`chat.go:2046`）喂会话上限门（`chat_session.go:174`），群会绕过上限。补 search/browse/overview 的守卫测试。
 
@@ -425,7 +427,7 @@
 
 ### 结论
 
-**已采纳 v1 = 顺序轮次。** 架构主干成立；顺序模式直接消除 C1/C6/I6/I7（并行专属问题）。**实现前仍需修订**：Phase C 须补漏掉的 `run_turn` 两处（C4）并明确 `activeStreams` 保持成员 id（C6）；Phase D 须重做 resume 机制（C5）；Phase F 前须补 runner/running-state 接线（I4）；C2（agent_id 读写路径）、C3（session_type 17 处）须按勘误落实。**L0/L1（并发气泡）整体移出 v1。**
+**已采纳 v1 = 顺序轮次。** 架构主干成立；顺序模式直接消除 C1/C6/I6/I7（并行专属问题）。**实现前仍需修订**：Phase C 须补漏掉的 `run_turn` 两处（C4）并明确 `activeStreams` 保持成员 id（C6）；Phase D 须重做 resume 机制（C5）；Phase F 前须补 runner/running-state 接线（I4）；C2（agent_id 读写路径）、C3（`session_type` 影响面，历史计数 17 处，实际以计划 E2 逐处清单为准）须按勘误落实。**L0/L1（并发气泡）整体移出 v1。**
 
 ## 12.1 二轮评审勘误（2026-10-04，Superpower code-reviewer，已核对代码）
 
@@ -556,6 +558,44 @@ A3 给 `GetChatHistory`/`GetMessageByID`/`GetSessionMessagesForSelection` 等 re
 **仍不满足直接实现条件（3 Critical）。** 三轮修复的**意图正确但未落到代码片段**：C-1 改了字段名却没改消息行写入（N-1）、C-5 调序把 F2 排到 F1 前（N-2）、C-4 只改测试文件名未覆盖 A3 的夹具连锁（N-3）。加上 N-5（缺 reader + 委派点）、N-8（幻影函数），修完即可实现；其余为规范卫生。
 
 **四轮累计**：一轮 7C、二轮 2C、三轮 5C、四轮 3C。**模式**：每轮修复都倾向"改勘误文字而非改代码片段"，导致下一轮发现片段未同步。**建议**：修完四轮后，实现者以**代码片段**为准（勘误文字仅作背景），逐 Task 编译验证。
+
+## 12.4 五轮评审勘误（2026-10-04，Superpower code-reviewer，已核对代码）
+
+> 五轮**以代码片段为唯一判据**逐行核对。结论：**3 个新 Critical（R-1/R-2/R-3，均为四轮修复暴露的"声明/文件清单滞后"）+ 10 个 Important**。四轮 N-1 的**片段改动确实落地**（无片段再把 `agentID` 当成员行 id），漂移又上移一层到"**结构体声明所在 Task 的片段未同步**"。
+
+### Critical（五轮）
+
+**R-1（四轮 N-1 修复暴露）— `SpeakerID` 在 Phase C 使用、却在 Phase F 才声明。**
+C2 的片段（plan 780/786/798）读 `spec.SpeakerID` 并构造 `RunConfig{SpeakerID:...}`，但 **C1（拥有 `TurnSpec`/`RunConfig` 的 Task）的片段只加了 `TimelineSessionID`**；F0b 才提 `SpeakerID`，而 Phase C 早于 Phase F ⇒ **照片段实现会 `spec.SpeakerID undefined`**。
+**修**：把 `TurnSpec.SpeakerID` / `RunConfig.SpeakerID` / `StreamStartData.SpeakerID` 的**声明放进 C1 的片段**（F0b 只加 payload 与接线）。已改计划 C1。
+- 附：F0b 的 Files 把 `RunConfig` 误标在 `run_turn.go`（实际 `session_executor.go:197`）；commit 漏 `session_executor.go`。
+
+**R-2（四轮 C-3 修复暴露）— G1 无法交付委派：`handler/chat.go` 不在 Files/commit 中。**
+G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此文件 ⇒ 照片段实现则**群发送静默走普通单智能体回合**（C-3 回归原状）。
+**修**：G1 Files/commit 加入 `internal/handler/chat.go`。已改计划 G1。
+
+**R-3（四轮 N-3 修复暴露）— A3 改 `insertChatMessageTx` 签名，漏了第二个调用者。**
+`insertChatMessageTx` 有两个调用者：`chat.go:653` 与 **`queue_store.go:217`**（`materializeQueuedRowTx`）。A3 只列 `chat.go` ⇒ Go 无默认参数 ⇒ **未列文件编译失败**。
+**修**：A3 Files/commit 加入 `internal/service/queue_store.go`。已改计划 A3。
+
+### Important（五轮）
+
+- **R-4** 设计 §3.1 body 仍把 `UpdateLastRead` 归为**时间线语义**，与计划 C3/I10（保持 `cfg.SessionID`）矛盾——而计划让实现者"先读设计 §3.1"。**已修**（改为显式例外）。
+- **R-5** 设计 §8 **漏 `GET /api/group/members`**（J1/K1 的 `isHost` 来源）。**已修**。
+- **R-6** **`GroupMember` 类型无人声明**（E1 的 `countActiveMembers([]GroupMember)` 依赖它）。**已修**（E1 定义）。
+- **R-7** E2 的 Files/commit **漏 `handler/session_resume.go:358`**（#37"4 处"之一）。**已修**。
+- **R-8** fork/continue 的 **INSERT 路径**（`continue_conversation.go:244,479`）不写 `agent_id`——A3 的 N5 只覆盖 SELECT。**已修**（A3 Files 加 continue_conversation 的写路径）。
+- **R-9** J2 的 both-tag 用例未在 TS 侧固定 `Instruction`；parity 语料"或新建"会破坏唯一性。**已修**（B1 建语料 + J2 读同一份，both-tag 断言 `instruction`）。
+- **R-10** N-3 推荐的"共享 DDL 常量"对 `internal/store` **不可行**（import cycle）。**已修**（store/rag 逐文件改）。
+- **M-1'** B1 测试数：片段 6 个、plan 写"5 个"。**已修**。
+- **M-2'** `GetSessionFullInfo` 不含 `session_type`（N-5 的"或复用"是死路）。**已修**（G1 直接说须新增 `GetSessionType`）。
+- **M-3'** F2 片段引用未声明的 `groupMemberTurn`/`groupMemberResult` 类型。**已修**（F2 声明）。
+
+### 五轮结论
+
+**仍不满足直接实现条件（3 Critical）。** 四轮 N-1 的片段改动**确已落地**（无片段再误用 `agentID`），但漂移上移一层：**声明所在 Task 的片段未同步**（R-1）、**task 的 Files/commit 滞后于自己的 body**（R-2/R-3）。修完 R-1/R-2/R-3 + R-4/R-5/R-6/R-7 即可实现。
+
+**五轮累计**：7C / 2C / 5C / 3C / 3C。**趋势**：Critical 不再来自架构或核心机制，而是**文档内部一致性**——每轮修复的文字与片段/清单错位。**强烈建议**：不再依赖文档迭代，直接进入实现——以**代码片段**为准，逐 Task `go build`/`go test` 验证；文档已足够指导实现，剩余问题会在编译期即时暴露（比再评审一轮更快更准）。
 
 ## 11. 关键文件索引
 
