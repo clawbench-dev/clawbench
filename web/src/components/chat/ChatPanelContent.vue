@@ -27,6 +27,7 @@
       :agents="agentsList"
       :currentAgent="currentAgent"
       :resolveSpeaker="resolveGroupSpeaker"
+      :resolveSpeakerByName="resolveGroupSpeakerByName"
       :hostMemberId="groupHostMemberId"
       :currentSessionId="identity.currentSessionId.value"
       :hasMore="session.hasMore.value"
@@ -346,7 +347,7 @@ const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
 // Group-chat member roster for the current session (empty outside a group).
-const { members: groupMembers, resolveSpeaker: resolveGroupSpeaker, hostMemberId: groupHostMemberId, refresh: refreshGroupMembers } = useGroupMembers(identity.currentSessionId)
+const { members: groupMembers, resolveSpeaker: resolveGroupSpeaker, resolveByName: resolveGroupSpeakerByName, hostMemberId: groupHostMemberId, refresh: refreshGroupMembers } = useGroupMembers(identity.currentSessionId)
 const isGroupSession = computed(() => groupMembers.value.length > 0)
 const inputBarRef = ref(null)
 const messageListRef = ref(null)

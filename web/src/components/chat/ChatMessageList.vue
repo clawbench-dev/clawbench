@@ -97,6 +97,7 @@
         :isLastMessage="i === messages.length - 1"
         :forkingMessageId="forkingMessageId"
         :resolveSpeaker="resolveSpeaker"
+        :resolveSpeakerByName="resolveSpeakerByName"
         :hostMemberId="hostMemberId"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
@@ -250,6 +251,9 @@ const props = defineProps({
   forkingMessageId: { type: [Number, String], default: null },
   /** Group-chat: resolves a speaker member row id to { name, backend }. */
   resolveSpeaker: { type: Function, default: null },
+  /** Group-chat: resolves a member display name (routing target) to
+   *  { name, backend, avatar } for @-mention chips. */
+  resolveSpeakerByName: { type: Function, default: null },
   /** Group-chat: the host member row id (for the host bubble style). */
   hostMemberId: { type: String, default: '' },
 })

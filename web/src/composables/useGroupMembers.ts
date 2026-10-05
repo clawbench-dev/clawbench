@@ -28,6 +28,17 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     return { name: m.name, backend: m.backend, avatar: getAgentAvatar(m.agentId) || '' }
   }
 
+  /** resolveByName maps a display name to { name, backend, avatar } or null.
+   *  Used to render @-mention chips for the host's routing targets, which are
+   *  named (not id'd) in the routing tag. */
+  function resolveByName(name: string): { name: string; backend: string; avatar: string } | null {
+    const target = name.trim()
+    if (!target) return null
+    const m = members.value.find(x => x.name.trim() === target)
+    if (!m) return null
+    return { name: m.name, backend: m.backend, avatar: getAgentAvatar(m.agentId) || '' }
+  }
+
   async function refresh(sessionId: string) {
     if (!sessionId) {
       members.value = []
@@ -45,5 +56,5 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
 
   watch(currentSessionId, (sid) => { void refresh(sid) }, { immediate: true })
 
-  return { members, hostMemberId, resolveSpeaker, refresh }
+  return { members, hostMemberId, resolveSpeaker, resolveByName, refresh }
 }

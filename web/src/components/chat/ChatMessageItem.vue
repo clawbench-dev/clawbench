@@ -14,13 +14,14 @@
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
     <div class="msg-card" :class="{ 'msg-card-host': isHostMessage }">
-    <!-- Host routing card: parse the <clawbench-speaker> tag into chips. The
-         host's plain text (including the end tag and summary) still renders
-         below via ContentBlocks. -->
+    <!-- Host routing card: the host's routing tag rendered as @-mention chips
+         (avatar + @name), no speaker label or arrow. The host's plain text
+         (including the end tag and summary) still renders below. -->
     <div v-if="isHostMessage && hostRouting.found" class="msg-routing-card">
-      <span class="msg-routing-label">{{ speaker?.name }}</span>
-      <span class="msg-routing-arrow">→</span>
-      <span v-for="s in hostRouting.speakers" :key="s" class="msg-routing-chip">{{ s }}</span>
+      <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
+        <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" :size="18" />
+        <span class="msg-routing-at">@{{ s.name }}</span>
+      </span>
     </div>
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
@@ -244,6 +245,9 @@ const props = defineProps({
   /** Resolves a group-chat speaker (msg.agentId = member row id) to
    *  { name, backend }. Returns null outside a group / when unresolved. */
   resolveSpeaker: { type: Function, default: null },
+  /** Resolves a member DISPLAY NAME (a routing target) to
+   *  { name, backend, avatar } for @-mention chips. */
+  resolveSpeakerByName: { type: Function, default: null },
   /** Host member row id, so the host's messages get a distinct style. */
   hostMemberId: { type: String, default: '' },
 })
@@ -265,6 +269,17 @@ const hostRouting = computed(() => {
   if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', end: false, raw: '' }
   const text = msgText.value || ''
   return parseGroupRouting(text)
+})
+
+// routingTargets maps the host's named routing targets to display info for the
+// @-mention chips. Names that no longer resolve (removed members) still render
+// as a plain @name so the routing intent stays visible.
+const routingTargets = computed(() => {
+  const resolve = props.resolveSpeakerByName
+  return hostRouting.value.speakers.map((name) => {
+    const hit = typeof resolve === 'function' ? resolve(name) : null
+    return hit || { name, backend: '', avatar: '' }
+  })
 })
 
 const autoSpeech = inject('autoSpeech')
@@ -1264,18 +1279,21 @@ const copyPayload = quotableText
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-1);
-  margin: 0 0 var(--space-1);
-  font-size: var(--font-size-xs);
-  color: var(--text-secondary);
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2);
 }
-.msg-routing-label {
-  font-weight: var(--font-weight-medium);
-}
+/* @-mention chip: avatar + @name, no speaker label or arrow. */
 .msg-routing-chip {
-  padding: 0 var(--space-2);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
   border-radius: var(--radius-full, 999px);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-sm);
+}
+.msg-routing-at {
+  font-weight: var(--font-weight-medium);
 }
 </style>

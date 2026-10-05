@@ -81,8 +81,9 @@ describe('ChatMessageItem group speaker', () => {
     expect(w.find('.msg-speaker').exists()).toBe(false)
   })
 
-  it('renders a routing card for the host message', () => {
+  it('renders routing targets as @-mention chips with avatars', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '<svg/>' })
     const w = mountItem(
       {
         role: 'assistant',
@@ -91,10 +92,32 @@ describe('ChatMessageItem group speaker', () => {
         blocks: [{ type: 'text', text: '<clawbench-speaker>A, B</clawbench-speaker> 请表态' }],
         agentId: 'host-1',
       },
-      { resolveSpeaker, hostMemberId: 'host-1' },
+      { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
     )
     expect(w.find('.msg-routing-card').exists()).toBe(true)
-    const chips = w.findAll('.msg-routing-chip').map(c => c.text())
-    expect(chips).toEqual(['A', 'B'])
+    // @name chips, no speaker label or arrow.
+    const chips = w.findAll('.msg-routing-chip')
+    expect(chips.map(c => c.find('.msg-routing-at').text())).toEqual(['@A', '@B'])
+    expect(w.find('.msg-routing-label').exists()).toBe(false)
+    expect(w.find('.msg-routing-arrow').exists()).toBe(false)
+    // Each chip carries an avatar.
+    expect(w.findAll('.msg-routing-chip .agent-icon-stub').length).toBe(2)
+  })
+
+  it('renders an unresolved routing target as a plain @name', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const resolveSpeakerByName = () => null
+    const w = mountItem(
+      {
+        role: 'assistant',
+        id: 5,
+        content: '',
+        blocks: [{ type: 'text', text: '<clawbench-speaker>Ghost</clawbench-speaker> 请表态' }],
+        agentId: 'host-1',
+      },
+      { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
+    )
+    expect(w.find('.msg-routing-at').text()).toBe('@Ghost')
+    expect(w.find('.msg-routing-chip .agent-icon-stub').exists()).toBe(false)
   })
 })
