@@ -2,22 +2,22 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-> ## ⚠️ 评审勘误（2026-10-04，三轮）— 实现前必读
+> ## ⚠️ 评审勘误（2026-10-04，四轮）— 实现前必读
 >
-> 本计划经 **三轮** Superpower code-reviewer 评审，均已逐条核对代码。
+> 本计划经 **四轮** Superpower code-reviewer 评审，均已逐条核对代码。**四轮专门追查"修复引入新 bug"**（前三轮已两次出现）。
 >
-> **✅ v1 决策：顺序轮次。** 放弃同轮并行（决策 #22 修订）。这直接消除 **C1/C6/I6/I7**（并行专属问题），并移除 L0/L1（并发气泡）。
+> **✅ v1 决策：顺序轮次。** 放弃同轮并行（决策 #22 修订）。移除 L0/L1（并发气泡）。
 >
-> **一轮勘误**：C2→A3、C3→E2、C4→C2、C5→D1、C7→M0、I1/I2/I4 见各 Task。
-> **二轮勘误**：N1（ACP 池键，D1 已重做）、N2（F0 ctx）、N3（F0b）、N4（成员行 id）、N5（A3 读路径）、N6（agentId 判主持人）、N7/N8（脚手架）。
+> **四轮 Critical（三轮修复引入的回归，必须先修）**：
+> - **N-1**：C2 片段把 `agentID`（真实 agent id）传给 `AddChatMessageWithAgent` —— 该调用是 `chat_history.agent_id` 的**唯一写入点**，须传 `spec.SpeakerID`（成员行 id）。**C-1 只改了字段名没改这里。**
+> - **N-2**：执行顺序 F2 排在 F1 前，但 F2 依赖 F1 的 `buildInjectionText`。**正确顺序 F0b → F1 → F2 → F0 → F3。**
+> - **N-3**：A3 改 SELECT 会打挂 **~25 个自带 `chat_history` DDL 的测试夹具**（含 `handler/testutil_test.go`）。须全部补 `agent_id` 列。
 >
-> **三轮新增（设计 §12.2，必须先修）**：
-> - **C-1**：`TurnSpec.AgentID` 传成员行 id 会毁后端解析（`ResolveAgentID` 原样返回 → ACP-only 后端失败）。**须新增独立 `SpeakerID` 字段**，`AgentID` 保持真实 agent id。→ Task F0b/F2。
-> - **C-2**：#32 汇总两种矛盾写法（B2 同轮 vs F2 另跑）。**已定**：结束信号轮即汇总（不另跑）；达上限才另跑。→ Task B2/F2。
-> - **C-3**：**群发送链路未接编排器**。`AIChat` 须在 POST 分支对 `session_type='group'` 委派 `RunGroupTurn`。→ Task G1。
-> - **C-4**：A3 与 A1 同文件却要求两个 Go 包。→ A3 用**独立文件** `chat_agent_id_test.go`（`package service_test`）。
-> - **C-5**：F0 修改 F2 才创建的文件。→ **F2 先建骨架，F0 后接线**（调换顺序）。
-> - **I-1..I-4/I-10**：E1 断言、#37 4 处、stream_start 空值省略、F1 夹具、maxRounds reader —— 见各 Task。
+> **四轮 Important**：N-4（两标签同现时结束标签泄漏进 Instruction）、N-5（缺 `GetSessionType` reader + 委派点须在 claim 前）、N-6（parity corpus 无人建）、N-7（`CreateStreamingMessage` split 丢归属）、N-8（`SetSessionGroupID` 不存在）、N-9（`GetGroupHost` 与 `GetGroupHostMember` 重叠）。
+>
+> **一轮**：C2→A3、C3→E2、C4→C2、C5→D1、C7→M0、I1/I2/I4。
+> **二轮**：N1（ACP 池键，D1 重做）、N2（F0 ctx）、N3（F0b）、N4（成员行 id）、N5（A3 读路径）、N6（agentId 判主持人）、N7/N8。
+> **三轮**：C-1（SpeakerID）、C-2（汇总两路径）、C-3（AIChat 委派）、C-4（A3 独立文件）、C-5（顺序）。
 >
 > **v2 候选**：同轮并行（须先按 §12 C1 增加按消息 id 的流式写入原语 + L0/L1）。
 
@@ -287,16 +287,28 @@ Expected: FAIL（字段/参数不存在）
 - `model.ChatMessage` 加 `AgentID string`（**语义 = 发言人成员行 id**，见设计 §4.3/N4）。
 - 新增 `AddChatMessageWithAgent(...agentID string)`，内部把 `agentID` 传给 `insertChatMessageTx`；`AddChatMessage` 保留原签名并转调 `AddChatMessageWithAgent(..., "")`（避免改动所有既有调用点）。
 - `insertChatMessageTx` 的 INSERT 增加 `agent_id` 列与占位符。
-- `chat_test.go` 的内存 `schema` 常量同步加 `agent_id` 列。
 
 **N5 勘误（读路径必须补全，否则群分享/fork/TTS 静默丢归属）**：除 `GetChatHistoryPaged` 三条 SELECT（`chat.go:89,105,119`）、`GetMessagesBySessionID`/`Raw`（`chat.go:343,361`）、`scanMessages`（`chat.go:131`）外，**还须补**：
 - `GetChatHistory`（`chat.go:34`，fork/RAG 用）
-- `GetMessageByID`（`chat.go:260`，TTS/summary/RAG 用）
+- `GetMessageByID`（`chat.go:304`，TTS/summary/RAG 用；`chat.go:260` 是 `GetMessageContent`）
 - `GetSessionMessagesForSelection`（`session_share_payload.go:129`，**群分享**）
 - `continue_conversation.go:215,446`（fork/continue 复制消息）
 - `chat.go:2116`（preview 查询）
+- `GetAssistantRawContents`（`chat.go:399`，fork 上下文 raw 文本）
 
 逐条 `SELECT ... agent_id ...` 并写入 `ChatMessage.AgentID`。**验证方法**：`grep -n "SELECT id, role, content" internal/service/` 找所有列清单，逐个确认已含 `agent_id`。
+
+**⚠️ N-3 勘误（四轮，Critical）——改 SELECT 会连带打挂全部测试夹具。** A3 给上述 reader 的 SELECT 增加 `agent_id` 列后，**所有用内存 DDL 建 `chat_history` 表却没加该列的测试**都会因 "no such column: agent_id" 失败。仓库内有 **25 个测试文件**自带 `chat_history` 建表语句（`grep -rln "CREATE TABLE.*chat_history" internal/ --include=*_test.go`），其中至少这些**必须**补列（否则首跑即挂）：
+- `internal/handler/testutil_test.go`（`setupTestEnv`，约 1575 个调用者，且 `service.GetChatHistory` 被大量调用）
+- `internal/service/chat_test.go`（`schema` 常量，`setupDB`）
+- `internal/service/session_command_test.go`
+- `internal/service/chat_summary_test.go`、`chat_summary_trigger_test.go`、`summary_test.go`
+- `internal/service/session_share_payload_test.go`、`session_share_helpers_test.go`
+- `internal/service/session_runtime_test.go`、`drain_test.go`、`scheduler_test.go`、`scheduler_executor_test.go`、`scheduler_script_phase_test.go`、`session_cleanup_test.go`、`pending_events_test.go`、`queue_reaper_test.go`、`tool_calls_test.go`、`thinking_migrate_test.go`、`chat_metadata_ledger_migrate_test.go`、`projects_migrate_test.go`、`database_test.go`
+- `internal/rag/indexer_failure_test.go`、`cluster_worker_test.go`
+- `internal/store/store_test_helpers_test.go`、`perf_instrumentation_test.go`
+
+**做法（推荐）**：不要逐个手改 25 处——抽一个**共享的 `chat_history` DDL 常量**（如 `internal/service/testdata` 或包内 helper），让各夹具引用它；或至少统一在每处 DDL 加 `agent_id TEXT DEFAULT ''`。**验收**：`go test ./internal/... -run TestNothing` 前先 `go vet ./...`，再全量 `go test ./internal/...`（隔离跑）确认无 "no such column"。
 
 **Step 4: 运行确认通过**
 
@@ -320,9 +332,13 @@ git commit -m "feat(group): thread agent_id through all message read/write paths
 
 **Files:**
 - Create: `internal/grouprouting/grouprouting.go`
+- Create: `internal/grouprouting/testdata/parity_corpus.json`（**N-6**：parity 语料，Go 与 TS 双向固化；J2 依赖它）
+- Create: `internal/grouprouting/parity_test.go`（**N-6**：Go 侧 parity 测试，读语料断言 `Parse` 输出；照 `internal/askquestion/parity_test.go`）
 - Test: `internal/grouprouting/grouprouting_test.go`
 
 **契约（照 `internal/askquestion` 的哲学）**：检测即解析；不可解析时**不剥离**标签（保留原文，绝不丢内容）；解析失败回退轮转。标签名固定 `clawbench-speaker`，结束信号固定 `clawbench-group-end`。**本包不 import 任何 internal 包**（叶子包）。
+
+> **N-6 勘误**：J2（前端路由卡片）要求"复用或新建 parity corpus + 双向 parity 测试"，但**没有任何 Task 创建它**。B1 须一并建 `testdata/parity_corpus.json` + `parity_test.go`（Go 侧）；J2 再补 TS 侧读取同一语料。语料至少覆盖：单发言人、多发言人、结束信号、**两标签同现（N-4）**、畸形（空 payload）、无标签。
 
 **Step 1: 写失败测试**
 
@@ -331,6 +347,7 @@ package grouprouting
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -361,6 +378,21 @@ func TestParseEndSignal(t *testing.T) {
 	r := Parse(`讨论已充分。<clawbench-group-end/>`)
 	if !r.End {
 		t.Fatal("expected End=true")
+	}
+}
+
+// N-4：一条消息同时含路由标签与结束标签。End 必须为真（编排器优先处理结束），
+// 且结束标签不得泄漏进 Instruction。
+func TestParseBothTags(t *testing.T) {
+	r := Parse(`<clawbench-speaker>B</clawbench-speaker> 请回应<clawbench-group-end/>`)
+	if !r.End {
+		t.Fatal("expected End=true (end wins)")
+	}
+	if strings.Contains(r.Instruction, "clawbench-group-end") {
+		t.Fatalf("end tag leaked into instruction: %q", r.Instruction)
+	}
+	if r.Instruction != "请回应" {
+		t.Fatalf("instruction=%q", r.Instruction)
 	}
 }
 
@@ -460,9 +492,12 @@ func Parse(text string) Result {
 	res.Found = true
 	res.Speakers = speakers
 
-	// Instruction = text after the closing tag, trimmed.
-	after := strings.TrimSpace(text[loc[1]:])
-	res.Instruction = after
+	// Instruction = text after the closing speaker tag, trimmed, with any end
+	// tag removed (N-4: a message may carry both tags; the end tag must not
+	// leak into the instruction handed to a member or rendered by the card).
+	after := text[loc[1]:]
+	after = reEnd.ReplaceAllString(after, "")
+	res.Instruction = strings.TrimSpace(after)
 	return res
 }
 
@@ -737,17 +772,18 @@ Expected: FAIL（此时 C3 测试已存在）
 
 **Step 3: 实现**
 
-`run_turn.go` 改动**五处**（**C4 勘误**：原计划只列了两处，漏了 `failTurn` 与 metadata）：
+`run_turn.go` 改动**五处**（**C4 勘误**：原计划只列了两处，漏了 `failTurn` 与 metadata；**N-1 勘误**：消息行的归属必须写 `SpeakerID` 而非 `agentID`）：
 
 ```go
+	// N-1：占位行的 agent_id = 发言人成员行 id（SpeakerID），不是真实 agent id。
 	streamingMsgID, err := AddChatMessageWithAgent(spec.ProjectPath, spec.BackendName, spec.effectiveTimelineSessionID(),
-		roleAssistant, string(emptyContent), nil, true, "", agentID)  // C2: 带 agentID
+		roleAssistant, string(emptyContent), nil, true, "", spec.SpeakerID)  // 成员行 id
 ```
 
 ```go
 	ws.EmitToSession(spec.effectiveTimelineSessionID(), ai.StreamEvent{
 		Type:        "stream_start",
-		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID},
+		StreamStart: &ai.StreamStartData{MessageID: streamingMsgID, SpeakerID: spec.SpeakerID}, // N-1/C-1：填 SpeakerID
 	})
 ```
 
@@ -758,10 +794,13 @@ Expected: FAIL（此时 C3 测试已存在）
 		BackendName:        spec.BackendName,
 		SessionID:          spec.SessionID,
 		TimelineSessionID:  spec.effectiveTimelineSessionID(),
-		AgentID:            agentID,
+		AgentID:            agentID,       // 真实 agent id（连接解析用）
+		SpeakerID:          spec.SpeakerID, // 成员行 id（归属用，N-1）
 		...
 	}
 ```
+
+> **N-1（四轮，Critical，三轮 C-1 修复引入）**：`chat_history.agent_id` 的**唯一写入点**是 `runTurnStart` 的 `AddChatMessageWithAgent`（`UpdateStreamingMessage`/`FinalizeStreamingMessage` 只改 `content`/`streaming`/`completed_at`，**不碰 `agent_id`**）。若这里传 `agentID`（真实 agent id），则 F1 的 `agent_id != self` 自排除、前端行 id→agent 映射、N4 全部失效，而 §9.4 守卫（"agent_id 非空"）**照样通过**。**必须传 `spec.SpeakerID`**，并加测试断言"占位行 `agent_id == 成员行 id`"。
 
 **C4 补两处**（否则成员/主持人的早失败错误与 metadata 落进隐藏成员会话，用户看不到）：
 
@@ -827,7 +866,7 @@ func (e *SessionExecutor) timelineSID() string {
 - `FinalizeStreamingMessage` / `FinalizeCancelledStreamingMessage`（`:1168,1626,1628`）→ `e.timelineSID()`
 - `persistThinkingToDB` / `AppendThinkingSegment`（`:1054,1249,1609`）→ 时间线 id（这些函数按 messageID+sessionID 落库，sessionID 用时间线）
 - tool-call 持久化（`:914,968`）→ 时间线 id
-- `CreateStreamingMessage`（`:1183,1193`）→ 时间线 id
+- `CreateStreamingMessage`（`:1183,1193`）→ 时间线 id。**N-7 勘误**：该函数（`chat.go:2571`）内部 `AddChatMessage(..., "", "")` ⇒ `agent_id=''`。群成员回合若发生 mid-turn 注入的 split，会产出一条**无归属**的 "after" 行（气泡中途丢失发言人）。须给 `CreateStreamingMessage` 增加 `agentID` 参数并传 `cfg.SpeakerID`（与 N-1 同源）。
 - `triggerChatSummarization`（`:1644`）→ 时间线 id（摘要属于群会话）
 - `newFinalizeTimer`（`:1550`）→ 仅日志，用时间线 id 便于诊断
 
@@ -1052,20 +1091,17 @@ Expected: FAIL
 
 **Step 3: 实现**
 
-新建 `internal/service/group_store.go`。复用 `CreateSession`（`chat.go:1822`，`sessionType` 参数可传 `"group"` / `"group_member"`）与 `SetSessionGroupID`。要点：
-- `CreateGroup(project, title, backend, hostAgentID)` → `CreateSession(..., "group")`，然后为主持人建成员行 `CreateSession(..., "group_member")`（`title` = 主持人 agent 名）并 `UPDATE chat_sessions SET group_id=?`，写 `host_member_id` 到群行 `context_state`，返回 `(groupID, hostMemberID, err)`。
+新建 `internal/service/group_store.go`。复用 `CreateSession`（`chat.go:1822`，`sessionType` 参数可传 `"group"` / `"group_member"`）。要点：
+- **N-8 勘误**：**`SetSessionGroupID` 在仓库中不存在**——须一并实现（`UPDATE chat_sessions SET group_id=? WHERE id=?`）并列入本 Task 交付物；或直接内联 UPDATE。
+- `CreateGroup(project, title, backend, hostAgentID)` → `CreateSession(..., "group")`，然后为主持人建成员行 `CreateSession(..., "group_member")`（`title` = 主持人 agent 名），`SetSessionGroupID(hostMemberID, groupID)`，写 `host_member_id` 到群行 `context_state`，返回 `(groupID, hostMemberID, err)`。
 - `AddGroupMember(project, groupID, backend, agentID, displayName)` —— **I-7**：加 `displayName` 参数写入成员行 `title`（决策 #36）。
 - `ListGroupMembers(groupID)` → `SELECT id, agent_id, backend, title, archived FROM chat_sessions WHERE group_id=? AND session_type='group_member' ORDER BY created_at ASC`（**含 archived=1**）。
-- `RemoveGroupMember(groupID, memberID)` → `UPDATE chat_sessions SET archived=1 WHERE id=? AND group_id=?`（**保留行**）。
-- `GetGroupHostMember(groupID)` / `SetGroupHostMember(groupID, memberID)` —— 用 `json_extract(context_state,'$.host_member_id')` 读 / `PatchContextStateMerge` 写（**I-10**：`ContextState` 结构体不含此键，须专门 reader）。
+- `RemoveGroupMember(groupID, memberID)` → `UPDATE chat_sessions SET archived=1 WHERE id=? AND group_id=?`（**保留行**，历史发言在群里不受影响）。
+- **N-9 勘误**：**只保留 `GetGroupHostMember(groupID) string` / `SetGroupHostMember(groupID, memberID)`**（返回/写入**成员行 id**）——删掉旧草稿里的 `GetGroupHost(groupID)`（它描述为"返回 agent id"，与 §4.3/N4/I-5 矛盾，且与 `GetGroupHostMember` 重叠）。读用 `json_extract(context_state,'$.host_member_id')`，写用 `PatchContextStateMerge`。
 - `GetGroupMaxRounds(groupID) int` —— `json_extract(context_state,'$.maxRounds')`，缺省/空返回 **10**（**I-10**，决策 #31）。
 - `SetGroupMaxRounds(groupID, n)` —— `PatchContextStateMerge`（值须为合法 JSON 数字）。
-- `AddGroupMember` 同上建成员行。
-- `ListGroupMembers(groupID)` → `SELECT id, agent_id, backend, title, archived FROM chat_sessions WHERE group_id=? AND session_type='group_member' ORDER BY created_at ASC`（含 archived=1 的"已离场"）。
-- `RemoveGroupMember` → `UPDATE chat_sessions SET archived=1 WHERE id=? AND group_id=?`（**保留行**，历史发言在群里不受影响）。
-- `GetGroupHost(groupID)` → 主持人 agent id（存哪见下）。
-
-**主持人存储**：群行的 `context_state` JSON 加 `host_member_id`。实现 `SetGroupHostMember(groupID, memberID)` / `GetGroupHostMember(groupID)`，用 `PatchContextStateMerge`（`session_executor.go:986` 同款）。
+- `GetSessionType(sessionID) string` —— **N-5**：新增（供 G1 判断群会话）；`SELECT session_type FROM chat_sessions WHERE id=?`。
+- `countActiveMembers(members []GroupMember) int` —— 测试辅助（活跃 = `!archived`）；M-5 指出它被用但未定义。
 
 **Step 4: 运行确认通过**
 
@@ -1168,7 +1204,11 @@ git commit -m "feat(group): show groups and hide members across list/search/brow
 
 ## 阶段 F：编排器主循环（顺序轮次）
 
-> **C-5 勘误（执行顺序）**：`group_orchestrator.go` 由 **F2 创建**；F0/F1/F3 都是**修改**它。因此**实际执行顺序为 F2 → F0 → F1 → F3**（F2 先建骨架 + 主循环，F0 再接线运行态/取消，F1 接注入，F3 接抢占）。下文 Task 编号保留但**按此顺序执行**。
+> **C-5 / N-2 勘误（执行顺序）**：`group_orchestrator.go` 由 **F2 创建**；F0/F3 是**修改**它；而 F2 的测试依赖 F1 的 `buildInjectionText`，F2 广播 `stream_start` 又依赖 F0b 的 `SpeakerID` 字段。故**实际执行顺序为**：
+>
+> **F0b（后端 SpeakerID）→ F1（`group_inject.go` + `buildInjectionText`）→ F2（创建 `group_orchestrator.go` 骨架 + 主循环）→ F0（接线运行态/取消）→ F3（抢占）**
+>
+> 下文 Task 编号保留但**按此顺序执行**。（三轮曾误写为 F2→F0→F1→F3，那会让 F2 早于它依赖的 F1，四轮 N-2 已纠正。）
 
 ### Task F0: 运行态与取消接线（评审 I4/I5）
 
@@ -1202,10 +1242,13 @@ git commit -m "feat(group): wire running-state, ctx-derived cancel, member-aware
 > **N3**：`stream_start` payload 只有 `message_id`（`ws/stream_hub.go:373`），流式中前端无法知道气泡属于哪个成员。v1 在 `stream_start` 增加发言人（成员行 id）。
 
 **Files:**
-- Modify: `internal/ai/interface.go`（`StreamStartData` 加 `AgentID string`）
-- Modify: `internal/service/run_turn.go`（广播 `stream_start` 时填发言人）
-- Modify: `internal/ws/stream_hub.go`（`streamStartPayload` 加 `agent_id`）
+- Modify: `internal/ai/interface.go`（`StreamStartData`（`:479`）加 **`SpeakerID string`**，**不是 `AgentID`**——C-1 勘误，避免与真实 agent id 混淆）
+- Modify: `internal/ai/interface.go`（`StreamEvent`（`:414`）如需在事件上携带发言人）
+- Modify: `internal/service/run_turn.go`（`TurnSpec`/`RunConfig` 加 `SpeakerID`；广播 `stream_start` 时从它填）
+- Modify: `internal/ws/stream_hub.go`（`streamStartPayload` 加 `agent_id`，值取 `SpeakerID`）
 - Test: `internal/ws/stream_hub_test.go`
+
+> **F0b 在阶段顺序中的位置（N-2 勘误）**：F0b 是**后端小改**，应在 **F2 之前**完成（F2 广播 `stream_start` 时依赖 `SpeakerID` 字段已存在）。故完整执行顺序为 **F0b → F1 → F2 → F0 → F3**。
 
 **Step 1: 写失败测试**
 
@@ -1228,7 +1271,7 @@ func TestStreamStartPayloadCarriesAgentID(t *testing.T) {
 > - `StreamStartData`（`internal/ai/interface.go:479`）加 **`SpeakerID string`**（不是 `AgentID`，避免与真实 agent id 混淆）；`streamStartPayload` 输出键名仍用 `agent_id`（前端语义 = 发言人成员行 id）。
 > - `TurnSpec` / `RunConfig` 加 `SpeakerID string`，`runTurnStart` 广播 `stream_start` 时从它填；**`TurnSpec.AgentID` 保持真实 agent id（或留空）**。
 >
-> **I-3 勘误**：`stream_hub_test.go:1066,1100` 是**整 map 相等**断言（`assert.Equal(t, map[string]any{"message_id": ...}, payload)`）。**`speaker_id` 为空时必须省略该键**（同 `simpleTextPayload` 对 `think_id` 的处理），否则既有断言失败。plan 原话"加字段不会破坏既有断言"**为假**。
+> **I-3 勘误**：`stream_hub_test.go:1100` 是 `stream_start` 的**整 map 相等**断言（`assert.Equal(t, map[string]any{"message_id": ...}, payload)`）。**`agent_id`（= SpeakerID）为空时必须省略该键**（同 `simpleTextPayload` 对 `think_id` 的处理），否则既有断言失败。plan 原话"加字段不会破坏既有断言"**为假**。**M-1 勘误**：`:1066` 其实是 `TestStreamSplitPayload`（`streamSplitPayload`，不被本 Task 改动），无需处理；只 `:1100` 相关。另**须新增一条"`SpeakerID == ""` 时 `agent_id` 键不存在"的测试**。
 
 **Step 5: Commit**
 
@@ -1372,9 +1415,16 @@ git commit -m "feat(group): add preemption on human interjection"
 - `DELETE /api/group/members` — `{groupId, memberId}` → `{ok}`
 - `GET /api/group/members?groupId=` → `{ok, members:[{id, agentId, name, backend, left, **isHost**}]}`（**I-5 勘误**：须含 `isHost`，J1/K1 靠它识别主持人）
 - `PATCH /api/group/settings` — `{groupId, maxRounds}` → `{ok}`（决策 #31）
-- `POST /api/group/chat` — `{groupId, message, ...}` → 触发编排器。
+- （**删除** `POST /api/group/chat`；群发送统一走 `AIChat` 的委派，见下 C-3/N-5）
 
-**C-3 勘误（Critical，群发送链路必须接通）**：仅有 `POST /api/group/chat` 端点**不够**——前端 `sendMessage` 现在发的是 `/api/ai/chat`（`useChatSession.ts`），无人会调新端点。**采用方案 A（推荐）**：在 `AIChat`（`handler/chat.go:30`）的 **POST 分支**判断该 session 的 `session_type == 'group'` → 委派 `service.RunGroupTurn(...)`，**前端不改**。须在 G1 显式实现并加测试（往群 session POST → 走编排器而非普通单智能体回合）。`POST /api/group/chat` 可保留为显式别名或删除。
+**C-3 勘误（Critical，群发送链路必须接通）**：仅有 `POST /api/group/chat` 端点**不够**——前端 `sendMessage` 现在发的是 `/api/ai/chat`（`useChatSession.ts`），无人会调新端点。**采用方案 A（推荐）**：在 `AIChat`（`handler/chat.go:30`）的 **POST 分支**判断该 session 的 `session_type == 'group'` → 委派 `service.RunGroupTurn(...)`，**前端不改**。须在 G1 显式实现并加测试（往群 session POST → 走编排器而非普通单智能体回合）。
+
+**N-5 勘误（四轮，C-3 的两个未定义依赖）**：
+1. **须新增 session 类型 reader**：判断 `session_type == 'group'` 需要读 `chat_sessions.session_type`，但**全仓没有这个 reader**（只有 `store.NormalizeSessionTypeFilter`/`SessionTypeDBValue` 两个**过滤器映射**，非读取）。G1 须新增如 `service.GetSessionType(sessionID) string`（或复用 `GetSessionFullInfo`，`chat.go:2453`——它已返回会话信息；确认其含 type）。
+2. **委派点必须明确在 `TryClaimSessionRun` 之前**：`AIChat` POST 现有顺序是 文件校验 → `TryClaimSessionRun`（`chat.go:469`）→ `AddChatMessage`（用户消息，`:525`）→ `user_message` WS 广播（`:535`）→ 起 goroutine。而 F2 的 `RunGroupTurn` **自己也写用户消息**。故必须**在 ownership 检查之后、`TryClaimSessionRun`/`AddChatMessage` 之前**委派，否则用户消息写两次、或编排器发现会话已被 claim。须在 G1 显式列出"编排器接管哪几项职责"（文件校验 / claim / 用户消息 insert / `user_message` 广播 / running-state）。
+3. **群 POST body 语义**：前端 POST 带 `agentId/modelId/transport/thinkingEffort`（`chat.go:293-304`），在群里这些是**每成员**的、非每群——须明确**忽略**。`RunGroupTurn` 的签名与 `userMessage` 类型（string？含 files 的结构体？）须定义。
+
+`POST /api/group/chat` **删除**（避免两个入口；M-7）。
 
 **Step 1-5:** TDD：先写 handler 测试（`httptest`），确认 404，再注册路由实现。OpenAPI 同步 `internal/api/openapi.yaml`，跑 `go test ./internal/handler/ -run TestOpenAPIDrift`。
 

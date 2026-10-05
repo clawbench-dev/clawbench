@@ -294,7 +294,7 @@
 - `POST /api/group/members` — 增成员（批量）。
 - `DELETE /api/group/members` — 删成员。
 - `PATCH /api/group/settings` — 群设置（最大轮数，决策 #31）。
-- 群消息发送：复用 `/api/ai/chat`（携带群会话 id），由编排器接管；或新增 `/api/group/chat`。
+- 群消息发送：**复用 `/api/ai/chat`**——`AIChat` POST 分支检测到群会话（`session_type='group'`）即委派编排器 `RunGroupTurn`，**前端不改**（决策见 §12.2 C-3；**不新增** `/api/group/chat`，避免双入口）。
 - 群回合取消：复用现有 cancel（须经编排器 ctx 传播，见 §5.5）。
 
 （字段名必须从 handler 代码抄，禁止望文生义。）
@@ -476,7 +476,7 @@
 
 **C-1 — `TurnSpec.AgentID` 传成员行 id 会毁后端解析。**
 `run_turn.go:234` 是 `agentID := ResolveAgentID(spec.SessionID, spec.AgentID)`，`ResolveAgentID`（`agent_resolve.go:25`）在 `requested != ""` 时**原样返回**；随后 `run_turn.go:245` 把它喂给 `NewBackendForAgentWithTransport(spec.BackendName, agentID, transport)`。若 `AgentID` = 成员行 id，`model.GetAgent(成员行id)` → nil → 落到 `NewBackend(backendName)`，对 **ACP-only 后端直接失败**（"unsupported backend type"）——每个 ACP 成员回合都死。
-**修**：**新增独立字段** `TurnSpec.SpeakerID` / `RunConfig.SpeakerID`（= 成员行 id），`StreamStartData.AgentID` 由它填；**`TurnSpec.AgentID` 保持真实 agent id（或留空让 `ResolveAgentID` 从成员行推出）**。F2 与 F0b 须按此改。
+**修**：**新增独立字段** `TurnSpec.SpeakerID` / `RunConfig.SpeakerID`（= 成员行 id）；`StreamStartData` 也加 **`SpeakerID`**（**不是 `AgentID`**——四轮 N-1 修正：字段名不得复用 `AgentID`），`stream_start` 广播与 `AddChatMessageWithAgent` 的归属参数**都取 `SpeakerID`**；**`TurnSpec.AgentID` 保持真实 agent id（或留空让 `ResolveAgentID` 从成员行推出）**。F0b/C2/F2 须按此改。
 
 **C-2 — #32 汇总：B2 说"同轮"、F2 说"另跑一轮"，二者冲突。**
 B2 提示词（计划 565 行）让**发结束标签那一轮**自己写结论；F2（1268 行）又"循环结束后再跑一次主持人"。一起实现 ⇒ 结束信号路径**两份汇总**；达上限路径 B2 的提示词（"结束标签之后"）**没要求汇总**。
@@ -520,6 +520,42 @@ F0（计划 1138-1139）`Modify: internal/service/group_orchestrator.go`；F2（
 ### 三轮结论
 
 **仍不满足直接实现条件（5 Critical）。** 架构成立、v1=顺序正确，但 C-1（后端解析被成员行 id 破坏）、C-2（汇总两种矛盾写法）、C-3（群发送链路未接）、C-4（A3 双包）、C-5（F0 先于 F2）必须先修；I-1/I-2/I-3/I-4 是首跑必挂的夹具缺陷，I-10 使 maxRounds 不可读。**均为局部规范修正，无需重构架构。**
+
+## 12.3 四轮评审勘误（2026-10-04，Superpower code-reviewer，已核对代码）
+
+> 四轮验证三轮 5 个 Critical 的修复，并**专门追查"修复本身引入的新 bug"**（前三轮已两次出现此模式）。结论：**3 个新 Critical（N-1/N-2/N-3，其中 N-1/N-2 是三轮修复引入的回归）+ 9 个 Important**。
+
+### Critical（四轮）
+
+**N-1（三轮 C-1 修复引入的回归）— `chat_history.agent_id` 仍被写成真实 agent id。**
+三轮把 `StreamStartData` 的字段改名 `SpeakerID`，但 **C2 的代码片段仍把 `agentID`（真实 agent id）传给 `AddChatMessageWithAgent`**。而该调用是 `chat_history.agent_id` 的**唯一写入点**（`UpdateStreamingMessage`/`FinalizeStreamingMessage` 只改 `content`/`streaming`/`completed_at`，不碰 `agent_id`）。后果：F1 的 `agent_id != self` 自排除失效、前端行 id→agent 映射失效、N4 失效，而 §9.4 守卫（"agent_id 非空"）**照样通过**。
+**修**：`AddChatMessageWithAgent(..., spec.SpeakerID)`；`stream_start` 广播也填 `SpeakerID`；加测试断言"占位行 `agent_id == 成员行 id`"。（设计 §4.3 已明确该列语义 = 成员行 id。）
+
+**N-2（三轮 C-5 修复引入的回归）— 执行顺序把 F2 排在 F1 之前。**
+三轮改为 F2→F0→F1→F3，但 **F2 的测试与实现都依赖 F1 的 `buildInjectionText`**（`group_inject.go`），且 F2 广播 `stream_start` 依赖 F0b 的 `SpeakerID` 字段。
+**修**：正确顺序 **F0b → F1 → F2 → F0 → F3**。
+
+**N-3（三轮 C-4 修复未覆盖的连锁）— A3 改 SELECT 会打挂 ~25 个测试夹具。**
+A3 给 `GetChatHistory`/`GetMessageByID`/`GetSessionMessagesForSelection` 等 reader 的 SELECT 增加 `agent_id` 后，**所有自带内存 `chat_history` DDL 却无该列的测试**都会 "no such column" 失败。`grep -rln "CREATE TABLE.*chat_history" internal/ --include=*_test.go` 得 **25 个文件**（含 `handler/testutil_test.go`，约 1575 个调用者）。
+**修**：A3 须枚举全部并补列（推荐抽共享 DDL 常量）。见计划 A3。
+
+### Important（四轮）
+
+- **N-4** 一条消息同时含路由标签与结束标签时：`End=true` 但结束标签会**泄漏进 `Instruction`**（`text[loc[1]:]`）。须"结束优先 + 从 Instruction 剥除结束标签"，并加 both-tag 测试。
+- **N-5** C-3 的两个未定义依赖：(a) **无 `session_type` reader**（须新增 `GetSessionType`）；(b) **委派点未定**——须明确在 `TryClaimSessionRun`/`AddChatMessage` **之前**委派，否则用户消息写两次。
+- **N-6** J2 要求的 parity corpus + `parity_test.go` **无人创建**（B1 只建 `grouprouting.go`+`_test.go`）。须 B1 建 Go 侧语料与测试，J2 补 TS 侧。
+- **N-7** `CreateStreamingMessage`（`chat.go:2571`）内部 `AddChatMessage(..., "", "")` ⇒ split 出的 "after" 行**无归属**。须加 `agentID` 参数传 `SpeakerID`（与 N-1 同源）。
+- **N-8** `SetSessionGroupID` **不存在**（E1 引用它）。须实现或内联 UPDATE。
+- **N-9** E1 的 `GetGroupHost` 与 `GetGroupHostMember` 重叠且返回语义矛盾（前者描述为 agent id）。**只保留后者**（返回成员行 id）。
+- **M-1** `stream_hub_test.go:1066` 是 `streamSplitPayload` 的断言（不受影响）；只有 `:1100` 相关。须补"`SpeakerID==""` 时键不存在"的测试。
+- **M-7** 删除 `POST /api/group/chat`（双入口是下一轮"哪条路活着"bug 的温床）。
+- **M-6** 设计 §12/§12.1 残留的历史计数（"17 处"/"5 处"）标为历史，避免第五轮重新翻案。
+
+### 四轮结论
+
+**仍不满足直接实现条件（3 Critical）。** 三轮修复的**意图正确但未落到代码片段**：C-1 改了字段名却没改消息行写入（N-1）、C-5 调序把 F2 排到 F1 前（N-2）、C-4 只改测试文件名未覆盖 A3 的夹具连锁（N-3）。加上 N-5（缺 reader + 委派点）、N-8（幻影函数），修完即可实现；其余为规范卫生。
+
+**四轮累计**：一轮 7C、二轮 2C、三轮 5C、四轮 3C。**模式**：每轮修复都倾向"改勘误文字而非改代码片段"，导致下一轮发现片段未同步。**建议**：修完四轮后，实现者以**代码片段**为准（勘误文字仅作背景），逐 Task 编译验证。
 
 ## 11. 关键文件索引
 
