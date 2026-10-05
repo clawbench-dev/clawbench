@@ -51,13 +51,18 @@ describe('GroupAvatarStack', () => {
     expect(discs[1].classes()).not.toContain('is-host')
   })
 
-  it('stacks uniformly by DOM order (host has no z-index override)', async () => {
-    // A per-item z-index on the host made the overlap direction inconsistent
-    // (host over its neighbours, others under). Guard the source: the host rule
-    // must not raise itself.
-    const raw = (await import('../GroupAvatarStack.vue?raw')).default as string
-    const hostRule = raw.match(/\.stack-item\.is-host\s*\{[^}]*\}/)?.[0] ?? ''
-    expect(hostRule).not.toContain('z-index')
+  it('stacks with the FIRST member (host) on top, decreasing by DOM order', () => {
+    // The host is first and must sit ON TOP; each later disc tucks UNDER the
+    // previous one. So z-index decreases with DOM order (first = highest).
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
+    ])
+    const z = w.findAll('.stack-item').map(el => Number(el.element.style.zIndex))
+    expect(z).toEqual([3, 2, 1])
+    expect(z[0]).toBeGreaterThan(z[1])
+    expect(z[1]).toBeGreaterThan(z[2])
   })
 
   it('does not dim members (no half-transparent icons)', () => {

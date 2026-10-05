@@ -10,10 +10,11 @@
     @keydown.space.prevent="openSheet"
   >
     <span
-      v-for="m in members"
+      v-for="(m, i) in members"
       :key="m.id"
       class="stack-item"
       :class="{ 'is-host': m.isHost }"
+      :style="{ zIndex: members.length - i }"
       :title="m.name + (m.isHost ? ' (Host)' : '')"
     >
       <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
