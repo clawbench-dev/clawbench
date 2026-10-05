@@ -13,8 +13,9 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
 vi.mock('@/composables/useAgents', () => ({
   getAgentAvatar: () => '',
 }))
+const sheetOpen = vi.fn()
 vi.mock('../GroupMemberSheet.vue', () => ({
-  default: { name: 'GroupMemberSheet', template: '<div class="sheet-stub" />', methods: { open: vi.fn() } },
+  default: { name: 'GroupMemberSheet', template: '<div class="sheet-stub" />', methods: { open: () => sheetOpen() } },
 }))
 
 function mountStack(members: any[]) {
@@ -29,7 +30,7 @@ function mountStack(members: any[]) {
 }
 
 describe('GroupAvatarStack', () => {
-  it('renders one overlapping disc per member plus a trailing add button', () => {
+  it('renders one overlapping disc per member and NO add button', () => {
     const w = mountStack([
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
       { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
@@ -37,7 +38,7 @@ describe('GroupAvatarStack', () => {
     ])
     expect(w.findAll('.stack-item')).toHaveLength(3)
     expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(3)
-    expect(w.find('.stack-add').exists()).toBe(true)
+    expect(w.find('.stack-add').exists()).toBe(false)
   })
 
   it('marks the host disc so it gets the accent ring', () => {
@@ -50,12 +51,22 @@ describe('GroupAvatarStack', () => {
     expect(discs[1].classes()).not.toContain('is-host')
   })
 
-  it('dims members that have left', () => {
+  it('does not dim members (no half-transparent icons)', () => {
     const w = mountStack([
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
       { id: 'm2', name: 'Gone', backend: 'claude', agentId: 'a2', isHost: false, left: true },
     ])
-    expect(w.findAll('.stack-item')[1].classes()).toContain('is-left')
+    // Left members are NOT greyed any more; every disc renders at full opacity.
+    expect(w.findAll('.stack-item')[1].classes()).not.toContain('is-left')
+  })
+
+  it('opens the member sheet when the stack is clicked anywhere', async () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+    ])
+    sheetOpen.mockClear()
+    await w.find('.agent-stack').trigger('click')
+    expect(sheetOpen).toHaveBeenCalled()
   })
 
   it('does not render when the session is not a group', () => {
