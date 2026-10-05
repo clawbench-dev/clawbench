@@ -6,7 +6,7 @@
          speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
          above the message box. -->
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
-      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" :size="16" />
+      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" :size="30" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
     </div>
@@ -1240,16 +1240,17 @@ const copyPayload = quotableText
 .msg-speaker {
   display: flex;
   align-items: center;
-  gap: var(--space-1);
-  margin: 0 0 var(--space-1) var(--space-2);
-  font-size: var(--font-size-xs);
+  gap: var(--space-2);
+  margin: 0 0 var(--space-2) var(--space-2);
+  font-size: var(--font-size-lg);
   color: var(--text-secondary);
 }
 .msg-speaker-name {
-  font-weight: var(--font-weight-medium);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-primary);
 }
 .msg-speaker-host-tag {
-  padding: 0 var(--space-1);
+  padding: 0 var(--space-2);
   border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
   color: var(--accent-color, #0066cc);
