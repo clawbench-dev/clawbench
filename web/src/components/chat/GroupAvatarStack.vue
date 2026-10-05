@@ -17,7 +17,7 @@
       :style="{ zIndex: members.length - i }"
       :title="m.name + (m.isHost ? ' (Host)' : '')"
     >
-      <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
+      <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="md" />
     </span>
     <GroupMemberSheet
       ref="sheetRef"
@@ -63,8 +63,8 @@ function openSheet() {
   outline: none;
 }
 .stack-item {
-  width: var(--icon-size-lg, 24px);
-  height: var(--icon-size-lg, 24px);
+  width: var(--icon-size-md, 18px);
+  height: var(--icon-size-md, 18px);
   padding: 0;
   border-radius: var(--radius-full);
   overflow: hidden;
@@ -76,8 +76,8 @@ function openSheet() {
      because in dark themes the latter is nearly the same value as the disc
      background, so the ring vanished against a black/dark wallpaper. The ring
      is uniform for every disc; only its colour differs for the host. */
-  box-shadow: 0 0 0 2px var(--border-color);
-  margin-left: -8px;
+  box-shadow: 0 0 0 1.5px var(--border-color);
+  margin-left: -6px;
   position: relative;
   transition: transform var(--duration-base) ease;
 }
@@ -95,7 +95,7 @@ function openSheet() {
 /* Host keeps the accent ring but NO z-index: every disc stacks by DOM order
    (each later one over the previous), so the overlap direction is uniform. */
 .stack-item.is-host {
-  box-shadow: 0 0 0 2px var(--accent-color, #0066cc);
+  box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
 }
 .agent-stack:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
