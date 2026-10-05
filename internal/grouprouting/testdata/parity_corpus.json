@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "name": "single_speaker",
+      "text": "<clawbench-speaker>B</clawbench-speaker> 请回应 A 的质疑",
+      "want": {"found": true, "end": false, "speakers": ["B"], "instruction": "请回应 A 的质疑"}
+    },
+    {
+      "name": "multiple_speakers_trimmed",
+      "text": "<clawbench-speaker>A, B ,C</clawbench-speaker> 各自表态",
+      "want": {"found": true, "end": false, "speakers": ["A", "B", "C"], "instruction": "各自表态"}
+    },
+    {
+      "name": "end_signal_only",
+      "text": "讨论已充分。<clawbench-group-end/>",
+      "want": {"found": false, "end": true, "speakers": [], "instruction": ""}
+    },
+    {
+      "name": "both_tags_end_wins_strip_from_instruction",
+      "text": "<clawbench-speaker>B</clawbench-speaker> 请回应<clawbench-group-end/>",
+      "want": {"found": true, "end": true, "speakers": ["B"], "instruction": "请回应"}
+    },
+    {
+      "name": "empty_payload_not_found",
+      "text": "<clawbench-speaker></clawbench-speaker>",
+      "want": {"found": false, "end": false, "speakers": [], "instruction": ""}
+    },
+    {
+      "name": "no_tag",
+      "text": "普通发言，没有标签",
+      "want": {"found": false, "end": false, "speakers": [], "instruction": ""}
+    },
+    {
+      "name": "end_tag_with_spaces",
+      "text": "done <clawbench-group-end />",
+      "want": {"found": false, "end": true, "speakers": [], "instruction": ""}
+    }
+  ]
+}
