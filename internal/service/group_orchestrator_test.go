@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"clawbench/internal/store"
@@ -238,5 +239,91 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 	}
 	if hostTurns != 2 {
 		t.Fatalf("host turns=%d, want 2 (route + summary), order=%v", hostTurns, *order)
+	}
+}
+
+// TestGroupOrchestrator_HostNeverRoutesToItself is a regression for the reported
+// "only the host ever speaks" defect: the host's selectable list included the
+// host itself, so the model named itself, resolveTargets mapped that back to
+// the host row, and every "member turn" was another host turn — the real
+// members were never called.
+//
+// It asserts two invariants:
+//  1. the host instruction never lists the host's own display name;
+//  2. even if the host DOES name itself, that target is dropped (so the turn
+//     falls through to real members instead of looping on the host).
+func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-self"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	// Host display name equals its backend name ("Codebuddy") — the exact shape
+	// that triggered the production bug.
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Codebuddy")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+
+	// Capture the host prompt to assert the host is not offered as a target.
+	var hostPrompts []string
+	script := map[string][]string{
+		hostID: {
+			// The host names ITSELF first — must be dropped, then the round
+			// continues to a real member in the next host turn.
+			`<clawbench-speaker>Codebuddy</clawbench-speaker> 我先补充一句`,
+			`<clawbench-speaker>A</clawbench-speaker> 请你表态`,
+			`讨论充分。<clawbench-group-end/> 结论：到此为止。`,
+		},
+		mA: {"A 的观点"},
+	}
+	order := &[]string{}
+	counts := map[string]int{}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		*order = append(*order, turn.MemberRowID)
+		if turn.IsHost {
+			hostPrompts = append(hostPrompts, turn.Prompt)
+		}
+		texts := script[turn.MemberRowID]
+		i := counts[turn.MemberRowID]
+		text := "(no script)"
+		if i < len(texts) {
+			text = texts[i]
+		}
+		counts[turn.MemberRowID]++
+		_, e := AddChatMessageWithAgent(project, "codebuddy", gid, "assistant",
+			`{"blocks":[{"type":"text","text":`+jsonQuote(text)+`}]}`, nil, false, "", turn.MemberRowID)
+		if e != nil {
+			return groupMemberResult{Err: e.Error()}
+		}
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	observeGroupTerminal(t)
+	if err := o.RunGroupTurn(context.Background(), "开始"); err != nil {
+		t.Fatalf("RunGroupTurn: %v", err)
+	}
+
+	// (1) The host must never be told it may address itself.
+	for _, p := range hostPrompts {
+		if strings.Contains(p, "可选的成员名：Codebuddy") || strings.Contains(p, "、Codebuddy") || strings.HasSuffix(p, "Codebuddy。\n") {
+			t.Fatalf("host prompt offers the host as a target:\n%s", p)
+		}
+	}
+
+	// (2) A is a real member and MUST have been called. Before the fix the host
+	// self-route swallowed every turn and A never ran.
+	aCalled := false
+	for _, id := range *order {
+		if id == mA {
+			aCalled = true
+		}
+	}
+	if !aCalled {
+		t.Fatalf("member A was never called; order=%v (host self-route loop)", *order)
 	}
 }

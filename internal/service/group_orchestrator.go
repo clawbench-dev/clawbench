@@ -121,7 +121,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		if hostRes.Err != "" {
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
 			// Host failed: try round-robin once, then stop.
-			if !o.speakNextMember(groupCtx, runner, members, names) {
+			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
 				emitGroupTerminal(groupID)
 				return nil
 			}
@@ -135,10 +135,10 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 			return nil
 		}
 
-		targets := o.resolveTargets(route, members)
+		targets := o.resolveTargets(route, members, hostMemberID)
 		if len(targets) == 0 {
 			// Parse failed or no valid speakers: fall back to round-robin.
-			if !o.speakNextMember(groupCtx, runner, members, names) {
+			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
 				emitGroupTerminal(groupID)
 				return nil
 			}
@@ -187,16 +187,17 @@ var emitGroupTerminal = func(groupID string) {
 // routing tags in this turn are ignored (never parsed).
 func (o *GroupOrchestrator) summarize(ctx context.Context, runner groupTurnRunner, hostMemberID string, names map[string]string, members []GroupMember) {
 	cursor := GetMemberCursor(hostMemberID)
-	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "") + BuildHostSummaryPrompt(activeMemberNames(members))
+	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "") + BuildHostSummaryPrompt(activeMemberNamesExcept(members, hostMemberID))
 	runner(ctx, o.groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: prompt, IsHost: true})
 	SetMemberCursor(hostMemberID, GroupTimelineHighWater(o.groupID))
 }
 
 // hostPrompt builds the host's turn prompt: the incremental group context plus
-// the host instruction (routing rules).
+// the host instruction (routing rules). The selectable list EXCLUDES the host
+// itself, so the model cannot name itself (which caused the self-route loop).
 func (o *GroupOrchestrator) hostPrompt(hostMemberID string, cursor int64, names map[string]string, members []GroupMember) string {
 	ctxText := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "")
-	return ctxText + BuildHostSystemPrompt(activeMemberNames(members))
+	return ctxText + BuildHostSystemPrompt(activeMemberNamesExcept(members, hostMemberID))
 }
 
 // lastHostOutput returns the host's most recent speech text on the group
@@ -215,14 +216,17 @@ func (o *GroupOrchestrator) lastHostOutput(groupID, hostMemberID string) string 
 }
 
 // resolveTargets maps the host's named speakers to active member rows, in the
-// order named. Unknown/left names are dropped.
-func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []GroupMember) []GroupMember {
+// order named. Unknown/left names are dropped, and so is the host itself — the
+// host must not be able to route to itself, which would turn every "member
+// turn" into another host turn and starve the real members (the reported "only
+// the host ever speaks" defect).
+func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []GroupMember, hostMemberID string) []GroupMember {
 	if !route.Found {
 		return nil
 	}
 	byName := map[string]GroupMember{}
 	for _, m := range members {
-		if m.Left {
+		if m.Left || m.ID == hostMemberID {
 			continue
 		}
 		byName[strings.TrimSpace(m.Name)] = m
@@ -240,11 +244,12 @@ func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []
 	return out
 }
 
-// speakNextMember runs one round-robin member turn (fallback path). Returns
-// false when no active member exists.
-func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTurnRunner, members []GroupMember, names map[string]string) bool {
+// speakNextMember runs one round-robin member turn (fallback path), skipping
+// the host so a fallback can never re-run the host. Returns false when no
+// active non-host member exists.
+func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTurnRunner, members []GroupMember, names map[string]string, hostMemberID string) bool {
 	for _, m := range members {
-		if m.Left {
+		if m.Left || m.ID == hostMemberID {
 			continue
 		}
 		cursor := GetMemberCursor(m.ID)
@@ -311,10 +316,13 @@ func memberNameMap(members []GroupMember) map[string]string {
 	return names
 }
 
-func activeMemberNames(members []GroupMember) []string {
+// activeMemberNamesExcept returns the display names the host may route to:
+// every active (non-left) member EXCEPT the host itself. The host must never be
+// offered as a routing target (see resolveTargets).
+func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []string {
 	out := make([]string, 0, len(members))
 	for _, m := range members {
-		if !m.Left {
+		if !m.Left && m.ID != hostMemberID {
 			out = append(out, m.Name)
 		}
 	}

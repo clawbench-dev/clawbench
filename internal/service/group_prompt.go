@@ -19,7 +19,15 @@ func BuildHostSystemPrompt(members []string) string {
 	b.WriteString("当讨论已充分、可以收敛时，输出结束标签：\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n")
+	b.WriteString("注意：你本人不在可点名名单里，**不要点名你自己**——只能点名下列其他成员。\n")
 	b.WriteString("可选的成员名：")
+	if len(members) == 0 {
+		// Only the host is in the group: there is nobody to route to. Tell the
+		// host to just answer directly instead of naming a non-existent member.
+		b.WriteString("（暂无其他成员）\n")
+		b.WriteString("当前群内没有其他成员，你无需路由，直接回答用户即可。\n")
+		return b.String()
+	}
 	b.WriteString(strings.Join(members, "、"))
 	b.WriteString("。\n")
 	return b.String()
