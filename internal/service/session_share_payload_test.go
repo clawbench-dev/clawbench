@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 			files TEXT,
 			session_id TEXT NOT NULL DEFAULT '',
 			backend TEXT NOT NULL DEFAULT '',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -464,6 +465,28 @@ func TestSessionSharePayload_ExcludesStreamingAndQueued(t *testing.T) {
 		assert.NotEqual(t, "half-written", m["content"])
 		assert.NotEqual(t, "waiting in queue", m["content"])
 	}
+}
+
+func TestSessionSharePayload_KeepsSpeakerAttribution(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	seedSession(t, db, "s1")
+	res, err := db.Exec(
+		`INSERT INTO chat_history (project_id, session_id, role, content, backend, streaming, agent_id)
+		 VALUES (?, 's1', 'assistant', 'A1', 'codebuddy', 0, 'member-row-a')`,
+		testProjectRoot,
+	)
+	require.NoError(t, err)
+	_, err = res.LastInsertId()
+	require.NoError(t, err)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	msgs := payloadMessages(t, raw)
+	require.Len(t, msgs, 1)
+	assert.Equal(t, "member-row-a", msgs[0]["agentId"], "group speaker attribution must survive the share snapshot")
 }
 
 func TestSessionSharePayload_MessageIDSelection(t *testing.T) {

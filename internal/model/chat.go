@@ -128,6 +128,10 @@ type ChatMessage struct {
 	Files        []FileEntry   `json:"files,omitempty"`
 	SessionID    string        `json:"sessionId,omitempty"`
 	Backend      string        `json:"backend,omitempty"`
+	// AgentID is the speaker's group-member session row id for group-chat
+	// messages (see docs/plans/2026-10-04-ai-group-chat-design.md §4.3). It is
+	// NOT a real agent id and is empty for ordinary single-agent messages.
+	AgentID      string        `json:"agentId,omitempty"`
 	ProjectPath  string        `json:"projectPath,omitempty"`
 	Streaming    bool          `json:"streaming,omitempty"`
 	Indexed      bool          `json:"indexed,omitempty"`

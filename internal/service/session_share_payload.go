@@ -101,6 +101,9 @@ type SessionShareMessage struct {
 	Role         string              `json:"role"`
 	Content      string              `json:"content"`
 	Files        []model.FileEntry   `json:"files,omitempty"`
+	// AgentID is the speaker's group-member row id (group chats only; empty
+	// for ordinary sessions). Preserves speaker attribution in a shared group.
+	AgentID      string              `json:"agentId,omitempty"`
 	CreatedAt    time.Time           `json:"createdAt"`
 	Summary      *string             `json:"summary,omitempty"`
 	SummaryCards *model.SummaryCards `json:"summaryCards,omitempty"`
@@ -270,6 +273,7 @@ func buildShareMessage(
 		ID:        msg.ID,
 		Role:      msg.Role,
 		Content:   inlineMessageContent(msg, toolCalls, thinking, projectRoot, homeDir),
+		AgentID:   msg.AgentID,
 		CreatedAt: msg.CreatedAt,
 	}
 	if len(msg.Files) > 0 {

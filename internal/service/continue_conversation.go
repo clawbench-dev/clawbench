@@ -212,7 +212,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	// h.created_at > s2.last_read_at). Instead, we let the database assign CURRENT_TIMESTAMP,
 	// which guarantees format consistency. Message ordering relies on auto-increment id, not created_at.
 	rows, err := store.ReadDB().Query(
-		"SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
+		"SELECT id, project_id, role, content, files, backend, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0 ORDER BY id",
 		sourceSessionID,
 	)
 	if err != nil {
@@ -227,11 +227,12 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 		content   string
 		files     sql.NullString
 		backend   string
+		agentID   string
 	}
 	var messages []sourceMsg
 	for rows.Next() {
 		var m sourceMsg
-		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend); err != nil {
+		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend, &m.agentID); err != nil {
 			return "", false, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
@@ -241,8 +242,8 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
 		result, err := store.WriteExec(
-			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
-			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
+			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming, agent_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+			m.projectID, m.role, m.content, m.files, newSessionID, m.backend, m.agentID,
 		)
 		if err != nil {
 			return "", false, fmt.Errorf("failed to copy message %d: %w", m.id, err)
@@ -443,7 +444,7 @@ func checkSessionLimit(projectPath string) error {
 // If beforeMessageID > 0, only messages with id <= beforeMessageID are copied.
 // Returns a map from old message IDs to new message IDs.
 func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID int64) (map[int64]int64, error) {
-	query := "SELECT id, project_id, role, content, files, backend FROM chat_history WHERE session_id = ? AND streaming = 0"
+	query := "SELECT id, project_id, role, content, files, backend, agent_id FROM chat_history WHERE session_id = ? AND streaming = 0"
 	args := []any{sourceSessionID}
 	if beforeMessageID > 0 {
 		query += " AND id <= ?"
@@ -463,11 +464,12 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 		content   string
 		files     sql.NullString
 		backend   string
+		agentID   string
 	}
 	var messages []sourceMsg
 	for rows.Next() {
 		var m sourceMsg
-		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend); err != nil {
+		if err := rows.Scan(&m.id, &m.projectID, &m.role, &m.content, &m.files, &m.backend, &m.agentID); err != nil {
 			return nil, fmt.Errorf("failed to scan source message: %w", err)
 		}
 		messages = append(messages, m)
@@ -476,8 +478,8 @@ func copySessionMessages(sourceSessionID, newSessionID string, beforeMessageID i
 	idMap := make(map[int64]int64)
 	for _, m := range messages {
 		result, err := store.WriteExec(
-			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming) VALUES (?, ?, ?, ?, ?, ?, 0)",
-			m.projectID, m.role, m.content, m.files, newSessionID, m.backend,
+			"INSERT INTO chat_history (project_id, role, content, files, session_id, backend, streaming, agent_id) VALUES (?, ?, ?, ?, ?, ?, 0, ?)",
+			m.projectID, m.role, m.content, m.files, newSessionID, m.backend, m.agentID,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("failed to copy message %d: %w", m.id, err)

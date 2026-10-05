@@ -214,7 +214,7 @@ func materializeQueuedRowTx(tx *sql.Tx, row QueuedRow) (int64, error) {
 	// once title_source is 'auto', so passing "" here cannot blank the title.
 	// The AI rename was likewise already scheduled at enqueue — its `titled`
 	// result is discarded here on purpose.
-	msgID, _, err := insertChatMessageTx(tx, row.ProjectID, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "")
+	msgID, _, err := insertChatMessageTx(tx, row.ProjectID, row.Backend, row.SessionID, "user", row.Content, row.Files, 0, "", "")
 	return msgID, err
 }
 

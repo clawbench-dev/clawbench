@@ -35,6 +35,7 @@ func setupTestDBForTriggerSummary(t *testing.T) (*sql.DB, func()) {
 			files TEXT,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			queue_id TEXT DEFAULT '',
