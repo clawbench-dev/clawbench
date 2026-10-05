@@ -441,6 +441,13 @@ type StreamEvent struct {
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
 	QueueAdded     *QueueAddedData        // A message was enqueued (Type=queue_added)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
+	// StreamFinish is set on a "stream_finalize" event: ONE producer turn has
+	// ended and its streaming bubble should be finalized, WITHOUT ending the
+	// whole run. Used by group chats, where each member turn must close its own
+	// bubble before the next member's stream_start so the next bubble opens.
+	// Distinct from the terminal "done" (which also clears loading / ends the
+	// run). See StreamFinishData.
+	StreamFinish *StreamFinishData
 	// SteerBoundary is set on a "steer_boundary" event: the exact point where a
 	// mid-turn injected user message entered the running turn. It lets the
 	// service layer split the assistant reply into two messages at that point
@@ -482,6 +489,13 @@ type StreamStartData struct {
 	// (empty for ordinary single-agent turns). It is NOT a real agent id: it
 	// identifies the speaker for attribution/rendering in a group chat.
 	SpeakerID string `json:"speaker_id,omitempty"`
+}
+
+// StreamFinishData carries the streaming row id of the producer turn that just
+// ended (0 when the turn never opened a row). Lets the frontend finalize that
+// bubble without touching the run's loading state.
+type StreamFinishData struct {
+	MessageID int64 `json:"message_id"`
 }
 
 // SteerBoundaryData identifies the point where a mid-turn injected message

@@ -589,6 +589,16 @@ export function useChatStream(options: UseChatStreamOptions) {
         // only after the DB row loads.
         const speakerId = (payload.agent_id as string | undefined) || ''
         if (messageId) {
+          // A NEW producer turn: if a DIFFERENT message is still marked
+          // streaming (a previous group member whose per-member finalize event
+          // was dropped, or a turn that ended without one), close it first.
+          // Otherwise this stream_start would find the stale bubble and never
+          // open one for the new member — the "other agents don't stream at all
+          // until you switch sessions" defect.
+          const existing = findStreamingMsg(messages.value)
+          if (existing && typeof existing.id === 'number' && existing.id !== messageId) {
+            dispatch({ type: 'stream_finalize' })
+          }
           // Event-driven placeholder: if no streaming assistant message exists
           // (e.g. client opened the session mid-stream, or the optimistic
           // placeholder was dropped by a loadHistory), create one. The DB row id
@@ -619,6 +629,23 @@ export function useChatStream(options: UseChatStreamOptions) {
         // applied. Done after the dispatch above so the replayed events land on
         // the real placeholder rather than being dropped again.
         replayBufferedEvents()
+        break
+      }
+
+      case 'stream_finalize': {
+        if (sessionChanged()) return
+        // One producer turn ended (group chats: one member). Finalize its
+        // streaming bubble WITHOUT ending the run (loading stays true, so the
+        // stop button remains and the next member's stream_start opens a new
+        // bubble). This is distinct from the terminal 'done'.
+        const finishId = payload.message_id as number | undefined
+        const sm = findStreamingMsg(messages.value)
+        // Only finalize the bubble this event refers to; a stale finalize for a
+        // previous member must not close the current one.
+        if (sm && (finishId === undefined || finishId === 0 || sm.id === finishId)) {
+          dispatch({ type: 'stream_finalize' })
+          onRenderNeeded()
+        }
         break
       }
 

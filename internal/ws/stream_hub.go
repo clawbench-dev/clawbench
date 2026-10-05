@@ -324,6 +324,8 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		return streamStartPayload(event)
 	case "stream_split":
 		return streamSplitPayload(event)
+	case "stream_finalize":
+		return streamFinishPayload(event)
 	case "queue_drain":
 		return queueDrainPayload(event)
 	case "queue_inject":
@@ -391,6 +393,16 @@ func streamSplitPayload(event ai.StreamEvent) any {
 		return nil
 	}
 	return map[string]any{"message_id": event.StreamSplit.MessageID}
+}
+
+// streamFinishPayload carries the streaming row id of a producer turn that just
+// ended (group chats: one member turn). Returns nil when no StreamFinish data is
+// attached (the event is then skipped downstream).
+func streamFinishPayload(event ai.StreamEvent) any {
+	if event.StreamFinish == nil {
+		return nil
+	}
+	return map[string]any{"message_id": event.StreamFinish.MessageID}
 }
 
 // acpStatePayload handles ACP state update event types (mode, config, commands, etc.)

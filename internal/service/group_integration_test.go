@@ -156,3 +156,39 @@ func TestGroupOrchestrator_DefaultRunnerWiring(t *testing.T) {
 		t.Error("DrainOnFinalize must be true for member turns")
 	}
 }
+
+// TestGroupOrchestrator_DefaultRunnerEmitsPerMemberFinalize pins the per-member
+// stream_finalize contract: every member (and host) turn must close its own
+// streaming bubble so the NEXT member's stream_start opens a new bubble.
+// Without it, all members' output piled into the first bubble — the reported
+// "other agents don't stream until you switch sessions".
+//
+// Uses the real defaultRunner against a nonexistent backend so runTurn returns
+// fast without a live agent; the finalize emit still fires (msgID may be 0).
+func TestGroupOrchestrator_DefaultRunnerEmitsPerMemberFinalize(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-finalize"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+
+	// Observe the per-member finalize calls without a WS hub.
+	orig := emitGroupMemberFinalize
+	var calls []int64
+	emitGroupMemberFinalize = func(_ string, msgID int64) { calls = append(calls, msgID) }
+	t.Cleanup(func() { emitGroupMemberFinalize = orig })
+
+	o := NewGroupOrchestrator(groupID)
+	// defaultRunner (no override) — it calls runTurn then emitGroupMemberFinalize.
+	o.defaultRunner(context.Background(), groupID, groupMemberTurn{MemberRowID: mA, Prompt: "hi"})
+
+	if len(calls) != 1 {
+		t.Fatalf("defaultRunner must emit exactly one per-member finalize, got %d (%v)", len(calls), calls)
+	}
+}

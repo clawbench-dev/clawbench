@@ -290,9 +290,30 @@ func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID str
 }
 
 // defaultRunner runs a member turn through the production runTurn path.
+//
+// After the turn returns it emits a per-member "stream_finalize" on the group
+// timeline. This is what lets the frontend close THIS member's streaming bubble
+// before the next member's stream_start arrives: without it the first member's
+// placeholder stays streaming, so the next member's stream_start finds an
+// existing streaming message and never opens a new bubble — the reported
+// "other agents don't stream at all until you switch sessions". The whole-group
+// "done" (emitted once by emitGroupTerminal) is a different event: it also
+// clears loading and ends the run, so it cannot be used per member.
 func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult {
 	res := runTurn(o.buildMemberTurnSpec(ctx, groupID, turn))
+	emitGroupMemberFinalize(groupID, res.MsgID)
 	return groupMemberResult{Err: res.Err}
+}
+
+// emitGroupMemberFinalize tells the group's subscribers that one member turn
+// has ended, so the frontend finalizes that member's streaming bubble. msgID is
+// the member row's streaming message id (0 if the turn never started). It is a
+// var seam so tests can observe the contract without a WS hub.
+var emitGroupMemberFinalize = func(groupID string, msgID int64) {
+	ws.EmitToSession(groupID, ai.StreamEvent{
+		Type:         "stream_finalize",
+		StreamFinish: &ai.StreamFinishData{MessageID: msgID},
+	})
 }
 
 // RunGroupTurnForSession runs one group turn for the given group session. It is
