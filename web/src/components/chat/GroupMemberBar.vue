@@ -9,7 +9,7 @@
         :title="m.name + (m.isHost ? ' (Host)' : '') + (m.left ? ' · ' + t('group.left') : '')"
         @click="openSheet"
       >
-        <AgentIcon :backend="m.backend" :name="m.name" :size="18" />
+        <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" :size="18" />
       </button>
     </div>
     <button class="group-member-add" :title="t('group.addMembers')" @click="openSheet">
@@ -31,6 +31,7 @@ import { useI18n } from 'vue-i18n'
 import { Plus } from 'lucide-vue-next'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import GroupMemberSheet from './GroupMemberSheet.vue'
+import { getAgentAvatar } from '@/composables/useAgents'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
 
 defineProps<{

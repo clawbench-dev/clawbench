@@ -584,6 +584,10 @@ export function useChatStream(options: UseChatStreamOptions) {
       case 'stream_start': {
         if (sessionChanged()) return
         const messageId = payload.message_id as number | undefined
+        // Group chats: the backend tags the placeholder with the speaker's
+        // member row id so the speaker header renders DURING streaming, not
+        // only after the DB row loads.
+        const speakerId = (payload.agent_id as string | undefined) || ''
         if (messageId) {
           // Event-driven placeholder: if no streaming assistant message exists
           // (e.g. client opened the session mid-stream, or the optimistic
@@ -600,6 +604,7 @@ export function useChatStream(options: UseChatStreamOptions) {
               streaming: true,
               createdAt: new Date().toISOString(),
               backend: currentBackend.value,
+              agentId: speakerId || undefined,
               seq: nextClientSeq(),
             } as ChatMessage })
             onRenderNeeded()
@@ -608,7 +613,7 @@ export function useChatStream(options: UseChatStreamOptions) {
           // ws_stream_start is idempotent: it re-sets the id on the existing
           // streaming message (a no-op when the placeholder above already
           // carries the DB id).
-          dispatch({ type: 'ws_stream_start', messageId })
+          dispatch({ type: 'ws_stream_start', messageId, speakerId: speakerId || undefined })
         }
         // A placeholder now exists, so anything that arrived before it can be
         // applied. Done after the dispatch above so the replayed events land on

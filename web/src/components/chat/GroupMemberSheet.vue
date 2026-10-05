@@ -2,7 +2,7 @@
   <BottomSheet :open="open" auto :title="t('group.members')" @close="close">
     <div class="group-member-sheet">
       <div v-for="m in members" :key="m.id" class="group-member-row" :class="{ 'is-left': m.left }">
-        <AgentIcon :backend="m.backend" :name="m.name" :size="18" />
+        <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" :size="18" />
         <span class="group-member-name">{{ m.name }}</span>
         <span v-if="m.isHost" class="group-member-host-tag">{{ t('group.host') }}</span>
         <span v-if="m.left" class="group-member-left-tag">{{ t('group.left') }}</span>
@@ -41,6 +41,7 @@ import { Trash2, Plus } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
+import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, removeGroupMember, updateGroupSettings, type GroupMemberInfo } from '@/composables/useGroupChat'
 
 const props = defineProps<{

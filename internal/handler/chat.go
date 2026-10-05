@@ -326,9 +326,12 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Background context: r.Context() is cancelled as soon as this handler
-		// returns, which would abort the group turn immediately.
+		// returns, which would abort the group turn immediately. queueId/clientId
+		// travel with the turn so the orchestrator's user_message echo lets the
+		// sending device adopt its optimistic bubble's DB id (instead of
+		// rendering a second bubble).
 		go func() {
-			if err := service.RunGroupTurnForSession(context.Background(), sessionID, req.Message); err != nil {
+			if err := service.RunGroupTurnForSession(context.Background(), sessionID, req.Message, req.QueueID, req.ClientID); err != nil {
 				slog.Error("handler: group turn failed", "session_id", sessionID, "error", err)
 			}
 		}()

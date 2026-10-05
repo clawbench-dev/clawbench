@@ -235,7 +235,7 @@ function getAgentBackend(agentId: string): string {
 }
 
 /** Get an agent's custom avatar SVG string. Returns '' when unset (use built-in icon). */
-function getAgentAvatar(agentId: string): string {
+export function getAgentAvatar(agentId: string): string {
     const agent = agents.value.find(a => a.id === agentId)
     return agent?.avatar || ''
 }

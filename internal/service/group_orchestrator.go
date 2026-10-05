@@ -37,6 +37,11 @@ type groupTurnRunner func(ctx context.Context, groupID string, turn groupMemberT
 type GroupOrchestrator struct {
 	groupID string
 	project string
+	// queueID / senderClientID identify the sending device's optimistic bubble
+	// so the user_message echo lets it adopt the DB id instead of rendering a
+	// duplicate. Empty for turns not initiated by a client send.
+	queueID        string
+	senderClientID string
 	// runTurn is injectable for tests; nil means the production runTurn path.
 	runTurn groupTurnRunner
 }
@@ -79,7 +84,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 	if err != nil {
 		return fmt.Errorf("persist group user message: %w", err)
 	}
-	emitGroupUserMessage(groupID, msgID, userMessage)
+	emitGroupUserMessage(groupID, msgID, userMessage, o.queueID, o.senderClientID)
 
 	// 2. Resolve the host and member roster.
 	hostMemberID := GetGroupHostMember(groupID)
@@ -105,6 +110,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 	// 3. Loop.
 	for round := 0; round < maxRounds; round++ {
 		if groupCtx.Err() != nil {
+			emitGroupTerminal(groupID)
 			return nil // cancelled by the user
 		}
 		// Host speaks and routes.
@@ -116,6 +122,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
 			// Host failed: try round-robin once, then stop.
 			if !o.speakNextMember(groupCtx, runner, members, names) {
+				emitGroupTerminal(groupID)
 				return nil
 			}
 			continue
@@ -124,6 +131,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		route := grouprouting.Parse(o.lastHostOutput(groupID, hostMemberID))
 		if route.End {
 			// The end-signal turn already contains the summary (B2 prompt).
+			emitGroupTerminal(groupID)
 			return nil
 		}
 
@@ -131,6 +139,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		if len(targets) == 0 {
 			// Parse failed or no valid speakers: fall back to round-robin.
 			if !o.speakNextMember(groupCtx, runner, members, names) {
+				emitGroupTerminal(groupID)
 				return nil
 			}
 			continue
@@ -139,6 +148,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		// Members speak in order; each sees the previous speakers' output.
 		for _, t := range targets {
 			if groupCtx.Err() != nil {
+				emitGroupTerminal(groupID)
 				return nil
 			}
 			memberCursor := GetMemberCursor(t.ID)
@@ -153,7 +163,24 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 
 	// 4. Round cap reached: run the host once more to produce a summary.
 	o.summarize(groupCtx, runner, hostMemberID, names, members)
+	emitGroupTerminal(groupID)
 	return nil
+}
+
+// emitGroupTerminal finalizes a group turn for the frontend. runTurn
+// deliberately emits no terminal WS event (the caller owns it), so without this
+// the last member's streaming bubble would stay "streaming" forever and the
+// session would never leave the running state. Mirrors the single-agent
+// handler: clear running first (so a loadHistory triggered by "done" sees the
+// terminal state), then emit "done" and the terminal "completed" update.
+//
+// It is a var seam so tests can observe the terminal contract without a WS hub.
+var emitGroupTerminal = func(groupID string) {
+	SetSessionRunning(groupID, false, true)
+	ws.EmitToSession(groupID, ai.StreamEvent{Type: eventTypeDone})
+	// Broadcast the terminal status so every client clears the running flag,
+	// even those that missed the stream-level "done".
+	EmitSessionEventWSOnly(groupID, "completed", false)
 }
 
 // summarize runs the host once more with the summary-only prompt. The host's
@@ -257,9 +284,14 @@ func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, t
 }
 
 // RunGroupTurnForSession runs one group turn for the given group session. It is
-// the entry point used by the HTTP handler's group delegation.
-func RunGroupTurnForSession(ctx context.Context, groupID, userMessage string) error {
-	return NewGroupOrchestrator(groupID).RunGroupTurn(ctx, userMessage)
+// the entry point used by the HTTP handler's group delegation. queueID and
+// senderClientID are the sending device's optimistic-bubble identifiers (may be
+// empty); they travel on the user_message echo so the sender adopts the DB id.
+func RunGroupTurnForSession(ctx context.Context, groupID, userMessage, queueID, senderClientID string) error {
+	o := NewGroupOrchestrator(groupID)
+	o.queueID = queueID
+	o.senderClientID = senderClientID
+	return o.RunGroupTurn(ctx, userMessage)
 }
 
 // --- small helpers ---
@@ -308,12 +340,16 @@ func finalizeGroupOrphans(groupID string) {
 
 // emitGroupUserMessage broadcasts a persisted group user message to the group's
 // subscribers. It is a seam (var) so tests can observe without the WS hub.
-var emitGroupUserMessage = func(groupID string, msgID int64, text string) {
+// queueID/senderClientID let the sending device adopt the DB id instead of
+// rendering a duplicate bubble (same contract as the single-agent path).
+var emitGroupUserMessage = func(groupID string, msgID int64, text, queueID, senderClientID string) {
 	ws.EmitToSession(groupID, ai.StreamEvent{
 		Type: eventTypeUserMessage,
 		UserMessage: &ai.UserMessageData{
-			MessageID: msgID,
-			Content:   text,
+			MessageID:      msgID,
+			Content:        text,
+			QueueID:        queueID,
+			SenderClientID: senderClientID,
 		},
 	})
 }

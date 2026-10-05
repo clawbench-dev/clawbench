@@ -1,17 +1,19 @@
 <template>
-  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null">
+  <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-streaming="msg.streaming ? 'true' : null">
+
+    <!-- Group-chat speaker attribution: a member (not the user) produced this
+         assistant message. agentId is the member row id, resolved via the
+         speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
+         above the message box. -->
+    <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
+      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" :size="16" />
+      <span class="msg-speaker-name">{{ speaker.name }}</span>
+      <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
+    </div>
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
     <div class="msg-card" :class="{ 'msg-card-host': isHostMessage }">
-    <!-- Group-chat speaker attribution: a member (not the user) produced this
-         assistant message. agentId is the member row id, resolved via the
-         speaker resolver prop. -->
-    <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
-      <AgentIcon :backend="speaker.backend" :name="speaker.name" :size="14" />
-      <span class="msg-speaker-name">{{ speaker.name }}</span>
-      <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
-    </div>
     <!-- Host routing card: parse the <clawbench-speaker> tag into chips. The
          host's plain text (including the end tag and summary) still renders
          below via ContentBlocks. -->
@@ -1234,12 +1236,12 @@ const copyPayload = quotableText
   vertical-align: middle;
 }
 
-/* ── Group-chat speaker header ── */
+/* ── Group-chat speaker header (outside the bubble, top-left of the row) ── */
 .msg-speaker {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  margin-bottom: var(--space-1);
+  margin: 0 0 var(--space-1) var(--space-2);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }

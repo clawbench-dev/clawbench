@@ -50,8 +50,20 @@ func jsonQuote(s string) string {
 func silenceGroupUserEmit(t *testing.T) {
 	t.Helper()
 	orig := emitGroupUserMessage
-	emitGroupUserMessage = func(groupID string, msgID int64, text string) {}
+	emitGroupUserMessage = func(groupID string, msgID int64, text, queueID, senderClientID string) {}
 	t.Cleanup(func() { emitGroupUserMessage = orig })
+}
+
+// observeGroupTerminal replaces the terminal emitter with a counter so tests can
+// assert a group turn ALWAYS ends with a terminal event (otherwise the last
+// member's streaming bubble would hang and the session stay "running").
+func observeGroupTerminal(t *testing.T) *int {
+	t.Helper()
+	orig := emitGroupTerminal
+	n := 0
+	emitGroupTerminal = func(groupID string) { n++ }
+	t.Cleanup(func() { emitGroupTerminal = orig })
+	return &n
 }
 
 func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
@@ -83,8 +95,12 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
+	term := observeGroupTerminal(t)
 	if err := o.RunGroupTurn(context.Background(), "大家讨论一下"); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
+	}
+	if *term != 1 {
+		t.Fatalf("terminal emitted %d times, want exactly 1 (end-signal path)", *term)
 	}
 
 	// Round 1 must speak A then B in that order (sequential), after the host.
@@ -205,8 +221,12 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
+	term := observeGroupTerminal(t)
 	if err := o.RunGroupTurn(context.Background(), "开始"); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
+	}
+	if *term != 1 {
+		t.Fatalf("terminal emitted %d times, want exactly 1 (round-cap path)", *term)
 	}
 
 	// Host should speak exactly twice: the routing turn + the summary turn.

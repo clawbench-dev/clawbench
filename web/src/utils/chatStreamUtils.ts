@@ -634,7 +634,7 @@ export type ChatMessageAction =
   | { type: 'clear' }
   | { type: 'prepend_older'; olderMsgs: ChatMessage[] }
   // ── WS structural events ──
-  | { type: 'ws_stream_start'; messageId: number }
+  | { type: 'ws_stream_start'; messageId: number; speakerId?: string }
   | { type: 'ws_stream_split'; messageId: number }
   // A queued message started its own turn: the reply that was streaming is now
   // complete (the backend only emits `done` when the whole drain loop exits).
@@ -1698,6 +1698,12 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         // already holds a numeric DB id is authoritative for its own row.
         if (typeof sm.id !== 'number') {
           sm.id = action.messageId
+        }
+        // Group chats: stamp the speaker (member row id) so the speaker header
+        // renders during streaming. Only when absent — a split's "after" bubble
+        // must keep its own speaker.
+        if (action.speakerId && !sm.agentId) {
+          sm.agentId = action.speakerId
         }
       }
       return state
