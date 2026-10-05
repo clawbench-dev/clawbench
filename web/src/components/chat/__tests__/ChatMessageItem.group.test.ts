@@ -100,8 +100,10 @@ describe('ChatMessageItem group speaker', () => {
     expect(chips.map(c => c.find('.msg-routing-at').text())).toEqual(['@A', '@B'])
     expect(w.find('.msg-routing-label').exists()).toBe(false)
     expect(w.find('.msg-routing-arrow').exists()).toBe(false)
-    // Each chip carries an avatar.
+    // Each chip carries an avatar, wrapped in a fixed-size disc so every chip is
+    // the same height regardless of the avatar's render mode.
     expect(w.findAll('.msg-routing-chip .agent-icon-stub').length).toBe(2)
+    expect(w.findAll('.msg-routing-chip .msg-routing-avatar').length).toBe(2)
   })
 
   it('renders an unresolved routing target as a plain @name', () => {

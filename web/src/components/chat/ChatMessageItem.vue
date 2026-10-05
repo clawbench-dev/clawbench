@@ -19,7 +19,9 @@
          (including the end tag and summary) still renders below. -->
     <div v-if="isHostMessage && hostRouting.found" class="msg-routing-card">
       <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
-        <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" :size="18" />
+        <span class="msg-routing-avatar">
+          <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" :size="18" />
+        </span>
         <span class="msg-routing-at">@{{ s.name }}</span>
       </span>
     </div>
@@ -1282,18 +1284,39 @@ const copyPayload = quotableText
   gap: var(--space-2);
   margin: 0 0 var(--space-2);
 }
-/* @-mention chip: avatar + @name, no speaker label or arrow. */
+/* @-mention chip: avatar + @name, no speaker label or arrow.
+   Fixed height + fixed avatar disc so every chip is exactly the same size
+   regardless of the avatar's render mode (<img> vs <svg>) or name length. */
 .msg-routing-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-3) 0 var(--space-1);
   border-radius: var(--radius-full, 999px);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-sm);
+  line-height: 1;
+  box-sizing: border-box;
+}
+.msg-routing-avatar {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-routing-avatar :deep(.agent-icon-img),
+.msg-routing-avatar :deep(.agent-icon-svg),
+.msg-routing-avatar :deep(.agent-icon-initial) {
+  border-radius: var(--radius-full);
 }
 .msg-routing-at {
   font-weight: var(--font-weight-medium);
+  white-space: nowrap;
 }
 </style>
