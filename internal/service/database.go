@@ -274,6 +274,32 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 		}
 	}
 
+	// Pre-migration: group-chat columns. On an existing database the CREATE
+	// TABLE below is a no-op, so the new idx_sessions_group index would
+	// reference a column that does not exist yet and abort the whole
+	// multi-statement Exec, breaking startup. Add the columns first.
+	// (chatHistoryExists is declared in the earlier pre-migration block above.)
+	if chatHistoryExists > 0 {
+		var hasAgentID int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_history') WHERE name='agent_id'").Scan(&hasAgentID)
+		if hasAgentID == 0 {
+			if _, err := store.WriteExec("ALTER TABLE chat_history ADD COLUMN agent_id TEXT DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add chat_history.agent_id: %w", err)
+			}
+		}
+	}
+	var chatSessionsExists int
+	_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='chat_sessions'").Scan(&chatSessionsExists)
+	if chatSessionsExists > 0 {
+		var hasGroupID int
+		_ = store.ReadDB().QueryRow("SELECT COUNT(*) FROM pragma_table_info('chat_sessions') WHERE name='group_id'").Scan(&hasGroupID)
+		if hasGroupID == 0 {
+			if _, err := store.WriteExec("ALTER TABLE chat_sessions ADD COLUMN group_id TEXT DEFAULT ''"); err != nil {
+				return fmt.Errorf("failed to add chat_sessions.group_id: %w", err)
+			}
+		}
+	}
+
 	// Create tables with latest schema
 	_, err = store.WriteExec(`
 		CREATE TABLE IF NOT EXISTS chat_history (
@@ -284,6 +310,7 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			files TEXT,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
+			agent_id TEXT DEFAULT '',
 			streaming INTEGER NOT NULL DEFAULT 0,
 			indexed INTEGER NOT NULL DEFAULT 0,
 			external_message_id TEXT DEFAULT '',
@@ -300,12 +327,14 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			model TEXT DEFAULT '',
 			external_session_id TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
+			group_id TEXT DEFAULT '',
 			archived INTEGER NOT NULL DEFAULT 0,
 			last_read_at DATETIME,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			UNIQUE(backend, id)
 		);
+		CREATE INDEX IF NOT EXISTS idx_sessions_group ON chat_sessions(group_id, session_type);
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
