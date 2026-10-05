@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -165,6 +166,18 @@ func SetGroupMaxRounds(groupID string, n int) error {
 	}
 	PatchContextStateMerge(groupID, map[string]string{"maxRounds": fmt.Sprintf("%d", n)})
 	return nil
+}
+
+// GetAgentDisplayName returns an agent's display name (falling back to its id,
+// then "AI"), used to seed a member row's title and the group's placeholder.
+func GetAgentDisplayName(agentID string) string {
+	if a := model.GetAgent(agentID); a != nil && a.Name != "" {
+		return a.Name
+	}
+	if agentID != "" {
+		return agentID
+	}
+	return "AI"
 }
 
 // GetSessionType returns a session's session_type ("" if not found).

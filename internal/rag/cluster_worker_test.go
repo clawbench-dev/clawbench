@@ -40,6 +40,7 @@ func setupTestDBForClusterWorker(t *testing.T) func() {
 			agent_source TEXT DEFAULT 'default',
 			model TEXT DEFAULT '',
 			session_type TEXT NOT NULL DEFAULT 'chat',
+			group_id TEXT DEFAULT '',
 			external_session_id TEXT DEFAULT '',
 			source_session_id TEXT DEFAULT NULL,
 			transport TEXT DEFAULT '',

@@ -256,6 +256,12 @@ func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, t
 	return groupMemberResult{Err: res.Err}
 }
 
+// RunGroupTurnForSession runs one group turn for the given group session. It is
+// the entry point used by the HTTP handler's group delegation.
+func RunGroupTurnForSession(ctx context.Context, groupID, userMessage string) error {
+	return NewGroupOrchestrator(groupID).RunGroupTurn(ctx, userMessage)
+}
+
 // --- small helpers ---
 
 func groupBackend(sessionID string) string {

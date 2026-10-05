@@ -314,6 +314,28 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Group-chat delegation: a message sent to a group session is driven by the
+	// group orchestrator (host routes, members speak) rather than a single-agent
+	// turn. Delegated here — after ownership/auth and the message check, but
+	// BEFORE TryClaimSessionRun/AddChatMessage — so the orchestrator owns the
+	// user-message insert, the running-state registration, and the WS broadcast.
+	// Group sends in v1 are text-only (attachments are per-member, not per-group).
+	if service.GetSessionType(sessionID) == "group" {
+		if len(req.Files) > 0 || len(req.FilePaths) > 0 {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return
+		}
+		// Background context: r.Context() is cancelled as soon as this handler
+		// returns, which would abort the group turn immediately.
+		go func() {
+			if err := service.RunGroupTurnForSession(context.Background(), sessionID, req.Message); err != nil {
+				slog.Error("handler: group turn failed", "session_id", sessionID, "error", err)
+			}
+		}()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID, "group": true})
+		return
+	}
+
 	// Validate file paths
 	allFilePaths := req.FilePaths
 

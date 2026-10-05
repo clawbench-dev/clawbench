@@ -5119,6 +5119,61 @@ paths:
         "502":
           description: 生成下载信息失败
 
+  /api/group/create:
+    post:
+      tags: [Group]
+      summary: 创建群聊
+      description: |
+        创建一个群聊及其主持人成员。群是一条 `chat_sessions` 行
+        （`session_type='group'`），主持人是其第一个成员（`session_type='group_member'`）。
+        `title` 可空，空则后端用「{主持人名} 的群聊」占位。
+        群计入会话上限（成员不计）。
+      operationId: groupCreate
+      responses:
+        "200":
+          description: 创建成功，返回 groupId 与 hostMemberId
+        "409":
+          description: 已达会话数量上限
+
+  /api/group/members:
+    get:
+      tags: [Group]
+      summary: 列出群成员
+      description: |
+        返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
+      operationId: groupMembersList
+      parameters:
+        - name: groupId
+          in: query
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: 成员列表
+    post:
+      tags: [Group]
+      summary: 批量添加群成员
+      operationId: groupMembersAdd
+      responses:
+        "200":
+          description: 添加成功，返回 memberIds
+    delete:
+      tags: [Group]
+      summary: 移除群成员（软删除，保留其历史发言）
+      operationId: groupMembersRemove
+      responses:
+        "200":
+          description: 移除成功
+
+  /api/group/settings:
+    patch:
+      tags: [Group]
+      summary: 更新群设置（最大轮数）
+      operationId: groupSettingsUpdate
+      responses:
+        "200":
+          description: 更新成功
+
 components:
   securitySchemes:
     cookieAuth:

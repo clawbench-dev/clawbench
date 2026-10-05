@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 	title TEXT NOT NULL,
 	agent_id TEXT DEFAULT '',
 	session_type TEXT NOT NULL DEFAULT 'chat',
+	group_id TEXT DEFAULT '',
 	archived INTEGER NOT NULL DEFAULT 0,
 	sort_order INTEGER NOT NULL DEFAULT 0,
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
