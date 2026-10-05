@@ -16,6 +16,8 @@
       :staticBlockCache="render.staticBlockCache"
       :agents="agentsList"
       :currentAgent="currentAgent"
+      :resolveSpeaker="resolveGroupSpeaker"
+      :hostMemberId="groupHostMemberId"
       :currentSessionId="identity.currentSessionId.value"
       :hasMore="session.hasMore.value"
       :loadingMore="session.loadingMore.value"
@@ -236,6 +238,7 @@ import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import { useGroupMembers } from '@/composables/useGroupMembers'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
@@ -331,6 +334,8 @@ const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
+// Group-chat member roster for the current session (empty outside a group).
+const { resolveSpeaker: resolveGroupSpeaker, hostMemberId: groupHostMemberId } = useGroupMembers(identity.currentSessionId)
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({

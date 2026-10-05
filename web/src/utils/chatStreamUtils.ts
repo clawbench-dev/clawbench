@@ -76,6 +76,12 @@ export interface ChatMessage {
   cancelled?: boolean
   streaming?: boolean
   backend?: string
+  /**
+   * Speaker's group-member session row id (group chats only; empty otherwise).
+   * NOT a real agent id — resolve it against the group member list to render
+   * the speaker's avatar/name. Mirrors backend chat_history.agent_id.
+   */
+  agentId?: string
   createdAt?: string
   files?: FileEntry[]
   /**

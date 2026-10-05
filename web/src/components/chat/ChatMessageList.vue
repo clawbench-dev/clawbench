@@ -96,6 +96,8 @@
         :isLastAssistant="isLastAssistant(msg, i)"
         :isLastMessage="i === messages.length - 1"
         :forkingMessageId="forkingMessageId"
+        :resolveSpeaker="resolveSpeaker"
+        :hostMemberId="hostMemberId"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
@@ -246,6 +248,10 @@ const props = defineProps({
   /** Message id whose fork button is mid-flight (spinner instead of the icon).
    *  Null when no fork is running. */
   forkingMessageId: { type: [Number, String], default: null },
+  /** Group-chat: resolves a speaker member row id to { name, backend }. */
+  resolveSpeaker: { type: Function, default: null },
+  /** Group-chat: the host member row id (for the host bubble style). */
+  hostMemberId: { type: String, default: '' },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])

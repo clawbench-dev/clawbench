@@ -3,7 +3,15 @@
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
-    <div class="msg-card">
+    <div class="msg-card" :class="{ 'msg-card-host': isHostMessage }">
+    <!-- Group-chat speaker attribution: a member (not the user) produced this
+         assistant message. agentId is the member row id, resolved via the
+         speaker resolver prop. -->
+    <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
+      <AgentIcon :backend="speaker.backend" :name="speaker.name" :size="14" />
+      <span class="msg-speaker-name">{{ speaker.name }}</span>
+      <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
+    </div>
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
       <FileAttachmentList v-if="msg.role === 'user' && msg.files && msg.files.length > 0 && !hasImagesInContent(msg.content)" :files="msg.files" @file-tag-click="$emit('file-tag-click', $event)" />
@@ -185,6 +193,7 @@ import { useTabDrawer } from '@/composables/useTabDrawer'
 import SummaryToggle from '@/components/common/SummaryToggle.vue'
 import CopyButton from '@/components/common/CopyButton.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 
 const { t } = useI18n()
 
@@ -221,9 +230,22 @@ const props = defineProps({
    *  blocks; `showSummary` falls back to the summary only when there are none).
    *  Only the timestamp line is kept — it is information, not a control. */
   readOnly: { type: Boolean, default: false },
+  /** Resolves a group-chat speaker (msg.agentId = member row id) to
+   *  { name, backend }. Returns null outside a group / when unresolved. */
+  resolveSpeaker: { type: Function, default: null },
+  /** Host member row id, so the host's messages get a distinct style. */
+  hostMemberId: { type: String, default: '' },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'quote-message'])
+
+// Group-chat speaker for this message (null for user/single-agent messages).
+const speaker = computed(() => {
+  const id = props.msg?.agentId
+  if (!id || typeof props.resolveSpeaker !== 'function') return null
+  return props.resolveSpeaker(id)
+})
+const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -1192,5 +1214,29 @@ const copyPayload = quotableText
    baseline gap. */
 .chat-message .chat-img {
   vertical-align: middle;
+}
+
+/* ── Group-chat speaker header ── */
+.msg-speaker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-bottom: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.msg-speaker-name {
+  font-weight: var(--font-weight-medium);
+}
+.msg-speaker-host-tag {
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
+  color: var(--accent-color, #0066cc);
+  font-size: var(--font-size-2xs);
+}
+/* The host's bubble is centered with an accent border to read as "chair". */
+.msg-card-host {
+  border-left: 2px solid var(--accent-color, #0066cc);
 }
 </style>
