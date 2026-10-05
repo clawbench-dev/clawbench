@@ -6,6 +6,16 @@
          Also mirrored by a sticky toast (startBusy) for the elapsed counter. -->
     <BusyBar :visible="busy !== null" :label="busyLabel" />
 
+    <!-- Group member bar (only for group sessions) -->
+    <GroupMemberBar
+      v-if="isGroupSession"
+      :sessionId="identity.currentSessionId.value"
+      :members="groupMembers"
+      :hostMemberId="groupHostMemberId"
+      :isGroup="isGroupSession"
+      @changed="refreshGroupMembers(identity.currentSessionId.value)"
+    />
+
     <!-- Messages -->
     <ChatMessageList
       ref="messageListRef"
@@ -238,6 +248,7 @@ import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
+import GroupMemberBar from './GroupMemberBar.vue'
 import { useGroupMembers } from '@/composables/useGroupMembers'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
@@ -335,7 +346,8 @@ const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
 // Group-chat member roster for the current session (empty outside a group).
-const { resolveSpeaker: resolveGroupSpeaker, hostMemberId: groupHostMemberId } = useGroupMembers(identity.currentSessionId)
+const { members: groupMembers, resolveSpeaker: resolveGroupSpeaker, hostMemberId: groupHostMemberId, refresh: refreshGroupMembers } = useGroupMembers(identity.currentSessionId)
+const isGroupSession = computed(() => groupMembers.value.length > 0)
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({
