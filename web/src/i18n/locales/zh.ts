@@ -1113,6 +1113,16 @@ export default {
     noMore: '没有更多会话',
     loadExternalSession: '外部会话',
   },
+  group: {
+    newGroup: '新建群聊',
+    title: '群聊',
+    host: '主持人',
+    addMembers: '添加成员',
+    members: '成员',
+    left: '已离场',
+    maxRounds: '最大轮数',
+    confirm: '添加',
+  },
   task: {
     title: '任务',
     noTasks: '暂无任务',

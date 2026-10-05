@@ -26,6 +26,9 @@
       <button class="header-action-btn" data-action="create" @click.stop="$emit('create')" :title="t('session.newSession')">
         <Plus :size="16" />
       </button>
+      <button class="header-action-btn" data-action="create-group" @click.stop="$emit('create-group')" :title="t('group.newGroup')">
+        <Users :size="16" />
+      </button>
       <template v-if="pinned">
         <RefreshButton :size="16" class="header-action-btn" data-action="refresh" :loading="refreshing" :disabled="refreshing" :title="t('session.refresh')" @click.stop="triggerRefresh" />
       </template>
@@ -40,7 +43,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { List, Search, Plus } from 'lucide-vue-next'
+import { List, Search, Plus, Users } from 'lucide-vue-next'
 import RefreshButton from '@/components/common/RefreshButton.vue'
 
 const props = defineProps({
@@ -53,7 +56,7 @@ const props = defineProps({
   refreshing: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['open-search', 'create', 'refresh'])
+const emit = defineEmits(['open-search', 'create', 'create-group', 'refresh'])
 
 function triggerRefresh() {
   if (props.refreshing) return

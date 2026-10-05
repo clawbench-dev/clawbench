@@ -1111,6 +1111,16 @@ export default {
     noMore: 'No more sessions',
     loadExternalSession: 'External Session',
   },
+  group: {
+    newGroup: 'New group chat',
+    title: 'Group',
+    host: 'Host',
+    addMembers: 'Add members',
+    members: 'Members',
+    left: 'Left',
+    maxRounds: 'Max rounds',
+    confirm: 'Add',
+  },
   task: {
     title: 'Tasks',
     noTasks: 'No tasks',
