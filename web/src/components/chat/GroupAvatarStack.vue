@@ -19,11 +19,14 @@
     >
       <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="md" />
     </span>
-    <!-- Overflow: when more than MAX members, the last slot becomes "+N". -->
+    <!-- Overflow: when more than MAX members, the last slot becomes "+N".
+         It is a terminal LABEL, not an avatar, so it must stay fully readable:
+         give it the highest z-index so the neighbouring avatar (which overlaps
+         its left 8px) cannot clip the "+". -->
     <span
       v-if="overflowCount > 0"
       class="stack-item stack-more"
-      :style="{ zIndex: 0 }"
+      :style="{ zIndex: visibleMembers.length + 1 }"
       :title="t('group.members') + ': ' + members.length"
     >+{{ overflowCount }}</span>
     <GroupMemberSheet

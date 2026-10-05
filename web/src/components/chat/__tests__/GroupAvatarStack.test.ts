@@ -66,6 +66,11 @@ describe('GroupAvatarStack', () => {
     expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(3)
     // 6 members, 3 shown → "+3".
     expect(w.find('.stack-more').text()).toBe('+3')
+    // The "+N" chip must sit ON TOP of every avatar, otherwise the overlapping
+    // neighbour clips its leading "+".
+    const moreZ = Number(w.find('.stack-more').element.style.zIndex)
+    const avatarZs = w.findAll('.stack-item:not(.stack-more)').map(el => Number(el.element.style.zIndex))
+    expect(avatarZs.every(z => z < moreZ)).toBe(true)
   })
 
   it('marks the host disc so it gets the accent ring', () => {
