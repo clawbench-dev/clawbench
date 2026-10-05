@@ -372,7 +372,7 @@ describe('SessionList', () => {
       expect(groupRow.find('.group-member-stack').exists()).toBe(true)
       expect(groupRow.find('.session-item-agent').exists()).toBe(false)
       // Two members -> two discs.
-      expect(groupRow.findAll('.group-member-stack .stack-disc').length).toBe(2)
+      expect(groupRow.findAll('.group-member-stack .avatar-disc').length).toBe(2)
 
       // Plain row is untouched: agent chip, no group slot.
       const plainRow = wrapper.find('[data-session-id="s1"]')
@@ -381,7 +381,7 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('caps the stack at four discs with no overflow badge', async () => {
+    it('caps the stack at four discs and summarises the rest as "+N" (same as the header)', async () => {
       const manyMembers = Array.from({ length: 6 }, (_, i) => ({
         id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
       }))
@@ -393,14 +393,14 @@ describe('SessionList', () => {
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      const discs = wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc')
-      // Capped at 4; the remaining members are not rendered at all.
+      const discs = wrapper.findAll('[data-session-id="g1"] .group-member-stack .avatar-disc')
+      // Capped at 4 discs; the remaining members are summarised as "+2".
       expect(discs.length).toBe(4)
-      expect(wrapper.find('[data-session-id="g1"] .stack-more').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="g1"] .avatar-more').text()).toBe('+2')
       wrapper.unmount()
     })
 
-    it('renders all four discs with no overflow badge when exactly at the cap', async () => {
+    it('renders all four discs with no overflow label when exactly at the cap', async () => {
       const exactly = Array.from({ length: 4 }, (_, i) => ({
         id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
       }))
@@ -412,8 +412,8 @@ describe('SessionList', () => {
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      expect(wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc').length).toBe(4)
-      expect(wrapper.find('[data-session-id="g1"] .stack-more').exists()).toBe(false)
+      expect(wrapper.findAll('[data-session-id="g1"] .group-member-stack .avatar-disc').length).toBe(4)
+      expect(wrapper.find('[data-session-id="g1"] .avatar-more').exists()).toBe(false)
       wrapper.unmount()
     })
 
@@ -1275,7 +1275,7 @@ describe('SessionList', () => {
       expect(row.find('.session-item-group').exists()).toBe(true)
       expect(row.find('.group-member-stack').exists()).toBe(true)
       expect(row.find('.session-item-agent').exists()).toBe(false)
-      expect(row.findAll('.group-member-stack .stack-disc').length).toBe(2)
+      expect(row.findAll('.group-member-stack .avatar-disc').length).toBe(2)
     })
 
     it('collapses and expands a cross-project group from its header', async () => {

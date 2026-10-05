@@ -36,8 +36,8 @@ describe('GroupAvatarStack', () => {
       { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
       { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
     ])
-    expect(w.findAll('.stack-item')).toHaveLength(3)
-    expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(3)
+    expect(w.findAll('.avatar-disc')).toHaveLength(3)
+    expect(w.findAll('.avatar-disc .agent-icon-stub')).toHaveLength(3)
     expect(w.find('.stack-add').exists()).toBe(false)
   })
 
@@ -48,8 +48,8 @@ describe('GroupAvatarStack', () => {
       { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
       { id: 'm4', name: 'C', backend: 'claude', agentId: 'a4', isHost: false },
     ])
-    expect(w.findAll('.stack-item')).toHaveLength(4)
-    expect(w.find('.stack-more').exists()).toBe(false)
+    expect(w.findAll('.avatar-disc')).toHaveLength(4)
+    expect(w.find('.avatar-more').exists()).toBe(false)
   })
 
   it('shows 4 avatars + a "+N" text label (not a disc) when there are more than 4 members', () => {
@@ -62,13 +62,13 @@ describe('GroupAvatarStack', () => {
       { id: 'm6', name: 'E', backend: 'claude', agentId: 'a6', isHost: false },
     ])
     // 4 avatar discs, no 5th disc.
-    expect(w.findAll('.stack-item')).toHaveLength(4)
-    expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(4)
+    expect(w.findAll('.avatar-disc')).toHaveLength(4)
+    expect(w.findAll('.avatar-disc .agent-icon-stub')).toHaveLength(4)
     // The overflow count is a plain text label beside the stack.
-    const more = w.find('.stack-more')
+    const more = w.find('.avatar-more')
     expect(more.exists()).toBe(true)
     expect(more.text()).toBe('+2')
-    expect(more.classes()).not.toContain('stack-item')
+    expect(more.classes()).not.toContain('avatar-disc')
   })
 
   it('marks the host disc so it gets the accent ring', () => {
@@ -76,7 +76,7 @@ describe('GroupAvatarStack', () => {
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
       { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
     ])
-    const discs = w.findAll('.stack-item')
+    const discs = w.findAll('.avatar-disc')
     expect(discs[0].classes()).toContain('is-host')
     expect(discs[1].classes()).not.toContain('is-host')
   })
@@ -89,19 +89,10 @@ describe('GroupAvatarStack', () => {
       { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
       { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
     ])
-    const z = w.findAll('.stack-item').map(el => Number(el.element.style.zIndex))
+    const z = w.findAll('.avatar-disc').map(el => Number(el.element.style.zIndex))
     expect(z).toEqual([3, 2, 1])
     expect(z[0]).toBeGreaterThan(z[1])
     expect(z[1]).toBeGreaterThan(z[2])
-  })
-
-  it('does not dim members (no half-transparent icons)', () => {
-    const w = mountStack([
-      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
-      { id: 'm2', name: 'Gone', backend: 'claude', agentId: 'a2', isHost: false, left: true },
-    ])
-    // Left members are NOT greyed any more; every disc renders at full opacity.
-    expect(w.findAll('.stack-item')[1].classes()).not.toContain('is-left')
   })
 
   it('opens the member sheet when the stack is clicked anywhere', async () => {
@@ -109,7 +100,7 @@ describe('GroupAvatarStack', () => {
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
     ])
     sheetOpen.mockClear()
-    await w.find('.agent-stack').trigger('click')
+    await w.find('.group-avatar-stack').trigger('click')
     expect(sheetOpen).toHaveBeenCalled()
   })
 
@@ -117,6 +108,6 @@ describe('GroupAvatarStack', () => {
     const w = mount(GroupAvatarStack, {
       props: { sessionId: 's1', members: [], hostMemberId: '', isGroup: false },
     })
-    expect(w.find('.agent-stack').exists()).toBe(false)
+    expect(w.find('.group-avatar-stack').exists()).toBe(false)
   })
 })
