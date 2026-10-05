@@ -71,9 +71,11 @@ function openSheet() {
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
-  /* Ring separates overlapping circles; matches the bar background so it reads
-     as a gap, and (unlike a border) does not change the circle's real size. */
-  box-shadow: 0 0 0 2px var(--bg-secondary, #fff);
+  /* Ring separates overlapping circles. --border-color (not --bg-secondary)
+     because in dark themes the latter is nearly the same value as the disc
+     background, so the ring vanished against a black/dark wallpaper. The ring
+     is uniform for every disc; only its colour differs for the host. */
+  box-shadow: 0 0 0 2px var(--border-color);
   margin-left: -8px;
   position: relative;
   transition: transform var(--duration-base) ease;
@@ -89,9 +91,10 @@ function openSheet() {
   border-radius: var(--radius-full);
 }
 .stack-item :deep(.agent-icon-img) { object-fit: cover; }
+/* Host keeps the accent ring but NO z-index: every disc stacks by DOM order
+   (each later one over the previous), so the overlap direction is uniform. */
 .stack-item.is-host {
   box-shadow: 0 0 0 2px var(--accent-color, #0066cc);
-  z-index: 1;
 }
 .agent-stack:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
