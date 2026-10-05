@@ -20,7 +20,7 @@
     <div v-if="isHostMessage && hostRouting.found" class="msg-routing-card">
       <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
         <span class="msg-routing-avatar">
-          <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" :size="18" />
+          <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" :size="20" />
         </span>
         <span class="msg-routing-at">@{{ s.name }}</span>
       </span>
@@ -1309,19 +1309,26 @@ const copyPayload = quotableText
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Circular background so a transparent-background built-in icon (e.g. the
+     Claude starburst) still reads as a circle, not a floating glyph. Matches
+     the member bar's disc. */
+  background: var(--bg-tertiary);
 }
 /* Force the avatar (custom <img> OR built-in <svg>) to fill the disc and crop
    to a circle, overriding AgentIcon's own 20% rounded-square radius. Without
    width/height:100% the 18px icon sits inside the 20px disc as a visible
-   rounded square. */
-.msg-routing-avatar :deep(.agent-icon-img),
-.msg-routing-avatar :deep(.agent-icon-svg),
-.msg-routing-avatar :deep(.agent-icon-initial) {
+   rounded square.
+   NOTE: this is the NON-scoped block, so `:deep()` is NOT transformed by Vue
+   (it only works in <style scoped>) — use plain descendant selectors anchored
+   on the parent class. */
+.msg-routing-avatar .agent-icon-img,
+.msg-routing-avatar .agent-icon-svg,
+.msg-routing-avatar .agent-icon-initial {
   width: 100%;
   height: 100%;
   border-radius: var(--radius-full);
 }
-.msg-routing-avatar :deep(.agent-icon-img) {
+.msg-routing-avatar .agent-icon-img {
   object-fit: cover;
 }
 .msg-routing-at {
