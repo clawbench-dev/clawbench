@@ -325,6 +325,7 @@
                     @close="sessionSidebar.closeSidebar"
                     @select="handleSessionSelect"
                     @create="handleSessionCreate"
+                    @create-group="handleSidebarGroupCreate"
                     @archive="handleSessionArchive"
                     @destroy="handleSessionDestroy"
                     @open-session-search="sessionSearchDrawer.open()"
@@ -391,6 +392,7 @@
         @close="sessionIdentity.sessionDrawer.close()"
         @select="handleSessionSelect"
         @create="handleSessionCreate"
+        @create-group="handleGroupCreate"
         @archive="handleSessionArchive"
         @destroy="handleSessionDestroy"
         @open-session-search="sessionSearchDrawer.open()"
@@ -1881,6 +1883,38 @@ async function handleSessionCreate(agentId: string) {
   }
   sessionSidebar.addSessionLocally(session)
   sessionIdentity.sessionDrawer.close()
+}
+
+// The desktop sidebar's create-group button has no local agent picker; it opens
+// the SessionDrawer's shared picker in group-host mode (the drawer then emits
+// create-group WITH an agentId, routed to handleGroupCreate).
+function handleSidebarGroupCreate() {
+  sessionDrawerRef.value?.openGroupHostSelector()
+}
+
+// handleGroupCreate creates a group with the chosen host agent and switches
+// into it. The group then appears in the session list like any other session.
+async function handleGroupCreate(hostAgentId: string) {
+  const { createGroup } = await import('@/composables/useGroupChat')
+  try {
+    const { groupId } = await createGroup(hostAgentId)
+    if (!groupId) return
+    await sessionIdentity.switchSession(groupId)
+    const session = {
+      id: groupId,
+      title: '',
+      backend: '',
+      agentId: hostAgentId,
+      model: '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      unreadCount: 0,
+    }
+    sessionSidebar.addSessionLocally(session)
+    sessionIdentity.sessionDrawer.close()
+  } catch (e) {
+    appLog.w('App', `create group failed: ${String(e)}`)
+  }
 }
 
 function handleDrawerPin() {
