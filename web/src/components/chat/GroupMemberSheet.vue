@@ -1,23 +1,48 @@
 <template>
   <BottomSheet :open="open" auto :title="t('group.members')" @close="close">
     <div class="group-member-sheet">
-      <div v-for="m in members" :key="m.id" class="group-member-row" :class="{ 'is-left': m.left }">
-        <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
-        <span class="group-member-name">{{ m.name }}</span>
-        <span v-if="m.isHost" class="group-member-host-tag">{{ t('group.host') }}</span>
-        <span v-if="m.left" class="group-member-left-tag">{{ t('group.left') }}</span>
-        <button v-else-if="!m.isHost" class="group-member-remove" :title="t('common.remove')" @click="remove(m)">
-          <Trash2 :size="14" />
-        </button>
+      <!-- Member roster -->
+      <ul class="gm-list">
+        <li
+          v-for="m in members"
+          :key="m.id"
+          class="gm-row"
+          :class="{ 'is-left': m.left }"
+        >
+          <span class="gm-avatar">
+            <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
+          </span>
+          <span class="gm-name">{{ m.name }}</span>
+          <span v-if="m.isHost" class="gm-tag gm-tag--host">{{ t('group.host') }}</span>
+          <span v-else-if="m.left" class="gm-tag gm-tag--left">{{ t('group.left') }}</span>
+          <button
+            v-else
+            class="gm-remove"
+            :title="t('common.remove')"
+            :aria-label="t('common.remove')"
+            @click="remove(m)"
+          >
+            <Trash2 :size="14" />
+          </button>
+        </li>
+      </ul>
+
+      <!-- Settings: max rounds -->
+      <div class="gm-setting">
+        <label class="gm-setting-label" for="group-max-rounds">{{ t('group.maxRounds') }}</label>
+        <input
+          id="group-max-rounds"
+          v-model.number="maxRounds"
+          type="number"
+          min="1"
+          class="gm-setting-input"
+          @change="saveMaxRounds"
+        />
       </div>
 
-      <div class="group-setting-row">
-        <label class="group-setting-label" for="group-max-rounds">{{ t('group.maxRounds') }}</label>
-        <input id="group-max-rounds" v-model.number="maxRounds" type="number" min="1" class="group-setting-input" @change="saveMaxRounds" />
-      </div>
-
-      <button class="group-add-members-btn" @click="openAdd">
-        <Plus :size="16" />
+      <!-- Add members -->
+      <button class="fbtn fbtn-primary gm-add" @click="openAdd">
+        <Plus :size="14" />
         <span>{{ t('group.addMembers') }}</span>
       </button>
     </div>
@@ -93,60 +118,128 @@ defineExpose({ open: openSheet })
 .group-member-sheet {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
+  gap: var(--space-5);
+  padding: var(--space-3) var(--space-7) var(--space-7);
 }
-.group-member-row {
+
+/* ── Member roster ── */
+.gm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.gm-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-4);
+  min-height: 40px;
+  padding: var(--space-2) 0;
 }
-.group-member-row.is-left {
+.gm-row + .gm-row {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+}
+.gm-row.is-left .gm-avatar,
+.gm-row.is-left .gm-name {
   opacity: var(--opacity-disabled, 0.4);
 }
-.group-member-name {
-  flex: 1;
-  text-align: left;
+.gm-avatar {
+  flex-shrink: 0;
+  width: var(--icon-size-lg, 24px);
+  height: var(--icon-size-lg, 24px);
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.group-member-host-tag,
-.group-member-left-tag {
+.gm-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Pills: host (accent) / left (muted). */
+.gm-tag {
+  flex-shrink: 0;
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
   font-size: var(--font-size-2xs);
-  padding: 0 var(--space-1);
-  border-radius: var(--radius-xs);
+  line-height: 16px;
+}
+.gm-tag--host {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 15%, transparent);
   color: var(--accent-color, #0066cc);
 }
-.group-member-left-tag {
-  background: var(--bg-tertiary, #eee);
-  color: var(--text-muted, #999);
+.gm-tag--left {
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
 }
-.group-member-remove {
+
+/* Remove: icon button, muted at rest, red on hover. */
+.gm-remove {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 0;
   border: none;
   background: none;
-  color: var(--text-muted, #999);
+  color: var(--text-muted);
   cursor: pointer;
-  display: flex;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: background var(--duration-base), color var(--duration-base);
 }
-.group-setting-row {
+@media (hover: hover) {
+  .gm-remove:hover {
+    color: var(--color-red, #dc2626);
+    background: color-mix(in srgb, var(--color-red, #dc2626) 12%, transparent);
+  }
+}
+.gm-remove:focus-visible {
+  outline: 2px solid var(--accent-color, #0066cc);
+  outline-offset: 1px;
+}
+
+/* ── Settings row ── */
+.gm-setting {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
 }
-.group-setting-input {
+.gm-setting-label {
+  font-size: var(--font-size-md);
+  color: var(--text-primary);
+}
+.gm-setting-input {
   width: 72px;
+  height: 30px;
   text-align: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-md);
 }
-.group-add-members-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  padding: var(--space-2);
-  border: 1px dashed var(--border-color, #ccc);
-  border-radius: var(--radius-md, 8px);
-  background: none;
-  color: var(--accent-color, #0066cc);
-  cursor: pointer;
+.gm-setting-input:focus {
+  outline: none;
+  border-color: var(--accent-color, #0066cc);
+  box-shadow: 0 0 0 2px var(--focus-ring, rgba(0, 102, 204, 0.2));
+}
+
+/* ── Add button (full-width pill) ── */
+.gm-add {
+  width: 100%;
 }
 </style>
