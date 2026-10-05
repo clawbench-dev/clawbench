@@ -355,7 +355,7 @@ func ServeSessionResume(w http.ResponseWriter, r *http.Request) {
 			var count int
 			err = store.ReadDB().QueryRowContext(
 				r.Context(),
-				"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+				"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')",
 				sessionProjectID,
 			).Scan(&count)
 			if err != nil {

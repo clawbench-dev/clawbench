@@ -123,15 +123,16 @@ type RecentSession struct {
 func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter, sortOrder, fromTime, toTime, cursor, cursorID string) ([]RecentSession, bool, error) {
 	// Browse mode never mixes session types: each selection lists exactly one
 	// type, and "all" means "all conversations" (not "conversations + tasks").
-	sessionType := "chat"
+	// "Conversations" now includes group chats, which are user-visible sessions.
+	sessionTypes := []string{"chat", "group"}
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
-		sessionType = "scheduled"
+		sessionTypes = []string{"scheduled", "scheduled"}
 	}
 	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.session_type = ?`
-	args := []interface{}{sessionType}
+		WHERE s.session_type IN (?, ?)`
+	args := []interface{}{sessionTypes[0], sessionTypes[1]}
 	if projectPath != "" {
 		projectID, idErr := ProjectIDForPath(projectPath)
 		if idErr != nil {
@@ -240,15 +241,15 @@ func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiv
 		return []RecentSession{}, nil
 	}
 
-	sessionType := "chat"
+	sessionTypes := []string{"chat", "group"}
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
-		sessionType = "scheduled"
+		sessionTypes = []string{"scheduled", "scheduled"}
 	}
 	query := `SELECT s.id, s.title, s.backend, COALESCE(p.path, ''), s.archived, s.created_at, s.session_type
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.session_type = ?`
-	args := []interface{}{sessionType}
+		WHERE s.session_type IN (?, ?)`
+	args := []interface{}{sessionTypes[0], sessionTypes[1]}
 	if projectPath != "" {
 		projectID, idErr := ProjectIDForPath(projectPath)
 		if idErr != nil {

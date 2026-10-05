@@ -158,7 +158,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if model.SessionMaxCount > 0 {
 		var count int
 		err = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')",
 			sessProjectID,
 		).Scan(&count)
 		if err != nil {
@@ -428,7 +428,7 @@ func checkSessionLimit(projectPath string) error {
 	}
 	var count int
 	err := store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type = 'chat'",
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')",
 		projectID,
 	).Scan(&count)
 	if err != nil {
