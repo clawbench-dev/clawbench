@@ -104,7 +104,14 @@
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <!-- Group rows swap the single-agent chip for a group glyph
+                         plus a stacked member preview: a group's agentId is its
+                         HOST, so the agent chip would read as a 1:1 chat. -->
+                    <span v-if="row.session.sessionType === 'group'" class="session-item-group">
+                      <Users :size="12" />
+                      <GroupMemberStack :members="row.session.groupMembers || []" />
+                    </span>
+                    <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
                     <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
                   </div>
                   <!-- Fork-group toggle, inlined on the anchor row itself.
@@ -200,7 +207,11 @@
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
+                    <span v-if="session.sessionType === 'group'" class="session-item-group">
+                      <Users :size="12" />
+                      <GroupMemberStack :members="session.groupMembers || []" />
+                    </span>
+                    <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
                     <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
                   </div>
                 </div>
@@ -283,13 +294,14 @@
 import { ref, reactive, watch, computed, nextTick, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { VueDraggable } from 'vue-draggable-plus'
-import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split } from 'lucide-vue-next'
+import { Archive, ChevronDown, Pin, PinOff, PencilLine, MessageSquareShare, Tags, Trash2, MoreVertical, Split, Users } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import SessionGroupHeader from '@/components/session/SessionGroupHeader.vue'
 import SessionTagDialog from '@/components/session/SessionTagDialog.vue'
 import SessionShareDialog from '@/components/session/SessionShareDialog.vue'
 import SessionTagFilterBar from '@/components/session/SessionTagFilterBar.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import GroupMemberStack from '@/components/session/GroupMemberStack.vue'
 import { tagAccentStyle } from '@/utils/tagColor.ts'
 import { useAgents } from '@/composables/useAgents'
 import { useSessionShare } from '@/composables/useSessionShare'
@@ -1594,6 +1606,17 @@ onUnmounted(() => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Group rows: a group glyph + stacked member previews. Deliberately NOT the
+   agent chip's pill background — the stack's own 2px rings already read as a
+   cluster, and a pill behind them would double the visual weight. */
+.session-item-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  color: var(--text-muted, #999);
 }
 
 .session-item-model {

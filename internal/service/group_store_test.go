@@ -101,3 +101,84 @@ func TestGroupMaxRoundsDefaultAndOverride(t *testing.T) {
 		t.Fatalf("maxRounds=%d want 25", got)
 	}
 }
+
+// TestGroupMembersForGroups pins the batch preview used by the session list:
+// one call covers many groups, left members are excluded, group ids with no
+// active members are absent, and an empty input never touches the DB.
+func TestGroupMembersForGroups(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	// Group A: host + two members; one of the two is then removed.
+	gA, hostA, err := CreateGroup(project, "A", "codebuddy", "agent-host", "Host A")
+	if err != nil {
+		t.Fatalf("CreateGroup A: %v", err)
+	}
+	leftMember, err := AddGroupMember(project, gA, "claude", "agent-left", "Gone")
+	if err != nil {
+		t.Fatalf("AddGroupMember A: %v", err)
+	}
+	if _, err := AddGroupMember(project, gA, "codex", "agent-b", "B"); err != nil {
+		t.Fatalf("AddGroupMember A: %v", err)
+	}
+	if err := RemoveGroupMember(gA, leftMember); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+
+	// Group B: only the host.
+	gB, _, err := CreateGroup(project, "B", "codebuddy", "agent-host", "Host B")
+	if err != nil {
+		t.Fatalf("CreateGroup B: %v", err)
+	}
+
+	got, err := GroupMembersForGroups([]string{gA, gB, gA, ""})
+	if err != nil {
+		t.Fatalf("GroupMembersForGroups: %v", err)
+	}
+
+	// A: host + B survive; the removed member is excluded.
+	aMembers := got[gA]
+	if len(aMembers) != 2 {
+		t.Fatalf("group A preview: want 2 active members, got %d", len(aMembers))
+	}
+	names := map[string]bool{}
+	for _, m := range aMembers {
+		names[m.Name] = true
+		if m.ID == "" || m.AgentID == "" || m.Backend == "" {
+			t.Fatalf("preview member missing a field: %+v", m)
+		}
+	}
+	if !names["Host A"] || !names["B"] {
+		t.Fatalf("group A preview names=%v want Host A + B", names)
+	}
+	if names["Gone"] {
+		t.Fatal("left member must not appear in the list preview")
+	}
+	_ = hostA
+
+	// B: only its host.
+	if len(got[gB]) != 1 {
+		t.Fatalf("group B preview: want 1 member, got %d", len(got[gB]))
+	}
+
+	// Empty input: empty map, no error.
+	empty, err := GroupMembersForGroups(nil)
+	if err != nil {
+		t.Fatalf("empty input: %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("empty input: want empty map, got %d entries", len(empty))
+	}
+
+	// Unknown group id: absent from the map (caller treats it as no members).
+	unknown, err := GroupMembersForGroups([]string{"no-such-group"})
+	if err != nil {
+		t.Fatalf("unknown id: %v", err)
+	}
+	if _, ok := unknown["no-such-group"]; ok {
+		t.Fatal("unknown group id must be absent from the map")
+	}
+}

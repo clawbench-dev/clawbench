@@ -37,10 +37,22 @@ export interface CrossProjectSession {
   backend?: string
   agentId?: string
   model?: string
+  /** 'group' for a group-chat session; drives the group row rendering. */
+  sessionType?: string
+  /** Active-member preview for a group row (see model.GroupMemberPreview). */
+  groupMembers?: GroupMemberPreview[]
   running: boolean
   pendingApproval: boolean
   unreadCount: number
   updatedAt: string
+}
+
+/** One active group member in a session-list row (mirrors the Go wire type). */
+export interface GroupMemberPreview {
+  id: string
+  agentId: string
+  name: string
+  backend: string
 }
 
 export interface CrossProjectGroup {
@@ -87,6 +99,10 @@ function toSession(raw: Record<string, unknown>): CrossProjectSession {
     backend: raw.backend ? String(raw.backend) : undefined,
     agentId: raw.agentId ? String(raw.agentId) : undefined,
     model: raw.model ? String(raw.model) : undefined,
+    sessionType: raw.sessionType ? String(raw.sessionType) : undefined,
+    groupMembers: Array.isArray(raw.groupMembers)
+      ? (raw.groupMembers as GroupMemberPreview[])
+      : undefined,
     running: !!raw.running,
     pendingApproval: !!raw.pendingApproval,
     unreadCount: Number(raw.unreadCount ?? 0),

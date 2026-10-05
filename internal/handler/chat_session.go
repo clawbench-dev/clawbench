@@ -39,15 +39,17 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	pendingSet := ai.GetACPConnManager().GetPendingApprovalSessionIDs()
 
 	type overviewSession struct {
-		ID              string    `json:"id"`
-		Title           string    `json:"title"`
-		Backend         string    `json:"backend"`
-		AgentID         string    `json:"agentId"`
-		Model           string    `json:"model"`
-		Running         bool      `json:"running"`
-		PendingApproval bool      `json:"pendingApproval"`
-		UnreadCount     int       `json:"unreadCount"`
-		UpdatedAt       time.Time `json:"updatedAt"`
+		ID              string                     `json:"id"`
+		Title           string                     `json:"title"`
+		Backend         string                     `json:"backend"`
+		AgentID         string                     `json:"agentId"`
+		Model           string                     `json:"model"`
+		SessionType     string                     `json:"sessionType,omitempty"`
+		Running         bool                       `json:"running"`
+		PendingApproval bool                       `json:"pendingApproval"`
+		UnreadCount     int                        `json:"unreadCount"`
+		UpdatedAt       time.Time                  `json:"updatedAt"`
+		GroupMembers    []model.GroupMemberPreview `json:"groupMembers,omitempty"`
 	}
 	type projectGroup struct {
 		Name     string            `json:"name"`
@@ -55,6 +57,7 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	groups := []*projectGroup{}
 	groupByName := map[string]*projectGroup{}
+	groupIDs := []string{}
 	total := 0
 	for _, s := range sessions {
 		running := runningSet[s.ID]
@@ -68,18 +71,36 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 			groupByName[s.ProjectPath] = g
 			groups = append(groups, g)
 		}
+		if s.SessionType == "group" {
+			groupIDs = append(groupIDs, s.ID)
+		}
 		g.Sessions = append(g.Sessions, overviewSession{
 			ID:              s.ID,
 			Title:           s.Title,
 			Backend:         s.Backend,
 			AgentID:         s.AgentID,
 			Model:           s.Model,
+			SessionType:     s.SessionType,
 			Running:         running,
 			PendingApproval: pending,
 			UnreadCount:     s.UnreadCount,
 			UpdatedAt:       s.UpdatedAt,
 		})
 		total++
+	}
+	// Group rows carry the same active-member preview as the main list. One
+	// batch query for all groups on this page (attachGroupMembers works on
+	// model.ChatSession, so this path inlines the lookup).
+	if membersByGroup, err := service.GroupMembersForGroups(groupIDs); err != nil {
+		slog.Warn("failed to load overview group members", "error", err)
+	} else {
+		for gi := range groups {
+			for si := range groups[gi].Sessions {
+				if members := membersByGroup[groups[gi].Sessions[si].ID]; len(members) > 0 {
+					groups[gi].Sessions[si].GroupMembers = members
+				}
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"projects": groups, "total": total})
 }
@@ -161,6 +182,7 @@ func ServeSessions(w http.ResponseWriter, r *http.Request) { //nolint:gocognit,g
 			sessions[i].PendingApproval = pendingApprovalSet[sessions[i].ID]
 		}
 		attachSessionTags(sessions)
+		attachGroupMembers(sessions)
 		totalCount, _ := service.GetSessionCount(projectPath)
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"sessions":   sessions,
@@ -651,6 +673,36 @@ func attachSessionTags(sessions []model.ChatSession) {
 	for i := range sessions {
 		for _, t := range tagsBySession[sessions[i].ID] {
 			sessions[i].Tags = append(sessions[i].Tags, model.SessionTag{Name: t.Name, Scope: t.Scope})
+		}
+	}
+}
+
+// attachGroupMembers batch-loads the active-member preview for group sessions
+// in a page and sets it in place. Only group rows get the field, so a page of
+// plain chat sessions pays no extra work. Like attachSessionTags, failures are
+// logged and swallowed: the preview is decoration and must not take down the
+// list.
+func attachGroupMembers(sessions []model.ChatSession) {
+	if len(sessions) == 0 {
+		return
+	}
+	groupIDs := make([]string, 0, len(sessions))
+	for i := range sessions {
+		if sessions[i].SessionType == "group" {
+			groupIDs = append(groupIDs, sessions[i].ID)
+		}
+	}
+	if len(groupIDs) == 0 {
+		return
+	}
+	membersByGroup, err := service.GroupMembersForGroups(groupIDs)
+	if err != nil {
+		slog.Warn("failed to load group members", "error", err)
+		return
+	}
+	for i := range sessions {
+		if members := membersByGroup[sessions[i].ID]; len(members) > 0 {
+			sessions[i].GroupMembers = members
 		}
 	}
 }

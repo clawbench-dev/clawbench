@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -108,6 +109,68 @@ func countActiveMembers(members []GroupMember) int {
 		}
 	}
 	return n
+}
+
+// GroupMembersForGroups returns the ACTIVE (non-archived) members of each group
+// id, keyed by group id, as compact previews for the session list's stacked
+// avatars. One query for all ids — the sessions list must not fan out a query
+// per group (the same reason GetTagsForSessions exists). Group ids with no
+// active members are absent from the map; empty input returns an empty map
+// without touching the DB.
+func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPreview, error) {
+	out := map[string][]model.GroupMemberPreview{}
+	if len(groupIDs) == 0 {
+		return out, nil
+	}
+
+	// De-duplicate and drop empties before building IN (...). SQLite's default
+	// variable limit is 999; a session-list page is far smaller, and this is a
+	// second query, so a plain expansion is fine (mirrors GetTagsForSessions).
+	seen := make(map[string]bool, len(groupIDs))
+	ids := make([]string, 0, len(groupIDs))
+	for _, id := range groupIDs {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, 0, len(ids)+1)
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	// archived = 0 keeps left members out of the list preview (the full roster,
+	// left members included, is only in GET /api/group/members). Order matches
+	// ListGroupMembers so the stack is stable across reloads.
+	query := fmt.Sprintf(`
+		SELECT group_id, id, agent_id, title, backend
+		FROM chat_sessions
+		WHERE group_id IN (%s) AND session_type = ? AND archived = 0
+		ORDER BY group_id, created_at ASC, id ASC`, placeholders)
+	args = append(args, groupMemberSessionType)
+
+	rows, err := store.ReadDB().Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var groupID string
+		var p model.GroupMemberPreview
+		if err := rows.Scan(&groupID, &p.ID, &p.AgentID, &p.Name, &p.Backend); err != nil {
+			return nil, err
+		}
+		out[groupID] = append(out[groupID], p)
+	}
+	return out, rows.Err()
 }
 
 // RemoveGroupMember soft-removes a member: the row is archived (kept) so its

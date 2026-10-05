@@ -91,6 +91,9 @@ vi.mock('@/composables/useGlobalEvents', () => ({
 }))
 vi.mock('@/composables/useAgents', () => ({
   useAgents: () => ({ getAgentBackend: mockGetAgentBackend, getAgentName: mockGetAgentName, getAgentAvatar: () => '' }),
+  // GroupMemberStack (rendered for group rows) imports this directly; a
+  // whitelist mock that omits it makes the import undefined and crashes render.
+  getAgentAvatar: () => '',
 }))
 // VueDraggable needs a real DOM root it can measure; in jsdom its mounted hook
 // throws "Root element not found" and takes the whole component down. The stub
@@ -337,6 +340,65 @@ describe('SessionList', () => {
     await wrapper.vm.loadSessions()
     await flushPromises()
     expect(wrapper.vm.visibleRows[0].running).toBe(true)
+  })
+
+  describe('group rows', () => {
+    const groupSession = {
+      id: 'g1',
+      title: 'Group 1',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-05',
+      agentId: 'agent-host',
+      backend: 'cli',
+      sessionType: 'group',
+      groupMembers: [
+        { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli' },
+        { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
+      ],
+    }
+
+    it('replaces the single-agent chip with a group glyph + member stack', async () => {
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [groupSession, sessionsFixture().s1], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      // Group row: group slot + stack, no agent chip.
+      const groupRow = wrapper.find('[data-session-id="g1"]')
+      expect(groupRow.find('.session-item-group').exists()).toBe(true)
+      expect(groupRow.find('.group-member-stack').exists()).toBe(true)
+      expect(groupRow.find('.session-item-agent').exists()).toBe(false)
+      // Two members -> two discs.
+      expect(groupRow.findAll('.group-member-stack .stack-disc').length).toBe(2)
+
+      // Plain row is untouched: agent chip, no group slot.
+      const plainRow = wrapper.find('[data-session-id="s1"]')
+      expect(plainRow.find('.session-item-agent').exists()).toBe(true)
+      expect(plainRow.find('.session-item-group').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('renders the +N overflow disc when members exceed the cap', async () => {
+      const manyMembers = Array.from({ length: 5 }, (_, i) => ({
+        id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
+      }))
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: manyMembers }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const discs = wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc')
+      // 3 capped discs + 1 overflow disc = 4.
+      expect(discs.length).toBe(4)
+      expect(wrapper.find('[data-session-id="g1"] .stack-more').text()).toBe('+2')
+      wrapper.unmount()
+    })
   })
 
   it('renders the sweep band as a real element only on running rows', async () => {

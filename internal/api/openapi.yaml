@@ -1319,7 +1319,11 @@ paths:
             type: string
       responses:
         "200":
-          description: 会话列表
+          description: |
+            会话列表。
+            群会话（`sessionType: "group"`）额外携带 `groupMembers`（紧凑的**在群**成员预览
+            `{id, agentId, name, backend}`，用于会话列表渲染成员头像堆叠）；非群会话省略该键。
+            完整成员名单（含已离场）见 `GET /api/group/members`。
     post:
       tags: [Sessions]
       summary: 新建会话

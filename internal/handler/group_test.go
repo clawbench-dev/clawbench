@@ -7,6 +7,7 @@ import (
 
 	"clawbench/internal/model"
 	"clawbench/internal/service"
+	"clawbench/internal/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,4 +105,117 @@ func TestAIChatDelegatesGroupSend(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, true, resp["group"], "group send must be delegated to the orchestrator")
+}
+
+// TestServeSessions_GroupRowCarriesMemberPreview pins the session-list contract
+// for group rows: a group session carries a compact `groupMembers` preview
+// (active members only), while a plain chat session omits the key entirely.
+func TestServeSessions_GroupRowCarriesMemberPreview(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostMemberID, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	// A plain chat session in the same project must NOT grow the field.
+	chatID, err := service.CreateSession(env.ProjectDir, "codebuddy", "plain", "codebuddy", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessions, req)
+	assertOK(t, w)
+
+	var result struct {
+		Sessions []model.ChatSession `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	byID := map[string]model.ChatSession{}
+	for _, s := range result.Sessions {
+		byID[s.ID] = s
+	}
+
+	group, ok := byID[groupID]
+	require.True(t, ok, "group session must appear in the list")
+	require.Len(t, group.GroupMembers, 2, "host + added member")
+	names := map[string]bool{}
+	ids := map[string]bool{}
+	for _, m := range group.GroupMembers {
+		names[m.Name] = true
+		ids[m.ID] = true
+	}
+	assert.True(t, names["Host"] && names["Claude"], "preview names=%v", names)
+	assert.True(t, ids[hostMemberID] && ids[memberID], "preview must carry member row ids")
+
+	// The plain chat row omits the field entirely (omitempty + nil slice → the
+	// key is absent, so a non-group payload is byte-for-byte unchanged). Assert
+	// on the raw JSON, not the decoded slice, which cannot tell absent from [].
+	require.Contains(t, w.Body.String(), `"groupMembers"`, "the group row must carry the preview key")
+	var raw struct {
+		Sessions []map[string]any `json:"sessions"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	for _, s := range raw.Sessions {
+		if s["id"] == chatID {
+			_, present := s["groupMembers"]
+			assert.False(t, present, "non-group session must not carry the groupMembers key")
+		}
+	}
+
+	// Members themselves are hidden from the list.
+	assert.NotContains(t, byID, hostMemberID)
+	assert.NotContains(t, byID, memberID)
+}
+
+// TestServeSessionsOverview_GroupRowCarriesMemberPreview pins the same contract
+// on the cross-project overview endpoint. A group only appears there when it is
+// running/pending/unread, so the fixture marks it unread.
+func TestServeSessionsOverview_GroupRowCarriesMemberPreview(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	_, err = service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	// Make the group unread so the overview (running/pending/unread only)
+	// includes it: an assistant message newer than last_read_at.
+	_, err = store.UnsafeDBForTest().Exec(
+		`INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming)
+		 VALUES (?, 'assistant', 'unread', ?, 'codebuddy', 0)`,
+		store.ProjectIDForTest(t, env.ProjectDir), groupID)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/sessions/overview", nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionsOverview, req)
+	assertOK(t, w)
+
+	var result struct {
+		Projects []struct {
+			Sessions []struct {
+				ID           string                     `json:"id"`
+				SessionType  string                     `json:"sessionType"`
+				GroupMembers []model.GroupMemberPreview `json:"groupMembers"`
+			} `json:"sessions"`
+		} `json:"projects"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+
+	found := false
+	for _, p := range result.Projects {
+		for _, s := range p.Sessions {
+			if s.ID != groupID {
+				continue
+			}
+			found = true
+			assert.Equal(t, "group", s.SessionType)
+			require.Len(t, s.GroupMembers, 2)
+		}
+	}
+	assert.True(t, found, "group session must appear in the overview")
 }

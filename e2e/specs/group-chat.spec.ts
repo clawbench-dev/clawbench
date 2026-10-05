@@ -42,11 +42,14 @@ test.describe('AI group chat', () => {
 
       const afterRemove = await (await fetch(`/api/group/members?groupId=${encodeURIComponent(created.groupId)}`)).json()
 
-      // The group must show up in the session list; members must not.
+      // The group must show up in the session list; members must not. The group
+      // row also carries a compact member preview (the list renders stacked
+      // avatars from it) — active members only, since one was just removed.
       const sessions = await (await fetch('/api/ai/sessions')).json()
       const ids = (sessions.sessions || []).map((s: { id: string }) => s.id)
+      const groupRow = (sessions.sessions || []).find((s: { id: string }) => s.id === created.groupId)
 
-      return { ok: true, created, added, listed, settings, removed, afterRemove, ids, memberId }
+      return { ok: true, created, added, listed, settings, removed, afterRemove, ids, memberId, groupRow }
     })
 
     expect(result.ok).toBe(true)
@@ -70,6 +73,11 @@ test.describe('AI group chat', () => {
     expect(result.ids).toContain(result.created.groupId)
     expect(result.ids).not.toContain(result.created.hostMemberId)
     expect(result.ids).not.toContain(result.memberId)
+
+    // The group row carries the member preview; the removed member is excluded.
+    expect(result.groupRow.sessionType).toBe('group')
+    expect(result.groupRow.groupMembers.length).toBe(1)
+    expect(result.groupRow.groupMembers[0].id).toBe(result.created.hostMemberId)
   })
 
   test('sending to a group is delegated to the orchestrator', async ({ page }) => {
