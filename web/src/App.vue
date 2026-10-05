@@ -277,7 +277,19 @@
                        cursor's location. -->
                   <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
                   <div class="chat-title-bar">
-                    <span class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
+                    <!-- Group sessions: the header shows an overlapping avatar
+                         stack (host first, then members) with a trailing "+"
+                         that opens member management. Single-agent sessions
+                         keep the original icon + name. -->
+                    <GroupAvatarStack
+                      v-if="isGroupSession"
+                      :sessionId="sessionIdentity.currentSessionId.value"
+                      :members="groupMembers"
+                      :hostMemberId="groupHostMemberId"
+                      :isGroup="isGroupSession"
+                      @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
+                    />
+                    <span v-else class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
@@ -301,6 +313,10 @@
                       :keyboard-active="chatShortcutActive"
                       :current-file="currentFile"
                       :current-dir="currentDir"
+                      :group-members="groupMembers"
+                      :group-host-member-id="groupHostMemberId"
+                      :resolve-group-speaker="resolveGroupSpeaker"
+                      :resolve-group-speaker-by-name="resolveGroupSpeakerByName"
                       @open="switchTab('chat')"
                       @task-card-click="onTaskCardClick"
                       @open-session-search="sessionSearchDrawer.open()"
@@ -567,6 +583,7 @@ import AcpSessionDrawer from './components/chat/AcpSessionDrawer.vue'
 import QuoteQuestionBar from './components/common/QuoteQuestionBar.vue'
 import HeaderMarquee from './components/common/HeaderMarquee.vue'
 import AgentIcon from './components/common/AgentIcon.vue'
+import GroupAvatarStack from './components/chat/GroupAvatarStack.vue'
 import SettingsPage from './components/settings/SettingsPage.vue'
 import TaskTab from '@/components/task/TaskTab.vue'
 import StatsTabHost from '@/components/stats/StatsTabHost.vue'
@@ -576,6 +593,7 @@ import SessionPickerDialog from './components/common/SessionPickerDialog.vue'
 import { useTaskTab, registerSwitchTab, onTaskEvent } from '@/composables/useTaskTab.ts'
 import { useTabDrawer, onTabSwitch, resetTabDrawerState } from '@/composables/useTabDrawer.ts'
 import { resetAgents, useAgents } from '@/composables/useAgents'
+import { useGroupMembers } from '@/composables/useGroupMembers'
 import { resetUsageStats } from '@/composables/useUsageStats'
 import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
@@ -1241,6 +1259,18 @@ const { downloadVisible, downloadFileName, downloadReceived, downloadTotal, canc
 
 const sessionIdentity = useSessionIdentity()
 const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
+
+// Group roster for the chat header's avatar stack. Single owner here (the header
+// lives in App.vue); ChatPanelContent receives it via props so the roster is
+// fetched once, not twice.
+const {
+  members: groupMembers,
+  hostMemberId: groupHostMemberId,
+  resolveSpeaker: resolveGroupSpeaker,
+  resolveByName: resolveGroupSpeakerByName,
+  refresh: refreshGroupMembers,
+} = useGroupMembers(sessionIdentity.currentSessionId)
+const isGroupSession = computed(() => groupMembers.value.length > 0)
 
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())

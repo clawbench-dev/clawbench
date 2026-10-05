@@ -6,16 +6,6 @@
          Also mirrored by a sticky toast (startBusy) for the elapsed counter. -->
     <BusyBar :visible="busy !== null" :label="busyLabel" />
 
-    <!-- Group member bar (only for group sessions) -->
-    <GroupMemberBar
-      v-if="isGroupSession"
-      :sessionId="identity.currentSessionId.value"
-      :members="groupMembers"
-      :hostMemberId="groupHostMemberId"
-      :isGroup="isGroupSession"
-      @changed="refreshGroupMembers(identity.currentSessionId.value)"
-    />
-
     <!-- Messages -->
     <ChatMessageList
       ref="messageListRef"
@@ -26,9 +16,9 @@
       :staticBlockCache="render.staticBlockCache"
       :agents="agentsList"
       :currentAgent="currentAgent"
-      :resolveSpeaker="resolveGroupSpeaker"
-      :resolveSpeakerByName="resolveGroupSpeakerByName"
-      :hostMemberId="groupHostMemberId"
+      :resolveSpeaker="props.resolveGroupSpeaker"
+      :resolveSpeakerByName="props.resolveGroupSpeakerByName"
+      :hostMemberId="props.groupHostMemberId"
       :currentSessionId="identity.currentSessionId.value"
       :hasMore="session.hasMore.value"
       :loadingMore="session.loadingMore.value"
@@ -249,8 +239,6 @@ import QuoteDetailDrawer from './QuoteDetailDrawer.vue'
 import BtwAnswerDrawer from './BtwAnswerDrawer.vue'
 import ChatInputBar from './ChatInputBar.vue'
 import ChatMessageList from './ChatMessageList.vue'
-import GroupMemberBar from './GroupMemberBar.vue'
-import { useGroupMembers } from '@/composables/useGroupMembers'
 import QueuedMessageBar from './QueuedMessageBar.vue'
 import PlanPanel from './PlanPanel.vue'
 import TeamPanel from './TeamPanel.vue'
@@ -310,6 +298,12 @@ const props = defineProps({
     keyboardActive: { type: Boolean, default: true },
     currentFile: Object,
     currentDir: String,
+    // Group roster, owned by App.vue (the header avatar stack lives there).
+    // Passed down so the roster is fetched once, not once per consumer.
+    groupMembers: { type: Array, default: () => [] },
+    groupHostMemberId: { type: String, default: '' },
+    resolveGroupSpeaker: { type: Function, default: null },
+    resolveGroupSpeakerByName: { type: Function, default: null },
 })
 const emit = defineEmits(['open', 'message', 'task-card-click', 'open-session-search'])
 
@@ -346,9 +340,6 @@ const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
-// Group-chat member roster for the current session (empty outside a group).
-const { members: groupMembers, resolveSpeaker: resolveGroupSpeaker, resolveByName: resolveGroupSpeakerByName, hostMemberId: groupHostMemberId, refresh: refreshGroupMembers } = useGroupMembers(identity.currentSessionId)
-const isGroupSession = computed(() => groupMembers.value.length > 0)
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({
