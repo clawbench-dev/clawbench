@@ -1,9 +1,13 @@
 <template>
   <span v-if="shown.length" class="group-member-stack" :title="tooltip">
-    <span v-for="m in shown" :key="m.id" class="stack-disc">
+    <span
+      v-for="(m, i) in shown"
+      :key="m.id"
+      class="stack-disc"
+      :style="{ zIndex: shown.length - i }"
+    >
       <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="sm" />
     </span>
-    <span v-if="overflow > 0" class="stack-disc stack-more">+{{ overflow }}</span>
   </span>
 </template>
 
@@ -23,20 +27,22 @@ export interface GroupMemberPreview {
 
 const props = withDefaults(defineProps<{
   members: GroupMemberPreview[]
-  /** Max discs shown before collapsing the rest into a trailing "+N". */
+  /** Max discs shown; members past it are omitted entirely (no overflow badge). */
   max?: number
 }>(), {
-  max: 3,
+  max: 4,
 })
 
 const { t } = useI18n()
 
-// Slice to `max` discs; everything past it becomes the +N counter.
+// Show at most `max` discs. The FIRST member is rendered foremost (see the
+// inline z-index above) and each later one tucks behind the previous, peeking
+// out to the right. Members past the cap are simply not rendered — there is no
+// "+N" badge.
 const shown = computed(() => props.members.slice(0, props.max))
-const overflow = computed(() => Math.max(0, props.members.length - props.max))
 
-// The whole stack carries one tooltip (per-disc tooltips would need the disc to
-// be a focusable element; the row already opens the session, so keep it inert).
+// The whole stack carries one tooltip listing every member (including any past
+// the cap), so the hidden ones are still discoverable on hover.
 const tooltip = computed(() => {
   const names = props.members.map(m => m.name).join(', ')
   return `${t('group.members')}: ${names}`
@@ -65,6 +71,9 @@ const tooltip = computed(() => {
      dark themes --bg-secondary is nearly identical to the disc background, so
      the ring vanishes and the discs merge. Matches GroupAvatarStack.vue. */
   box-shadow: 0 0 0 1.5px var(--border-color);
+  /* Each disc after the first slides LEFT under the previous one. z-index is set
+     inline (first = highest) so the FIRST member stays fully visible and the
+     rest are tucked behind it — the reverse of plain DOM-order stacking. */
   margin-left: -6px;
   position: relative;
 }
@@ -79,11 +88,4 @@ const tooltip = computed(() => {
   border-radius: var(--radius-full);
 }
 .stack-disc :deep(.agent-icon-img) { object-fit: cover; }
-
-.stack-more {
-  font-size: 9px;
-  font-weight: var(--font-weight-medium);
-  color: var(--text-secondary, #495057);
-  background: var(--bg-tertiary);
-}
 </style>

@@ -381,8 +381,8 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('renders the +N overflow disc when members exceed the cap', async () => {
-      const manyMembers = Array.from({ length: 5 }, (_, i) => ({
+    it('caps the stack at four discs with no overflow badge', async () => {
+      const manyMembers = Array.from({ length: 6 }, (_, i) => ({
         id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
       }))
       mockFetch.mockResolvedValue({
@@ -394,14 +394,14 @@ describe('SessionList', () => {
       await flushPromises()
 
       const discs = wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc')
-      // 3 capped discs + 1 overflow disc = 4.
+      // Capped at 4; the remaining members are not rendered at all.
       expect(discs.length).toBe(4)
-      expect(wrapper.find('[data-session-id="g1"] .stack-more').text()).toBe('+2')
+      expect(wrapper.find('[data-session-id="g1"] .stack-more').exists()).toBe(false)
       wrapper.unmount()
     })
 
-    it('renders no +N when the roster is exactly the cap', async () => {
-      const exactly = Array.from({ length: 3 }, (_, i) => ({
+    it('renders all four discs with no overflow badge when exactly at the cap', async () => {
+      const exactly = Array.from({ length: 4 }, (_, i) => ({
         id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
       }))
       mockFetch.mockResolvedValue({
@@ -412,7 +412,7 @@ describe('SessionList', () => {
       await wrapper.vm.loadSessions()
       await flushPromises()
 
-      expect(wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc').length).toBe(3)
+      expect(wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc').length).toBe(4)
       expect(wrapper.find('[data-session-id="g1"] .stack-more').exists()).toBe(false)
       wrapper.unmount()
     })
