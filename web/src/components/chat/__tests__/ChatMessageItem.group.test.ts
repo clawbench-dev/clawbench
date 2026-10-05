@@ -7,7 +7,10 @@ import { createI18n } from 'vue-i18n'
 vi.mock('@/composables/useDoubleClickCopy', () => ({ useDoubleClickCopy: () => ({ handleDblClick: vi.fn() }) }))
 vi.mock('@/composables/useFilePathAnnotation', () => ({ useFilePathAnnotation: () => ({ openFilePath: vi.fn(), readLineTargetFromEl: vi.fn() }), openFilePath: vi.fn() }))
 vi.mock('@/composables/useLocalhostAnnotation', () => ({ useLocalhostUrlClickHandler: () => ({ handleLocalhostUrlClick: vi.fn() }) }))
-vi.mock('@/composables/useAutoSpeech', () => ({ extractSpeakableText: () => '' }))
+vi.mock('@/composables/useAutoSpeech', () => ({
+  extractSpeakableText: (blocks: Array<{ type: string; text?: string }>) =>
+    (blocks || []).filter(b => b.type === 'text' && b.text).map(b => b.text).join('\n'),
+}))
 vi.mock('@/composables/useDialog', () => ({ useDialog: () => ({ confirm: vi.fn() }) }))
 vi.mock('@/utils/chatStreamUtils', () => ({
   extractFileChanges: () => ({ created: [], modified: [] }),
@@ -76,5 +79,22 @@ describe('ChatMessageItem group speaker', () => {
   it('renders no speaker header for an ordinary message', () => {
     const w = mountItem({ role: 'assistant', id: 3, content: '', blocks: [] })
     expect(w.find('.msg-speaker').exists()).toBe(false)
+  })
+
+  it('renders a routing card for the host message', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      {
+        role: 'assistant',
+        id: 4,
+        content: '',
+        blocks: [{ type: 'text', text: '<clawbench-speaker>A, B</clawbench-speaker> 请表态' }],
+        agentId: 'host-1',
+      },
+      { resolveSpeaker, hostMemberId: 'host-1' },
+    )
+    expect(w.find('.msg-routing-card').exists()).toBe(true)
+    const chips = w.findAll('.msg-routing-chip').map(c => c.text())
+    expect(chips).toEqual(['A', 'B'])
   })
 })

@@ -12,6 +12,14 @@
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
     </div>
+    <!-- Host routing card: parse the <clawbench-speaker> tag into chips. The
+         host's plain text (including the end tag and summary) still renders
+         below via ContentBlocks. -->
+    <div v-if="isHostMessage && hostRouting.found" class="msg-routing-card">
+      <span class="msg-routing-label">{{ speaker?.name }}</span>
+      <span class="msg-routing-arrow">→</span>
+      <span v-for="s in hostRouting.speakers" :key="s" class="msg-routing-chip">{{ s }}</span>
+    </div>
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
       <FileAttachmentList v-if="msg.role === 'user' && msg.files && msg.files.length > 0 && !hasImagesInContent(msg.content)" :files="msg.files" @file-tag-click="$emit('file-tag-click', $event)" />
@@ -181,6 +189,7 @@ import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuot
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
+import { parseGroupRouting } from '@/utils/groupRouting.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
@@ -246,6 +255,15 @@ const speaker = computed(() => {
   return props.resolveSpeaker(id)
 })
 const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
+
+// Host routing card: parse the host's routing tag from its text so the reader
+// sees "Host → A, B" chips. Unparseable tags are NOT stripped from the body
+// (parseGroupRouting never mutates text) — only the card is added.
+const hostRouting = computed(() => {
+  if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', end: false, raw: '' }
+  const text = msgText.value || ''
+  return parseGroupRouting(text)
+})
 
 const autoSpeech = inject('autoSpeech')
 const wrapperRef = ref(null)
@@ -1238,5 +1256,23 @@ const copyPayload = quotableText
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {
   border-left: 2px solid var(--accent-color, #0066cc);
+}
+.msg-routing-card {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+.msg-routing-label {
+  font-weight: var(--font-weight-medium);
+}
+.msg-routing-chip {
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  color: var(--accent-color, #0066cc);
 }
 </style>
