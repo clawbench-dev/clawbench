@@ -52,7 +52,7 @@ describe('GroupAvatarStack', () => {
     expect(w.find('.stack-more').exists()).toBe(false)
   })
 
-  it('shows 3 avatars + a "+N" chip when there are more than 4 members', () => {
+  it('shows 4 avatars + a "+N" text label (not a disc) when there are more than 4 members', () => {
     const w = mountStack([
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
       { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
@@ -61,16 +61,14 @@ describe('GroupAvatarStack', () => {
       { id: 'm5', name: 'D', backend: 'claude', agentId: 'a5', isHost: false },
       { id: 'm6', name: 'E', backend: 'claude', agentId: 'a6', isHost: false },
     ])
-    // Total discs = 4 (3 avatars + 1 "+N"), not 6.
+    // 4 avatar discs, no 5th disc.
     expect(w.findAll('.stack-item')).toHaveLength(4)
-    expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(3)
-    // 6 members, 3 shown → "+3".
-    expect(w.find('.stack-more').text()).toBe('+3')
-    // The "+N" chip must sit ON TOP of every avatar, otherwise the overlapping
-    // neighbour clips its leading "+".
-    const moreZ = Number(w.find('.stack-more').element.style.zIndex)
-    const avatarZs = w.findAll('.stack-item:not(.stack-more)').map(el => Number(el.element.style.zIndex))
-    expect(avatarZs.every(z => z < moreZ)).toBe(true)
+    expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(4)
+    // The overflow count is a plain text label beside the stack.
+    const more = w.find('.stack-more')
+    expect(more.exists()).toBe(true)
+    expect(more.text()).toBe('+2')
+    expect(more.classes()).not.toContain('stack-item')
   })
 
   it('marks the host disc so it gets the accent ring', () => {

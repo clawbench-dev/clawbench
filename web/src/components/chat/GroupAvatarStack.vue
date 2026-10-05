@@ -19,14 +19,14 @@
     >
       <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="md" />
     </span>
-    <!-- Overflow: when more than MAX members, the last slot becomes "+N".
-         It is a terminal LABEL, not an avatar, so it must stay fully readable:
-         give it the highest z-index so the neighbouring avatar (which overlaps
-         its left 8px) cannot clip the "+". -->
+    <!-- Overflow count is plain text to the RIGHT of the stack, NOT a disc:
+         the count is extra info, not a member, and keeping it out of the stack
+         leaves the overlap direction uniform (host on top, each later disc
+         under the previous) instead of one avatar being squeezed on both sides.
+         No leading dot — with a small gap it already reads as separate. -->
     <span
       v-if="overflowCount > 0"
-      class="stack-item stack-more"
-      :style="{ zIndex: visibleMembers.length + 1 }"
+      class="stack-more"
       :title="t('group.members') + ': ' + members.length"
     >+{{ overflowCount }}</span>
     <GroupMemberSheet
@@ -58,15 +58,11 @@ defineEmits<{ (e: 'changed'): void }>()
 const { t } = useI18n()
 const sheetRef = ref<InstanceType<typeof GroupMemberSheet> | null>(null)
 
-// Header shows at most MAX discs; beyond that the last slot is a "+N" chip, so
-// at most MAX-1 avatars are shown when overflowing.
+// Header shows at most MAX avatar discs; any remainder is a "+N" text label
+// to the right (not a disc). So 6 members -> 4 avatars + "+2".
 const MAX = 4
-const visibleMembers = computed(() =>
-  props.members.length > MAX ? props.members.slice(0, MAX - 1) : props.members,
-)
-const overflowCount = computed(() =>
-  props.members.length > MAX ? props.members.length - (MAX - 1) : 0,
-)
+const visibleMembers = computed(() => props.members.slice(0, MAX))
+const overflowCount = computed(() => Math.max(0, props.members.length - MAX))
 
 function openSheet() {
   sheetRef.value?.open()
@@ -117,12 +113,13 @@ function openSheet() {
 .stack-item.is-host {
   box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
 }
-/* "+N" overflow chip: same disc geometry, no avatar inside. */
+/* "+N" is plain text to the right of the stack — extra info, not a member. */
 .stack-more {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  font-size: var(--font-size-2xs);
-  font-weight: var(--font-weight-semibold, 600);
+  margin-left: 6px;
+  flex-shrink: 0;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium, 500);
+  color: var(--text-muted);
   line-height: 1;
 }
 .agent-stack:focus-visible {
