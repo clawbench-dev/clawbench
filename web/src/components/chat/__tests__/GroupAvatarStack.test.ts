@@ -41,6 +41,33 @@ describe('GroupAvatarStack', () => {
     expect(w.find('.stack-add').exists()).toBe(false)
   })
 
+  it('caps the stack at 4 discs: exactly 4 members shows 4 avatars, no +N', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
+      { id: 'm4', name: 'C', backend: 'claude', agentId: 'a4', isHost: false },
+    ])
+    expect(w.findAll('.stack-item')).toHaveLength(4)
+    expect(w.find('.stack-more').exists()).toBe(false)
+  })
+
+  it('shows 3 avatars + a "+N" chip when there are more than 4 members', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
+      { id: 'm4', name: 'C', backend: 'claude', agentId: 'a4', isHost: false },
+      { id: 'm5', name: 'D', backend: 'claude', agentId: 'a5', isHost: false },
+      { id: 'm6', name: 'E', backend: 'claude', agentId: 'a6', isHost: false },
+    ])
+    // Total discs = 4 (3 avatars + 1 "+N"), not 6.
+    expect(w.findAll('.stack-item')).toHaveLength(4)
+    expect(w.findAll('.stack-item .agent-icon-stub')).toHaveLength(3)
+    // 6 members, 3 shown → "+3".
+    expect(w.find('.stack-more').text()).toBe('+3')
+  })
+
   it('marks the host disc so it gets the accent ring', () => {
     const w = mountStack([
       { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },

@@ -10,15 +10,22 @@
     @keydown.space.prevent="openSheet"
   >
     <span
-      v-for="(m, i) in members"
+      v-for="(m, i) in visibleMembers"
       :key="m.id"
       class="stack-item"
       :class="{ 'is-host': m.isHost }"
-      :style="{ zIndex: members.length - i }"
+      :style="{ zIndex: visibleMembers.length - i }"
       :title="m.name + (m.isHost ? ' (Host)' : '')"
     >
       <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="md" />
     </span>
+    <!-- Overflow: when more than MAX members, the last slot becomes "+N". -->
+    <span
+      v-if="overflowCount > 0"
+      class="stack-item stack-more"
+      :style="{ zIndex: 0 }"
+      :title="t('group.members') + ': ' + members.length"
+    >+{{ overflowCount }}</span>
     <GroupMemberSheet
       ref="sheetRef"
       :groupId="sessionId"
@@ -30,14 +37,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import GroupMemberSheet from './GroupMemberSheet.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import type { GroupMemberInfo } from '@/composables/useGroupChat'
 
-defineProps<{
+const props = defineProps<{
   sessionId: string
   members: GroupMemberInfo[]
   hostMemberId: string
@@ -47,6 +54,16 @@ defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
 const sheetRef = ref<InstanceType<typeof GroupMemberSheet> | null>(null)
+
+// Header shows at most MAX discs; beyond that the last slot is a "+N" chip, so
+// at most MAX-1 avatars are shown when overflowing.
+const MAX = 4
+const visibleMembers = computed(() =>
+  props.members.length > MAX ? props.members.slice(0, MAX - 1) : props.members,
+)
+const overflowCount = computed(() =>
+  props.members.length > MAX ? props.members.length - (MAX - 1) : 0,
+)
 
 function openSheet() {
   sheetRef.value?.open()
@@ -96,6 +113,14 @@ function openSheet() {
    (each later one over the previous), so the overlap direction is uniform. */
 .stack-item.is-host {
   box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
+}
+/* "+N" overflow chip: same disc geometry, no avatar inside. */
+.stack-more {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1;
 }
 .agent-stack:focus-visible {
   outline: 2px solid var(--accent-color, #0066cc);
