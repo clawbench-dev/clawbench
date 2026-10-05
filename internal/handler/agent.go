@@ -580,15 +580,9 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 	// the SVG safety scan below sees the actual markup.
 	if v, exists := patch["avatar"]; exists {
 		avatar, _ := v.(string)
-		if avatar != "" {
-			if len(avatar) > maxAgentAvatarBytes {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
-				return
-			}
-			if !avatarSVGLooksSafe([]byte(avatar)) {
-				writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
-				return
-			}
+		if avatar != "" && (len(avatar) > maxAgentAvatarBytes || !avatarSVGLooksSafe([]byte(avatar))) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidAgentAvatar")
+			return
 		}
 		ap.Avatar = &avatar
 	}

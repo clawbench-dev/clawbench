@@ -89,12 +89,11 @@ vi.mock('@/composables/useDialog', () => ({
   useDialog: () => ({ confirm: mockDialogConfirm }),
 }))
 
-// The picker lazily imports DiceBear; stub the heavy deps so this file does not
+// The picker lazily imports DiceBear; stub the heavy dep so this file does not
 // pull the library (and its ESM/JSON chain) into jsdom.
 vi.mock('@/utils/lazyAvatar', () => ({
   AVATAR_STYLES: ['bottts', 'identicon'],
-  getAvatarLib: vi.fn().mockResolvedValue({}),
-  renderAvatar: vi.fn().mockResolvedValue('<svg viewBox="0 0 2 2"></svg>'),
+  loadAvatarKit: vi.fn().mockResolvedValue({ Avatar: class {}, styles: {} }),
 }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: { name: 'AgentIcon', props: ['backend', 'name', 'size', 'avatar'], template: '<span class="agent-icon-stub" />' },

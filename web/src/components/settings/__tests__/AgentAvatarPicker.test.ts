@@ -18,15 +18,12 @@ const { mockLoadAvatarKit, mockStyles } = vi.hoisted(() => {
   const mockStyles = { bottts: { $id: 'bottts' }, identicon: { $id: 'identicon' }, shapes: { $id: 'shapes' } }
   return {
     mockStyles,
-    mockLoadAvatarKit: vi.fn().mockImplementation(async (onProgress?: (d: number, t: number) => void) => {
-      onProgress?.(3, 3)
-      return {
-        Avatar: class {
-          constructor(public style: unknown, public options: { seed: string }) {}
-          toString() { return `<svg data-seed="${this.options.seed}"></svg>` }
-        },
-        styles: mockStyles,
-      }
+    mockLoadAvatarKit: vi.fn().mockResolvedValue({
+      Avatar: class {
+        constructor(public style: unknown, public options: { seed: string }) {}
+        toString() { return `<svg data-seed="${this.options.seed}"></svg>` }
+      },
+      styles: mockStyles,
     }),
   }
 })

@@ -1,12 +1,13 @@
 <template>
-    <img v-if="avatarSrc" class="agent-icon-img" :style="imgStyle" :src="avatarSrc" :alt="name || backend" />
-    <svg v-else-if="processedSvg" class="agent-icon-svg" :class="[svgData!.needsBg ? 'agent-icon-bg' : '', svgData!.monoCssClass]" :style="svgStyle" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
+    <img v-if="avatarSrc" class="agent-icon-img" :style="sizeStyle" :src="avatarSrc" :alt="name || backend" />
+    <svg v-else-if="processedSvg" class="agent-icon-svg" :class="[svgData!.needsBg ? 'agent-icon-bg' : '', svgData!.monoCssClass]" :style="sizeStyle" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
     <span v-else class="agent-icon-initial" :style="initialStyle">{{ initial }}</span>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue'
 import { getAgentSvg } from '@/utils/agentIcons'
+import { svgToDataUri } from '@/utils/svgDataUri'
 
 // Per-instance unique suffix to avoid SVG gradient ID collisions when
 // multiple AgentIcon instances render on the same page. Without this,
@@ -28,10 +29,8 @@ const svgData = computed(() => getAgentSvg(props.backend))
 
 // A custom avatar is rendered as an <img> with a data URI, NOT via v-html:
 // the <img> context is sandboxed (no script execution, no external loads) and
-// sidesteps the scoped-CSS red line. encodeURIComponent is load-bearing — it
-// encodes `#` so `fill="url(#id)"` references survive in the data URI.
-const avatarSrc = computed(() =>
-    props.avatar ? 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(props.avatar) : '')
+// sidesteps the scoped-CSS red line.
+const avatarSrc = computed(() => (props.avatar ? svgToDataUri(props.avatar) : ''))
 
 // Replace all ID references (id="...", url(#...", href="#...") in SVG content
 // that match known gradient ID patterns (lobe-icons-* or ai-* prefixes)
@@ -50,12 +49,7 @@ const processedSvg = computed(() => {
     return s
 })
 
-const svgStyle = computed(() => ({
-    width: `${props.size}px`,
-    height: `${props.size}px`,
-}))
-
-const imgStyle = computed(() => ({
+const sizeStyle = computed(() => ({
     width: `${props.size}px`,
     height: `${props.size}px`,
 }))

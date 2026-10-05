@@ -2404,7 +2404,7 @@ export default {
       agentAvatarShuffle: '随机',
       agentAvatarSave: '保存',
       agentAvatarClear: '恢复默认',
-      agentAvatarLoading: '正在加载头像…（{done}/{total}）',
+      agentAvatarLoading: '正在加载头像…',
       agentAvatarLoadFailed: '头像库加载失败',
       agentAvatarSaved: '头像已更新',
       agentSystemPrompt: '系统提示',

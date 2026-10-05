@@ -2407,7 +2407,7 @@ export default {
       agentAvatarShuffle: 'Shuffle',
       agentAvatarSave: 'Save',
       agentAvatarClear: 'Reset to Default',
-      agentAvatarLoading: 'Loading avatars… ({done}/{total})',
+      agentAvatarLoading: 'Loading avatars…',
       agentAvatarLoadFailed: 'Failed to load avatar library',
       agentAvatarSaved: 'Avatar updated',
       agentSystemPrompt: 'System Prompt',

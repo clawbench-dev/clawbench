@@ -7,10 +7,7 @@
     @close="handleClose"
   >
     <div class="avatar-picker__body">
-      <LoadingIndicator
-        v-if="loading"
-        :label="t('settings.items.agentAvatarLoading', { done: loadedCount, total: AVATAR_STYLES.length })"
-      />
+      <LoadingIndicator v-if="loading" :label="t('settings.items.agentAvatarLoading')" />
 
       <div v-else-if="loadError" class="avatar-picker__error">
         <span>{{ t('settings.items.agentAvatarLoadFailed') }}</span>
@@ -78,6 +75,7 @@ import ModalDialog from '@/components/common/ModalDialog.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHandler'
 import { loadAvatarKit, AVATAR_STYLES, type AvatarStyle, type AvatarKit } from '@/utils/lazyAvatar'
+import { svgToDataUri } from '@/utils/svgDataUri'
 import { appLog } from '@/utils/appLog'
 
 const props = defineProps<{
@@ -94,7 +92,6 @@ const { t } = useI18n()
 
 const loading = ref(false)
 const loadError = ref(false)
-const loadedCount = ref(0)
 // shallowRef, NOT ref: the kit holds DiceBear `Style` instances that use
 // `#private` fields. A deep reactive proxy would wrap them and any access to a
 // private member throws "Cannot read private member from an object whose class
@@ -126,13 +123,9 @@ const tileSvgs = computed<Partial<Record<AvatarStyle, string>>>(() => {
   return out
 })
 
-function toDataUri(svg: string): string {
-  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg)
-}
-
 function tileSrc(s: AvatarStyle): string {
   const svg = tileSvgs.value[s]
-  return svg ? toDataUri(svg) : ''
+  return svg ? svgToDataUri(svg) : ''
 }
 
 const selectedSvg = computed(() => tileSvgs.value[style.value] || '')
@@ -148,12 +141,9 @@ function selectStyle(s: AvatarStyle) {
 async function initLib() {
   loadError.value = false
   loading.value = true
-  loadedCount.value = 0
   kit.value = null
   try {
-    // onProgress drives the loading label's done/total counter.
-    const loaded = await loadAvatarKit((done) => { loadedCount.value = done })
-    kit.value = loaded
+    kit.value = await loadAvatarKit()
   } catch (err) {
     appLog.w('AgentAvatar', 'failed to load DiceBear kit', err)
     loadError.value = true
@@ -185,7 +175,6 @@ watch(() => props.open, (open) => {
   if (open) {
     error.value = ''
     loadError.value = false
-    loadedCount.value = 0
     kit.value = null
     style.value = 'bottts'
     // Prefer a stable seed so re-opening shows the same avatars; fall back to name.
