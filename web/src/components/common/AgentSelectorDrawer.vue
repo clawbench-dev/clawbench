@@ -11,13 +11,16 @@
         v-for="(agent, idx) in agents"
         :key="agent.id"
         class="agent-option"
-        :class="{ selected: agent.id === modelValue, 'agent-option-active': listNav.activeIndex.value === idx }"
+        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx }"
         role="button"
         tabindex="0"
         @click="handleSelect(agent.id)"
         @keydown.enter="handleSelect(agent.id)"
         @keydown.space.prevent="handleSelect(agent.id)"
       >
+        <span v-if="multiple" class="agent-option-check" :class="{ checked: isSelected(agent.id) }">
+          <Check v-if="isSelected(agent.id)" :size="14" />
+        </span>
         <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" :size="16" /></span>
         <div class="agent-option-detail">
           <span class="agent-option-name">{{ agent.name }}</span>
@@ -36,12 +39,15 @@
         </button>
       </div>
     </div>
+    <template v-if="multiple" #footer>
+      <button class="agent-multi-confirm" @click="handleConfirmMulti">{{ confirmLabel }}</button>
+    </template>
   </BottomSheet>
 </template>
 
 <script setup lang="ts">
 import { ref, watch, inject } from 'vue'
-import { Bot, Star, Settings } from 'lucide-vue-next'
+import { Bot, Star, Settings, Check } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -55,23 +61,27 @@ const { t } = useI18n()
 
 const props = withDefaults(defineProps<{
   open: boolean
-  modelValue?: string
+  modelValue?: string | string[]
+  multiple?: boolean
   title?: string
   defaultBadge?: string
   setDefaultTitle?: string
   configTitle?: string
+  confirmLabel?: string
 }>(), {
   modelValue: '',
+  multiple: false,
   title: 'Select Agent',
   defaultBadge: 'Default',
   setDefaultTitle: 'Set as default',
   configTitle: 'Agent settings',
+  confirmLabel: 'OK',
 })
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
-  (e: 'update:modelValue', agentId: string): void
-  (e: 'select', agentId: string): void
+  (e: 'update:modelValue', agentId: string | string[]): void
+  (e: 'select', agentId: string | string[]): void
 }>()
 
 const { agents, loadAgents, isDefaultAgent, getAgentDefaultModelName, setDefaultAgent } = useAgents()
@@ -79,6 +89,15 @@ const { agents, loadAgents, isDefaultAgent, getAgentDefaultModelName, setDefault
 // Guard against accidental clicks right after opening the agent selector
 let openTime = 0
 const agentsLoading = ref(false)
+
+// selectedIds is the live multi-select buffer. In single mode it mirrors the
+// string modelValue; in multiple mode it is the working array until confirm.
+const selectedIds = ref<string[]>([])
+
+function isSelected(agentId: string): boolean {
+  if (props.multiple) return selectedIds.value.includes(agentId)
+  return agentId === props.modelValue
+}
 
 function handleClose() {
   emit('update:open', false)
@@ -88,10 +107,25 @@ function handleSelect(agentId: string) {
   // Ignore clicks within 400ms of opening — prevents accidental selection
   // from touch events that propagate to the newly rendered dialog
   if (Date.now() - openTime < 400) return
+  if (props.multiple) {
+    // Toggle; do not close.
+    const i = selectedIds.value.indexOf(agentId)
+    if (i >= 0) selectedIds.value.splice(i, 1)
+    else selectedIds.value.push(agentId)
+    return
+  }
   emit('update:modelValue', agentId)
   emit('select', agentId)
   handleClose()
 }
+
+function handleConfirmMulti() {
+  const ids = [...selectedIds.value]
+  emit('update:modelValue', ids)
+  emit('select', ids)
+  handleClose()
+}
+
 
 async function handleSetDefaultAgent(agentId: string) {
   await setDefaultAgent(agentId)
@@ -137,6 +171,10 @@ watch(agents, () => listNav.reset())
 watch(() => props.open, async (val) => {
   if (val) {
     openTime = Date.now()
+    // Seed the multi-select buffer from the incoming modelValue.
+    if (props.multiple) {
+      selectedIds.value = Array.isArray(props.modelValue) ? [...props.modelValue] : []
+    }
     agentsLoading.value = true
     try {
       await loadAgents()
@@ -328,5 +366,35 @@ watch(() => props.open, async (val) => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Multi-select checkbox and confirm button */
+.agent-option-check {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: var(--radius-sm, 4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-color, #0066cc);
+}
+
+.agent-option-check.checked {
+  border-color: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+
+.agent-multi-confirm {
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  background: var(--accent-color, #0066cc);
+  color: #fff;
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
 }
 </style>

@@ -33,7 +33,7 @@ vi.mock('@/composables/useAgents', () => ({
 vi.mock('@/components/common/BottomSheet.vue', () => ({
   default: {
     name: 'BottomSheet',
-    template: '<div class="bottom-sheet-stub" :data-open="open"><slot name="header" /><slot /></div>',
+    template: '<div class="bottom-sheet-stub" :data-open="open"><slot name="header" /><slot /><slot name="footer" /></div>',
     methods: { close: vi.fn() },
   },
 }))
@@ -157,6 +157,52 @@ describe('AgentSelectorDrawer', () => {
       await wrapper.find('.agent-option').trigger('click')
 
       expect(wrapper.emitted('select')).toBeTruthy()
+    })
+  })
+
+  describe('multi-select', () => {
+    it('renders checkboxes and does not close on click', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.findAll('.agent-option-check').length).toBe(2)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await flushPromises()
+
+      // No immediate emit/close; selection is buffered until confirm.
+      expect(wrapper.emitted('update:open')).toBeFalsy()
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('emits an array of ids on confirm', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: [] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await wrapper.findAll('.agent-option')[1].trigger('click')
+      await flushPromises()
+
+      await wrapper.find('.agent-multi-confirm').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('select')).toBeTruthy()
+      expect(wrapper.emitted('select')![0]).toEqual([['agent-1', 'agent-2']])
+      expect(wrapper.emitted('update:open')![0]).toEqual([false])
+    })
+
+    it('toggles a selected agent off', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await wrapper.find('.agent-multi-confirm').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('select')![0]).toEqual([[]])
     })
   })
 
