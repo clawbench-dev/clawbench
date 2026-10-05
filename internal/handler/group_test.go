@@ -153,17 +153,23 @@ func TestServeSessions_GroupRowCarriesMemberPreview(t *testing.T) {
 	// The plain chat row omits the field entirely (omitempty + nil slice → the
 	// key is absent, so a non-group payload is byte-for-byte unchanged). Assert
 	// on the raw JSON, not the decoded slice, which cannot tell absent from [].
+	// The `byID` guard is load-bearing: without it a payload that dropped the
+	// plain row entirely would make the loop below pass vacuously.
+	require.Contains(t, byID, chatID, "the plain chat row must be in the payload")
 	require.Contains(t, w.Body.String(), `"groupMembers"`, "the group row must carry the preview key")
 	var raw struct {
 		Sessions []map[string]any `json:"sessions"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	sawChat := false
 	for _, s := range raw.Sessions {
 		if s["id"] == chatID {
+			sawChat = true
 			_, present := s["groupMembers"]
 			assert.False(t, present, "non-group session must not carry the groupMembers key")
 		}
 	}
+	assert.True(t, sawChat, "plain chat row must appear in the raw payload")
 
 	// Members themselves are hidden from the list.
 	assert.NotContains(t, byID, hostMemberID)

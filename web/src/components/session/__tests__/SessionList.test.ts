@@ -399,6 +399,40 @@ describe('SessionList', () => {
       expect(wrapper.find('[data-session-id="g1"] .stack-more').text()).toBe('+2')
       wrapper.unmount()
     })
+
+    it('renders no +N when the roster is exactly the cap', async () => {
+      const exactly = Array.from({ length: 3 }, (_, i) => ({
+        id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
+      }))
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: exactly }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.findAll('[data-session-id="g1"] .group-member-stack .stack-disc').length).toBe(3)
+      expect(wrapper.find('[data-session-id="g1"] .stack-more').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('shows only the group glyph when no active members remain', async () => {
+      // A group with zero active members (e.g. all removed) must still read as a
+      // group — the Users glyph stays, the stack is simply empty.
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [{ ...groupSession, groupMembers: [] }], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      const groupRow = wrapper.find('[data-session-id="g1"]')
+      expect(groupRow.find('.session-item-group').exists()).toBe(true)
+      expect(groupRow.find('.group-member-stack').exists()).toBe(false)
+      wrapper.unmount()
+    })
   })
 
   it('renders the sweep band as a real element only on running rows', async () => {
@@ -1214,6 +1248,34 @@ describe('SessionList', () => {
       // crossGroup() has two active sessions — the count must reflect the group,
       // matching the count badge the Pinned/Recent headers already show.
       expect(wrapper.find('.session-group-count').text()).toBe('2')
+    })
+
+    it('renders the group glyph + member stack for a group row in the cross pane', async () => {
+      mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+      mockCrossState.groups.value = [{
+        name: '/proj/other',
+        displayName: 'other',
+        displayPath: '~/proj/other',
+        sessions: [
+          {
+            id: 'og1', title: 'Other group', backend: 'cli', agentId: 'agent-host',
+            sessionType: 'group',
+            groupMembers: [
+              { id: 'm1', agentId: 'agent-host', name: 'Host', backend: 'cli' },
+              { id: 'm2', agentId: 'agent-2', name: 'Claude', backend: 'acp' },
+            ],
+            running: false, pendingApproval: false, unreadCount: 1, updatedAt: '2025-01-05',
+          },
+        ],
+      }]
+      const wrapper = await mountList({ activeTab: 'cross' })
+      await flushPromises()
+
+      const row = wrapper.find('.cross-session-item')
+      expect(row.find('.session-item-group').exists()).toBe(true)
+      expect(row.find('.group-member-stack').exists()).toBe(true)
+      expect(row.find('.session-item-agent').exists()).toBe(false)
+      expect(row.findAll('.group-member-stack .stack-disc').length).toBe(2)
     })
 
     it('collapses and expands a cross-project group from its header', async () => {

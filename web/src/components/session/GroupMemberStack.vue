@@ -51,19 +51,20 @@ const tooltip = computed(() => {
 }
 
 .stack-disc {
-  /* 16px: sits in the meta line without growing the 44px row (AgentIcon's
-     sm glyph is 14px, and the meta line is sized by that). */
-  width: 16px;
-  height: 16px;
+  /* 14px + a 1.5px ring = 17px, which fits the meta line's 18px box without
+     being clipped by its overflow:hidden. */
+  width: 14px;
+  height: 14px;
   border-radius: var(--radius-full);
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
-  /* Ring separates overlapping discs; matches the list panel background so it
-     reads as a gap and, unlike a border, does not change the disc's real size. */
-  box-shadow: 0 0 0 2px var(--bg-secondary, #fff);
+  /* Ring separates overlapping discs. --border-color (NOT --bg-secondary): in
+     dark themes --bg-secondary is nearly identical to the disc background, so
+     the ring vanishes and the discs merge. Matches GroupAvatarStack.vue. */
+  box-shadow: 0 0 0 1.5px var(--border-color);
   margin-left: -6px;
   position: relative;
 }
