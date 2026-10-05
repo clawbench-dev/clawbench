@@ -370,11 +370,18 @@ func simpleTextPayload(event ai.StreamEvent) any {
 
 // streamStartPayload builds the stream_start message payload. Returns nil when
 // no StreamStart data is attached (the event is then skipped downstream).
+//
+// The speaker key is omitted when empty (ordinary single-agent turns) so the
+// payload shape is unchanged for existing clients.
 func streamStartPayload(event ai.StreamEvent) any {
 	if event.StreamStart == nil {
 		return nil
 	}
-	return map[string]any{"message_id": event.StreamStart.MessageID}
+	payload := map[string]any{"message_id": event.StreamStart.MessageID}
+	if event.StreamStart.SpeakerID != "" {
+		payload["agent_id"] = event.StreamStart.SpeakerID
+	}
+	return payload
 }
 
 // streamSplitPayload carries the new "after" assistant row opened when a

@@ -1,0 +1,313 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+
+	"clawbench/internal/ai"
+	"clawbench/internal/grouprouting"
+	"clawbench/internal/ws"
+)
+
+// group_orchestrator.go drives a group chat's main loop: host speaks, routes to
+// named members, they speak in order, repeat until the host ends the discussion,
+// the round cap is reached, or a human interjects. See
+// docs/plans/2026-10-04-ai-group-chat-design.md §5.
+
+// groupMemberTurn describes one member's (or the host's) turn.
+type groupMemberTurn struct {
+	MemberRowID string
+	Prompt      string
+	IsHost      bool
+}
+
+// groupMemberResult is the outcome of one member turn.
+type groupMemberResult struct {
+	Err string
+}
+
+// groupTurnRunner runs one member's turn. Production wires it to runTurn with a
+// TurnSpec whose SessionID is the member row and TimelineSessionID the group.
+// It is a field on the orchestrator so tests can inject a scripted runner.
+type groupTurnRunner func(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult
+
+// GroupOrchestrator runs one group turn.
+type GroupOrchestrator struct {
+	groupID string
+	project string
+	// runTurn is injectable for tests; nil means the production runTurn path.
+	runTurn groupTurnRunner
+}
+
+// NewGroupOrchestrator builds an orchestrator for a group session.
+func NewGroupOrchestrator(groupID string) *GroupOrchestrator {
+	return &GroupOrchestrator{
+		groupID: groupID,
+		project: GetSessionProjectPathAnyPath(groupID),
+	}
+}
+
+// GetSessionProjectPathAnyPath is a small helper so the orchestrator can resolve
+// the project path (empty if the session is gone).
+func GetSessionProjectPathAnyPath(sessionID string) string {
+	p, _ := GetSessionProjectPathAny(sessionID)
+	return p
+}
+
+// RunGroupTurn executes one full group turn for userMessage.
+//
+// It is intentionally sequential (v1): members speak one at a time so each sees
+// the previous speakers' same-round output and only one streaming row is written
+// to the group timeline at any moment.
+func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string) error {
+	groupID := o.groupID
+
+	// Register the group as running with a cancelable context so a frontend
+	// "stop" on the group session (CancelSession(groupID)) propagates into the
+	// member turns, whose TurnSpec.Ctx is derived from groupCtx. Without this a
+	// stop would only cancel a group placeholder runner that does not exist.
+	groupCtx, groupCancel := context.WithCancel(ctx)
+	defer groupCancel()
+	RegisterExternalExecution(groupCtx, groupCancel, groupID)
+	SetSessionRunning(groupID, true, true)
+	defer SetSessionRunning(groupID, false, true)
+
+	// 1. Persist the user message to the group timeline and broadcast it.
+	msgID, err := AddChatMessageWithAgent(o.project, groupBackend(groupID), groupID, "user", userMessage, nil, false, "", "")
+	if err != nil {
+		return fmt.Errorf("persist group user message: %w", err)
+	}
+	emitGroupUserMessage(groupID, msgID, userMessage)
+
+	// 2. Resolve the host and member roster.
+	hostMemberID := GetGroupHostMember(groupID)
+	if hostMemberID == "" {
+		return fmt.Errorf("group %s has no host member", groupID)
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return fmt.Errorf("list group members: %w", err)
+	}
+	names := memberNameMap(members)
+	maxRounds := GetGroupMaxRounds(groupID)
+
+	runner := o.runTurn
+	if runner == nil {
+		runner = o.defaultRunner
+	}
+
+	// Clean up any orphaned streaming rows from a previous crashed group turn
+	// before we start writing new ones (C1 residual).
+	finalizeGroupOrphans(groupID)
+
+	// 3. Loop.
+	for round := 0; round < maxRounds; round++ {
+		if groupCtx.Err() != nil {
+			return nil // cancelled by the user
+		}
+		// Host speaks and routes.
+		hostCursor := GetMemberCursor(hostMemberID)
+		hostPrompt := o.hostPrompt(hostMemberID, hostCursor, names, members)
+		hostRes := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: hostPrompt, IsHost: true})
+		SetMemberCursor(hostMemberID, GroupTimelineHighWater(groupID))
+		if hostRes.Err != "" {
+			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
+			// Host failed: try round-robin once, then stop.
+			if !o.speakNextMember(groupCtx, runner, members, names) {
+				return nil
+			}
+			continue
+		}
+
+		route := grouprouting.Parse(o.lastHostOutput(groupID, hostMemberID))
+		if route.End {
+			// The end-signal turn already contains the summary (B2 prompt).
+			return nil
+		}
+
+		targets := o.resolveTargets(route, members)
+		if len(targets) == 0 {
+			// Parse failed or no valid speakers: fall back to round-robin.
+			if !o.speakNextMember(groupCtx, runner, members, names) {
+				return nil
+			}
+			continue
+		}
+
+		// Members speak in order; each sees the previous speakers' output.
+		for _, t := range targets {
+			if groupCtx.Err() != nil {
+				return nil
+			}
+			memberCursor := GetMemberCursor(t.ID)
+			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction)
+			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
+			SetMemberCursor(t.ID, GroupTimelineHighWater(groupID))
+			if res.Err != "" {
+				slog.Warn("group: member turn failed", "group", groupID, "member", t.ID, "err", res.Err)
+			}
+		}
+	}
+
+	// 4. Round cap reached: run the host once more to produce a summary.
+	o.summarize(groupCtx, runner, hostMemberID, names, members)
+	return nil
+}
+
+// summarize runs the host once more with the summary-only prompt. The host's
+// routing tags in this turn are ignored (never parsed).
+func (o *GroupOrchestrator) summarize(ctx context.Context, runner groupTurnRunner, hostMemberID string, names map[string]string, members []GroupMember) {
+	cursor := GetMemberCursor(hostMemberID)
+	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "") + BuildHostSummaryPrompt(activeMemberNames(members))
+	runner(ctx, o.groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: prompt, IsHost: true})
+	SetMemberCursor(hostMemberID, GroupTimelineHighWater(o.groupID))
+}
+
+// hostPrompt builds the host's turn prompt: the incremental group context plus
+// the host instruction (routing rules).
+func (o *GroupOrchestrator) hostPrompt(hostMemberID string, cursor int64, names map[string]string, members []GroupMember) string {
+	ctxText := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "")
+	return ctxText + BuildHostSystemPrompt(activeMemberNames(members))
+}
+
+// lastHostOutput returns the host's most recent speech text on the group
+// timeline (used to parse its routing decision).
+func (o *GroupOrchestrator) lastHostOutput(groupID, hostMemberID string) string {
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		return ""
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].AgentID == hostMemberID && msgs[i].Role == "assistant" {
+			return ExtractPlainText(msgs[i].Content)
+		}
+	}
+	return ""
+}
+
+// resolveTargets maps the host's named speakers to active member rows, in the
+// order named. Unknown/left names are dropped.
+func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []GroupMember) []GroupMember {
+	if !route.Found {
+		return nil
+	}
+	byName := map[string]GroupMember{}
+	for _, m := range members {
+		if m.Left {
+			continue
+		}
+		byName[strings.TrimSpace(m.Name)] = m
+	}
+	out := make([]GroupMember, 0, len(route.Speakers))
+	seen := map[string]bool{}
+	for _, name := range route.Speakers {
+		m, ok := byName[strings.TrimSpace(name)]
+		if !ok || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		out = append(out, m)
+	}
+	return out
+}
+
+// speakNextMember runs one round-robin member turn (fallback path). Returns
+// false when no active member exists.
+func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTurnRunner, members []GroupMember, names map[string]string) bool {
+	for _, m := range members {
+		if m.Left {
+			continue
+		}
+		cursor := GetMemberCursor(m.ID)
+		prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "")
+		runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
+		SetMemberCursor(m.ID, GroupTimelineHighWater(o.groupID))
+		return true
+	}
+	return false
+}
+
+// defaultRunner runs a member turn through the production runTurn path.
+func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult {
+	project := o.project
+	agentID := ResolveAgentID(turn.MemberRowID, "")
+	backend := groupBackend(turn.MemberRowID)
+	req := BuildChatRequest(turn.Prompt, turn.MemberRowID, project, backend, agentID, "", "", "", "", resolveFileDir(project), false)
+	// Fix the chat_history-derived resume signals for a member row.
+	applyMemberResumeOverrides(&req, GetExternalSessionID(turn.MemberRowID), resolveIsACP(agentID, ""))
+	if turn.IsHost {
+		// Host prompt already carries the host instruction.
+	}
+	res := runTurn(TurnSpec{
+		Ctx:               ctx,
+		Mode:              ModeInteractive,
+		ProjectPath:       project,
+		BackendName:       backend,
+		SessionID:         turn.MemberRowID,
+		TimelineSessionID: groupID,
+		SpeakerID:         turn.MemberRowID,
+		AgentID:           agentID,
+		ChatReq:           req,
+		FileDir:           resolveFileDir(project),
+		DrainOnFinalize:   true,
+	})
+	return groupMemberResult{Err: res.Err}
+}
+
+// --- small helpers ---
+
+func groupBackend(sessionID string) string {
+	if info := GetSessionFullInfo(sessionID); info != nil {
+		return info.Backend
+	}
+	return ""
+}
+
+func memberNameMap(members []GroupMember) map[string]string {
+	names := make(map[string]string, len(members))
+	for _, m := range members {
+		names[m.ID] = m.Name
+	}
+	return names
+}
+
+func activeMemberNames(members []GroupMember) []string {
+	out := make([]string, 0, len(members))
+	for _, m := range members {
+		if !m.Left {
+			out = append(out, m.Name)
+		}
+	}
+	return out
+}
+
+func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[string]string, instruction string) string {
+	text, err := groupInjectionText(groupID, self, cursor, names, instruction)
+	if err != nil {
+		slog.Warn("group: injection load failed", "group", groupID, "err", err)
+		return ""
+	}
+	return text
+}
+
+// finalizeGroupOrphans closes any streaming=1 rows left on the group timeline
+// by a previous crashed/aborted group turn, so they do not surface as phantom
+// streaming bubbles on reload (review C1 residual). Uses the group session as
+// the orphan-finalize target.
+func finalizeGroupOrphans(groupID string) {
+	finalizeOrphanedStreamingMessages(groupID, "interrupt")
+}
+
+// emitGroupUserMessage broadcasts a persisted group user message to the group's
+// subscribers. It is a seam (var) so tests can observe without the WS hub.
+var emitGroupUserMessage = func(groupID string, msgID int64, text string) {
+	ws.EmitToSession(groupID, ai.StreamEvent{
+		Type: eventTypeUserMessage,
+		UserMessage: &ai.UserMessageData{
+			MessageID: msgID,
+			Content:   text,
+		},
+	})
+}

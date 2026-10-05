@@ -173,3 +173,36 @@ func GetSessionType(sessionID string) string {
 	_ = store.ReadDB().QueryRow("SELECT session_type FROM chat_sessions WHERE id = ?", sessionID).Scan(&t)
 	return t
 }
+
+// GetMemberCursor returns a member's seen_cursor: the group-timeline high-water
+// mark it has already been shown. 0 means "nothing seen yet".
+func GetMemberCursor(memberID string) int64 {
+	var raw string
+	_ = store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$.seen_cursor'), '') FROM chat_sessions WHERE id = ?",
+		memberID,
+	).Scan(&raw)
+	if raw == "" {
+		return 0
+	}
+	var n int64
+	if err := json.Unmarshal([]byte(raw), &n); err != nil {
+		return 0
+	}
+	return n
+}
+
+// SetMemberCursor records a member's seen_cursor.
+func SetMemberCursor(memberID string, cursor int64) {
+	PatchContextStateMerge(memberID, map[string]string{"seen_cursor": fmt.Sprintf("%d", cursor)})
+}
+
+// GroupTimelineHighWater returns the largest chat_history id on the group
+// timeline (0 if empty). Used as the per-speech cursor.
+func GroupTimelineHighWater(groupID string) int64 {
+	var id int64
+	_ = store.ReadDB().QueryRow(
+		"SELECT COALESCE(MAX(id), 0) FROM chat_history WHERE session_id = ?", groupID,
+	).Scan(&id)
+	return id
+}

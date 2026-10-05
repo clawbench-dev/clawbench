@@ -1100,6 +1100,22 @@ func TestStreamStartPayload(t *testing.T) {
 	assert.Equal(t, map[string]any{"message_id": int64(5)}, payload)
 }
 
+// TestStreamStartPayloadCarriesSpeaker covers the group-chat speaker id: it is
+// emitted as "agent_id" when set, and omitted entirely when empty (so the
+// single-agent payload shape is unchanged).
+func TestStreamStartPayloadCarriesSpeaker(t *testing.T) {
+	payload := streamStartPayload(ai.StreamEvent{
+		StreamStart: &ai.StreamStartData{MessageID: 7, SpeakerID: "member-1"},
+	})
+	assert.Equal(t, map[string]any{"message_id": int64(7), "agent_id": "member-1"}, payload)
+
+	empty := streamStartPayload(ai.StreamEvent{
+		StreamStart: &ai.StreamStartData{MessageID: 7},
+	})
+	_, hasKey := empty.(map[string]any)["agent_id"]
+	assert.False(t, hasKey, "agent_id must be omitted when SpeakerID is empty")
+}
+
 // TestQueueAddedPayload covers the enqueue announcement: it carries the queue
 // panel data and, when present, the sender id so the sending device skips its
 // own echo.
