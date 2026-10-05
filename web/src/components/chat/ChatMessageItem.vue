@@ -1310,10 +1310,19 @@ const copyPayload = quotableText
   align-items: center;
   justify-content: center;
 }
+/* Force the avatar (custom <img> OR built-in <svg>) to fill the disc and crop
+   to a circle, overriding AgentIcon's own 20% rounded-square radius. Without
+   width/height:100% the 18px icon sits inside the 20px disc as a visible
+   rounded square. */
 .msg-routing-avatar :deep(.agent-icon-img),
 .msg-routing-avatar :deep(.agent-icon-svg),
 .msg-routing-avatar :deep(.agent-icon-initial) {
+  width: 100%;
+  height: 100%;
   border-radius: var(--radius-full);
+}
+.msg-routing-avatar :deep(.agent-icon-img) {
+  object-fit: cover;
 }
 .msg-routing-at {
   font-weight: var(--font-weight-medium);
