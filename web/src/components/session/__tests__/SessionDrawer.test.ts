@@ -50,8 +50,9 @@ const {
   },
   AgentSelectorDrawerStub: {
     name: 'AgentSelectorDrawer',
-    template: '<div class="agent-selector-drawer-stub" />',
-    methods: { preload: vi.fn() },
+    props: ['title'],
+    template: '<div class="agent-selector-drawer-stub" :data-title="title" />',
+    methods: { preload: vi.fn(), open: vi.fn(), close: vi.fn() },
   },
   SessionListStub: {
     name: 'SessionList',
@@ -243,6 +244,19 @@ describe('SessionDrawer', () => {
       // 避免一键误触直接建空会话。
       expect(wrapper.emitted('create')).toBeUndefined()
       expect(wrapper.vm.agentSelectorDrawer.isOpen.value).toBe(true)
+    })
+
+    it('titles the selector "select host" when creating a group, "select agent" otherwise', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      const selector = wrapper.find('.agent-selector-drawer-stub')
+      // The i18n mock returns the key verbatim.
+      // Ordinary new-session flow.
+      expect(selector.attributes('data-title')).toBe('session.selectAgent')
+      // Group-creation flow reuses the same drawer but must ask for the host.
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      expect(selector.attributes('data-title')).toBe('group.selectHost')
     })
   })
 

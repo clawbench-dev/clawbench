@@ -1115,6 +1115,7 @@ export default {
     newGroup: 'New group chat',
     title: 'Group',
     host: 'Host',
+    selectHost: 'Select a group host',
     addMembers: 'Add members',
     members: 'Members',
     left: 'Left',

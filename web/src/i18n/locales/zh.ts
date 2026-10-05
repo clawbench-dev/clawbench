@@ -1117,6 +1117,7 @@ export default {
     newGroup: '新建群聊',
     title: '群聊',
     host: '主持人',
+    selectHost: '请选择群聊主持人',
     addMembers: '添加成员',
     members: '成员',
     left: '已离场',

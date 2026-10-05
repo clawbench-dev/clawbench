@@ -62,7 +62,7 @@
     <AgentSelectorDrawer
       ref="agentSelectorRef"
       :open="agentSelectorDrawer.effectiveOpen.value"
-      :title="t('session.selectAgent')"
+      :title="creatingGroup ? t('group.selectHost') : t('session.selectAgent')"
       :default-badge="t('chat.sessionSetting.defaultBadge')"
       :set-default-title="t('session.setAsDefaultAgent')"
       :config-title="t('session.configAgent')"
