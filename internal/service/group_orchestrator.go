@@ -261,18 +261,20 @@ func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTur
 	return false
 }
 
-// defaultRunner runs a member turn through the production runTurn path.
-func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult {
+// buildMemberTurnSpec assembles the TurnSpec for one member (or host) turn.
+//
+// Extracted from defaultRunner so the wiring can be unit-tested without running
+// a real backend: the load-bearing invariants are that the CONNECTION session
+// is the member row (SessionID) while the TIMELINE is the group (so output
+// lands on the group timeline and is attributed to the member via SpeakerID).
+func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID string, turn groupMemberTurn) TurnSpec {
 	project := o.project
 	agentID := ResolveAgentID(turn.MemberRowID, "")
 	backend := groupBackend(turn.MemberRowID)
 	req := BuildChatRequest(turn.Prompt, turn.MemberRowID, project, backend, agentID, "", "", "", "", resolveFileDir(project), false)
 	// Fix the chat_history-derived resume signals for a member row.
 	applyMemberResumeOverrides(&req, GetExternalSessionID(turn.MemberRowID), resolveIsACP(agentID, ""))
-	if turn.IsHost {
-		// Host prompt already carries the host instruction.
-	}
-	res := runTurn(TurnSpec{
+	return TurnSpec{
 		Ctx:               ctx,
 		Mode:              ModeInteractive,
 		ProjectPath:       project,
@@ -284,7 +286,12 @@ func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, t
 		ChatReq:           req,
 		FileDir:           resolveFileDir(project),
 		DrainOnFinalize:   true,
-	})
+	}
+}
+
+// defaultRunner runs a member turn through the production runTurn path.
+func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult {
+	res := runTurn(o.buildMemberTurnSpec(ctx, groupID, turn))
 	return groupMemberResult{Err: res.Err}
 }
 

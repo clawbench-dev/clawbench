@@ -535,6 +535,13 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 		}
 	}
 	response := "Hello! I am a mock ACP agent for E2E testing. I received your message and processed it successfully."
+	// Group-chat host turns: the ClawBench host instruction is injected into the
+	// prompt. When present, emit a routing tag naming the first addressable
+	// member so the orchestrator can dispatch a real member turn. This makes the
+	// mock usable for the multi-agent group E2E without hard-coding names.
+	if tag := groupRoutingReply(userText); tag != "" {
+		response = tag
+	}
 	words := strings.Fields(response)
 	for i, word := range words {
 		select {
@@ -681,6 +688,41 @@ func extractUserText(blocks []acp.ContentBlock) string {
 		}
 	}
 	return strings.Join(texts, " ")
+}
+
+// groupRoutingReply returns a group host's routing-tag reply when the prompt
+// carries ClawBench's host instruction ("可选的成员名："), else "". It names the
+// FIRST member in that list so the orchestrator dispatches a real member turn.
+//
+// Members whose turn prompt carries the host directive ("[群聊主持人]"/host
+// instruction) are themselves ordinary turns and get the default reply, so this
+// only fires for the host. The end signal is emitted when no member remains.
+func groupRoutingReply(prompt string) string {
+	const marker = "可选的成员名："
+	idx := strings.Index(prompt, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := prompt[idx+len(marker):]
+	// The list ends at the first newline (BuildHostSystemPrompt appends "。\n").
+	if nl := strings.IndexAny(rest, "\n"); nl >= 0 {
+		rest = rest[:nl]
+	}
+	rest = strings.TrimSuffix(strings.TrimSpace(rest), "。")
+	if rest == "" || strings.HasPrefix(rest, "（") {
+		// No addressable member: end the discussion.
+		return "讨论结束。<clawbench-group-end/> 结论：群内暂无其他成员。"
+	}
+	// First name only (comma/、-separated list).
+	name := rest
+	if i := strings.IndexAny(rest, ",、"); i >= 0 {
+		name = rest[:i]
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "讨论结束。<clawbench-group-end/> 结论：无人可点。"
+	}
+	return "<clawbench-speaker>" + name + "</clawbench-speaker> 请你发表看法。"
 }
 
 func truncate(s string, maxLen int) string {
