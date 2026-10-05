@@ -246,6 +246,16 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.findAll('.agent-config-btn').length).toBe(2)
     })
 
+    it('hides the default badge/star and the gear when showAgentActions is false', () => {
+      // The group "add members" picker passes showAgentActions=false: those
+      // per-row actions are noise there.
+      mockIsDefaultAgent.mockImplementation((id: string) => id === 'agent-1')
+      const wrapper = mountDrawer({ showAgentActions: false })
+      expect(wrapper.find('.agent-config-btn').exists()).toBe(false)
+      expect(wrapper.find('.agent-set-default-btn').exists()).toBe(false)
+      expect(wrapper.find('.agent-default-badge-pill').exists()).toBe(false)
+    })
+
     it('deep-links to the agent settings page and closes the drawer on gear click without selecting', async () => {
       const wrapper = mountDrawer()
       await flushPromises()

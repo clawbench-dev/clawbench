@@ -25,6 +25,7 @@
     <AgentSelectorDrawer
       :open="pickerOpen"
       multiple
+      :showAgentActions="false"
       :modelValue="[]"
       :title="t('group.addMembers')"
       :confirm-label="t('group.confirm')"

@@ -30,11 +30,11 @@
             <span v-if="defaultModelName(agent.id)" class="agent-tag model-tag">{{ defaultModelName(agent.id) }}</span>
           </div>
         </div>
-        <span v-if="isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
-        <button v-else class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
+        <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
+        <button v-else-if="showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
           <Star :size="14" />
         </button>
-        <button class="agent-config-btn" @click.stop="handleOpenAgentConfig(agent.id)" :title="configTitle">
+        <button v-if="showAgentActions" class="agent-config-btn" @click.stop="handleOpenAgentConfig(agent.id)" :title="configTitle">
           <Settings :size="14" />
         </button>
       </div>
@@ -68,6 +68,9 @@ const props = withDefaults(defineProps<{
   setDefaultTitle?: string
   configTitle?: string
   confirmLabel?: string
+  /** Show the per-row default badge / set-default star and the settings button.
+   *  False for the group "add members" picker, where those actions are noise. */
+  showAgentActions?: boolean
 }>(), {
   modelValue: '',
   multiple: false,
@@ -76,6 +79,7 @@ const props = withDefaults(defineProps<{
   setDefaultTitle: 'Set as default',
   configTitle: 'Agent settings',
   confirmLabel: 'OK',
+  showAgentActions: true,
 })
 
 const emit = defineEmits<{
