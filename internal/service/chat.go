@@ -2578,11 +2578,18 @@ func SessionHasRealAssistantContent(sessionID string) bool {
 // at injection time (before this row is created), so the new row's higher id
 // already places it directly below that question.
 func CreateStreamingMessage(projectPath, backend, sessionID string) (int64, error) {
+	return CreateStreamingMessageWithAgent(projectPath, backend, sessionID, "")
+}
+
+// CreateStreamingMessageWithAgent is CreateStreamingMessage plus speaker
+// attribution (agentID = member row id for group turns, "" otherwise). Needed
+// so a mid-turn split's "after" row keeps its speaker.
+func CreateStreamingMessageWithAgent(projectPath, backend, sessionID, agentID string) (int64, error) {
 	emptyContent, err := json.Marshal(map[string]any{"blocks": []any{}})
 	if err != nil {
 		return 0, err
 	}
-	return AddChatMessage(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "")
+	return AddChatMessageWithAgent(projectPath, backend, sessionID, "assistant", string(emptyContent), nil, true, "", agentID)
 }
 
 // FinalizeStreamingMessage marks the latest streaming assistant message as complete and updates its content.

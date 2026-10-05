@@ -478,6 +478,10 @@ type StreamEvent struct {
 // anchored to the authoritative DB row id.
 type StreamStartData struct {
 	MessageID int64 `json:"message_id"`
+	// SpeakerID is the group-member session row id that produced this stream
+	// (empty for ordinary single-agent turns). It is NOT a real agent id: it
+	// identifies the speaker for attribution/rendering in a group chat.
+	SpeakerID string `json:"speaker_id,omitempty"`
 }
 
 // SteerBoundaryData identifies the point where a mid-turn injected message
