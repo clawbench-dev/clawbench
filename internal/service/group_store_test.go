@@ -81,6 +81,74 @@ func TestCreateGroupAndMembers(t *testing.T) {
 	}
 }
 
+// TestAddGroupMemberDedup covers the A contract: adding an agent that is
+// already a member does NOT create a second row (two rows for one agent make
+// one of them unreachable — routing addresses members by name), and re-adding
+// an agent that LEFT rejoins its original row (archived cleared) instead of
+// duplicating it.
+func TestAddGroupMemberDedup(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/groupdedup"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	first, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Re-adding an ACTIVE member returns the same row and creates nothing.
+	again, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember (again): %v", err)
+	}
+	if again != first {
+		t.Fatalf("re-adding an active member returned a new row: %q != %q", again, first)
+	}
+	members, _ := ListGroupMembers(groupID)
+	if got := countAgentRows(members, "agent-a"); got != 1 {
+		t.Fatalf("want 1 row for agent-a, got %d", got)
+	}
+
+	// Removing then re-adding REJOINS the original row (archived cleared),
+	// preserving its id so past speech attribution stays intact.
+	if err := RemoveGroupMember(groupID, first); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	rejoined, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember (rejoin): %v", err)
+	}
+	if rejoined != first {
+		t.Fatalf("rejoin created a new row: %q != %q", rejoined, first)
+	}
+	members, _ = ListGroupMembers(groupID)
+	if got := countAgentRows(members, "agent-a"); got != 1 {
+		t.Fatalf("rejoin must reuse the row: want 1 row, got %d", got)
+	}
+	for _, m := range members {
+		if m.AgentID == "agent-a" && m.Left {
+			t.Fatal("rejoined member must no longer be marked left")
+		}
+	}
+}
+
+// countAgentRows counts member rows for one agent (0, 1, or the bug's 2+).
+func countAgentRows(members []GroupMember, agentID string) int {
+	n := 0
+	for _, m := range members {
+		if m.AgentID == agentID {
+			n++
+		}
+	}
+	return n
+}
+
 func TestGroupMaxRoundsDefaultAndOverride(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"

@@ -1123,6 +1123,7 @@ export default {
     left: '已离场',
     maxRounds: '最大轮数',
     confirm: '添加',
+    alreadyMember: '已加入',
   },
   task: {
     title: '任务',

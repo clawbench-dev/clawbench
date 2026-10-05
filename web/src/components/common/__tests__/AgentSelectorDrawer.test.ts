@@ -256,6 +256,24 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.find('.agent-default-badge-pill').exists()).toBe(false)
     })
 
+    it('dims and blocks agents listed in excludedAgentIds (already members)', async () => {
+      const wrapper = mountDrawer({ multiple: true, excludedAgentIds: ['agent-1'], addedLabel: 'Added' })
+      await flushPromises()
+      // Clear the 400ms open-guard so clicks register.
+      vi.advanceTimersByTime(500)
+      const rows = wrapper.findAll('.agent-option')
+      // agent-1 is excluded: dimmed + tagged, agent-2 is normal.
+      expect(rows[0].classes()).toContain('agent-option-disabled')
+      expect(rows[0].find('.agent-added-tag').text()).toBe('Added')
+      expect(rows[1].classes()).not.toContain('agent-option-disabled')
+      // Clicking an excluded row must not select it.
+      await rows[0].trigger('click')
+      expect(rows[0].classes()).not.toContain('selected')
+      // Clicking a normal row still toggles selection.
+      await rows[1].trigger('click')
+      expect(rows[1].classes()).toContain('selected')
+    })
+
     it('deep-links to the agent settings page and closes the drawer on gear click without selecting', async () => {
       const wrapper = mountDrawer()
       await flushPromises()

@@ -53,9 +53,28 @@ func CreateGroup(projectPath, title, backend, hostAgentID, hostName string) (gro
 	return groupID, hostMemberID, nil
 }
 
-// AddGroupMember creates a hidden member row for the group and returns its id.
-// displayName is stored in the member row's title (design §4.4/#36).
+// AddGroupMember adds an agent to the group, or REJOINS it if a member row for
+// the same (group, agent) already exists.
+//
+// Why dedup: a member's only identity is its agent — the routing tag addresses
+// members by NAME, and resolveTargets maps names through a map, so two rows for
+// the same agent would make one of them unreachable (a "mute" member that can
+// be selected but never spoken to). Re-adding an agent that LEFT the group
+// therefore reuses its original row and clears the archived flag (the A
+// contract), preserving its past speech attribution instead of creating a
+// duplicate row. displayName is only applied on first creation; the row's
+// stored title is authoritative afterwards.
+//
+// Returns the member row id (existing or new).
 func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) (string, error) {
+	if existing, ok := findGroupMemberByAgent(groupID, agentID); ok {
+		if existing.Left {
+			if err := setGroupMemberArchived(existing.ID, false); err != nil {
+				return "", err
+			}
+		}
+		return existing.ID, nil
+	}
 	memberID, err := CreateSession(projectPath, backend, displayName, agentID, "", "default", groupMemberSessionType)
 	if err != nil {
 		return "", fmt.Errorf("create member session: %w", err)
@@ -64,6 +83,42 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 		return "", err
 	}
 	return memberID, nil
+}
+
+// findGroupMemberByAgent returns the group's member row for agentID, preferring
+// an active (non-archived) row when both exist. ok is false when the agent is
+// not a member.
+func findGroupMemberByAgent(groupID, agentID string) (GroupMember, bool) {
+	rows, err := store.ReadDB().Query(
+		`SELECT id, agent_id, title, backend, archived FROM chat_sessions
+		 WHERE group_id = ? AND session_type = ? AND agent_id = ?
+		 ORDER BY archived ASC, created_at ASC, id ASC`,
+		groupID, groupMemberSessionType, agentID,
+	)
+	if err != nil {
+		return GroupMember{}, false
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var m GroupMember
+		var archived int
+		if err := rows.Scan(&m.ID, &m.AgentID, &m.Name, &m.Backend, &archived); err != nil {
+			return GroupMember{}, false
+		}
+		m.Left = archived != 0
+		return m, true
+	}
+	return GroupMember{}, false
+}
+
+// setGroupMemberArchived flips a member row's archived flag (false = rejoined).
+func setGroupMemberArchived(memberID string, archived bool) error {
+	v := 0
+	if archived {
+		v = 1
+	}
+	_, err := store.WriteExec("UPDATE chat_sessions SET archived = ? WHERE id = ?", v, memberID)
+	return err
 }
 
 // SetSessionGroupID points a member row at its owning group.

@@ -51,6 +51,8 @@
       :open="pickerOpen"
       multiple
       :showAgentActions="false"
+      :excludedAgentIds="activeAgentIds"
+      :addedLabel="t('group.alreadyMember')"
       :modelValue="[]"
       :title="t('group.addMembers')"
       :confirm-label="t('group.confirm')"
@@ -61,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Trash2, Plus } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -81,6 +83,12 @@ const { t } = useI18n()
 const open = ref(false)
 const pickerOpen = ref(false)
 const maxRounds = ref(10)
+
+// Active members' agent ids: shown dimmed + unpickable in the add-members
+// picker (the backend rejoins/no-ops, so offering them would be misleading).
+const activeAgentIds = computed(() =>
+  props.members.filter(m => !m.left).map(m => m.agentId),
+)
 
 function openSheet() { open.value = true }
 function close() { open.value = false }

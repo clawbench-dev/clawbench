@@ -11,7 +11,7 @@
         v-for="(agent, idx) in agents"
         :key="agent.id"
         class="agent-option"
-        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx }"
+        :class="{ selected: isSelected(agent.id), 'agent-option-active': listNav.activeIndex.value === idx, 'agent-option-disabled': isExcluded(agent.id) }"
         role="button"
         tabindex="0"
         @click="handleSelect(agent.id)"
@@ -30,6 +30,7 @@
             <span v-if="defaultModelName(agent.id)" class="agent-tag model-tag">{{ defaultModelName(agent.id) }}</span>
           </div>
         </div>
+        <span v-if="isExcluded(agent.id)" class="agent-tag agent-added-tag">{{ addedLabel }}</span>
         <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
         <button v-else-if="showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
           <Star :size="14" />
@@ -71,6 +72,11 @@ const props = withDefaults(defineProps<{
   /** Show the per-row default badge / set-default star and the settings button.
    *  False for the group "add members" picker, where those actions are noise. */
   showAgentActions?: boolean
+  /** Agent ids that cannot be picked (already members). Rendered dimmed with an
+   *  "added" tag; clicking them is a no-op. */
+  excludedAgentIds?: string[]
+  /** Label shown on excluded rows. */
+  addedLabel?: string
 }>(), {
   modelValue: '',
   multiple: false,
@@ -80,6 +86,8 @@ const props = withDefaults(defineProps<{
   configTitle: 'Agent settings',
   confirmLabel: 'OK',
   showAgentActions: true,
+  excludedAgentIds: () => [],
+  addedLabel: 'Added',
 })
 
 const emit = defineEmits<{
@@ -103,11 +111,18 @@ function isSelected(agentId: string): boolean {
   return agentId === props.modelValue
 }
 
+/** isExcluded reports whether the agent is already in the group (unpickable). */
+function isExcluded(agentId: string): boolean {
+  return props.excludedAgentIds.includes(agentId)
+}
+
 function handleClose() {
   emit('update:open', false)
 }
 
 function handleSelect(agentId: string) {
+  // Already a member: not selectable (the backend would rejoin/no-op anyway).
+  if (isExcluded(agentId)) return
   // Ignore clicks within 400ms of opening — prevents accidental selection
   // from touch events that propagate to the newly rendered dialog
   if (Date.now() - openTime < 400) return
@@ -254,6 +269,23 @@ watch(() => props.open, async (val) => {
 
 .agent-option.selected {
   background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+
+/* Already a member: dimmed, not clickable, and no hover affordance. */
+.agent-option-disabled {
+  opacity: var(--opacity-disabled, 0.4);
+  cursor: default;
+  pointer-events: none;
+}
+.agent-added-tag {
+  flex-shrink: 0;
+  padding: 1px var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--bg-tertiary, #eee);
+  color: var(--text-muted, #999);
+  font-size: var(--font-size-2xs);
+  line-height: 16px;
+  opacity: 1;
 }
 
 .agent-option-icon {

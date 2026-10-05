@@ -1121,6 +1121,7 @@ export default {
     left: 'Left',
     maxRounds: 'Max rounds',
     confirm: 'Add',
+    alreadyMember: 'Added',
   },
   task: {
     title: 'Tasks',
