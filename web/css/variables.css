@@ -210,6 +210,17 @@
     --font-size-2xl: 16px;   /* headings, and inputs kept at 16px so mobile
                                 Safari does not zoom when they gain focus */
 
+    /* ── Icon size scale (px). Four steps for the agent/brand icons, chosen so
+       each matches the text it sits beside: sm (14) rides 10–12px meta, md (18)
+       the default 13–15px rows, lg (24) larger list/avatar contexts, xl (40)
+       the single settings-detail preview. Passed to AgentIcon as `size` enum
+       (sm|md|lg|xl), which resolves to these vars. Prefer the closest step over
+       a new one. ── */
+    --icon-size-sm: 14px;
+    --icon-size-md: 18px;
+    --icon-size-lg: 24px;
+    --icon-size-xl: 40px;
+
     /* ── Weights. Three steps cover the UI, plus `normal` for the places that
        must opt back OUT of an inherited weight (a muted badge nested inside a
        semibold label); `800` exists once for terminal keycaps. ── */

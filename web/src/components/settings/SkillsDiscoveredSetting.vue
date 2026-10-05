@@ -53,7 +53,7 @@
            "agent"/"backend" prefix: the icon already says which tool it is. -->
       <div v-if="s.backends?.length" class="skills-item-backends">
         <span v-for="b in s.backends" :key="b" class="skills-backend-chip">
-          <AgentIcon :backend="b" :size="12" />
+          <AgentIcon :backend="b" size="sm" />
           {{ getBackendDisplayName(b) }}
         </span>
       </div>

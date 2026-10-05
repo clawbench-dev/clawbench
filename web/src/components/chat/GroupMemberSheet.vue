@@ -2,7 +2,7 @@
   <BottomSheet :open="open" auto :title="t('group.members')" @close="close">
     <div class="group-member-sheet">
       <div v-for="m in members" :key="m.id" class="group-member-row" :class="{ 'is-left': m.left }">
-        <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" :size="24" />
+        <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
         <span class="group-member-name">{{ m.name }}</span>
         <span v-if="m.isHost" class="group-member-host-tag">{{ t('group.host') }}</span>
         <span v-if="m.left" class="group-member-left-tag">{{ t('group.left') }}</span>

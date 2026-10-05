@@ -6,7 +6,7 @@
          speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
          above the message box. -->
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
-      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" :size="30" />
+      <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
     </div>
@@ -20,7 +20,7 @@
     <div v-if="isHostMessage && hostRouting.found" class="msg-routing-card">
       <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
         <span class="msg-routing-avatar">
-          <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" :size="20" />
+          <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" size="md" />
         </span>
         <span class="msg-routing-at">@{{ s.name }}</span>
       </span>

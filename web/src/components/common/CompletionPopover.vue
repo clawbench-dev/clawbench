@@ -21,7 +21,7 @@
                类别是分类（会话/任务/议题与合并），事件是结果——两者层级不同，
                因此类别保持徽章形态，事件用纯文字标题。 -->
           <div class="completion-notify-header">
-            <AgentIcon v-if="agentBackend" :backend="agentBackend" :avatar="agentAvatar" :size="16" class="completion-notify-icon" />
+            <AgentIcon v-if="agentBackend" :backend="agentBackend" :avatar="agentAvatar" size="md" class="completion-notify-icon" />
             <span v-if="active.kindLabel" class="completion-notify-category">{{ active.kindLabel }}</span>
             <span class="completion-notify-kind" :class="`is-${active.eventTone}`">{{ displayKind }}</span>
             <button

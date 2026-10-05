@@ -126,6 +126,15 @@ describe('radius tokens (variables.css)', () => {
   })
 })
 
+describe('icon-size tokens (variables.css)', () => {
+  it('defines the four steps at their documented px values', () => {
+    expect(token('--icon-size-sm')).toBe('14px')
+    expect(token('--icon-size-md')).toBe('18px')
+    expect(token('--icon-size-lg')).toBe('24px')
+    expect(token('--icon-size-xl')).toBe('40px')
+  })
+})
+
 describe('duration tokens (variables.css)', () => {
   it('defines the three steps at their documented values', () => {
     expect(token('--duration-fast')).toBe('0.1s')

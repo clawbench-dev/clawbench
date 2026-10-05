@@ -51,7 +51,7 @@
             <span v-if="!chips.length" class="stask-chips-none">{{ t('task.form.eventTypesNone') }}</span>
           </span>
         </div>
-        <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :avatar="getAgentAvatar(task!.agentId as string)" :size="14" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
+        <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :avatar="getAgentAvatar(task!.agentId as string)" size="sm" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.status') }}</strong><span class="stask-status-dot" :class="statusClassOf(task!)"></span>{{ statusLabelOf(task!) }}</div>
         <div v-if="task!.lastRunAt" class="stask-row"><strong>{{ t('chat.contentBlocks.lastRun') }}</strong>{{ formatRelativeTime(task!.lastRunAt as string) }}</div>
       </template>
@@ -59,7 +59,7 @@
       <!-- ── Cron schedule ── -->
       <template v-else>
         <div class="stask-row"><strong>{{ t('chat.contentBlocks.frequency') }}</strong>{{ humanizeCron(task!.cronExpr as string) }}</div>
-        <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :avatar="getAgentAvatar(task!.agentId as string)" :size="14" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
+        <div class="stask-row"><strong>{{ t('chat.contentBlocks.executor') }}</strong><AgentIcon :backend="getAgentBackend(task!.agentId as string)" :name="getAgentName(task!.agentId as string)" :avatar="getAgentAvatar(task!.agentId as string)" size="sm" class="stask-agent-icon" /> {{ getAgentName(task!.agentId as string) }}</div>
         <!-- Progress toward the run limit, matching the task list page. Only a
              bounded task has progress to show; an unlimited one never advances
              toward anything, so a count there would be noise. -->

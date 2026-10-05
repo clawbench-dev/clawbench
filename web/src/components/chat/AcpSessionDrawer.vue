@@ -1,7 +1,7 @@
 <template>
   <BottomSheet :open="open" auto :title="drawerTitle" @close="$emit('close')">
     <template #header>
-      <AgentIcon :backend="backendId" :name="backendDisplayName" :avatar="agentAvatar" :size="18" class="bs-header-icon" />
+      <AgentIcon :backend="backendId" :name="backendDisplayName" :avatar="agentAvatar" size="md" class="bs-header-icon" />
       <span class="bs-header-title">{{ drawerTitle }}</span>
     </template>
     <div class="acp-session-search-row">

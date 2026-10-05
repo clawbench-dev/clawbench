@@ -1,7 +1,7 @@
 <template>
-    <img v-if="avatarSrc" class="agent-icon-img" :style="sizeStyle" :src="avatarSrc" :alt="name || backend" />
-    <svg v-else-if="processedSvg" class="agent-icon-svg" :class="[svgData!.needsBg ? 'agent-icon-bg' : '', svgData!.monoCssClass]" :style="sizeStyle" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
-    <span v-else class="agent-icon-initial" :style="initialStyle">{{ initial }}</span>
+    <img v-if="avatarSrc" class="agent-icon-img" :class="sizeClass" :src="avatarSrc" :alt="name || backend" />
+    <svg v-else-if="processedSvg" class="agent-icon-svg" :class="[sizeClass, svgData!.needsBg ? 'agent-icon-bg' : '', svgData!.monoCssClass]" :viewBox="svgData!.viewBox" role="img" :aria-label="name || backend" v-html="processedSvg" />
+    <span v-else class="agent-icon-initial" :class="sizeClass">{{ initial }}</span>
 </template>
 
 <script setup lang="ts">
@@ -15,15 +15,23 @@ import { svgToDataUri } from '@/utils/svgDataUri'
 // causing wrong colors/shapes.
 const uid = `_${Math.random().toString(36).slice(2, 8)}`
 
+/** Size steps. Each maps to a --icon-size-* token (see variables.css) via a
+ *  CSS class, so callers never pass raw pixels. Chosen to match the text each
+ *  icon sits beside: sm=14 (dense meta), md=18 (default rows), lg=24 (larger
+ *  list/avatar contexts), xl=40 (settings-detail preview). */
+export type AgentIconSize = 'sm' | 'md' | 'lg' | 'xl'
+
 const props = withDefaults(defineProps<{
     backend: string
     name?: string
-    size?: number
+    size?: AgentIconSize
     /** Raw SVG string for a user-configured custom avatar ("" = built-in icon). */
     avatar?: string
 }>(), {
-    size: 16,
+    size: 'md',
 })
+
+const sizeClass = computed(() => `agent-icon--${props.size}`)
 
 const svgData = computed(() => getAgentSvg(props.backend))
 
@@ -49,24 +57,30 @@ const processedSvg = computed(() => {
     return s
 })
 
-const sizeStyle = computed(() => ({
-    width: `${props.size}px`,
-    height: `${props.size}px`,
-}))
-
 const initial = computed(() => {
     if (props.name) return props.name.charAt(0).toUpperCase()
     return props.backend ? props.backend.charAt(0).toUpperCase() : '?'
 })
-
-const initialStyle = computed(() => ({
-    width: `${props.size}px`,
-    height: `${props.size}px`,
-    fontSize: `${Math.max(props.size * 0.55, 8)}px`,
-}))
 </script>
 
 <style scoped>
+/* Size classes set --ai-size from the --icon-size-* tokens and drive the box.
+   Written as element-agnostic rules so the same class sizes whichever of the
+   three render paths (svg / img / initial span) is active. A single source
+   (--ai-size) also lets the initial glyph scale from the box without repeating
+   the calc per class. */
+.agent-icon--sm { --ai-size: var(--icon-size-sm); }
+.agent-icon--md { --ai-size: var(--icon-size-md); }
+.agent-icon--lg { --ai-size: var(--icon-size-lg); }
+.agent-icon--xl { --ai-size: var(--icon-size-xl); }
+
+.agent-icon-svg,
+.agent-icon-img,
+.agent-icon-initial {
+    width: var(--ai-size);
+    height: var(--ai-size);
+}
+
 .agent-icon-svg {
     display: inline-flex;
     align-items: center;
@@ -101,5 +115,7 @@ const initialStyle = computed(() => ({
     background: var(--bg-tertiary);
     color: var(--text-secondary);
     font-weight: var(--font-weight-semibold);
+    /* Glyph scales with the box; 0.55 matches the previous ratio. */
+    font-size: calc(var(--ai-size) * 0.55);
 }
 </style>

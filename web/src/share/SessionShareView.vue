@@ -44,7 +44,7 @@
         <span v-else-if="error" class="share-status share-error">{{ error }}</span>
         <template v-else>
           <span v-if="backendLabel" class="session-share-agent">
-            <AgentIcon :backend="backendLabel" :name="agentName" :size="14" />
+            <AgentIcon :backend="backendLabel" :name="agentName" size="sm" />
             <span class="session-share-agent-name">{{ agentName }}</span>
           </span>
           <span v-if="backendLabel && messageCount > 0" class="session-share-dot" aria-hidden="true">·</span>

@@ -46,7 +46,7 @@
           @keydown.enter="!item.archived && openConversation(item)"
         >
           <div class="shared-session-main">
-            <AgentIcon :backend="item.backend" :name="item.backend" :size="22" />
+            <AgentIcon :backend="item.backend" :name="item.backend" size="md" />
             <div class="shared-session-info">
               <div class="shared-session-name-row">
                 <span class="shared-session-name" :title="item.title">{{ item.title || t('share.sharedConversation') }}</span>

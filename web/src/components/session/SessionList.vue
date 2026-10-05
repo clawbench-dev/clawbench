@@ -104,7 +104,7 @@
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(row.session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" :size="12" /> {{ getAgentName(row.session.agentId) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
                     <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
                   </div>
                   <!-- Fork-group toggle, inlined on the anchor row itself.
@@ -200,7 +200,7 @@
                   </div>
                   <div class="session-item-meta">
                     <span class="session-item-time">{{ formatRelativeTime(session.updatedAt) }}</span>
-                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" :size="12" /> {{ getAgentName(session.agentId) }}</span>
+                    <span class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
                     <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
                   </div>
                 </div>

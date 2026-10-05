@@ -21,7 +21,7 @@
         <span v-if="multiple" class="agent-option-check" :class="{ checked: isSelected(agent.id) }">
           <Check v-if="isSelected(agent.id)" :size="14" />
         </span>
-        <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" :size="16" /></span>
+        <span class="agent-option-icon"><AgentIcon :backend="agent.backend" :name="agent.name" :avatar="agent.avatar" size="md" /></span>
         <div class="agent-option-detail">
           <span class="agent-option-name">{{ agent.name }}</span>
           <span class="agent-option-specialty">{{ agent.specialty }}</span>

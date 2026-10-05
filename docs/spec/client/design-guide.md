@@ -321,6 +321,18 @@
 - 共享类里的图标尺寸写在 CSS 里：`.chat-action-btn svg { width:14px; height:14px }`、`.fbtn svg { flex-shrink: 0 }`。
 - **溢出的按钮条要支持拖拽横向滚动**：聊天 Action Bar 的按钮在窄窗格下会溢出，而滚动条是隐藏的——普通鼠标滚轮只能滚页面，够不到被挡住的按钮（触控板横滑与触摸拖拽本来就能用，只有鼠标不行）。`utils/dragScroll.ts` 在**真正溢出时**才挂载（放得下就不拦截按压、也不显示抓手光标），按下并左右拖动即滚动；形态沿用 `dragClickGuard`（独立 util + 返回 disposer + 组件挂载）
 - 自定义品牌图标走 `AgentIcon.vue` / `ProviderIcon.vue`；单色图标配色在 `mono-icon-colors.css`，深浅主题各一套。
+- **`AgentIcon` 的 `size` 是字符串枚举 `sm|md|lg|xl`，不是像素数字**（改自旧版 `:size="16"`）。四档映射到 `--icon-size-*` token（见下），与所伴文字匹配：`sm`=14（密集 meta，10–12px 文字旁）、`md`=18（默认行，13–15px）、`lg`=24（较大列表/头像上下文）、`xl`=40（设置详情预览位）。**传数字会生成 `agent-icon--18` 这类匹配不到任何规则的类名并静默按继承尺寸渲染**——与 `LoadingIndicator` 的枚举同源约束。
+- ⚠️ **批量替换 `:size="N"` 会误伤同文件里的 lucide 图标**（`<Bot :size="16">` 等）——lucide 的 `size` 是数字，不能改成枚举。改 AgentIcon 调用点时必须逐处确认标签名。
+
+**图标尺寸 token（`--icon-size-*`，4 档，px）**
+
+| Token | 值 | 用途 |
+|---|---|---|
+| `--icon-size-sm` | 14px | 密集行：会话列表 chip、任务卡片、分享页（伴 10–12px 文字） |
+| `--icon-size-md` | 18px | 默认行：选择器、通知、任务、头栏、设置列表、群聊（伴 13–15px 文字） |
+| `--icon-size-lg` | 24px | 较大上下文：群聊成员/发言者头、聊天欢迎页 |
+| `--icon-size-xl` | 40px | 设置详情头像行（唯一大图预览位） |
+
 
 ---
 

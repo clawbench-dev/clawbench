@@ -10,7 +10,7 @@
         @click="openSheet"
       >
         <span class="group-member-avatar">
-          <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" :size="30" />
+          <AgentIcon :backend="m.backend" :name="m.name" :avatar="getAgentAvatar(m.agentId)" size="lg" />
         </span>
       </button>
     </div>
