@@ -175,7 +175,15 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 // terminal state), then emit "done" and the terminal "completed" update.
 //
 // It is a var seam so tests can observe the terminal contract without a WS hub.
+//
+// Before announcing the terminal state it finalizes any streaming row still
+// open on the group timeline. That is a safety net for a Finalize that itself
+// failed (a DB write error): without it the row stays streaming=1 forever and
+// the next reload renders a phantom bubble that never ends. It is NOT a race
+// guard — every caller runs after the turn's runner returned, so no member turn
+// is still in flight (design §12.7(19)).
 var emitGroupTerminal = func(groupID string) {
+	finalizeOrphanedStreamingMessages(groupID, "interrupt")
 	SetSessionRunning(groupID, false, true)
 	ws.EmitToSession(groupID, ai.StreamEvent{Type: eventTypeDone})
 	// Broadcast the terminal status so every client clears the running flag,

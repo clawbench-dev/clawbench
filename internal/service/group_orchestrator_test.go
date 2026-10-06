@@ -327,3 +327,66 @@ func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 		t.Fatalf("member A was never called; order=%v (host self-route loop)", *order)
 	}
 }
+
+// The terminal emitter must finalize any streaming row left behind by a failed
+// Finalize, or the frontend reloads into a phantom streaming bubble that never
+// ends (decision #71). This is a safety net, not a race guard: every caller of
+// emitGroupTerminal runs after the turn's runner returned.
+func TestEmitGroupTerminal_FinalizesOrphanStreamingRow(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-orphan"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+
+	// A streaming assistant row left behind (as if Finalize failed).
+	msgID, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant", "half a thought", nil, true, "", "row-x")
+	if err != nil {
+		t.Fatalf("AddChatMessageWithAgent: %v", err)
+	}
+	if !isStreaming(t, msgID) {
+		t.Fatal("precondition: the row must start out streaming")
+	}
+
+	// Call the REAL terminal emitter (the seam is not replaced here).
+	emitGroupTerminal(groupID)
+
+	if isStreaming(t, msgID) {
+		t.Fatal("emitGroupTerminal must finalize orphaned streaming rows")
+	}
+}
+
+// A clean turn (no orphan) must still emit the terminal contract exactly once.
+func TestEmitGroupTerminal_NoOrphanStillTerminal(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-clean"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	SetSessionRunning(groupID, true, true)
+
+	emitGroupTerminal(groupID)
+
+	if IsSessionRunning(groupID) {
+		t.Fatal("emitGroupTerminal must clear the running flag")
+	}
+}
+
+// isStreaming reports whether a chat_history row is still marked streaming.
+func isStreaming(t *testing.T, msgID int64) bool {
+	t.Helper()
+	var s int
+	if err := store.ReadDB().QueryRow("SELECT streaming FROM chat_history WHERE id = ?", msgID).Scan(&s); err != nil {
+		t.Fatalf("read streaming: %v", err)
+	}
+	return s == 1
+}
