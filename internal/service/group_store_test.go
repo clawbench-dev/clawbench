@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"clawbench/internal/model"
 	"clawbench/internal/store"
@@ -376,8 +377,183 @@ func TestGroupMembersForGroups(t *testing.T) {
 	}
 }
 
-// The host controls the flow, so removing it would leave the group unroutable.
-// Refuse the removal rather than silently orphaning the group (decision: N5).
+// countMemberRows returns how many hidden member rows still exist for a group.
+func countMemberRows(t *testing.T, groupID string) int {
+	t.Helper()
+	var n int
+	if err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE group_id = ? AND session_type = ?",
+		groupID, groupMemberSessionType,
+	).Scan(&n); err != nil {
+		t.Fatalf("count member rows: %v", err)
+	}
+	return n
+}
+
+// Destroying a group must cascade its member rows in the same transaction:
+// they are independent chat_sessions rows, so deleting only the group row would
+// orphan them forever (decision #48).
+func TestHardDeleteSession_CascadesGroupMemberRows(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if got := countMemberRows(t, groupID); got != 2 {
+		t.Fatalf("expected 2 member rows before delete, got %d", got)
+	}
+
+	if err := HardDeleteSession(groupID); err != nil {
+		t.Fatalf("HardDeleteSession: %v", err)
+	}
+
+	if got := countMemberRows(t, groupID); got != 0 {
+		t.Fatalf("member rows must be cascaded with the group, got %d remaining", got)
+	}
+	// The group row itself is gone too.
+	var groupRows int
+	if err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE id = ?", groupID).Scan(&groupRows); err != nil {
+		t.Fatalf("count group rows: %v", err)
+	}
+	if groupRows != 0 {
+		t.Fatalf("group row must be deleted, got %d", groupRows)
+	}
+}
+
+// Archiving a group must NOT archive its member rows: they are hidden
+// transitively through the group, and archiving them would make them eligible
+// for retention expiry (decision #48).
+func TestArchiveGroup_DoesNotArchiveMemberRows(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	if err := ArchiveSession(project, "codebuddy", groupID); err != nil {
+		t.Fatalf("ArchiveSession: %v", err)
+	}
+
+	var archived int
+	if err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE group_id = ? AND session_type = ? AND archived = 1",
+		groupID, groupMemberSessionType,
+	).Scan(&archived); err != nil {
+		t.Fatalf("count archived members: %v", err)
+	}
+	if archived != 0 {
+		t.Fatalf("archiving the group must leave member rows archived=0, got %d", archived)
+	}
+}
+
+// Removing a member refreshes updated_at, so a left member is not mistaken for
+// a retention-expired session (decision #48).
+func TestRemoveGroupMember_RefreshesUpdatedAt(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Age the member row, then remove it — the removal must refresh updated_at.
+	if _, err := store.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", memberID,
+	); err != nil {
+		t.Fatalf("age member row: %v", err)
+	}
+	if err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+
+	// Assert the timestamp directly: the retention query ALSO excludes
+	// group_member rows, so a query-only assertion would pass even if
+	// updated_at were never refreshed (a tautology).
+	var old int
+	if err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE id = ? AND updated_at < datetime('now', '-90 days')",
+		memberID,
+	).Scan(&old); err != nil {
+		t.Fatalf("read member updated_at: %v", err)
+	}
+	if old != 0 {
+		t.Fatalf("RemoveGroupMember must refresh updated_at, but the row is still >90 days old")
+	}
+
+	// Belt-and-braces: the retention sweep must not pick the member up either.
+	cutoff := time.Now().AddDate(0, 0, -90)
+	ids, err := store.GetExpiredArchivedSessions(cutoff)
+	if err != nil {
+		t.Fatalf("GetExpiredArchivedSessions: %v", err)
+	}
+	for _, id := range ids {
+		if id == memberID {
+			t.Fatalf("a removed member must not be treated as retention-expired: %v", ids)
+		}
+	}
+}
+
+// Even if a member row's updated_at IS old (e.g. legacy data), the retention
+// query must exclude session_type='group_member' outright (decision #48, the
+// double-safety half of the fix).
+func TestGetExpiredArchivedSessions_ExcludesGroupMemberRows(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	// Simulate legacy/edge data: an archived member row with an old timestamp.
+	if _, err := store.UnsafeDBForTest().Exec(
+		"UPDATE chat_sessions SET updated_at = datetime('now', '-100 days') WHERE id = ?", memberID,
+	); err != nil {
+		t.Fatalf("age member row: %v", err)
+	}
+
+	cutoff := time.Now().AddDate(0, 0, -90)
+	ids, err := store.GetExpiredArchivedSessions(cutoff)
+	if err != nil {
+		t.Fatalf("GetExpiredArchivedSessions: %v", err)
+	}
+	for _, id := range ids {
+		if id == memberID {
+			t.Fatalf("group_member rows must be excluded from retention expiry: %v", ids)
+		}
+	}
+}
+
+// The host controls the flow, so removing it would leave the group unroutable.// Refuse the removal rather than silently orphaning the group (decision: N5).
 func TestRemoveGroupMember_RefusesHost(t *testing.T) {
 	setupGroupDB(t)
 	project := "/tmp/grouptest"

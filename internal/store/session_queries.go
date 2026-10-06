@@ -22,6 +22,13 @@ const (
 	SessionSortOldest    = "oldest"
 )
 
+// groupMemberSessionTypeForQuery is the session_type of a hidden group member
+// row (mirrors service.groupMemberSessionType). A member that left a group is
+// archived=1 by design and must never be treated as retention-expired
+// (decision #48); this package cannot import service, so the value is
+// duplicated here.
+const groupMemberSessionTypeForQuery = "group_member"
+
 // NormalizeSessionArchiveFilter maps a raw filter string to a known value,
 // defaulting to "all" for empty/unknown input.
 func NormalizeSessionArchiveFilter(v string) string {
@@ -477,7 +484,12 @@ func MessageIndexCounts() (total int, indexed int, err error) {
 //
 //nolint:errcheck,noctx // legacy query moved from service; rationale documented at the call site
 func GetExpiredArchivedSessions(cutoff time.Time) ([]string, error) {
-	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND updated_at < ?", cutoff)
+	// Exclude hidden group member rows (session_type='group_member'). A member
+	// that LEFT a group is archived=1 by design and must be retained: its past
+	// speech in the group timeline is attributed by its row id (decision #48).
+	// Without this filter, enabling ArchiveRetention would treat "left the
+	// group" as "expired" and hard-delete the row, orphaning that attribution.
+	rows, err := dbRead.Query("SELECT id FROM chat_sessions WHERE archived = 1 AND session_type != ? AND updated_at < ?", groupMemberSessionTypeForQuery, cutoff)
 	if err != nil {
 		return nil, err
 	}

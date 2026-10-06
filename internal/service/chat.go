@@ -2875,6 +2875,12 @@ func HardDeleteSession(sessionID string) error {
 	// /btw side questions belong to the conversation they were asked about;
 	// without this they would linger as orphan markers.
 	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id = ?", sessionID)
+	// A group's member rows are independent chat_sessions rows (session_type
+	// 'group_member', group_id = the group). Deleting only the group row would
+	// leave every member row behind forever, orphaned and invisible (decision
+	// #48). Cascade them in the SAME transaction as the group row, before it is
+	// deleted (the group_id link points at the row being removed).
+	_, _ = tx.Exec("DELETE FROM chat_sessions WHERE group_id = ? AND session_type = ?", sessionID, groupMemberSessionType)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err

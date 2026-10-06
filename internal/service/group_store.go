@@ -436,7 +436,7 @@ func RemoveGroupMember(groupID, memberID string) error {
 		return ErrCannotRemoveHost
 	}
 	_, err := store.WriteExec(
-		"UPDATE chat_sessions SET archived = 1 WHERE id = ? AND group_id = ?",
+		"UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ?",
 		memberID, groupID,
 	)
 	if err != nil {
