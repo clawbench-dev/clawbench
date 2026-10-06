@@ -23,7 +23,7 @@
 
 | Task | 决策 | 未实现证据 |
 |---|---|---|
-| O1 | #45/#46/#58 群消息入队 + 复用 drain | `handler/chat.go:323` 群分支在 `TryClaimSessionRun`（`:494`）**之前**就 return；无群 drain |
+| O1 | #45/#46/#58/**#72** 群消息入队 + 复用 drain + 推送 | `handler/chat.go:323` 群分支在 `TryClaimSessionRun`（`:494`）**之前**就 return；无群 drain；`emitGroupTerminal:178` **不调 `EmitSessionPushNotification`**（切走后收不到通知） |
 | O2 | #48 级联删成员行 / 离群刷 `updated_at` | `HardDeleteSession` 只删群行；`RemoveGroupMember` 无 `updated_at` |
 | O3 | #51 成员失败复用 `failTurn` | `group_orchestrator.go:158` 仅 `slog.Warn` |
 | O4 | #55 群聊跳过摘要推荐 | `session_executor.go:1672` 无群判断 |
@@ -139,6 +139,7 @@
 | 69 | 失败时游标是否推进 | **不推进**：只在回合**成功**时 `SetMemberCursor`。失败 = 没处理过，游标推过去会让那段上下文**永久丢失**（成员后续答非所问且时间线看不出）。失败残留（半截输出 / warning block）**保留在时间线**供用户查看 |
 | 70 | warning block 的注入 | **不注入给成员**：成员失败的 warning block（`role='assistant'` + 该成员 `agent_id`）排除在 `buildInjectionText` 之外——它是给用户看的运维信息，不是讨论内容（现状会被当"某成员发言"注入，原始错误如 `create backend: …` 广播给其他成员，而当事人自己反被作者过滤跳过） |
 | 71 | 终态前的流式行收尾 | **`emitGroupTerminal` 内部调 `finalizeOrphanedStreamingMessages(groupID,"interrupt")`**，四条退出路径（取消/结束信号/达上限/主持人失败终止）共用。**定位是"兜 `FinalizeStreamingMessage` 自身失败"**——发出终态事件时 `runTurn` 早已返回（`defaultRunner:303` 同步阻塞，所有调用点都在 runner 返回后），**不引入等待**。该函数幂等（查 `streaming=1` 再 finalize） |
+| 72 | 群回合的推送通知 | **与单聊完全一致**：复用 `EmitSessionPushNotification(groupID,"completed")`（带 once-per-run 守卫）与 `EmitTurnAnsweredNotification`（排队中途逐条，不占名额）。现状 `emitGroupTerminal` **只发 WS、不推送** ⇒ 用户切走后群讨论跑完完全收不到通知（IM/Android/桌面全无）。`pushSessionTerminal` 依赖的 `GetSessionTitle`/`getSessionResponsePreviewRaw` 对群会话均成立 |
 
 ## 3. 架构
 
@@ -857,6 +858,10 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 `emitGroupTerminal`（`group_orchestrator.go:178`）只做 `SetSessionRunning(false)` + `done` + `completed`，**不 finalize 任何流式行**；而 `finalizeGroupOrphans`（`:373`）只在**回合开始时**调（`:108`）。⇒ 若某成员回合的 `FinalizeStreamingMessage` 自身失败（DB 写错），该行停在 `streaming=1`，终态事件发出后前端重载即出现**幽灵流式气泡**。
 **澄清（勿夸大）**：这**不是**取消竞态——`defaultRunner:303` 是同步 `runTurn`，`emitGroupTerminal` 的六个调用点全在某个 `runner(...)` 返回之后，故发出终态时 executor 的 finalize 早已执行。**无需引入等待**；只需把幂等的孤儿清理放进 `emitGroupTerminal` 兜住"finalize 失败"。
 **修（决策 #71）**：`emitGroupTerminal` 内先 `finalizeOrphanedStreamingMessages(groupID, "interrupt")`，再发终态。
+
+**（20）群回合结束不推送通知（决策 #72）。**
+`emitGroupTerminal`（`group_orchestrator.go:178`）只发 WS `done`/`completed`，**不调 `EmitSessionPushNotification`**；而单聊终止路径会推（`session_command.go:304`、`session_runtime.go:174`）。⇒ 用户在群里发完消息切走，群讨论跑完（可达数十秒到数分钟）**完全收不到通知**——IM 机器人 / Android 原生 / 桌面系统通知全都没有，而单聊同样操作会收到。群讨论耗时更长，通知价值反而更高。
+**修（决策 #72）**：群回合复用 `EmitSessionPushNotification(groupID,"completed")` + `EmitTurnAnsweredNotification`（排队中途逐条），不另写推送逻辑。与决策 #58（`MarkDoneAndSendFinal` 决定终态）同批落地——单聊的 `MarkDoneAndSendFinal` 本就带推送。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
