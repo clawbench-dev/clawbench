@@ -1831,7 +1831,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O2: 级联删除 + 归档保留 + 离群不误删（决策 #48）
+### Task O2: 级联删除 + 归档保留 + 离群不误删（决策 #48）✅ 已实现（team-f `f0f1bead1`，待集成）
 
 **Files:**
 - Modify: `internal/service/chat.go`（`HardDeleteSession` 删成员行）
@@ -1850,7 +1850,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O3: 成员失败复用 failTurn（决策 #51）
+### Task O3: 成员失败复用 failTurn（决策 #51）✅ 已核实为既成事实 + 归因已钉住（`e0fdf415c`）
 
 **Files:**
 - Modify: `internal/service/group_orchestrator.go`（运行中失败也走 failTurn 形态）
@@ -1864,7 +1864,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O4: 群聊跳过摘要与推荐（决策 #55）
+### Task O4: 群聊跳过摘要与推荐（决策 #55）✅ 已实现（`3d8185fb3`）
 
 **Files:**
 - Modify: `internal/service/session_executor.go`（Finalize 的 `triggerChatSummarization` 加群判断）
@@ -1879,7 +1879,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O5: 回退轮转指针 + 连续失败收尾（决策 #56）
+### Task O5: 回退轮转指针 + 连续失败收尾（决策 #56）✅ 已实现（`52bebec31`）
 
 **Files:**
 - Modify: `internal/service/group_orchestrator.go`（`speakNextMember` 轮转 + 失败计数）
@@ -2087,7 +2087,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O17: 保护群讨论中的成员连接（决策 #73，细化 I4）
+### Task O17: 保护群讨论中的成员连接（决策 #73，细化 I4）✅ 已实现（`26679d733`）
 
 **Files:**
 - Modify: `internal/service/group_orchestrator.go`（维护"本轮在用成员行"集合）
