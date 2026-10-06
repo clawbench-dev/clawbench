@@ -233,3 +233,43 @@ func TestBuildMemberInjection_LeavesMemberSpeechAlone(t *testing.T) {
 		t.Fatalf("a member's own text must not be rewritten: %q", got)
 	}
 }
+
+// A user message with attachments must carry an attachment summary into the
+// members' injected context, using the SAME formatter as single chat (decision
+// #65) — otherwise members would be asked to discuss a file they cannot see.
+// The bubble itself must NOT contain the markers (decision #65: content stays
+// clean; only the injection is enriched).
+func TestBuildMemberInjection_RendersUserAttachments(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{
+			ID:      2,
+			Role:    "user",
+			Content: `{"blocks":[{"type":"text","text":"看看这个"}]}`,
+			Files: []model.FileEntry{
+				{Path: "/tmp/report.pdf"},
+			},
+		},
+	}
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
+	if !strings.Contains(got, "User uploaded") {
+		t.Fatalf("user attachments must be summarized for members: %q", got)
+	}
+	if !strings.Contains(got, "report.pdf") {
+		t.Fatalf("the attachment label must be present: %q", got)
+	}
+	if !strings.Contains(got, "看看这个") {
+		t.Fatalf("the user's own words must survive: %q", got)
+	}
+}
+
+// A user message WITHOUT attachments must render exactly as before — no empty
+// "[User uploaded 0 file(s)]" noise.
+func TestBuildMemberInjection_NoAttachmentNoPrefix(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "user", Content: `{"blocks":[{"type":"text","text":"普通消息"}]}`},
+	}
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
+	if strings.Contains(got, "User uploaded") {
+		t.Fatalf("a message without attachments must not gain an attachment header: %q", got)
+	}
+}

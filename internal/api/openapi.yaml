@@ -925,6 +925,10 @@ paths:
       description: |
         发送一条用户消息并启动 AI 流式响应。流式事件经 `/api/ai/events/ws` 推送。
         会话由 `session_id` 查询参数（或会话 Cookie）决定，**不在请求体里**。
+
+        **群会话**：消息交由群编排器（主持人路由、成员依次发言），响应带
+        `group:true`。群消息**支持附件**（决策 #65）：`files` 落库到用户消息行，
+        并渲染进各成员的注入上下文；但**不写进 `content`**——气泡与单聊逐字一致。
       operationId: chatSend
       parameters:
         - name: session_id

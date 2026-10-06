@@ -9,6 +9,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/grouprouting"
+	"clawbench/internal/model"
 	"clawbench/internal/ws"
 )
 
@@ -79,7 +80,7 @@ func GetSessionProjectPathAnyPath(sessionID string) string {
 // It is intentionally sequential (v1): members speak one at a time so each sees
 // the previous speakers' same-round output and only one streaming row is written
 // to the group timeline at any moment.
-func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string) error {
+func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string, files []model.FileEntry) error {
 	groupID := o.groupID
 
 	// Register the group as running with a cancelable context so a frontend
@@ -93,7 +94,9 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 	defer SetSessionRunning(groupID, false, true)
 
 	// 1. Persist the user message to the group timeline and broadcast it.
-	msgID, err := AddChatMessageWithAgent(o.project, groupBackend(groupID), groupID, "user", userMessage, nil, false, "", "")
+	// Attachments are stored on the row (decision #65): the bubble renders them
+	// via `files`, and the injection layer renders them as prompt prefixes.
+	msgID, err := AddChatMessageWithAgent(o.project, groupBackend(groupID), groupID, "user", userMessage, files, false, "", "")
 	if err != nil {
 		return fmt.Errorf("persist group user message: %w", err)
 	}
@@ -409,11 +412,13 @@ var emitGroupMemberFinalize = func(groupID string, msgID int64) {
 // the entry point used by the HTTP handler's group delegation. queueID and
 // senderClientID are the sending device's optimistic-bubble identifiers (may be
 // empty); they travel on the user_message echo so the sender adopts the DB id.
-func RunGroupTurnForSession(ctx context.Context, groupID, userMessage, queueID, senderClientID string) error {
+// files are the message's attachments (decision #65) — persisted on the user
+// message and rendered into each member's injected context.
+func RunGroupTurnForSession(ctx context.Context, groupID, userMessage string, files []model.FileEntry, queueID, senderClientID string) error {
 	o := NewGroupOrchestrator(groupID)
 	o.queueID = queueID
 	o.senderClientID = senderClientID
-	return o.RunGroupTurn(ctx, userMessage)
+	return o.RunGroupTurn(ctx, userMessage, files)
 }
 
 // --- small helpers ---

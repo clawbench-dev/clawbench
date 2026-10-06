@@ -325,19 +325,19 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	// turn. Delegated here — after ownership/auth and the message check, but
 	// BEFORE TryClaimSessionRun/AddChatMessage — so the orchestrator owns the
 	// user-message insert, the running-state registration, and the WS broadcast.
-	// Group sends in v1 are text-only (attachments are per-member, not per-group).
+	//
+	// Attachments are supported (decision #65): they are persisted on the user
+	// message and rendered into each member's injected context, but NOT into the
+	// message content (the bubble stays identical to single chat).
 	if service.GetSessionType(sessionID) == "group" {
-		if len(req.Files) > 0 || len(req.FilePaths) > 0 {
-			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
-			return
-		}
+		groupFiles := req.Files
 		// Background context: r.Context() is cancelled as soon as this handler
 		// returns, which would abort the group turn immediately. queueId/clientId
 		// travel with the turn so the orchestrator's user_message echo lets the
 		// sending device adopt its optimistic bubble's DB id (instead of
 		// rendering a second bubble).
 		go func() {
-			if err := service.RunGroupTurnForSession(context.Background(), sessionID, req.Message, req.QueueID, req.ClientID); err != nil {
+			if err := service.RunGroupTurnForSession(context.Background(), sessionID, req.Message, groupFiles, req.QueueID, req.ClientID); err != nil {
 				slog.Error("handler: group turn failed", "session_id", sessionID, "error", err)
 			}
 		}()

@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -50,7 +52,7 @@ func TestGroupOrchestrator_MultiRoundClosedLoop(t *testing.T) {
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始讨论"); err != nil {
+	if err := o.RunGroupTurn(context.Background(), "开始讨论", nil); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
 	}
 	if *term != 1 {
@@ -106,7 +108,7 @@ func TestGroupOrchestrator_HostOnlyGroupDoesNotLoop(t *testing.T) {
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始"); err != nil {
+	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
 	}
 	if *term != 1 {
@@ -190,5 +192,51 @@ func TestGroupOrchestrator_DefaultRunnerEmitsPerMemberFinalize(t *testing.T) {
 
 	if len(calls) != 1 {
 		t.Fatalf("defaultRunner must emit exactly one per-member finalize, got %d (%v)", len(calls), calls)
+	}
+}
+
+// A group message with attachments must persist them on the user row (decision
+// #65) so the injection layer can render them; the content itself stays clean.
+func TestGroupTurn_PersistsUserAttachments(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-attach"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
+			return groupMemberResult{}
+		}
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	files := []model.FileEntry{{Path: "/tmp/report.pdf"}}
+	if err := o.RunGroupTurn(context.Background(), "看看这个", files); err != nil {
+		t.Fatalf("RunGroupTurn: %v", err)
+	}
+
+	msgs, _ := GetMessagesBySessionIDRaw(groupID)
+	found := false
+	for _, m := range msgs {
+		if m.Role == "user" {
+			if len(m.Files) == 1 && m.Files[0].Path == "/tmp/report.pdf" {
+				found = true
+			}
+			// The content must NOT carry the attachment markers.
+			if strings.Contains(m.Content, "User uploaded") {
+				t.Fatalf("the bubble content must stay clean: %q", m.Content)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the user message must persist its attachments")
 	}
 }

@@ -345,3 +345,27 @@ func TestAIChatGet_ReturnsSessionType(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
 	assert.Equal(t, "chat", result["sessionType"])
 }
+
+// A group send WITH attachments must no longer be rejected (decision #65): the
+// files are carried to the orchestrator, which persists them on the user row
+// for the injection layer. Before this, the group branch returned 400.
+func TestAIChatDelegatesGroupSendWithAttachments(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/chat", map[string]any{
+		"message": "看看这个",
+		"files":   []map[string]any{{"path": "/tmp/report.pdf"}},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: groupID})
+	w := callHandlerWithAuth(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["group"], "group send with attachments must be delegated, not rejected")
+}

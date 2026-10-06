@@ -3176,7 +3176,7 @@ func TestSendMessageToSessionFromPush_GroupRoutesToOrchestrator(t *testing.T) {
 		message   string
 	}
 	done := make(chan struct{}, 1)
-	restore := SetRunGroupTurnForSessionForTest(func(_ context.Context, groupID, message, _, _ string) error {
+	restore := SetRunGroupTurnForSessionForTest(func(_ context.Context, groupID, message string, _ []model.FileEntry, _, _ string) error {
 		calls = append(calls, struct {
 			sessionID string
 			message   string
@@ -3220,7 +3220,7 @@ func TestSendMessageToSessionFromPush_GroupRejectsAttachments(t *testing.T) {
 
 	insertGroupSessionRow(t, db, "group-attach")
 
-	restore := SetRunGroupTurnForSessionForTest(func(context.Context, string, string, string, string) error {
+	restore := SetRunGroupTurnForSessionForTest(func(context.Context, string, string, []model.FileEntry, string, string) error {
 		t.Error("a rejected attachment must not start a group turn")
 		return nil
 	})

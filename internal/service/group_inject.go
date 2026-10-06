@@ -60,6 +60,11 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 			continue
 		}
 		if m.Role == "user" || m.AgentID == "" {
+			// A user message's attachments are rendered into the INJECTION only
+			// (decision #65): the bubble stays clean, but a member must know a
+			// file was attached or it cannot discuss it. Same formatter as
+			// single chat so the two cannot drift.
+			text = userTextWithAttachments(text, m.Files)
 			b.WriteString("用户: ")
 			b.WriteString(text)
 			b.WriteString("\n")
@@ -109,6 +114,24 @@ func hostSpeechForMembers(text string) string {
 		return text
 	}
 	return res.Before
+}
+
+// userTextWithAttachments prepends the attachment summary to a user message's
+// text for the injected context (decision #65). It reuses the single-chat
+// formatter (model.ClassifyAttachments + model.ApplyAttachmentPrefixes) rather
+// than writing a second format that could drift.
+//
+// The excludePaths set is nil: in this path the attachment list IS the files
+// channel (there is no separate "current file" argument), so nothing must be
+// filtered out. A message with no attachments is returned unchanged — the
+// formatter already omits empty buckets, but skipping the call keeps the
+// common case allocation-free.
+func userTextWithAttachments(text string, files []model.FileEntry) string {
+	if len(files) == 0 {
+		return text
+	}
+	parts := model.ClassifyAttachments(files, nil)
+	return model.ApplyAttachmentPrefixes(text, nil, nil, parts)
 }
 
 // participantHeader renders the "参与者：A（描述）、B（描述）" line, or "" when

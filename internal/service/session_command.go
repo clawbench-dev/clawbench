@@ -181,7 +181,7 @@ var runGroupTurnForSession = RunGroupTurnForSession
 // SetRunGroupTurnForSessionForTest swaps the group-turn seam and returns the
 // previous one, so tests can assert the IM group delegation without running a
 // real orchestrator. Pass nil to restore the default.
-func SetRunGroupTurnForSessionForTest(fn func(context.Context, string, string, string, string) error) func(context.Context, string, string, string, string) error {
+func SetRunGroupTurnForSessionForTest(fn func(context.Context, string, string, []model.FileEntry, string, string) error) func(context.Context, string, string, []model.FileEntry, string, string) error {
 	prev := runGroupTurnForSession
 	if fn == nil {
 		runGroupTurnForSession = RunGroupTurnForSession
@@ -223,7 +223,7 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 			return fmt.Errorf("group sessions do not accept attachments")
 		}
 		go func() {
-			if err := runGroupTurnForSession(context.Background(), sessionID, message, queueID, ""); err != nil {
+			if err := runGroupTurnForSession(context.Background(), sessionID, message, nil, queueID, ""); err != nil {
 				slog.Error("push: group turn failed", "session_id", sessionID, "error", err)
 			}
 		}()
