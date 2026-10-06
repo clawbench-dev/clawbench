@@ -300,6 +300,7 @@ export function useChatSession(options: UseChatSessionOptions) {
     currentSessionId.value = returnedId
     currentSessionTitle.value = (sessionData.sessionTitle as string) || ''
     currentBackend.value = (sessionData.backend as string) || ''
+    currentSessionType.value = (sessionData.sessionType as string) || ''
     currentAgentId.value = (sessionData.agentId as string) || ''
     // ── ACP model list ──
     // Must run BEFORE syncModelFromData below, which resolves the display name
@@ -389,7 +390,7 @@ export function useChatSession(options: UseChatSessionOptions) {
 
   // ── Identity refs from singleton ──
   const identity = useSessionIdentity()
-  const { currentSessionTitle, currentBackend, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
+  const { currentSessionTitle, currentBackend, currentSessionType, currentAgentId, currentModelId, currentModelName, runningSessions, runningSessionsVersion, availableCommands, autoApprove, thinkingEffortState, modeState } = identity
 
   // ── Agents from singleton ──
   const { agents, loadAgents, getAgentBackend, getAgentName, getAgent, syncModelFromAgent, getAgentModel, agentHeaderTitle: makeAgentTitle, supportsACP } = useAgents()

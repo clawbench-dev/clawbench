@@ -840,3 +840,33 @@ describe('ChatPanelContent — tool detail drawer is session-scoped', () => {
     expect(region).toMatch(/sessionId:\s*\(\)\s*=>/)
   })
 })
+
+// ── O11: isGroupSession is derived from the session TYPE, not the roster ──
+//
+// useGroupMembers clears the roster on any fetch failure, so deriving group-ness
+// from "roster is non-empty" made a group render as a single chat after one
+// network blip (fork/rewind/model chrome reappearing, avatar strip vanishing).
+// The stored session_type is authoritative. ChatPanelContent pulls in the whole
+// chat tree, so this is a source guard rather than a mount test.
+
+describe('ChatPanelContent — isGroupSession derives from session type', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatPanelContent.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('computes isGroupSession from currentSessionType === group', async () => {
+    const src = await source()
+    const start = src.indexOf('const isGroupSession = computed(')
+    expect(start, 'isGroupSession must be a computed').toBeGreaterThan(-1)
+    const region = src.slice(start, src.indexOf('\n', start))
+    expect(region).toMatch(/identity\.currentSessionType\.value\s*===\s*'group'/)
+    // The roster-presence heuristic must be gone — it is exactly the bug.
+    expect(region).not.toMatch(/groupMembers/)
+  })
+
+  it('still receives the roster as a prop (used only to render members)', async () => {
+    const src = await source()
+    expect(src).toContain('groupMembers: { type: Array')
+  })
+})

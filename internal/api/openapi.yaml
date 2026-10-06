@@ -915,6 +915,10 @@ paths:
             消息列表与状态。`messages` 只含 `chat_history` 行（对话内容）；
             尚未出队的排队消息不在其中，而是由 `queue` 数组单独返回（与
             `GET /api/ai/queue` 同源，按入队顺序）。
+
+            `sessionType` 是该会话存储的 `session_type`（`chat` / `group` /
+            `scheduled` / …），客户端据此判定群会话。**不要**用成员名单是否为空
+            来推断群会话——名单在拉取失败时会被清空，会把群会话误判成单聊。
     post:
       tags: [Chat]
       summary: 发送聊天消息

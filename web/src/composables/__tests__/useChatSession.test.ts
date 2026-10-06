@@ -69,6 +69,7 @@ const { mockIdentity, mockToastFn, mockAgentFns, mockUtilsFns, mockIdentityFns, 
   const mockIdentity: Record<string, string | boolean> = {
     currentSessionTitle: '',
     currentBackend: '',
+    currentSessionType: '',
     currentAgentId: '',
     currentModelId: '',
     currentModelName: '',
@@ -164,6 +165,10 @@ vi.mock('@/composables/useSessionIdentity.ts', () => ({
     currentBackend: {
       get value() { return mockIdentity.currentBackend },
       set value(v) { mockIdentity.currentBackend = v },
+    },
+    currentSessionType: {
+      get value() { return mockIdentity.currentSessionType },
+      set value(v) { mockIdentity.currentSessionType = v },
     },
     currentAgentId: {
       get value() { return mockIdentity.currentAgentId },
@@ -3210,6 +3215,26 @@ describe('loadHistory', () => {
     expect(mockIdentity.currentBackend).toBe('claude')
     expect(mockIdentity.currentAgentId).toBe('agent1')
     expect(mockUtilsFns.parseMessages).toHaveBeenCalled()
+  })
+
+  // ── O11: sessionType is synced from the response (decision #62) ──
+  // The frontend decides "group vs single" from this TYPE, not from the member
+  // roster (which useGroupMembers clears on any fetch failure). If the sync is
+  // dropped, a group session renders as a single chat (fork/rewind/model chrome
+  // reappearing) whenever the roster request fails.
+  it('syncs currentSessionType from the chat response', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        sessionId: 'current-s1', sessionTitle: 'G', sessionType: 'group',
+        messages: [], total: 0, running: false, backend: 'codebuddy', agentId: 'host',
+      }),
+    })
+
+    const session = createSession()
+    await session.loadHistory(true, false, false)
+
+    expect(mockIdentity.currentSessionType).toBe('group')
   })
 
   it('sets switching=true when showOverlay=true, restores to false after', async () => {

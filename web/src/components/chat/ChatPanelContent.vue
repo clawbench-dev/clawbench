@@ -343,11 +343,13 @@ const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
-/** A group-chat session (multiple agents). The roster is owned by App.vue and
- *  passed down; a non-empty roster is the synchronous group signal. Drives the
- *  suppression of single-agent-only controls (fork/rewind/reset, model/mode/
- *  usage chrome) in the message list and input bar. */
-const isGroupSession = computed(() => (props.groupMembers?.length ?? 0) > 0)
+/** A group-chat session (multiple agents). Derived from the session's stored
+ *  TYPE, not the member roster: useGroupMembers clears the roster on any fetch
+ *  failure, so a network blip used to make a group render as a single chat
+ *  (fork/rewind/model chrome reappearing, avatar strip vanishing). The roster
+ *  is only used to render members. Drives the suppression of single-agent-only
+ *  controls in the message list and input bar. */
+const isGroupSession = computed(() => identity.currentSessionType.value === 'group')
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({

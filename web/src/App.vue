@@ -1281,7 +1281,7 @@ const {
   resolveByName: resolveGroupSpeakerByName,
   refresh: refreshGroupMembers,
 } = useGroupMembers(sessionIdentity.currentSessionId)
-const isGroupSession = computed(() => groupMembers.value.length > 0)
+const isGroupSession = computed(() => sessionIdentity.currentSessionType.value === 'group')
 // Member row id of the turn currently being produced (decision #59). Written by
 // useChatStream, read here by the header avatar strip so the speaking member is
 // highlighted. Module-level singleton ref (useSessionIdentity), like runningSessions.

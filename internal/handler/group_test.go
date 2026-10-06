@@ -311,3 +311,37 @@ func TestServeGroupMembers_RefuseHostRemoval(t *testing.T) {
 	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
 	assert.Contains(t, w.Body.String(), "CannotRemoveHost")
 }
+
+// TestAIChatGet_ReturnsSessionType pins decision #62: GET /api/ai/chat must
+// return the stored session_type so the frontend can decide "group vs single"
+// from the TYPE. The member roster is not authoritative — useGroupMembers clears
+// it on any fetch failure, and deriving group-ness from "roster is non-empty"
+// would make a group render as a single chat after one network blip.
+func TestAIChatGet_ReturnsSessionType(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(AIChat, req)
+	assertOK(t, w)
+
+	var result map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "group", result["sessionType"])
+
+	// A plain chat session reports its own type, not "group".
+	chatID, err := service.CreateSession(env.ProjectDir, "codebuddy", "single", "", "", "default", "chat")
+	require.NoError(t, err)
+
+	req = newRequest(t, http.MethodGet, "/api/ai/chat?session_id="+chatID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(AIChat, req)
+	assertOK(t, w)
+
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &result))
+	assert.Equal(t, "chat", result["sessionType"])
+}
