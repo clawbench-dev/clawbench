@@ -1922,7 +1922,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O8: 群会话禁用回溯与 fork（决策 #52/#74）
+### Task O8: 群会话禁用回溯与 fork（决策 #52/#74）✅ 已实现（前端 `fe3a867bd` / 后端 `e5e64f23b`）
 
 **Files:**
 - Modify: `internal/service/continue_conversation.go`（`ForkSession` 加群守卫）
@@ -1969,7 +1969,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O11: `isGroupSession` 改用会话类型（决策 #62）
+### Task O11: `isGroupSession` 改用会话类型（决策 #62）✅ 已实现（`1f88212f0`）
 
 **Files:**
 - Modify: `internal/handler/chat.go`（`GET /api/ai/chat` 响应补 `sessionType`）
