@@ -3,6 +3,8 @@ package ai
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -1236,23 +1238,34 @@ func TestBuildPromptBlocks_SlashCommandWithForkContext(t *testing.T) {
 // the agent reads them itself with its Read tool. They must NOT be stripped
 // into a ContentBlock::Image (which is what CodeBuddy and other ACP agents used
 // to receive, unlike the CLI transport).
+//
+// The fixture deliberately satisfies EVERY precondition the deleted pipeline
+// used to require — a real image file, small enough to inline, located inside
+// WorkDir — so that the only reason no image block appears is that the pipeline
+// is gone, not that a precondition happened to be unmet. (The old gate also
+// required the agent's PromptCapabilities.Image; that capability and its
+// registry accessors were removed with the pipeline, so it can no longer be
+// forced here — the file/workdir preconditions are the ones this test can pin.)
 func TestBuildPromptBlocks_ImagePathsStayInText(t *testing.T) {
 	agent := &model.Agent{ID: "test-build-prompt-imgpath", Backend: "acp-stdio", AcpCommand: "echo"}
 	backend, err := NewACPBackend(agent)
 	require.NoError(t, err)
 
-	prompt := "[Current file: /abs/pic.png]\n这是什么\n[User uploaded 1 file(s): .clawbench/uploads/shot.jpg]"
-	req := ChatRequest{Prompt: prompt, WorkDir: "/tmp"}
+	dir := t.TempDir()
+	pngPath := filepath.Join(dir, "pic.png")
+	require.NoError(t, os.WriteFile(pngPath, []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0x00}, 0o644))
+
+	prompt := "[Current file: " + pngPath + "]\n这是什么"
+	req := ChatRequest{Prompt: prompt, WorkDir: dir}
 	blocks := backend.buildPromptBlocks(req)
 
 	// Exactly one block: a single text block, no appended image content block.
 	require.Len(t, blocks, 1)
 	require.NotNil(t, blocks[0].Text)
 	assert.Nil(t, blocks[0].Image)
-	// The image paths survive verbatim in the text.
-	assert.Contains(t, blocks[0].Text.Text, "/abs/pic.png")
-	assert.Contains(t, blocks[0].Text.Text, ".clawbench/uploads/shot.jpg")
-	assert.Contains(t, blocks[0].Text.Text, "这是什么")
+	// The image path survives verbatim in the text — the agent reads it itself.
+	assert.Equal(t, prompt, blocks[0].Text.Text)
+	assert.Contains(t, blocks[0].Text.Text, pngPath)
 }
 
 // TestEmitPromptResponseUsage_NilCachedState verifies that emitting a
