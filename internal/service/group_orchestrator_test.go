@@ -603,3 +603,114 @@ func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 		t.Fatal("host sweep state must be cleared once the group turn ends")
 	}
 }
+
+// When the host's routing is unparseable the fallback must ROTATE through the
+// members. Always picking the first non-host member means only one member ever
+// speaks during a parse-failure streak, and the discussion collapses to a
+// monologue (decision #56).
+func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-rotate"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+	mC, _ := AddGroupMember(project, groupID, "claude", "agent-c", "C")
+
+	// Alternate a parse failure with a usable route: the failure streak resets
+	// each time (so the abort does not kick in), and the fallback is exercised
+	// repeatedly — which is where rotation must show.
+	runner, order := newScriptedRunner(t, groupID, project, map[string][]string{
+		hostID: {
+			"(no routing tag at all)",
+			"<clawbench-speaker>A</clawbench-speaker> 请 A 表态",
+			"(no routing tag at all)",
+			"<clawbench-speaker>A</clawbench-speaker> 请 A 表态",
+			"(no routing tag at all)",
+			"<clawbench-speaker>A</clawbench-speaker> 请 A 表态",
+			"(no routing tag at all)",
+			"<clawbench-group-end/> 讨论结束",
+		},
+		mA: {"A 的观点", "A 的观点", "A 的观点"},
+	})
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	// Fallback picks are those that are NOT the member the host explicitly
+	// routed to (A) and not the host itself. Those must rotate across B and C.
+	picks := []string{}
+	for _, id := range *order {
+		if id != hostID && id != mA {
+			picks = append(picks, id)
+		}
+	}
+	if len(picks) < 2 {
+		t.Fatalf("expected at least two fallback picks, got %v (full order=%v)", picks, *order)
+	}
+	if picks[0] == picks[1] {
+		t.Fatalf("fallback must rotate, but picked %q twice: %v", picks[0], picks)
+	}
+	// Both non-routed members must be reached by rotation.
+	seen := map[string]bool{}
+	for _, p := range picks {
+		seen[p] = true
+	}
+	if !seen[mB] || !seen[mC] {
+		t.Fatalf("rotation must reach B and C: picks=%v (B=%s C=%s)", picks, mB, mC)
+	}
+}
+
+// Two consecutive parse failures mean the host is not producing usable routing:
+// continuing burns the whole round budget for nothing. Abort and finalize
+// (decision #56).
+func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-abort"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	// A large cap so that, without the abort, the loop would run many rounds.
+	if err := SetGroupMaxRounds(groupID, 20); err != nil {
+		t.Fatalf("SetGroupMaxRounds: %v", err)
+	}
+
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			hostTurns++
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"no tag here"}]}`, nil, false, "", hostID)
+			return groupMemberResult{}
+		}
+		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":"member speech"}]}`, nil, false, "", turn.MemberRowID)
+		return groupMemberResult{}
+	}
+	term := observeGroupTerminal(t)
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	// 2 failures, then abort. Allow a small margin for the final summary turn.
+	if hostTurns > 4 {
+		t.Fatalf("must abort after two consecutive parse failures, but the host ran %d turns", hostTurns)
+	}
+	if *term != 1 {
+		t.Fatalf("aborting must still emit exactly one terminal event, got %d", *term)
+	}
+}

@@ -45,7 +45,19 @@ type GroupOrchestrator struct {
 	senderClientID string
 	// runTurn is injectable for tests; nil means the production runTurn path.
 	runTurn groupTurnRunner
+	// fallbackIdx is the round-robin cursor for the parse-failure fallback, so
+	// consecutive failures address DIFFERENT members instead of the same first
+	// one every time (decision #56).
+	fallbackIdx int
+	// parseFailures counts consecutive unparseable host routings. Reset by a
+	// usable decision; reaching maxConsecutiveParseFailures ends the turn.
+	parseFailures int
 }
+
+// maxConsecutiveParseFailures is how many unparseable host routings in a row
+// end the discussion early (decision #56). Two is enough to tell "the host
+// fumbled once" from "the host cannot route at all".
+const maxConsecutiveParseFailures = 2
 
 // NewGroupOrchestrator builds an orchestrator for a group session.
 func NewGroupOrchestrator(groupID string) *GroupOrchestrator {
@@ -154,12 +166,26 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		targets := o.resolveTargets(route, members, hostMemberID)
 		if len(targets) == 0 {
 			// Parse failed or no valid speakers: fall back to round-robin.
+			//
+			// Two consecutive failures mean the host is not producing usable
+			// routing at all — continuing would burn the whole round budget on
+			// a broken loop. Abort and finalize (decision #56).
+			o.parseFailures++
+			if o.parseFailures >= maxConsecutiveParseFailures {
+				slog.Warn("group: aborting after consecutive parse failures",
+					"group", groupID, "failures", o.parseFailures)
+				o.summarize(groupCtx, runner, hostMemberID, names, members)
+				emitGroupTerminal(groupID)
+				return nil
+			}
 			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
 				emitGroupTerminal(groupID)
 				return nil
 			}
 			continue
 		}
+		// A usable routing decision resets the failure streak.
+		o.parseFailures = 0
 
 		// Members speak in order; each sees the previous speakers' output.
 		for _, t := range targets {
@@ -276,25 +302,40 @@ func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []
 // speakNextMember runs one round-robin member turn (fallback path), skipping
 // the host so a fallback can never re-run the host. Returns false when no
 // active non-host member exists.
+//
+// The pick ROTATES via o.fallbackIdx (decision #56): when the host's routing is
+// repeatedly unparseable, always choosing the first member would turn the
+// discussion into that member's monologue. The index advances past whatever was
+// picked and wraps, skipping left members and the host.
 func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTurnRunner, members []GroupMember, names map[string]string, hostMemberID string) bool {
+	eligible := make([]GroupMember, 0, len(members))
 	for _, m := range members {
 		if m.Left || m.ID == hostMemberID {
 			continue
 		}
-		cursor := GetMemberCursor(m.ID)
-		prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "")
-		res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
-		// Advance only on success (decision #69) — same rule as the routed and
-		// host paths. The round-robin fallback is still "a turn", so a failed
-		// one must not swallow the context it was handed.
-		if res.Err == "" {
-			SetMemberCursor(m.ID, GroupTimelineHighWater(o.groupID))
-		} else {
-			slog.Warn("group: fallback member turn failed", "group", o.groupID, "member", m.ID, "err", res.Err)
-		}
-		return true
+		eligible = append(eligible, m)
 	}
-	return false
+	if len(eligible) == 0 {
+		return false
+	}
+	if o.fallbackIdx >= len(eligible) {
+		o.fallbackIdx = 0
+	}
+	m := eligible[o.fallbackIdx]
+	o.fallbackIdx = (o.fallbackIdx + 1) % len(eligible)
+
+	cursor := GetMemberCursor(m.ID)
+	prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "")
+	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
+	// Advance only on success (decision #69) — same rule as the routed and
+	// host paths. The round-robin fallback is still "a turn", so a failed
+	// one must not swallow the context it was handed.
+	if res.Err == "" {
+		SetMemberCursor(m.ID, GroupTimelineHighWater(o.groupID))
+	} else {
+		slog.Warn("group: fallback member turn failed", "group", o.groupID, "member", m.ID, "err", res.Err)
+	}
+	return true
 }
 
 // buildMemberTurnSpec assembles the TurnSpec for one member (or host) turn.
