@@ -287,3 +287,27 @@ func TestServeSessionsOverview_GroupRowCarriesMemberPreview(t *testing.T) {
 	}
 	assert.True(t, found, "group session must appear in the overview")
 }
+
+// Removing the host must be refused with 409 so the frontend can explain why,
+// rather than the generic 500 the unguarded path produced.
+func TestServeGroupMembers_RefuseHostRemoval(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{"title": "讨论组", "hostAgentId": "codebuddy"})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+
+	req = newRequest(t, http.MethodDelete, "/api/group/members", map[string]any{"groupId": created.GroupID, "memberId": created.HostMemberID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "CannotRemoveHost")
+}

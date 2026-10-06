@@ -3,6 +3,7 @@ SessionStreamNotFound: 未找到会话流
 SessionStreamBusy: 会话流正在其他设备上查看
 SessionLimitReached: 已达会话数量上限（{{.MaxCount}}），请先归档旧会话
 SessionIdRequired: session_id 为必填项
+CannotRemoveHost: 不能移除主持人，请先转移主持人
 ShareSessionNoContent: 该会话暂无可分享的消息
 ShareSessionInvalidSelection: 部分选中的消息无法分享（可能仍在生成中）
 QueueIdRequired: queueId 为必填项

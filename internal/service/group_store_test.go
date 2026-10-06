@@ -373,3 +373,64 @@ func TestGroupMembersForGroups(t *testing.T) {
 		t.Fatal("unknown group id must be absent from the map")
 	}
 }
+
+// The host controls the flow, so removing it would leave the group unroutable.
+// Refuse the removal rather than silently orphaning the group (decision: N5).
+func TestRemoveGroupMember_RefusesHost(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	groupID, hostMemberID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	other, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Removing the host must fail...
+	if err := RemoveGroupMember(groupID, hostMemberID); err == nil {
+		t.Fatal("removing the host must be refused")
+	}
+	// ...and must NOT have archived the host row.
+	for _, m := range mustListMembers(t, groupID) {
+		if m.ID == hostMemberID && m.Left {
+			t.Fatal("host row must remain active after a refused removal")
+		}
+	}
+
+	// Removing a normal member still works (the guard must not over-reach).
+	if err := RemoveGroupMember(groupID, other); err != nil {
+		t.Fatalf("removing a non-host member must still work: %v", err)
+	}
+}
+
+// Idempotency must survive the guard: removing an already-left non-host member
+// stays a no-op success, and removing the host stays refused.
+func TestRemoveGroupMember_HostGuardIdempotent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if err := RemoveGroupMember(groupID, hostMemberID); err == nil {
+		t.Fatal("second removal of the host must also be refused")
+	}
+}
+
+func mustListMembers(t *testing.T, groupID string) []GroupMember {
+	t.Helper()
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	return members
+}

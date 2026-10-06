@@ -5185,10 +5185,15 @@ paths:
     delete:
       tags: [Group]
       summary: 移除群成员（软删除，保留其历史发言）
+      description: |
+        主持人**不可移除**（`409`）——它是群唯一的调度者，移除后群无法再起回合。
+        需先转移主持人（`PATCH /api/group/settings`）。
       operationId: groupMembersRemove
       responses:
         "200":
           description: 移除成功
+        "409":
+          description: 目标是主持人（`msgKey=CannotRemoveHost`）
 
   /api/group/settings:
     patch:

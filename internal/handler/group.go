@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"clawbench/internal/model"
@@ -170,6 +171,10 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := service.RemoveGroupMember(req.GroupID, req.MemberID); err != nil {
+			if errors.Is(err, service.ErrCannotRemoveHost) {
+				writeLocalizedErrorf(w, r, http.StatusConflict, "CannotRemoveHost")
+				return
+			}
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 			return
 		}

@@ -2,6 +2,7 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -345,9 +346,20 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	return out, rows.Err()
 }
 
+// ErrCannotRemoveHost is returned when a caller tries to remove the group's
+// host member. The host is the only router, so removing it would leave the
+// group unable to run another turn.
+var ErrCannotRemoveHost = errors.New("cannot remove the group host")
+
 // RemoveGroupMember soft-removes a member: the row is archived (kept) so its
 // past speech in the group timeline stays attributed. Idempotent.
+//
+// The host member cannot be removed (ErrCannotRemoveHost): it is the group's
+// only router, so dropping it would silently strand the group.
 func RemoveGroupMember(groupID, memberID string) error {
+	if memberID != "" && memberID == GetGroupHostMember(groupID) {
+		return ErrCannotRemoveHost
+	}
 	_, err := store.WriteExec(
 		"UPDATE chat_sessions SET archived = 1 WHERE id = ? AND group_id = ?",
 		memberID, groupID,
