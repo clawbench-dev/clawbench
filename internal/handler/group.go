@@ -10,9 +10,11 @@ import (
 // group.go holds the AI group-chat HTTP endpoints (design §8). All routes are
 // project-scoped and authenticated via middleware.Auth, like the rest of /api/.
 
-// ServeGroupCreate creates a group plus its host member.
+// ServeGroupCreate creates a group plus ALL its members in one call (design
+// §7.1, decision #25). The frontend picks members and host together, so the
+// host and members arrive in a single request and are created atomically.
 //
-//	POST /api/group/create  {title, hostAgentId} -> {ok, groupId, hostMemberId}
+//	POST /api/group/create  {hostAgentId, memberAgentIds:[]} -> {ok, groupId, hostMemberId}
 func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -31,27 +33,47 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Title       string `json:"title"`
-		HostAgentID string `json:"hostAgentId"`
+		HostAgentID    string   `json:"hostAgentId"`
+		MemberAgentIDs []string `json:"memberAgentIds"`
 	}
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	agentID := req.HostAgentID
-	if agentID == "" {
-		agentID = model.GetDefaultAgentID()
+	hostAgentID := req.HostAgentID
+	if hostAgentID == "" {
+		hostAgentID = model.GetDefaultAgentID()
 	}
-	backend, _, _, _, ok := resolveAgentConfig(agentID)
-	if !ok {
-		writeLocalizedErrorf(w, r, http.StatusServiceUnavailable, "NoAgentsAvailable")
+	// The host must be a member: if the caller omitted the member list (older
+	// client), fall back to a host-only group. Otherwise require the host to be
+	// present in the list — otherwise no member row would match it.
+	agentIDs := req.MemberAgentIDs
+	if len(agentIDs) == 0 {
+		agentIDs = []string{hostAgentID}
+	} else if !containsString(agentIDs, hostAgentID) {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
 	}
-	hostName := service.GetAgentDisplayName(agentID)
-	title := req.Title
-	if title == "" {
-		title = hostName + " 的群聊"
+
+	// Resolve every agent BEFORE creating anything: an unknown agent id must
+	// fail the whole request (the service also rolls back, but resolving first
+	// avoids opening a transaction for a request that cannot succeed).
+	specs := make([]service.GroupMemberSpec, 0, len(agentIDs))
+	for _, agentID := range agentIDs {
+		backend, _, _, _, ok := resolveAgentConfig(agentID)
+		if !ok {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return
+		}
+		specs = append(specs, service.GroupMemberSpec{
+			AgentID:     agentID,
+			Backend:     backend,
+			DisplayName: service.GetAgentDisplayName(agentID),
+		})
 	}
-	groupID, hostMemberID, err := service.CreateGroup(projectPath, title, backend, agentID, hostName)
+
+	hostName := service.GetAgentDisplayName(hostAgentID)
+	title := hostName + " 的群聊"
+	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, title, hostAgentID, specs)
 	if err != nil {
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "CreateSessionFailed")
 		return

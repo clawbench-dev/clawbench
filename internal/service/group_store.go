@@ -74,9 +74,33 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	if len(specs) == 0 {
 		return "", "", fmt.Errorf("create group: no members")
 	}
+	// Validate before touching the DB so a bad spec cannot even open a
+	// transaction (and no id is generated for a doomed request).
+	for _, s := range specs {
+		if s.AgentID == "" {
+			return "", "", fmt.Errorf("create group: member with empty agent id")
+		}
+	}
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return "", "", idErr
+	}
+
+	// Generate every id BEFORE opening the transaction. generateSessionID
+	// probes the DB for uniqueness via store.ReadDB(); a read issued while the
+	// write transaction is open deadlocks whenever the read and write pools are
+	// the same single-connection handle (the handler test fixture does exactly
+	// that: store.SetDBForTest(db, db) with MaxOpenConns(1)).
+	groupID = generateSessionID()
+	if groupID == "" {
+		return "", "", fmt.Errorf("failed to generate unique session ID")
+	}
+	memberIDs := make([]string, len(specs))
+	for i := range specs {
+		memberIDs[i] = generateSessionID()
+		if memberIDs[i] == "" {
+			return "", "", fmt.Errorf("failed to generate unique member session ID")
+		}
 	}
 
 	tx, err := store.WriteBegin()
@@ -85,11 +109,6 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	}
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
-
-	groupID = generateSessionID()
-	if groupID == "" {
-		return "", "", fmt.Errorf("failed to generate unique session ID")
-	}
 
 	// The group row's backend mirrors its host (the group itself never runs a
 	// turn; the host does). specs[0] is not assumed to be the host.
@@ -112,22 +131,15 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 		return "", "", fmt.Errorf("mark group title placeholder: %w", err)
 	}
 
-	for _, s := range specs {
-		if s.AgentID == "" {
-			return "", "", fmt.Errorf("create group: member with empty agent id")
-		}
-		memberID := generateSessionID()
-		if memberID == "" {
-			return "", "", fmt.Errorf("failed to generate unique member session ID")
-		}
+	for i, s := range specs {
 		if _, err := tx.Exec(
 			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-			memberID, projectID, s.Backend, s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
+			memberIDs[i], projectID, s.Backend, s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
 		); err != nil {
 			return "", "", fmt.Errorf("create member session: %w", err)
 		}
 		if s.AgentID == hostAgentID && hostMemberID == "" {
-			hostMemberID = memberID
+			hostMemberID = memberIDs[i]
 		}
 	}
 	if hostMemberID == "" {

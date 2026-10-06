@@ -5126,16 +5126,33 @@ paths:
   /api/group/create:
     post:
       tags: [Group]
-      summary: 创建群聊
+      summary: 创建群聊（一步创建群与全部成员）
       description: |
-        创建一个群聊及其主持人成员。群是一条 `chat_sessions` 行
-        （`session_type='group'`），主持人是其第一个成员（`session_type='group_member'`）。
-        `title` 可空，空则后端用「{主持人名} 的群聊」占位。
+        创建一个群聊及其全部成员。群是一条 `chat_sessions` 行
+        （`session_type='group'`），每个成员（含主持人）是一条隐藏的
+        `session_type='group_member'` 行。群行与成员行在**同一事务**内创建，
+        任一成员非法则整批回滚，不留只有主持人的半成品群。
+        `hostAgentId` 必须在 `memberAgentIds` 中；`memberAgentIds` 省略时
+        退化为「只有主持人的群」。标题不接受入参，后端用「{主持人名} 的群聊」
+        占位（首条消息后由 auto-title 接管）。
         群计入会话上限（成员不计）。
       operationId: groupCreate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                hostAgentId: {type: string}
+                memberAgentIds:
+                  type: array
+                  items: {type: string}
       responses:
         "200":
           description: 创建成功，返回 groupId 与 hostMemberId
+        "400":
+          description: 请求非法（hostAgentId 不在 memberAgentIds 中，或含未知 agent）
         "409":
           description: 已达会话数量上限
 

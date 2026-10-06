@@ -67,6 +67,68 @@ func TestServeGroupCreateAndMembers(t *testing.T) {
 	assert.True(t, hostSeen, "host member must be listed")
 }
 
+// TestServeGroupCreateWithMembers pins the one-step creation endpoint (design
+// §7.1, decision #25): a single POST with hostAgentId + memberAgentIds creates
+// the group and ALL members at once, so the frontend no longer follows up with
+// a separate add-members call.
+func TestServeGroupCreateWithMembers(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "claude"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var created struct {
+		OK           bool   `json:"ok"`
+		GroupID      string `json:"groupId"`
+		HostMemberID string `json:"hostMemberId"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &created))
+	require.True(t, created.OK)
+	require.NotEmpty(t, created.GroupID)
+
+	// Both members exist after the single call — no follow-up needed.
+	members, err := service.ListGroupMembers(created.GroupID)
+	require.NoError(t, err)
+	require.Len(t, members, 2, "host + 1 member must be created in one call")
+	require.Equal(t, created.HostMemberID, service.GetGroupHostMember(created.GroupID))
+
+	hostSeen := false
+	for _, m := range members {
+		if m.ID == created.HostMemberID {
+			hostSeen = true
+			require.Equal(t, "codebuddy", m.AgentID)
+		}
+	}
+	require.True(t, hostSeen, "host row must be among the created members")
+}
+
+// TestServeGroupCreateInvalidMemberAborts pins atomicity at the HTTP boundary:
+// an unknown agent id must fail the request and leave no group behind.
+func TestServeGroupCreateInvalidMemberAborts(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	req := newRequest(t, http.MethodPost, "/api/group/create", map[string]any{
+		"hostAgentId":    "codebuddy",
+		"memberAgentIds": []string{"codebuddy", "no-such-agent-xyz"},
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupCreate, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+
+	var count int
+	require.NoError(t, store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE session_type = 'group'",
+	).Scan(&count))
+	require.Zero(t, count, "failed create must not leave a group row")
+}
+
 func TestServeGroupSettings(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()
