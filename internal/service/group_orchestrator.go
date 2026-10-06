@@ -344,15 +344,27 @@ func memberNameMap(members []GroupMember) map[string]string {
 	return names
 }
 
-// activeMemberNamesExcept returns the display names the host may route to:
-// every active (non-left) member EXCEPT the host itself. The host must never be
-// offered as a routing target (see resolveTargets).
-func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []string {
-	out := make([]string, 0, len(members))
+// activeMemberNamesExcept returns the members the host may route to, with the
+// metadata that makes routing sensible (decision #39/#41): every member EXCEPT
+// the host itself, each carrying its specialty and whether it has left.
+//
+// Left members are INCLUDED (marked, not dropped): their past speech is still
+// on the timeline, so omitting them would make the host see speech from a name
+// it cannot address. Marking them is what stops the host from routing to
+// someone who is gone (which would silently fall back to round-robin).
+//
+// The host must never be offered as a routing target (see resolveTargets).
+func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []HostMemberInfo {
+	out := make([]HostMemberInfo, 0, len(members))
 	for _, m := range members {
-		if !m.Left && m.ID != hostMemberID {
-			out = append(out, m.Name)
+		if m.ID == hostMemberID {
+			continue
 		}
+		out = append(out, HostMemberInfo{
+			Name:      m.Name,
+			Specialty: GetAgentSpecialty(m.AgentID),
+			Left:      m.Left,
+		})
 	}
 	return out
 }
