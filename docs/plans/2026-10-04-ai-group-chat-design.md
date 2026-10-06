@@ -81,6 +81,8 @@
 | 60 | 群会话级设置（model/mode/effort/usage） | **不显示选择器**，每个成员用自己 agent 的默认（**已实现**：`ChatInputBar.vue:33,316` 已按 `isGroupSession` 隐藏） |
 | 61 | 群 auto-approve 开关 | **作用于全体成员**：切换时批量写各成员行 `auto_approve` + 逐个 `SetAutoApprove` 同步活连接（现状：写群行，而 ACP 读成员行 `acp_backend.go:126` ⇒ **死开关**） |
 | 62 | `isGroupSession` 判定 | **用 `session_type === 'group'`**，不靠"名单非空"（后者被 `useGroupMembers.ts:52` 的 catch 置空击穿，群会退回单聊形态）；需后端在 `GET /api/ai/chat` 响应补 `sessionType` 字段 |
+| 63 | 成员行的隔离方式 | **白名单**：所有用户可见的会话查询一律 `session_type IN ('chat','group')`，成员行天然不匹配。**不用黑名单** `!= 'group_member'`（新增查询漏加条件时，白名单默认隐藏、黑名单默认泄漏） |
+| 64 | 项目会话计数 | **排除成员行**：`ListAllProjects`（`project_registry.go:70`）与 `GetConversationProjects`（`chat.go:1013`）的 COUNT 都加 `session_type IN ('chat','group')`（与决策 #37 同规则；现状两处无类型条件 ⇒ 5 人成员的群使项目数虚增 6） |
 
 ## 3. 架构
 
@@ -773,6 +775,14 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 
 **（13）群会话级设置已正确隐藏（决策 #60，非缺口）。**
 `ChatInputBar.vue:33`（ACP 控制栏）与 `:316`（model/mode/auto-approve/usage 行）已按 `isGroupSession` 隐藏；`ChatMessageItem.vue:144,149` 隐藏 fork；`ContentBlocks.vue` 隐藏 warning-reset 按钮。此项**无需改动**，记录以免重复设计。
+
+**（14）项目会话计数把隐藏成员行算进去了（决策 #64）。**
+`ListAllProjects`（`project_registry.go:70-73`）与 `GetConversationProjects`（`chat.go:1013-1014`）都对 `chat_sessions` 做 `COUNT(*)` **且无 `session_type` 条件** ⇒ 一个 5 人成员的群使项目会话数**虚增 6**（1 群行 + 5 成员行），而侧边栏只显示 1 条。两处分别喂设置页项目列表（`GET /api/projects/registry`）与项目选择器（`GET /api/conversation-projects`），**用户可见**。
+
+**（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
+- `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
+- 未读：`unreadCountSubquery`（`chat.go:1196`）以**群行**为 `s`，群时间线的 `role='assistant'` 行（成员发言 + warning block）计入未读；成员行无 `chat_history` 故永不显示未读。`UpdateLastRead`（`chat.go:1522`）锚定群行。
+- `activeStreams` 以 `cfg.SessionID` = **成员行** 为键（`session_executor.go:367,397`），是 executor 级注册表，多成员并发互不覆盖；优雅关停的 `FlushStreamingNow`/`WaitStreamsDrained` 正常。
 
 ## 11. 关键文件索引
 
