@@ -1959,7 +1959,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O10: 群 auto-approve 作用于全体成员（决策 #61）
+### Task O10: 群 auto-approve 作用于全体成员（决策 #61）✅ 已实现（team-f `cd067c023`）
 
 **Files:**
 - Modify: `internal/handler/chat_session.go`（`:583-590` 群分支批量写成员行）
@@ -2009,7 +2009,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O13: 群消息支持附件（注入时渲染）（决策 #65/#66）
+### Task O13: 群消息支持附件（注入时渲染）（决策 #65/#66）✅ 已实现（`63df1eba2`）
 
 **Files:**
 - Modify: `internal/handler/chat.go`（群分支放开附件校验）
