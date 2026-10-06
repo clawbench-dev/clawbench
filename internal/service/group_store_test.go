@@ -628,6 +628,109 @@ func TestRemoveGroupMember_WritesSystemEvent(t *testing.T) {
 	}
 }
 
+// Adding a member broadcasts a system_message event carrying the committed row
+// id and text (decisions #40/#43), so the timeline updates live instead of only
+// after a reload.
+func TestAddGroupMember_BroadcastsSystemEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"agent-host": {ID: "agent-host", Name: "Host", Specialty: "主持"},
+		"agent-a":    {ID: "agent-a", Name: "A", Specialty: "代码编写与推理"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	type emitted struct {
+		groupID string
+		msgID   int64
+		text    string
+	}
+	var got []emitted
+	orig := emitGroupSystemMessage
+	emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
+		got = append(got, emitted{groupID, msgID, text})
+	}
+	t.Cleanup(func() { emitGroupSystemMessage = orig })
+
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one system_message broadcast, got %d: %+v", len(got), got)
+	}
+	if got[0].groupID != groupID {
+		t.Fatalf("broadcast to wrong group: got %q want %q", got[0].groupID, groupID)
+	}
+	if !strings.Contains(got[0].text, "A") || !strings.Contains(got[0].text, "加入了讨论") {
+		t.Fatalf("broadcast text must match the stored event: %q", got[0].text)
+	}
+	// The broadcast id must be the committed chat_history row id, not 0 or a
+	// fabricated value — the frontend dedups on it.
+	sysMsgs := systemMessages(t, groupID)
+	if len(sysMsgs) != 1 {
+		t.Fatalf("expected 1 stored system row, got %d", len(sysMsgs))
+	}
+	if got[0].msgID != sysMsgs[0].ID {
+		t.Fatalf("broadcast msgID must be the DB row id: got %d want %d", got[0].msgID, sysMsgs[0].ID)
+	}
+	if got[0].text != sysMsgs[0].Content {
+		t.Fatalf("broadcast text must equal stored content: got %q want %q", got[0].text, sysMsgs[0].Content)
+	}
+}
+
+// Removing a member broadcasts the departure system_message event too.
+func TestRemoveGroupMember_BroadcastsSystemEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	type emitted struct {
+		msgID int64
+		text  string
+	}
+	var got []emitted
+	orig := emitGroupSystemMessage
+	emitGroupSystemMessage = func(_ string, msgID int64, text string) {
+		got = append(got, emitted{msgID, text})
+	}
+	t.Cleanup(func() { emitGroupSystemMessage = orig })
+
+	if err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one departure broadcast, got %d: %+v", len(got), got)
+	}
+	if !strings.Contains(got[0].text, "A") || !strings.Contains(got[0].text, "已离场") {
+		t.Fatalf("departure broadcast must name the member and say they left: %q", got[0].text)
+	}
+	sysMsgs := systemMessages(t, groupID)
+	last := sysMsgs[len(sysMsgs)-1]
+	if got[0].msgID != last.ID || got[0].text != last.Content {
+		t.Fatalf("departure broadcast must carry the stored row: got (%d,%q) want (%d,%q)",
+			got[0].msgID, got[0].text, last.ID, last.Content)
+	}
+}
+
 // A system event must be injected into the next member's context (decision #44:
 // it counts toward the cursor) — otherwise members never learn who joined.
 func TestSystemEvent_InjectedIntoMemberContext(t *testing.T) {

@@ -560,3 +560,18 @@ func IsSessionRunningForSweep(sessionID string) bool {
 	defer groupActiveMembersMu.RUnlock()
 	return groupActiveMembers[sessionID] > 0
 }
+
+// emitGroupSystemMessage broadcasts a persisted role='system' timeline row to
+// the group's subscribers so a membership change appears immediately (decisions
+// #40/#43). Like emitGroupUserMessage it is a seam (var) so tests can observe
+// without the WS hub. msgID is the chat_history row id; the frontend dedups on
+// it, so a duplicate delivery cannot render the row twice.
+var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
+	ws.EmitToSession(groupID, ai.StreamEvent{
+		Type: eventTypeSystemMessage,
+		SystemMessage: &ai.SystemMessageData{
+			MessageID: msgID,
+			Content:   text,
+		},
+	})
+}

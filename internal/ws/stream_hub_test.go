@@ -343,6 +343,24 @@ func TestStreamEventToPayload_ContentCarriesMemberName(t *testing.T) {
 	assert.Equal(t, "call_agent", m["parent_tool_call_id"])
 }
 
+// A system_message event (a group membership change) maps to a payload carrying
+// the DB row id and text so the frontend can append it live.
+func TestStreamEventToPayload_SystemMessage(t *testing.T) {
+	payload := StreamEventToPayload(ai.StreamEvent{
+		Type:          "system_message",
+		SystemMessage: &ai.SystemMessageData{MessageID: 42, Content: "A 加入了讨论"},
+	})
+	m, ok := payload.(map[string]any)
+	assert.True(t, ok)
+	assert.Equal(t, int64(42), m["messageId"])
+	assert.Equal(t, "A 加入了讨论", m["content"])
+}
+
+// A system_message without data is skipped downstream (nil payload).
+func TestStreamEventToPayload_SystemMessageNoData(t *testing.T) {
+	assert.Nil(t, StreamEventToPayload(ai.StreamEvent{Type: "system_message"}))
+}
+
 // team_update forwards the whole TeamState as the payload.
 func TestStreamEventToPayload_TeamUpdate(t *testing.T) {
 	hasLive := true

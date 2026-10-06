@@ -406,7 +406,7 @@ type UsageState struct {
 
 // StreamEvent represents a single event in the streaming output
 type StreamEvent struct {
-	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "stream_start", "replay_done", "content_reset"
+	Type    string // "content", "thinking", "metadata", "done", "error", "tool_use", "tool_result", "queue_drain", "queue_inject", "queue_cancel", "queue_added", "session_capture", "mode_update", "config_update", "commands_update", "thinking_effort_update", "plan_update", "model_list_update", "usage_update", "user_message", "system_message", "stream_start", "replay_done", "content_reset"
 	Content string // Incremental text (Type=content, Type=thinking) or captured session ID (Type=session_capture)
 	// ThinkID is the stable identity of a thinking block, set on Type=thinking
 	// from the moment the block opens (see AccumulateBlock, which mints it and
@@ -433,6 +433,7 @@ type StreamEvent struct {
 	Usage          *UsageState            // Usage state (Type=usage_update)
 	ToolMeta       *ToolCallMeta          // Extracted tool metadata for WS forwarding (Type=tool_use, Type=tool_result)
 	UserMessage    *UserMessageData       // User message for cross-device sync (Type=user_message)
+	SystemMessage  *SystemMessageData     // System timeline event (Type=system_message)
 	QueueAdded     *QueueAddedData        // A message was enqueued (Type=queue_added)
 	StreamStart    *StreamStartData       // Stream start (Type=stream_start) — carries streaming message DB id
 	// StreamFinish is set on a "stream_finalize" event: ONE producer turn has
@@ -577,6 +578,19 @@ type UserMessageData struct {
 	Files          []model.FileEntry `json:"files,omitempty"`          // File attachments
 	SenderClientID string            `json:"senderClientId,omitempty"` // WS client ID of the sender (to skip self-echo)
 	QueueID        string            `json:"queueId,omitempty"`        // Client queue ID the sender used, so it can adopt this row's id
+}
+
+// SystemMessageData carries a role='system' timeline event (a membership change)
+// for real-time broadcast, so it appears in the group timeline the moment it is
+// written instead of only after a full history reload.
+//
+// Distinct from UserMessageData on purpose: a user message renders as a user
+// bubble, but a system event renders as a centered thin row (ChatMessageItem
+// role==='system'). MessageID is the authoritative chat_history row id and is
+// the frontend's dedup key — the same event delivered twice must render once.
+type SystemMessageData struct {
+	MessageID int64  `json:"messageId"`
+	Content   string `json:"content"`
 }
 
 // QueueAddedData announces a message that was just ENQUEUED (waiting for the

@@ -77,6 +77,11 @@ const (
 	// subscriber (cross-device sync). Used by the direct send, the queue/push
 	// path and auto-continue.
 	eventTypeUserMessage = "user_message"
+	// eventTypeSystemMessage announces a role='system' timeline row (a group
+	// membership change) to the group's subscribers so it appears live instead
+	// of only after a reload (decisions #40/#43). Distinct from user_message:
+	// the frontend renders it as a centered row, not a user bubble.
+	eventTypeSystemMessage = "system_message"
 	// eventTypeToolUse is the stream event type for tool calls.
 	eventTypeToolUse = "tool_use"
 	// eventTypeToolResult is the stream event type for tool results.

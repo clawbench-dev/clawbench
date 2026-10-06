@@ -321,6 +321,8 @@ func StreamEventToPayload(event ai.StreamEvent) any { //nolint:gocyclo // one br
 		return warningPayload(event)
 	case "user_message":
 		return userMessagePayload(event)
+	case "system_message":
+		return systemMessagePayload(event)
 	case "stream_start":
 		return streamStartPayload(event)
 	case "stream_split":
@@ -530,6 +532,20 @@ func userMessagePayload(event ai.StreamEvent) any {
 		payload["queueId"] = event.UserMessage.QueueID
 	}
 	return payload
+}
+
+// systemMessagePayload carries a role='system' timeline row (a group membership
+// change) so it can be appended live. Returns nil when no SystemMessage data is
+// attached (the event is then skipped downstream). messageId is the frontend's
+// dedup key.
+func systemMessagePayload(event ai.StreamEvent) any {
+	if event.SystemMessage == nil {
+		return nil
+	}
+	return map[string]any{
+		payloadKeyMessageID: event.SystemMessage.MessageID,
+		"content":           event.SystemMessage.Content,
+	}
 }
 
 // queueAddedPayload announces a message that was just enqueued (it has no

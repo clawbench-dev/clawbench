@@ -1079,6 +1079,18 @@ export function useChatStream(options: UseChatStreamOptions) {
         break
       }
 
+      case 'system_message': {
+        // A role='system' timeline row (group membership change). It belongs to
+        // nobody and is not a user message — appending it here (not via the
+        // user_message path) keeps it out of the user-bubble rendering and the
+        // queue/echo logic. Dedup is by DB id inside the reducer.
+        if (sessionChanged()) return
+        const sysData = payload as { messageId?: number; content?: string }
+        dispatch({ type: 'ws_system_message', data: sysData })
+        debouncedRender()
+        break
+      }
+
       case 'queue_added': {
         // A message was enqueued (by this device or another). It has no
         // chat_history row yet, so it goes to the queue panel, not the list.

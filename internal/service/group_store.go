@@ -218,9 +218,14 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 // system event must never fail the membership change itself.
 func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, suffix string) {
 	text := displayName + memberSpecialtySuffix(agentID) + suffix
-	if _, err := AddSystemMessage(projectPath, groupID, text); err != nil {
+	msgID, err := AddSystemMessage(projectPath, groupID, text)
+	if err != nil {
 		slog.Warn("group: writing member system event failed", "group", groupID, "err", err)
+		return
 	}
+	// Broadcast only after the row is committed, so subscribers can render it
+	// immediately (decisions #40/#43). Best-effort like the write itself.
+	emitGroupSystemMessage(groupID, msgID, text)
 }
 
 // memberSpecialtySuffix renders "（specialty）" or "" — omitted entirely when the
@@ -442,8 +447,11 @@ func RemoveGroupMember(groupID, memberID string) error {
 	// failed removal. Skip when the row did not change (already left) to keep
 	// the removal idempotent without spamming the timeline.
 	if name := memberDisplayName(memberID); name != "" {
-		if _, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, name+" 已离场"); err != nil {
+		text := name + " 已离场"
+		if msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text); err != nil {
 			slog.Warn("group: writing departure system event failed", "group", groupID, "err", err)
+		} else {
+			emitGroupSystemMessage(groupID, msgID, text)
 		}
 	}
 	return nil

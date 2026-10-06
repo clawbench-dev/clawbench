@@ -640,6 +640,9 @@ export type ChatMessageAction =
   // complete (the backend only emits `done` when the whole drain loop exits).
   | { type: 'ws_queue_drain' }
   | { type: 'ws_user_message'; data: { messageId?: number; content?: string; files?: FileEntry[]; senderClientId?: string; queueId?: string; backend?: string } }
+  // A role='system' timeline row (group membership change) written by the
+  // backend. Deduped by DB id so a duplicate delivery renders once.
+  | { type: 'ws_system_message'; data: { messageId?: number; content?: string } }
   | { type: 'ws_error'; text: string; reason?: string; errorCode?: number; httpStatus?: number; errorSource?: string; errorDetail?: string }
   | { type: 'stream_finalize' }
   // ── WS block-level (in-place blocks mutation, same array reference) ──
@@ -1808,6 +1811,29 @@ export function chatMessageReducer(state: ChatMessage[], action: ChatMessageActi
         _remote: true,
         ...(data.backend ? { backend: data.backend } : {}),
         ...(remoteQueueId ? { _remoteQueueId: remoteQueueId } : {}),
+        seq: nextClientSeq(),
+      } as ChatMessage)
+      sortMessages(state)
+      return state
+    }
+    case 'ws_system_message': {
+      // A role='system' timeline row (group membership change) — render it as a
+      // centered row. Identity is the DB id: a replayed/duplicate delivery must
+      // not append a second row. Text is never the key (two membership events
+      // can legitimately share text, e.g. the same member rejoining twice).
+      const sysData = action.data
+      const sysMsgId = sysData.messageId || 0
+      const sysContent = sysData.content || ''
+      const sysExists = state.some(
+        (m) => m.role === 'system' && sysMsgId > 0 && m.id === sysMsgId,
+      )
+      if (sysExists) return state
+      state.push({
+        role: 'system',
+        id: sysMsgId > 0 ? sysMsgId : `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        content: sysContent,
+        blocks: sysContent ? [{ type: 'text', text: sysContent }] : [],
+        createdAt: new Date().toISOString(),
         seq: nextClientSeq(),
       } as ChatMessage)
       sortMessages(state)

@@ -2006,6 +2006,44 @@ describe('useChatStream', () => {
     })
   })
 
+  describe('WS event handling — system_message', () => {
+    it('appends a role=system row for a membership event', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('system_message', { messageId: 7, content: 'A 加入了讨论' })
+
+      const sysMsgs = options.messages.value.filter((m: any) => m.role === 'system')
+      expect(sysMsgs).toHaveLength(1)
+      expect(sysMsgs[0].content).toBe('A 加入了讨论')
+      expect(sysMsgs[0].id).toBe(7)
+      // It must NOT be rendered as a user bubble.
+      expect(options.messages.value.filter((m: any) => m.role === 'user')).toHaveLength(0)
+    })
+
+    it('deduplicates by DB message id (a replayed delivery renders once)', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('system_message', { messageId: 7, content: 'A 加入了讨论' })
+      simulateWsEvent('system_message', { messageId: 7, content: 'A 加入了讨论' })
+
+      expect(options.messages.value.filter((m: any) => m.role === 'system')).toHaveLength(1)
+    })
+
+    it('drops a system_message for a different session', () => {
+      const options = createOptions()
+      const { connectStream } = useChatStream(options)
+      connectStream('test-session-1')
+
+      simulateWsEvent('system_message', { messageId: 7, content: 'elsewhere' }, 'other-session')
+
+      expect(options.messages.value.filter((m: any) => m.role === 'system')).toHaveLength(0)
+    })
+  })
+
   // ── ACP state events ──
 
   describe('WS event handling — ACP state events', () => {

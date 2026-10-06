@@ -307,6 +307,42 @@ describe('chatMessageReducer — ws_stream_split', () => {
   })
 })
 
+describe('chatMessageReducer — ws_system_message', () => {
+  it('appends a role=system row and sorts it by DB id among existing messages', () => {
+    const state = run(
+      [u({ id: 1, content: 'q' }), a({ id: 2, content: 'a' })],
+      [{ type: 'ws_system_message', data: { messageId: 3, content: 'A 加入了讨论' } }],
+    )
+    expect(state.map((m) => m.id)).toEqual([1, 2, 3])
+    const sys = state.find((m) => m.role === 'system')!
+    expect(sys.content).toBe('A 加入了讨论')
+    expect(sys.blocks).toEqual([{ type: 'text', text: 'A 加入了讨论' }])
+  })
+
+  it('is idempotent on the same DB id (dedup key is the id, not text)', () => {
+    const state = run(
+      [],
+      [
+        { type: 'ws_system_message', data: { messageId: 5, content: 'X' } },
+        { type: 'ws_system_message', data: { messageId: 5, content: 'X' } },
+      ],
+    )
+    expect(state).toHaveLength(1)
+  })
+
+  it('keeps two distinct events with identical text (dedup is not by text)', () => {
+    const state = run(
+      [],
+      [
+        { type: 'ws_system_message', data: { messageId: 5, content: 'A 加入了讨论' } },
+        { type: 'ws_system_message', data: { messageId: 6, content: 'A 加入了讨论' } },
+      ],
+    )
+    expect(state).toHaveLength(2)
+    expect(state.map((m) => m.id)).toEqual([5, 6])
+  })
+})
+
 describe('rebuildFromDb (db_load)', () => {
   it('rebuild drops a finalized drain-* reply that has no DB row; DB row is the truth', () => {
     const state = [a({ id: 'drain-99', content: 'reply', createdAt: '2026-01-01T00:00:00Z', seq: 1 })]
