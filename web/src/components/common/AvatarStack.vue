@@ -4,7 +4,7 @@
       v-for="(m, i) in visible"
       :key="m.id"
       class="avatar-disc"
-      :class="[`avatar-disc--${size}`, { 'is-host': m.isHost }]"
+      :class="[`avatar-disc--${size}`, { 'is-host': m.isHost, 'is-speaking': m.id === activeSpeakerId }]"
       :style="{ zIndex: visible.length - i }"
       :title="m.isHost ? `${m.name} (Host)` : m.name"
     >
@@ -41,10 +41,14 @@ const props = withDefaults(defineProps<{
   max?: number
   /** Tooltip for the whole stack. Defaults to the member names joined. */
   tooltip?: string
+  /** Member row id currently producing a turn. That disc gets the speaking
+   *  ring + pulse; empty/undefined means nobody is speaking. */
+  activeSpeakerId?: string
 }>(), {
   size: 'md',
   max: 4,
   tooltip: '',
+  activeSpeakerId: '',
 })
 
 // Host first, then everyone else in their original order. The host must lead
@@ -115,6 +119,28 @@ const resolvedTooltip = computed(() =>
    no ring override is needed. Kept as a hook for tests/consumers. */
 .avatar-disc.is-host {
   box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
+}
+
+/* The member currently producing a turn (group chat): a wider accent ring that
+   pulses. Ordered AFTER `.is-host` so it wins when the host is the speaker
+   (both are (0,2,0)); the animation outranks both while running.
+   The ring itself is the load-bearing channel, so the pulse is pure decoration
+   and is dropped under reduced motion — unlike the session-status dot, where
+   motion is the only separator between two same-shaped states. */
+.avatar-disc.is-speaking {
+  box-shadow: 0 0 0 2.5px var(--accent-color, #0066cc);
+  animation: avatar-disc-speaking 1.2s ease-in-out infinite;
+}
+@keyframes avatar-disc-speaking {
+  0%, 100% { box-shadow: 0 0 0 2.5px var(--accent-color, #0066cc); }
+  50% {
+    box-shadow:
+      0 0 0 2.5px var(--accent-color, #0066cc),
+      0 0 7px 1px color-mix(in srgb, var(--accent-color, #0066cc) 60%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .avatar-disc.is-speaking { animation: none; }
 }
 
 /* "+N" is plain text beside the stack — extra info, not a member. */

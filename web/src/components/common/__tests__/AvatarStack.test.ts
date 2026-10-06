@@ -89,4 +89,28 @@ describe('AvatarStack', () => {
     const noTip = mount(AvatarStack, { props: { members: [member(1), member(2)] } })
     expect(noTip.find('.avatar-stack').attributes('title')).toBe('M1, M2')
   })
+
+  it('marks only the active speaker disc (by member id)', () => {
+    const w = mount(AvatarStack, { props: { members: [member(1), member(2), member(3)], activeSpeakerId: 'm3' } })
+    const discs = w.findAll('.avatar-disc')
+    expect(discs.map(d => d.classes().includes('is-speaking'))).toEqual([false, false, true])
+  })
+
+  it('marks no disc when activeSpeakerId is empty or unknown', () => {
+    const empty = mount(AvatarStack, { props: { members: [member(1), member(2)] } })
+    expect(empty.findAll('.avatar-disc.is-speaking')).toHaveLength(0)
+    const unknown = mount(AvatarStack, { props: { members: [member(1), member(2)], activeSpeakerId: 'nope' } })
+    expect(unknown.findAll('.avatar-disc.is-speaking')).toHaveLength(0)
+  })
+
+  it('the speaking ring is defined after the host ring (wins when the host speaks)', async () => {
+    // Both `.is-host` and `.is-speaking` are (0,2,0); source order decides. The
+    // speaking rule must come later or the host's thin ring would win.
+    const mod = await import('@/components/common/AvatarStack.vue?raw')
+    const src = typeof mod.default === 'string' ? mod.default : ''
+    const hostIdx = src.indexOf('.avatar-disc.is-host')
+    const speakingIdx = src.indexOf('.avatar-disc.is-speaking')
+    expect(hostIdx).toBeGreaterThan(-1)
+    expect(speakingIdx).toBeGreaterThan(hostIdx)
+  })
 })

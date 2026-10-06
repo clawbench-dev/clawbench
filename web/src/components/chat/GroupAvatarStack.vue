@@ -9,7 +9,7 @@
     @keydown.enter.prevent="openSheet"
     @keydown.space.prevent="openSheet"
   >
-    <AvatarStack :members="stackMembers" size="md" :max="4" />
+    <AvatarStack :members="stackMembers" size="md" :max="4" :activeSpeakerId="activeSpeakerId" />
     <GroupMemberSheet
       ref="sheetRef"
       :groupId="sessionId"
@@ -32,6 +32,8 @@ const props = defineProps<{
   members: GroupMemberInfo[]
   hostMemberId: string
   isGroup: boolean
+  /** Member row id currently producing a turn; that disc is highlighted. */
+  activeSpeakerId?: string
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

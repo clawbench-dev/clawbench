@@ -18,13 +18,14 @@ vi.mock('../GroupMemberSheet.vue', () => ({
   default: { name: 'GroupMemberSheet', template: '<div class="sheet-stub" />', methods: { open: () => sheetOpen() } },
 }))
 
-function mountStack(members: any[]) {
+function mountStack(members: any[], props: Record<string, unknown> = {}) {
   return mount(GroupAvatarStack, {
     props: {
       sessionId: 'g1',
       members,
       hostMemberId: members.find(m => m.isHost)?.id || '',
       isGroup: true,
+      ...props,
     },
   })
 }
@@ -109,5 +110,28 @@ describe('GroupAvatarStack', () => {
       props: { sessionId: 's1', members: [], hostMemberId: '', isGroup: false },
     })
     expect(w.find('.group-avatar-stack').exists()).toBe(false)
+  })
+
+  it('highlights the member whose id is activeSpeakerId', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'B', backend: 'claude', agentId: 'a3', isHost: false },
+    ], { activeSpeakerId: 'm2' })
+
+    const discs = w.findAll('.avatar-disc')
+    // Only m2 is speaking; the others (host included) are not.
+    expect(discs[0].classes()).not.toContain('is-speaking')
+    expect(discs[1].classes()).toContain('is-speaking')
+    expect(discs[2].classes()).not.toContain('is-speaking')
+  })
+
+  it('highlights nobody when activeSpeakerId is empty', () => {
+    const w = mountStack([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'A', backend: 'claude', agentId: 'a2', isHost: false },
+    ], { activeSpeakerId: '' })
+
+    expect(w.findAll('.avatar-disc.is-speaking')).toHaveLength(0)
   })
 })
