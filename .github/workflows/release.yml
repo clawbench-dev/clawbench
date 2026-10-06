@@ -1056,6 +1056,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # OIDC token for npm trusted publishing. Without this the publish steps
+      # have no credential at all and fail with a misleading 404.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -1063,7 +1066,10 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # `registry-url` is deliberately NOT set: it makes setup-node write an
+          # .npmrc containing `_authToken=${NODE_AUTH_TOKEN}`, and npm treats
+          # that placeholder as a configured token, which defeats trusted
+          # publishing (see the Configure step below).
 
       - name: Extract version from tag
         id: version
@@ -1168,17 +1174,23 @@ jobs:
           echo "All npm packages assembled"
 
       - name: Configure npm registry for publishing
+        # Auth is OIDC trusted publishing (see the job's `id-token: write`).
+        # Two things must be true for npm to use it, and both are counterintuitive:
+        #
+        #  1. The project .npmrc sets registry=npmmirror, and project config
+        #     outranks even NPM_CONFIG_USERCONFIG. Removing it is what keeps the
+        #     publish pointed at registry.npmjs.org.
+        #
+        #  2. No token may be configured. npm tries a configured token first and
+        #     only falls back to OIDC when there is none — and an .npmrc line of
+        #     `_authToken=${NODE_AUTH_TOKEN}` counts as *configured* even when
+        #     the variable is unset (the literal placeholder string is sent as
+        #     the token). That is the usual cause of "trusted publishing is set
+        #     up but publish still 404s", so setup-node's registry-url is left
+        #     unset above and no NODE_AUTH_TOKEN is exported below.
         run: |
-          # The project .npmrc sets registry=npmmirror which overrides even
-          # NPM_CONFIG_USERCONFIG (project config has higher priority).
-          # Remove it and write auth config to the userconfig file instead.
           rm -f .npmrc
-          {
-            echo "registry=https://registry.npmjs.org/"
-            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
-          } >> "${NPM_CONFIG_USERCONFIG}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          printf 'registry=https://registry.npmjs.org/\n' >> "${NPM_CONFIG_USERCONFIG}"
 
       - name: Publish @xulongzhe/clawbench-linux-x64
         run: |
@@ -1188,8 +1200,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/platforms/linux-x64 --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-linux-arm64
         run: |
@@ -1199,8 +1209,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/platforms/linux-arm64 --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-android-arm64
         run: |
@@ -1210,8 +1218,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/platforms/android-arm64 --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-darwin-x64
         run: |
@@ -1221,8 +1227,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/platforms/darwin-x64 --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-darwin-arm64
         run: |
@@ -1232,8 +1236,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/platforms/darwin-arm64 --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish @xulongzhe/clawbench-win32-x64
         run: |
@@ -1243,8 +1245,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/platforms/win32-x64 --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish main package (@xulongzhe/clawbench)
         run: |
@@ -1254,8 +1254,6 @@ jobs:
             exit 0
           fi
           npm publish ./npm/main --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Publishes the desktop incremental-upgrade payloads to npm. This is the ONLY
   # channel the payload ships through: the ~150MB full package is what a GitHub
@@ -1269,6 +1267,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      # OIDC token for npm trusted publishing — see the note in publish-npm.
+      id-token: write
     steps:
       - uses: actions/checkout@v4
 
@@ -1276,7 +1276,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
-          registry-url: 'https://registry.npmjs.org'
+          # No `registry-url`: see the note in publish-npm. It would write an
+          # .npmrc `_authToken=${NODE_AUTH_TOKEN}` placeholder, which npm counts
+          # as a configured token and which therefore disables OIDC.
 
       - name: Extract version from tag
         id: version
@@ -1376,17 +1378,11 @@ jobs:
           done
 
       - name: Configure npm registry for publishing
+        # Auth is OIDC trusted publishing — see the longer note in publish-npm
+        # for why no token may be configured here.
         run: |
-          # The project .npmrc sets registry=npmmirror, and project config
-          # outranks even NPM_CONFIG_USERCONFIG. Without removing it this job
-          # would publish to the mirror with no credentials.
           rm -f .npmrc
-          {
-            echo "registry=https://registry.npmjs.org/"
-            echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}"
-          } >> "${NPM_CONFIG_USERCONFIG}"
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          printf 'registry=https://registry.npmjs.org/\n' >> "${NPM_CONFIG_USERCONFIG}"
 
       - name: Publish payload packages
         run: |
@@ -1401,8 +1397,6 @@ jobs:
             fi
             npm publish "./npm/desktop-payloads/$KEY" --access public
           done
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   release-notes:
     name: Generate Release Notes
