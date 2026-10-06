@@ -180,6 +180,21 @@ describe('ChatMessageItem group gating', () => {
     expect(w.findAll('.chat-action-btn').length).toBeGreaterThan(0)
   })
 
+  // Decision #52: the rewind entry itself must not render in a group. Asserting
+  // on the ICON (not just the title) pins the actual entry element: rewinding a
+  // group timeline truncates rows the members' monotonic seen_cursor still
+  // points past, so the members would silently lose memory. The title check
+  // above would still pass if the button kept rendering with a blank title.
+  it('renders no rewind entry (icon) for a group session', () => {
+    const normal = mountItem(finishedAssistant)
+    expect(normal.find('.lucide-rewind').exists()).toBe(true)
+
+    const group = mountItem(finishedAssistant, { isGroupSession: true })
+    expect(group.find('.lucide-rewind').exists()).toBe(false)
+    // The rewind BUTTON (not just its icon) is gone.
+    expect(group.findAll('.chat-action-btn').some(b => b.attributes('title')?.includes('rewindSession'))).toBe(false)
+  })
+
   it('forwards isGroupSession to ContentBlocks', () => {
     const w = mountItem(finishedAssistant, { isGroupSession: true })
     const cb = w.findComponent({ name: 'ContentBlocks' })
