@@ -58,7 +58,7 @@ func setupTestDBForTTS(t *testing.T) (*sql.DB, func()) {
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			files TEXT,
 			session_id TEXT,
@@ -2120,7 +2120,7 @@ func TestSchema_ForwardedPortsMigration_HostColumnFromOldSchema(t *testing.T) {
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
@@ -2507,7 +2507,7 @@ func TestSchema_DropHistoryDeletedColumn_FromOldSchema(t *testing.T) {
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
@@ -3364,7 +3364,7 @@ func setupTestDBForToolCallMigration(t *testing.T) func() {
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',
@@ -3721,7 +3721,7 @@ func setupTestDBForMessageStats(t *testing.T) func() {
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			files TEXT,
 			session_id TEXT,

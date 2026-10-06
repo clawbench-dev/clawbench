@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			files TEXT,
 			session_id TEXT,
@@ -1980,10 +1980,27 @@ func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
 	defer func() { _ = db.Close() }()
 
 	sessionID := "fork-sys-skip"
-	// The chat_history table has a CHECK(role IN ('user', 'assistant')),
-	// so we can't insert system messages directly. But we can verify
-	// that messages with only thinking blocks produce empty fork context
-	// (thinking blocks are now excluded, tool_use blocks are included).
+	// chat_history now accepts role='system' (group-chat system events), and
+	// fork context must skip it: a system event is not conversation history and
+	// must not be replayed into a forked session.
+	_, err := store.WriteExec(
+		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'system', ?, ?, 'claude', 0)",
+		"/proj", `{"blocks":[{"type":"text","text":"成员 A 加入了讨论"}]}`, sessionID,
+	)
+	require.NoError(t, err)
+
+	result := BuildForkContext(sessionID)
+	assert.Equal(t, "", result, "system events should be skipped in fork context")
+}
+
+// TestBuildForkContext_SkipsThinkingOnlyMessages verifies that messages with
+// only thinking blocks produce empty fork context (thinking blocks are
+// excluded; tool_use blocks are included).
+func TestBuildForkContext_SkipsThinkingOnlyMessages(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	sessionID := "fork-think-only"
 	_, err := store.WriteExec(
 		"INSERT INTO chat_history (project_id, role, content, session_id, backend, streaming) VALUES (?, 'user', ?, ?, 'claude', 0)",
 		"/proj", `{"blocks":[{"type":"thinking","text":"thinking content"}]}`, sessionID,
@@ -1991,7 +2008,6 @@ func TestBuildForkContext_SkipsSystemMessages(t *testing.T) {
 	require.NoError(t, err)
 
 	result := BuildForkContext(sessionID)
-	// thinking blocks are excluded, so only-thinking messages produce empty fork context
 	assert.Equal(t, "", result, "thinking-only messages should be skipped in fork context")
 }
 

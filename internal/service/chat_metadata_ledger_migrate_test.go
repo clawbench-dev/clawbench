@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
 		CREATE TABLE IF NOT EXISTS chat_history (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,
-			role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+			role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 			content TEXT NOT NULL,
 			session_id TEXT,
 			backend TEXT NOT NULL DEFAULT 'claude',

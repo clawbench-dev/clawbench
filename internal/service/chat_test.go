@@ -29,7 +29,7 @@ const schema = `
 CREATE TABLE IF NOT EXISTS chat_history (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	project_id INTEGER NOT NULL,
-	role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+	role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
 	content TEXT NOT NULL,
 	files TEXT,
 	session_id TEXT,
@@ -5985,10 +5985,11 @@ func TestReplaceSessionHistory_RollbackRestoresHistory(t *testing.T) {
 	require.NoError(t, err)
 
 	// Force the transaction to fail AFTER the DELETE has removed the old rows: an
-	// invalid role violates the CHECK(role IN ('user','assistant')) constraint.
-	// The transaction must roll back, restoring the original history intact.
+	// invalid role violates the CHECK(role IN ('user','assistant','system'))
+	// constraint. The transaction must roll back, restoring the original history
+	// intact.
 	msgs := []service.ReplayMessage{{
-		Role:    "system", // violates CHECK constraint
+		Role:    "bogus", // violates CHECK constraint
 		Content: `{"blocks":[{"type":"text","text":"new"}]}`,
 	}}
 	n, err := service.ReplaceSessionHistory(sid, projectPath, "claude", msgs)
