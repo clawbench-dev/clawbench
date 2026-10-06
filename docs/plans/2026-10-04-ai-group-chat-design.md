@@ -1,7 +1,55 @@
 # AI 群聊设计（Group Chat）
 
 日期：2026-10-04
-状态：设计定稿（待实现）
+状态：**v1 基线（阶段 A–M）已合入 main（`aa88f921a`）；阶段 N/O 全部未实现**
+
+---
+
+## 0. 未实现清单（待做，2026-10-06 核实）
+
+> 已逐项 `grep` 核实：以下代码点**当前均不存在**。实施顺序见计划 `2026-10-04-ai-group-chat-plan.md` 的阶段 N / O。
+
+### 阶段 N（决策 #39–#44）：成员可见性与描述
+
+| Task | 决策 | 未实现证据 |
+|---|---|---|
+| N1 | #40/#43/#44 `chat_history.role='system'` + 整表重建 | `database.go` 无 `rebuildChatHistoryRoleCheck`、无 `'system'`；CHECK 仍只有 `('user','assistant')` |
+| N2 | #39/#41 成员描述注入三处 + 离场标注 | `group_prompt.go:12` 入参仍是 `[]string`（只有名字）；`activeMemberNamesExcept` 只返回 `m.Name` |
+| N3 | #40 增删成员写系统事件 | `handler/group.go:148,172` 直接调增删，**不写时间线** |
+| N4 | #43 前端系统事件渲染（居中细条） | 前端无 `role==='system'` 分支 |
+| N5 | #42 拒绝移除主持人 | `RemoveGroupMember`（`group_store.go:341`）**无 host 守卫** |
+
+### 阶段 O（决策 #45–#70）：排队、生命周期与降级
+
+| Task | 决策 | 未实现证据 |
+|---|---|---|
+| O1 | #45/#46/#58 群消息入队 + 复用 drain | `handler/chat.go:323` 群分支在 `TryClaimSessionRun`（`:494`）**之前**就 return；无群 drain |
+| O2 | #48 级联删成员行 / 离群刷 `updated_at` | `HardDeleteSession` 只删群行；`RemoveGroupMember` 无 `updated_at` |
+| O3 | #51 成员失败复用 `failTurn` | `group_orchestrator.go:158` 仅 `slog.Warn` |
+| O4 | #55 群聊跳过摘要推荐 | `session_executor.go:1672` 无群判断 |
+| O5 | #56 回退轮转 + 连续失败收尾 | `speakNextMember:250` 恒选第一个；无失败计数 |
+| O6 | #50 智能体重名收敛 | `agent_store.go` 无 `AgentNameTaken` |
+| O7 | #57 归档/销毁群关成员连接 | `chat_session.go` 只 `CloseConn(群行 id)` |
+| O8 | #52 隐藏群回溯入口 | 前端未按 `isGroupSession` 隐藏 rewind |
+| O9 | #59 发言中高亮 | 无 `activeSpeaker`/`isSpeaking` |
+| O10 | #61 群 auto-approve 批量写成员 | `chat_session.go:583` 只写群行；无 `SetGroupAutoApprove` |
+| O11 | #62 `isGroupSession` 用会话类型 | `GET /api/ai/chat` 响应**无 `sessionType`**；前端靠名单非空 |
+| O12 | #64 项目计数排除成员行 | `project_registry.go:70`、`chat.go:1013` 无 `session_type` 条件 |
+| O13 | #65/#66 群消息附件注入 | `handler/chat.go:324` 仍 400 拒绝群附件 |
+| O14 | #67/#68 剥离主持人标签 + 指令去重 | `grouprouting.Result` 无 `Before` 字段；`buildInjectionText` 不剥标签 |
+| O15 | #69/#70 失败不推游标 + warning 不注入 | `group_orchestrator.go:120,157` 先推游标后判错；`group_inject.go:32` 不排除 warning |
+
+### 已实现（勿重复设计）
+
+- **群会话级设置隐藏**（#60）：`ChatInputBar.vue:33,316` 已按 `isGroupSession` 隐藏 model/mode/auto-approve/usage；`ChatMessageItem.vue:144,149` 隐藏 fork。
+- **成员 resume**（Task D1）：`group_member_request.go` 已实现。
+- **群时间线渲染/路由卡片/头像条**（J/K 阶段）：`GroupMemberSheet.vue`、`groupRouting.ts` 等已存在。
+
+### 已核实安全（非缺口）
+
+`context_state` / 未读 `last_read_at` / `activeStreams` / auto-title / RAG 索引（详见 §12.7(15)）。
+
+---
 
 ## 1. 目标
 
