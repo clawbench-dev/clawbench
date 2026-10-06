@@ -1681,7 +1681,7 @@ git commit -m "test(group): add second mock agent and routing-tag support for e2
 
 **前置：** `go build -o clawbench ./cmd/server && go build -o acp-mock ./cmd/acp-mock`
 
-**场景（v1 顺序轮次）：** 建群（选主持人）→ 加 2 个成员 → 发一条消息 → 断言成员气泡**按顺序**出现 + 主持人消息可见 + 人类抢占生效。
+**场景（v1 顺序轮次）：** 建群（一步多选：成员 + 行内指定主持人）→ 发一条消息 → 断言成员气泡**按顺序**出现 + 主持人消息可见 + 人类抢占生效。既有的 host-only `POST /api/group/create`（省略 `memberAgentIds`）退化路径仍被 E2E 覆盖，后端不得移除该兼容。
 
 Run: `npx playwright test --config e2e/playwright.config.ts --project=chromium-coverage e2e/specs/group-chat.spec.ts`
 Expected: PASS
