@@ -208,12 +208,10 @@ func serviceLocalizeError(_ error, key string, args map[string]any) string {
 	}
 }
 
-// failTurn emits the error event, persists a warning row, and returns the
-// result. Shared by both early-failure branches (backend creation and stream
-// start) so they cannot drift in what they report or persist.
-func (s TurnSpec) failTurn(err error, key string) TurnResult {
-	errMsg := s.localize(err, key, map[string]any{"Error": err.Error()})
-	emitDrainEvent(s.effectiveTimelineSessionID(), ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+// buildWarningContent renders the canonical warning-block payload for a failed
+// turn. Single chat's failTurn and the group member path share it so the two
+// cannot drift in what they persist (decision #51).
+func buildWarningContent(errMsg string) string {
 	errContent, _ := json.Marshal(map[string]any{
 		contentKeyBlocks: []any{map[string]string{
 			contentKeyType:   blockTypeWarning,
@@ -221,9 +219,26 @@ func (s TurnSpec) failTurn(err error, key string) TurnResult {
 			contentKeyReason: ai.ReasonBackendExit,
 		}},
 	})
-	if _, saveErr := AddChatMessageWithAgent(s.ProjectPath, s.BackendName, s.effectiveTimelineSessionID(), roleAssistant, string(errContent), nil, false, "", s.SpeakerID); saveErr != nil {
+	return string(errContent)
+}
+
+// persistTurnWarning writes a warning row for a failed turn to the given
+// timeline, attributed to speakerID (empty for single chat). Best-effort: a
+// write failure is logged, never propagated — the failure being reported is
+// already more important than this record of it.
+func persistTurnWarning(projectPath, backend, timelineSessionID, speakerID, errMsg string) {
+	if _, saveErr := AddChatMessageWithAgent(projectPath, backend, timelineSessionID, roleAssistant, buildWarningContent(errMsg), nil, false, "", speakerID); saveErr != nil {
 		slog.Error("failed to save error message", slog.String("err", saveErr.Error()))
 	}
+}
+
+// failTurn emits the error event, persists a warning row, and returns the
+// result. Shared by both early-failure branches (backend creation and stream
+// start) so they cannot drift in what they report or persist.
+func (s TurnSpec) failTurn(err error, key string) TurnResult {
+	errMsg := s.localize(err, key, map[string]any{"Error": err.Error()})
+	emitDrainEvent(s.effectiveTimelineSessionID(), ai.StreamEvent{Type: eventTypeError, Error: errMsg})
+	persistTurnWarning(s.ProjectPath, s.BackendName, s.effectiveTimelineSessionID(), s.SpeakerID, errMsg)
 	return TurnResult{Err: errMsg}
 }
 

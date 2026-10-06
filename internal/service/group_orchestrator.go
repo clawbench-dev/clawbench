@@ -383,6 +383,14 @@ func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID str
 func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult {
 	res := runTurn(o.buildMemberTurnSpec(ctx, groupID, turn))
 	emitGroupMemberFinalize(groupID, res.MsgID)
+	// No extra failure handling is needed here (decision #51): every path that
+	// sets res.Err already persisted an attributed warning block.
+	//   - early failures (backend create / stream start) go through
+	//     TurnSpec.failTurn, which writes one with SpeakerID = the member row;
+	//   - a timeout appends a warning in the executor's content assembly
+	//     (session_executor.go:1526) before Finalize persists it.
+	// The frontend then shows WHICH member failed, and the cursor fix (#69)
+	// makes sure the member is re-fed that context next round.
 	return groupMemberResult{Err: res.Err}
 }
 

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -750,5 +751,55 @@ func TestEmitGroupTerminal_SummarizesOnce(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("the group terminal path must summarize the discussion once")
+	}
+}
+
+// A group member turn that fails early must persist its warning block
+// attributed to THAT member (decision #51), exactly like single chat. The
+// member path builds its TurnSpec via buildMemberTurnSpec, so this pins that
+// SpeakerID carries the member row id — without it the timeline would show an
+// unattributed error and the user could not tell which member failed.
+//
+// NOTE: this already holds by construction — both failure sources write a
+// warning (failTurn for early failures, the executor's content assembly for a
+// timeout). This test PINS the attribution so a future change to the spec
+// wiring cannot silently drop it.
+func TestGroupMemberTurn_FailureWarningIsAttributed(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-failturn"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	spec := o.buildMemberTurnSpec(context.Background(), groupID, groupMemberTurn{MemberRowID: mA, Prompt: "hi"})
+
+	// failTurn is the early-failure path the member turn uses.
+	res := spec.failTurn(errors.New("backend exploded"), reasonBackendCreateFailed)
+	if res.Err == "" {
+		t.Fatal("failTurn must report the error")
+	}
+
+	msgs, _ := GetMessagesBySessionIDRaw(groupID)
+	found := false
+	for _, m := range msgs {
+		if m.Role != "assistant" || m.AgentID != mA {
+			continue
+		}
+		if strings.Contains(m.Content, "warning") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a failed member turn must leave a warning block attributed to the member; msgs=%v", msgs)
 	}
 }
