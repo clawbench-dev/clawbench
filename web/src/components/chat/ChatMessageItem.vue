@@ -1,6 +1,8 @@
 <template>
   <div class="chat-message" :class="[msg.role, { 'has-metadata': msg.role === 'assistant' && msg.metadata }]" :data-msg-key="msg.id ? 'db-' + msg.id : null" :data-streaming="msg.streaming ? 'true' : null">
 
+    <div v-if="msg.role === 'system'" class="chat-system-row">{{ msg.content }}</div>
+    <template v-else>
     <!-- Group-chat speaker attribution: a member (not the user) produced this
          assistant message. agentId is the member row id, resolved via the
          speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
@@ -160,6 +162,7 @@
         </button>
       </div>
     </div>
+    </template>
 
     <!-- File changes sheet -->
     <FileChangesDrawer
@@ -1340,5 +1343,25 @@ const copyPayload = quotableText
 .msg-routing-at {
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
+}
+
+/* ── Group-chat system event row (member joined / left) ──
+   A centered thin pill: NOT a bubble (no .msg-card, no avatar, no meta bar).
+   Global block (not scoped) because it is a shared row style, and because a
+   future v-html/markdown surface could reuse the class name. */
+.chat-system-row {
+  align-self: center;
+  max-width: 100%;
+  margin: var(--space-2) auto;
+  padding: var(--space-1) var(--space-4);
+  border-radius: var(--radius-full, 999px);
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  text-align: center;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 </style>

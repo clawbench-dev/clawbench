@@ -124,6 +124,36 @@ describe('ChatMessageItem group speaker', () => {
   })
 })
 
+describe('ChatMessageItem group system events', () => {
+  it('renders a system event as a centered thin row, not a bubble', () => {
+    const w = mountItem({ role: 'system', id: 20, content: 'Alice（产品经理）加入了讨论' })
+    const row = w.find('.chat-system-row')
+    expect(row.exists()).toBe(true)
+    expect(row.text()).toBe('Alice（产品经理）加入了讨论')
+    // Not a bubble, no speaker header, no meta bar, no avatar.
+    expect(w.find('.msg-card').exists()).toBe(false)
+    expect(w.find('.msg-speaker').exists()).toBe(false)
+    expect(w.find('.chat-meta-bar').exists()).toBe(false)
+    expect(w.find('.agent-icon-stub').exists()).toBe(false)
+  })
+
+  it('renders system text verbatim (no markdown parsing)', () => {
+    const w = mountItem({ role: 'system', id: 21, content: '**Alice** joined' })
+    const row = w.find('.chat-system-row')
+    // Interpolated as text: markers survive literally and no <strong> is created.
+    expect(row.text()).toBe('**Alice** joined')
+    expect(row.find('strong').exists()).toBe(false)
+    // ContentBlocks (the markdown pipeline) must not run for system rows.
+    expect(w.find('.cb-stub').exists()).toBe(false)
+  })
+
+  it('still renders ordinary assistant messages as a bubble', () => {
+    const w = mountItem({ role: 'assistant', id: 22, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] })
+    expect(w.find('.chat-system-row').exists()).toBe(false)
+    expect(w.find('.msg-card').exists()).toBe(true)
+  })
+})
+
 describe('ChatMessageItem group gating', () => {
   // A finished assistant message shows the fork + rewind buttons in a normal
   // session. Fork/rewind operate on ONE agent's history, so both must be hidden
