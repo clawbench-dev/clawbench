@@ -76,6 +76,10 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 	title := hostName + " 的群聊"
 	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, title, hostAgentID, specs)
 	if err != nil {
+		if errors.Is(err, service.ErrGroupMemberLimit) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
+			return
+		}
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "CreateSessionFailed")
 		return
 	}
@@ -148,6 +152,10 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 			}
 			id, err := service.AddGroupMember(projectPath, req.GroupID, backend, agentID, service.GetAgentDisplayName(agentID))
 			if err != nil {
+				if errors.Is(err, service.ErrGroupMemberLimit) {
+					writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
+					return
+				}
 				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 				return
 			}

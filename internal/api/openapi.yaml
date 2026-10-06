@@ -5158,7 +5158,7 @@ paths:
         "400":
           description: 请求非法（hostAgentId 不在 memberAgentIds 中，或含未知 agent）
         "409":
-          description: 已达会话数量上限
+          description: 已达会话数量上限，或成员数超过上限（`msgKey=GroupMemberLimitReached`）
 
   /api/group/members:
     get:
@@ -5178,10 +5178,16 @@ paths:
     post:
       tags: [Group]
       summary: 批量添加群成员
+      description: |
+        活跃成员数上限为 10（每个成员是一个独立的 ACP 子进程，连接池无上限）。
+        重新添加**已存在的 agent**（含已离场者）复用原行：活跃成员不加，
+        故不受上限约束；离场者重新加入会占一个名额。
       operationId: groupMembersAdd
       responses:
         "200":
           description: 添加成功，返回 memberIds
+        "409":
+          description: 成员数超过上限（`msgKey=GroupMemberLimitReached`）
     delete:
       tags: [Group]
       summary: 移除群成员（软删除，保留其历史发言）

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -433,4 +434,123 @@ func mustListMembers(t *testing.T, groupID string) []GroupMember {
 		t.Fatalf("ListGroupMembers: %v", err)
 	}
 	return members
+}
+
+// maxGroupMembers caps active members: each member is an independent ACP
+// subprocess (hundreds of MB), and the connection pool has no ceiling, so an
+// uncapped roster can exhaust memory on a single group turn (decision #78).
+func TestCreateGroupWithMembers_RejectsTooMany(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	// Exactly the cap is allowed.
+	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
+	for i := 0; i < maxGroupMembers; i++ {
+		specs = append(specs, GroupMemberSpec{
+			AgentID:     fmt.Sprintf("agent-%d", i),
+			Backend:     "claude",
+			DisplayName: fmt.Sprintf("M%d", i),
+		})
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "满员群", "agent-0", specs)
+	if err != nil {
+		t.Fatalf("exactly maxGroupMembers must be allowed: %v", err)
+	}
+	if groupID == "" {
+		t.Fatal("expected a group id")
+	}
+
+	// One over the cap is refused, and creates NOTHING (no half-built group).
+	over := append(specs, GroupMemberSpec{AgentID: "agent-extra", Backend: "claude", DisplayName: "Extra"})
+	if _, _, err := CreateGroupWithMembers(project, "超员群", "agent-0", over); err == nil {
+		t.Fatal("more than maxGroupMembers must be refused")
+	}
+}
+
+// Re-adding an existing agent (active OR left) reuses its row and must not be
+// counted as a new member — otherwise a group at the cap could never re-add
+// someone who left.
+func TestAddGroupMember_CapIgnoresExistingAgent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
+	for i := 0; i < maxGroupMembers; i++ {
+		specs = append(specs, GroupMemberSpec{
+			AgentID:     fmt.Sprintf("agent-%d", i),
+			Backend:     "claude",
+			DisplayName: fmt.Sprintf("M%d", i),
+		})
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "满员群", "agent-0", specs)
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+
+	// A brand-new agent at the cap is refused.
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err == nil {
+		t.Fatal("adding a new agent at the cap must be refused")
+	}
+
+	// Re-adding an EXISTING agent (idempotent reuse) must succeed even at the cap.
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-3", "M3"); err != nil {
+		t.Fatalf("re-adding an existing agent must not be capped: %v", err)
+	}
+
+	// Free a slot, then the new agent fits.
+	if err := RemoveGroupMember(groupID, mustMemberID(t, groupID, "agent-3")); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err != nil {
+		t.Fatalf("adding after freeing a slot must succeed: %v", err)
+	}
+}
+
+// Rejoining (re-adding a LEFT member) reuses the row, so it must be allowed at
+// the cap — the roster does not actually grow.
+func TestAddGroupMember_RejoinAllowedAtCap(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	specs := make([]GroupMemberSpec, 0, maxGroupMembers)
+	for i := 0; i < maxGroupMembers; i++ {
+		specs = append(specs, GroupMemberSpec{
+			AgentID:     fmt.Sprintf("agent-%d", i),
+			Backend:     "claude",
+			DisplayName: fmt.Sprintf("M%d", i),
+		})
+	}
+	groupID, _, err := CreateGroupWithMembers(project, "满员群", "agent-0", specs)
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	leaver := mustMemberID(t, groupID, "agent-5")
+	if err := RemoveGroupMember(groupID, leaver); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	// Fill the freed slot with a new agent...
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-new", "New"); err != nil {
+		t.Fatalf("filling the freed slot: %v", err)
+	}
+	// ...then the left member rejoins, which grows the ACTIVE count back to the
+	// cap only if a slot exists. It is at the cap now, so this must be refused.
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-5", "M5"); err == nil {
+		t.Fatal("rejoining at the cap must be refused (it would exceed the cap)")
+	}
+}
+
+func mustMemberID(t *testing.T, groupID, agentID string) string {
+	t.Helper()
+	m, ok := findGroupMemberByAgent(groupID, agentID)
+	if !ok {
+		t.Fatalf("member for agent %q not found", agentID)
+	}
+	return m.ID
 }

@@ -75,6 +75,9 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	if len(specs) == 0 {
 		return "", "", fmt.Errorf("create group: no members")
 	}
+	if len(specs) > maxGroupMembers {
+		return "", "", ErrGroupMemberLimit
+	}
 	// Validate before touching the DB so a bad spec cannot even open a
 	// transaction (and no id is generated for a doomed request).
 	for _, s := range specs {
@@ -177,12 +180,23 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 // Returns the member row id (existing or new).
 func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) (string, error) {
 	if existing, ok := findGroupMemberByAgent(groupID, agentID); ok {
-		if existing.Left {
-			if err := setGroupMemberArchived(existing.ID, false); err != nil {
-				return "", err
-			}
+		// Re-adding an ACTIVE member is a no-op reuse: the active count does not
+		// change, so the cap does not apply.
+		if !existing.Left {
+			return existing.ID, nil
+		}
+		// Rejoining a left member reactivates an existing row, but that still
+		// grows the active count by one, so it must clear the cap too.
+		if err := ensureGroupMemberSlot(groupID); err != nil {
+			return "", err
+		}
+		if err := setGroupMemberArchived(existing.ID, false); err != nil {
+			return "", err
 		}
 		return existing.ID, nil
+	}
+	if err := ensureGroupMemberSlot(groupID); err != nil {
+		return "", err
 	}
 	memberID, err := CreateSession(projectPath, backend, displayName, agentID, "", "default", groupMemberSessionType)
 	if err != nil {
@@ -192,6 +206,20 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 		return "", err
 	}
 	return memberID, nil
+}
+
+// ensureGroupMemberSlot returns ErrGroupMemberLimit when the group is already at
+// maxGroupMembers active members. Callers invoke it only on paths that would
+// ADD an active member (new row, or rejoining a left one).
+func ensureGroupMemberSlot(groupID string) error {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return err
+	}
+	if countActiveMembers(members) >= maxGroupMembers {
+		return ErrGroupMemberLimit
+	}
+	return nil
 }
 
 // findGroupMemberByAgent returns the group's member row for agentID, preferring
@@ -350,6 +378,24 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 // host member. The host is the only router, so removing it would leave the
 // group unable to run another turn.
 var ErrCannotRemoveHost = errors.New("cannot remove the group host")
+
+// ErrGroupMemberLimit is returned when adding a member would push the group's
+// ACTIVE member count past maxGroupMembers.
+var ErrGroupMemberLimit = errors.New("group member limit reached")
+
+// MaxGroupMembers caps a group's ACTIVE members (decision #78). Exported so the
+// handler can report the limit to the user.
+//
+// Why a cap at all: every member is a separate ACP subprocess carrying its own
+// node/npx runtime (hundreds of MB), and the ACP connection pool has no upper
+// bound (its conns map is unbounded; minAliveConns is a floor, not a ceiling).
+// A group turn touches every member, so an uncapped roster can spawn dozens of
+// agents at once. Ten is also the point past which a "discussion" stops being
+// useful to a model.
+const MaxGroupMembers = 10
+
+// maxGroupMembers is the internal alias used by the store.
+const maxGroupMembers = MaxGroupMembers
 
 // RemoveGroupMember soft-removes a member: the row is archived (kept) so its
 // past speech in the group timeline stays attributed. Idempotent.
