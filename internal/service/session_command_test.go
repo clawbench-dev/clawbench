@@ -3109,3 +3109,123 @@ func TestSetLaunchSessionExecutionForTest_RestoresDefault(t *testing.T) {
 	assert.NotNil(t, SetLaunchSessionExecutionForTest(nil), "restoring must return the previous seam")
 	assert.NotNil(t, launchSessionExecution, "the seam must never be left nil")
 }
+
+// ============================================================================
+// O18: IM bots support group sessions (decisions #75/#76)
+// ============================================================================
+
+// insertGroupSessionRow inserts a group timeline row (session_type='group').
+func insertGroupSessionRow(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type) VALUES (?, 1, 'codebuddy', 'Group', 'agent-host', 'default', '', 'group')",
+		id,
+	)
+	require.NoError(t, err)
+}
+
+// A group session must be visible to the IM bots' list/prefix lookups, while
+// hidden member rows stay invisible (decisions #75/#76). A member row is
+// inserted alongside to prove the whitelist excludes it.
+func TestListRecentSessions_IncludesGroupExcludesMembers(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-1111")
+	// A hidden member row must NOT surface to IM bots.
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, 1, 'claude', 'Member', 'agent-a', 'default', '', 'group_member', 'group-1111')",
+		"group-1111-m1",
+	)
+	require.NoError(t, err)
+
+	results, err := ListRecentSessions(10)
+	require.NoError(t, err)
+	require.Len(t, results, 1, "only the group timeline is listed; member rows are hidden")
+	assert.Equal(t, "group-1111", results[0].ID)
+}
+
+func TestFindSessionsByPrefix_IncludesGroupExcludesMembers(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-abcd")
+	_, err := store.WriteExec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, 1, 'claude', 'Member', 'agent-a', 'default', '', 'group_member', 'group-abcd')",
+		"group-abcd-m1",
+	)
+	require.NoError(t, err)
+
+	results, err := FindSessionsByPrefix("group-abcd")
+	require.NoError(t, err)
+	require.Len(t, results, 1, "only the group timeline matches; member rows are hidden")
+	assert.Equal(t, "group-abcd", results[0].ID)
+}
+
+// An IM message to a group must be routed to the group orchestrator, not run as
+// a single-agent turn (which would let the host answer alone and pollute the
+// group timeline).
+func TestSendMessageToSessionFromPush_GroupRoutesToOrchestrator(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-orch")
+
+	var calls []struct {
+		sessionID string
+		message   string
+	}
+	done := make(chan struct{}, 1)
+	restore := SetRunGroupTurnForSessionForTest(func(_ context.Context, groupID, message, _, _ string) error {
+		calls = append(calls, struct {
+			sessionID string
+			message   string
+		}{groupID, message})
+		done <- struct{}{}
+		return nil
+	})
+	defer SetRunGroupTurnForSessionForTest(restore)
+
+	// The single-agent seam must NOT be touched for a group send.
+	restoreLaunch := SetLaunchSessionExecutionForTest(func(LaunchConfig) {
+		t.Error("a group message must not start a single-agent execution")
+	})
+	defer SetLaunchSessionExecutionForTest(restoreLaunch)
+
+	err := SendMessageToSessionFromDingTalk("group-orch", "hello group", nil)
+	require.NoError(t, err)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the group orchestrator was never invoked")
+	}
+
+	require.Len(t, calls, 1)
+	assert.Equal(t, "group-orch", calls[0].sessionID)
+	assert.Equal(t, "hello group", calls[0].message)
+
+	// The group turn owns the user-message insert, so the push path must not
+	// have materialized a chat_history row of its own.
+	var count int
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", "group-orch").Scan(&count))
+	assert.Equal(t, 0, count, "the orchestrator owns the group user-message insert")
+}
+
+// Group sends are text-only in v1: an attachment must be rejected, not silently
+// dropped.
+func TestSendMessageToSessionFromPush_GroupRejectsAttachments(t *testing.T) {
+	db := setupTestDBForSessionCommand(t)
+	defer func() { _ = db.Close() }()
+
+	insertGroupSessionRow(t, db, "group-attach")
+
+	restore := SetRunGroupTurnForSessionForTest(func(context.Context, string, string, string, string) error {
+		t.Error("a rejected attachment must not start a group turn")
+		return nil
+	})
+	defer SetRunGroupTurnForSessionForTest(restore)
+
+	err := SendMessageToSessionFromDingTalk("group-attach", "with file", []model.FileEntry{{Path: "a.txt"}})
+	require.Error(t, err)
+}

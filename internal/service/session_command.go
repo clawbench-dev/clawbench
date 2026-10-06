@@ -43,7 +43,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type = 'chat'
+		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type IN ('chat', 'group')
 		  ORDER BY s.updated_at DESC
 		  LIMIT 10`,
 		prefix+"%",
@@ -68,7 +68,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.archived = 0 AND s.session_type = 'chat'
+		  WHERE s.archived = 0 AND s.session_type IN ('chat', 'group')
 		  ORDER BY s.updated_at DESC
 		  LIMIT ?`,
 		limit,
@@ -173,6 +173,24 @@ func GetSessionInfoForPush(sessionID string) (DingTalkSessionInfo, error) {
 	}, nil
 }
 
+// runGroupTurnForSession is an indirection over RunGroupTurnForSession so tests
+// can observe that an IM message to a group is routed to the orchestrator
+// (rather than a single-agent turn) without starting a real AI backend.
+var runGroupTurnForSession = RunGroupTurnForSession
+
+// SetRunGroupTurnForSessionForTest swaps the group-turn seam and returns the
+// previous one, so tests can assert the IM group delegation without running a
+// real orchestrator. Pass nil to restore the default.
+func SetRunGroupTurnForSessionForTest(fn func(context.Context, string, string, string, string) error) func(context.Context, string, string, string, string) error {
+	prev := runGroupTurnForSession
+	if fn == nil {
+		runGroupTurnForSession = RunGroupTurnForSession
+	} else {
+		runGroupTurnForSession = fn
+	}
+	return prev
+}
+
 // sendMessageToSessionFromPush is the shared implementation for sending a message
 // to a non-running session from any push backend (DingTalk, Feishu, etc.).
 //
@@ -189,6 +207,28 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	// own, and the id is the queue entity's identity (cancel/inject address it)
 	// as well as the token the sender-side dedup uses on queue_added.
 	queueID := newPushQueueID()
+
+	// Group-chat delegation: a message to a group session is driven by the group
+	// orchestrator (host routes, members speak) rather than a single-agent turn,
+	// which would otherwise run the host agent alone and pollute the group
+	// timeline. Mirrors handler/chat.go's group branch: the orchestrator owns the
+	// user-message insert, the running-state registration and the WS broadcast.
+	//
+	// It runs in a goroutine because the IM callback is synchronous and a group
+	// turn is potentially multi-minute; blocking it would stall the bot stream.
+	// v1 group sends are text-only (attachments are per-member, not per-group),
+	// so reject rather than silently drop the files.
+	if GetSessionType(sessionID) == "group" {
+		if len(files) > 0 {
+			return fmt.Errorf("group sessions do not accept attachments")
+		}
+		go func() {
+			if err := runGroupTurnForSession(context.Background(), sessionID, message, queueID, ""); err != nil {
+				slog.Error("push: group turn failed", "session_id", sessionID, "error", err)
+			}
+		}()
+		return nil
+	}
 
 	// Persist the message + start execution or signal the running drain loop.
 	// EnqueueAndMaybeStart handles the B2 drain-loop exit race internally and
