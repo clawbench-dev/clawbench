@@ -78,6 +78,9 @@
 | 57 | 归档/销毁群的成员连接 | **显式关闭**：遍历 `ListGroupMembers` 逐个 `CloseConn(memberRowID)`（群行 id 关不到成员连接） |
 | 58 | 群回合的终止事件 | **调 `MarkDoneAndSendFinal`**，由 drain loop 决定是否继续；群回合不自发 `done`（否则与 drain 契约冲突，队列未排空就清 running） |
 | 59 | 头像条"发言中高亮" | **前端消费已有信号**：`stream_start.agent_id`（发言人成员行 id）+ `stream_finalize`；后端零改动 |
+| 60 | 群会话级设置（model/mode/effort/usage） | **不显示选择器**，每个成员用自己 agent 的默认（**已实现**：`ChatInputBar.vue:33,316` 已按 `isGroupSession` 隐藏） |
+| 61 | 群 auto-approve 开关 | **作用于全体成员**：切换时批量写各成员行 `auto_approve` + 逐个 `SetAutoApprove` 同步活连接（现状：写群行，而 ACP 读成员行 `acp_backend.go:126` ⇒ **死开关**） |
+| 62 | `isGroupSession` 判定 | **用 `session_type === 'group'`**，不靠"名单非空"（后者被 `useGroupMembers.ts:52` 的 catch 置空击穿，群会退回单聊形态）；需后端在 `GET /api/ai/chat` 响应补 `sessionType` 字段 |
 
 ## 3. 架构
 
@@ -761,6 +764,15 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 
 **（10）rewind 与成员游标冲突（决策 #52）。**
 `TruncateSessionAfterMessage`（`continue_conversation.go:770`）删群时间线行后，成员 `seen_cursor` 仍是旧高水位（`SetMemberCursor` 单调递增）⇒ 之后 `id > cursor` 恒不成立 ⇒ 成员失忆。且 `ServeSessionRewind` 会 `CloseConn`，恢复的是 agent 侧**未被回溯**的历史，与群时间线不一致。
+
+**（11）群 auto-approve 是死开关（决策 #61）。**
+`toggleAutoApprove`（`useSessionIdentity.ts:420`）PATCH `currentSessionId` = **群行**；`chat_session.go:583-590` 写群行并 `GetConn(群行)` 同步（群行无连接，恒 nil）。而 ACP 读的是 `getSessionAutoApprove(req.SessionID)`（`acp_backend.go:126`），成员的 `req.SessionID` 是**成员行 id**（`group_orchestrator.go:282`）⇒ 群里开 auto-approve **完全不生效**，成员照弹权限卡片。同类"配置写在群行、成员读成员行"的错位。
+
+**（12）`isGroupSession` 靠名单非空，会被 fetch 失败击穿（决策 #62）。**
+`ChatPanelContent.vue:350` `isGroupSession = (props.groupMembers?.length ?? 0) > 0`，而 `useGroupMembers.ts:52-53` 在任何异常时 `members.value = []` ⇒ 一次网络抖动就让群会话**按单聊渲染**（fork/rewind/model/mode 控件全部冒出来、头像条消失）。需改为从 `session_type` 派生——但 `GET /api/ai/chat` 目前**不返回** `sessionType`（只返回 `sessionBackend`/`sessionAgentId`/`sessionModelId`/`sessionTransport`/`sessionAutoApprove`），故需后端补字段。
+
+**（13）群会话级设置已正确隐藏（决策 #60，非缺口）。**
+`ChatInputBar.vue:33`（ACP 控制栏）与 `:316`（model/mode/auto-approve/usage 行）已按 `isGroupSession` 隐藏；`ChatMessageItem.vue:144,149` 隐藏 fork；`ContentBlocks.vue` 隐藏 warning-reset 按钮。此项**无需改动**，记录以免重复设计。
 
 ## 11. 关键文件索引
 

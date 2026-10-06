@@ -27,7 +27,7 @@
 
 **Tech Stack:** Go（SQLite、net/http、WS StreamHub）、Vue 3 + TypeScript（Vitest）、Playwright（E2E + acp-mock）。
 
-**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **59 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6/§12.7**）。
+**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **62 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6/§12.7**）。
 
 **通用约定：**
 - 每个 Task 结束必须 commit（独立小提交）。
@@ -56,7 +56,7 @@
 | K | 前端：成员头像条 + 增删 | G、H |
 | M | E2E（M0 前置 + M1） | 全部 |
 | N | **增补（合入后）**：成员可见性、描述注入、系统事件（N1 role='system' 重建 / N2 描述三处注入 / N3 系统事件 / N4 前端渲染 / N5 拒绝移除主持人） | 全部 |
-| O | **增补（二轮 grill）**：排队与生命周期（O1 群入队+drain / O2 级联删除+离群保留 / O3 成员失败复用 failTurn / O4 摘要推荐跳过 / O5 轮转+失败收尾 / O6 智能体重名收敛 / O7 归档关连接 / O8 隐藏回溯入口 / O9 发言中高亮） | N |
+| O | **增补（二轮 grill）**：排队与生命周期（O1 群入队+drain / O2 级联删除+离群保留 / O3 成员失败复用 failTurn / O4 摘要推荐跳过 / O5 轮转+失败收尾 / O6 智能体重名收敛 / O7 归档关连接 / O8 隐藏回溯入口 / O9 发言中高亮 / O10 群 auto-approve 批量 / O11 isGroupSession 用类型） | N |
 | ~~L~~ | ~~前端：同轮并发气泡~~ → **v2**（随并行一起做，见头部勘误） | — |
 
 ---
@@ -1935,6 +1935,41 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
+### Task O10: 群 auto-approve 作用于全体成员（决策 #61）
+
+**Files:**
+- Modify: `internal/handler/chat_session.go`（`:583-590` 群分支批量写成员行）
+- Modify: `internal/service/group_store.go`（新增 `SetGroupAutoApprove(groupID, enabled)`）
+- Test: `internal/handler/chat_session_group_test.go`、`internal/service/group_store_test.go`（追加）
+
+**Step 1: 写失败测试**：建群 + 2 个 ACP 成员 → PATCH `{sessionId: groupID, autoApprove: true}` → 断言**两个成员行的 `auto_approve` 均为 1**（群行可不变）；建了连接的成员 → 断言 `conn.GetAutoApprove()` 已同步。
+
+**Step 3: 实现**：`chat_session.go:583` 的 `req.AutoApprove != nil` 分支里，若 `GetSessionType(sessionID) == "group"`，取 `ListGroupMembers` 逐个 `UpdateSessionAutoApprove(member.ID, enabled)` + `GetConn(member.ID)?.SetAutoApprove(...)`；否则保持现状。**注意**：群行自身无连接，`GetConn(sessionID)` 对群恒 nil，勿依赖它。
+
+**Commit:** `fix(group): apply auto-approve toggle to every member row`
+
+---
+
+### Task O11: `isGroupSession` 改用会话类型（决策 #62）
+
+**Files:**
+- Modify: `internal/handler/chat.go`（`GET /api/ai/chat` 响应补 `sessionType`）
+- Modify: `internal/api/openapi.yaml`
+- Modify: `web/src/composables/useChatSession.ts`（暴露 `sessionType`）
+- Modify: `web/src/components/chat/ChatPanelContent.vue`（`:350` 改判据）
+- Modify: `web/src/App.vue`（把类型传下去，或经 useChatSession 共享）
+- Test: `internal/handler/chat_test.go`、组件测试（追加）
+
+**Step 1: 写失败测试**：
+- 后端：`GET /api/ai/chat` 对群会话返回 `sessionType: "group"`。
+- 前端：roster 为空但 `sessionType==='group'` → 断言 `isGroupSession` 为 **true**（控件仍隐藏）；roster 非空但类型是 `chat` → 为 false。
+
+**Step 3: 实现**：后端读 `GetSessionType(sessionID)` 放进 GET 响应（与既有 `sessionBackend` 等并列）；前端 `isGroupSession` 改 `computed(() => sessionType.value === 'group')`，**名单只用于渲染成员**。注意 `useGroupMembers` 的 catch 置空行为**保持不变**（名单失败不影响类型判定）。
+
+**Commit:** `fix(group): derive isGroupSession from session type, not roster presence`
+
+---
+
 ## 完成标准
 
 - 所有阶段 Task 完成且各自 commit（**v1 不含 L0/L1，它们属 v2**）。
@@ -1950,4 +1985,4 @@ git commit -m "test(group): add group chat e2e spec"
 - **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 **F0b→F1→F2→F0→F3**）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
 - **评审项验收（四/五轮）**：R-1（`SpeakerID` 在 C1 声明，先于 C2 使用）、R-2（G1 Files 含 `handler/chat.go`）、R-3（A3 含 `queue_store.go:217` 第二调用者）、R-4（设计 §3.1 `UpdateLastRead` 保持成员 id）、R-5（设计 §8 含 `GET /api/group/members`）、R-6（`GroupMember` 类型已声明）、R-7（E2 含 `session_resume.go`）、R-8（fork/continue INSERT 写归属）均落地。
 - **增补验收（阶段 N，决策 #39–#44）**：离场成员注入标注（#39）、系统事件 `role='system'` 整表重建（#40/#43/#44）、描述注入三处（#41）、拒绝移除主持人（#42）均有对应测试通过。
-- **增补验收（阶段 O，决策 #45–#59）**：群消息入队+复用 drain（#45/#46/#58）、级联删除/归档保留/离群不误删（#48）、成员失败复用 `failTurn`（#51）、群聊跳过摘要推荐（#55）、轮转+连续失败收尾（#56）、智能体重名单一函数（#50）、归档关成员连接（#57）、隐藏回溯入口（#52）、发言中高亮（#59）均有对应测试通过；**v1 明确不做**：@ 成员（#47）、离线状态（#54）、更换主持人（#53）。
+- **增补验收（阶段 O，决策 #45–#62）**：群消息入队+复用 drain（#45/#46/#58）、级联删除/归档保留/离群不误删（#48）、成员失败复用 `failTurn`（#51）、群聊跳过摘要推荐（#55）、轮转+连续失败收尾（#56）、智能体重名单一函数（#50）、归档关成员连接（#57）、隐藏回溯入口（#52）、发言中高亮（#59）、群 auto-approve 批量写成员（#61）、`isGroupSession` 用会话类型（#62）均有对应测试通过；**v1 明确不做**：@ 成员（#47）、离线状态（#54）、更换主持人（#53）；**已实现无需改**：群会话级设置隐藏（#60）。
