@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -35,9 +36,13 @@ type ParticipantInfo struct {
 //     pure noise).
 //   - instruction is the host's directive to this member, rendered as a
 //     high-priority final paragraph (empty = omitted).
+//   - hostID is the host member's ROW id. Its speech has the routing tag
+//     stripped (decision #67): the tag is internal protocol, and leaving it in
+//     would invite the member to imitate `<clawbench-speaker>`. Only the tag's
+//     background survives; an unparseable tag is kept verbatim.
 //
 // User messages are rendered as "用户: ..."; member speech as "<name>: ...".
-func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction string) string {
+func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, hostID string) string {
 	var b strings.Builder
 	if header := participantHeader(roster); header != "" {
 		b.WriteString(header)
@@ -60,6 +65,9 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 			b.WriteString("\n")
 			continue
 		}
+		if hostID != "" && m.AgentID == hostID {
+			text = hostSpeechForMembers(text)
+		}
 		name := names[m.AgentID]
 		if name == "" {
 			name = "成员"
@@ -81,6 +89,26 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// hostSpeechForMembers renders a host message for a member's context: the
+// routing tag is replaced by the text that preceded it (decision #67/#68).
+//
+// Two contracts hold here:
+//   - Unparseable tags are NEVER stripped (same rule as askquestion): a message
+//     whose tag we do not understand is passed through verbatim rather than
+//     losing content.
+//   - The directive is not repeated: it reaches the member once, in the
+//     high-priority "主持人要求你：…" paragraph the caller appends. Keeping it
+//     in the body too would tell the member the host emphasised it twice.
+//
+// A message with no tag at all (the host just talking) is returned unchanged.
+func hostSpeechForMembers(text string) string {
+	res := grouprouting.Parse(text)
+	if !res.Found {
+		return text
+	}
+	return res.Before
 }
 
 // participantHeader renders the "参与者：A（描述）、B（描述）" line, or "" when
@@ -120,7 +148,13 @@ func groupInjectionText(groupID, selfMemberRowID string, cursor int64, names map
 		return "", fmt.Errorf("load group members: %w", err)
 	}
 	leftIDs, roster := participantMetadata(members, selfMemberRowID)
-	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction), nil
+	// The host's own speech keeps its tags (the host reads them back as its own
+	// prior routing decisions); only OTHER members get the stripped form.
+	hostID := GetGroupHostMember(groupID)
+	if hostID == selfMemberRowID {
+		hostID = ""
+	}
+	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, hostID), nil
 }
 
 // participantMetadata derives the left-member set and the active-participant
