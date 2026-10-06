@@ -857,3 +857,23 @@ describe('ChatMessageList — /btw anchors', () => {
     }
   })
 })
+
+describe('ChatMessageList — group gating (single-agent chrome suppressed)', () => {
+  async function source(): Promise<string> {
+    const mod = await import('@/components/chat/ChatMessageList.vue?raw')
+    return typeof mod.default === 'string' ? mod.default : ''
+  }
+
+  it('declares isGroupSession and forwards it to ChatMessageItem', async () => {
+    const src = await source()
+    expect(src).toContain('isGroupSession: { type: Boolean, default: false }')
+    expect(src).toContain(':isGroupSession="isGroupSession"')
+  })
+
+  it('suppresses the single-agent welcome card for a group session', async () => {
+    const src = await source()
+    // The welcome card names ONE agent; in a group the header stack already
+    // shows the roster, so the card must not render.
+    expect(src).toMatch(/v-else-if="currentAgent && !isGroupSession"/)
+  })
+})

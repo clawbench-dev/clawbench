@@ -38,7 +38,7 @@
           <span>{{ t('chat.messageList.noAgentsAction') }}</span>
         </button>
       </template>
-      <template v-else-if="currentAgent">
+      <template v-else-if="currentAgent && !isGroupSession">
         <div class="agent-welcome">
           <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="lg" /></span>
           <div class="agent-welcome-info">
@@ -99,6 +99,7 @@
         :resolveSpeaker="resolveSpeaker"
         :resolveSpeakerByName="resolveSpeakerByName"
         :hostMemberId="hostMemberId"
+        :isGroupSession="isGroupSession"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @show-metadata="$emit('show-metadata', $event)"
@@ -256,6 +257,9 @@ const props = defineProps({
   resolveSpeakerByName: { type: Function, default: null },
   /** Group-chat: the host member row id (for the host bubble style). */
   hostMemberId: { type: String, default: '' },
+  /** Group-chat session: the single-agent welcome card and the per-message
+   *  fork/rewind actions are suppressed (see ChatMessageItem). */
+  isGroupSession: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])

@@ -55,6 +55,7 @@
         :staticBlockCache="staticBlockCache"
         :active="active"
         :readOnly="readOnly"
+        :isGroupSession="isGroupSession"
         @toggle-tool="$emit('toggle-tool', $event)"
         @show-tool-detail="$emit('show-tool-detail', $event)"
         @task-card-click="$emit('task-card-click', $event)"
@@ -140,12 +141,12 @@
           class="chat-action-btn"
         />
         <template v-if="msg.role === 'assistant'">
-          <button v-if="!readOnly && !msg.streaming && !hideSessionActions" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
+          <button v-if="!readOnly && !msg.streaming && !hideSessionActions && !isGroupSession" class="chat-action-btn" :class="{ 'is-forking': isForking }" :disabled="isForking" @click="$emit('fork-from-message', msg)" :title="isForking ? t('chat.busy.forking') : t('chat.actions.forkSession')">
             <LoadingIndicator v-if="isForking" size="sm" inline />
             <Split v-else :size="14" />
           </button>
           <button
-            v-if="!readOnly && !msg.streaming && !hideSessionActions"
+            v-if="!readOnly && !msg.streaming && !hideSessionActions && !isGroupSession"
             class="chat-action-btn"
             :disabled="isLastMessage"
             :title="isLastMessage ? t('chat.session.nothingToRewind') : t('chat.actions.rewindSession')"
@@ -230,6 +231,11 @@ const props = defineProps({
    *  execution record does not have. The rest of the bar (summary toggle,
    *  speak, copy, details) stays useful there. */
   hideSessionActions: { type: Boolean, default: false },
+  /** Group-chat session: fork/rewind operate on ONE agent's history, but the
+   *  group timeline is an aggregation of several members' sessions, so both are
+   *  meaningless (and broken) here. Also forwarded to ContentBlocks to suppress
+   *  its reset-session button. */
+  isGroupSession: { type: Boolean, default: false },
   /** Message id whose fork button is mid-flight. The fork POST can take
    *  seconds (it copies the whole history), so the clicked button swaps to a
    *  spinner and disables — without it the click reads as a no-op. */

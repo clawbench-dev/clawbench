@@ -24,7 +24,7 @@ vi.mock('@/stores/app', () => ({ store: { state: { projectRoot: '/p' } } }))
 vi.mock('@/composables/useTabDrawer', () => ({ useTabDrawer: () => ({ open: vi.fn(), close: vi.fn(), isOpen: { value: false }, effectiveOpen: { value: false } }) }))
 vi.mock('@/composables/useFileChanges', () => ({ useFileChanges: () => ({ open: vi.fn() }) }))
 
-vi.mock('@/components/chat/ContentBlocks.vue', () => ({ default: { name: 'ContentBlocks', template: '<div class="cb-stub" />' } }))
+vi.mock('@/components/chat/ContentBlocks.vue', () => ({ default: { name: 'ContentBlocks', props: ['isGroupSession'], template: '<div class="cb-stub" />' } }))
 vi.mock('@/components/common/AgentIcon.vue', () => ({ default: { name: 'AgentIcon', props: ['backend', 'name'], template: '<span class="agent-icon-stub" />' } }))
 vi.mock('@/components/common/LoadingIndicator.vue', () => ({ default: { template: '<span />' } }))
 vi.mock('@/components/common/SummaryToggle.vue', () => ({ default: { template: '<span />' } }))
@@ -121,5 +121,38 @@ describe('ChatMessageItem group speaker', () => {
     )
     expect(w.find('.msg-routing-at').text()).toBe('@Ghost')
     expect(w.find('.msg-routing-chip .agent-icon-stub').exists()).toBe(false)
+  })
+})
+
+describe('ChatMessageItem group gating', () => {
+  // A finished assistant message shows the fork + rewind buttons in a normal
+  // session. Fork/rewind operate on ONE agent's history, so both must be hidden
+  // in a group (the timeline aggregates several members' sessions).
+  const finishedAssistant = { role: 'assistant', id: 10, content: 'hi', blocks: [{ type: 'text', text: 'hi' }] }
+
+  function actionTitles(w: ReturnType<typeof mountItem>) {
+    return w.findAll('.chat-action-btn').map(b => b.attributes('title') || '')
+  }
+
+  it('shows fork + rewind for a normal session', () => {
+    const w = mountItem(finishedAssistant)
+    const titles = actionTitles(w)
+    expect(titles.some(t => t.includes('forkSession'))).toBe(true)
+    expect(titles.some(t => t.includes('rewindSession'))).toBe(true)
+  })
+
+  it('hides fork + rewind in a group session', () => {
+    const w = mountItem(finishedAssistant, { isGroupSession: true })
+    const titles = actionTitles(w)
+    expect(titles.some(t => t.includes('forkSession'))).toBe(false)
+    expect(titles.some(t => t.includes('rewindSession'))).toBe(false)
+    // Generic per-message actions stay.
+    expect(w.findAll('.chat-action-btn').length).toBeGreaterThan(0)
+  })
+
+  it('forwards isGroupSession to ContentBlocks', () => {
+    const w = mountItem(finishedAssistant, { isGroupSession: true })
+    const cb = w.findComponent({ name: 'ContentBlocks' })
+    expect(cb.props('isGroupSession')).toBe(true)
   })
 })

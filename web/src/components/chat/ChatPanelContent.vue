@@ -16,6 +16,7 @@
       :staticBlockCache="render.staticBlockCache"
       :agents="agentsList"
       :currentAgent="currentAgent"
+      :isGroupSession="isGroupSession"
       :resolveSpeaker="props.resolveGroupSpeaker"
       :resolveSpeakerByName="props.resolveGroupSpeakerByName"
       :hostMemberId="props.groupHostMemberId"
@@ -116,6 +117,7 @@
       :acpSyncing="acpSyncing"
       :busyKind="busy"
       :active="props.active"
+      :isGroupSession="isGroupSession"
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"
@@ -340,6 +342,11 @@ const renderedMessages = computed(() => messages.value)
 const inputDisabled = ref(false)
 const loading = ref(false)
 const currentAgent = computed(() => getAgent(identity.currentAgentId.value) || null)
+/** A group-chat session (multiple agents). The roster is owned by App.vue and
+ *  passed down; a non-empty roster is the synchronous group signal. Drives the
+ *  suppression of single-agent-only controls (fork/rewind/reset, model/mode/
+ *  usage chrome) in the message list and input bar. */
+const isGroupSession = computed(() => (props.groupMembers?.length ?? 0) > 0)
 const inputBarRef = ref(null)
 const messageListRef = ref(null)
 const metadataModal = ref({

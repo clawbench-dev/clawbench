@@ -735,6 +735,19 @@ describe('ContentBlocks', () => {
       expect(wrapper.emitted('reset-session')![0]).toEqual([{ reason: 'backend_exit' }])
     })
 
+    it('hides the reset button in a group session (both warning and error blocks)', () => {
+      // Reset-session recycles ONE agent's connection; a group timeline has no
+      // single owner, so the button is suppressed on every block shape.
+      const wrapper = mountBlocks({
+        isGroupSession: true,
+        blocks: [
+          { type: 'warning', reason: 'empty', text: 'AI returned no content' },
+          { type: 'error', reason: 'backend_exit', text: 'AI backend exited' },
+        ],
+      })
+      expect(wrapper.find('.warning-reset-btn').exists()).toBe(false)
+    })
+
     // A turn where the agent accepted the prompt but never ran the model is
     // recoverable by resetting the session, so it must offer the button — the
     // user otherwise has no way out of a stuck agent.

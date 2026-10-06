@@ -21,7 +21,7 @@
           <AlertTriangle :size="14" class="error-icon" />
           <span class="error-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
-          <button v-if="isResetableReason(w.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <button v-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -30,7 +30,7 @@
           <AlertTriangle :size="14" class="error-icon" />
           <span class="error-text">{{ getWarningText(w) }}</span>
           <span v-if="errorSourceLabel(w)" class="error-source-chip" :class="'src-' + (w.error_source || '')">{{ errorSourceLabel(w) }}</span>
-          <button v-if="isResetableReason(w.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <button v-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -42,7 +42,7 @@
           <button v-if="w.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
             {{ t('chat.contentBlocks.continue') }}
           </button>
-          <button v-if="isResetableReason(w.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
+          <button v-if="isResetableReason(w.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: w.reason })">
             {{ t('chat.contentBlocks.resetSession') }}
           </button>
         </div>
@@ -280,7 +280,7 @@
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
-        <button v-if="isResetableReason(block.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <button v-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -289,7 +289,7 @@
         <AlertTriangle :size="14" class="error-icon" />
         <span class="error-text">{{ getWarningText(block) }}</span>
         <span v-if="errorSourceLabel(block)" class="error-source-chip" :class="'src-' + (block.error_source || '')">{{ errorSourceLabel(block) }}</span>
-        <button v-if="isResetableReason(block.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <button v-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -301,7 +301,7 @@
         <button v-if="block.reason === 'restart'" class="warning-continue-btn" @click.stop="$emit('send-message', t('chat.contentBlocks.continue'))">
           {{ t('chat.contentBlocks.continue') }}
         </button>
-        <button v-if="isResetableReason(block.reason)" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
+        <button v-if="isResetableReason(block.reason) && !isGroupSession" class="warning-reset-btn" @click.stop="$emit('reset-session', { reason: block.reason })">
           {{ t('chat.contentBlocks.resetSession') }}
         </button>
       </div>
@@ -603,6 +603,11 @@ const props = defineProps({
   // are suppressed. Display-only affordances (expanding a tool, copying, opening
   // the detail drawer) keep working.
   readOnly: { type: Boolean, default: false },
+  // Group-chat session: the reset-session button recycles ONE agent's connection,
+  // which has no meaning on a multi-agent timeline (which member would it reset?).
+  // The group orchestrator owns member lifecycle. Hides the reset button only;
+  // the "continue" button (a plain message into the group) stays.
+  isGroupSession: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'task-card-click', 'send-message', 'render-flush', 'resume-session', 'reset-session'])

@@ -30,7 +30,7 @@
         <span class="chat-action-label">{{ t('chat.actions.wideLabels.jump') }}</span>
       </button>
       <button
-        v-if="isACPTransport"
+        v-if="isACPTransport && !isGroupSession"
         class="chat-action-btn acp-sync-btn"
         :class="{ disabled: acpSyncDisabled }"
         :disabled="acpSyncDisabled"
@@ -310,8 +310,10 @@
       </PopupMenu>
     </div>
     <!-- Session info bar (model + mode) — always rendered to reserve vertical space,
-         preventing layout shift when async model/mode data loads after messages -->
-    <div class="chat-session-info">
+         preventing layout shift when async model/mode data loads after messages.
+         Hidden for group sessions: model / mode+auto-approve / context-usage are
+         all per-agent settings with no owner on a multi-agent timeline. -->
+    <div v-if="!isGroupSession" class="chat-session-info">
       <span class="session-info-model" @click.stop="openSettingsDrawer('model')"><ProviderIcon :model-name="currentModelName || ''" :size="11" />{{ currentModelName }}</span>
       <template v-if="showModeInfo">
         <span class="session-info-divider"></span>
@@ -604,6 +606,12 @@ const props = defineProps({
   currentAgentId: String,
   currentSessionRunning: Boolean,
   active: Boolean,
+  /** Group-chat session: the session-info chrome (model / mode+auto-approve /
+   *  context-usage) and the ACP sync button are per-AGENT settings, which have
+   *  no owner on a multi-agent timeline — hidden here. The model chip and the
+   *  ACP sync button are also the entry points to SessionDrawer (all per-agent),
+   *  so hiding them closes that drawer's only doors. */
+  isGroupSession: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([

@@ -2416,6 +2416,22 @@ describe('ChatInputBar', () => {
     expect(true).toBe(true)
   })
 
+  describe('session info bar (group gating)', () => {
+    it('renders the model/mode/usage info bar for a normal session', () => {
+      const wrapper = mountBar({ currentModelName: 'gpt-5', currentAgentId: 'agent1' })
+      expect(wrapper.find('.chat-session-info').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
+    it('hides the whole session info bar in a group session', () => {
+      // Model / mode+auto-approve / context-usage are per-agent settings with no
+      // owner on a multi-agent timeline.
+      const wrapper = mountBar({ currentModelName: 'gpt-5', currentAgentId: 'agent1', isGroupSession: true })
+      expect(wrapper.find('.chat-session-info').exists()).toBe(false)
+      wrapper.unmount()
+    })
+  })
+
   describe('ACP sync button', () => {
     it('shows sync button in ACP transport and emits sync-acp-session', async () => {
       const wrapper = mountBar({
@@ -2440,6 +2456,22 @@ describe('ChatInputBar', () => {
         currentSessionId: 'sid-1',
         currentSessionRunning: false,
         acpSyncing: false,
+      })
+      expect(wrapper.find('.chat-action-btn.acp-sync-btn').exists()).toBe(false)
+      wrapper.unmount()
+    })
+
+    it('hides sync button in a group session', () => {
+      // Syncing re-establishes ONE agent's ACP session; a group has several, so
+      // the button is suppressed even in ACP transport.
+      const wrapper = mountBar({
+        currentTransport: 'acp-stdio',
+        currentAgentId: 'agent1',
+        currentSessionId: 'sid-1',
+        currentSessionRunning: false,
+        acpSyncing: false,
+        messages: [{ id: 1, role: 'user', content: 'hi' }],
+        isGroupSession: true,
       })
       expect(wrapper.find('.chat-action-btn.acp-sync-btn').exists()).toBe(false)
       wrapper.unmount()
