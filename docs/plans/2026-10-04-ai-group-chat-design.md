@@ -41,6 +41,7 @@
 | O16 | #71 终态前兜孤儿流式行 | `emitGroupTerminal:178` 只发事件，不 finalize 流式行 |
 | O17 | #73 保护群讨论中的成员连接（= 未落地的 I4(a)） | 群只对群行 `SetSessionRunning`；成员行从不标记 running ⇒ sweep（`acp_pool.go:419`）会杀正在用的成员连接 |
 | O18 | #75/#76 IM 机器人支持群会话 | `session_command.go:46,71` 硬编码 `session_type='chat'`（群在 IM 列表缺席）；`sendMessageToSessionFromPush:182` 走单聊回合（对群发消息会退化） |
+| O19 | #78 群成员数上限 10 | `CreateGroupWithMembers` 只校验 `len(specs)==0`；`AddGroupMember` 无个数校验；连接池无上限 |
 
 ### 已实现（勿重复设计）
 
@@ -147,6 +148,7 @@
 | 75 | IM 机器人（钉钉/飞书）的会话列表 | **包含群会话**：`session_command.go:46,71` 两处硬编码 `session_type = 'chat'` 改 `IN ('chat','group')`（与决策 #63 同一白名单）。现状群里讨论在 IM 里完全看不到、也选不中，与 Web 端不一致 |
 | 76 | IM 里对群会话发消息 | **委派群编排器**：`sendMessageToSessionFromPush`（`session_command.go:182`）开头判 `GetSessionType == "group"` → 走 `RunGroupTurn`（与 Web 的 `AIChat` 群分支同构）。否则"选中群→发消息"会用**主持人单个 agent 跑单聊回合**，其他成员不参与，且消息落进群时间线**污染讨论**。该函数已走 `EnqueueAndMaybeStart`（`:197`），**天然支持忙碌入队**（决策 #45） |
 | 77 | 群聊的 usage 统计 | **保持现状**（usage 写成员行、群行不写）。**非缺口**：群里的 usage 进度条与 popup **整体已被 `isGroupSession` 隐藏**（`ChatInputBar.vue:316` 容器，决策 #60），故无用户可见失效；全局统计按 `chat_metadata` 逐消息聚合（`usage_stats.go:283`），群消息 metadata 正常落库 ⇒ **统计不丢**；成员行各存一份 usage 只是无人读取（无害） |
+| 78 | 群成员数上限 | **10 个活跃成员**。理由：每成员是一条独立 ACP 子进程（各带 node/npx 运行时，数百 MB 级），连接池**无上限**（`acp_pool.go` 的 `conns` 是 map）⇒ 无护栏时"加 50 个成员"可瞬间打爆内存；且 10 人以上"辩论"对模型无意义。校验放 **service 层**（唯一写入口）：`CreateGroupWithMembers` 与 `AddGroupMember`；**批量加须先算"现有活跃 + 去重后的净新增"**（`AddGroupMember` 对同 agent 幂等复用，重复添加不得算超限） |
 
 ## 3. 架构
 
@@ -891,6 +893,10 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - 全局用量统计按 `chat_metadata` **逐消息**聚合（`usage_stats.go:283`），群消息的 metadata 由 `SaveMetadata(msgID, …)`（`session_executor.go:1679`）正常落库 ⇒ **统计不丢**。
 - 成员行各存一份 usage 无人读取，无害。
 **决定（#77）**：保持现状，不加"汇总到群行"的逻辑（每个成员有各自上下文窗口，"合并"语义本身有歧义）。
+
+**（25）群成员数无上限（决策 #78）。**
+`CreateGroupWithMembers`（`group_store.go:74`）只校验 `len(specs) == 0`；`handler/group.go:142-154` 的批量加成员也不限个数。而**连接池无上限**（`acp_pool.go` 的 `conns` 是 `map[string]*ACPConn`，`minAliveConns = 3` 是**下限**不是上限）⇒ 一个 20 成员群首次讨论会 spawn 最多 20 个 ACP 子进程（各带 node/npx 运行时）。sweep 会在 5 分钟空闲后回收，但**讨论期间**是真实资源峰值，且"加 50 个成员"可瞬间打爆内存。
+**修（决策 #78）**：上限 10 个活跃成员，校验在 service 层两个写入口。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
