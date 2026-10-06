@@ -30,7 +30,7 @@
 | O5 | #56 回退轮转 + 连续失败收尾 | `speakNextMember:250` 恒选第一个；无失败计数 |
 | O6 | #50 智能体重名收敛 | `agent_store.go` 无 `AgentNameTaken` |
 | O7 | #57 归档/销毁群关成员连接 | `chat_session.go` 只 `CloseConn(群行 id)` |
-| O8 | #52 隐藏群回溯入口 | 前端未按 `isGroupSession` 隐藏 rewind |
+| O8 | #52/#74 隐藏回溯入口 + 拒绝 fork 群 | 前端未隐藏 rewind；`ServeForkSession` 无群守卫（`ForkSession` 硬编码 `'chat'`） |
 | O9 | #59 发言中高亮 | 无 `activeSpeaker`/`isSpeaking` |
 | O10 | #61 群 auto-approve 批量写成员 | `chat_session.go:583` 只写群行；无 `SetGroupAutoApprove` |
 | O11 | #62 `isGroupSession` 用会话类型 | `GET /api/ai/chat` 响应**无 `sessionType`**；前端靠名单非空 |
@@ -142,6 +142,7 @@
 | 71 | 终态前的流式行收尾 | **`emitGroupTerminal` 内部调 `finalizeOrphanedStreamingMessages(groupID,"interrupt")`**，四条退出路径（取消/结束信号/达上限/主持人失败终止）共用。**定位是"兜 `FinalizeStreamingMessage` 自身失败"**——发出终态事件时 `runTurn` 早已返回（`defaultRunner:303` 同步阻塞，所有调用点都在 runner 返回后），**不引入等待**。该函数幂等（查 `streaming=1` 再 finalize） |
 | 72 | 群回合的推送通知 | **与单聊完全一致**：复用 `EmitSessionPushNotification(groupID,"completed")`（带 once-per-run 守卫）与 `EmitTurnAnsweredNotification`（排队中途逐条，不占名额）。现状 `emitGroupTerminal` **只发 WS、不推送** ⇒ 用户切走后群讨论跑完完全收不到通知（IM/Android/桌面全无）。`pushSessionTerminal` 依赖的 `GetSessionTitle`/`getSessionResponsePreviewRaw` 对群会话均成立 |
 | 73 | 成员连接的 sweep 保护（细化 I4） | **给 ACP idle sweep 单独的查询，不动 `GetRunningSessionIDs`**：编排器维护"当前群回合正在使用的成员行集合"，`SetSessionRunningChecker`（`main.go:863` 注入）的回调改为同时查它。理由：`GetRunningSessionIDs` 的语义是"用户可见的 running 会话"（喂会话列表 `chat_session.go:34,173`、项目删除判定 `project_delete.go:198`），混入隐藏成员行会误触发"项目有会话在跑不能删" |
+| 74 | fork 群会话 | **后端拒绝**（与 #52 rewind 对称：v1 不支持，前端隐藏 + 后端守卫）。现状 `ServeForkSession` 无守卫，API 直调会产出"成员归属解析不到的假单聊"（`ForkSession` 硬编码 `session_type='chat'`，`continue_conversation.go:383`）。**`ContinueFromExecution` 无需守卫**——其源是 `task_executions`，群不产生该行，天然够不到 |
 
 ## 3. 架构
 
@@ -869,6 +870,11 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 连接以**成员行 id** 为键注册（`group_orchestrator.go:282` `SessionID: turn.MemberRowID`），而 idle sweep 的存活判断是 `m.isSessionRunning(sid)`（`acp_pool.go:419,457`），`sid` 即成员行。但群路径只对**群行**调 `SetSessionRunning`（`group_orchestrator.go:79`），**成员行从不被标记 running** ⇒ 群回合进行中，一个空闲超 5 分钟（`idleConnTimeout`）的成员连接会被 sweep **杀掉**（功能上会 respawn，但每个 ACP spawn 可能数秒到数十秒，且讨论中反复 spawn）。
 **注意**：此问题**已被评审识别为 I4(a)**（§12），但**从未落地修复**。
 **修（决策 #73）**：给 sweep 单独的"群回合正在使用的成员行"查询，**不把成员行塞进 `GetRunningSessionIDs`**（那会污染会话列表与项目删除判定）。
+
+**（22）fork 群会话无后端守卫（决策 #74）。**
+`ServeForkSession`（`chat_session.go:806`）**不校验 `session_type`**；`ForkSession`（`continue_conversation.go:290`）按源会话的 backend/agent_id 建**硬编码 `session_type='chat'`** 的新会话（`:383`），并把群时间线消息**复制**过去（含 `agent_id` = 成员行 id）。⇒ fork 一个群会产出：backend = 主持人的后端、内容为整群讨论副本、但**成员行 id 在新单聊里解析不到成员**（`useGroupMembers` roster 为空）→ 前端 `resolveSpeaker` 返回 null → 一堆**无归属**的 AI 发言；且 `fork_context_budget` 会把这些当普通历史注入。
+前端已隐藏群 fork 按钮（`ChatMessageItem.vue:144,149`），但**API 可绕过**。
+**修（决策 #74）**：`ForkSession` 加群守卫（与 #52 对称）。**`ContinueFromExecution` 无需改**（源是 `task_executions`，群不产生）。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
