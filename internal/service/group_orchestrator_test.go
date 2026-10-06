@@ -390,3 +390,120 @@ func isStreaming(t *testing.T, msgID int64) bool {
 	}
 	return s == 1
 }
+
+// A failed member turn must NOT advance that member's cursor: it produced no
+// output, so nothing was actually processed. Advancing it would make the
+// messages injected into that turn permanently unreachable — the member would
+// silently lose that stretch of the discussion and answer off-topic, with
+// nothing on the timeline to show why (decision #69).
+func TestGroupOrchestrator_FailedMemberDoesNotAdvanceCursor(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-cursor-fail"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Seed a timeline message the member must still see next time.
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "seed question", nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	SetMemberCursor(mA, 0)
+	before := GetMemberCursor(mA)
+
+	// Host routes to A; A's turn FAILS (no message written, Err set).
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`},
+	}
+	runner, _ := newScriptedRunner(t, groupID, project, script)
+	baseRunner := runner
+	runner = func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			return groupMemberResult{Err: "backend exploded"}
+		}
+		return baseRunner(ctx, gid, turn)
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	if got := GetMemberCursor(mA); got != before {
+		t.Fatalf("a failed member turn must not advance the cursor: before=%d after=%d", before, got)
+	}
+}
+
+// A failed HOST turn must not advance the host's cursor either — the host routes
+// from what it has seen, so skipping content would corrupt its next decision.
+func TestGroupOrchestrator_FailedHostDoesNotAdvanceCursor(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-host-cursor"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	SetMemberCursor(hostID, 0)
+
+	// The host turn always fails.
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			return groupMemberResult{Err: "host backend down"}
+		}
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	if got := GetMemberCursor(hostID); got != 0 {
+		t.Fatalf("a failed host turn must not advance the cursor, got %d", got)
+	}
+}
+
+// A SUCCESSFUL member turn must still advance the cursor (the fix must not
+// break the normal path).
+func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-cursor-ok"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	SetMemberCursor(mA, 0)
+
+	script := map[string][]string{
+		hostID: {
+			`<clawbench-speaker>A</clawbench-speaker> 请表态`,
+			`<clawbench-group-end/> 讨论结束`,
+		},
+		mA: {"我的观点"},
+	}
+	runner, _ := newScriptedRunner(t, groupID, project, script)
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	if got := GetMemberCursor(mA); got <= 0 {
+		t.Fatalf("a successful member turn must advance the cursor, got %d", got)
+	}
+}

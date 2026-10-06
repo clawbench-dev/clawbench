@@ -117,8 +117,12 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		hostCursor := GetMemberCursor(hostMemberID)
 		hostPrompt := o.hostPrompt(hostMemberID, hostCursor, names, members)
 		hostRes := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: hostPrompt, IsHost: true})
-		SetMemberCursor(hostMemberID, GroupTimelineHighWater(groupID))
-		if hostRes.Err != "" {
+		if hostRes.Err == "" {
+			// Advance only on success: the cursor means "has processed up to
+			// here". A failed turn processed nothing, so advancing would make
+			// the injected context permanently unreachable (decision #69).
+			SetMemberCursor(hostMemberID, GroupTimelineHighWater(groupID))
+		} else {
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
 			// Host failed: try round-robin once, then stop.
 			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
@@ -154,8 +158,13 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 			memberCursor := GetMemberCursor(t.ID)
 			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction)
 			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
-			SetMemberCursor(t.ID, GroupTimelineHighWater(groupID))
-			if res.Err != "" {
+			if res.Err == "" {
+				// Advance only on success (decision #69): a failed member
+				// processed nothing, so the messages it just received must be
+				// re-injected next time instead of being lost. The failed
+				// turn's residue stays on the timeline for the user.
+				SetMemberCursor(t.ID, GroupTimelineHighWater(groupID))
+			} else {
 				slog.Warn("group: member turn failed", "group", groupID, "member", t.ID, "err", res.Err)
 			}
 		}
@@ -262,8 +271,15 @@ func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTur
 		}
 		cursor := GetMemberCursor(m.ID)
 		prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "")
-		runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
-		SetMemberCursor(m.ID, GroupTimelineHighWater(o.groupID))
+		res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
+		// Advance only on success (decision #69) — same rule as the routed and
+		// host paths. The round-robin fallback is still "a turn", so a failed
+		// one must not swallow the context it was handed.
+		if res.Err == "" {
+			SetMemberCursor(m.ID, GroupTimelineHighWater(o.groupID))
+		} else {
+			slog.Warn("group: fallback member turn failed", "group", o.groupID, "member", m.ID, "err", res.Err)
+		}
 		return true
 	}
 	return false

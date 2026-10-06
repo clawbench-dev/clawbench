@@ -137,3 +137,52 @@ func TestParticipantMetadata(t *testing.T) {
 		t.Fatalf("roster entry must carry the specialty, got %q", roster[0].Specialty)
 	}
 }
+
+// A member's failed turn leaves a warning block on the timeline (role=assistant,
+// that member's agent_id). It is operational information for the USER, not
+// discussion content: injecting it would feed raw errors like "create backend:
+// ..." to the other members as if it were speech (decision #70). The failure
+// stays on the timeline (decision #69) — it is only excluded from injection.
+//
+// NOTE: this already holds by construction — ExtractPlainText goes through
+// extractTextsFromArray (chat.go:590), which skips every block whose type is
+// not "text" (thinking/tool_use/warning). This test PINS that invariant so a
+// future loosening of that filter cannot silently start leaking failures.
+func TestBuildMemberInjection_ExcludesWarningBlocks(t *testing.T) {
+	warningContent := `{"blocks":[{"type":"warning","text":"create backend: exit status 1"}]}`
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-a", Content: warningContent},
+		{ID: 3, Role: "assistant", AgentID: "row-a", Content: `{"blocks":[{"type":"text","text":"real speech"}]}`},
+	}
+	names := map[string]string{"row-a": "A"}
+
+	// A different member must not see A's failure.
+	other := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "")
+	if strings.Contains(other, "create backend") {
+		t.Fatalf("warning text must not be injected to another member: %q", other)
+	}
+	if !strings.Contains(other, "real speech") {
+		t.Fatalf("real speech must still be injected: %q", other)
+	}
+
+	// A's own warning is filtered by the author rule anyway, but assert the
+	// warning text is absent regardless.
+	self := buildInjectionText(msgs, 0, "row-a", names, nil, nil, "")
+	if strings.Contains(self, "create backend") {
+		t.Fatalf("warning text must not be injected to the member itself: %q", self)
+	}
+}
+
+// A message that mixes real content with a warning block must still be injected
+// (only PURE-warning messages are excluded) — otherwise a backend that appends
+// a warning to a real reply would lose that reply.
+func TestBuildMemberInjection_KeepsMixedContent(t *testing.T) {
+	mixed := `{"blocks":[{"type":"text","text":"my answer"},{"type":"warning","text":"truncated"}]}`
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-a", Content: mixed},
+	}
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "")
+	if !strings.Contains(got, "my answer") {
+		t.Fatalf("a mixed message's real content must be injected: %q", got)
+	}
+}
