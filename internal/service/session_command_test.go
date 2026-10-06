@@ -3162,31 +3162,28 @@ func TestFindSessionsByPrefix_IncludesGroupExcludesMembers(t *testing.T) {
 	assert.Equal(t, "group-abcd", results[0].ID)
 }
 
-// An IM message to a group must be routed to the group orchestrator, not run as
+// An IM message to a group must be routed to the GROUP drain loop, not run as
 // a single-agent turn (which would let the host answer alone and pollute the
-// group timeline).
+// group timeline). It goes through the queue entry point so a message arriving
+// while a group turn runs is queued rather than starting a second orchestrator
+// (decisions #45/#75/#76).
 func TestSendMessageToSessionFromPush_GroupRoutesToOrchestrator(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	insertGroupSessionRow(t, db, "group-orch")
 
-	var calls []struct {
+	type call struct {
 		sessionID string
 		message   string
 	}
-	done := make(chan struct{}, 1)
-	restore := SetRunGroupTurnForSessionForTest(func(_ context.Context, groupID, message string, _ []model.FileEntry, _, _ string) error {
-		calls = append(calls, struct {
-			sessionID string
-			message   string
-		}{groupID, message})
-		done <- struct{}{}
-		return nil
+	done := make(chan call, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, groupID, _ string, _ int64, text string, _ []model.FileEntry) {
+		done <- call{groupID, text}
 	})
-	defer SetRunGroupTurnForSessionForTest(restore)
+	defer SetRunGroupDrainLoopForTest(restore)
 
-	// The single-agent seam must NOT be touched for a group send.
+	// The single-agent launcher must NOT be used for a group send.
 	restoreLaunch := SetLaunchSessionExecutionForTest(func(LaunchConfig) {
 		t.Error("a group message must not start a single-agent execution")
 	})
@@ -3196,36 +3193,42 @@ func TestSendMessageToSessionFromPush_GroupRoutesToOrchestrator(t *testing.T) {
 	require.NoError(t, err)
 
 	select {
-	case <-done:
+	case c := <-done:
+		assert.Equal(t, "group-orch", c.sessionID)
+		assert.Equal(t, "hello group", c.message)
 	case <-time.After(2 * time.Second):
-		t.Fatal("the group orchestrator was never invoked")
+		t.Fatal("the group drain loop was never invoked")
 	}
 
-	require.Len(t, calls, 1)
-	assert.Equal(t, "group-orch", calls[0].sessionID)
-	assert.Equal(t, "hello group", calls[0].message)
-
-	// The group turn owns the user-message insert, so the push path must not
-	// have materialized a chat_history row of its own.
+	// The drain entry point materializes the user row itself, so exactly one
+	// chat_history user row must exist (the orchestrator must not add another).
 	var count int
-	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ?", "group-orch").Scan(&count))
-	assert.Equal(t, 0, count, "the orchestrator owns the group user-message insert")
+	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM chat_history WHERE session_id = ? AND role='user'", "group-orch").Scan(&count))
+	assert.Equal(t, 1, count, "the group drain path materializes the user row exactly once")
 }
 
-// Group sends are text-only in v1: an attachment must be rejected, not silently
-// dropped.
-func TestSendMessageToSessionFromPush_GroupRejectsAttachments(t *testing.T) {
+// Attachments are supported for IM group sends too (decision #65): they are
+// carried through the queue to the orchestrator rather than rejected.
+func TestSendMessageToSessionFromPush_GroupAcceptsAttachments(t *testing.T) {
 	db := setupTestDBForSessionCommand(t)
 	defer func() { _ = db.Close() }()
 
 	insertGroupSessionRow(t, db, "group-attach")
 
-	restore := SetRunGroupTurnForSessionForTest(func(context.Context, string, string, []model.FileEntry, string, string) error {
-		t.Error("a rejected attachment must not start a group turn")
-		return nil
+	got := make(chan []model.FileEntry, 1)
+	restore := SetRunGroupDrainLoopForTest(func(_ context.Context, _ string, _ string, _ int64, _ string, files []model.FileEntry) {
+		got <- files
 	})
-	defer SetRunGroupTurnForSessionForTest(restore)
+	defer SetRunGroupDrainLoopForTest(restore)
 
 	err := SendMessageToSessionFromDingTalk("group-attach", "with file", []model.FileEntry{{Path: "a.txt"}})
-	require.Error(t, err)
+	require.NoError(t, err)
+
+	select {
+	case files := <-got:
+		require.Len(t, files, 1)
+		assert.Equal(t, "a.txt", files[0].Path)
+	case <-time.After(2 * time.Second):
+		t.Fatal("the group drain loop was never invoked with the attachment")
+	}
 }

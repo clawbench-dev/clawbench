@@ -929,6 +929,10 @@ paths:
         **群会话**：消息交由群编排器（主持人路由、成员依次发言），响应带
         `group:true`。群消息**支持附件**（决策 #65）：`files` 落库到用户消息行，
         并渲染进各成员的注入上下文；但**不写进 `content`**——气泡与单聊逐字一致。
+
+        **群回合运行中再发消息会入队**（决策 #45），与单聊一致：响应带
+        `queued:true, running:true`，由运行中的 drain loop 依次取用；
+        **不会**并发起第二个编排器（两个群回合交错会打乱成员发言顺序）。
       operationId: chatSend
       parameters:
         - name: session_id

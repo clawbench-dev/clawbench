@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"clawbench/internal/model"
@@ -356,9 +358,15 @@ func TestAIChatDelegatesGroupSendWithAttachments(t *testing.T) {
 	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
 	require.NoError(t, err)
 
+	// A REAL file inside the project: the handler validates attachment paths
+	// (os.Stat + containment), so a fake path is correctly rejected. Use a
+	// project-RELATIVE path — that is the form the frontend sends, and it is
+	// resolved against the project cookie.
+	require.NoError(t, os.WriteFile(filepath.Join(env.ProjectDir, "report.pdf"), []byte("x"), 0o644))
+
 	req := newRequest(t, http.MethodPost, "/api/ai/chat", map[string]any{
 		"message": "看看这个",
-		"files":   []map[string]any{{"path": "/tmp/report.pdf"}},
+		"files":   []map[string]any{{"path": "report.pdf"}},
 	})
 	req = withProjectCookie(req, env.ProjectDir)
 	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: groupID})
@@ -368,4 +376,40 @@ func TestAIChatDelegatesGroupSendWithAttachments(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, true, resp["group"], "group send with attachments must be delegated, not rejected")
+}
+
+// A second message sent while a group turn is running must be QUEUED, exactly
+// like single chat — never run as a second concurrent orchestrator (decision
+// #45). Two group turns on one timeline would interleave member turns.
+func TestAIChat_GroupBusyEnqueues(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// Simulate a live group run: claim the session so the handler sees "busy".
+	runCtx, claimed := service.TryClaimSessionRun(groupID)
+	require.True(t, claimed, "precondition: the group must start idle")
+	t.Cleanup(func() {
+		_ = runCtx
+		service.FinishSessionRun(groupID)
+	})
+
+	req := newRequest(t, http.MethodPost, "/api/ai/chat", map[string]any{"message": "第二条"})
+	req = withProjectCookie(req, env.ProjectDir)
+	req.AddCookie(&http.Cookie{Name: model.ScopedCookieName("chat_session_id"), Value: groupID})
+	w := callHandlerWithAuth(AIChat, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, true, resp["queued"], "a message to a busy group must be queued")
+	assert.Equal(t, true, resp["running"])
+
+	// It landed in the queue, not the timeline.
+	queued, err := service.GetQueuedMessages(groupID)
+	require.NoError(t, err)
+	require.Len(t, queued, 1)
+	assert.Equal(t, "第二条", queued[0].Text)
 }

@@ -320,31 +320,6 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Group-chat delegation: a message sent to a group session is driven by the
-	// group orchestrator (host routes, members speak) rather than a single-agent
-	// turn. Delegated here — after ownership/auth and the message check, but
-	// BEFORE TryClaimSessionRun/AddChatMessage — so the orchestrator owns the
-	// user-message insert, the running-state registration, and the WS broadcast.
-	//
-	// Attachments are supported (decision #65): they are persisted on the user
-	// message and rendered into each member's injected context, but NOT into the
-	// message content (the bubble stays identical to single chat).
-	if service.GetSessionType(sessionID) == "group" {
-		groupFiles := req.Files
-		// Background context: r.Context() is cancelled as soon as this handler
-		// returns, which would abort the group turn immediately. queueId/clientId
-		// travel with the turn so the orchestrator's user_message echo lets the
-		// sending device adopt its optimistic bubble's DB id (instead of
-		// rendering a second bubble).
-		go func() {
-			if err := service.RunGroupTurnForSession(context.Background(), sessionID, req.Message, groupFiles, req.QueueID, req.ClientID); err != nil {
-				slog.Error("handler: group turn failed", "session_id", sessionID, "error", err)
-			}
-		}()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID, "group": true})
-		return
-	}
-
 	// Validate file paths
 	allFilePaths := req.FilePaths
 
@@ -498,6 +473,48 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 
 	// Prevent concurrent sessions for the same session ID
 	runCtx, claimed := service.TryClaimSessionRun(sessionID)
+
+	// Group-chat delegation (decisions #45/#46/#58/#72): a message to a group is
+	// driven by the group orchestrator (host routes, members speak), NOT a
+	// single-agent turn. It is handled AFTER the claim so a message arriving
+	// while a group turn runs takes the ordinary enqueue path below — exactly
+	// like single chat — and the running group drain loop picks it up. Two
+	// concurrent group orchestrators on one timeline would interleave member
+	// turns, so queueing is the only safe behavior.
+	//
+	// Attachments are supported (decision #65): persisted on the user row and
+	// rendered into each member's injected context, not into the content.
+	if service.GetSessionType(sessionID) == "group" {
+		if claimed {
+			// Idle: this request owns the run. Materialize the first message
+			// into the timeline, then drain the queue with the group runner.
+			msgID, saveErr := service.AddChatMessage(projectPath, backendName, sessionID, "user", req.Message, allFiles, false, T(r, "FileMessage"))
+			if saveErr != nil {
+				service.FinishSessionRun(sessionID)
+				model.WriteError(w, model.Internal(fmt.Errorf("failed to save message")))
+				return
+			}
+			ws.EmitToSession(sessionID, ai.StreamEvent{
+				Type: "user_message",
+				UserMessage: &ai.UserMessageData{
+					MessageID:      msgID,
+					Content:        req.Message,
+					Files:          allFiles,
+					SenderClientID: req.ClientID,
+					QueueID:        req.QueueID,
+				},
+			})
+			go func() {
+				defer service.FinishSessionRun(sessionID)
+				service.RunGroupDrainLoop(runCtx, sessionID, projectPath, msgID, req.Message, allFiles)
+			}()
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID, "group": true})
+			return
+		}
+		// Busy: fall through to the shared enqueue block below (identical to
+		// single chat), so the running group drain loop claims it.
+	}
+
 	if !claimed {
 		// Session already running — enqueue the message. The running drain loop
 		// claims and materializes it.

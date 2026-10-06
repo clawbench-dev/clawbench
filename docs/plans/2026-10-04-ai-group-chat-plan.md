@@ -1810,7 +1810,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 > **背景**：二轮 grill 逐分支核对代码后新增（设计 §12.7 记录了 10 个缺口）。**逐 Task TDD + 独立 commit。** 依赖阶段 N（N1 的 `role='system'` 是 O3 的前置，O2 复用 N1 的删除路径）。
 
-### Task O1: 群消息入队 + 复用 drain loop（决策 #45/#46/#58/#72）
+### Task O1: 群消息入队 + 复用 drain loop（决策 #45/#46/#58/#72）✅ 已实现（本次提交）
 
 **Files:**
 - Modify: `internal/handler/chat.go`（群委派移到 claim 之后）

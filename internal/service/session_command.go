@@ -173,24 +173,6 @@ func GetSessionInfoForPush(sessionID string) (DingTalkSessionInfo, error) {
 	}, nil
 }
 
-// runGroupTurnForSession is an indirection over RunGroupTurnForSession so tests
-// can observe that an IM message to a group is routed to the orchestrator
-// (rather than a single-agent turn) without starting a real AI backend.
-var runGroupTurnForSession = RunGroupTurnForSession
-
-// SetRunGroupTurnForSessionForTest swaps the group-turn seam and returns the
-// previous one, so tests can assert the IM group delegation without running a
-// real orchestrator. Pass nil to restore the default.
-func SetRunGroupTurnForSessionForTest(fn func(context.Context, string, string, []model.FileEntry, string, string) error) func(context.Context, string, string, []model.FileEntry, string, string) error {
-	prev := runGroupTurnForSession
-	if fn == nil {
-		runGroupTurnForSession = RunGroupTurnForSession
-	} else {
-		runGroupTurnForSession = fn
-	}
-	return prev
-}
-
 // sendMessageToSessionFromPush is the shared implementation for sending a message
 // to a non-running session from any push backend (DingTalk, Feishu, etc.).
 //
@@ -211,23 +193,17 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	// Group-chat delegation: a message to a group session is driven by the group
 	// orchestrator (host routes, members speak) rather than a single-agent turn,
 	// which would otherwise run the host agent alone and pollute the group
-	// timeline. Mirrors handler/chat.go's group branch: the orchestrator owns the
-	// user-message insert, the running-state registration and the WS broadcast.
+	// timeline.
 	//
-	// It runs in a goroutine because the IM callback is synchronous and a group
-	// turn is potentially multi-minute; blocking it would stall the bot stream.
-	// v1 group sends are text-only (attachments are per-member, not per-group),
-	// so reject rather than silently drop the files.
+	// It goes through the SAME enqueue entry point as single chat (decision
+	// #45): while a group turn is running the message must be QUEUED, not run as
+	// a second concurrent orchestrator. EnqueueAndMaybeStart claims or queues,
+	// materializes the row, and launches the group drain loop when it starts one.
+	// It runs the launch in a goroutine because the IM callback is synchronous
+	// and a group turn is potentially multi-minute; blocking it would stall the
+	// bot stream. Attachments are supported (decision #65).
 	if GetSessionType(sessionID) == "group" {
-		if len(files) > 0 {
-			return fmt.Errorf("group sessions do not accept attachments")
-		}
-		go func() {
-			if err := runGroupTurnForSession(context.Background(), sessionID, message, nil, queueID, ""); err != nil {
-				slog.Error("push: group turn failed", "session_id", sessionID, "error", err)
-			}
-		}()
-		return nil
+		return enqueueGroupFromPush(sessionID, message, files, queueID)
 	}
 
 	// Persist the message + start execution or signal the running drain loop.
@@ -546,6 +522,79 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 		},
 	})
 	return false, 0, nil
+}
+
+// enqueueGroupFromPush is the group counterpart of EnqueueAndMaybeStart for the
+// IM path (decisions #45/#75/#76). It inserts the message into the queue and:
+//
+//   - idle: claims the group, materializes the row, and launches the group
+//     drain loop in a goroutine (the IM callback is synchronous and a group turn
+//     is potentially multi-minute);
+//   - busy: marks the running group's loop as having pending work and returns —
+//     that loop claims and materializes this message, exactly like single chat.
+//
+// Doing this through the queue (rather than calling the orchestrator directly)
+// is what makes a message sent while a group turn runs QUEUE instead of
+// starting a second concurrent orchestrator.
+func enqueueGroupFromPush(sessionID, message string, files []model.FileEntry, queueID string) error {
+	info := GetSessionFullInfo(sessionID)
+	if info == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	effectiveQueueID := queueID
+	if effectiveQueueID == "" {
+		effectiveQueueID = newPushQueueID()
+	}
+	queueRowID, err := AddQueuedMessage(info.ProjectPath, info.Backend, sessionID, message, files, effectiveQueueID, "")
+	if err != nil {
+		return err
+	}
+	runCtx, created := TryClaimSessionRun(sessionID)
+	if !created {
+		// A group loop is live and has been woken; it will claim this message.
+		WakeSessionRunner(sessionID)
+		ws.EmitToSession(sessionID, ai.StreamEvent{
+			Type: "queue_added",
+			QueueAdded: &ai.QueueAddedData{
+				QueueID: effectiveQueueID,
+				Text:    message,
+				Files:   files,
+			},
+		})
+		return nil
+	}
+	row, matMsgID, ok, cerr := ClaimByIDAndMaterialize(sessionID, queueRowID)
+	if cerr != nil || !ok {
+		// The row vanished (concurrent cancel/clear). Release the claim so the
+		// session is not stranded as running with nothing consuming it.
+		slog.Warn("push: group queued row vanished before materialize",
+			slog.String("session", sessionID), slog.Int64("queue_row_id", queueRowID), slog.Any("error", cerr))
+		FinishSessionRun(sessionID)
+		return fmt.Errorf("group queued message could not be materialized")
+	}
+	emitUserMessage(sessionID, matMsgID, row)
+	go func() {
+		defer FinishSessionRun(sessionID)
+		runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, matMsgID, row.Content, row.Files)
+	}()
+	return nil
+}
+
+// runGroupDrainLoopFn is the injectable indirection over RunGroupDrainLoop, so
+// tests can assert the IM group path launches the group drain without running a
+// real orchestrator.
+var runGroupDrainLoopFn = RunGroupDrainLoop
+
+// SetRunGroupDrainLoopForTest swaps the group-drain seam and returns the
+// previous one. Pass nil to restore the default.
+func SetRunGroupDrainLoopForTest(fn func(context.Context, string, string, int64, string, []model.FileEntry)) func(context.Context, string, string, int64, string, []model.FileEntry) {
+	prev := runGroupDrainLoopFn
+	if fn == nil {
+		runGroupDrainLoopFn = RunGroupDrainLoop
+	} else {
+		runGroupDrainLoopFn = fn
+	}
+	return prev
 }
 
 // handleSessionPanic recovers from panics in the session goroutine.

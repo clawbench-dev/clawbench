@@ -102,14 +102,55 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 	}
 	emitGroupUserMessage(groupID, msgID, userMessage, o.queueID, o.senderClientID)
 
-	// 2. Resolve the host and member roster.
+	// 2. Run the loop, then emit the terminal event ourselves: this is the
+	// STANDALONE entry point (a client send that claimed the session), so nobody
+	// else will send "done". The drain entry point (RunGroupTurnDrain) skips
+	// this and lets RunDrainLoop own the terminal.
+	o.runLoop(groupCtx, groupID)
+	emitGroupTerminal(groupID)
+	return nil
+}
+
+// RunGroupTurnDrain runs one group turn for a message the drain loop already
+// materialized. It differs from RunGroupTurn in exactly two ways, both required
+// for the drain loop to own the turn lifecycle (decision #45/#58):
+//
+//   - It does NOT persist or announce the user message: ClaimNextAndMaterialize
+//     already wrote the chat_history row and emitted user_message, so doing it
+//     again would duplicate both.
+//   - It does NOT emit a terminal event: RunDrainLoop decides when the whole
+//     queue is drained and sends "done" exactly once, then.
+//
+// It returns a DrainResult the loop uses to decide whether to continue.
+func RunGroupTurnDrain(ctx context.Context, groupID string, msgID int64, row QueuedRow, runner groupTurnRunner) DrainResult {
+	o := NewGroupOrchestrator(groupID)
+	if runner != nil {
+		o.runTurn = runner
+	}
+	// NOTE: no running-state management here. The caller (the HTTP handler via
+	// TryClaimSessionRun, or the drain loop) already owns the runner and the
+	// running flag for the whole queued run. Registering a second, per-message
+	// runner would let this function clear the running flag when ONE message
+	// finishes, while later queued messages are still to come.
+	//
+	// ctx is the claim's context, so CancelSession still reaches every member
+	// turn (their TurnSpec.Ctx derives from it).
+	return o.runLoop(ctx, groupID)
+}
+
+// runLoop executes the host/member rounds and returns the outcome WITHOUT
+// emitting any terminal event or touching the session's running state — both
+// belong to the caller (standalone vs drain). groupCtx cancellation is reported
+// as a user cancel.
+func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) DrainResult {
+	// Resolve the host and member roster.
 	hostMemberID := GetGroupHostMember(groupID)
 	if hostMemberID == "" {
-		return fmt.Errorf("group %s has no host member", groupID)
+		return DrainResult{Err: fmt.Sprintf("group %s has no host member", groupID)}
 	}
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
-		return fmt.Errorf("list group members: %w", err)
+		return DrainResult{Err: fmt.Sprintf("list group members: %v", err)}
 	}
 	names := memberNameMap(members)
 	maxRounds := GetGroupMaxRounds(groupID)
@@ -137,8 +178,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 	// 3. Loop.
 	for round := 0; round < maxRounds; round++ {
 		if groupCtx.Err() != nil {
-			emitGroupTerminal(groupID)
-			return nil // cancelled by the user
+			return DrainResult{CancelReason: cancelReasonUser}
 		}
 		// Host speaks and routes.
 		hostCursor := GetMemberCursor(hostMemberID)
@@ -153,8 +193,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
 			// Host failed: try round-robin once, then stop.
 			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
-				emitGroupTerminal(groupID)
-				return nil
+				return DrainResult{Err: "host turn failed and no member could take over"}
 			}
 			continue
 		}
@@ -162,8 +201,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		route := grouprouting.Parse(o.lastHostOutput(groupID, hostMemberID))
 		if route.End {
 			// The end-signal turn already contains the summary (B2 prompt).
-			emitGroupTerminal(groupID)
-			return nil
+			return DrainResult{}
 		}
 
 		targets := o.resolveTargets(route, members, hostMemberID)
@@ -178,12 +216,10 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 				slog.Warn("group: aborting after consecutive parse failures",
 					"group", groupID, "failures", o.parseFailures)
 				o.summarize(groupCtx, runner, hostMemberID, names, members)
-				emitGroupTerminal(groupID)
-				return nil
+				return DrainResult{}
 			}
 			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
-				emitGroupTerminal(groupID)
-				return nil
+				return DrainResult{}
 			}
 			continue
 		}
@@ -193,8 +229,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 		// Members speak in order; each sees the previous speakers' output.
 		for _, t := range targets {
 			if groupCtx.Err() != nil {
-				emitGroupTerminal(groupID)
-				return nil
+				return DrainResult{CancelReason: cancelReasonUser}
 			}
 			memberCursor := GetMemberCursor(t.ID)
 			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction)
@@ -213,8 +248,7 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 
 	// 4. Round cap reached: run the host once more to produce a summary.
 	o.summarize(groupCtx, runner, hostMemberID, names, members)
-	emitGroupTerminal(groupID)
-	return nil
+	return DrainResult{}
 }
 
 // emitGroupTerminal finalizes a group turn for the frontend. runTurn
@@ -574,4 +608,51 @@ var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 			Content:   text,
 		},
 	})
+}
+
+// RunGroupDrainLoop drives a group turn for `first` (an already-materialized
+// user message) and then drains any queued messages through the SAME loop
+// single chat uses, so queueing semantics, the terminal event and the push
+// contract are identical (decisions #45/#58/#72).
+//
+// The drain loop — not the orchestrator — owns the terminal event: the group
+// turn returns a DrainResult and RunDrainLoop sends "done" exactly once when
+// the whole queue is empty. That is why the orchestrator's own standalone entry
+// (RunGroupTurn) emits the terminal itself while this one does not.
+//
+// runCtx is the claim's context (from TryClaimSessionRun or the enqueue path),
+// so CancelSession reaches every member turn. The caller is responsible for
+// FinishSessionRun; this function does not touch the running flag, because the
+// drain loop's MarkDoneAndSendFinal owns that transition.
+func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firstMsgID int64, firstText string, firstFiles []model.FileEntry) {
+	markDoneAndSendFinal := func(event ai.StreamEvent) {
+		// Clear running BEFORE the terminal event so a loadHistory triggered by
+		// "done" cannot see running=true and reconnect in a loop.
+		SetSessionRunning(groupID, false, true)
+		ws.EmitToSession(groupID, event)
+		if event.Type == "done" {
+			if !EmitSessionPushNotification(groupID, statusCompleted) {
+				return
+			}
+			EmitSessionEventWSOnly(groupID, "completed", false)
+		}
+	}
+
+	first := RunGroupTurnDrain(runCtx, groupID, firstMsgID,
+		QueuedRow{SessionID: groupID, Content: firstText, Files: firstFiles}, nil)
+
+	RunDrainLoop(DrainConfig{
+		SessionID:   groupID,
+		ProjectPath: projectPath,
+		BackendName: GetSessionBackend(groupID),
+		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
+			return RunGroupTurnDrain(runCtx, groupID, msgID, row, nil)
+		},
+		// Each intermediate answer in a multi-message group drain is its own
+		// completed turn: notify now, not once at the very end (decision #72).
+		OnTurnAnswered: func() {
+			EmitTurnAnsweredNotification(groupID)
+		},
+		MarkDoneAndSendFinal: markDoneAndSendFinal,
+	}, first)
 }
