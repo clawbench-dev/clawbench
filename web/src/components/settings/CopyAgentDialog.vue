@@ -50,6 +50,10 @@ import { registerBackHandler, PRIORITY_OVERLAY } from '@/composables/useBackHand
 const props = defineProps<{
   open: boolean
   sourceName: string
+  // Server-side failure text (e.g. a name collision) to show inside the dialog.
+  // Owned by the parent: only it knows the create request failed, and only it
+  // can keep the dialog open so the user can correct the name and retry.
+  errorMessage?: string
 }>()
 
 const emit = defineEmits<{
@@ -64,10 +68,16 @@ const error = ref('')
 const nameInputRef = ref<HTMLInputElement | null>(null)
 let unregisterBack: (() => void) | null = null
 
+// Show the parent-supplied server error (e.g. a name collision). The parent
+// keeps the dialog open so the user can correct the name and retry.
+watch(() => props.errorMessage, (msg) => {
+  error.value = msg ?? ''
+})
+
 // Reset the pre-filled name and focus the input whenever the dialog opens.
 watch(() => props.open, (open) => {
   if (open) {
-    error.value = ''
+    error.value = props.errorMessage ?? ''
     newName.value = props.sourceName ? `${props.sourceName} (${t('settings.items.agentCopy')})` : ''
     nextTick(() => nameInputRef.value?.focus())
     unregisterBack = registerBackHandler({

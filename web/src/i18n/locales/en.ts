@@ -2436,6 +2436,7 @@ export default {
       agentCopied: 'Agent duplicated',
       agentCopyFailed: 'Duplicate failed',
       agentCopyEmptyName: 'Name cannot be empty',
+      agentCopyNameTaken: 'An agent with this name already exists',
       agentRescan: 'Rescan',
       agentRescanning: 'Scanning...',
       agentRescanSuccess: 'Rescan complete',

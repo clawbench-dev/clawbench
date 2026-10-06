@@ -105,6 +105,7 @@ AgentNotFound: Agent not found
 InvalidModelForAgent: Invalid model for this agent
 InvalidThinkingEffort: Invalid thinking effort level for this agent
 InvalidModeForAgent: Invalid mode for this agent
+AgentNameTaken: An agent with this name already exists
 InvalidAgentName: Invalid agent name
 InvalidAgentSpecialty: Invalid description
 InvalidAgentAvatar: Invalid avatar image

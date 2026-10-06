@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -12,6 +13,37 @@ import (
 	"clawbench/internal/dbutil"
 	"clawbench/internal/model"
 )
+
+// ErrAgentNameTaken is returned when an agent name collides with a different
+// agent's name. Agent names are globally unique (decision #50): the roster,
+// group-member pickers and routing all key off the display name, so two
+// indistinguishable entries are a real hazard.
+var ErrAgentNameTaken = errors.New("agent name already taken")
+
+// AgentNameTaken reports whether any agent OTHER than excludeID already uses
+// name. The exclusion is essential: SaveAgent is an ON CONFLICT(id) upsert that
+// built-in backend registration calls repeatedly, so comparing against all rows
+// would make an agent reject its own re-registration.
+//
+// Matching is exact and case-sensitive (the existing name convention: the UI
+// validates length but never folds case). An empty name is never "taken" —
+// callers validate non-empty separately.
+func AgentNameTaken(name, excludeID string) bool {
+	if name == "" {
+		return false
+	}
+	var count int
+	err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM agents WHERE name = ? AND id != ?",
+		name, excludeID,
+	).Scan(&count)
+	if err != nil {
+		// A lookup failure must not silently allow a duplicate; treat it as
+		// "taken" so the write is refused rather than corrupting uniqueness.
+		return true
+	}
+	return count > 0
+}
 
 // AgentDDL creates the agents table.
 // Exported so handler tests and other external packages can create these tables
@@ -146,6 +178,10 @@ func SaveAgent(db dbutil.Writer, agent *model.Agent) error {
 		autoApprove = 1
 	}
 
+	if AgentNameTaken(agent.Name, agent.ID) {
+		return fmt.Errorf("save agent %s: %w", agent.ID, ErrAgentNameTaken)
+	}
+
 	_, err = db.Exec(`
 		INSERT INTO agents (id, name, specialty, backend, command,
 			thinking_effort, thinking_effort_levels,
@@ -253,6 +289,9 @@ func PatchAgentFields(id string, patch AgentPatch) error {
 		addSet("transport", transport)
 	}
 	if patch.Name != nil {
+		if AgentNameTaken(*patch.Name, id) {
+			return fmt.Errorf("patch agent %s: %w", id, ErrAgentNameTaken)
+		}
 		addSet("name", *patch.Name)
 	}
 	if patch.Specialty != nil {

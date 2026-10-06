@@ -3747,10 +3747,16 @@ paths:
     post:
       tags: [Agents]
       summary: 复制 / 新建 agent
+      description: |
+        复制（body 含 `source_id` + `name`）或新建 agent。**智能体名称全局唯一**
+        （决策 #50）：`name` 与其它 agent 重名时返回 `409` + `msgKey=AgentNameTaken`
+        （复制自身同一名称两次会撞预填名，同样被拒）。
       operationId: agentsCreate
       responses:
         "200":
           description: 新 agent
+        "409":
+          description: 名称已被其它 agent 占用（`AgentNameTaken`）
     patch:
       tags: [Agents]
       summary: 更新 agent
@@ -3761,10 +3767,15 @@ paths:
         `sort_order`、`auto_approve`。
         `avatar` 为原始 SVG 字符串（客户端生成）；传空串表示恢复内置图标，
         非空时校验大小上限与 SVG 安全性。
+
+        `name` 全局唯一（决策 #50）：改名撞上其它 agent 时返回 `409` +
+        `msgKey=AgentNameTaken`；改回自身当前名称不是冲突。
       operationId: agentsUpdate
       responses:
         "200":
           description: 更新结果
+        "409":
+          description: 名称已被其它 agent 占用（`AgentNameTaken`）
     delete:
       tags: [Agents]
       summary: 删除 agent

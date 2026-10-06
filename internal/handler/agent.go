@@ -4,6 +4,7 @@ package handler
 import (
 	"bytes"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -220,6 +221,10 @@ func serveAgentsDuplicate(w http.ResponseWriter, r *http.Request) {
 	clone, err := service.DuplicateAgent(req.SourceID, req.Name)
 	if err != nil {
 		slog.Error("failed to duplicate agent", "source", req.SourceID, "error", err)
+		if errors.Is(err, service.ErrAgentNameTaken) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			writeLocalizedErrorf(w, r, http.StatusNotFound, "AgentNotFound")
 			return
@@ -636,6 +641,10 @@ func serveAgentsPatch(w http.ResponseWriter, r *http.Request) { //nolint:gocogni
 
 	// Persist to database
 	if err := service.PatchAgentFields(agentID, ap); err != nil {
+		if errors.Is(err, service.ErrAgentNameTaken) {
+			writeLocalizedErrorf(w, r, http.StatusConflict, "AgentNameTaken")
+			return
+		}
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
 		return
 	}

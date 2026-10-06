@@ -59,6 +59,7 @@
     <CopyAgentDialog
       :open="copying"
       :source-name="agent?.name ?? ''"
+      :error-message="copyError"
       @close="copying = false"
       @confirmed="handleCopyConfirmed"
     />
@@ -103,6 +104,9 @@ const dialog = useDialog()
 const { loadAgents, getAgent, agentsLoaded, updateAgentField, deleteAgent, duplicateAgent, defaultAgentId, setDefaultAgent, getAgentThinkingEffortLevelsIncludingACP } = useAgents()
 const activeKey = ref<string | null>(null)
 const copying = ref(false)
+// Server-side copy failure (e.g. the name is already taken) shown inside the
+// dialog; the dialog stays open so the user can pick another name.
+const copyError = ref('')
 const avatarPickerOpen = ref(false)
 
 onMounted(async () => {
@@ -413,15 +417,27 @@ function handleEditToggle(key: string, open: boolean) {
 }
 
 function startCopy() {
+  copyError.value = ''
   copying.value = true
 }
 
 async function handleCopyConfirmed(newName: string) {
-  copying.value = false
+  // Clear any previous collision before the new attempt so a repeated failure
+  // re-triggers the dialog's error watcher (an unchanged prop would not).
+  copyError.value = ''
   try {
     await duplicateAgent(props.agentId, newName)
+    copying.value = false
     toast.show(t('settings.items.agentCopied'), { icon: '✅', type: 'success', duration: 3000 })
-  } catch {
+  } catch (err) {
+    // A name collision is recoverable: keep the dialog open and show the
+    // reason inline so the user can correct it, instead of a bare toast.
+    const msgKey = (err as { msgKey?: string } | null)?.msgKey
+    if (msgKey === 'AgentNameTaken') {
+      copyError.value = t('settings.items.agentCopyNameTaken')
+      return
+    }
+    copying.value = false
     toast.show(t('settings.items.agentCopyFailed'), { icon: '⚠️', type: 'error', duration: 3000 })
   }
 }

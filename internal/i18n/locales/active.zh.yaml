@@ -106,6 +106,7 @@ AgentNotFound: 智能体未找到
 InvalidModelForAgent: 无效的模型
 InvalidThinkingEffort: 无效的思考深度级别
 InvalidModeForAgent: 无效的模式
+AgentNameTaken: 已存在同名智能体
 InvalidAgentName: 无效的智能体名称
 InvalidAgentSpecialty: 无效的描述
 InvalidAgentAvatar: 无效的头像图片

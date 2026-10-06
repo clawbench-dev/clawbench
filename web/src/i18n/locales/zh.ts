@@ -2433,6 +2433,7 @@ export default {
       agentCopied: '智能体已复制',
       agentCopyFailed: '复制失败',
       agentCopyEmptyName: '名称不能为空',
+      agentCopyNameTaken: '已存在同名智能体',
       agentRescan: '重新扫描',
       agentRescanning: '扫描中...',
       agentRescanSuccess: '重新扫描完成',
