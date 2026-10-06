@@ -893,7 +893,9 @@ func buildForkTitle(r *http.Request, sourceID string) string {
 func writeForkError(w http.ResponseWriter, r *http.Request, err error) {
 	slog.Error("handler: failed to fork session", "error", err)
 	errMsg := err.Error()
-	if strings.Contains(errMsg, "session limit") {
+	if strings.Contains(errMsg, "group sessions are not forkable") {
+		writeLocalizedErrorf(w, r, http.StatusBadRequest, "GroupNotForkable")
+	} else if strings.Contains(errMsg, "session limit") {
 		writeLocalizedErrorf(w, r, http.StatusConflict, "SessionLimitReached", map[string]any{"MaxCount": model.SessionMaxCount})
 	} else if strings.Contains(errMsg, "not found in session") || strings.Contains(errMsg, "must be a user or assistant message") || strings.Contains(errMsg, "streaming message") {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidForkPoint")

@@ -5,6 +5,7 @@ SessionLimitReached: Session limit reached ({{.MaxCount}}), please archive old s
 SessionIdRequired: session_id required
 CannotRemoveHost: The host cannot be removed; transfer the host role first
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
+GroupNotForkable: A group chat cannot be forked
 ShareSessionNoContent: This conversation has no shareable messages yet
 ShareSessionInvalidSelection: Some selected messages cannot be shared (they may still be generating)
 QueueIdRequired: queueId required

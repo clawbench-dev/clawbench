@@ -288,6 +288,15 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 // If beforeMessageID > 0, only messages up to and including the assistant reply
 // following the specified user message are copied. The title is provided by the caller.
 func ForkSession(sourceSessionID, projectPath, title string, beforeMessageID int64, overrideAgentID string) (string, error) { //nolint:gocyclo // multi-step session fork with fork-point resolution
+	// 0. A group cannot be forked (decision #74, symmetric with rewind #52).
+	// The fork hard-codes session_type='chat' and copies the source's
+	// backend/agent, so a forked group would be a single-agent chat whose
+	// messages carry MEMBER row ids — ids that resolve to no member, rendering
+	// as unattributed AI speech.
+	if GetSessionType(sourceSessionID) == groupSessionType {
+		return "", fmt.Errorf("cannot fork session %s: group sessions are not forkable", sourceSessionID)
+	}
+
 	// 1. Get source session metadata
 	var backend, agentID, agentSource, modelName, sessProjectPath string
 	var sessProjectID int64

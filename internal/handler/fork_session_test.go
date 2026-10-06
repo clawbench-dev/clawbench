@@ -455,3 +455,20 @@ func TestServeForkSession_BeforeMessageID_StreamingMessage(t *testing.T) {
 	w := callHandler(ServeForkSession, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
+
+// Forking a group must return 400 with a localized reason, not a 500 — the
+// frontend hides the entry, but an API caller still needs a clear refusal
+// (decision #74).
+func TestServeForkSession_RefusesGroup(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "讨论组", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPost, "/api/ai/session/fork", map[string]string{"sessionId": groupID})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeForkSession, req)
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "GroupNotForkable")
+}

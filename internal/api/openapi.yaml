@@ -1618,7 +1618,11 @@ paths:
     post:
       tags: [Sessions]
       summary: 分叉会话
-      description: 请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
+      description: |
+        请求体字段均可选；缺省时回退到查询参数 / 会话 Cookie。
+        **群会话不可分叉**（`400`）：分叉会硬编码 `session_type='chat'` 并复制源会话的
+        backend/agent，而群时间线的消息带**成员行 id**——新单聊里解析不到成员，
+        表现为一整屏无归属的 AI 发言。与回溯（rewind）的处理对称（决策 #74）。
       operationId: sessionFork
       requestBody:
         required: false
@@ -1636,6 +1640,8 @@ paths:
       responses:
         "200":
           description: 新会话
+        "400":
+          description: 分叉点非法，或源会话是群（`msgKey=GroupNotForkable`）
 
   /api/ai/session/btw:
     post:
