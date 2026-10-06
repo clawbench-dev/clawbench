@@ -38,16 +38,112 @@ type GroupMember struct {
 // the group is usable immediately.
 //
 // title may be empty; the caller substitutes a placeholder (e.g. host name).
+//
+// This is the host-only convenience wrapper over CreateGroupWithMembers (used
+// by tests and any caller that adds members later); the one-step UI path calls
+// CreateGroupWithMembers directly.
 func CreateGroup(projectPath, title, backend, hostAgentID, hostName string) (groupID, hostMemberID string, err error) {
-	groupID, err = CreateSession(projectPath, backend, title, hostAgentID, "", "default", groupSessionType)
-	if err != nil {
-		return "", "", fmt.Errorf("create group session: %w", err)
+	return CreateGroupWithMembers(projectPath, title, hostAgentID, []GroupMemberSpec{
+		{AgentID: hostAgentID, Backend: backend, DisplayName: hostName},
+	})
+}
+
+// GroupMemberSpec is one member to create at group-creation time. DisplayName
+// is only used on first creation (the row's stored title is authoritative
+// afterwards).
+type GroupMemberSpec struct {
+	AgentID     string
+	Backend     string
+	DisplayName string
+}
+
+// CreateGroupWithMembers creates a group timeline row AND all its member rows
+// (host included) in ONE transaction, so a failure leaves no half-built group
+// behind. This is the one-step creation path (design §7.1, decision #25): the
+// frontend picks members and host together and calls this once.
+//
+// hostAgentID must appear in specs; the matching spec's row becomes the host
+// pointer. specs is expected to be non-empty and every spec to carry a
+// non-empty AgentID — an invalid spec aborts the whole transaction.
+//
+// The host pointer is written inline (not via SetGroupHostMember, which takes
+// the write lock and would deadlock inside this transaction). title_source is
+// set to 'placeholder' inline for the same reason, so the group's host-name
+// title is still replaceable by auto-title after the first message.
+func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []GroupMemberSpec) (groupID, hostMemberID string, err error) {
+	if len(specs) == 0 {
+		return "", "", fmt.Errorf("create group: no members")
 	}
-	hostMemberID, err = AddGroupMember(projectPath, groupID, backend, hostAgentID, hostName)
+	projectID, idErr := store.ProjectIDForPath(projectPath)
+	if idErr != nil {
+		return "", "", idErr
+	}
+
+	tx, err := store.WriteBegin()
 	if err != nil {
 		return "", "", err
 	}
-	if err := SetGroupHostMember(groupID, hostMemberID); err != nil {
+	defer store.WriteUnlock()
+	defer func() { _ = tx.Rollback() }()
+
+	groupID = generateSessionID()
+	if groupID == "" {
+		return "", "", fmt.Errorf("failed to generate unique session ID")
+	}
+
+	// The group row's backend mirrors its host (the group itself never runs a
+	// turn; the host does). specs[0] is not assumed to be the host.
+	groupBackend := ""
+	for _, s := range specs {
+		if s.AgentID == hostAgentID {
+			groupBackend = s.Backend
+			break
+		}
+	}
+
+	if _, err := tx.Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		groupID, projectID, groupBackend, title, hostAgentID, "default", "", groupSessionType, "",
+	); err != nil {
+		return "", "", fmt.Errorf("create group session: %w", err)
+	}
+	// Inline (not markSessionTitlePlaceholder: that takes the write lock).
+	if _, err := tx.Exec("UPDATE chat_sessions SET title_source = ? WHERE id = ?", TitleSourcePlaceholder, groupID); err != nil {
+		return "", "", fmt.Errorf("mark group title placeholder: %w", err)
+	}
+
+	for _, s := range specs {
+		if s.AgentID == "" {
+			return "", "", fmt.Errorf("create group: member with empty agent id")
+		}
+		memberID := generateSessionID()
+		if memberID == "" {
+			return "", "", fmt.Errorf("failed to generate unique member session ID")
+		}
+		if _, err := tx.Exec(
+			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+			memberID, projectID, s.Backend, s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
+		); err != nil {
+			return "", "", fmt.Errorf("create member session: %w", err)
+		}
+		if s.AgentID == hostAgentID && hostMemberID == "" {
+			hostMemberID = memberID
+		}
+	}
+	if hostMemberID == "" {
+		return "", "", fmt.Errorf("create group: host agent %q not among members", hostAgentID)
+	}
+
+	// Host pointer inline: json_set on the group row's context_state.
+	hostJSON, _ := json.Marshal(hostMemberID)
+	if _, err := tx.Exec(
+		"UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END, '$.host_member_id', json(?)) WHERE id = ?",
+		string(hostJSON), groupID,
+	); err != nil {
+		return "", "", fmt.Errorf("set host member: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
 		return "", "", err
 	}
 	return groupID, hostMemberID, nil

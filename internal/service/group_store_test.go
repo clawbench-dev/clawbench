@@ -138,6 +138,109 @@ func TestAddGroupMemberDedup(t *testing.T) {
 	}
 }
 
+// TestCreateGroupWithMembers pins the one-step group creation contract (design
+// §7.1, decision #25): the group row and ALL member rows (host included) are
+// created in a single transaction, and the host pointer is written inline so it
+// is visible immediately after the call returns.
+func TestCreateGroupWithMembers(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/groupstep1"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	specs := []GroupMemberSpec{
+		{AgentID: "agent-host", Backend: "codebuddy", DisplayName: "Host"},
+		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
+		{AgentID: "agent-b", Backend: "codex", DisplayName: "B"},
+	}
+	groupID, hostMemberID, err := CreateGroupWithMembers(project, "讨论组", "agent-host", specs)
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	if groupID == "" || hostMemberID == "" {
+		t.Fatal("empty ids")
+	}
+	if got := GetSessionType(groupID); got != groupSessionType {
+		t.Fatalf("group session_type=%q want %q", got, groupSessionType)
+	}
+
+	// All three members exist after the single call — no follow-up add needed.
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if len(members) != 3 {
+		t.Fatalf("want 3 members after one call, got %d", len(members))
+	}
+	if got := countActiveMembers(members); got != 3 {
+		t.Fatalf("want 3 active members, got %d", got)
+	}
+	for _, m := range members {
+		if GetSessionType(m.ID) != groupMemberSessionType {
+			t.Fatalf("member %s session_type=%q want %q", m.ID, GetSessionType(m.ID), groupMemberSessionType)
+		}
+	}
+
+	// Host pointer resolves to the host's row and is set synchronously.
+	if got := GetGroupHostMember(groupID); got != hostMemberID {
+		t.Fatalf("host member=%q want %q", got, hostMemberID)
+	}
+	hostRow := ""
+	for _, m := range members {
+		if m.AgentID == "agent-host" {
+			hostRow = m.ID
+		}
+	}
+	if hostRow != hostMemberID {
+		t.Fatalf("host member row=%q want %q", hostRow, hostMemberID)
+	}
+
+	// The placeholder title is still replaceable by auto-title (group titles
+	// come from the host name until the first message).
+	if GetSessionType(groupID) == "" {
+		t.Fatal("group row must exist")
+	}
+	var titleSource string
+	if err := store.ReadDB().QueryRow("SELECT COALESCE(title_source,'') FROM chat_sessions WHERE id = ?", groupID).Scan(&titleSource); err != nil {
+		t.Fatalf("read title_source: %v", err)
+	}
+	if titleSource != TitleSourcePlaceholder {
+		t.Fatalf("group title_source=%q want %q (auto-title must be able to take over)", titleSource, TitleSourcePlaceholder)
+	}
+}
+
+// TestCreateGroupWithMembersRollsBackOnInvalid pins atomicity: if any member
+// spec is invalid (empty agent id), NOTHING is created — no half-built group
+// left behind for the user to clean up (decision #25).
+func TestCreateGroupWithMembersRollsBackOnInvalid(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/groupstep1rollback"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	specs := []GroupMemberSpec{
+		{AgentID: "agent-host", Backend: "codebuddy", DisplayName: "Host"},
+		{AgentID: "", Backend: "claude", DisplayName: "Bad"},
+	}
+	if _, _, err := CreateGroupWithMembers(project, "g", "agent-host", specs); err == nil {
+		t.Fatal("want error for an invalid member spec")
+	}
+
+	// No group row must survive the failed call.
+	var count int
+	if err := store.ReadDB().QueryRow(
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = (SELECT id FROM projects WHERE path = ?) AND session_type = ?",
+		project, groupSessionType,
+	).Scan(&count); err != nil {
+		t.Fatalf("count groups: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("failed create left %d group rows behind", count)
+	}
+}
+
 // countAgentRows counts member rows for one agent (0, 1, or the bug's 2+).
 func countAgentRows(members []GroupMember, agentID string) int {
 	n := 0
