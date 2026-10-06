@@ -3125,3 +3125,64 @@ func TestBuildContentJSON_Interrupt_EmptyGetsExplanation(t *testing.T) {
 		t.Error("an interrupt is not a cancellation")
 	}
 }
+
+// A group member's turn must NOT trigger summarization/recommendation: the
+// member's Finalize writes to the GROUP timeline, so running it per member
+// would summarize (and recommend on) every member's reply — N LLM calls per
+// round, and a recommendation chip for each. The group turn summarizes once at
+// the end instead (decision #55).
+func TestSessionExecutor_Finalize_GroupMemberSkipsSummarization(t *testing.T) {
+	setupExecutorDB(t)
+	model.Agents = map[string]*model.Agent{
+		"test-agent": {ID: "test-agent", Name: "Test", Backend: "test"},
+	}
+	defer func() { model.Agents = nil }()
+
+	project := "/test"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "test", "test-agent", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	// A member row whose TIMELINE is the group (this is what a member turn uses).
+	memberID, err := AddGroupMember(project, groupID, "test", "test-agent", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	_ = hostID
+
+	// Streaming placeholder on the GROUP timeline, attributed to the member.
+	emptyContent, _ := json.Marshal(map[string]any{"blocks": []any{}})
+	if _, err := AddChatMessageWithAgent(project, "test", groupID, "assistant", string(emptyContent), nil, true, "", memberID); err != nil {
+		t.Fatalf("seed streaming row: %v", err)
+	}
+	streamMsgID := GetStreamingMessageID(groupID)
+	if streamMsgID == 0 {
+		t.Fatal("expected a streaming placeholder on the group timeline")
+	}
+
+	ctx := context.Background()
+	cfg := RunConfig{
+		Mode:               ModeInteractive,
+		ProjectPath:        project,
+		BackendName:        "test",
+		SessionID:          memberID, // connection session = member row
+		TimelineSessionID:  groupID,  // timeline = group
+		AgentID:            "test-agent",
+		ChatRequest:        ai.ChatRequest{Prompt: "hello"},
+		StreamingMessageID: streamMsgID,
+	}
+	executor := NewSessionExecutor(ctx, cfg)
+	executor.blocks = []model.ContentBlock{{Type: "text", Text: "member reply"}}
+	result := RunResult{ReceivedTerminal: true, Blocks: executor.blocks, Metadata: &ai.Metadata{}}
+	finalized := executor.Finalize(result, nil)
+	if finalized.MsgID == 0 {
+		t.Fatal("expected a finalized message id")
+	}
+
+	if _, found := GetSummary("chat_message", finalized.MsgID); found {
+		t.Fatal("a group member turn must NOT summarize its own reply")
+	}
+}

@@ -714,3 +714,41 @@ func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 		t.Fatalf("aborting must still emit exactly one terminal event, got %d", *term)
 	}
 }
+
+// The group turn's terminal path must summarize the discussion once — member
+// turns deliberately skip it (decision #55), so this is the only place it can
+// happen.
+func TestEmitGroupTerminal_SummarizesOnce(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-summarize"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	// A finalized assistant row so there is something to summarize.
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+		`{"blocks":[{"type":"text","text":"结论：可以发布"}]}`, nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	emitGroupTerminal(groupID)
+
+	// A summary must now exist for that message (triggerChatSummarization ran).
+	msgs, _ := GetMessagesBySessionIDRaw(groupID)
+	found := false
+	for _, m := range msgs {
+		if m.Role != "assistant" {
+			continue
+		}
+		if s, ok := GetSummary("chat_message", m.ID); ok && s != "" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the group terminal path must summarize the discussion once")
+	}
+}

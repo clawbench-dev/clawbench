@@ -231,6 +231,10 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 // is still in flight (design §12.7(19)).
 var emitGroupTerminal = func(groupID string) {
 	finalizeOrphanedStreamingMessages(groupID, "interrupt")
+	// Summarize the whole discussion ONCE here (decision #55). Member turns
+	// deliberately skip summarization, so without this a group turn would
+	// produce no reading summaries at all.
+	triggerChatSummarization(context.Background(), groupID)
 	SetSessionRunning(groupID, false, true)
 	ws.EmitToSession(groupID, ai.StreamEvent{Type: eventTypeDone})
 	// Broadcast the terminal status so every client clears the running flag,

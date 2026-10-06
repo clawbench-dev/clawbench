@@ -1668,7 +1668,11 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// would never be reached via that path. Call it here instead, right after
 	// the message is finalized and streaming=0 is persisted.
 	doneSummarize := ft.phase("summarize")
-	if msgID > 0 {
+	if msgID > 0 && GetSessionType(e.timelineSID()) != groupSessionType {
+		// Group member turns write to the GROUP timeline, so summarizing here
+		// would run once per member per round (N LLM calls) and emit a
+		// recommendation for every member's reply. The group turn summarizes
+		// once at the end instead (decision #55).
 		triggerChatSummarization(e.ctx, e.timelineSID())
 	}
 	doneSummarize()
