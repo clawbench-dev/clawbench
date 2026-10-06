@@ -83,6 +83,8 @@
 | 62 | `isGroupSession` 判定 | **用 `session_type === 'group'`**，不靠"名单非空"（后者被 `useGroupMembers.ts:52` 的 catch 置空击穿，群会退回单聊形态）；需后端在 `GET /api/ai/chat` 响应补 `sessionType` 字段 |
 | 63 | 成员行的隔离方式 | **白名单**：所有用户可见的会话查询一律 `session_type IN ('chat','group')`，成员行天然不匹配。**不用黑名单** `!= 'group_member'`（新增查询漏加条件时，白名单默认隐藏、黑名单默认泄漏） |
 | 64 | 项目会话计数 | **排除成员行**：`ListAllProjects`（`project_registry.go:70`）与 `GetConversationProjects`（`chat.go:1013`）的 COUNT 都加 `session_type IN ('chat','group')`（与决策 #37 同规则；现状两处无类型条件 ⇒ 5 人成员的群使项目数虚增 6） |
+| 65 | 群消息的附件 | **支持**（放开后端的 400 拒绝）；**注入时渲染，不写 `content`**——`buildInjectionText` 渲染用户消息时调 `ApplyAttachmentPrefixes`，气泡只靠 `files` 字段渲染（**与单聊逐字一致**）。`GetMessagesBySessionIDRaw` 已取 `files`（`chat.go:361,379`），**无需改取数** |
+| 66 | 前端附件入口 | 群输入框**保留**附件按钮 / `@` 文件补全 / 引用入口（决策 #65 让它们真正可用；现状是入口在、发送被 400 拒且无提示） |
 
 ## 3. 架构
 
@@ -778,6 +780,13 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 
 **（14）项目会话计数把隐藏成员行算进去了（决策 #64）。**
 `ListAllProjects`（`project_registry.go:70-73`）与 `GetConversationProjects`（`chat.go:1013-1014`）都对 `chat_sessions` 做 `COUNT(*)` **且无 `session_type` 条件** ⇒ 一个 5 人成员的群使项目会话数**虚增 6**（1 群行 + 5 成员行），而侧边栏只显示 1 条。两处分别喂设置页项目列表（`GET /api/projects/registry`）与项目选择器（`GET /api/conversation-projects`），**用户可见**。
+
+**（16）群消息的附件：入口在、发送必被拒、注入也丢（决策 #65/#66）。**
+三处叠加：
+- **后端拒绝**：`handler/chat.go:324-327` 群会话带 `Files`/`FilePaths` 即 400 `InvalidRequest`。
+- **前端入口照常**：附件按钮（`ChatInputBar.vue:112`）与 `@` 文件补全（`:979`）**无 `isGroupSession` 门控**；引用（`kind='quote'` 的 `FileEntry`，`model/chat.go:93`）也走 `req.Files`。⇒ 用户能挂、能选，点发送得到**无提示的失败**。
+- **即使放开也丢**：单聊把附件拼进 prompt 是 handler 干的（`chat.go:424` `ApplyAttachmentPrefixes`），而群注入走 `groupInjectionText` → `buildInjectionText`（`group_inject.go:26`）**只渲染 `ExtractPlainText(content)`，不读 `files`** ⇒ 附件对成员不可见。
+**修（决策 #65/#66）**：放开后端拒绝；在 `buildInjectionText` 渲染用户消息时调 `ApplyAttachmentPrefixes`（**不写 content**，气泡与单聊一致）；前端入口保留。**`GetMessagesBySessionIDRaw` 已经取了 `files` 并解析进 `msg.Files`（`chat.go:361,379-381`），无需改取数。**
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
