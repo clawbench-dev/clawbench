@@ -507,3 +507,99 @@ func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
 		t.Fatalf("a successful member turn must advance the cursor, got %d", got)
 	}
 }
+
+// A group turn touches every member, but each member's ACP connection is keyed
+// by the MEMBER row id — which is never registered as "running". The ACP idle
+// sweep therefore sees an idle member connection mid-discussion and kills it,
+// forcing a respawn (seconds, per member) during a live debate (decision #73).
+//
+// IsSessionRunningForSweep exists for exactly this: it reports member rows as
+// busy while the group turn runs, WITHOUT polluting GetRunningSessionIDs (which
+// feeds the session list and the "project has a running session" delete guard).
+func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-sweep"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// Observe the sweep-visible state DURING a member turn.
+	var seenRunning bool
+	var seenInRunningIDs bool
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			seenRunning = IsSessionRunningForSweep(mA)
+			for _, id := range GetRunningSessionIDs() {
+				if id == mA {
+					seenInRunningIDs = true
+				}
+			}
+		}
+		if turn.IsHost {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"`+"<clawbench-speaker>A</clawbench-speaker> 请表态"+`"}]}`, nil, false, "", hostID)
+			return groupMemberResult{}
+		}
+		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":"我的观点"}]}`, nil, false, "", turn.MemberRowID)
+		return groupMemberResult{}
+	}
+
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	if !seenRunning {
+		t.Fatal("a member row must read as running for the ACP sweep during its turn")
+	}
+	if seenInRunningIDs {
+		t.Fatal("member rows must NOT appear in GetRunningSessionIDs (session list / project-delete guard)")
+	}
+}
+
+// After the turn ends, no member row may linger as "running for sweep".
+func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
+	setupGroupDB(t)
+	silenceGroupUserEmit(t)
+	project := "/tmp/gorch-sweep-clear"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"`+"<clawbench-speaker>A</clawbench-speaker> 请表态"+`"}]}`, nil, false, "", hostID)
+			return groupMemberResult{}
+		}
+		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":"我的观点"}]}`, nil, false, "", turn.MemberRowID)
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = o.RunGroupTurn(context.Background(), "开始")
+
+	if IsSessionRunningForSweep(mA) {
+		t.Fatal("member sweep state must be cleared once the group turn ends")
+	}
+	if IsSessionRunningForSweep(hostID) {
+		t.Fatal("host sweep state must be cleared once the group turn ends")
+	}
+}

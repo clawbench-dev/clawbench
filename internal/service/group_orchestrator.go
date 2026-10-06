@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"clawbench/internal/ai"
 	"clawbench/internal/grouprouting"
@@ -97,6 +98,17 @@ func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string
 	}
 	names := memberNameMap(members)
 	maxRounds := GetGroupMaxRounds(groupID)
+
+	// Protect every member's ACP connection for the duration of the turn: the
+	// idle sweep keys off the member row id, which is otherwise never "running"
+	// (decision #73). Registered here (after the roster is known) and cleared on
+	// return, so it covers every exit path including panics.
+	activeMemberIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		activeMemberIDs = append(activeMemberIDs, m.ID)
+	}
+	markGroupMembersActive(activeMemberIDs)
+	defer clearGroupMembersActive(activeMemberIDs)
 
 	runner := o.runTurn
 	if runner == nil {
@@ -424,4 +436,69 @@ var emitGroupUserMessage = func(groupID string, msgID int64, text, queueID, send
 			SenderClientID: senderClientID,
 		},
 	})
+}
+
+// --- ACP idle-sweep protection for group members (decision #73) ---
+
+// groupActiveMemberIDs tracks the member rows a running group turn is using.
+//
+// Why it exists: an ACP connection is keyed by the MEMBER row id, but a group
+// turn only registers the GROUP row as running. The idle sweep asks
+// IsSessionRunning(memberID), gets false, and kills a member's connection in
+// the middle of a live discussion — forcing a respawn (seconds, per member)
+// exactly when the debate needs it.
+//
+// It is deliberately a SEPARATE registry from the session runner registry:
+// GetRunningSessionIDs feeds the session list and the "project has a running
+// session, refuse to delete" guard, and member rows are hidden from users. A
+// member row must never appear there (decision #73).
+var (
+	groupActiveMembersMu sync.RWMutex
+	groupActiveMembers   = map[string]int{} // member row id -> refcount
+)
+
+// markGroupMembersActive registers the member rows a group turn is about to use.
+// Idempotent per id via refcount, so overlapping registrations are safe.
+func markGroupMembersActive(memberIDs []string) {
+	groupActiveMembersMu.Lock()
+	defer groupActiveMembersMu.Unlock()
+	for _, id := range memberIDs {
+		if id == "" {
+			continue
+		}
+		groupActiveMembers[id]++
+	}
+}
+
+// clearGroupMembersActive unregisters member rows when the group turn ends.
+func clearGroupMembersActive(memberIDs []string) {
+	groupActiveMembersMu.Lock()
+	defer groupActiveMembersMu.Unlock()
+	for _, id := range memberIDs {
+		if id == "" {
+			continue
+		}
+		if n := groupActiveMembers[id]; n <= 1 {
+			delete(groupActiveMembers, id)
+		} else {
+			groupActiveMembers[id] = n - 1
+		}
+	}
+}
+
+// IsSessionRunningForSweep reports whether the ACP idle sweep must treat
+// sessionID as busy. It is IsSessionRunning OR "this row is a member of a group
+// turn that is running right now".
+//
+// The split matters: the sweep must see members as busy (their connections are
+// keyed by member row id), while every user-facing consumer keeps using
+// IsSessionRunning / GetRunningSessionIDs and therefore never sees the hidden
+// member rows (decision #73).
+func IsSessionRunningForSweep(sessionID string) bool {
+	if IsSessionRunning(sessionID) {
+		return true
+	}
+	groupActiveMembersMu.RLock()
+	defer groupActiveMembersMu.RUnlock()
+	return groupActiveMembers[sessionID] > 0
 }

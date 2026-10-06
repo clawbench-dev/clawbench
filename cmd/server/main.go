@@ -859,8 +859,15 @@ func main() { //nolint:gocognit,gocyclo // complex startup orchestration
 	// Inject auto-approve getter for ACP permission auto-approval
 	ai.SetAutoApproveGetter(service.GetSessionAutoApprove)
 
-	// Inject session running checker for ACP idle sweep (avoids import cycle)
-	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunning)
+	// Inject session running checker for ACP idle sweep (avoids import cycle).
+	//
+	// IsSessionRunningForSweep, NOT IsSessionRunning: a group member's connection
+	// is keyed by its MEMBER row id, which is never registered as "running" —
+	// only the group row is. Without the member-aware variant the sweep kills a
+	// member's connection mid-discussion. The member rows stay invisible to
+	// GetRunningSessionIDs (session list / project-delete guard), which is the
+	// whole point of the separate predicate (decision #73).
+	ai.GetACPConnManager().SetSessionRunningChecker(service.IsSessionRunningForSweep)
 
 	// Inject permission state change callback (emits WS event on approval state change)
 	ai.SetPermissionStateChangeCallback(func(clawbenchSID string, pending bool, toolName string, toolInput string) {
