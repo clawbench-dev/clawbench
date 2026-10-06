@@ -38,6 +38,16 @@
           <span>{{ t('chat.messageList.noAgentsAction') }}</span>
         </button>
       </template>
+      <template v-else-if="isGroupSession">
+        <!-- Group empty state: the roster as an overlapping avatar stack (the
+             same visual as the header/list rows) plus a one-line hint on how a
+             group works. Deliberately minimal — the group name and the member
+             list are already in the header. -->
+        <div class="group-welcome">
+          <AvatarStack :members="groupStackMembers" size="lg" :max="4" />
+        </div>
+        <span class="group-welcome-hint">{{ t('chat.messageList.groupStartHint') }}</span>
+      </template>
       <template v-else-if="currentAgent && !isGroupSession">
         <div class="agent-welcome">
           <span class="agent-welcome-icon"><AgentIcon :backend="currentAgent.backend" :name="currentAgent.name" :avatar="currentAgent.avatar" size="lg" /></span>
@@ -199,6 +209,7 @@ import { useI18n } from 'vue-i18n'
 import { ChevronUp, ChevronsUp, ArrowUp, ChevronsDown, ArrowDown, Bot, Settings, MessageCircleQuestion } from 'lucide-vue-next'
 import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
+import AvatarStack from '@/components/common/AvatarStack.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
@@ -260,6 +271,9 @@ const props = defineProps({
   /** Group-chat session: the single-agent welcome card and the per-message
    *  fork/rewind actions are suppressed (see ChatMessageItem). */
   isGroupSession: { type: Boolean, default: false },
+  /** Group-chat roster (active members, host flagged). Drives the empty-state
+   *  avatar stack; empty for non-group sessions. */
+  groupMembers: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['toggle-tool', 'show-tool-detail', 'show-metadata', 'file-tag-click', 'quote-message', 'file-open', 'load-more', 'task-card-click', 'send-message', 'render-flush', 'toggle-summary', 'ensure-content', 'resume-session', 'fork-from-message', 'rewind-from-message', 'reset-session', 'open-btw'])
@@ -277,6 +291,14 @@ const codeLinkPreview = useCodeLinkPreview({ containerRef: messagesRef, source: 
 function isLastAssistant(msg, _i) {
   return isLastAssistantMessage(props.messages, msg)
 }
+
+// Active group members shaped for AvatarStack (the host gets the accent ring).
+// Left members are excluded — they are not part of the group any more.
+const groupStackMembers = computed(() =>
+  (props.groupMembers || [])
+    .filter((m) => !m.left)
+    .map((m) => ({ id: m.id, agentId: m.agentId, name: m.name, backend: m.backend, isHost: m.isHost })),
+)
 
 /** Number of /btw questions asked after this message (0 = no anchor). */
 function anchorCountFor(msg) {
@@ -1451,6 +1473,19 @@ defineExpose({
   max-width: 280px;
   width: 100%;
   text-align: left;
+}
+
+/* Group empty state: just the roster stack + a hint. Minimal by design — the
+   group name and roster are already in the header stack. */
+.group-welcome {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.group-welcome-hint {
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
 }
 
 .agent-welcome-icon {

@@ -876,4 +876,12 @@ describe('ChatMessageList — group gating (single-agent chrome suppressed)', ()
     // shows the roster, so the card must not render.
     expect(src).toMatch(/v-else-if="currentAgent && !isGroupSession"/)
   })
+
+  it('shows a group empty state (avatar stack + hint) when a group has no messages', async () => {
+    const src = await source()
+    // Group empty state: its own branch, before the generic fallback text.
+    expect(src).toContain('class="group-welcome"')
+    expect(src).toContain('groupMembers')
+    expect(src).toContain("t('chat.messageList.groupStartHint')")
+  })
 })

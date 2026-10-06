@@ -838,6 +838,7 @@ export default {
       allMessagesLoaded: '已加载全部消息',
       startConversation: '发送消息开始对话',
       startConversationAI: '发送消息开始与 AI 对话',
+      groupStartHint: '发送消息，主持人会安排成员依次发言',
       noAgentsTitle: '暂无可用智能体',
       noAgentsDesc: '安装并配置 AI 智能体以开始对话。',
       noAgentsAction: '配置智能体',

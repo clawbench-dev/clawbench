@@ -17,6 +17,7 @@
       :agents="agentsList"
       :currentAgent="currentAgent"
       :isGroupSession="isGroupSession"
+      :groupMembers="props.groupMembers"
       :resolveSpeaker="props.resolveGroupSpeaker"
       :resolveSpeakerByName="props.resolveGroupSpeakerByName"
       :hostMemberId="props.groupHostMemberId"
