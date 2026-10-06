@@ -553,6 +553,42 @@ func TestGetExpiredArchivedSessions_ExcludesGroupMemberRows(t *testing.T) {
 	}
 }
 
+// SetGroupAutoApprove must write every member row (and the group row), because
+// members each own the ACP connection that reads the flag (decision #61).
+func TestSetGroupAutoApprove_AppliesToAllMembers(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostMemberID, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	if err := SetGroupAutoApprove(groupID, true); err != nil {
+		t.Fatalf("SetGroupAutoApprove: %v", err)
+	}
+	for _, id := range []string{groupID, hostMemberID, memberID} {
+		if !GetSessionAutoApprove(id) {
+			t.Fatalf("session %s must have auto_approve=1 after enabling", id)
+		}
+	}
+
+	if err := SetGroupAutoApprove(groupID, false); err != nil {
+		t.Fatalf("SetGroupAutoApprove(false): %v", err)
+	}
+	for _, id := range []string{groupID, hostMemberID, memberID} {
+		if GetSessionAutoApprove(id) {
+			t.Fatalf("session %s must have auto_approve=0 after disabling", id)
+		}
+	}
+}
+
 // The host controls the flow, so removing it would leave the group unroutable.// Refuse the removal rather than silently orphaning the group (decision: N5).
 func TestRemoveGroupMember_RefusesHost(t *testing.T) {
 	setupGroupDB(t)

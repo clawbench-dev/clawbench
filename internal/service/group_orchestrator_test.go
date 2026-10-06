@@ -98,7 +98,7 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "大家讨论一下"); err != nil {
+	if err := o.RunGroupTurn(context.Background(), "大家讨论一下", nil); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
 	}
 	if *term != 1 {
@@ -183,7 +183,7 @@ func TestGroupOrchestrator_RunningStateAndCancel(t *testing.T) {
 		}
 		return runner(ctx, gid, turn)
 	}
-	if err := o.RunGroupTurn(context.Background(), "开始"); err != nil {
+	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
 	}
 	if !sawRunning {
@@ -224,7 +224,7 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始"); err != nil {
+	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
 	}
 	if *term != 1 {
@@ -305,7 +305,7 @@ func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始"); err != nil {
+	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
 		t.Fatalf("RunGroupTurn: %v", err)
 	}
 
@@ -435,7 +435,7 @@ func TestGroupOrchestrator_FailedMemberDoesNotAdvanceCursor(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	if got := GetMemberCursor(mA); got != before {
 		t.Fatalf("a failed member turn must not advance the cursor: before=%d after=%d", before, got)
@@ -466,7 +466,7 @@ func TestGroupOrchestrator_FailedHostDoesNotAdvanceCursor(t *testing.T) {
 	}
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	if got := GetMemberCursor(hostID); got != 0 {
 		t.Fatalf("a failed host turn must not advance the cursor, got %d", got)
@@ -502,7 +502,7 @@ func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
 	runner, _ := newScriptedRunner(t, groupID, project, script)
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	if got := GetMemberCursor(mA); got <= 0 {
 		t.Fatalf("a successful member turn must advance the cursor, got %d", got)
@@ -557,7 +557,7 @@ func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	if !seenRunning {
 		t.Fatal("a member row must read as running for the ACP sweep during its turn")
@@ -595,7 +595,7 @@ func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 	}
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	if IsSessionRunningForSweep(mA) {
 		t.Fatal("member sweep state must be cleared once the group turn ends")
@@ -642,7 +642,7 @@ func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
 	})
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	// Fallback picks are those that are NOT the member the host explicitly
 	// routed to (A) and not the host itself. Those must rotate across B and C.
@@ -705,7 +705,7 @@ func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 	term := observeGroupTerminal(t)
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始")
+	_ = o.RunGroupTurn(context.Background(), "开始", nil)
 
 	// 2 failures, then abort. Allow a small margin for the final summary turn.
 	if hostTurns > 4 {

@@ -608,12 +608,7 @@ func ServeAISessionUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.AutoApprove != nil {
-		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
-		service.UpdateSessionAutoApprove(sessionID, *req.AutoApprove)
-		// Sync to ACPConn runtime state
-		if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
-			conn.SetAutoApprove(*req.AutoApprove)
-		}
+		applyAutoApprove(sessionID, *req.AutoApprove)
 	}
 	if title := strings.TrimSpace(req.Title); title != "" {
 		// Manual rename: lock the title so the first-message auto-title does
@@ -660,6 +655,36 @@ func applySessionTags(sessionID string, tags []service.SessionTagRef) error {
 		return fmt.Errorf("session %s no longer exists", sessionID)
 	}
 	return service.SetSessionTags(sessionID, projectPath, tags)
+}
+
+// applyAutoApprove persists the auto-approve toggle and syncs it to any live
+// ACP connection(s).
+//
+// Group chats need a fan-out: each member owns its own ACP connection keyed by
+// the MEMBER row id, and the permission handler reads the member row's flag —
+// so writing the group row alone (whose connection is always nil) made the
+// switch dead (decision #61). SetGroupAutoApprove writes every member row plus
+// the group row; the live member connections are synced here.
+func applyAutoApprove(sessionID string, enabled bool) {
+	if service.GetSessionType(sessionID) == "group" {
+		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+		service.SetGroupAutoApprove(sessionID, enabled)
+		members, err := service.ListGroupMembers(sessionID)
+		if err != nil {
+			return
+		}
+		for _, m := range members {
+			if conn := ai.GetACPConnManager().GetConn(m.ID); conn != nil {
+				conn.SetAutoApprove(enabled)
+			}
+		}
+		return
+	}
+	//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
+	service.UpdateSessionAutoApprove(sessionID, enabled)
+	if conn := ai.GetACPConnManager().GetConn(sessionID); conn != nil {
+		conn.SetAutoApprove(enabled)
+	}
 }
 
 // forwardSessionConfigOption pushes a config-option change to the session's ACP

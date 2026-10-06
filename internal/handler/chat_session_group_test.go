@@ -87,6 +87,81 @@ func TestDestroySession_ClosesGroupMemberConnections(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "member connections must be closed when the group is destroyed")
 }
 
+// Toggling auto-approve on a group must apply to every MEMBER row, not just the
+// group row: members each own an ACP connection keyed by their member row id,
+// and the permission handler reads the member row's flag (decision #61). The
+// group row has no connection, so the old code was a dead switch.
+func TestServeAISessionUpdate_GroupAutoApproveAppliesToMembers(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, hostMemberID, err := service.CreateGroup(env.ProjectDir, "讨论组", "claude", "claude", "Host")
+	require.NoError(t, err)
+	memberID, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", "claude", "Claude")
+	require.NoError(t, err)
+
+	// Both members have live ACP connections (registered under the MEMBER id).
+	mgr := ai.GetACPConnManager()
+	for _, sid := range []string{hostMemberID, memberID} {
+		conn := &ai.ACPConn{}
+		conn.SetClientForTest(ai.NewClawBenchACPClient())
+		conn.SetSessionMappingForTest(sid, "acp-"+sid)
+		mgr.SetConnForTest(sid, conn)
+	}
+	t.Cleanup(func() {
+		mgr.CloseConn(hostMemberID)
+		mgr.CloseConn(memberID)
+	})
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":   groupID,
+		"autoApprove": true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	// Every member row must carry auto_approve=1.
+	for _, id := range []string{hostMemberID, memberID} {
+		assert.True(t, service.GetSessionAutoApprove(id),
+			"member row %s must have auto_approve enabled", id)
+	}
+	// And every live member connection must have synced its runtime flag.
+	assert.True(t, mgr.GetConn(hostMemberID).IsAutoApprove(), "host connection must sync auto-approve")
+	assert.True(t, mgr.GetConn(memberID).IsAutoApprove(), "member connection must sync auto-approve")
+
+	// Toggling back off must clear every member row too.
+	req = newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":   groupID,
+		"autoApprove": false,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w = callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	for _, id := range []string{hostMemberID, memberID} {
+		assert.False(t, service.GetSessionAutoApprove(id),
+			"member row %s must have auto_approve disabled again", id)
+	}
+}
+
+// An ordinary chat still uses the single-row path (no member fan-out).
+func TestServeAISessionUpdate_ChatAutoApproveStillWorks(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sid, err := service.CreateSession(env.ProjectDir, "claude", "T", "claude", "", "default", "chat")
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodPatch, "/api/ai/session/update", map[string]any{
+		"sessionId":   sid,
+		"autoApprove": true,
+	})
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeAISessionUpdate, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.True(t, service.GetSessionAutoApprove(sid))
+}
+
 // The member-closing helper must be a no-op for an ordinary chat: it must not
 // look up members (there are none) or close anything.
 func TestCloseGroupMemberConns_NonGroupNoop(t *testing.T) {

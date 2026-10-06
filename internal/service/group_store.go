@@ -474,6 +474,43 @@ func GetGroupHostMember(groupID string) string {
 	return hostID
 }
 
+// SetGroupAutoApprove applies the auto-approve flag to EVERY member row of a
+// group (decision #61).
+//
+// Why not the group row alone: the group row owns no ACP connection — each
+// member owns one, keyed by its member row id (group_orchestrator.go builds the
+// turn with SessionID = the member row id), and the ACP permission handler
+// reads getSessionAutoApprove(req.SessionID), i.e. the MEMBER row. Writing only
+// the group row therefore made auto-approve a dead switch: members still popped
+// permission cards.
+//
+// Best-effort per member (the write is idempotent); the first error is returned
+// after attempting all members so one bad row cannot leave the roster split.
+// The group row itself is also written so the toggle round-trips through the
+// group session's own GET/PATCH.
+func SetGroupAutoApprove(groupID string, enabled bool) error {
+	val := 0
+	if enabled {
+		val = 1
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return err
+	}
+	var firstErr error
+	for _, m := range members {
+		if _, err := store.WriteExec("UPDATE chat_sessions SET auto_approve = ? WHERE id = ?", val, m.ID); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	// The group row is not a member; keep it in sync too so the group session's
+	// own auto_approve column reflects the roster.
+	if _, err := store.WriteExec("UPDATE chat_sessions SET auto_approve = ? WHERE id = ?", val, groupID); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
 // SetGroupHostMember records which member is the host (stored in the group
 // row's context_state JSON).
 func SetGroupHostMember(groupID, memberID string) error {

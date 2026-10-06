@@ -1422,6 +1422,9 @@ paths:
                   type: string
                 autoApprove:
                   type: boolean
+                  description: |
+                    开关自动批准（hands-off）。对群会话，会同时写入群行与**每个成员行**
+                    （成员的 ACP 连接按成员行 id 读取该标志，只写群行等于没生效）。
                 title:
                   type: string
                 pinned:
