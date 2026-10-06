@@ -1177,9 +1177,9 @@ jobs:
         # Auth is OIDC trusted publishing (see the job's `id-token: write`).
         # Two things must be true for npm to use it, and both are counterintuitive:
         #
-        #  1. The project .npmrc sets registry=npmmirror, and project config
-        #     outranks even NPM_CONFIG_USERCONFIG. Removing it is what keeps the
-        #     publish pointed at registry.npmjs.org.
+        #  1. The project .npmrc sets registry=npmmirror, which project config
+        #     makes outrank everything else. Rewriting it to registry.npmjs.org
+        #     is what keeps the publish pointed at the public registry.
         #
         #  2. No token may be configured. npm tries a configured token first and
         #     only falls back to OIDC when there is none — and an .npmrc line of
@@ -1188,9 +1188,15 @@ jobs:
         #     the token). That is the usual cause of "trusted publishing is set
         #     up but publish still 404s", so setup-node's registry-url is left
         #     unset above and no NODE_AUTH_TOKEN is exported below.
+        #
+        # The rewrite targets the project .npmrc rather than
+        # $NPM_CONFIG_USERCONFIG: that variable is only exported by setup-node
+        # when `registry-url` is set, so with it removed the redirect would
+        # expand to "" and the shell would fail with "No such file or
+        # directory". A project .npmrc needs no env var and is read from the
+        # working directory npm runs in.
         run: |
-          rm -f .npmrc
-          printf 'registry=https://registry.npmjs.org/\n' >> "${NPM_CONFIG_USERCONFIG}"
+          printf 'registry=https://registry.npmjs.org/\n' > .npmrc
 
       - name: Publish @xulongzhe/clawbench-linux-x64
         run: |
@@ -1379,10 +1385,10 @@ jobs:
 
       - name: Configure npm registry for publishing
         # Auth is OIDC trusted publishing — see the longer note in publish-npm
-        # for why no token may be configured here.
+        # for why no token may be configured, and why this rewrites the project
+        # .npmrc instead of appending to $NPM_CONFIG_USERCONFIG.
         run: |
-          rm -f .npmrc
-          printf 'registry=https://registry.npmjs.org/\n' >> "${NPM_CONFIG_USERCONFIG}"
+          printf 'registry=https://registry.npmjs.org/\n' > .npmrc
 
       - name: Publish payload packages
         run: |
