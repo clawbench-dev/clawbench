@@ -85,6 +85,8 @@
 | 64 | 项目会话计数 | **排除成员行**：`ListAllProjects`（`project_registry.go:70`）与 `GetConversationProjects`（`chat.go:1013`）的 COUNT 都加 `session_type IN ('chat','group')`（与决策 #37 同规则；现状两处无类型条件 ⇒ 5 人成员的群使项目数虚增 6） |
 | 65 | 群消息的附件 | **支持**（放开后端的 400 拒绝）；**注入时渲染，不写 `content`**——`buildInjectionText` 渲染用户消息时调 `ApplyAttachmentPrefixes`，气泡只靠 `files` 字段渲染（**与单聊逐字一致**）。`GetMessagesBySessionIDRaw` 已取 `files`（`chat.go:361,379`），**无需改取数** |
 | 66 | 前端附件入口 | 群输入框**保留**附件按钮 / `@` 文件补全 / 引用入口（决策 #65 让它们真正可用；现状是入口在、发送被 400 拒且无提示） |
+| 67 | 主持人标签对成员的可见性 | **注入时剥离**：`buildInjectionText` 渲染主持人发言时去掉 `<clawbench-speaker>…</clawbench-speaker>`（只在 `Found==true` 时剥，解析失败**绝不剥**——同 askquestion 契约），成员只看到指令文本。理由：标签是后端↔主持人内部协议，留着会诱导成员模仿输出、污染时间线 |
+| 68 | 指令重复 | **去掉重复**：`grouprouting.Result` **新增"标签前背景"字段**（做法 A），注入时只渲染背景、指令仍由末尾 `主持人要求你：…` 给一次。**同步改前端镜像 `groupRouting.ts` + parity 语料**（该包本有 parity 契约，加字段是设计内演进） |
 
 ## 3. 架构
 
@@ -787,6 +789,12 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - **前端入口照常**：附件按钮（`ChatInputBar.vue:112`）与 `@` 文件补全（`:979`）**无 `isGroupSession` 门控**；引用（`kind='quote'` 的 `FileEntry`，`model/chat.go:93`）也走 `req.Files`。⇒ 用户能挂、能选，点发送得到**无提示的失败**。
 - **即使放开也丢**：单聊把附件拼进 prompt 是 handler 干的（`chat.go:424` `ApplyAttachmentPrefixes`），而群注入走 `groupInjectionText` → `buildInjectionText`（`group_inject.go:26`）**只渲染 `ExtractPlainText(content)`，不读 `files`** ⇒ 附件对成员不可见。
 **修（决策 #65/#66）**：放开后端拒绝；在 `buildInjectionText` 渲染用户消息时调 `ApplyAttachmentPrefixes`（**不写 content**，气泡与单聊一致）；前端入口保留。**`GetMessagesBySessionIDRaw` 已经取了 `files` 并解析进 `msg.Files`（`chat.go:361,379-381`），无需改取数。**
+
+**（17）主持人路由标签泄漏进成员上下文，且指令重复两遍（决策 #67/#68）。**
+`buildInjectionText`（`group_inject.go:45-52`）渲染每条消息用 `ExtractPlainText(m.Content)`，**不做任何标签剥离** ⇒ 被点名成员看到 `主持人: <clawbench-speaker>A</clawbench-speaker> 请谈谈你的看法`。两个后果：① 成员可能**模仿该格式**在自己的发言里也输出 `<clawbench-speaker>`（前端会误渲染成路由卡片）；② 用户引用成员原话时带出标签。
+叠加**重复**：`group_inject.go:54-61` 把 `route.Instruction` **单独再拼一段**「主持人要求你：…」，而主持人那条发言文本里**已含同一句** ⇒ 成员看到两遍。
+`grouprouting.Parse` 按契约**只解析不剥离**（`Result.Raw` 保留原文，注释明说 "never mutates input"）⇒ 剥离需在新地方做，且必须遵守「解析失败绝不剥离」。
+**修（决策 #67/#68）**：`Result` 新增**标签前背景**字段；注入时渲染背景 + 剥离标签；指令只由末尾那一段给一次。**前端镜像 `groupRouting.ts` 与 parity 语料同步改。**
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
