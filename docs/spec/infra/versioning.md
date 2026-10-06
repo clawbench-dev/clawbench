@@ -200,6 +200,17 @@ env:
 - **npm 的 packlist 默认规则会丢文件**（`.gitignore`、`*.orig`、`.npmrc` 等）。今天载荷里没有这类文件（实测 119/119 逐字节保真），但这是当前树的运气而非流水线的保证，故 CI 用 `npm pack --dry-run --json` 与磁盘清单比对，一旦 npm 会漏掉文件即失败。
 - **失败静默性**：客户端把任何载荷问题（镜像 404、ABI 不符、归档损坏）都降级为全量下载，所以载荷包名不一致**不会报错**，只会让每次升级又下 150MB。因此 npm 包名由 `scripts/__tests__/releaseAssets.test.ts` 与 Go 的载荷基名做跨语言比对，并反向守护「载荷 zip 不得再出现在 Release 的 `files:` 或打包命令里」。
 
+#### npm 发布认证：OIDC Trusted Publishing
+
+`publish-npm` 与 `publish-npm-desktop` 都改用 **OIDC Trusted Publishing**，不再用长期 token。
+
+早期用 GitHub Secret `NPM_TOKEN`（npm granular access token），它会**静默过期**（默认 90 天）。一旦过期，每个 publish 步骤都以 **404** 失败——npm 报的是 "resource not found" 而非"token 过期"，于是连续三个 release（v0.110/111/112）没发上 npm 都未被察觉。改用 OIDC 后不再有过期凭据，但有两个反直觉前提，任一缺失都复现同一个 404：
+
+- **job 必须声明 `id-token: write`**，否则 GitHub 根本不签发 OIDC token。
+- **不得存在任何"已配置"的 token**：npm 优先用 token、没有才回退 OIDC，而 `.npmrc` 里的 `_authToken=${NODE_AUTH_TOKEN}` 这行**即使变量未设也算已配置**（npm 会把字面占位符当 token 发出去）。这也是 `setup-node` 的 `registry-url` 必须去掉的原因——它正是写这一行的元凶。
+
+registry 覆盖不能再用 `$NPM_CONFIG_USERCONFIG`：该变量只在 `registry-url` 存在时才由 `setup-node` 导出，移除后重定向会展开成空串并以 "No such file or directory" 失败（v0.112.1 实测）。因此改为把 `registry=https://registry.npmjs.org/` 一条 `> .npmrc` 写进**项目** .npmrc（npm 从工作目录读取，无需任何环境变量）。回归守护见 `scripts/__tests__/npmTrustedPublishing.test.ts`。
+
 ### 下游影响
 
 - **桌面端下载 URL 必须带 tag**：`internal/service/desktop_upgrade.go` 的 `desktopAssetBase` 只存基名，`desktopAssetName(osArch, tag)` 拼上 tag。因为名字含版本，**不存在** `releases/latest/download/<名>` 这种稳定链接，URL 一律由服务端上报的 tag 拼出。
@@ -239,7 +250,9 @@ env:
 - 壳指纹接线：三个发载荷的 job 都写了 `shell-fingerprint.mjs`，且**在打包全量包之前**（写在 zip 之后则进不了归档）；打包命令不得引用嵌套的 `<unpacked>/payload` 路径；macOS job 不得出现 `stage-payload.mjs`
 - npm 载荷包：三个 `npm/desktop-payloads/*/package.json` 的 `files` 必须含 `payload.json` 与 `resources/`；无 `scripts`；版本为占位 `0.1.0`（由 CI 改写）
 - 载荷 artifact 上传必须带 `include-hidden-files: true`（`upload-artifact@v4` 默认跳过点文件，载荷含 6 个）
-- `publish-npm-desktop` 必须复制 `publish-npm` 的 registry 配置（`rm -f .npmrc` + 写 `NPM_CONFIG_USERCONFIG`，否则会无凭据发往 npmmirror）并带 `npm view` 幂等守卫
+- `publish-npm-desktop` 必须复制 `publish-npm` 的 registry 配置（`> .npmrc` 写 `registry=https://registry.npmjs.org/`，否则会发往 npmmirror）并带 `npm view` 幂等守卫
+
+npm 发布认证另有独立守护 `scripts/__tests__/npmTrustedPublishing.test.ts`：两个 publish job 都须有 `id-token: write`、都不得出现任何 token 配置（`NODE_AUTH_TOKEN` / `secrets.NPM_TOKEN` / `_authToken`）、都不得设 `registry-url`、都须把 registry 写进项目 `.npmrc` 且不引用 `$NPM_CONFIG_USERCONFIG`；每个可发布 `package.json` 的 `repository.url` 须匹配 trusted publisher 的仓库（否则 provenance 校验拒绝）。该测试**先剥 YAML 注释再断言**——workflow 注释里逐字写明了 `_authToken=${NODE_AUTH_TOKEN}` 这个陷阱，不剥注释守护会栽在自己的文档上。
 
 变异验证 4/4（均实测变红）：改回无版本归档名 / 上传 pattern 去掉 tag / 删掉 APK 版本化复制 / Go 资产名丢 tag。载荷守护另验：把载荷 zip 加回 `files:` → 「不进 Release」断言变红；把载荷 zip 加回打包命令 → 打包断言变红；给 `desktopPayloadURLs` 加回 `releaseAssetURLs` → Go 测试与 TS 派生断言双红；把壳指纹步骤挪到 zip 之后 → 顺序断言变红；去掉 `include-hidden-files` → artifact 断言变红；改 npm 包名 → 与 Go 的 parity 断言变红。指纹模块自身另验：改成哈希构建产物（模拟每版重编译）→ 稳定性测试变红。tar 读取器另验：去掉 `prefix` 拼接 → 长路径测试变红；去掉截断边界检查 → 截断测试变红；不归一化 zip 的 mode → zip 系列测试变红。CI 的 packlist 比对另验：往载荷里放一个 `*.orig` → 比对失败（npm 会静默丢弃它）。
 
