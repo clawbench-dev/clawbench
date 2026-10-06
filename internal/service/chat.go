@@ -684,6 +684,19 @@ func AddChatMessageWithAgent(projectPath, backend, sessionID, role, content stri
 	return msgID, nil
 }
 
+// AddSystemMessage appends a role='system' timeline row to a session.
+//
+// System events record membership changes ("X joined the discussion") so the
+// host and every member learn about them (decisions #40/#44). They belong to
+// nobody: agent_id is empty, which is what keeps them out of the author filter
+// in buildInjectionText and lets the frontend render them as a centered row.
+//
+// Unread counts are unaffected by construction — they count role='assistant'
+// only. Requires N1's widened CHECK (role IN ('user','assistant','system')).
+func AddSystemMessage(projectPath, sessionID, text string) (int64, error) {
+	return AddChatMessageWithAgent(projectPath, groupBackend(sessionID), sessionID, "system", text, nil, false, "", "")
+}
+
 // ErrChatQuoteNotFound is returned when the addressed quote entry does not
 // exist on the given message (wrong id, or the message carries no quotes).
 var ErrChatQuoteNotFound = errors.New("chat quote not found")

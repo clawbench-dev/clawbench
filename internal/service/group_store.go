@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"clawbench/internal/model"
@@ -181,7 +182,8 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) (string, error) {
 	if existing, ok := findGroupMemberByAgent(groupID, agentID); ok {
 		// Re-adding an ACTIVE member is a no-op reuse: the active count does not
-		// change, so the cap does not apply.
+		// change, so the cap does not apply. No system event either — nothing
+		// changed on the timeline.
 		if !existing.Left {
 			return existing.ID, nil
 		}
@@ -193,6 +195,7 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 		if err := setGroupMemberArchived(existing.ID, false); err != nil {
 			return "", err
 		}
+		writeMemberSystemEvent(projectPath, groupID, agentID, displayName, " 重新加入")
 		return existing.ID, nil
 	}
 	if err := ensureGroupMemberSlot(groupID); err != nil {
@@ -205,7 +208,28 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 	if err := SetSessionGroupID(memberID, groupID); err != nil {
 		return "", err
 	}
+	writeMemberSystemEvent(projectPath, groupID, agentID, displayName, "加入了讨论")
 	return memberID, nil
+}
+
+// writeMemberSystemEvent appends a membership-change row to the group timeline
+// (decisions #40/#41). The text carries the member's specialty so readers know
+// what the newcomer is for, and is written best-effort: a failure to record a
+// system event must never fail the membership change itself.
+func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, suffix string) {
+	text := displayName + memberSpecialtySuffix(agentID) + suffix
+	if _, err := AddSystemMessage(projectPath, groupID, text); err != nil {
+		slog.Warn("group: writing member system event failed", "group", groupID, "err", err)
+	}
+}
+
+// memberSpecialtySuffix renders "（specialty）" or "" — omitted entirely when the
+// agent has no specialty, so a description-less member does not read "Name（）".
+func memberSpecialtySuffix(agentID string) string {
+	if s := GetAgentSpecialty(agentID); s != "" {
+		return "（" + s + "）"
+	}
+	return ""
 }
 
 // ensureGroupMemberSlot returns ErrGroupMemberLimit when the group is already at
@@ -410,7 +434,26 @@ func RemoveGroupMember(groupID, memberID string) error {
 		"UPDATE chat_sessions SET archived = 1 WHERE id = ? AND group_id = ?",
 		memberID, groupID,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	// Record the departure on the timeline (decision #40). Best-effort: the
+	// member is already archived, so a write failure must not surface as a
+	// failed removal. Skip when the row did not change (already left) to keep
+	// the removal idempotent without spamming the timeline.
+	if name := memberDisplayName(memberID); name != "" {
+		if _, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, name+" 已离场"); err != nil {
+			slog.Warn("group: writing departure system event failed", "group", groupID, "err", err)
+		}
+	}
+	return nil
+}
+
+// memberDisplayName returns a member row's display name (empty if unknown).
+func memberDisplayName(memberID string) string {
+	var name string
+	_ = store.ReadDB().QueryRow("SELECT COALESCE(title, '') FROM chat_sessions WHERE id = ?", memberID).Scan(&name)
+	return name
 }
 
 // GetGroupHostMember returns the host member row id (empty if unset).

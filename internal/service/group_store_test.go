@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"clawbench/internal/model"
@@ -553,4 +554,124 @@ func mustMemberID(t *testing.T, groupID, agentID string) string {
 		t.Fatalf("member for agent %q not found", agentID)
 	}
 	return m.ID
+}
+
+// ---------- N3: system events on member add/remove ----------
+
+// Adding a member writes a role='system' row to the group timeline so the host
+// and every member learn about the change (decisions #40/#41). It carries no
+// agent_id (it is nobody's speech) and does not count as unread.
+func TestAddGroupMember_WritesSystemEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"agent-host": {ID: "agent-host", Name: "Host", Specialty: "主持"},
+		"agent-a":    {ID: "agent-a", Name: "A", Specialty: "代码编写与推理"},
+	}
+	defer func() { model.Agents = origAgents }()
+
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	sysMsgs := systemMessages(t, groupID)
+	if len(sysMsgs) != 1 {
+		t.Fatalf("expected exactly 1 system event, got %d", len(sysMsgs))
+	}
+	text := sysMsgs[0].Content
+	if !strings.Contains(text, "A") || !strings.Contains(text, "加入了讨论") {
+		t.Fatalf("system event must name the member and say they joined: %q", text)
+	}
+	if !strings.Contains(text, "代码编写与推理") {
+		t.Fatalf("system event must carry the member's specialty (decision #41): %q", text)
+	}
+	if sysMsgs[0].AgentID != "" {
+		t.Fatalf("a system event belongs to nobody: agent_id must be empty, got %q", sysMsgs[0].AgentID)
+	}
+}
+
+// Removing a member writes a departure system event.
+func TestRemoveGroupMember_WritesSystemEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	before := len(systemMessages(t, groupID))
+
+	if err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("RemoveGroupMember: %v", err)
+	}
+	sysMsgs := systemMessages(t, groupID)
+	if len(sysMsgs) != before+1 {
+		t.Fatalf("expected one more system event after removal: before=%d after=%d", before, len(sysMsgs))
+	}
+	last := sysMsgs[len(sysMsgs)-1].Content
+	if !strings.Contains(last, "A") || !strings.Contains(last, "已离场") {
+		t.Fatalf("departure event must name the member and say they left: %q", last)
+	}
+}
+
+// A system event must be injected into the next member's context (decision #44:
+// it counts toward the cursor) — otherwise members never learn who joined.
+func TestSystemEvent_InjectedIntoMemberContext(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	// A second member speaks after the event; its injection must include it.
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		t.Fatalf("GetMessagesBySessionIDRaw: %v", err)
+	}
+	names := map[string]string{}
+	got := buildInjectionText(msgs, 0, memberID, names, nil, nil, "")
+	if !strings.Contains(got, "加入了讨论") {
+		t.Fatalf("system event must reach the member's injected context: %q", got)
+	}
+}
+
+// systemMessages returns the group timeline's role='system' rows in id order.
+func systemMessages(t *testing.T, groupID string) []model.ChatMessage {
+	t.Helper()
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		t.Fatalf("GetMessagesBySessionIDRaw: %v", err)
+	}
+	out := make([]model.ChatMessage, 0)
+	for _, m := range msgs {
+		if m.Role == "system" {
+			out = append(out, m)
+		}
+	}
+	return out
 }
