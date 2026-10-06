@@ -1,6 +1,10 @@
 {
   "name": "@xulongzhe/clawbench-linux-arm64",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clawbench-dev/clawbench.git"
+  },
   "description": "ClawBench — AI Workbench, United Across Devices. Linux arm64 binary (also used on Termux/Android)",
   "os": ["linux", "android"],
   "cpu": ["arm64"],
