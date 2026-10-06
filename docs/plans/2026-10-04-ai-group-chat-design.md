@@ -38,6 +38,7 @@
 | O13 | #65/#66 群消息附件注入 | `handler/chat.go:324` 仍 400 拒绝群附件 |
 | O14 | #67/#68 剥离主持人标签 + 指令去重 | `grouprouting.Result` 无 `Before` 字段；`buildInjectionText` 不剥标签 |
 | O15 | #69/#70 失败不推游标 + warning 不注入 | `group_orchestrator.go:120,157` 先推游标后判错；`group_inject.go:32` 不排除 warning |
+| O16 | #71 终态前兜孤儿流式行 | `emitGroupTerminal:178` 只发事件，不 finalize 流式行 |
 
 ### 已实现（勿重复设计）
 
@@ -137,6 +138,7 @@
 | 68 | 指令重复 | **去掉重复**：`grouprouting.Result` **新增"标签前背景"字段**（做法 A），注入时只渲染背景、指令仍由末尾 `主持人要求你：…` 给一次。**同步改前端镜像 `groupRouting.ts` + parity 语料**（该包本有 parity 契约，加字段是设计内演进） |
 | 69 | 失败时游标是否推进 | **不推进**：只在回合**成功**时 `SetMemberCursor`。失败 = 没处理过，游标推过去会让那段上下文**永久丢失**（成员后续答非所问且时间线看不出）。失败残留（半截输出 / warning block）**保留在时间线**供用户查看 |
 | 70 | warning block 的注入 | **不注入给成员**：成员失败的 warning block（`role='assistant'` + 该成员 `agent_id`）排除在 `buildInjectionText` 之外——它是给用户看的运维信息，不是讨论内容（现状会被当"某成员发言"注入，原始错误如 `create backend: …` 广播给其他成员，而当事人自己反被作者过滤跳过） |
+| 71 | 终态前的流式行收尾 | **`emitGroupTerminal` 内部调 `finalizeOrphanedStreamingMessages(groupID,"interrupt")`**，四条退出路径（取消/结束信号/达上限/主持人失败终止）共用。**定位是"兜 `FinalizeStreamingMessage` 自身失败"**——发出终态事件时 `runTurn` 早已返回（`defaultRunner:303` 同步阻塞，所有调用点都在 runner 返回后），**不引入等待**。该函数幂等（查 `streaming=1` 再 finalize） |
 
 ## 3. 架构
 
@@ -850,6 +852,11 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - **游标**：`group_orchestrator.go:119-121`（主持人）与 `:156-158`（成员）都是**先 `SetMemberCursor(高水位)`、后判 `Err`**。⇒ 失败回合（后端创建失败/连接不可用）实际上**什么都没处理**，但游标已被推过 ⇒ 本轮注入的内容**永久丢失**，成员后续答非所问，且时间线上看不出。
 - **warning block**：成员失败的 warning block 是 `role='assistant'` + **该成员行 `agent_id`**（决策 #51）。`buildInjectionText:32` 的作者过滤只跳 `m.AgentID == self` ⇒ **其他成员**会把 `ExtractPlainText` 解出的原始错误文本（`create backend: …`）当"某成员发言"读进上下文；而**失败者自己**反被过滤跳过，看不到自己的失败。
 **修（决策 #69/#70）**：游标只在成功时推进；warning block 排除在注入之外。
+
+**（19）终态前无孤儿行收尾（决策 #71）。**
+`emitGroupTerminal`（`group_orchestrator.go:178`）只做 `SetSessionRunning(false)` + `done` + `completed`，**不 finalize 任何流式行**；而 `finalizeGroupOrphans`（`:373`）只在**回合开始时**调（`:108`）。⇒ 若某成员回合的 `FinalizeStreamingMessage` 自身失败（DB 写错），该行停在 `streaming=1`，终态事件发出后前端重载即出现**幽灵流式气泡**。
+**澄清（勿夸大）**：这**不是**取消竞态——`defaultRunner:303` 是同步 `runTurn`，`emitGroupTerminal` 的六个调用点全在某个 `runner(...)` 返回之后，故发出终态时 executor 的 finalize 早已执行。**无需引入等待**；只需把幂等的孤儿清理放进 `emitGroupTerminal` 兜住"finalize 失败"。
+**修（决策 #71）**：`emitGroupTerminal` 内先 `finalizeOrphanedStreamingMessages(groupID, "interrupt")`，再发终态。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
