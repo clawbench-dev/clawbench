@@ -1758,7 +1758,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task N3: 增删成员写系统事件
+### Task N3: 增删成员写系统事件 ✅ 已实现（落库+注入 `28ecd817c`；广播由 team-f 进行中）
 
 **Files:**
 - Modify: `internal/service/group_store.go`（`AddGroupMember`/`RemoveGroupMember` 写系统事件）
@@ -2030,7 +2030,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O14: 剥离主持人标签 + 去掉指令重复（决策 #67/#68）
+### Task O14: 剥离主持人标签 + 去掉指令重复（决策 #67/#68）✅ 已实现（叶子包 `893107348` / 消费侧 `6027497ed`）
 
 **Files:**
 - Modify: `internal/grouprouting/grouprouting.go`（`Result` 加"标签前背景"字段）
@@ -2053,7 +2053,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O15: 失败不推进游标 + warning block 不注入（决策 #69/#70）
+### Task O15: 失败不推进游标 + warning block 不注入（决策 #69/#70）✅ 已实现（`d08755698`）
 
 **Files:**
 - Modify: `internal/service/group_orchestrator.go`（游标推进移到成功分支）
@@ -2073,7 +2073,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O16: 终态前兜住孤儿流式行（决策 #71）
+### Task O16: 终态前兜住孤儿流式行（决策 #71）✅ 已实现（`d9336de14`）
 
 **Files:**
 - Modify: `internal/service/group_orchestrator.go`（`emitGroupTerminal` 内加孤儿清理）
