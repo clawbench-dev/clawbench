@@ -37,7 +37,7 @@
 
 **Tech Stack:** Go（SQLite、net/http、WS StreamHub）、Vue 3 + TypeScript（Vitest）、Playwright（E2E + acp-mock）。
 
-**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **74 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6/§12.7**）。
+**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **76 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6/§12.7**）。
 
 **通用约定：**
 - 每个 Task 结束必须 commit（独立小提交）。
@@ -66,7 +66,7 @@
 | K | 前端：成员头像条 + 增删 | G、H |
 | M | E2E（M0 前置 + M1） | 全部 |
 | N | **增补（合入后）**：成员可见性、描述注入、系统事件（N1 role='system' 重建 / N2 描述三处注入 / N3 系统事件 / N4 前端渲染 / N5 拒绝移除主持人） | 全部 |
-| O | **增补（二轮 grill）**：排队与生命周期（O1 群入队+drain / O2 级联删除+离群保留 / O3 成员失败复用 failTurn / O4 摘要推荐跳过 / O5 轮转+失败收尾 / O6 智能体重名收敛 / O7 归档关连接 / O8 隐藏回溯入口 / O9 发言中高亮 / O10 群 auto-approve 批量 / O11 isGroupSession 用类型 / O12 项目计数排除成员行 / O13 群消息附件注入 / O14 剥离主持人标签+去重 / O15 失败不推游标+warning 不注入 / O16 终态前兜孤儿流式行 / #72 群回合推送并入 O1 / O17 保护成员连接 / #74 fork 守卫并入 O8） | N |
+| O | **增补（二轮 grill）**：排队与生命周期（O1 群入队+drain / O2 级联删除+离群保留 / O3 成员失败复用 failTurn / O4 摘要推荐跳过 / O5 轮转+失败收尾 / O6 智能体重名收敛 / O7 归档关连接 / O8 隐藏回溯入口 / O9 发言中高亮 / O10 群 auto-approve 批量 / O11 isGroupSession 用类型 / O12 项目计数排除成员行 / O13 群消息附件注入 / O14 剥离主持人标签+去重 / O15 失败不推游标+warning 不注入 / O16 终态前兜孤儿流式行 / #72 群回合推送并入 O1 / O17 保护成员连接 / #74 fork 守卫并入 O8 / O18 IM 支持群） | N |
 | ~~L~~ | ~~前端：同轮并发气泡~~ → **v2**（随并行一起做，见头部勘误） | — |
 
 ---
@@ -2100,6 +2100,25 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
+### Task O18: IM 机器人支持群会话（决策 #75/#76）
+
+**Files:**
+- Modify: `internal/service/session_command.go`（两处白名单 + `sendMessageToSessionFromPush` 群委派）
+- Test: `internal/service/session_command_test.go`（追加）
+
+**Step 1: 写失败测试**：
+- 建群 → `ListRecentSessions(10)` 与按 id 前缀查找**都返回该群**（成员行仍不返回）。
+- 对群会话调 `sendMessageToSessionFromPush` → 断言走了 `RunGroupTurn`（成员参与、消息落群时间线），**不是**单聊回合。
+- 群会话正在跑时再发 → 断言**入队**（不启动第二个编排器）。
+
+**Step 3: 实现**：
+- `session_command.go:46` 与 `:71` 的 `s.session_type = 'chat'` 改 `IN ('chat','group')`。
+- `sendMessageToSessionFromPush` 开头：`if GetSessionType(sessionID) == "group" { return RunGroupTurnForSession(...) }`（与 `handler/chat.go:323` 的群分支同构；注意该函数已有 `EnqueueAndMaybeStart`，群分支也应复用其入队语义）。
+
+**Commit:** `feat(group): expose group sessions to IM bots and route their messages to the orchestrator`
+
+---
+
 ## 完成标准
 
 - 所有阶段 Task 完成且各自 commit（**v1 不含 L0/L1，它们属 v2**）。
@@ -2115,4 +2134,4 @@ git commit -m "test(group): add group chat e2e spec"
 - **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 **F0b→F1→F2→F0→F3**）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
 - **评审项验收（四/五轮）**：R-1（`SpeakerID` 在 C1 声明，先于 C2 使用）、R-2（G1 Files 含 `handler/chat.go`）、R-3（A3 含 `queue_store.go:217` 第二调用者）、R-4（设计 §3.1 `UpdateLastRead` 保持成员 id）、R-5（设计 §8 含 `GET /api/group/members`）、R-6（`GroupMember` 类型已声明）、R-7（E2 含 `session_resume.go`）、R-8（fork/continue INSERT 写归属）均落地。
 - **增补验收（阶段 N，决策 #39–#44）**：离场成员注入标注（#39）、系统事件 `role='system'` 整表重建（#40/#43/#44）、描述注入三处（#41）、拒绝移除主持人（#42）均有对应测试通过。
-- **增补验收（阶段 O，决策 #45–#66）**：群消息入队+复用 drain（#45/#46/#58）、级联删除/归档保留/离群不误删（#48）、成员失败复用 `failTurn`（#51）、群聊跳过摘要推荐（#55）、轮转+连续失败收尾（#56）、智能体重名单一函数（#50）、归档关成员连接（#57）、隐藏回溯入口（#52）、发言中高亮（#59）、群 auto-approve 批量写成员（#61）、`isGroupSession` 用会话类型（#62）、项目计数排除成员行（#64）、群消息附件注入（#65/#66）、剥离主持人标签+指令去重（#67/#68）、失败不推进游标+warning 不注入（#69/#70）、终态前兜孤儿流式行（#71）、群回合推送与单聊一致（#72）、群讨论中保护成员连接（#73，细化 I4）、fork 群被拒（#74）均有对应测试通过；**v1 明确不做**：@ 成员（#47）、离线状态（#54）、更换主持人（#53）；**已实现无需改**：群会话级设置隐藏（#60）；**已核实安全**：context_state / 未读 / activeStreams / auto-title / RAG（设计 §12.7(15)）。
+- **增补验收（阶段 O，决策 #45–#66）**：群消息入队+复用 drain（#45/#46/#58）、级联删除/归档保留/离群不误删（#48）、成员失败复用 `failTurn`（#51）、群聊跳过摘要推荐（#55）、轮转+连续失败收尾（#56）、智能体重名单一函数（#50）、归档关成员连接（#57）、隐藏回溯入口（#52）、发言中高亮（#59）、群 auto-approve 批量写成员（#61）、`isGroupSession` 用会话类型（#62）、项目计数排除成员行（#64）、群消息附件注入（#65/#66）、剥离主持人标签+指令去重（#67/#68）、失败不推进游标+warning 不注入（#69/#70）、终态前兜孤儿流式行（#71）、群回合推送与单聊一致（#72）、群讨论中保护成员连接（#73，细化 I4）、fork 群被拒（#74）、IM 机器人支持群会话（#75/#76）均有对应测试通过；**v1 明确不做**：@ 成员（#47）、离线状态（#54）、更换主持人（#53）；**已实现无需改**：群会话级设置隐藏（#60）；**已核实安全**：context_state / 未读 / activeStreams / auto-title / RAG（设计 §12.7(15)）。
