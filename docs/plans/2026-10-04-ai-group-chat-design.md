@@ -146,6 +146,7 @@
 | 74 | fork 群会话 | **后端拒绝**（与 #52 rewind 对称：v1 不支持，前端隐藏 + 后端守卫）。现状 `ServeForkSession` 无守卫，API 直调会产出"成员归属解析不到的假单聊"（`ForkSession` 硬编码 `session_type='chat'`，`continue_conversation.go:383`）。**`ContinueFromExecution` 无需守卫**——其源是 `task_executions`，群不产生该行，天然够不到 |
 | 75 | IM 机器人（钉钉/飞书）的会话列表 | **包含群会话**：`session_command.go:46,71` 两处硬编码 `session_type = 'chat'` 改 `IN ('chat','group')`（与决策 #63 同一白名单）。现状群里讨论在 IM 里完全看不到、也选不中，与 Web 端不一致 |
 | 76 | IM 里对群会话发消息 | **委派群编排器**：`sendMessageToSessionFromPush`（`session_command.go:182`）开头判 `GetSessionType == "group"` → 走 `RunGroupTurn`（与 Web 的 `AIChat` 群分支同构）。否则"选中群→发消息"会用**主持人单个 agent 跑单聊回合**，其他成员不参与，且消息落进群时间线**污染讨论**。该函数已走 `EnqueueAndMaybeStart`（`:197`），**天然支持忙碌入队**（决策 #45） |
+| 77 | 群聊的 usage 统计 | **保持现状**（usage 写成员行、群行不写）。**非缺口**：群里的 usage 进度条与 popup **整体已被 `isGroupSession` 隐藏**（`ChatInputBar.vue:316` 容器，决策 #60），故无用户可见失效；全局统计按 `chat_metadata` 逐消息聚合（`usage_stats.go:283`），群消息 metadata 正常落库 ⇒ **统计不丢**；成员行各存一份 usage 只是无人读取（无害） |
 
 ## 3. 架构
 
@@ -883,6 +884,13 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - **看不到**：`session_command.go:46`（按 id 前缀查找）与 `:71`（列最近会话）**硬编码 `session_type = 'chat'`** ⇒ 群在钉钉/飞书的会话列表与查找里**完全缺席**，无法选中。与 Web 端（群计入列表，决策 #37）不一致。
 - **发消息会退化**：`sendMessageToSessionFromPush`（`session_command.go:182`）走 `EnqueueAndMaybeStart` → 普通单聊回合 ⇒ 即使能让 IM 选中群，发消息也只会用**主持人那一个 agent** 跑单聊，其他成员不参与，且该消息落进群时间线**污染后续讨论**。
 **修（决策 #75/#76）**：两处改 `IN ('chat','group')`；`sendMessageToSessionFromPush` 判群后委派 `RunGroupTurn`（与 Web `AIChat` 群分支同构）。该函数已走 `EnqueueAndMaybeStart`，**天然支持忙碌入队**。
+
+**（24）usage 统计经核实是群安全的（非缺口，决策 #77）。**
+成员回合的 usage 走 `PatchContextStateMerge(e.cfg.SessionID, …)`（`session_executor.go:1014`）写到**成员行** `context_state.usage`；群行不写。但：
+- 群里的 usage 进度条 + popup **整体在 `v-if="!isGroupSession"` 容器内**（`ChatInputBar.vue:316`，决策 #60）⇒ **无用户可见失效**。
+- 全局用量统计按 `chat_metadata` **逐消息**聚合（`usage_stats.go:283`），群消息的 metadata 由 `SaveMetadata(msgID, …)`（`session_executor.go:1679`）正常落库 ⇒ **统计不丢**。
+- 成员行各存一份 usage 无人读取，无害。
+**决定（#77）**：保持现状，不加"汇总到群行"的逻辑（每个成员有各自上下文窗口，"合并"语义本身有歧义）。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
