@@ -372,6 +372,7 @@ func ArchiveSession(w http.ResponseWriter, r *http.Request) {
 		slog.Info("acp: closing connection for archived session", "session_id", sessionID, "agent_id", agentID)
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
+	closeGroupMemberConns(sessionID)
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": false, "sessionCount": sessionCount})
@@ -450,6 +451,7 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 			go ai.GetACPConnManager().CloseConn(sessionID)
 		}
 	}
+	closeGroupMemberConns(sessionID)
 
 	// Delete RAG chunks for this session before hard-deleting session data.
 	// Best-effort — if RAG is not initialized, this is a no-op.
@@ -466,6 +468,31 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 
 	sessionCount, _ := service.GetSessionCount(projectPath)
 	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "destroyed": true, "sessionCount": sessionCount})
+}
+
+// closeGroupMemberConns closes the ACP connection of every member of a group.
+//
+// Each member owns a separate connection keyed by the MEMBER row id, so closing
+// the group row's connection (what the archive/destroy paths already do) leaves
+// every member agent process running. A group's members must be closed by their
+// own ids (decision #57). No-op for non-group sessions.
+//
+// Each close runs in its own goroutine, matching the existing convention:
+// CloseConn may block on cmd.Wait() if the agent does not exit cleanly, and the
+// HTTP response must not wait on it.
+func closeGroupMemberConns(sessionID string) {
+	if service.GetSessionType(sessionID) != "group" {
+		return
+	}
+	members, err := service.ListGroupMembers(sessionID)
+	if err != nil {
+		slog.Warn("acp: listing group members to close connections failed", "session_id", sessionID, "err", err)
+		return
+	}
+	for _, m := range members {
+		slog.Info("acp: closing connection for group member", "group_id", sessionID, "member_id", m.ID)
+		go ai.GetACPConnManager().CloseConn(m.ID)
+	}
 }
 
 // getSessionID retrieves session ID from query param or cookie.
