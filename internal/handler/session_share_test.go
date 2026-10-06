@@ -129,6 +129,34 @@ func TestSessionShareManage_StatusReportsInFlightFlags(t *testing.T) {
 	assert.True(t, status.Messages[2].Streaming, "streaming flag must reach the dialog")
 }
 
+// TestSessionShareManage_StatusCarriesSpeakerIdentities pins the dialog's data
+// for real speaker icons: the session agent resolves (the dialog is owner-only,
+// so its avatars are fine here), and each message carries its speaker id.
+func TestSessionShareManage_StatusCarriesSpeakerIdentities(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, ids := seedShareSession(t, env, "sess-speakers")
+	// Mark the assistant message as group speech.
+	_, err := env.DB().Exec(
+		`UPDATE chat_history SET agent_id = 'member-9' WHERE id = ?`, ids[1],
+	)
+	require.NoError(t, err)
+
+	req := newRequest(t, http.MethodGet, "/api/share/session?session_id="+sessionID, nil)
+	withProjectCookie(req, env.ProjectDir)
+	w := callHandler(ServeSessionShareManage, req)
+	assertOK(t, w)
+
+	var status sessionShareStatusResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &status))
+	require.NotNil(t, status.SessionAgent, "the dialog needs the session agent to icon the single-agent rows")
+	assert.Equal(t, "codebuddy", status.SessionAgent.Backend)
+	// The assistant row carries the group-member id; the user row does not.
+	assert.Equal(t, "member-9", status.Messages[1].AgentID)
+	assert.Empty(t, status.Messages[0].AgentID)
+}
+
 func TestSessionShareManage_CreateRotatesToken(t *testing.T) {
 	env, teardown := setupTestEnv(t)
 	defer teardown()

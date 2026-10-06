@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 
 	"clawbench/internal/service"
@@ -779,4 +780,42 @@ func TestGetSessionMessagesForSelection_UnknownSessionIsEmpty(t *testing.T) {
 	items, err := service.GetSessionMessagesForSelection("nope")
 	require.NoError(t, err)
 	assert.Empty(t, items)
+}
+
+// TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars pins the
+// public-share privacy boundary: the snapshot carries each speaker's name and
+// backend (so the viewer renders the right brand icon) but NEVER a custom
+// avatar — a shared link must not expose the creator's avatars.
+func TestSessionSharePayload_FreezesSpeakerIdentitiesWithoutAvatars(t *testing.T) {
+	db := setupTestDBForSessionSharePayload(t)
+	defer func() { _ = db.Close() }()
+
+	origAgents := model.Agents
+	model.Agents = map[string]*model.Agent{
+		"codebuddy": {ID: "codebuddy", Name: "Host Agent", Backend: "codebuddy", Avatar: "<host/>"},
+	}
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	seedSession(t, db, "s1")
+	seedMessage(t, db, "s1", "assistant", `{"blocks":[{"type":"text","text":"hi"}],"metadata":{}}`, 0, 0)
+
+	raw, _, err := service.BuildSessionSharePayload("s1", nil, testProjectRoot, "/home/u")
+	require.NoError(t, err)
+
+	var payload struct {
+		SessionAgent *struct {
+			Name    string `json:"name"`
+			Backend string `json:"backend"`
+			Avatar  string `json:"avatar"`
+		} `json:"sessionAgent"`
+		Speakers map[string]struct {
+			Backend string `json:"backend"`
+			Avatar  string `json:"avatar"`
+		} `json:"speakers"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	require.NotNil(t, payload.SessionAgent, "the viewer needs the session agent to icon single-agent rows")
+	assert.Equal(t, "codebuddy", payload.SessionAgent.Backend)
+	assert.Equal(t, "Host Agent", payload.SessionAgent.Name)
+	assert.Empty(t, payload.SessionAgent.Avatar, "the share snapshot must not freeze custom avatars")
 }

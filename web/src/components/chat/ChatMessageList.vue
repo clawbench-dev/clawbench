@@ -185,6 +185,7 @@
     :loading="loadingIndex"
     :jumping="loadingTarget"
     :has-btw="hasBtwAnchor"
+    :resolve-speaker="resolveIndexSpeaker"
     @close="closeUserMsgIndex"
     @select="jumpToUserMessage"
   />
@@ -1142,6 +1143,25 @@ const {
     if (!val) userLeftBottom = true
   },
 })
+
+/**
+ * Resolve the conversation-index row's speaker identity so the drawer shows the
+ * real agent icon instead of a generic Bot.
+ *
+ * Precedence mirrors service.ResolveSessionSpeakers: a non-empty agentId is a
+ * GROUP member row id → `resolveSpeaker` (the roster the parent already owns for
+ * speaker attribution). An empty agentId is an ordinary message → the current
+ * session's agent. An unknown member id yields null so the row falls back to
+ * Bot rather than misattributing the speech to the host.
+ */
+function resolveIndexSpeaker(agentId) {
+  if (agentId) {
+    return typeof props.resolveSpeaker === 'function' ? props.resolveSpeaker(agentId) : null
+  }
+  const a = props.currentAgent
+  if (!a || !a.backend) return null
+  return { name: a.name, backend: a.backend, avatar: a.avatar }
+}
 
 // Nearest user message to viewport center — used for activeId highlight in index
 const scrollTick = ref(0)

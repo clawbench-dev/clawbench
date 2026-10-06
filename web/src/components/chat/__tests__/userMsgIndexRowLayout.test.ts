@@ -66,7 +66,11 @@ describe('UserMsgIndexDrawer: one-line rows', () => {
 describe('UserMsgIndexDrawer: icon-only role chips', () => {
   it('renders an icon per role and no role text', () => {
     // The chip must not fall back to a text label — that is what this replaced.
-    expect(source).toMatch(/<Bot v-if="msg\.role === 'assistant'"/)
+    // Assistant rows prefer the REAL agent icon (AgentIcon) and only fall back
+    // to the generic Bot when the host cannot resolve a speaker; user rows keep
+    // the generic User glyph.
+    expect(source).toMatch(/<AgentIcon\s+v-if="msg\.role === 'assistant' && speaker"/)
+    expect(source).toMatch(/<Bot v-else-if="msg\.role === 'assistant'"/)
     expect(source).toMatch(/<User v-else/)
     expect(source, 'the old text label must be gone').not.toMatch(
       /msg-role-tag[\s\S]{0,200}conversationIndexRoleUser'\s*\}\}\s*<\/span>/,

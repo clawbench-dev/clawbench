@@ -156,6 +156,9 @@ function makePayload() {
       agentId: 'codebuddy',
       model: 'claude-sonnet-4',
     },
+    // Speaker identities frozen at share time (no avatars — the server omits
+    // them on the public path). Drives the TOC rows' real agent icon.
+    sessionAgent: { name: 'CodeBuddy', backend: 'codebuddy' },
     messages: [
       { id: 11, role: 'user', content: 'please fix it', createdAt: '2026-09-22T09:00:00Z' },
       {
@@ -495,6 +498,15 @@ describe('SessionShareView', () => {
       expect(rows[0].find('.msg-text').text()).toContain('please fix it')
       // The assistant row uses its stored summary when one exists.
       expect(rows[1].find('.msg-text').text()).toContain('A short summary.')
+    })
+
+    it('icons the assistant row with the frozen session agent (public TOC)', async () => {
+      const wrapper = await mountView()
+      const rows = wrapper.findAll('.share-toc .msg-item')
+      // User row keeps the generic User glyph; assistant row resolves the
+      // frozen session agent to a real AgentIcon.
+      expect(rows[0].find('.agent-icon-svg, .agent-icon-img, .agent-icon-initial').exists()).toBe(false)
+      expect(rows[1].find('.agent-icon-svg, .agent-icon-img, .agent-icon-initial').exists()).toBe(true)
     })
 
     it('scrolls the content container to the clicked message and flashes it', async () => {

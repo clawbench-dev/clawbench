@@ -44,6 +44,7 @@
             :nav-active="listNav.activeIndex.value === idx"
             :search-query="searchQuery"
             :has-btw="hasBtw(msg)"
+            :resolve-speaker="resolveSpeaker"
             @select="$emit('select', $event)"
           />
         </div>
@@ -79,6 +80,12 @@ const props = defineProps({
    * share TOC wants.
    */
   hasBtw: { type: Function, default: () => false },
+  /**
+   * Resolves a message's agentId to the speaker's identity so rows show the
+   * real agent icon (see MessageIndexRow). The host owns the roster; absent
+   * means every assistant row keeps the generic Bot.
+   */
+  resolveSpeaker: { type: Function, default: null },
 })
 
 const emit = defineEmits(['close', 'select'])

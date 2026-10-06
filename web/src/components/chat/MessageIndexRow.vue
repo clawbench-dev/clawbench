@@ -32,7 +32,17 @@
         :title="roleLabel"
         :aria-label="roleLabel"
       >
-        <Bot v-if="msg.role === 'assistant'" :size="12" />
+        <!-- Assistant rows show the ACTUAL speaker's agent icon when the host
+             can resolve one; otherwise the generic Bot. User rows always keep
+             the generic User glyph (the human is not an agent). -->
+        <AgentIcon
+          v-if="msg.role === 'assistant' && speaker"
+          :backend="speaker.backend"
+          :name="speaker.name"
+          :avatar="speaker.avatar"
+          size="sm"
+        />
+        <Bot v-else-if="msg.role === 'assistant'" :size="12" />
         <User v-else :size="12" />
       </span>
       <span class="msg-text" :class="{ 'msg-text--muted': isPlaceholder }" v-html="rowHighlight"></span>
@@ -56,9 +66,11 @@
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Bot, User, MessageCircleQuestion } from 'lucide-vue-next'
+import AgentIcon from '@/components/common/AgentIcon.vue'
 import { assistantIndexText, formatIndexMsg } from '@/utils/userMsgIndexUtils.ts'
 import { highlightText } from '@/utils/searchUtils'
 import { formatRelativeTime } from '@/utils/format.ts'
+import type { SpeakerIdentity } from '@/utils/speakerIdentity'
 
 interface IndexMsg {
   id?: number | string
@@ -68,6 +80,8 @@ interface IndexMsg {
   createdAt?: string
   blocks?: Array<{ type?: string; text?: string }>
   files?: Array<string | { path?: string }>
+  /** Speaker's group-member row id (group chats); empty for single-agent. */
+  agentId?: string
 }
 
 const props = withDefaults(defineProps<{
@@ -88,12 +102,20 @@ const props = withDefaults(defineProps<{
    * so no marker renders there.
    */
   hasBtw?: boolean
+  /**
+   * Resolves a message's `agentId` to the speaker's identity, so the role chip
+   * can show the real agent icon instead of a generic Bot. The host owns the
+   * data (roster / session agent); absent means "always generic Bot". The
+   * component stays presentational — it never imports a group composable.
+   */
+  resolveSpeaker?: ((agentId: string) => SpeakerIdentity | null) | null
 }>(), {
   active: false,
   navActive: false,
   searchQuery: '',
   showTime: true,
   hasBtw: false,
+  resolveSpeaker: null,
 })
 
 defineEmits<{ select: [msg: IndexMsg] }>()
@@ -129,6 +151,18 @@ const rowHighlight = computed(() =>
 
 /** Tooltip/label for the /btw marker (icon-only, so the text must live here). */
 const btwLabel = computed(() => t('chat.btw.anchorTitle'))
+
+/**
+ * The speaker's identity for this row, or null to render the generic Bot.
+ * Only assistant rows have a speaker (a user message is the human, not an
+ * agent), and the host must have supplied a resolver.
+ */
+const speaker = computed<SpeakerIdentity | null>(() => {
+  if (props.msg.role !== 'assistant') return null
+  const resolve = props.resolveSpeaker
+  if (typeof resolve !== 'function') return null
+  return resolve(props.msg.agentId || '') || null
+})
 </script>
 
 <style scoped>

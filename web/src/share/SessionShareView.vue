@@ -121,6 +121,7 @@
             :index="i + 1"
             :active="activeTocId === item.id"
             :show-time="true"
+            :resolve-speaker="resolveSpeaker"
             @select="scrollToMessage(item.id)"
           />
         </div>
@@ -146,6 +147,7 @@
               :index="i + 1"
               :active="activeTocId === item.id"
               :show-time="true"
+              :resolve-speaker="resolveSpeaker"
               @select="scrollToMessage(item.id); tocOpen = false"
             />
           </div>
@@ -196,6 +198,7 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 import MessageIndexRow from '@/components/chat/MessageIndexRow.vue'
+import { makeSpeakerResolver, type SpeakerIdentity } from '@/utils/speakerIdentity'
 import ToolDetailDrawer from '@/components/chat/ToolDetailDrawer.vue'
 import ChatMetadataModal from '@/components/chat/ChatMetadataModal.vue'
 import { useChatRender } from '@/composables/useChatRender'
@@ -266,8 +269,18 @@ interface TocMessage {
   createdAt?: string
   blocks?: Array<{ type?: string; text?: string }>
   files?: Array<string | { path?: string }>
+  /** Speaker's group-member row id (group chats); empty for single-agent. */
+  agentId?: string
 }
 const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMessage[])
+
+// Speaker identities frozen into the snapshot. The public viewer is anonymous
+// and cannot call /api/agents or /api/group/members, so the roster must travel
+// with the payload. Avatars are absent by design (the server omits them on the
+// share path), so rows render the built-in per-backend brand icon.
+const sessionAgent = ref<SpeakerIdentity | null>(null)
+const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
+const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
 /** Message id currently in view (scroll-spy); null until the observer fires. */
 const activeTocId = ref<number | string | null>(null)
 
@@ -591,6 +604,8 @@ async function loadSnapshot() {
 
     title.value = payload?.session?.title || t('share.sharedConversation')
     backendLabel.value = payload?.session?.backend || ''
+    sessionAgent.value = payload?.sessionAgent || null
+    speakers.value = payload?.speakers || null
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
     messageCount.value = rawMessages.length
 

@@ -1054,6 +1054,7 @@ paths:
         轻量返回该会话的对话索引（`{messages:[...]}`），供消息导航。
         按 id 升序返回全部已定稿消息（用户消息 + 助手消息），排除 streaming 行。排队消息不在 `messages` 中（它们尚无 chat_history 行），由响应里的 `queue` 数组单独返回。
         用户消息带 `content` / `files`；助手消息带 `summary`（已存阅读摘要，缺失时回退为该轮回复正文抽取的预览，`content` 为空串）。
+        群聊中助手消息还带 `agentId`（发言成员的会话行 id），供前端解析出该发言人的真实智能体图标；单聊助手消息无此字段。
       operationId: chatUserMessages
       parameters:
         - name: session_id
@@ -1073,7 +1074,7 @@ paths:
                     type: array
                     items:
                       type: object
-                      description: 索引条目（含 id / role / createdAt；用户条目含 content / files，助手条目含 summary）。
+                      description: 索引条目（含 id / role / createdAt；用户条目含 content / files，助手条目含 summary；群聊助手条目含 agentId）。
 
   /api/ai/chat/tool-call:
     get:
@@ -2851,6 +2852,7 @@ paths:
         需要 `session_id` 查询参数。返回该会话当前的分享状态，并附带**全部**消息
         （含仍在生成/排队的）供分享对话框渲染：生成中的消息不可勾选。
         未分享时 `token` 为空但 `messages` 照常返回，使打开对话框只需一次请求。
+        另附 `sessionAgent`（会话级智能体）与 `speakers`（群聊成员行 id → 身份），供对话框为每条助手消息渲染真实智能体图标；此端点需登录（仅属主），故身份**含**自定义头像。
       operationId: sessionShareStatus
       parameters:
         - name: session_id
@@ -2860,7 +2862,9 @@ paths:
             type: string
       responses:
         "200":
-          description: 分享状态与消息列表
+          description: |
+            分享状态与消息列表。
+            每条消息含 `agentId`（群聊发言成员行 id，单聊为空）；`sessionAgent`/`speakers` 提供解析所需身份。
     post:
       tags: [Share]
       summary: 创建会话分享链接

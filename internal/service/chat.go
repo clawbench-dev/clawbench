@@ -194,7 +194,7 @@ const indexSummaryMaxRunes = 200
 // until they are dequeued into chat_history.
 func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 	rows, err := store.ReadDB().Query(
-		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, '')
+		`SELECT h.id, h.role, h.content, h.files, h.created_at, COALESCE(s.summary, ''), COALESCE(h.agent_id, '')
 		 FROM chat_history h
 		 LEFT JOIN summaries s ON s.target_type = 'chat_message' AND s.target_id = h.id
 		 WHERE h.session_id = ? AND h.streaming = 0
@@ -210,7 +210,7 @@ func GetConversationIndex(sessionID string) ([]model.ChatMessage, error) {
 		var msg model.ChatMessage
 		var filesJSON sql.NullString
 		var summary string
-		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.CreatedAt, &summary); err != nil {
+		if err := rows.Scan(&msg.ID, &msg.Role, &msg.Content, &filesJSON, &msg.CreatedAt, &summary, &msg.AgentID); err != nil {
 			return nil, err
 		}
 		if msg.Role == roleAssistant {

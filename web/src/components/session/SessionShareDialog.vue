@@ -89,7 +89,8 @@
               :title="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
               :aria-label="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
             >
-              <Bot v-if="m.role === 'assistant'" :size="12" />
+              <AgentIcon v-if="m.role === 'assistant' && speakerFor(m)" :backend="speakerFor(m).backend" :name="speakerFor(m).name" :avatar="speakerFor(m).avatar" size="sm" />
+              <Bot v-else-if="m.role === 'assistant'" :size="12" />
               <User v-else :size="12" />
             </span>
             <span class="session-share-dialog-preview" :title="m.preview">{{ m.preview || '—' }}</span>
@@ -145,6 +146,8 @@ import { useI18n } from 'vue-i18n'
 import { Bot, ExternalLink, Info, Link2, RefreshCw, Trash2, User } from 'lucide-vue-next'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
 import ModalDialog from '@/components/common/ModalDialog.vue'
+import AgentIcon from '@/components/common/AgentIcon.vue'
+import { makeSpeakerResolver } from '@/utils/speakerIdentity'
 import { useDialog } from '@/composables/useDialog'
 import { useToast } from '@/composables/useToast.ts'
 import { copyText } from '@/utils/clipboard.ts'
@@ -183,9 +186,23 @@ const messages = ref([])
 const selectedIds = ref(new Set())
 const linkInputRef = ref(null)
 
+// Speaker identities shipped with the status response, so each row shows the
+// real agent icon (group members included) instead of a generic Bot. The dialog
+// is self-contained — it opens for arbitrary sessions — so the roster travels
+// in the response rather than coming from a current-session composable.
+const sessionAgent = ref(null)
+const speakers = ref(null)
+const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
+
 /** A message is shareable only once finalized (streaming excluded). */
 function isSelectable(m) {
   return !m.streaming
+}
+
+/** Speaker identity for one message row (null → the template renders Bot). */
+function speakerFor(m) {
+  if (!m || m.role !== 'assistant') return null
+  return resolveSpeaker.value(m.agentId || '') || null
 }
 
 const selectableCount = computed(() => messages.value.filter(isSelectable).length)
@@ -229,6 +246,8 @@ async function loadStatus() {
     if (!resp.ok) throw new Error(resp.statusText)
     const data = await resp.json()
     messages.value = Array.isArray(data.messages) ? data.messages : []
+    sessionAgent.value = data.sessionAgent || null
+    speakers.value = data.speakers || null
     // Default: everything selectable is checked. In-flight messages can never be
     // selected, so they are excluded from the default rather than silently
     // dropped at submit time.

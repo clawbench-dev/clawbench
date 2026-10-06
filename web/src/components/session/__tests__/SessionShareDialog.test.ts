@@ -140,6 +140,25 @@ describe('SessionShareDialog', () => {
     expect(wrapper.findAll('.session-share-dialog-row')).toHaveLength(4)
   })
 
+  it('renders the real speaker icon when the response carries identities', async () => {
+    // The dialog is owner-only, so the response ships the session agent + the
+    // group roster; assistant rows must show AgentIcon, not the generic Bot.
+    globalThis.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        ...messagesResponse(2),
+        sessionAgent: { name: 'Solo', backend: 'claude' },
+        speakers: { 'member-1': { name: 'Alice', backend: 'codex' } },
+      }),
+    } as Response)) as unknown as typeof fetch
+
+    const wrapper = await mountDialog()
+    // messagesResponse(2): row 0 user, row 1 assistant (empty agentId → session agent).
+    const rows = wrapper.findAll('.session-share-dialog-row')
+    expect(rows[0].find('.agent-icon-img, .agent-icon-svg, .agent-icon-initial').exists()).toBe(false)
+    expect(rows[1].find('.agent-icon-img, .agent-icon-svg, .agent-icon-initial').exists()).toBe(true)
+  })
+
   // The default is "share everything" — the user unchecks what they do not want,
   // rather than opting in message by message.
   it('checks every selectable message by default', async () => {

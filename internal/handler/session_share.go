@@ -40,6 +40,12 @@ type sessionShareStatusResponse struct {
 	Path         string                          `json:"path,omitempty"`
 	MessageCount int                             `json:"messageCount,omitempty"`
 	Messages     []service.SessionMessagePreview `json:"messages"`
+	// SessionAgent + Speakers let the dialog render the real speaker icon per
+	// row. The dialog is self-contained (it fetches its own data for an
+	// arbitrary session), so the roster must travel with this response rather
+	// than being read from a current-session composable.
+	SessionAgent *service.SpeakerIdentity           `json:"sessionAgent,omitempty"`
+	Speakers     map[string]service.SpeakerIdentity `json:"speakers,omitempty"`
 }
 
 // sessionShareRequest is the shared request shape for POST and DELETE. GET
@@ -156,7 +162,10 @@ func serveSessionShareStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := sessionShareStatusResponse{Messages: messages}
+	// includeAvatar=true: the dialog is authenticated (owner-only), so the real
+	// avatars are fine here — unlike the public share payload.
+	sessionAgent, speakers := service.ResolveSessionSpeakers(sessionID, true)
+	resp := sessionShareStatusResponse{Messages: messages, SessionAgent: sessionAgent, Speakers: speakers}
 	token, exists, err := service.GetSessionShareBySession(sessionID)
 	if err != nil {
 		slog.Error("session share: status lookup failed", "session", sessionID, "err", err)
