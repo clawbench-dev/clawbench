@@ -206,6 +206,89 @@ describe('AgentSelectorDrawer', () => {
     })
   })
 
+  describe('group mode (host dot)', () => {
+    it('shows a host dot only on selected rows', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const rows = wrapper.findAll('.agent-option')
+      // agent-1 is selected -> host dot present; agent-2 is not -> absent.
+      expect(rows[0].find('.agent-host-dot').exists()).toBe(true)
+      expect(rows[1].find('.agent-host-dot').exists()).toBe(false)
+    })
+
+    it('does not show host dots in the plain add-members mode', async () => {
+      const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      expect(wrapper.findAll('.agent-host-dot').length).toBe(0)
+    })
+
+    it('emits update:hostId without toggling selection when the dot is clicked', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].find('.agent-host-dot').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeTruthy()
+      expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-1'])
+      // The row must stay selected (the dot click is not a toggle).
+      expect(wrapper.findAll('.agent-option')[0].classes()).toContain('selected')
+      expect(wrapper.emitted('select')).toBeFalsy()
+    })
+
+    it('keeps a single host: selecting another dot replaces it', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1', 'agent-2'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[1].find('.agent-host-dot').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-2'])
+    })
+
+    it('marks the current host dot as active', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1', 'agent-2'], hostId: 'agent-2' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const rows = wrapper.findAll('.agent-option')
+      expect(rows[1].find('.agent-host-dot').classes()).toContain('active')
+      expect(rows[0].find('.agent-host-dot').classes()).not.toContain('active')
+    })
+
+    it('disables confirm until a host is chosen', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      const confirm = wrapper.find('.agent-multi-confirm')
+      expect(confirm.attributes('disabled')).toBeDefined()
+
+      await wrapper.setProps({ hostId: 'agent-1' })
+      await flushPromises()
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeUndefined()
+    })
+
+    it('clears the host when its row is deselected', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // Deselect agent-1 (the host) by clicking its row body.
+      await wrapper.findAll('.agent-option')[0].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeTruthy()
+      expect(wrapper.emitted('update:hostId')!.at(-1)).toEqual([''])
+    })
+  })
+
   describe('close', () => {
     it('emits update:open=false when handleClose is called', async () => {
       const wrapper = mountDrawer()

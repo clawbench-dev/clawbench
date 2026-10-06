@@ -30,6 +30,15 @@
             <span v-if="defaultModelName(agent.id)" class="agent-tag model-tag">{{ defaultModelName(agent.id) }}</span>
           </div>
         </div>
+        <span
+          v-if="groupMode && isSelected(agent.id)"
+          class="agent-host-dot"
+          :class="{ active: agent.id === hostId }"
+          role="radio"
+          :aria-checked="agent.id === hostId"
+          :title="hostLabel"
+          @click.stop="handleSetHost(agent.id)"
+        ><span class="agent-host-dot-inner" /></span>
         <span v-if="isExcluded(agent.id)" class="agent-tag agent-added-tag">{{ addedLabel }}</span>
         <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
         <button v-else-if="showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
@@ -41,13 +50,13 @@
       </div>
     </div>
     <template v-if="multiple" #footer>
-      <button class="agent-multi-confirm" @click="handleConfirmMulti">{{ confirmLabel }}</button>
+      <button class="agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
     </template>
   </BottomSheet>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, inject } from 'vue'
+import { ref, watch, inject, computed } from 'vue'
 import { Bot, Star, Settings, Check } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -77,6 +86,13 @@ const props = withDefaults(defineProps<{
   excludedAgentIds?: string[]
   /** Label shown on excluded rows. */
   addedLabel?: string
+  /** Group-creation mode: each SELECTED row grows a "host" radio dot so the
+   *  user picks the host inline, in the same list as the members. */
+  groupMode?: boolean
+  /** The currently chosen host agent id (groupMode only). */
+  hostId?: string
+  /** Tooltip/label for the host dot. */
+  hostLabel?: string
 }>(), {
   modelValue: '',
   multiple: false,
@@ -88,11 +104,15 @@ const props = withDefaults(defineProps<{
   showAgentActions: true,
   excludedAgentIds: () => [],
   addedLabel: 'Added',
+  groupMode: false,
+  hostId: '',
+  hostLabel: 'Host',
 })
 
 const emit = defineEmits<{
   (e: 'update:open', value: boolean): void
   (e: 'update:modelValue', agentId: string | string[]): void
+  (e: 'update:hostId', agentId: string): void
   (e: 'select', agentId: string | string[]): void
 }>()
 
@@ -129,14 +149,29 @@ function handleSelect(agentId: string) {
   if (props.multiple) {
     // Toggle; do not close.
     const i = selectedIds.value.indexOf(agentId)
-    if (i >= 0) selectedIds.value.splice(i, 1)
-    else selectedIds.value.push(agentId)
+    if (i >= 0) {
+      selectedIds.value.splice(i, 1)
+      // Deselecting the host clears it: the host must be a member.
+      if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
+    } else {
+      selectedIds.value.push(agentId)
+    }
     return
   }
   emit('update:modelValue', agentId)
   emit('select', agentId)
   handleClose()
 }
+
+// The host dot only appears in group mode on SELECTED rows; clicking it sets
+// the single host without toggling the row's selection.
+function handleSetHost(agentId: string) {
+  if (Date.now() - openTime < 400) return
+  emit('update:hostId', agentId)
+}
+
+// Confirm is blocked until a host is chosen (groupMode has no default host).
+const confirmDisabled = computed(() => props.groupMode && !props.hostId)
 
 function handleConfirmMulti() {
   const ids = [...selectedIds.value]
@@ -420,6 +455,43 @@ watch(() => props.open, async (val) => {
 .agent-option-check.checked {
   border-color: var(--accent-color, #0066cc);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+}
+
+/* Group mode: inline "host" radio dot on selected rows. Only one may be
+   active; clicking it never toggles the row's selection. */
+.agent-host-dot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid var(--border-color, #ccc);
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: border-color var(--duration-base), background var(--duration-base);
+}
+
+.agent-host-dot.active {
+  border-color: var(--accent-color, #0066cc);
+  background: var(--accent-color, #0066cc);
+}
+
+.agent-host-dot-inner {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transition: background var(--duration-base);
+}
+
+.agent-host-dot.active .agent-host-dot-inner {
+  background: #fff;
+}
+
+.agent-multi-confirm:disabled {
+  opacity: var(--opacity-disabled, 0.4);
+  cursor: not-allowed;
 }
 
 .agent-multi-confirm {
