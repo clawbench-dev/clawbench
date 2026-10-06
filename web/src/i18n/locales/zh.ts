@@ -1119,7 +1119,7 @@ export default {
     host: '主持人',
     selectHost: '请选择群聊主持人',
     selectMembersAndHost: '选择成员与主持人',
-    hostLabel: '设为主持人',
+    hostLabel: '点击设为主持人',
     createGroup: '创建群聊',
     addMembers: '添加成员',
     members: '成员',

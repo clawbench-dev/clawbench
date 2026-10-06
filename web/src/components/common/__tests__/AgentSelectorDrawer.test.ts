@@ -206,60 +206,83 @@ describe('AgentSelectorDrawer', () => {
     })
   })
 
-  describe('group mode (host dot)', () => {
-    it('shows a host dot only on selected rows', async () => {
+  describe('group mode (host button)', () => {
+    it('shows a host button only on selected rows', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
       const rows = wrapper.findAll('.agent-option')
-      // agent-1 is selected -> host dot present; agent-2 is not -> absent.
-      expect(rows[0].find('.agent-host-dot').exists()).toBe(true)
-      expect(rows[1].find('.agent-host-dot').exists()).toBe(false)
+      // agent-1 is selected -> host button present; agent-2 is not -> absent.
+      expect(rows[0].find('.agent-host-btn').exists()).toBe(true)
+      expect(rows[1].find('.agent-host-btn').exists()).toBe(false)
     })
 
-    it('does not show host dots in the plain add-members mode', async () => {
+    it('does not show host buttons in the plain add-members mode', async () => {
       const wrapper = mountDrawer({ multiple: true, modelValue: ['agent-1'] })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      expect(wrapper.findAll('.agent-host-dot').length).toBe(0)
+      expect(wrapper.findAll('.agent-host-btn').length).toBe(0)
     })
 
-    it('emits update:hostId without toggling selection when the dot is clicked', async () => {
-      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+    it('auto-assigns the host to the first agent selected', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: [] })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      await wrapper.findAll('.agent-option')[0].find('.agent-host-dot').trigger('click')
+      await wrapper.findAll('.agent-option')[0].trigger('click')
       await flushPromises()
 
       expect(wrapper.emitted('update:hostId')).toBeTruthy()
       expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-1'])
-      // The row must stay selected (the dot click is not a toggle).
+    })
+
+    it('does not override an existing host when more members are selected', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: [], hostId: 'agent-1' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[1].trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeFalsy()
+    })
+
+    it('emits update:hostId without toggling selection when the button is clicked', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'] })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      await wrapper.findAll('.agent-option')[0].find('.agent-host-btn').trigger('click')
+      await flushPromises()
+
+      expect(wrapper.emitted('update:hostId')).toBeTruthy()
+      expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-1'])
+      // The row must stay selected (the host button click is not a toggle).
       expect(wrapper.findAll('.agent-option')[0].classes()).toContain('selected')
       expect(wrapper.emitted('select')).toBeFalsy()
     })
 
-    it('keeps a single host: selecting another dot replaces it', async () => {
+    it('keeps a single host: selecting another button replaces it', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1', 'agent-2'], hostId: 'agent-1' })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      await wrapper.findAll('.agent-option')[1].find('.agent-host-dot').trigger('click')
+      await wrapper.findAll('.agent-option')[1].find('.agent-host-btn').trigger('click')
       await flushPromises()
 
       expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-2'])
     })
 
-    it('marks the current host dot as active', async () => {
+    it('marks the current host button as active', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1', 'agent-2'], hostId: 'agent-2' })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
       const rows = wrapper.findAll('.agent-option')
-      expect(rows[1].find('.agent-host-dot').classes()).toContain('active')
-      expect(rows[0].find('.agent-host-dot').classes()).not.toContain('active')
+      expect(rows[1].find('.agent-host-btn').classes()).toContain('active')
+      expect(rows[0].find('.agent-host-btn').classes()).not.toContain('active')
     })
 
     it('disables confirm until a host is chosen', async () => {

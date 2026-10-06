@@ -67,6 +67,7 @@
       :group-mode="creatingGroup"
       :host-id="groupHostId"
       :host-label="t('group.hostLabel')"
+      :host-badge="t('group.host')"
       :confirm-label="t('group.createGroup')"
       :title="creatingGroup ? t('group.selectMembersAndHost') : t('session.selectAgent')"
       :show-agent-actions="!creatingGroup"

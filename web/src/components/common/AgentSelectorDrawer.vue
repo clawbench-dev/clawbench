@@ -30,15 +30,21 @@
             <span v-if="defaultModelName(agent.id)" class="agent-tag model-tag">{{ defaultModelName(agent.id) }}</span>
           </div>
         </div>
-        <span
+        <!-- Group mode: the host control sits where the per-row default star
+             normally is, but is a labelled button so it reads as an action.
+             Only selected rows can be host (the host must be a member). -->
+        <button
           v-if="groupMode && isSelected(agent.id)"
-          class="agent-host-dot"
+          class="agent-host-btn"
           :class="{ active: agent.id === hostId }"
-          role="radio"
-          :aria-checked="agent.id === hostId"
+          type="button"
+          :aria-pressed="agent.id === hostId"
           :title="hostLabel"
           @click.stop="handleSetHost(agent.id)"
-        ><span class="agent-host-dot-inner" /></span>
+        >
+          <Crown :size="12" />
+          <span class="agent-host-btn-label">{{ hostBadge }}</span>
+        </button>
         <span v-if="isExcluded(agent.id)" class="agent-tag agent-added-tag">{{ addedLabel }}</span>
         <span v-if="showAgentActions && isDefaultAgent(agent.id)" class="agent-default-badge-pill">{{ defaultBadge }}</span>
         <button v-else-if="showAgentActions" class="agent-set-default-btn" @click.stop="handleSetDefaultAgent(agent.id)" :title="setDefaultTitle">
@@ -57,7 +63,7 @@
 
 <script setup lang="ts">
 import { ref, watch, inject, computed } from 'vue'
-import { Bot, Star, Settings, Check } from 'lucide-vue-next'
+import { Bot, Star, Settings, Check, Crown } from 'lucide-vue-next'
 import { useI18n } from 'vue-i18n'
 import BottomSheet from '@/components/common/BottomSheet.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
@@ -91,8 +97,10 @@ const props = withDefaults(defineProps<{
   groupMode?: boolean
   /** The currently chosen host agent id (groupMode only). */
   hostId?: string
-  /** Tooltip/label for the host dot. */
+  /** Tooltip/label for the host button. */
   hostLabel?: string
+  /** Short label shown on the host button (groupMode only). */
+  hostBadge?: string
 }>(), {
   modelValue: '',
   multiple: false,
@@ -107,6 +115,7 @@ const props = withDefaults(defineProps<{
   groupMode: false,
   hostId: '',
   hostLabel: 'Host',
+  hostBadge: 'Host',
 })
 
 const emit = defineEmits<{
@@ -151,10 +160,14 @@ function handleSelect(agentId: string) {
     const i = selectedIds.value.indexOf(agentId)
     if (i >= 0) {
       selectedIds.value.splice(i, 1)
-      // Deselecting the host clears it: the host must be a member.
+      // Deselecting the host clears it: the host must be a member. The next
+      // select re-seeds a host (see below), so the group stays creatable.
       if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
     } else {
       selectedIds.value.push(agentId)
+      // First pick becomes the host automatically (user can change it): with
+      // nothing selected there is no host, and an empty host blocks creation.
+      if (props.groupMode && !props.hostId) emit('update:hostId', agentId)
     }
     return
   }
@@ -457,36 +470,35 @@ watch(() => props.open, async (val) => {
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
 }
 
-/* Group mode: inline "host" radio dot on selected rows. Only one may be
-   active; clicking it never toggles the row's selection. */
-.agent-host-dot {
+/* Group mode: the host control sits where the default star normally is, but is
+   a labelled button so it reads as an action rather than a decorative dot.
+   Only one may be active; clicking it never toggles the row's selection. */
+.agent-host-btn {
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border: 1.5px solid var(--border-color, #ccc);
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  border: 1px solid var(--border-color, #ccc);
   border-radius: var(--radius-full);
+  background: none;
+  color: var(--text-secondary, #666);
+  font-size: var(--font-size-2xs);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
   cursor: pointer;
-  transition: border-color var(--duration-base), background var(--duration-base);
+  white-space: nowrap;
+  transition: color var(--duration-base), border-color var(--duration-base), background var(--duration-base);
 }
 
-.agent-host-dot.active {
+.agent-host-btn.active {
   border-color: var(--accent-color, #0066cc);
-  background: var(--accent-color, #0066cc);
+  background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
+  color: var(--accent-color, #0066cc);
 }
 
-.agent-host-dot-inner {
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-full);
-  background: transparent;
-  transition: background var(--duration-base);
-}
-
-.agent-host-dot.active .agent-host-dot-inner {
-  background: #fff;
+.agent-host-btn-label {
+  line-height: 1;
 }
 
 .agent-multi-confirm:disabled {
