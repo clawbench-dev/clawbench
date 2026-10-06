@@ -381,7 +381,7 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
-    it('caps the stack at four discs and summarises the rest as "+N" (same as the header)', async () => {
+    it('caps the stack at four discs with no overflow label', async () => {
       const manyMembers = Array.from({ length: 6 }, (_, i) => ({
         id: `m${i}`, agentId: `a${i}`, name: `M${i}`, backend: 'cli',
       }))
@@ -394,9 +394,10 @@ describe('SessionList', () => {
       await flushPromises()
 
       const discs = wrapper.findAll('[data-session-id="g1"] .group-member-stack .avatar-disc')
-      // Capped at 4 discs; the remaining members are summarised as "+2".
+      // Capped at 4 discs; the extra members are not rendered and the session
+      // row shows no "+N" label.
       expect(discs.length).toBe(4)
-      expect(wrapper.find('[data-session-id="g1"] .avatar-more').text()).toBe('+2')
+      expect(wrapper.find('[data-session-id="g1"] .avatar-more').exists()).toBe(false)
       wrapper.unmount()
     })
 

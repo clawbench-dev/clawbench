@@ -25,15 +25,17 @@ describe('GroupMemberStack', () => {
     expect(w.find('.avatar-more').exists()).toBe(false)
   })
 
-  it('caps the discs at four and summarises the rest as "+N" (same as the header)', () => {
+  it('caps the discs at four and renders no overflow label', () => {
     const w = mount(GroupMemberStack, {
       props: { members: [member(1), member(2), member(3), member(4), member(5)] },
     })
+    // Capped at 4; the extra member is simply not rendered — the session row
+    // shows no "+N" (the tooltip still lists everyone).
     expect(w.findAll('.avatar-disc')).toHaveLength(4)
-    expect(w.find('.avatar-more').text()).toBe('+1')
+    expect(w.find('.avatar-more').exists()).toBe(false)
   })
 
-  it('renders no overflow label when the roster is exactly the cap', () => {
+  it('renders all four discs with no overflow label when exactly at the cap', () => {
     const w = mount(GroupMemberStack, {
       props: { members: [member(1), member(2), member(3), member(4)] },
     })
@@ -50,12 +52,12 @@ describe('GroupMemberStack', () => {
     expect(z[1]).toBeGreaterThan(z[2])
   })
 
-  it('honours a custom max', () => {
+  it('honours a custom max without an overflow label', () => {
     const w = mount(GroupMemberStack, {
       props: { members: [member(1), member(2), member(3)], max: 1 },
     })
     expect(w.findAll('.avatar-disc')).toHaveLength(1)
-    expect(w.find('.avatar-more').text()).toBe('+2')
+    expect(w.find('.avatar-more').exists()).toBe(false)
   })
 
   it('renders nothing for an empty roster', () => {

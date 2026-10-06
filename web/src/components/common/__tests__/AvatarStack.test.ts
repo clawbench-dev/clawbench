@@ -40,6 +40,16 @@ describe('AvatarStack', () => {
     expect(w.find('.avatar-more').text()).toBe('+1')
   })
 
+  it('omits the "+N" label when showCount is false', () => {
+    // The compact session-list row suppresses the label (extra members are just
+    // not rendered); the header keeps it.
+    const w = mount(AvatarStack, {
+      props: { members: [member(1), member(2), member(3), member(4), member(5)], showCount: false },
+    })
+    expect(w.findAll('.avatar-disc')).toHaveLength(4)
+    expect(w.find('.avatar-more').exists()).toBe(false)
+  })
+
   it('puts the FIRST member on top (z-index decreases with DOM order)', () => {
     const w = mount(AvatarStack, { props: { members: [member(1), member(2), member(3)] } })
     const z = w.findAll('.avatar-disc').map(el => Number(el.element.style.zIndex))

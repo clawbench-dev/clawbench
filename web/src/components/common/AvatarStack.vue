@@ -12,8 +12,10 @@
     </span>
     <!-- Overflow count as plain text to the RIGHT, never a disc: it is extra
          info, not a member, and keeping it out of the stack leaves the overlap
-         direction uniform (first on top, each later disc tucked behind). -->
-    <span v-if="overflowCount > 0" class="avatar-more">+{{ overflowCount }}</span>
+         direction uniform (first on top, each later disc tucked behind).
+         Suppressed when showCount is false (e.g. the dense session-list row,
+         where the extra label is noise; the tooltip still lists everyone). -->
+    <span v-if="showCount && overflowCount > 0" class="avatar-more">+{{ overflowCount }}</span>
   </span>
 </template>
 
@@ -39,11 +41,15 @@ const props = withDefaults(defineProps<{
   size?: AgentIconSize
   /** Max discs shown; the remainder becomes a "+N" text label. */
   max?: number
+  /** Render the trailing "+N" label for members past `max`. Off for compact
+   *  callers (the session-list row) where the label is noise. */
+  showCount?: boolean
   /** Tooltip for the whole stack. Defaults to the member names joined. */
   tooltip?: string
 }>(), {
   size: 'md',
   max: 4,
+  showCount: true,
   tooltip: '',
 })
 
