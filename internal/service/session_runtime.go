@@ -336,7 +336,8 @@ func GetLastUserMessageMeta(ctx context.Context, sessionID string) (plain string
 	}
 	var content string
 	var files string
-	err := store.ReadDB().QueryRowContext(ctx,
+	err := store.ReadDB().QueryRowContext(
+		ctx,
 		"SELECT content, COALESCE(files, '') FROM chat_history WHERE session_id = ? AND role = 'user' AND streaming = 0 ORDER BY id DESC LIMIT 1",
 		sessionID,
 	).Scan(&content, &files)
@@ -988,7 +989,8 @@ func rawAssistantBlocks(ctx context.Context, messageID int64, viewContent string
 	// Filter streaming = 0 in SQL (matching backfillMissingSummaries) so a
 	// half-persisted placeholder row can never be read as the final answer.
 	var content string
-	if err := store.ReadDB().QueryRowContext(ctx,
+	if err := store.ReadDB().QueryRowContext(
+		ctx,
 		"SELECT content FROM chat_history WHERE id = ? AND streaming = 0",
 		messageID,
 	).Scan(&content); err != nil {
@@ -1316,13 +1318,38 @@ func RespondPermission(sessionID, toolCallID, optionID string, cancelled bool) e
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
-	// Look up the ACP connection for this ClawBench session
+	// The frontend sends the permissionBlockID (prefixed with "perm_") as
+	// toolCallId. Strip the prefix to recover the original ACP tool call ID
+	// used in PermissionKey.
+	toolCallID = stripPermissionBlockPrefix(toolCallID)
+
 	mgr := ai.GetACPConnManager()
+
+	// Group fallback: in a group the frontend only knows the GROUP session id
+	// (that is the timeline it is subscribed to and the id it echoes back), but
+	// every member runs on its own ACP connection keyed by the MEMBER ROW id.
+	// The group row itself never runs a turn, so there is no connection under
+	// the group id — probe the members for the one holding this tool call.
+	// Without this, a group approval finds nothing, returns not-found (HTTP
+	// 404), and the member's turn stays blocked on its pending permission until
+	// the stall watchdog or a user cancel.
+	if GetSessionType(sessionID) == groupSessionType {
+		if respondGroupPermission(mgr, sessionID, toolCallID, optionID, cancelled) {
+			slog.Info("permission respond: user responded to group member permission request",
+				"group_id", sessionID, "tool_call_id", toolCallID,
+				"option_id", optionID, "cancelled", cancelled)
+			return nil
+		}
+		slog.Warn("permission respond: no pending permission found",
+			"session_id", sessionID, "tool_call_id", toolCallID)
+		return fmt.Errorf("no pending permission found for session %s, tool %s", sessionID, toolCallID)
+	}
+
+	// Single-agent path: the session's own connection owns the request.
 	conn := mgr.GetConn(sessionID)
 	if conn == nil {
 		return fmt.Errorf("session not running: %s", sessionID)
 	}
-
 	client := conn.GetClient()
 	if client == nil {
 		return fmt.Errorf("session not running: %s", sessionID)
@@ -1332,12 +1359,6 @@ func RespondPermission(sessionID, toolCallID, optionID string, cancelled bool) e
 	acpSessionID := conn.AcpSID()
 	if acpSessionID == "" {
 		return fmt.Errorf("ACP session not found: %s", sessionID)
-	}
-
-	// The frontend sends the permissionBlockID (prefixed with "perm_") as toolCallId.
-	// Strip the prefix to recover the original ACP tool call ID used in PermissionKey.
-	if len(toolCallID) > 5 && toolCallID[:5] == "perm_" {
-		toolCallID = toolCallID[5:]
 	}
 
 	key := ai.PermissionKey(acpSessionID, toolCallID)
@@ -1361,4 +1382,48 @@ func RespondPermission(sessionID, toolCallID, optionID string, cancelled bool) e
 	)
 
 	return nil
+}
+
+// stripPermissionBlockPrefix removes the "perm_" prefix the ACP layer adds to
+// the PermissionApproval card's block id, recovering the ACP tool call id used
+// as part of PermissionKey.
+func stripPermissionBlockPrefix(toolCallID string) string {
+	const prefix = "perm_"
+	if strings.HasPrefix(toolCallID, prefix) {
+		return toolCallID[len(prefix):]
+	}
+	return toolCallID
+}
+
+// respondGroupPermission locates the member whose connection holds the pending
+// request and answers it. The tool call id is unique per turn, so at most one
+// member matches; every other member's connection is left untouched.
+func respondGroupPermission(mgr *ai.ACPConnManager, groupID, toolCallID, optionID string, cancelled bool) bool {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return false
+	}
+	for _, m := range members {
+		conn := mgr.GetConn(m.ID)
+		if conn == nil {
+			continue
+		}
+		client := conn.GetClient()
+		if client == nil {
+			continue
+		}
+		acpSessionID := conn.AcpSID()
+		if acpSessionID == "" {
+			continue
+		}
+		key := ai.PermissionKey(acpSessionID, toolCallID)
+		// Only answer the connection that actually owns this tool call.
+		if !client.HasPendingPermission(key) {
+			continue
+		}
+		if client.RespondPermission(key, optionID, cancelled) {
+			return true
+		}
+	}
+	return false
 }

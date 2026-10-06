@@ -251,7 +251,7 @@
 
 - **会话列表**：群与普通会话并列，群行以 **`Users` 图标 + 成员头像堆叠**标识（meta 行替换掉单聊的 `[AgentIcon] 主持人名`——群行的 `agentId` 是主持人，直接显示会被误读成单聊）；堆叠只显示**在群**成员（离场者不进列表，完整名单见成员管理抽屉），**最多 4 个**、首个完整可见后续压在其后、**不显示 `+N`**（超出者不渲染，hover tooltip 列出全部）；`group_member` 行被过滤（防泄漏到侧边栏）。成员预览由 `GET /api/ai/sessions`（及 `/overview`）随列表**一次批量**返回（`groupMembers`，非群会话省略该键）。
 - **群时间线**：成员发言气泡显示头像 + 名字 + 后端标识（复用 `AgentIcon` / `getAgentName`）；主持人发言居中特殊样式。
-- **群空状态**（群会话无消息时）：**极简**——`AvatarStack` 头像堆叠（`size=lg`，主持人带 accent 环，最多 4 个，排除已离场成员）+ 一行引导语「发送消息，主持人会安排成员依次发言」。**不重复**群名与成员名单（头部头像条已展示）。复用单聊空状态的卡片语言与 `AvatarStack`（与头部/列表行同一套视觉）。数据由 `ChatPanelContent` 把已有的 `groupMembers` 透传给 `ChatMessageList`。
+- **群空状态**（群会话无消息时）：**极简内容 + 单聊同款卡片样式**——复用 `.agent-welcome` 的卡片语言（`--bg-secondary` 底 + `--border-color` 边 + `--radius-md` + `max-width: 280px`），头像堆叠占据"图标"位（`AvatarStack`，`size=lg`，主持人带 accent 环，最多 4 个，排除已离场），右侧文字位放引导语「发送消息，主持人会安排成员依次发言」。**不重复**群名与成员名单（头部头像条已展示）。数据由 `ChatPanelContent` 把已有的 `groupMembers` 透传给 `ChatMessageList`。
   - **⚠️ 实时归属缺口（评审 N3）**：`stream_start` 的 payload 只有 `message_id`（`ws/stream_hub.go:373`），`simpleTextPayload`（`:345`）也不带 agent id。所以**流式过程中**前端无法知道当前气泡属于哪个成员——`agent_id` 只在消息落库后由 DB 读回。v1 方案二选一：(a) 在 `stream_start` 增加 `agent_id`（后端小改）；(b) 明确降级为"流式时用通用样式、重载后才显示发言人"。**v1 推荐 (a)**（改动小且体验完整）。
 - **（v2）同轮并发气泡**：一轮内 N 个成员同时流式时的多锚点渲染——**v1 顺序轮次不需要**，见 §12。
 - **顶部横向头像条**（决策 #19）：群会话头部一行成员头像，**发言中高亮/脉动**；点击可查看成员详情。
@@ -612,6 +612,31 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 **仍不满足直接实现条件（3 Critical）。** 四轮 N-1 的片段改动**确已落地**（无片段再误用 `agentID`），但漂移上移一层：**声明所在 Task 的片段未同步**（R-1）、**task 的 Files/commit 滞后于自己的 body**（R-2/R-3）。修完 R-1/R-2/R-3 + R-4/R-5/R-6/R-7 即可实现。
 
 **五轮累计**：7C / 2C / 5C / 3C / 3C。**趋势**：Critical 不再来自架构或核心机制，而是**文档内部一致性**——每轮修复的文字与片段/清单错位。**强烈建议**：不再依赖文档迭代，直接进入实现——以**代码片段**为准，逐 Task `go build`/`go test` 验证；文档已足够指导实现，剩余问题会在编译期即时暴露（比再评审一轮更快更准）。
+
+## 12.5 实现后缺陷：群聊人工权限审批（2026-10-06，已修）
+
+> 合入 main（`aa88f921a`）后发现。设计与五轮评审**均未覆盖审批响应路径**——评审只钉住了 auto-approve 不变量（N1），漏了人工点按钮这条链。
+
+**症状**：群聊里 ACP 成员请求权限时卡片正常弹出，用户点「批准」**静默失败**（前端乐观显示已批准，后端返回 404 `PermissionNotFound`），成员回合卡在 pending permission 上直到看门狗超时或用户取消。
+
+**根因**：**连接定位键前后端不一致**。
+
+| 环节 | 用的键 | 代码 |
+|---|---|---|
+| 成员回合建 ACP 连接 | **成员行 id** | `group_orchestrator.go` `SessionID: turn.MemberRowID` → `acp_backend.go:61` `GetOrCreateConn(ctx, agent, req.SessionID)` |
+| 权限卡片广播 | 群会话 id | `session_executor.go:385` `ws.EmitToSession(e.timelineSID())` = groupID |
+| 前端卡片 `data-session-id` | 群会话 id | `ChatMessageItem.vue` `chatSession.sessionId()` = `identity.currentSessionId` |
+| 审批回传后查连接 | 群会话 id → **nil** | `session_runtime.go` `mgr.GetConn(groupID)` |
+
+`GetConn` 是 `conns[clawbenchSID]`，连接只以成员行 id 注册过 ⇒ 用 groupID 查必为 nil。群行虽写了 `agent_id = hostAgentID`（`group_store.go`）故第一道检查通过，但卡在 `GetConn`。
+
+**为什么 auto-approve 不受影响**：它读 `getSessionAutoApprove(req.SessionID)`，而 `req.SessionID` 就是成员行 id，键天然一致。
+
+**修法（后端解析，两条响应路径共用）**：`RespondPermission` 先做单聊快路径；若 `GetSessionType(sessionID) == 'group'`，遍历 `ListGroupMembers` 的成员连接，用新增的 `ClawACPClient.HasPendingPermission(key)` 命中持有该 tool call 的连接后应答。单聊路径的 `"session not running"` / `"ACP session not found"` 诊断信息**原样保留**（既有测试钉住）。
+
+- 覆盖 HTTP `POST /api/ai/permission/respond`（`handler/permission.go`）与 WS `permission_respond`（`ws/events.go`）——两者都汇聚到 `service.RespondPermission`，故一处修复两条路径生效。
+- 前端与 ACP 层**零改动**（卡片继续带群 id，后端解析）。tool call id 每回合唯一 ⇒ 至多一个成员命中，其余连接不受影响。
+- 测试：`internal/service/permission_group_test.go`（多成员判别 + 无 pending 仍失败），变异验证关掉群分支即变红。
 
 ## 11. 关键文件索引
 

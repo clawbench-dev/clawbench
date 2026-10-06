@@ -626,6 +626,18 @@ type PendingPermissionForTest struct {
 	ToolCallID string
 }
 
+// HasPendingPermission reports whether a permission request is currently
+// awaiting a response under key (see PermissionKey). The group-chat approval
+// path uses it to find which member's connection owns a given tool call: the
+// frontend only knows the group session id, so the service layer probes each
+// active member's client by key to locate the owner.
+func (c *ClawBenchACPClient) HasPendingPermission(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.pendingPermission[key]
+	return ok
+}
+
 // RespondPermission delivers a user's response to a pending permission request.
 // Called by the HTTP handler when the frontend submits the user's choice.
 // Returns false if no pending request was found for this key.
