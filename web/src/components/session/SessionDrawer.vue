@@ -58,15 +58,23 @@
       </template>
     </BottomSheet>
 
-    <!-- Agent selector drawer -->
+    <!-- Agent selector drawer. In group mode it is multi-select with an inline
+         "host" dot so members and host are chosen in one pass (design #25/#33). -->
     <AgentSelectorDrawer
       ref="agentSelectorRef"
       :open="agentSelectorDrawer.effectiveOpen.value"
-      :title="creatingGroup ? t('group.selectHost') : t('session.selectAgent')"
+      :multiple="creatingGroup"
+      :group-mode="creatingGroup"
+      :host-id="groupHostId"
+      :host-label="t('group.hostLabel')"
+      :confirm-label="t('group.createGroup')"
+      :title="creatingGroup ? t('group.selectMembersAndHost') : t('session.selectAgent')"
+      :show-agent-actions="!creatingGroup"
       :default-badge="t('chat.sessionSetting.defaultBadge')"
       :set-default-title="t('session.setAsDefaultAgent')"
       :config-title="t('session.configAgent')"
-      @update:open="v => v ? agentSelectorDrawer.open() : agentSelectorDrawer.close()"
+      @update:open="handleAgentSelectorOpen"
+      @update:host-id="v => groupHostId = v"
       @select="handleAgentPicked"
     />
     <SharedSessionsDrawer ref="sharedSessionsRef" @select-session="$emit('select', $event)" />
@@ -127,12 +135,13 @@ async function openAgentSelector() {
   agentSelectorDrawer.open()
 }
 
-// openGroupHostSelector opens the shared agent picker in "pick a host for a new
-// group" mode. Exposed so the desktop sidebar's create-group button (which has
-// no local picker) can reuse it via the SessionDrawer ref.
+// openGroupHostSelector opens the shared agent picker in group-creation mode
+// (multi-select members + inline host dot). Exposed so the desktop sidebar's
+// create-group button (which has no local picker) can reuse it via the ref.
 async function openGroupHostSelector() {
   await loadAgents()
   creatingGroup.value = true
+  groupHostId.value = ''
   agentSelectorDrawer.open()
 }
 
@@ -147,21 +156,43 @@ function createSession(agentId) {
   bottomSheetRef.value?.close()
 }
 
-// creatingGroup distinguishes the "pick a host for a new group" flow from the
-// ordinary "pick an agent for a new session" flow, since both reuse the same
-// AgentSelectorDrawer.
+// creatingGroup distinguishes the "create a group" flow (multi-select members +
+// inline host dot) from the ordinary "pick an agent for a new session" flow,
+// since both reuse the same AgentSelectorDrawer.
 const creatingGroup = ref(false)
+// The host agent id chosen inline via the row dot (group mode only).
+const groupHostId = ref('')
 
 function handleGroupCreateClick() {
   creatingGroup.value = true
+  groupHostId.value = ''
   agentSelectorDrawer.open()
+}
+
+// Closing the picker (cancel or confirm) must also leave group mode, otherwise
+// the next single-select open would be treated as a group creation.
+function handleAgentSelectorOpen(v) {
+  if (v) {
+    agentSelectorDrawer.open()
+    return
+  }
+  creatingGroup.value = false
+  groupHostId.value = ''
+  agentSelectorDrawer.close()
 }
 
 function handleAgentPicked(agentId) {
   if (creatingGroup.value) {
+    const memberIds = Array.isArray(agentId) ? agentId : [agentId]
+    const hostId = groupHostId.value
     creatingGroup.value = false
+    groupHostId.value = ''
     agentSelectorDrawer.close()
-    emit('create-group', agentId)
+    // The host is required (the confirm button is disabled without it), so a
+    // missing host here means an unexpected call — bail rather than create a
+    // group with no host.
+    if (!hostId || !memberIds.includes(hostId)) return
+    emit('create-group', { hostId, memberIds })
     bottomSheetRef.value?.close()
     return
   }

@@ -32,9 +32,11 @@ async function postJSON(path: string, body: unknown): Promise<Record<string, unk
   return resp.json()
 }
 
-/** createGroup creates a group with the given host agent. */
-export async function createGroup(hostAgentId: string, title = ''): Promise<CreateGroupResult> {
-  const data = await postJSON('/api/group/create', { hostAgentId, title })
+/** createGroup creates a group together with ALL its members in one call
+ *  (design §7.1, decision #25). hostAgentId must be present in memberAgentIds;
+ *  the backend creates the group and every member atomically. */
+export async function createGroup(hostAgentId: string, memberAgentIds: string[]): Promise<CreateGroupResult> {
+  const data = await postJSON('/api/group/create', { hostAgentId, memberAgentIds })
   return { groupId: String(data.groupId ?? ''), hostMemberId: String(data.hostMemberId ?? '') }
 }
 

@@ -21,13 +21,13 @@ describe('useGroupChat API', () => {
     vi.unstubAllGlobals()
   })
 
-  it('createGroup posts hostAgentId and returns ids', async () => {
+  it('createGroup posts hostAgentId + memberAgentIds and returns ids', async () => {
     vi.stubGlobal('fetch', mockFetch(200, { ok: true, groupId: 'g1', hostMemberId: 'm1' }))
-    const r = await createGroup('agent-a', 'title')
+    const r = await createGroup('agent-a', ['agent-a', 'agent-b'])
     expect(r).toEqual({ groupId: 'g1', hostMemberId: 'm1' })
     const [url, opts] = (fetch as any).mock.calls[0]
     expect(url).toBe('/api/group/create')
-    expect(JSON.parse(opts.body)).toEqual({ hostAgentId: 'agent-a', title: 'title' })
+    expect(JSON.parse(opts.body)).toEqual({ hostAgentId: 'agent-a', memberAgentIds: ['agent-a', 'agent-b'] })
   })
 
   it('listGroupMembers returns members', async () => {
@@ -63,6 +63,6 @@ describe('useGroupChat API', () => {
 
   it('throws on a non-ok response', async () => {
     vi.stubGlobal('fetch', mockFetch(500, {}))
-    await expect(createGroup('agent-a')).rejects.toThrow()
+    await expect(createGroup('agent-a', ['agent-a'])).rejects.toThrow()
   })
 })

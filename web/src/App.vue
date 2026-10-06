@@ -1916,18 +1916,22 @@ async function handleSessionCreate(agentId: string) {
 }
 
 // The desktop sidebar's create-group button has no local agent picker; it opens
-// the SessionDrawer's shared picker in group-host mode (the drawer then emits
-// create-group WITH an agentId, routed to handleGroupCreate).
+// the SessionDrawer's shared picker in group mode (members + inline host dot),
+// which then emits create-group with {hostId, memberIds}.
 function handleSidebarGroupCreate() {
   sessionDrawerRef.value?.openGroupHostSelector()
 }
 
-// handleGroupCreate creates a group with the chosen host agent and switches
-// into it. The group then appears in the session list like any other session.
-async function handleGroupCreate(hostAgentId: string) {
+// handleGroupCreate creates a group with the chosen host and members in one
+// call (design #25) and switches into it. The group then appears in the
+// session list like any other session.
+async function handleGroupCreate(payload: { hostId: string; memberIds: string[] }) {
   const { createGroup } = await import('@/composables/useGroupChat')
+  const hostAgentId = payload?.hostId ?? ''
+  const memberAgentIds = payload?.memberIds ?? []
+  if (!hostAgentId || memberAgentIds.length === 0) return
   try {
-    const { groupId } = await createGroup(hostAgentId)
+    const { groupId } = await createGroup(hostAgentId, memberAgentIds)
     if (!groupId) return
     await sessionIdentity.switchSession(groupId)
     const session = {
