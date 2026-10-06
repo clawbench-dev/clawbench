@@ -1011,7 +1011,8 @@ type ConversationProject struct {
 func GetConversationProjects() ([]ConversationProject, error) {
 	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT p.path, COUNT(*), MAX(agg.last_at) FROM (
-			SELECT project_id, created_at AS last_at FROM chat_sessions WHERE project_id != 0
+			SELECT project_id, created_at AS last_at FROM chat_sessions
+			 WHERE project_id != 0 AND session_type IN ('chat', 'group')
 			UNION ALL
 			SELECT project_id, created_at AS last_at FROM chat_metadata WHERE project_id != 0
 		) agg

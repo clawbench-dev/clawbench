@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS projects (
 CREATE TABLE IF NOT EXISTS chat_sessions (
 	id TEXT PRIMARY KEY,
 	project_id INTEGER NOT NULL,
+	session_type TEXT NOT NULL DEFAULT 'chat',
 	created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 `
@@ -71,6 +72,17 @@ func insertRegistrySession(t *testing.T, db *sql.DB, projectID int64, id, create
 	_, err := db.Exec(
 		"INSERT INTO chat_sessions (id, project_id, created_at) VALUES (?, ?, ?)",
 		id, projectID, createdAt,
+	)
+	require.NoError(t, err)
+}
+
+// insertTypedRegistrySession inserts a chat_sessions row with an explicit
+// session_type, so the group/member exclusion can be exercised.
+func insertTypedRegistrySession(t *testing.T, db *sql.DB, projectID int64, id, sessionType, createdAt string) {
+	t.Helper()
+	_, err := db.Exec(
+		"INSERT INTO chat_sessions (id, project_id, session_type, created_at) VALUES (?, ?, ?, ?)",
+		id, projectID, sessionType, createdAt,
 	)
 	require.NoError(t, err)
 }
@@ -129,6 +141,31 @@ func TestListAllProjects_CountsOnlyCurrentSessions(t *testing.T) {
 	assert.Equal(t, "2026-04-01 00:00:00", items[0].LastActiveAt, "last active is the newest session")
 }
 
+// A group timeline occupies exactly one project slot; its hidden member rows
+// must not inflate the count (decision #64). The count uses the session_type
+// whitelist IN ('chat','group') rather than a != 'group_member' blacklist
+// (decision #63), so any future non-chat type is excluded by default.
+func TestListAllProjects_ExcludesGroupMemberRowsFromCount(t *testing.T) {
+	db := setupProjectRegistryDB(t)
+	id := registerProject(t, db, "/proj/group", "2026-01-01 00:00:00")
+
+	before, err := service.ListAllProjects()
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	require.Equal(t, 0, before[0].SessionCount)
+
+	// One group timeline + three hidden member rows.
+	insertTypedRegistrySession(t, db, id, "g1", "group", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1-m1", "group_member", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1-m2", "group_member", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1-m3", "group_member", "2026-02-01 00:00:00")
+
+	items, err := service.ListAllProjects()
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.Equal(t, 1, items[0].SessionCount, "only the group timeline counts, not its members")
+}
+
 func TestListAllProjects_ExistsReflectsDisk(t *testing.T) {
 	db := setupProjectRegistryDB(t)
 	dir := t.TempDir()
@@ -156,6 +193,24 @@ func TestGetProjectDetail_UnknownID(t *testing.T) {
 	detail, err := service.GetProjectDetail(999)
 	require.NoError(t, err)
 	assert.Nil(t, detail, "an unknown id is (nil, nil), not an error")
+}
+
+// GetProjectDetail reports the same session_count as ListAllProjects, so it must
+// apply the same group/member whitelist (decision #64) — otherwise the project
+// list and its detail page would disagree.
+func TestGetProjectDetail_ExcludesGroupMemberRowsFromCount(t *testing.T) {
+	db := setupProjectRegistryDB(t)
+	id := registerProject(t, db, "/proj/group-detail", "2026-01-01 00:00:00")
+
+	insertTypedRegistrySession(t, db, id, "g1", "group", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1-m1", "group_member", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1-m2", "group_member", "2026-02-01 00:00:00")
+	insertTypedRegistrySession(t, db, id, "g1-m3", "group_member", "2026-02-01 00:00:00")
+
+	detail, err := service.GetProjectDetail(id)
+	require.NoError(t, err)
+	require.NotNil(t, detail)
+	assert.Equal(t, 1, detail.SessionCount, "only the group timeline counts, not its members")
 }
 
 func TestGetProjectDetail_GlobalSentinel(t *testing.T) {
