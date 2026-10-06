@@ -836,7 +836,7 @@ export default {
       allMessagesLoaded: 'All messages loaded',
       startConversation: 'Send a message to start',
       startConversationAI: 'Send a message to start chatting with AI',
-      groupStartHint: 'Send a message — the host will line up members to speak',
+      groupStartHint: 'Send a message — the host coordinates members to get the work done',
       noAgentsTitle: 'No agents available',
       noAgentsDesc: 'Install and configure an AI agent to start chatting.',
       noAgentsAction: 'Configure agents',
