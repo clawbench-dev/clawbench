@@ -39,6 +39,7 @@
 | O14 | #67/#68 剥离主持人标签 + 指令去重 | `grouprouting.Result` 无 `Before` 字段；`buildInjectionText` 不剥标签 |
 | O15 | #69/#70 失败不推游标 + warning 不注入 | `group_orchestrator.go:120,157` 先推游标后判错；`group_inject.go:32` 不排除 warning |
 | O16 | #71 终态前兜孤儿流式行 | `emitGroupTerminal:178` 只发事件，不 finalize 流式行 |
+| O17 | #73 保护群讨论中的成员连接（= 未落地的 I4(a)） | 群只对群行 `SetSessionRunning`；成员行从不标记 running ⇒ sweep（`acp_pool.go:419`）会杀正在用的成员连接 |
 
 ### 已实现（勿重复设计）
 
@@ -140,6 +141,7 @@
 | 70 | warning block 的注入 | **不注入给成员**：成员失败的 warning block（`role='assistant'` + 该成员 `agent_id`）排除在 `buildInjectionText` 之外——它是给用户看的运维信息，不是讨论内容（现状会被当"某成员发言"注入，原始错误如 `create backend: …` 广播给其他成员，而当事人自己反被作者过滤跳过） |
 | 71 | 终态前的流式行收尾 | **`emitGroupTerminal` 内部调 `finalizeOrphanedStreamingMessages(groupID,"interrupt")`**，四条退出路径（取消/结束信号/达上限/主持人失败终止）共用。**定位是"兜 `FinalizeStreamingMessage` 自身失败"**——发出终态事件时 `runTurn` 早已返回（`defaultRunner:303` 同步阻塞，所有调用点都在 runner 返回后），**不引入等待**。该函数幂等（查 `streaming=1` 再 finalize） |
 | 72 | 群回合的推送通知 | **与单聊完全一致**：复用 `EmitSessionPushNotification(groupID,"completed")`（带 once-per-run 守卫）与 `EmitTurnAnsweredNotification`（排队中途逐条，不占名额）。现状 `emitGroupTerminal` **只发 WS、不推送** ⇒ 用户切走后群讨论跑完完全收不到通知（IM/Android/桌面全无）。`pushSessionTerminal` 依赖的 `GetSessionTitle`/`getSessionResponsePreviewRaw` 对群会话均成立 |
+| 73 | 成员连接的 sweep 保护（细化 I4） | **给 ACP idle sweep 单独的查询，不动 `GetRunningSessionIDs`**：编排器维护"当前群回合正在使用的成员行集合"，`SetSessionRunningChecker`（`main.go:863` 注入）的回调改为同时查它。理由：`GetRunningSessionIDs` 的语义是"用户可见的 running 会话"（喂会话列表 `chat_session.go:34,173`、项目删除判定 `project_delete.go:198`），混入隐藏成员行会误触发"项目有会话在跑不能删" |
 
 ## 3. 架构
 
@@ -862,6 +864,11 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 **（20）群回合结束不推送通知（决策 #72）。**
 `emitGroupTerminal`（`group_orchestrator.go:178`）只发 WS `done`/`completed`，**不调 `EmitSessionPushNotification`**；而单聊终止路径会推（`session_command.go:304`、`session_runtime.go:174`）。⇒ 用户在群里发完消息切走，群讨论跑完（可达数十秒到数分钟）**完全收不到通知**——IM 机器人 / Android 原生 / 桌面系统通知全都没有，而单聊同样操作会收到。群讨论耗时更长，通知价值反而更高。
 **修（决策 #72）**：群回合复用 `EmitSessionPushNotification(groupID,"completed")` + `EmitTurnAnsweredNotification`（排队中途逐条），不另写推送逻辑。与决策 #58（`MarkDoneAndSendFinal` 决定终态）同批落地——单聊的 `MarkDoneAndSendFinal` 本就带推送。
+
+**（21）成员连接会被 idle sweep 在群讨论进行中杀掉（= 未落地的 I4(a)，决策 #73）。**
+连接以**成员行 id** 为键注册（`group_orchestrator.go:282` `SessionID: turn.MemberRowID`），而 idle sweep 的存活判断是 `m.isSessionRunning(sid)`（`acp_pool.go:419,457`），`sid` 即成员行。但群路径只对**群行**调 `SetSessionRunning`（`group_orchestrator.go:79`），**成员行从不被标记 running** ⇒ 群回合进行中，一个空闲超 5 分钟（`idleConnTimeout`）的成员连接会被 sweep **杀掉**（功能上会 respawn，但每个 ACP spawn 可能数秒到数十秒，且讨论中反复 spawn）。
+**注意**：此问题**已被评审识别为 I4(a)**（§12），但**从未落地修复**。
+**修（决策 #73）**：给 sweep 单独的"群回合正在使用的成员行"查询，**不把成员行塞进 `GetRunningSessionIDs`**（那会污染会话列表与项目删除判定）。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
