@@ -1711,7 +1711,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 > **背景**：v1（A–M）已合入 main（`aa88f921a`）。本阶段是**合入后增补**——设计 §12.6 记录了三个确实存在的缺口（主持人只知道成员名字 / 增删成员不写时间线且离场者仍被点名 / 主持人被移除后仍控场）加系统事件落库的硬约束。**逐 Task TDD + 独立 commit。**
 
-### Task N1: `chat_history` 放宽 role CHECK（新增 `role='system'`）
+### Task N1: `chat_history` 放宽 role CHECK（新增 `role='system'`）✅ 已实现（`7c09eacc0`）
 
 **Files:**
 - Modify: `internal/service/database.go`（`chat_history` 建表 `:308` + 新增重建迁移函数）
@@ -1731,7 +1731,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task N2: 成员描述取值 + 三处注入
+### Task N2: 成员描述取值 + 三处注入 ✅ 已实现（`d28eb6850`）
 
 **Files:**
 - Create: `internal/service/group_agent_info.go`（`GetAgentSpecialty(agentID) string`）
@@ -1773,7 +1773,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task N4: 前端系统事件渲染
+### Task N4: 前端系统事件渲染 ✅ 已实现（`c7a67f943`）
 
 **Files:**
 - Modify: `web/src/utils/chatStreamUtils.ts`（`role` 已含 `'system'`，确认 `agentId` 语义）
@@ -1786,7 +1786,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task N5: 拒绝移除主持人
+### Task N5: 拒绝移除主持人 ✅ 已实现（`aea2fd658`）
 
 **Files:**
 - Modify: `internal/service/group_store.go`（`RemoveGroupMember` 加守卫）
@@ -1810,6 +1810,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 **Files:**
 - Modify: `internal/handler/chat.go`（群委派移到 claim 之后）
+- Modify: `internal/service/session_command.go`（**O18 的 IM 群分支改走本 Task 的入队入口**——O18 已按"直接委派"落地，因本 Task 当时不在基线上；见 O18 的 ⚠️）
 - Modify: `internal/service/group_orchestrator.go`（`emitGroupTerminal` → `MarkDoneAndSendFinal`）
 - Test: `internal/handler/chat_group_queue_test.go`（新建）、`internal/service/group_orchestrator_test.go`（追加）
 
@@ -1888,7 +1889,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O6: 智能体重名收敛到单一函数（决策 #50）
+### Task O6: 智能体重名收敛到单一函数（决策 #50）✅ 已实现（`3643cf045`）
 
 **Files:**
 - Modify: `internal/service/agent_store.go`（新增 `AgentNameTaken`；`SaveAgent`/`PatchAgentFields` 调用）
@@ -1907,7 +1908,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O7: 归档/销毁群关闭成员连接（决策 #57）
+### Task O7: 归档/销毁群关闭成员连接（决策 #57）✅ 已实现（`b27669d07`）
 
 **Files:**
 - Modify: `internal/handler/chat_session.go`（Archive/Destroy 遍历成员关连接）
@@ -1940,7 +1941,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O9: 头像条"发言中高亮"（决策 #59）
+### Task O9: 头像条"发言中高亮"（决策 #59）✅ 已实现（`cd3865af9`）
 
 **Files:**
 - Modify: `web/src/components/chat/GroupAvatarStack.vue`（消费 `activeSpeakerId`）
@@ -1988,7 +1989,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O12: 项目会话计数排除成员行（决策 #64）
+### Task O12: 项目会话计数排除成员行（决策 #64）✅ 已实现（`a23067a04`）
 
 **Files:**
 - Modify: `internal/service/project_registry.go`（`ListAllProjects` 的 COUNT 加类型白名单）
@@ -2100,7 +2101,7 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
-### Task O18: IM 机器人支持群会话（决策 #75/#76）
+### Task O18: IM 机器人支持群会话（决策 #75/#76）✅ 已实现（`9d532b62a`）
 
 **Files:**
 - Modify: `internal/service/session_command.go`（两处白名单 + `sendMessageToSessionFromPush` 群委派）
@@ -2115,11 +2116,16 @@ git commit -m "test(group): add group chat e2e spec"
 - `session_command.go:46` 与 `:71` 的 `s.session_type = 'chat'` 改 `IN ('chat','group')`。
 - `sendMessageToSessionFromPush` 开头：`if GetSessionType(sessionID) == "group" { return RunGroupTurnForSession(...) }`（与 `handler/chat.go:323` 的群分支同构；注意该函数已有 `EnqueueAndMaybeStart`，群分支也应复用其入队语义）。
 
+**⚠️ 实现时发现的两个计划外事实（team-b 报告，已核实）**：
+1. **「群忙碌时入队」子项在 O1 落地前无法实现**：本基线（`083b1ebeb`）的 handler 群分支（`chat.go:323`）是**直接起 goroutine 调 `RunGroupTurnForSession`**，**没有** `EnqueueAndMaybeStart`/`RunDrainLoop`（O1 不在该基线上）。计划里「该函数已走 `EnqueueAndMaybeStart`，天然支持忙碌入队」只对**单聊**路径成立。
+   → O18 已按**现有 handler 群分支行为同构实现**（直接委派编排器），未虚构不存在的入队链路。**O1 落地后，O18 的群分支须改为走 O1 的入队入口**（否则 IM 群消息仍不能排队）。
+2. **O12 另有第 3 处 COUNT**：`GetProjectDetail` 有与 `ListAllProjects` 完全相同的 `session_count` 子查询，只改列表会让两者对不上 —— 已一并加白名单（同属决策 #64）。
+
 **Commit:** `feat(group): expose group sessions to IM bots and route their messages to the orchestrator`
 
 ---
 
-### Task O19: 群成员数上限 10（决策 #78）
+### Task O19: 群成员数上限 10（决策 #78）✅ 已实现（`1dedee693`）
 
 **Files:**
 - Modify: `internal/service/group_store.go`（`CreateGroupWithMembers` + `AddGroupMember` 校验）

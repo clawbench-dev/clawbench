@@ -912,6 +912,13 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 **（28）中途订阅的 live run 重放是群安全的（非缺口，决策 #81）。**
 `EmitLiveRunStateToClient`（`stream_hub.go:724`）在客户端中途订阅时补发 `user_message` + `stream_start`（否则前端缓冲的事件永不排空）。其 speaker 来自 `GetLiveRunState`（`chat.go:2725`）：按 `session_id` 查最新 `streaming=1` 的 assistant 行，取该行 `agent_id`。群会话的 `session_id` 是群行、流式行的 `agent_id` 是**成员行** ⇒ speaker 正确解析。**这也是决策 #59「发言中高亮」的数据源**。
 
+**（29）N1 实现时发现的两个硬陷阱（整表重建 chat_history）——已修并测试固化。**
+计划只写了「CREATE new → INSERT SELECT → DROP → RENAME，同一事务」，但实测还有两条**不做就静默毁数据**的约束：
+1. **`DROP TABLE chat_history` 在 FK=ON 时会级联删除 `chat_thinking` / `chat_tool_calls`**（SQLite 对 DROP TABLE 做隐式 `DELETE FROM`，触发 `ON DELETE CASCADE`）⇒ 思考与工具调用记录**全部清空**。修法：`store.WriteLock()` + `WriteDBRaw().Conn(ctx)` **钉住一条连接**（`PRAGMA foreign_keys` 是**每连接**的），在该连接上 `PRAGMA foreign_keys=OFF`（SQLite 官方 ALTER 流程），事务完成后恢复 `=ON` 再还池。**变异验证：去掉 FK-off → 子表计数归零、测试报红。**
+2. **必须在 `migrateQueuedMessagesToOwnTable` 之后跑**：重建的显式列清单不含 legacy `queue_id`/`queued`，跑前面会让队列迁移的 `SELECT` 失败 ⇒ **永久丢排队消息**。已加专门测试钉住顺序。
+3. 附带：重建按「源表**实际存在**的列」求交集拷贝（旧库可能缺 `files` 等可选列）——被 `TestInitDB_MigratesChatThinkingSeq` 的极简夹具抓出的真回归。
+**给后续任何 `chat_history` 系整表重建的提示：复用「钉连接 + FK off」模式，否则静默清空思考/工具调用。**
+
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
 - 未读：`unreadCountSubquery`（`chat.go:1196`）以**群行**为 `s`，群时间线的 `role='assistant'` 行（成员发言 + warning block）计入未读；成员行无 `chat_history` 故永不显示未读。`UpdateLastRead`（`chat.go:1522`）锚定群行。
