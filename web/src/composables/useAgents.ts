@@ -286,11 +286,19 @@ function getAgentDefaultModelName(agentId: string): string {
     return model?.name || modelId
 }
 
-/** Build the header title string for an agent. */
+/**
+ * Build the header title string for an agent.
+ *
+ * Returns '' for an unknown/absent agent rather than a placeholder ("AI 对话"):
+ * the chat title bar now shows a skeleton while a session switch is in flight
+ * and otherwise renders nothing, so a fallback string would only flash during
+ * the switch. Callers gate on the empty result (App.vue renders the agent line
+ * only when `currentAgentId` is set).
+ */
 function agentHeaderTitle(agentId: string): string {
     const agent = getAgent(agentId)
     if (agent) return agent.name
-    return agentId ? getAgentName(agentId) : gt('chat.session.aiDialog')
+    return agentId ? getAgentName(agentId) : ''
 }
 
 /**

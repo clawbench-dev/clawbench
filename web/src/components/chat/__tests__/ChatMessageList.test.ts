@@ -17,12 +17,16 @@ describe('ChatMessageList — handleTableBlockClick integration', () => {
 })
 
 describe('ChatMessageList — session switching indicator (replaces full-area overlay)', () => {
-  it('renders an in-list LoadingIndicator while switching and messages are empty', async () => {
+  it('renders the ChatSkeleton while switching and messages are empty', async () => {
     const mod = await import('@/components/chat/ChatMessageList.vue?raw')
     const source = typeof mod.default === 'string' ? mod.default : ''
-    // The spinner is gated on switching + empty message list — no full-area mask.
+    // The skeleton is gated on switching + empty message list — no full-area mask.
     expect(source).toContain('v-if="props.switching && messages.length === 0"')
     expect(source).toContain('class="chat-switching-indicator"')
+    // The lone spinner was replaced by simulated bubbles; the empty-state
+    // branch must stay `v-else-if` so the two never render together.
+    expect(source).toContain('<ChatSkeleton')
+    expect(source).toContain('v-else-if="messages.length === 0" class="chat-empty"')
   })
 
   it('defines the switching prop and forwards it from the panel', async () => {

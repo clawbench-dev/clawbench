@@ -796,7 +796,6 @@ export default {
       categoryForge: '议题与合并',
     },
     session: {
-      aiDialog: 'AI 对话',
       refresh: '刷新会话列表',
       requestFailed: '请求失败 ({status})',
       loadHistoryFailed: '加载聊天记录失败',

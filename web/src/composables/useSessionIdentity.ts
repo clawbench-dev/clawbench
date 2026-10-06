@@ -1,6 +1,5 @@
 import { ref, computed } from 'vue'
 import { useAgents, registerIdentityUpdaters } from '@/composables/useAgents'
-import { gt } from '@/composables/useLocale'
 import { appLog } from '@/utils/appLog'
 import { createSelectState } from '@/composables/useSelectState'
 import { useChatContext } from '@/composables/useChatContext'
@@ -691,10 +690,13 @@ export async function initSessionFromAPI() {
 // Computed helpers
 // ───────────────────────────────────────────────────────────
 
+// Empty when there is no current agent — the chat title bar shows a skeleton
+// during a switch and otherwise renders nothing, so a placeholder ("AI 对话")
+// would only ever flash. Consumers gate on currentAgentId being set.
 const agentHeaderTitle = computed(() => {
   const { agentHeaderTitle: makeTitle } = useAgents()
   if (currentAgentId.value) return makeTitle(currentAgentId.value)
-  return gt('chat.session.aiDialog')
+  return ''
 })
 
 // ───────────────────────────────────────────────────────────

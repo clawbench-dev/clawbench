@@ -793,7 +793,6 @@ export default {
       categoryForge: 'Issues & PRs',
     },
     session: {
-      aiDialog: 'AI Chat',
       refresh: 'Refresh session list',
       requestFailed: 'Request failed ({status})',
       loadHistoryFailed: 'Failed to load chat history',

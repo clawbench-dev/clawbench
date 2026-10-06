@@ -367,8 +367,11 @@ describe('useAgents', () => {
       expect(agentHeaderTitle('claude')).toBe('Claude')
     })
 
-    it('returns i18n key for empty agentId', () => {
-      expect(agentHeaderTitle('')).toBe('chat.session.aiDialog')
+    // No placeholder fallback: the header shows a skeleton during a switch and
+    // otherwise renders nothing, so an unknown agent must yield '' (a placeholder
+    // string would only flash mid-switch).
+    it('returns empty string for empty agentId', () => {
+      expect(agentHeaderTitle('')).toBe('')
     })
   })
 

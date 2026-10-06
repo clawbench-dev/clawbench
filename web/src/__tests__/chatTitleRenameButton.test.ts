@@ -54,7 +54,9 @@ describe('chat title bar rename button', () => {
   it('only shows the button when a session is selected', () => {
     const block = titleBarBlock(readWebFile(APP))
 
-    expect(block).toContain('v-if="sessionIdentity.currentSessionId.value"')
+    // Hidden during a session switch too: the title it acts on is a skeleton
+    // at that point, so the affordance would target nothing.
+    expect(block).toContain('v-if="sessionIdentity.currentSessionId.value && !switching"')
   })
 
   /**

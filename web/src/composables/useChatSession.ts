@@ -35,6 +35,19 @@ let _sessionsLoadPromise: Promise<void> | null = null
  */
 let _lastBadgeSignature: string | null = null
 
+/**
+ * True while a session switch is in flight (old messages cleared, new history
+ * loading) — distinct from `loading`, which means "AI is generating".
+ *
+ * Module-level rather than per-composable-instance because TWO components in
+ * different subtrees read it: the chat message area (ChatPanelContent →
+ * ChatMessageList) and the chat title bar in App.vue. The title bar lives in
+ * App.vue, which never calls useChatSession — a local ref there would leave the
+ * header unable to render its switching skeleton and it would flash the
+ * placeholder instead. Exported so App.vue can import it directly.
+ */
+export const switching = ref(false)
+
 export async function loadSessionsOnce(): Promise<void> {
   // Dedup: if a load is already in-flight, reuse its promise instead of
   // firing a duplicate request (e.g. App.vue + ChatPanelContent.vue
@@ -99,6 +112,10 @@ export async function loadSessionsOnce(): Promise<void> {
 export function resetChatSessionState(): void {
   _sessionsLoadPromise = null
   _lastBadgeSignature = null
+  // Module-level state: without this a test that leaves a switch in flight would
+  // leak `switching=true` into the next one (the header/bubble skeletons would
+  // then render when they must not).
+  switching.value = false
 }
 
 export interface UseChatSessionOptions {
@@ -111,7 +128,6 @@ export interface UseChatSessionOptions {
   blockTasks: Record<string, unknown>
   blockAskQuestions: Record<string, unknown>
   expandedTools: Ref<Record<string, boolean>>
-  switching?: Ref<boolean>
   /** Parses an assistant row's content JSON into blocks. `liveStreaming` marks a
    *  row belonging to a turn that is still running, whose `done` flags are
    *  current facts and must not be defaulted to "finished". */
@@ -450,7 +466,8 @@ export function useChatSession(options: UseChatSessionOptions) {
   // Switching state — true while a session switch is in progress (distinct from
   // "loading" which means "AI is generating"). Used to show a fade/placeholder
   // transition so the user sees immediate feedback instead of a frozen UI.
-  const switching = ref(false)
+  // `switching` is the module-level ref above (shared with App.vue's header);
+  // the returned object keeps exposing it as `session.switching`.
   const pendingSessionOps = ref(new Set<string>())
 
   // Fallback polling timer for WS disconnect

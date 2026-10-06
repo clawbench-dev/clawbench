@@ -980,3 +980,54 @@
 @keyframes li-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ==========================================================================
+   Skeleton placeholder
+   A shimmering grey block used while a session switch is in flight: the chat
+   title bar (App.vue) and the message area (ChatSkeleton.vue) both stand in
+   with these blocks until the real content arrives.
+
+   Declared GLOBALLY, not scoped, because two different components in two
+   different style scopes paint them (App.vue's header and the chat list).
+   Per design-guide red line 2, a class shared across components must live in
+   the global sheet — a scoped copy would silently miss the other consumer.
+
+   Geometry is supplied by the caller (`width`/`height`/`border-radius`); this
+   rule only owns the fill and the shimmer. `--skeleton-radius` lets a caller
+   opt into a pill shape without redeclaring the whole rule. */
+.skeleton-block {
+  --skeleton-radius: var(--radius-sm);
+  display: block;
+  border-radius: var(--skeleton-radius);
+  background-color: var(--bg-tertiary, #e9ecef);
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--bg-primary, #fff) 60%, transparent) 50%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-size: 200% 100%;
+  background-position: 150% 0;
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Circle variant for avatar discs. */
+.skeleton-block.skeleton-circle {
+  --skeleton-radius: 50%;
+  flex-shrink: 0;
+}
+
+@keyframes skeleton-shimmer {
+  from { background-position: 150% 0; }
+  to { background-position: -50% 0; }
+}
+
+/* Unlike BusyBar / the running comet, the shimmer carries NO information —
+   the placeholder block itself already says "loading". Freezing it just makes
+   the grey blocks static, which is exactly what reduced-motion users want. */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-block {
+    animation: none;
+  }
+}

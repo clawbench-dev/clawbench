@@ -277,6 +277,15 @@
                        cursor's location. -->
                   <div class="chat-col" :class="{ 'chat-drop-active': chatDropActive }">
                   <div class="chat-title-bar">
+                    <!-- Session switch in flight: identity was cleared and the
+                         new session's metadata has not arrived yet. Stand in
+                         with a skeleton instead of flashing a placeholder (the
+                         old "AI 对话" fallback) or the previous session's title. -->
+                    <template v-if="switching">
+                      <div class="skeleton-block skeleton-circle chat-title-skeleton-avatar"></div>
+                      <div class="skeleton-block chat-title-skeleton-title"></div>
+                    </template>
+                    <template v-else>
                     <!-- Group sessions: the header shows an overlapping avatar
                          stack (host first, then members) with a trailing "+"
                          that opens member management. Single-agent sessions
@@ -289,15 +298,16 @@
                       :isGroup="isGroupSession"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
-                    <span v-else class="bs-header-title"><AgentIcon v-if="sessionIdentity.currentAgentId.value" :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
+                    <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title"><AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
                     <div v-if="sessionIdentity.currentSessionTitle.value" class="bs-header-description bs-header-title-editable" :title="t('chat.sessionRename.tooltip')" @click="handleRenameSession">
                       <HeaderMarquee :text="sessionIdentity.currentSessionTitle.value">{{ sessionIdentity.currentSessionTitle.value }}</HeaderMarquee>
                     </div>
+                    </template>
                     <!-- Explicit rename affordance. The title text above is also
                          clickable, but that is undiscoverable on touch; this icon
                          surfaces the same action on the right of the header. -->
                     <button
-                      v-if="sessionIdentity.currentSessionId.value"
+                      v-if="sessionIdentity.currentSessionId.value && !switching"
                       class="chat-title-edit-btn"
                       data-action="rename-session"
                       :title="t('chat.sessionRename.tooltip')"
@@ -599,7 +609,7 @@ import { resetGitStats } from '@/composables/useGitCodeStats'
 import { useSessionIdentity, registerSessionDrawerRef, registerOpenSessionTabOverride, resetIdentity } from './composables/useSessionIdentity.ts'
 import { useSessionSidebar } from './composables/useSessionSidebar.ts'
 import type { SessionSearchResult } from './composables/useSessionSearch'
-import { loadSessionsOnce, resetChatSessionState } from './composables/useChatSession.ts'
+import { loadSessionsOnce, resetChatSessionState, switching } from './composables/useChatSession.ts'
 import { resetAllCrudLists } from '@/composables/useCrudList'
 import { resetTaskTabState } from './composables/useTaskTab.ts'
 import { clearPlanState } from './composables/usePlanProgress.ts'
@@ -3997,6 +4007,19 @@ onUnmounted(() => {
     overflow: hidden;
     white-space: nowrap;
 }
+/* Session-switch skeleton in the chat title bar. Geometry only — the fill and
+   shimmer come from the global .skeleton-block primitive (web/css/components.css),
+   shared with the message-area ChatSkeleton. */
+.chat-title-skeleton-avatar {
+    width: 22px;
+    height: 22px;
+}
+
+.chat-title-skeleton-title {
+    width: 140px;
+    height: 14px;
+}
+
 /* Rename-session icon at the right end of the chat title bar. Pushed to the
    edge with margin-left:auto so it stays put when the title is short.
    Deliberately muted at rest (the title text next to it is the primary

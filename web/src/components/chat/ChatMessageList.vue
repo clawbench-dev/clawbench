@@ -21,12 +21,12 @@
   <div class="chat-messages" id="aiChatMessages" ref="messagesRef" @click="handleChatClick" @mousedown="onContainerMouseDown" @touchstart.passive="onScrollAndTableTouchStart" @touchend="onScrollTouchEnd" @touchcancel="onScrollTouchEnd" @wheel.passive="onWheelScroll" @scroll="handleScroll">
     <div class="chat-messages-list" :key="listKey">
       <!-- Session switching in progress: the old messages were cleared but the
-           new session's history is still loading — show a centered spinner in
-           place of the empty state instead of a full-area overlay mask. -->
-      <LoadingIndicator
+           new session's history is still loading — show simulated message
+           bubbles in place of the empty state instead of a full-area overlay
+           mask or a lone spinner. -->
+      <ChatSkeleton
         v-if="props.switching && messages.length === 0"
         class="chat-switching-indicator"
-        size="md"
       />
       <div v-else-if="messages.length === 0" class="chat-empty">
       <template v-if="agents && agents.length === 0">
@@ -215,6 +215,7 @@ import ChatMessageItem from './ChatMessageItem.vue'
 import AgentIcon from '@/components/common/AgentIcon.vue'
 import AvatarStack from '@/components/common/AvatarStack.vue'
 import LoadingIndicator from '@/components/common/LoadingIndicator.vue'
+import ChatSkeleton from './ChatSkeleton.vue'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
 import UserMsgIndexDrawer from './UserMsgIndexDrawer.vue'
 import TableRowModal from '@/components/common/TableRowModal.vue'
