@@ -5,7 +5,6 @@
     :members="members"
     size="sm"
     :max="max"
-    :show-count="false"
     :tooltip="tooltip"
   />
 </template>
