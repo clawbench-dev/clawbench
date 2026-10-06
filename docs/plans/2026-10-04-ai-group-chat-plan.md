@@ -27,7 +27,7 @@
 
 **Tech Stack:** Go（SQLite、net/http、WS StreamHub）、Vue 3 + TypeScript（Vitest）、Playwright（E2E + acp-mock）。
 
-**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **38 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2）。
+**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **44 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6**）。
 
 **通用约定：**
 - 每个 Task 结束必须 commit（独立小提交）。
@@ -55,6 +55,7 @@
 | J | 前端：群时间线渲染（发言人气泡/主持人样式/路由卡片 J2） | G |
 | K | 前端：成员头像条 + 增删 | G、H |
 | M | E2E（M0 前置 + M1） | 全部 |
+| N | **增补（合入后）**：成员可见性、描述注入、系统事件（N1 role='system' 重建 / N2 描述三处注入 / N3 系统事件 / N4 前端渲染 / N5 拒绝移除主持人） | 全部 |
 | ~~L~~ | ~~前端：同轮并发气泡~~ → **v2**（随并行一起做，见头部勘误） | — |
 
 ---
@@ -1695,6 +1696,101 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
+## 阶段 N：成员可见性、描述注入与系统事件（决策 #39–#44）
+
+> **背景**：v1（A–M）已合入 main（`aa88f921a`）。本阶段是**合入后增补**——设计 §12.6 记录了三个确实存在的缺口（主持人只知道成员名字 / 增删成员不写时间线且离场者仍被点名 / 主持人被移除后仍控场）加系统事件落库的硬约束。**逐 Task TDD + 独立 commit。**
+
+### Task N1: `chat_history` 放宽 role CHECK（新增 `role='system'`）
+
+**Files:**
+- Modify: `internal/service/database.go`（`chat_history` 建表 `:308` + 新增重建迁移函数）
+- Modify: **约 20 个测试夹具**的 `CHECK(role IN ('user','assistant'))`（见设计 §12.6 清单）
+- Test: `internal/service/database_group_test.go`（追加）
+
+**Step 1: 写失败测试**：建一个含 `role='system'` 行的库，断言插入成功且 `GetChatHistoryPaged` 能读出该行。
+
+**Step 3: 实现**：
+- 建表语句的 CHECK 改为 `CHECK(role IN ('user','assistant','system'))`（新库直接生效）。
+- 新增 `rebuildChatHistoryRoleCheckIfNeeded()`：用 `SELECT sql FROM sqlite_master WHERE name='chat_history'` 检测现有表是否**已含 `'system'`**，未含则整表重建（`CREATE chat_history_new → INSERT SELECT → DROP → RENAME`），**保留所有列与索引**（照抄 `rebuildChatMetadataWithoutFK` 的结构）。**必须在同一事务内**，防崩溃丢数据。
+- **夹具同改**：`chat_test.go:32`、`handler/testutil_test.go`、`session_runtime_test.go:1370`、`database_test.go:61/2123/2510/3367/3724`、`drain_test.go:51`、`scheduler_test.go:26`、`scheduler_executor_test.go:28`、`scheduler_script_phase_test.go:31`、`summary_test.go:258`、`session_cleanup_test.go:351`、`chat_metadata_ledger_migrate_test.go:50`、`thinking_migrate_test.go:48`、`session_command_test.go:66`。**逐个改，不得共享常量**（R-10 先例）。
+
+**Step 4: 运行确认通过**：`go test ./internal/service/ ./internal/handler/ -run 'Group|History|Database' -v`
+
+**Commit:** `feat(group): allow role='system' in chat_history via table rebuild`
+
+---
+
+### Task N2: 成员描述取值 + 三处注入
+
+**Files:**
+- Create: `internal/service/group_agent_info.go`（`GetAgentSpecialty(agentID) string`）
+- Modify: `internal/service/group_prompt.go`（`BuildHostSystemPrompt` 入参改结构体切片）
+- Modify: `internal/service/group_orchestrator.go`（`activeMemberNamesExcept` → 带描述/离场状态）
+- Modify: `internal/service/group_inject.go`（离场标注 + 头部参与者清单）
+- Test: `internal/service/group_prompt_test.go`、`group_inject_test.go`（追加）
+
+**Step 1: 写失败测试**：
+- `BuildHostSystemPrompt` 断言渲染为 `Claude（代码编写与推理）`；离场者带 `（已离场）`；无描述时省略括号。
+- `buildInjectionText` 断言离场成员名后带 `（已离场）`；头部含 `参与者：A（描述）、B（描述）`。
+
+**Step 3: 实现**：
+- `GetAgentSpecialty(agentID) string`：`model.GetAgent(agentID)` 取 `Specialty`，空则返回 `""`（调用方据此省略括号）。
+- `BuildHostSystemPrompt` 入参改为 `[]HostMemberInfo{Name, Specialty string, Left bool}`；**同步改调用点** `group_orchestrator.go:200` 与测试 `group_prompt_test.go`。
+- `buildInjectionText` 加 `leftIDs map[string]bool` 参数；渲染离场者名后加 `（已离场）`；头部插入参与者清单（**仅当有描述时**，避免噪音）。
+- **决策 #41 明确不做**：不注入默认模型、不注入完整运行时提示词（见设计 §5.2）。
+
+**Commit:** `feat(group): inject member specialty into host prompt, injection context`
+
+---
+
+### Task N3: 增删成员写系统事件
+
+**Files:**
+- Modify: `internal/service/group_store.go`（`AddGroupMember`/`RemoveGroupMember` 写系统事件）
+- Modify: `internal/service/chat.go`（新增 `AddSystemMessage`，`role='system'`、`agent_id=''`）
+- Modify: `internal/service/group_orchestrator.go`（系统事件广播到群）
+- Test: `internal/service/group_store_test.go`（追加）
+
+**Step 1: 写失败测试**：加成员后群时间线多一条 `role='system'` 行，内容含 `名字（描述）加入了讨论`；删成员后多一条 `XX 已离场`；**断言该行计入注入**（`id > cursor` 时出现在 `buildInjectionText`）且**不计入未读**（`role='assistant'` 过滤天然排除）。
+
+**Step 3: 实现**：
+- `AddSystemMessage(projectPath, sessionID, text) (int64, error)`：`role='system'`、`agent_id=''`、`streaming=0`，复用 `insertChatMessageTx`（N1 已放宽 CHECK）。
+- `AddGroupMember` 成功后写 `"{名字}（{描述}）加入了讨论"`（**重新加入**写 `"{名字} 重新加入"`）；`RemoveGroupMember` 成功后写 `"{名字} 已离场"`。
+- 广播：系统事件同样 `ws.EmitToSession(groupID, ...)`，前端按系统事件样式渲染（Task N4）。
+
+**Commit:** `feat(group): write system events on member add/remove`
+
+---
+
+### Task N4: 前端系统事件渲染
+
+**Files:**
+- Modify: `web/src/utils/chatStreamUtils.ts`（`role` 已含 `'system'`，确认 `agentId` 语义）
+- Modify: `web/src/components/chat/ChatMessageItem.vue`（系统事件分支）
+- Test: 组件测试
+
+**Step 3: 实现**：`role === 'system'` 渲染**居中细条**（非气泡、无头像、无 meta bar），样式走**全局 css**（`v-html` 陷阱不适用，但共享类基规则须在全局——design-guide 红线 2）。文案不解析 markdown，纯文本。
+
+**Commit:** `feat(group): render system events as centered thin rows`
+
+---
+
+### Task N5: 拒绝移除主持人
+
+**Files:**
+- Modify: `internal/service/group_store.go`（`RemoveGroupMember` 加守卫）
+- Modify: `internal/handler/group.go`（错误映射 409/400）
+- Modify: `internal/api/openapi.yaml`（DELETE `/api/group/members` 新增 409）
+- Test: `internal/service/group_store_test.go`、`internal/handler/group_test.go`（追加）
+
+**Step 1: 写失败测试**：`RemoveGroupMember(groupID, hostMemberID)` 返回错误、主持人行 `archived` 仍为 0；handler 返回 409。
+
+**Step 3: 实现**：`RemoveGroupMember` 先 `GetGroupHostMember(groupID)`，若 `memberID == hostID` 返回 `ErrCannotRemoveHost`；handler 映射为 409 并本地化提示"请先转移主持人"。
+
+**Commit:** `feat(group): refuse to remove the host member`
+
+---
+
 ## 完成标准
 
 - 所有阶段 Task 完成且各自 commit（**v1 不含 L0/L1，它们属 v2**）。
@@ -1709,3 +1805,4 @@ git commit -m "test(group): add group chat e2e spec"
 - **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、**建群一步多选 + 行内指定主持人（#25/#33）**、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）、**群计入会话上限而成员不计、建群过上限门（#37）**、群设置在成员管理抽屉内（#38）均落地。
 - **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 **F0b→F1→F2→F0→F3**）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
 - **评审项验收（四/五轮）**：R-1（`SpeakerID` 在 C1 声明，先于 C2 使用）、R-2（G1 Files 含 `handler/chat.go`）、R-3（A3 含 `queue_store.go:217` 第二调用者）、R-4（设计 §3.1 `UpdateLastRead` 保持成员 id）、R-5（设计 §8 含 `GET /api/group/members`）、R-6（`GroupMember` 类型已声明）、R-7（E2 含 `session_resume.go`）、R-8（fork/continue INSERT 写归属）均落地。
+- **增补验收（阶段 N，决策 #39–#44）**：离场成员注入标注（#39）、系统事件 `role='system'` 整表重建（#40/#43/#44）、描述注入三处（#41）、拒绝移除主持人（#42）均有对应测试通过。

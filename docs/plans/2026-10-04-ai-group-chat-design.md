@@ -57,6 +57,12 @@
 | 36 | 成员展示名 | 存成员行的 **`title` 列**（复用现有字段） |
 | 37 | 会话上限计入 | **群计入、成员不计**：**4 处** COUNT 改 `session_type IN ('chat','group')`（`chat.go:2046`、`continue_conversation.go:161,430`、`handler/session_resume.go:358`）；`POST /api/group/create` 也须过上限门 |
 | 38 | 群设置位置 | **成员管理 BottomSheet 内**（不进设置页） |
+| 39 | 离场成员的注入标注 | 注入上下文里离场成员名后加 **"（已离场）"**；主持人提示词的**可点名名单**同时区分"在场 / 已离场" |
+| 40 | 成员增删的系统事件 | 增删成员时写一条 **`role='system'`** 的消息到群时间线（如"XX 加入了讨论"）；**需整表重建** `chat_history` 以放宽 `role` 的 CHECK |
+| 41 | 成员描述注入（三处） | 成员的专业描述（`Agent.Specialty`）注入 **①主持人提示词**、**②系统事件**、**③成员自己的注入上下文**（见 §5.2） |
+| 42 | 主持人被移除 | **拒绝**：`RemoveGroupMember` 遇 `memberID == host_member_id` 直接报错，须先转移主持人（`SetGroupHostMember`） |
+| 43 | 系统事件的消息归属 | `role='system'`，**`agent_id=''`**（非成员发言）；前端按系统事件样式渲染（居中细条，非气泡） |
+| 44 | 系统事件是否进游标 | **计入**（`id > cursor` 即注入）——成员/主持人都要知道谁进出了；但**不计入未读数**（未读只数 `role='assistant'`，无需改） |
 
 ## 3. 架构
 
@@ -197,6 +203,15 @@
 - 游标存在成员行 `context_state` JSON（决策 #10 落地）。
 - **顺序模式下无并发竞态**：同一时刻只有一个成员在发言，游标取"发言前最大 id"即可。若未来恢复并行（v2），游标须改为"本轮开始高水位 + 作者过滤"（见 §12 C1 与决策 #23 原并行语义）。
 
+**离场成员的标注（决策 #39）**：注入文本里，已离场成员的名字后加 **"（已离场）"**，如 `Claude（已离场）: 我认为...`。理由：主持人与其他成员都能看到离场者的历史发言（游标不因离场而重置），但不标注会让主持人**继续点名一个已经不在的人**——`resolveTargets` 查不到就静默回退轮转，表现为"主持人反复点名某人然后莫名换人"。标注后模型能自行避免。同理，**主持人提示词的可点名名单**也须区分在场/已离场（见 §5.4）。
+
+**成员描述的注入（决策 #41，三处）**：成员的专业描述来自 `model.GetAgent(agentID).Specialty`（如"全栈开发助手"），注入到：
+1. **主持人提示词**——路由名单渲染成 `名字（描述）`，让"AI 决定发言者"有依据（否则只能看名字猜专业）。**默认模型不注入**（模型不是路由信号，只添噪音）；**完整运行时提示词不注入**（含内置共享前缀，每成员数千字，token 成本爆炸且泄漏内部提示词）。
+2. **系统事件**——增删成员时写入的时间线消息带上描述，如"Claude（代码编写与推理）加入了讨论"（决策 #40）。
+3. **成员自己的注入上下文**——每个成员发言前，能看到**其他成员的描述**，知道"我在跟谁讨论"。渲染在注入文本的**头部**（一次性、不随每条消息重复），格式：`参与者：A（描述）、B（描述）`。
+
+三者共用同一个取描述的函数（`GetAgentSpecialty(agentID) string`，空则省略括号），避免三处各写一份而漂移。
+
 ### 5.3 路由标签
 
 仿 `internal/askquestion/` 建独立叶子包（`internal/grouprouting/`）：
@@ -210,11 +225,33 @@
 - **可解析**：把**标签 span**替换为卡片（"主持人 → A、B" chips）；**标签之后的指令文本保留显示一次**（卡片里可含指令，但正文不得重复渲染同一段——即卡片替换范围包含指令文本，或卡片不含指令而正文保留，二选一，实现时统一，**不得两处都显示**）。
 - **不可解析**：**不剥离**，原样显示（含标签），与后端契约一致——**绝不因解析失败丢内容**。
 
-### 5.4 主持人发言的特殊样式
+### 5.4 主持人提示词与发言样式
 
-**决策（#35/#N6）**：主持人发言与成员发言的区分**靠 `agent_id == 主持人成员行 id`**（群的主持人成员行 id 已知）。**不引入 content 信封标记**（N6：content 由 executor 的 `buildContentJSON` 构建，编排器无注入点）。
+**样式决策（#35/#N6）**：主持人发言与成员发言的区分**靠 `agent_id == 主持人成员行 id`**（群的主持人成员行 id 已知）。**不引入 content 信封标记**（N6：content 由 executor 的 `buildContentJSON` 构建，编排器无注入点）。
 
 前端对主持人气泡渲染**居中特殊样式**，并把其中的路由标签**解析成"主持人 → A、B"卡片**（决策 #35）。标签解析逻辑与后端 `internal/grouprouting` 镜像。
+
+**可点名名单（决策 #39/#41）**：`BuildHostSystemPrompt` 的成员列表**不再只传名字**，而是渲染成 `名字（描述）`，并区分在场状态：
+
+```
+可选的成员名：
+Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（xAI 编码代理，已离场）
+```
+
+- **描述**来自 `GetAgentSpecialty(agentID)`（决策 #41）——这是"AI 决定发言者"的唯一依据；不注入描述时主持人只能看名字猜专业。
+- **在场/离场**（决策 #39）：已离场成员名后加"（已离场）"，主持人据此避免点名一个不在的人（点名后 `resolveTargets` 查不到会静默回退，用户看到"莫名换人"）。
+- 因此 `BuildHostSystemPrompt` 的入参从 `[]string` 改为**带元数据的结构体切片**（名字 + 描述 + 是否离场），测试与调用点同步改。
+
+### 5.7 成员增删的系统事件（决策 #40/#43/#44）
+
+增删成员时，往**群时间线**写一条系统消息，让主持人和其他成员都知道成员变动。
+
+- **存储**：`role='system'`，**`agent_id=''`**（不是任何成员的发言）。需**整表重建** `chat_history` 放宽 `role` 的 CHECK（原 `CHECK(role IN ('user','assistant'))`）——SQLite 不能改 CHECK，只能 `CREATE new → INSERT SELECT → DROP → RENAME`（仓库有先例：`rebuildChatMetadataWithoutFK`、`migrateChatThinkingSeq`）。
+  - **影响面（实现时必须一次改全）**：生产 DDL 1 处 + 重建迁移 1 段 + **约 20 个测试夹具**手写了同一句 CHECK（`chat_test.go:32`、`handler/testutil_test.go`、`session_runtime_test.go:1370` 等）——漏改任一个该测试即失败。
+  - **不得用 `role='assistant'` 冒充**：`role='assistant'` 被大量语义占用（未读数 `unreadCountSubquery`、`SessionHasAssistant`、auto-title、resume 判定、`pending_events`），冒充会让系统事件被算成"一条 AI 回复"。
+- **内容**：如 `Claude（代码编写与推理）加入了讨论`、`Claude 已离场`（描述来自决策 #41）。
+- **注入（决策 #44）**：系统事件**计入游标**（`id > cursor` 即注入），成员/主持人都能看到"谁进谁出"；但**不计入未读数**（未读只数 `role='assistant'`，天然不受影响）。
+- **渲染（决策 #43）**：前端按系统事件样式渲染——**居中细条**（非气泡、无头像），与主持人/成员气泡区分。
 
 ### 5.5 抢占
 
@@ -301,7 +338,11 @@
 - **入口**：成员管理面板（头像条 `+` 进入后的成员列表里可移除）。
 - **容器**：**`BottomSheet` 抽屉**（决策 #34），与移动端现有抽屉一致；抽屉内同时承载**群设置**（最大轮数，决策 #31）。
 - **历史发言保留并标记"已离场"**（决策 #29）：发言原样保留，头像灰显 + "已离场"标记；主持人不再选它。与"离线"状态（连接无法恢复）复用同一套视觉。
+- **写一条系统事件**（决策 #40）：时间线追加"XX 已离场"，让全员知道。
+- **拒绝移除主持人**（决策 #42）：`RemoveGroupMember` 若 `memberID == host_member_id` 直接返回错误（handler 映射为 409/400），提示"请先转移主持人"。否则会出现**主持人已被移出群却继续控场**的缺陷——`RunGroupTurn` 读的是 `context_state.host_member_id`（行 id），不校验该行是否已归档。
 - 理由：群时间线是"会议纪要"，删掉某人发言会让后续"B 回应 A"失去上下文；完全不留痕又会让用户以为系统出 bug。
+
+**加成员**：除成员行外，同样写一条系统事件（决策 #40）——"XX（描述）加入了讨论"（决策 #41）。**重新加入**（`AddGroupMember` 复用原行并清 `archived`）也写一条"XX 重新加入"。
 
 ## 8. API
 
@@ -326,11 +367,16 @@
 - **（v2）多发言者并行**：断言同轮并发执行、注入高水位 `H` 一致——**v1 不适用**。
 - 路由标签解析器（`internal/grouprouting/`）：独立叶子包 + parity corpus（含多成员逗号分隔、结束信号、畸形输入）。
 - `run_turn` 的 `TimelineSessionID`：断言"连接用成员、落库/广播用群"，且缺省时行为不变（向后兼容）。
+- **主持人提示词（决策 #39/#41）**：`BuildHostSystemPrompt` 断言成员渲染为 `名字（描述）`、离场者带"（已离场）"、缺描述时省略括号。
+- **注入上下文（决策 #39/#41）**：`buildInjectionText` 断言离场成员名后带"（已离场）"、头部含"参与者：名字（描述）"清单。
+- **系统事件（决策 #40/#43/#44）**：增删成员各写一条 `role='system'` 行（`agent_id=''`）；断言该行**计入注入**（`id > cursor` 时出现）且**不计入未读**（`role='assistant'` 过滤天然排除）。
+- **拒绝移除主持人（决策 #42）**：`RemoveGroupMember(hostMemberID)` 返回错误、主持人行 `archived` 仍为 0。
 
 ### 9.2 单元测试（前端）
 
 - `agent_id`（成员行 id）→ 气泡头像/名字渲染；映射缺失时降级通用样式。
 - 主持人特殊样式（`agentId == 主持人成员行 id`）。
+- **系统事件渲染（决策 #43）**：`role='system'` 渲染为居中细条、无头像、非气泡。
 - **路由卡片解析**（决策 #35）：前端解析 `<clawbench-speaker>` 成"主持人 → A、B"卡片；与 Go 镜像由 parity corpus 固化。
 - 顶部头像条状态（空闲/发言中/离线）；v1 顺序轮次同一时刻至多一个发言中。
 - 群设置：改最大轮数 → PATCH 调用。
@@ -370,6 +416,10 @@
 18. ~~群停止传播~~ → 成员回合 ctx 派生自编排器（§5.5）。
 19. ~~`GetSessionCount` 是否计入群~~ → **群计入、成员不计**（决策 #37）：**4 处** COUNT 改 `session_type IN ('chat','group')`；`POST /api/group/create` 也须过上限门。
 20. ~~群设置 UI 形态~~ → **成员管理 BottomSheet 内**（决策 #38），不进设置页。
+21. ~~主持人是否知道成员增删~~ → **知道**：注入标注离场（#39）、提示词区分在场（#39）、系统事件（#40）。
+22. ~~主持人是否知道成员描述~~ → **知道**：描述注入三处（#41）。
+23. ~~主持人被移除~~ → **拒绝**，须先转移（#42）。
+24. ~~系统事件落库方式~~ → **新增 `role='system'`，整表重建**（#40/#43/#44）。
 
 ## 12. 设计评审勘误（2026-10-04，Superpower code-reviewer，已逐条核对代码）
 
@@ -637,6 +687,28 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - 覆盖 HTTP `POST /api/ai/permission/respond`（`handler/permission.go`）与 WS `permission_respond`（`ws/events.go`）——两者都汇聚到 `service.RespondPermission`，故一处修复两条路径生效。
 - 前端与 ACP 层**零改动**（卡片继续带群 id，后端解析）。tool call id 每回合唯一 ⇒ 至多一个成员命中，其余连接不受影响。
 - 测试：`internal/service/permission_group_test.go`（多成员判别 + 无 pending 仍失败），变异验证关掉群分支即变红。
+
+## 12.6 增补：成员可见性、描述注入与系统事件（2026-10-06，决策 #39–#44）
+
+> 合入 `aa88f921a` 后增补。以下三项是**实现里确实存在的缺口**，已逐条核对当前代码。
+
+**（1）主持人只知道成员名字。**
+`group_orchestrator.go:200` 调 `BuildHostSystemPrompt(activeMemberNamesExcept(...))`，而 `activeMemberNamesExcept`（`:350`）只返回 `m.Name`；`group_prompt.go:31` 仅 `strings.Join(members, "、")`。⇒ 主持人路由**等于看名字猜专业**。而成员自己走 `BuildChatRequest` → `SystemPrompt: agent.RuntimeSystemPrompt`（`chat_request.go:209`），人设对成员已成立——缺口只在主持人侧。
+**修（决策 #41）**：描述（`Agent.Specialty`）注入三处（主持人提示词 / 系统事件 / 成员注入上下文），`BuildHostSystemPrompt` 入参由 `[]string` 改为带元数据的结构体切片。
+
+**（2）增删成员不写时间线，且离场者仍被点名。**
+`handler/group.go:148,172` 直接调 `AddGroupMember`/`RemoveGroupMember`，**不往 `chat_history` 插行**；主持人获取上下文只靠时间线注入（`group_inject.go:26`）⇒ 主持人眼里"什么都没发生"。且 `buildInjectionText`（`group_inject.go:28-53`）**没有 Left 过滤**，离场者的旧发言照注入却不标注，主持人会继续输出 `<clawbench-speaker>离场者</...>` → `resolveTargets`（`:237`）查不到 → 静默回退轮转（表现为"反复点名某人然后莫名换人"）。
+**修（决策 #39/#40）**：注入时离场者名后加"（已离场）"；主持人提示词区分在场/离场；增删写系统事件。
+
+**（3）主持人被移除后仍继续控场。**
+`RemoveGroupMember`（`group_store.go:341`）只置 `archived=1`，**不清 `context_state.host_member_id`**；`RunGroupTurn:90` 读 `GetGroupHostMember` 拿到行 id 后**不校验该行是否已归档**，`buildMemberTurnSpec` 也不检查 `Left`。`groupMemberTurn.IsHost`（`:23`）字段从未用于校验。⇒ 把主持人移出群，它被标"已离场"、从名单消失，**但下一轮照样发言控场**。
+**修（决策 #42）**：`RemoveGroupMember` 加守卫，遇 `memberID == host_member_id` 直接报错，须先 `SetGroupHostMember` 转移。
+
+**（4）系统事件落库的硬约束（决策 #40/#43/#44）。**
+`chat_history.role` 有 `CHECK(role IN ('user','assistant'))`（`database.go:308`）。加 `role='system'` **SQLite 不能改 CHECK**，只能整表重建（先例：`rebuildChatMetadataWithoutFK`、`migrateChatThinkingSeq`）。
+- **影响面（一次改全，漏一处即失败）**：生产 DDL 1 处 + 重建迁移 1 段 + **约 20 个测试夹具**手写同一句 CHECK（`chat_test.go:32`、`handler/testutil_test.go`、`session_runtime_test.go:1370`、`database_test.go:61/2123/2510/3367/3724`、`drain_test.go:51`、`scheduler_test.go:26`、`scheduler_executor_test.go:28`、`scheduler_script_phase_test.go:31`、`summary_test.go:258`、`session_cleanup_test.go:351`、`chat_metadata_ledger_migrate_test.go:50`、`thinking_migrate_test.go:48`、`session_command_test.go:66` 等）。
+- **不得用 `role='assistant'` 冒充**：该角色被大量语义占用——未读数 `unreadCountSubquery`（`chat.go:1199`）、`SessionHasAssistant`（`chat.go:2497`）、auto-title、resume 判定、`pending_events.go:381`、`thinking_migrate.go:23/54`、`database.go:1927/1997/2318/2346`。冒充会让系统事件被算成"一条 AI 回复"。
+- **好消息**：未读天然只数 `role='assistant'`，故系统事件**不计入未读**无需额外改动（决策 #44）；但它**计入游标**（`id > cursor` 即注入），成员/主持人都能看到成员变动。
 
 ## 11. 关键文件索引
 
