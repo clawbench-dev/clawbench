@@ -27,7 +27,7 @@
 
 **Tech Stack:** Go（SQLite、net/http、WS StreamHub）、Vue 3 + TypeScript（Vitest）、Playwright（E2E + acp-mock）。
 
-**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **44 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6**）。
+**设计文档：** `docs/plans/2026-10-04-ai-group-chat-design.md`（决策表 **59 条**，遇歧义先读它；评审勘误见 §12/§12.1/§12.2；**合入后增补见 §12.6/§12.7**）。
 
 **通用约定：**
 - 每个 Task 结束必须 commit（独立小提交）。
@@ -56,6 +56,7 @@
 | K | 前端：成员头像条 + 增删 | G、H |
 | M | E2E（M0 前置 + M1） | 全部 |
 | N | **增补（合入后）**：成员可见性、描述注入、系统事件（N1 role='system' 重建 / N2 描述三处注入 / N3 系统事件 / N4 前端渲染 / N5 拒绝移除主持人） | 全部 |
+| O | **增补（二轮 grill）**：排队与生命周期（O1 群入队+drain / O2 级联删除+离群保留 / O3 成员失败复用 failTurn / O4 摘要推荐跳过 / O5 轮转+失败收尾 / O6 智能体重名收敛 / O7 归档关连接 / O8 隐藏回溯入口 / O9 发言中高亮） | N |
 | ~~L~~ | ~~前端：同轮并发气泡~~ → **v2**（随并行一起做，见头部勘误） | — |
 
 ---
@@ -1791,6 +1792,149 @@ git commit -m "test(group): add group chat e2e spec"
 
 ---
 
+## 阶段 O：排队、生命周期与降级（决策 #45–#59）
+
+> **背景**：二轮 grill 逐分支核对代码后新增（设计 §12.7 记录了 10 个缺口）。**逐 Task TDD + 独立 commit。** 依赖阶段 N（N1 的 `role='system'` 是 O3 的前置，O2 复用 N1 的删除路径）。
+
+### Task O1: 群消息入队 + 复用 drain loop（决策 #45/#46/#58）
+
+**Files:**
+- Modify: `internal/handler/chat.go`（群委派移到 claim 之后）
+- Modify: `internal/service/group_orchestrator.go`（`emitGroupTerminal` → `MarkDoneAndSendFinal`）
+- Test: `internal/handler/chat_group_queue_test.go`（新建）、`internal/service/group_orchestrator_test.go`（追加）
+
+**Step 1: 写失败测试**：群回合运行中发第二条消息 → 断言**入队**（不启动第二个编排器）、时间线只有一条用户消息；群回合结束 → drain loop 取队列继续；队列排空 → 恰好一次 `done`。
+
+**Step 3: 实现**：
+- `handler/chat.go` 的群分支移到 `TryClaimSessionRun` **之后**（与单聊同构）；忙碌时走 `AddQueuedMessage` + `queue_added`。
+- 群回合的 run 包装成 `DrainConfig.ExecuteRunWithMessage`：`func(msgID int64, row service.QueuedRow) service.DrainResult { return service.RunGroupTurnForSession(...) }`。
+- `emitGroupTerminal` 改为调用 `MarkDoneAndSendFinal`（群回合不自发 `done`）；`OnTurnAnswered` 复用逐条完成推送。
+- 前端队列条目的「加入本轮」按钮在群会话**不显示**（只留「插话」）；文案 key 复用/新增 i18n。
+
+**Commit:** `feat(group): queue messages while a group turn runs and drain via RunDrainLoop`
+
+---
+
+### Task O2: 级联删除 + 归档保留 + 离群不误删（决策 #48）
+
+**Files:**
+- Modify: `internal/service/chat.go`（`HardDeleteSession` 删成员行）
+- Modify: `internal/service/group_store.go`（`RemoveGroupMember` 刷 `updated_at`）
+- Modify: `internal/store/session_queries.go`（`GetExpiredArchivedSessions` 排除 `group_member`）
+- Test: `internal/service/group_store_test.go`、`internal/service/chat_test.go`（追加）
+
+**Step 1: 写失败测试**：
+- 销毁群 → 断言成员行**全部消失**。
+- 归档群 → 断言成员行 `archived` **仍为 0**（传递性隐藏）。
+- 移除成员 → 断言 `updated_at` 被刷新；把 `updated_at` 设为 100 天前再跑 `GetExpiredArchivedSessions` → 断言该成员行**不在**结果里。
+
+**Step 3: 实现**：`HardDeleteSession` 在删群行前 `DELETE FROM chat_sessions WHERE group_id=? AND session_type='group_member'`（同一事务）；`RemoveGroupMember` 的 UPDATE 加 `updated_at = CURRENT_TIMESTAMP`；`GetExpiredArchivedSessions` 加 `AND session_type != 'group_member'`（双保险）。
+
+**Commit:** `fix(group): cascade member rows on group delete, keep them on archive`
+
+---
+
+### Task O3: 成员失败复用 failTurn（决策 #51）
+
+**Files:**
+- Modify: `internal/service/group_orchestrator.go`（运行中失败也走 failTurn 形态）
+- Test: `internal/service/group_orchestrator_test.go`（追加）
+
+**Step 1: 写失败测试**：成员回合返回 `res.Err != ""` → 断言群时间线多一条 `role='assistant'` 的 warning block，且 `agent_id == 该成员行 id`。
+
+**Step 3: 实现**：`defaultRunner` 在 `res.Err != ""` 时用与 `TurnSpec.failTurn`（`run_turn.go:214`）**相同的 block 结构**（`{type:'warning', text, reason: ai.ReasonBackendExit}`）写群时间线；**不新增** `role='system'` 错误消息。抽共享构造函数避免两处漂移。
+
+**Commit:** `fix(group): surface member turn failures as warning blocks like single chat`
+
+---
+
+### Task O4: 群聊跳过摘要与推荐（决策 #55）
+
+**Files:**
+- Modify: `internal/service/session_executor.go`（Finalize 的 `triggerChatSummarization` 加群判断）
+- Modify: `internal/service/group_orchestrator.go`（整轮结束时跑一次）
+- Test: `internal/service/session_executor_test.go`、`group_orchestrator_test.go`（追加）
+
+**Step 1: 写失败测试**：群成员回合 Finalize → 断言 `triggerChatSummarization` **未被调用**；群回合整轮结束 → 断言**调用一次**。
+
+**Step 3: 实现**：`session_executor.go:1672` 改为 `if GetSessionType(e.timelineSID()) != "group" { triggerChatSummarization(...) }`（成员回合的 `timelineSID()` 是群行）；编排器在 `emitGroupTerminal` 前对群行调一次。
+
+**Commit:** `perf(group): summarize once per group turn instead of per member`
+
+---
+
+### Task O5: 回退轮转指针 + 连续失败收尾（决策 #56）
+
+**Files:**
+- Modify: `internal/service/group_orchestrator.go`（`speakNextMember` 轮转 + 失败计数）
+- Test: `internal/service/group_orchestrator_test.go`（追加）
+
+**Step 1: 写失败测试**：连续两次路由解析失败 → 断言**两次点名不同成员**；第三次失败 → 断言**跳出循环**（不再跑满 `maxRounds`）。
+
+**Step 3: 实现**：`RunGroupTurn` 维护 `lastFallbackIdx`（或轮转游标）与 `parseFailures`；`speakNextMember` 从游标之后取第一个未离场非主持人成员并推进游标；`parseFailures >= 2` → 走收尾路径。
+
+**Commit:** `fix(group): round-robin fallback and abort after two parse failures`
+
+---
+
+### Task O6: 智能体重名收敛到单一函数（决策 #50）
+
+**Files:**
+- Modify: `internal/service/agent_store.go`（新增 `AgentNameTaken`；`SaveAgent`/`PatchAgentFields` 调用）
+- Modify: `internal/handler/agent.go`（错误码映射）
+- Test: `internal/service/agent_store_test.go`（追加）
+
+**Step 1: 写失败测试**：
+- `SaveAgent` 写入与**其他 id** 同名的 agent → 报错。
+- `PatchAgentFields` 改名撞他人 → 报错。
+- **同名但同 id**（幂等重存）→ **不报错**（否则内置后端重注册自我拒绝）。
+- `DuplicateAgent` 用已存在名字 → 报错（预填是 `{源名} (复制)`，同源复制两次会撞）。
+
+**Step 3: 实现**：`AgentNameTaken(name, excludeID string) bool`（查 `agents` 表 `name=? AND id!=?`，大小写/空白按现有约定处理）；`SaveAgent` 与 `PatchAgentFields` 在写入前调用；`DuplicateAgent` 无需单独改（走 `SaveAgent`）。handler 返回 409 + 本地化文案。**同步更新** `CopyAgentDialog.vue` 的错误显示（已有 `error` 位）。
+
+**Commit:** `feat(agent): enforce globally unique agent names in one place`
+
+---
+
+### Task O7: 归档/销毁群关闭成员连接（决策 #57）
+
+**Files:**
+- Modify: `internal/handler/chat_session.go`（Archive/Destroy 遍历成员关连接）
+- Test: `internal/handler/chat_session_group_test.go`（新建）
+
+**Step 1: 写失败测试**：建群 + 2 个 ACP 成员 + 各自建连接 → 归档群 → 断言**两个成员连接都被关闭**。
+
+**Step 3: 实现**：归档与销毁路径中，若 `GetSessionType(sessionID) == "group"`，取 `ListGroupMembers` 并逐个 `go CloseConn(member.ID)`（保持现有 goroutine 惯例，`CloseConn` 可能阻塞在 `cmd.Wait()`）。
+
+**Commit:** `fix(group): close member connections when a group is archived or destroyed`
+
+---
+
+### Task O8: 群会话隐藏回溯入口（决策 #52）
+
+**Files:**
+- Modify: `web/src/components/chat/ChatMessageItem.vue`（或回溯入口所在组件）
+- Test: 组件测试
+
+**Step 3: 实现**：群会话（`isGroupSession`）不渲染「回溯到此处」入口。**后端不加守卫**（v1 前端隐藏即可；若日后开放需先解决游标回退，见设计 §12.7(10)）。
+
+**Commit:** `feat(group): hide rewind entry for group sessions`
+
+---
+
+### Task O9: 头像条"发言中高亮"（决策 #59）
+
+**Files:**
+- Modify: `web/src/components/chat/GroupAvatarStack.vue`（消费 `activeSpeakerId`）
+- Modify: `web/src/composables/useGroupMembers.ts` 或 `useChatStream.ts`（从 `stream_start.agent_id` / `stream_finalize` 派生）
+- Test: 组件测试
+
+**Step 3: 实现**：`stream_start.agent_id` 设为当前发言人（高亮），`stream_finalize` 或整轮 `done` 清除。**后端零改动**（`stream_hub.go:384/399` 已在线上）。
+
+**Commit:** `feat(group): highlight the speaking member in the avatar strip`
+
+---
+
 ## 完成标准
 
 - 所有阶段 Task 完成且各自 commit（**v1 不含 L0/L1，它们属 v2**）。
@@ -1806,3 +1950,4 @@ git commit -m "test(group): add group chat e2e spec"
 - **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 **F0b→F1→F2→F0→F3**）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
 - **评审项验收（四/五轮）**：R-1（`SpeakerID` 在 C1 声明，先于 C2 使用）、R-2（G1 Files 含 `handler/chat.go`）、R-3（A3 含 `queue_store.go:217` 第二调用者）、R-4（设计 §3.1 `UpdateLastRead` 保持成员 id）、R-5（设计 §8 含 `GET /api/group/members`）、R-6（`GroupMember` 类型已声明）、R-7（E2 含 `session_resume.go`）、R-8（fork/continue INSERT 写归属）均落地。
 - **增补验收（阶段 N，决策 #39–#44）**：离场成员注入标注（#39）、系统事件 `role='system'` 整表重建（#40/#43/#44）、描述注入三处（#41）、拒绝移除主持人（#42）均有对应测试通过。
+- **增补验收（阶段 O，决策 #45–#59）**：群消息入队+复用 drain（#45/#46/#58）、级联删除/归档保留/离群不误删（#48）、成员失败复用 `failTurn`（#51）、群聊跳过摘要推荐（#55）、轮转+连续失败收尾（#56）、智能体重名单一函数（#50）、归档关成员连接（#57）、隐藏回溯入口（#52）、发言中高亮（#59）均有对应测试通过；**v1 明确不做**：@ 成员（#47）、离线状态（#54）、更换主持人（#53）。

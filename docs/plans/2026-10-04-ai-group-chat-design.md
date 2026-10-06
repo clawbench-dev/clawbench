@@ -60,9 +60,24 @@
 | 39 | 离场成员的注入标注 | 注入上下文里离场成员名后加 **"（已离场）"**；主持人提示词的**可点名名单**同时区分"在场 / 已离场" |
 | 40 | 成员增删的系统事件 | 增删成员时写一条 **`role='system'`** 的消息到群时间线（如"XX 加入了讨论"）；**需整表重建** `chat_history` 以放宽 `role` 的 CHECK |
 | 41 | 成员描述注入（三处） | 成员的专业描述（`Agent.Specialty`）注入 **①主持人提示词**、**②系统事件**、**③成员自己的注入上下文**（见 §5.2） |
-| 42 | 主持人被移除 | **拒绝**：`RemoveGroupMember` 遇 `memberID == host_member_id` 直接报错，须先转移主持人（`SetGroupHostMember`） |
+| 42 | 主持人被移除 | **拒绝**：`RemoveGroupMember` 遇 `memberID == host_member_id` 直接报错（决策 #53 修订：**不可转移**，故无"先转移"路径） |
 | 43 | 系统事件的消息归属 | `role='system'`，**`agent_id=''`**（非成员发言）；前端按系统事件样式渲染（居中细条，非气泡） |
 | 44 | 系统事件是否进游标 | **计入**（`id > cursor` 即注入）——成员/主持人都要知道谁进出了；但**不计入未读数**（未读只数 `role='assistant'`，无需改） |
+| 45 | 群回合运行中人类发消息 | **排队**（复用单聊语义）：群委派移到 `TryClaimSessionRun` **之后**，忙碌时入队；群回合复用现有 `RunDrainLoop`（把群回合当一次 turn） |
+| 46 | 排队条目的操作按钮 | **只给「停止并发送」，但文案显示为「插话」**（行为=取消本轮+用该消息起新一轮）；**「加入本轮」不提供**（群回合是多轮循环，无单一在跑回合可注入） |
+| 47 | 人类 @ 成员 | **v1 不做**。人类一律排队，想指定发言人时由**主持人**下一轮自行决定；不引入第二套路由入口 |
+| 48 | 群删除/归档的成员行 | **删除→级联硬删成员行**；**归档→只归档群行，成员行不动**（传递性隐藏，避免 `archived` 列同时表示"已离场"与"群已归档"）；`RemoveGroupMember` **刷新 `updated_at`**（防保留期把"离场"当"过期"硬删） |
+| 49 | 新成员"补课" | **全量注入**（现状）：新成员 `seen_cursor=0` → 首次发言注入全部群历史 |
+| 50 | 智能体重名 | **全局禁止**：收敛到单一函数 `AgentNameTaken(name, excludeID)`，由 `SaveAgent`（创建/复制）与 `PatchAgentFields`（改名）调用；命中即**报错**（含复制路径）。仅比对**其他 id**，否则内置后端重注册会自我拒绝 |
+| 51 | 成员失败呈现 | **完全复用单聊 `failTurn`**（warning block、`role='assistant'`、带成员归属 `SpeakerID`）；不在群路径另造 `role='system'` 错误消息 |
+| 52 | 群聊回溯（rewind） | **v1 不支持**：前端群会话**隐藏回溯入口**（成员游标单调递增，回溯会致成员失忆） |
+| 53 | 主持人可否更换 | **不可换、不可移除**：建群时指定即固定；`SetGroupHostMember` 仅创建路径使用，不暴露端点 |
+| 54 | 成员"离线"状态 | **不引入**：连接不可恢复时 AI 层已自动开新会话并发可见警告（`acp_backend.go:87`），群时间线据此暴露；不新增状态机 |
+| 55 | 摘要与推荐 | **群聊跳过**：成员回合 Finalize 不跑 `triggerChatSummarization`；**只在群回合整轮结束时跑一次**（否则 N×轮数 次 LLM 推荐调用 + 全表摘要扫描） |
+| 56 | 路由解析失败的回退 | **轮转指针选下一个未发言成员** + **连续失败 2 次自动收尾**（现状是永远选第一个且永不收尾） |
+| 57 | 归档/销毁群的成员连接 | **显式关闭**：遍历 `ListGroupMembers` 逐个 `CloseConn(memberRowID)`（群行 id 关不到成员连接） |
+| 58 | 群回合的终止事件 | **调 `MarkDoneAndSendFinal`**，由 drain loop 决定是否继续；群回合不自发 `done`（否则与 drain 契约冲突，队列未排空就清 running） |
+| 59 | 头像条"发言中高亮" | **前端消费已有信号**：`stream_start.agent_id`（发言人成员行 id）+ `stream_finalize`；后端零改动 |
 
 ## 3. 架构
 
@@ -711,6 +726,41 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - **影响面（一次改全，漏一处即失败）**：生产 DDL 1 处 + 重建迁移 1 段 + **约 20 个测试夹具**手写同一句 CHECK（`chat_test.go:32`、`handler/testutil_test.go`、`session_runtime_test.go:1370`、`database_test.go:61/2123/2510/3367/3724`、`drain_test.go:51`、`scheduler_test.go:26`、`scheduler_executor_test.go:28`、`scheduler_script_phase_test.go:31`、`summary_test.go:258`、`session_cleanup_test.go:351`、`chat_metadata_ledger_migrate_test.go:50`、`thinking_migrate_test.go:48`、`session_command_test.go:66` 等）。
 - **不得用 `role='assistant'` 冒充**：该角色被大量语义占用——未读数 `unreadCountSubquery`（`chat.go:1199`）、`SessionHasAssistant`（`chat.go:2497`）、auto-title、resume 判定、`pending_events.go:381`、`thinking_migrate.go:23/54`、`database.go:1927/1997/2318/2346`。冒充会让系统事件被算成"一条 AI 回复"。
 - **好消息**：未读天然只数 `role='assistant'`，故系统事件**不计入未读**无需额外改动（决策 #44）；但它**计入游标**（`id > cursor` 即注入），成员/主持人都能看到成员变动。
+
+## 12.7 增补：排队、生命周期与降级（2026-10-06，决策 #45–#59）
+
+> 第二轮 grill（逐分支核对代码）。以下缺口均为**实现里确实存在**的，已定位到具体行。
+
+**（1）群委派绕过运行中检查 → 并发编排器（决策 #45/#46）。**
+`handler/chat.go:323` 的群委派在 `TryClaimSessionRun`（忙碌检查）**之前**就 `go RunGroupTurnForSession(...)` 并 `return`（`:339`）。单聊路径则在忙碌时入队（`:292` 注释 + `:521` `AddQueuedMessage`）。⇒ 群回合运行中再发消息会起**第二个编排器**，两个都 `SetSessionRunning(groupID,true)` 且都写群时间线，`UpdateStreamingMessage` 的 `ORDER BY id DESC LIMIT 1` 互相打到对方流式行——顺序轮次只保证**单编排器内**串行。
+**修**：群委派移到 claim 之后；复用 `RunDrainLoop`（`drain.go:275`，`ExecuteRunWithMessage func(msgID, row) DrainResult` 是唯一 run 钩子，传一个调 `RunGroupTurn` 的实现即可）。
+
+**（2）群删除/归档不处理成员行（决策 #48）。**
+`HardDeleteSession`（`chat.go:2864`）只 `DELETE FROM chat_sessions WHERE id=?`（群行），成员行是独立 `chat_sessions` 行 → **永久残留**。`RemoveGroupMember`（`group_store.go:341`）只 `UPDATE archived=1` **不刷 `updated_at`** → 若开 `ArchiveRetentionEnabled`，`GetExpiredArchivedSessions`（`session_queries.go:480`，`archived=1 AND updated_at<cutoff`）会把"离场"当"过期"**硬删**，历史发言失去名字映射。
+
+**（3）群回合运行中的人类消息无抢占语义（决策 #45–#47）。**
+决策 #14 说"人类可 @ 成员 / 打断"，代码里**无任何 @ 解析或抢占处理**。
+
+**（4）成员失败静默（决策 #51）。**
+`group_orchestrator.go:158` 仅 `slog.Warn`，时间线不留痕，违背决策 #18/§6"时间线记可见错误"。**早失败**已走 `failTurn`（`run_turn.go:214`，已对群时间线接线：`emitDrainEvent(s.effectiveTimelineSessionID(),...)` + `AddChatMessageWithAgent(..., s.effectiveTimelineSessionID(), ..., s.SpeakerID)`）；**运行中失败**这条路径静默。
+
+**（5）摘要/推荐按成员回合触发（决策 #55）。**
+`session_executor.go:1672` 每次 Finalize 调 `triggerChatSummarization(e.ctx, e.timelineSID())`；群会话的 `timelineSID()` 是**群行** ⇒ 每个成员回合都（a）摘要全群未摘要的 assistant 消息（DB 扫描 + 写锁）、（b）发起推荐 LLM 调用（`session_runtime.go:969`，最长 60s）。3 成员 × 10 轮 ≈ 30 次。
+
+**（6）回退永远选第一个且永不收尾（决策 #56）。**
+`speakNextMember`（`group_orchestrator.go:250`）`for ... { ...; return true }` 恒选名单第一个非主持人成员；`len(targets)==0` 分支（`:139`）只 `continue`，**无失败计数** ⇒ 主持人持续畸形会以同一成员空转到 `maxRounds`。
+
+**（7）主持人不可换且无转移入口（决策 #53）。**
+`SetGroupHostMember`（`group_store.go:361`）存在但**无 handler、无前端**（`GroupMemberSheet` 无换人入口）⇒ "拒绝移除主持人"会把用户锁死（唯一出路是解散重建）。用户决定：**干脆不可换**，规则最简。
+
+**（8）归档群不关成员连接（决策 #57）。**
+`chat_session.go:373/397/450` 都 `CloseConn(sessionID)` = 群行 id，而成员连接注册在**成员行 id**（`group_orchestrator.go:282` `SessionID: turn.MemberRowID`）⇒ 一个连接都关不到，5 个 ACP 成员会多存活最长 5 分钟（每会话一个子进程）。
+
+**（9）发言中高亮未实现（决策 #59）。**
+`GroupAvatarStack.vue` 只有 host ring；全仓无 `activeSpeaker`/`isSpeaking`。但信号已在线上：`stream_start.agent_id`（`stream_hub.go:384`）+ `stream_finalize`（`:399`）⇒ **纯前端改动**。
+
+**（10）rewind 与成员游标冲突（决策 #52）。**
+`TruncateSessionAfterMessage`（`continue_conversation.go:770`）删群时间线行后，成员 `seen_cursor` 仍是旧高水位（`SetMemberCursor` 单调递增）⇒ 之后 `id > cursor` 恒不成立 ⇒ 成员失忆。且 `ServeSessionRewind` 会 `CloseConn`，恢复的是 agent 侧**未被回溯**的历史，与群时间线不一致。
 
 ## 11. 关键文件索引
 
