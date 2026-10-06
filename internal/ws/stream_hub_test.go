@@ -1151,8 +1151,8 @@ func TestStreamHub_EmitLiveRunState_QuestionBeforeStreamStart(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-late", "")
 	hub.Subscribe("client-late", "session-live")
 
-	hub.SetStreamStateLookupFunc(func(sessionID string) (int64, int64, string) {
-		return 51660, 51659, "hello from dingtalk"
+	hub.SetStreamStateLookupFunc(func(sessionID string) (int64, int64, string, string) {
+		return 51660, 51659, "hello from dingtalk", ""
 	})
 
 	hub.EmitLiveRunStateToClient("client-late", "session-live")
@@ -1185,7 +1185,7 @@ func TestStreamHub_EmitLiveRunState_NoQuestion(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-sched", "")
 	hub.Subscribe("client-sched", "session-sched")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string) { return 99, 0, "" })
+	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) { return 99, 0, "", "" })
 
 	hub.EmitLiveRunStateToClient("client-sched", "session-sched")
 
@@ -1204,11 +1204,61 @@ func TestStreamHub_EmitLiveRunState_NothingStreaming(t *testing.T) {
 	sub := mgr.Subscribe(nil, &writeMu, "client-idle", "")
 	hub.Subscribe("client-idle", "session-idle")
 
-	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string) { return 0, 0, "" })
+	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) { return 0, 0, "", "" })
 
 	hub.EmitLiveRunStateToClient("client-idle", "session-idle")
 
 	assert.Empty(t, sub.GetBufferedEvents(), "nothing streaming → nothing to re-emit")
+}
+
+// TestStreamHub_EmitLiveRunState_CarriesSpeaker guards the group-chat
+// switch-away-and-back path: the subscribe-time recovery re-emits stream_start,
+// and a group turn's speaker (member row id) must ride along. Without it the
+// placeholder a returning client creates is speakerless and the speaker header
+// stays missing for the rest of the turn (the reported defect).
+func TestStreamHub_EmitLiveRunState_CarriesSpeaker(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-group", "")
+	hub.Subscribe("client-group", "session-group")
+
+	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) {
+		return 700, 699, "question", "member-row-1"
+	})
+
+	hub.EmitLiveRunStateToClient("client-group", "session-group")
+
+	buffered := sub.GetBufferedEvents()
+	require.Len(t, buffered, 2)
+	streamStart := buffered[1].Data.(ChatStreamData)
+	assert.Equal(t, "stream_start", streamStart.EventType)
+	payload := streamStart.Payload.(map[string]any)
+	assert.Equal(t, int64(700), payload["message_id"])
+	assert.Equal(t, "member-row-1", payload["agent_id"],
+		"the re-emitted stream_start must carry the group speaker")
+}
+
+// TestStreamHub_EmitLiveRunState_NoSpeakerOmitsKey verifies the key is absent
+// for ordinary single-agent turns, so the payload shape is unchanged for them.
+func TestStreamHub_EmitLiveRunState_NoSpeakerOmitsKey(t *testing.T) {
+	mgr, hub := newTestStreamHub()
+
+	var writeMu sync.Mutex
+	sub := mgr.Subscribe(nil, &writeMu, "client-solo", "")
+	hub.Subscribe("client-solo", "session-solo")
+
+	hub.SetStreamStateLookupFunc(func(string) (int64, int64, string, string) {
+		return 701, 700, "question", ""
+	})
+
+	hub.EmitLiveRunStateToClient("client-solo", "session-solo")
+
+	buffered := sub.GetBufferedEvents()
+	require.Len(t, buffered, 2)
+	payload := buffered[1].Data.(ChatStreamData).Payload.(map[string]any)
+	_, has := payload["agent_id"]
+	assert.False(t, has, "an empty speaker must omit the key entirely")
 }
 
 func TestSimpleTextPayload_CarriesThinkID(t *testing.T) {

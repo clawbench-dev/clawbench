@@ -1420,6 +1420,16 @@ export function rebuildFromDb(state: ChatMessage[], dbMessages: ChatMessage[], s
       if (db.summaryCards) live.summaryCards = db.summaryCards
       if (db.metadata && !live.metadata) live.metadata = db.metadata
       if (db.files) live.files = db.files
+      // Speaker attribution (group chats): the DB row's agent_id is authoritative.
+      // The placeholder frequently has none — the subscribe-time recovery
+      // re-emits stream_start WITHOUT a speaker (EmitStreamStartEvent carries
+      // only message_id, unlike the live broadcast), and a session switch clears
+      // the array before that re-emit, so the placeholder is created speakerless.
+      // Adopt the DB value when the placeholder lacks one; never overwrite a
+      // speaker the placeholder already carries (a mid-turn split's "after"
+      // bubble keeps its own). Without this the avatar/name vanish on every
+      // switch-away-and-back and only a full reload restores them.
+      if (db.agentId && !live.agentId) live.agentId = db.agentId
       // A FINALIZED, summary-stripped row is the whole record of a turn that is
       // already over, and it carries NO blocks on purpose: the backend replaces
       // the content of a summarized non-streaming assistant row with

@@ -24,11 +24,12 @@ const payloadKeyMessageID = "messageId"
 type GetContextStateUsageFunc func(sessionID string) *ContextStateUsage
 
 // StreamStateLookupFunc returns the live run's state for a session: the
-// streaming assistant row id, plus the question that run answers (id 0 and
-// empty content when the run has no question, e.g. a scheduled task).
+// streaming assistant row id, the question that run answers (id 0 and empty
+// content when the run has no question, e.g. a scheduled task), and the
+// streaming row's speaker (group-member row id; empty for ordinary turns).
 //
 // Injected by the service layer to avoid a circular import.
-type StreamStateLookupFunc func(sessionID string) (messageID int64, questionID int64, questionContent string)
+type StreamStateLookupFunc func(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string)
 
 // StreamHub manages session-scoped streaming event fan-out via WebSocket.
 // It replaces the single-consumer SSE channel with multi-client WS delivery.
@@ -674,9 +675,18 @@ func (h *StreamHub) emitACPState(clientID, sessionID string, s ai.ACPCachedState
 }
 
 // EmitStreamStartEvent sends a stream_start chat_stream event to a single
-// client, carrying the streaming assistant row's id.
-func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID int64) {
-	h.emitStateEvent(clientID, sessionID, "stream_start", map[string]any{"message_id": messageID})
+// client, carrying the streaming assistant row's id and, for a group turn, the
+// speaker (member row id). The speaker must ride along: this is the
+// subscribe-time recovery emit, and a client that switched away and back
+// creates its placeholder from it — without the speaker the group speaker
+// header would be missing for the rest of the turn. Mirrors the broadcast
+// path's streamStartPayload, which carries the same key.
+func (h *StreamHub) EmitStreamStartEvent(clientID, sessionID string, messageID int64, speakerID string) {
+	payload := map[string]any{"message_id": messageID}
+	if speakerID != "" {
+		payload["agent_id"] = speakerID
+	}
+	h.emitStateEvent(clientID, sessionID, "stream_start", payload)
 }
 
 // EmitUserMessageEvent sends a user_message chat_stream event to a single
@@ -719,14 +729,14 @@ func (h *StreamHub) EmitLiveRunStateToClient(clientID, sessionID string) {
 	if stateFn == nil {
 		return
 	}
-	msgID, questionID, questionContent := stateFn(sessionID)
+	msgID, questionID, questionContent, speakerID := stateFn(sessionID)
 	if msgID <= 0 {
 		return
 	}
 	if questionID > 0 {
 		h.EmitUserMessageEvent(clientID, sessionID, questionID, questionContent)
 	}
-	h.EmitStreamStartEvent(clientID, sessionID, msgID)
+	h.EmitStreamStartEvent(clientID, sessionID, msgID, speakerID)
 }
 
 // emitStateEvent sends a single chat_stream state event to a specific client.

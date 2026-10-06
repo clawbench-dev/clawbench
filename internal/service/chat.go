@@ -2699,8 +2699,9 @@ func GetStreamingMessageID(sessionID string) int64 {
 }
 
 // GetLiveRunState returns the state a client that just subscribed needs in order
-// to render a run already in flight: the streaming assistant row's id, plus the
-// question it answers (the nearest preceding user row). Backs
+// to render a run already in flight: the streaming assistant row's id, the
+// question it answers (the nearest preceding user row), and the streaming row's
+// speaker (group-member row id; empty for ordinary single-agent turns). Backs
 // ws.StreamHub.EmitLiveRunStateToClient.
 //
 // Unlike GetStreamingMessageID this does NOT fall back to a finalized message:
@@ -2714,13 +2715,20 @@ func GetStreamingMessageID(sessionID string) int64 {
 // id order IS the conversation order. The old queue-id lookup also broke for
 // rows whose queue_id was empty. questionID is 0 for a run with no preceding
 // user row (e.g. some scheduled runs).
-func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent string) {
+//
+// speakerID MUST travel with the re-emitted stream_start: the subscribe-time
+// recovery is how a client that switched away and back learns about a live
+// turn, and without the speaker the placeholder it creates is speakerless —
+// the group speaker header then stays missing for the rest of the turn (the
+// frontend's db_load merge can heal it only because it also adopts agentId;
+// see rebuildFromDb).
+func GetLiveRunState(sessionID string) (messageID int64, questionID int64, questionContent, speakerID string) {
 	err := store.ReadDB().QueryRow(
-		"SELECT id FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
+		"SELECT id, COALESCE(agent_id, '') FROM chat_history WHERE session_id = ? AND role = 'assistant' AND streaming = 1 ORDER BY id DESC LIMIT 1",
 		sessionID,
-	).Scan(&messageID)
+	).Scan(&messageID, &speakerID)
 	if err != nil || messageID <= 0 {
-		return 0, 0, ""
+		return 0, 0, "", ""
 	}
 
 	err = store.ReadDB().QueryRow(
@@ -2728,9 +2736,9 @@ func GetLiveRunState(sessionID string) (messageID int64, questionID int64, quest
 		sessionID, messageID,
 	).Scan(&questionID, &questionContent)
 	if err != nil {
-		return messageID, 0, ""
+		return messageID, 0, "", speakerID
 	}
-	return messageID, questionID, questionContent
+	return messageID, questionID, questionContent, speakerID
 }
 
 // UpdateMessageContent updates the content of a specific message by its ID.

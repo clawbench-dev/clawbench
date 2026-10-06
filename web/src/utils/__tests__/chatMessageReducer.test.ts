@@ -477,6 +477,31 @@ describe('rebuildFromDb (live placeholder)', () => {
     expect(merged[0].createdAt).toBe('2026-01-01T00:00:00Z')
   })
 
+  // ── Bug regression: switching away and back drops the group speaker header.
+  //    On a session switch the frontend clears the array, then re-subscribes;
+  //    the backend's subscribe-time recovery re-emits stream_start — but that
+  //    path carries no speaker, so the placeholder it creates has no agentId.
+  //    The DB streaming row DOES carry agentId, and the subsequent db_load must
+  //    merge it onto the preserved placeholder object, or the avatar/name is
+  //    lost for the rest of the turn (it reappears only after a full reload).
+  it('adopts the DB row agentId when the live placeholder has none (session-switch speaker loss)', () => {
+    const live = a({ id: 7, streaming: true, seq: 1 })
+    const merged = rebuildFromDb([live], [
+      a({ id: 7, streaming: true, agentId: 'member-1' }),
+    ])
+    expect(merged).toHaveLength(1)
+    expect(merged[0]).toBe(live)
+    expect(merged[0].agentId).toBe('member-1')
+  })
+
+  it('keeps the live placeholder agentId when it already carries one', () => {
+    const live = a({ id: 7, streaming: true, agentId: 'member-2', seq: 1 })
+    const merged = rebuildFromDb([live], [
+      a({ id: 7, streaming: true, agentId: 'member-1' }),
+    ])
+    expect(merged[0].agentId).toBe('member-2')
+  })
+
   it('drops the streaming placeholder when the DB snapshot has no streaming row for it (done was missed)', () => {
     const state = [a({ id: 'drain-1', streaming: true, seq: 1 })]
     const merged = rebuildFromDb(state, [u({ id: 1, content: '1' })])

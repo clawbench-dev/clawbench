@@ -1783,10 +1783,11 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 		store.ProjectIDForTest(t, "/project"), sid)
 	require.NoError(t, err)
 
-	msgID, qID, qContent := service.GetLiveRunState(sid)
+	msgID, qID, qContent, speaker := service.GetLiveRunState(sid)
 	require.NotZero(t, msgID, "the streaming row must be reported")
 	require.NotZero(t, qID, "the question must be found by id order")
 	assert.Equal(t, "what is 2+2?", qContent)
+	assert.Equal(t, "", speaker, "an ordinary turn carries no group speaker")
 	assert.Less(t, qID, msgID, "the question must precede the reply it anchors")
 
 	// An idle session reports nothing: emitting a stream_start for it would open
@@ -1794,9 +1795,30 @@ func TestGetLiveRunState_ResolvesQuestionByIdOrder(t *testing.T) {
 	_, err = store.UnsafeDBForTest().Exec(
 		"UPDATE chat_history SET streaming = 0 WHERE session_id = ?", sid)
 	require.NoError(t, err)
-	idleMsgID, idleQID, _ := service.GetLiveRunState(sid)
+	idleMsgID, idleQID, _, _ := service.GetLiveRunState(sid)
 	assert.Zero(t, idleMsgID, "nothing streaming → no live run state")
 	assert.Zero(t, idleQID)
+}
+
+// TestGetLiveRunState_CarriesGroupSpeaker guards the group-chat switch-back
+// path: the streaming row's agent_id (member row id) must be returned so the
+// subscribe-time re-emitted stream_start carries it. Without it a returning
+// client creates a speakerless placeholder and the speaker header stays missing.
+func TestGetLiveRunState_CarriesGroupSpeaker(t *testing.T) {
+	setupDB(t)
+	sid := helperCreateSession(t, "/project", "codebuddy", "Group Live Run State")
+
+	_, err := store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming) VALUES (?, 'codebuddy', ?, 'user', 'q', 0)",
+		store.ProjectIDForTest(t, "/project"), sid)
+	require.NoError(t, err)
+	_, err = store.UnsafeDBForTest().Exec(
+		"INSERT INTO chat_history (project_id, backend, session_id, role, content, streaming, agent_id) VALUES (?, 'codebuddy', ?, 'assistant', '', 1, 'member-row-7')",
+		store.ProjectIDForTest(t, "/project"), sid)
+	require.NoError(t, err)
+
+	_, _, _, speaker := service.GetLiveRunState(sid)
+	assert.Equal(t, "member-row-7", speaker, "the streaming row's speaker must be reported")
 }
 
 // TestUnread_MarkReadAfterCompletionClearsBadge is the counterpart: once the
