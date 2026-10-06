@@ -87,6 +87,8 @@
 | 66 | 前端附件入口 | 群输入框**保留**附件按钮 / `@` 文件补全 / 引用入口（决策 #65 让它们真正可用；现状是入口在、发送被 400 拒且无提示） |
 | 67 | 主持人标签对成员的可见性 | **注入时剥离**：`buildInjectionText` 渲染主持人发言时去掉 `<clawbench-speaker>…</clawbench-speaker>`（只在 `Found==true` 时剥，解析失败**绝不剥**——同 askquestion 契约），成员只看到指令文本。理由：标签是后端↔主持人内部协议，留着会诱导成员模仿输出、污染时间线 |
 | 68 | 指令重复 | **去掉重复**：`grouprouting.Result` **新增"标签前背景"字段**（做法 A），注入时只渲染背景、指令仍由末尾 `主持人要求你：…` 给一次。**同步改前端镜像 `groupRouting.ts` + parity 语料**（该包本有 parity 契约，加字段是设计内演进） |
+| 69 | 失败时游标是否推进 | **不推进**：只在回合**成功**时 `SetMemberCursor`。失败 = 没处理过，游标推过去会让那段上下文**永久丢失**（成员后续答非所问且时间线看不出）。失败残留（半截输出 / warning block）**保留在时间线**供用户查看 |
+| 70 | warning block 的注入 | **不注入给成员**：成员失败的 warning block（`role='assistant'` + 该成员 `agent_id`）排除在 `buildInjectionText` 之外——它是给用户看的运维信息，不是讨论内容（现状会被当"某成员发言"注入，原始错误如 `create backend: …` 广播给其他成员，而当事人自己反被作者过滤跳过） |
 
 ## 3. 架构
 
@@ -795,6 +797,11 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 叠加**重复**：`group_inject.go:54-61` 把 `route.Instruction` **单独再拼一段**「主持人要求你：…」，而主持人那条发言文本里**已含同一句** ⇒ 成员看到两遍。
 `grouprouting.Parse` 按契约**只解析不剥离**（`Result.Raw` 保留原文，注释明说 "never mutates input"）⇒ 剥离需在新地方做，且必须遵守「解析失败绝不剥离」。
 **修（决策 #67/#68）**：`Result` 新增**标签前背景**字段；注入时渲染背景 + 剥离标签；指令只由末尾那一段给一次。**前端镜像 `groupRouting.ts` 与 parity 语料同步改。**
+
+**（18）失败时游标照推 + warning block 被当成员发言注入（决策 #69/#70）。**
+- **游标**：`group_orchestrator.go:119-121`（主持人）与 `:156-158`（成员）都是**先 `SetMemberCursor(高水位)`、后判 `Err`**。⇒ 失败回合（后端创建失败/连接不可用）实际上**什么都没处理**，但游标已被推过 ⇒ 本轮注入的内容**永久丢失**，成员后续答非所问，且时间线上看不出。
+- **warning block**：成员失败的 warning block 是 `role='assistant'` + **该成员行 `agent_id`**（决策 #51）。`buildInjectionText:32` 的作者过滤只跳 `m.AgentID == self` ⇒ **其他成员**会把 `ExtractPlainText` 解出的原始错误文本（`create backend: …`）当"某成员发言"读进上下文；而**失败者自己**反被过滤跳过，看不到自己的失败。
+**修（决策 #69/#70）**：游标只在成功时推进；warning block 排除在注入之外。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
