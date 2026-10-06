@@ -151,6 +151,7 @@
 | 78 | 群成员数上限 | **10 个活跃成员**。理由：每成员是一条独立 ACP 子进程（各带 node/npx 运行时，数百 MB 级），连接池**无上限**（`acp_pool.go` 的 `conns` 是 map）⇒ 无护栏时"加 50 个成员"可瞬间打爆内存；且 10 人以上"辩论"对模型无意义。校验放 **service 层**（唯一写入口）：`CreateGroupWithMembers` 与 `AddGroupMember`；**批量加须先算"现有活跃 + 去重后的净新增"**（`AddGroupMember` 对同 agent 幂等复用，重复添加不得算超限） |
 | 79 | 群里的 `/btw` 与 `/cb-*` 命令 | **保留现状**（不禁用）。**非缺口**：`slashCandidates`（`ChatInputBar.vue:1014`）无 `isGroupSession` 门控 ⇒ 群输入框弹命令菜单。但 `/btw` 存独立的 `btw_questions` 表**不污染群时间线**，`/cb-*` 走各自 HTTP API 与群无关 ⇒ 属**语义模糊**（`/btw` 用群行 backend 即主持人回答）而非缺陷；用户明确选择保留 |
 | 80 | 通知点击跳转 / 跨设备已读 | **无需改动**（非缺口）。桌面通知 nav 携带 `sessionId`（`notification.ts:37-43` → `clawbench-open-session`），群传群行 id ⇒ 正常跳转；Android `NativeNotificationPolicy` 是**纯 status 判定**（`isNotifiableSessionStatus`），与 `session_type` 无关 ⇒ 群 `completed`/`cancelled` 天然覆盖（**前提是决策 #72 让群回合真的发 `completed`**）；`UpdateLastRead`（`chat.go:997`）按 sessionID 更新并广播 `read`，群行同构 |
+| 81 | 中途订阅的 live run 重放 | **无需改动**（非缺口）。`GetLiveRunState`（`chat.go:2725`）按 `session_id` 查最新 `streaming=1` 行并取该行 `agent_id` 作 speaker ⇒ 群会话（session_id=群行）的流式行带**成员行 agent_id**，speaker **正确解析**。这正是决策 #59「发言中高亮」的数据源 |
 
 ## 3. 架构
 
@@ -907,6 +908,9 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 - **桌面通知点击**：nav 携带 `sessionId`（`desktop/src/main/notification.ts:37-43` `channelFor` → `clawbench-open-session`），群会话传**群行 id** ⇒ 正常切到该群。
 - **Android 原生通知**：`NativeNotificationPolicy` 是**纯 status 判定**（`isNotifiableSessionStatus`：completed/cancelled/permission_pending），**与 `session_type` 无关** ⇒ 群的状态天然覆盖。**但前提是决策 #72**（群回合目前根本不调 `EmitSessionPushNotification`，也就不写 `pending_events`，Android 通知链无从触发）。
 - **跨设备已读**：`UpdateLastRead`（`chat.go:997` → `chat.go:1522`）按 sessionID 更新 `last_read_at` 并 `EmitSessionEventWSOnly(sessionID,"read")`，群行与单聊行同构。
+
+**（28）中途订阅的 live run 重放是群安全的（非缺口，决策 #81）。**
+`EmitLiveRunStateToClient`（`stream_hub.go:724`）在客户端中途订阅时补发 `user_message` + `stream_start`（否则前端缓冲的事件永不排空）。其 speaker 来自 `GetLiveRunState`（`chat.go:2725`）：按 `session_id` 查最新 `streaming=1` 的 assistant 行，取该行 `agent_id`。群会话的 `session_id` 是群行、流式行的 `agent_id` 是**成员行** ⇒ speaker 正确解析。**这也是决策 #59「发言中高亮」的数据源**。
 
 **（15）context_state / unread / activeStreams 经核实是群安全的（非缺口）。**
 - `context_state`：成员回合写 `mode/effort/usage` 走 `PatchContextStateMerge(e.cfg.SessionID)`（`session_executor.go:1014`）= **成员行**；`seen_cursor` 也写成员行；群行只存 `host_member_id`/`maxRounds`。键不冲突。
