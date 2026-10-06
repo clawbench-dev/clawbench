@@ -47,9 +47,18 @@ const props = withDefaults(defineProps<{
   tooltip: '',
 })
 
+// Host first, then everyone else in their original order. The host must lead
+// the stack because the FIRST disc is drawn on top (highest z-index), so a host
+// placed later would be tucked behind the others and hard to pick out.
+const ordered = computed(() => {
+  const host = props.members.find(m => m.isHost)
+  if (!host) return props.members
+  return [host, ...props.members.filter(m => m !== host)]
+})
+
 // Show at most `max` discs; the rest are summarised by the "+N" label.
-const visible = computed(() => props.members.slice(0, props.max))
-const overflowCount = computed(() => Math.max(0, props.members.length - props.max))
+const visible = computed(() => ordered.value.slice(0, props.max))
+const overflowCount = computed(() => Math.max(0, ordered.value.length - props.max))
 const resolvedTooltip = computed(() =>
   props.tooltip || props.members.map(m => m.name).join(', '),
 )
@@ -73,10 +82,12 @@ const resolvedTooltip = computed(() =>
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
-  /* Ring separates overlapping discs. --border-color (NOT --bg-secondary):
-     in dark themes the latter is nearly the disc background, so the ring
-     vanishes and the discs merge. */
-  box-shadow: 0 0 0 1.5px var(--border-color);
+  /* Every disc carries the accent ring, so the stack reads as one accent-
+     bordered family. The host is distinguished by POSITION (it leads the
+     stack, so it is fully visible) rather than by a different ring colour.
+     --accent-color (NOT --border-color): the latter nearly vanishes against
+     the disc background in dark themes. */
+  box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
   /* Each disc after the first slides LEFT under the previous one; z-index is
      inline (first = highest) so the first stays fully visible. */
   margin-left: calc(-1 * var(--disc-overlap));
@@ -100,7 +111,8 @@ const resolvedTooltip = computed(() =>
 }
 .avatar-disc :deep(.agent-icon-img) { object-fit: cover; }
 
-/* Host ring (accent). No z-index here — overlap direction is DOM-driven. */
+/* The host leads the stack (see `ordered`), so it is already fully visible;
+   no ring override is needed. Kept as a hook for tests/consumers. */
 .avatar-disc.is-host {
   box-shadow: 0 0 0 1.5px var(--accent-color, #0066cc);
 }

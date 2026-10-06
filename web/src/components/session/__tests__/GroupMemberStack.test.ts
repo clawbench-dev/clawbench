@@ -62,4 +62,19 @@ describe('GroupMemberStack', () => {
     const w = mount(GroupMemberStack, { props: { members: [] } })
     expect(w.find('.group-member-stack').exists()).toBe(false)
   })
+
+  it('leads with the host even when it is not first in the roster', () => {
+    // The list preview carries isHost; the stack must promote that member to
+    // the front so the host is the fully-visible disc.
+    const w = mount(GroupMemberStack, {
+      props: {
+        members: [
+          { id: 'm1', agentId: 'a1', name: 'M1', backend: 'cli' },
+          { id: 'm2', agentId: 'a2', name: 'M2', backend: 'cli', isHost: true },
+          { id: 'm3', agentId: 'a3', name: 'M3', backend: 'cli' },
+        ],
+      },
+    })
+    expect(w.findAll('.avatar-disc')[0].classes()).toContain('is-host')
+  })
 })

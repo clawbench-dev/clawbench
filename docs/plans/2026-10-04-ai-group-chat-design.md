@@ -286,9 +286,11 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 
 ## 7. 界面
 
-- **会话列表**：群与普通会话并列，群行以 **`Users` 图标 + 成员头像堆叠**标识（meta 行替换掉单聊的 `[AgentIcon] 主持人名`——群行的 `agentId` 是主持人，直接显示会被误读成单聊）；堆叠只显示**在群**成员（离场者不进列表，完整名单见成员管理抽屉），**最多 4 个**、首个完整可见后续压在其后、**不显示 `+N`**（超出者不渲染，hover tooltip 列出全部）；`group_member` 行被过滤（防泄漏到侧边栏）。成员预览由 `GET /api/ai/sessions`（及 `/overview`）随列表**一次批量**返回（`groupMembers`，非群会话省略该键）。
+- **会话列表**：群与普通会话并列，群行以 **`Users` 图标 + 成员头像堆叠**标识（meta 行替换掉单聊的 `[AgentIcon] 主持人名`——群行的 `agentId` 是主持人，直接显示会被误读成单聊）；堆叠只显示**在群**成员（离场者不进列表，完整名单见成员管理抽屉），**最多 4 个**、**主持人排最前**（首位 z-index 最高、完整可见）、后续压在其后、**不显示 `+N`**（超出者不渲染，hover tooltip 列出全部）；`group_member` 行被过滤（防泄漏到侧边栏）。成员预览由 `GET /api/ai/sessions`（及 `/overview`）随列表**一次批量**返回（`groupMembers`，非群会话省略该键）。
 - **群时间线**：成员发言气泡显示头像 + 名字 + 后端标识（复用 `AgentIcon` / `getAgentName`）；主持人发言居中特殊样式。
-- **群空状态**（群会话无消息时）：**极简内容 + 单聊同款卡片样式**——复用 `.agent-welcome` 的卡片语言（`--bg-secondary` 底 + `--border-color` 边 + `--radius-md` + `max-width: 280px`），头像堆叠占据"图标"位（`AvatarStack`，`size=lg`，主持人带 accent 环，最多 4 个，排除已离场），右侧文字位放引导语「发送消息，主持人会协调成员完成工作」。**不重复**群名与成员名单（头部头像条已展示）。数据由 `ChatPanelContent` 把已有的 `groupMembers` 透传给 `ChatMessageList`。
+- **群空状态**（群会话无消息时）：**极简内容 + 单聊同款卡片样式**——复用 `.agent-welcome` 的卡片语言（`--bg-secondary` 底 + `--border-color` 边 + `--radius-md` + `max-width: 280px`），头像堆叠占据"图标"位（`AvatarStack`，`size=lg`，最多 4 个，排除已离场），右侧文字位放引导语「发送消息，主持人会协调成员完成工作」。**不重复**群名与成员名单（头部头像条已展示）。数据由 `ChatPanelContent` 把已有的 `groupMembers` 透传给 `ChatMessageList`。
+
+**头像堆叠的统一规格**（`AvatarStack`，头部 / 会话列表 / 空状态共用）：**每个 disc 都用主题色边框**（`--accent-color`，不再区分主持人用主题色、其余用中性色）；**主持人排在最前**（`ordered` 把 host 提到首位）——因为**第一个 disc 的 z-index 最高、完整可见**，主持人放最后会被压在下面认不出。主持人由**位置**区分，不再靠不同边框色。
   - **⚠️ 实时归属缺口（评审 N3）**：`stream_start` 的 payload 只有 `message_id`（`ws/stream_hub.go:373`），`simpleTextPayload`（`:345`）也不带 agent id。所以**流式过程中**前端无法知道当前气泡属于哪个成员——`agent_id` 只在消息落库后由 DB 读回。v1 方案二选一：(a) 在 `stream_start` 增加 `agent_id`（后端小改）；(b) 明确降级为"流式时用通用样式、重载后才显示发言人"。**v1 推荐 (a)**（改动小且体验完整）。
 - **（v2）同轮并发气泡**：一轮内 N 个成员同时流式时的多锚点渲染——**v1 顺序轮次不需要**，见 §12。
 - **顶部横向头像条**（决策 #19）：群会话头部一行成员头像，**发言中高亮/脉动**；点击可查看成员详情。

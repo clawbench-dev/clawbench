@@ -330,6 +330,26 @@ func TestGroupMembersForGroups(t *testing.T) {
 	}
 	_ = hostA
 
+	// The host preview carries isHost so the list stack can lead with it. The
+	// pointer lives on the GROUP row, so this also proves the join resolves it.
+	hosts := 0
+	for _, m := range aMembers {
+		if m.IsHost {
+			hosts++
+			if m.ID != hostA {
+				t.Fatalf("isHost on %q, want host row %q", m.ID, hostA)
+			}
+		}
+	}
+	if hosts != 1 {
+		t.Fatalf("group A preview: want exactly 1 host, got %d", hosts)
+	}
+	for _, m := range got[gB] {
+		if !m.IsHost {
+			t.Fatal("group B's sole member is its host and must carry isHost")
+		}
+	}
+
 	// B: only its host.
 	if len(got[gB]) != 1 {
 		t.Fatalf("group B preview: want 1 member, got %d", len(got[gB]))

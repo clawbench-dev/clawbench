@@ -312,11 +312,18 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	// archived = 0 keeps left members out of the list preview (the full roster,
 	// left members included, is only in GET /api/group/members). Order matches
 	// ListGroupMembers so the stack is stable across reloads.
+	//
+	// is_host comes from the GROUP row's context_state (the host pointer is
+	// stored there, not on the member row), so it is resolved with a correlated
+	// subquery per member — still one statement for all groups. The frontend
+	// uses it to lead the stack with the host.
 	query := fmt.Sprintf(`
-		SELECT group_id, id, agent_id, title, backend
-		FROM chat_sessions
-		WHERE group_id IN (%s) AND session_type = ? AND archived = 0
-		ORDER BY group_id, created_at ASC, id ASC`, placeholders)
+		SELECT m.group_id, m.id, m.agent_id, m.title, m.backend,
+		       (m.id = COALESCE(json_extract(g.context_state, '$.host_member_id'), '')) AS is_host
+		FROM chat_sessions m
+		LEFT JOIN chat_sessions g ON g.id = m.group_id
+		WHERE m.group_id IN (%s) AND m.session_type = ? AND m.archived = 0
+		ORDER BY m.group_id, m.created_at ASC, m.id ASC`, placeholders)
 	args = append(args, groupMemberSessionType)
 
 	rows, err := store.ReadDB().Query(query, args...)
@@ -328,9 +335,11 @@ func GroupMembersForGroups(groupIDs []string) (map[string][]model.GroupMemberPre
 	for rows.Next() {
 		var groupID string
 		var p model.GroupMemberPreview
-		if err := rows.Scan(&groupID, &p.ID, &p.AgentID, &p.Name, &p.Backend); err != nil {
+		var isHost int
+		if err := rows.Scan(&groupID, &p.ID, &p.AgentID, &p.Name, &p.Backend, &isHost); err != nil {
 			return nil, err
 		}
+		p.IsHost = isHost != 0
 		out[groupID] = append(out[groupID], p)
 	}
 	return out, rows.Err()

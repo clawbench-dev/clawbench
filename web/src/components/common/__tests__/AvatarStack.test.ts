@@ -54,6 +54,35 @@ describe('AvatarStack', () => {
     expect(discs[1].classes()).not.toContain('is-host')
   })
 
+  it('moves the host to the front (top) and keeps the rest in order', () => {
+    const w = mount(AvatarStack, {
+      props: { members: [member(1), member(2, { isHost: true }), member(3)] },
+    })
+    const discs = w.findAll('.avatar-disc')
+    // Host is first in the DOM, so it is fully visible (highest z-index)…
+    expect(discs[0].classes()).toContain('is-host')
+    // …and the others keep their original relative order.
+    expect(discs.map(d => d.attributes('title'))).toEqual(['M2 (Host)', 'M1', 'M3'])
+    const z = discs.map(d => Number(d.element.style.zIndex))
+    expect(z[0]).toBeGreaterThan(z[1])
+  })
+
+  it('leaves the order untouched when no member is the host', () => {
+    const w = mount(AvatarStack, { props: { members: [member(1), member(2), member(3)] } })
+    expect(w.findAll('.avatar-disc').map(d => d.attributes('title'))).toEqual(['M1', 'M2', 'M3'])
+  })
+
+  it('gives EVERY disc the accent ring (host is distinguished by position)', async () => {
+    // jsdom does not apply stylesheet rules, so assert on the source: the disc
+    // rule must ring with --accent-color, and there must be no neutral
+    // (--border-color) ring left on the base disc.
+    const mod = await import('@/components/common/AvatarStack.vue?raw')
+    const src = typeof mod.default === 'string' ? mod.default : ''
+    const discRule = src.match(/\.avatar-disc\s*\{[^}]*\}/)?.[0] ?? ''
+    expect(discRule).toContain('var(--accent-color')
+    expect(discRule).not.toContain('var(--border-color)')
+  })
+
   it('uses the provided tooltip when given, else the joined names', () => {
     const withTip = mount(AvatarStack, { props: { members: [member(1)], tooltip: 'custom tip' } })
     expect(withTip.find('.avatar-stack').attributes('title')).toBe('custom tip')

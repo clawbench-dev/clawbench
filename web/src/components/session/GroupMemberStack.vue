@@ -20,6 +20,8 @@ export interface GroupMemberPreview {
   agentId: string
   name: string
   backend: string
+  /** The group host; the stack leads with it (leading disc is fully visible). */
+  isHost?: boolean
 }
 
 const props = withDefaults(defineProps<{

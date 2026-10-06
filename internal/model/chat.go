@@ -319,6 +319,10 @@ type GroupMemberPreview struct {
 	AgentID string `json:"agentId"`
 	Name    string `json:"name"`
 	Backend string `json:"backend"`
+	// IsHost lets the list-row stack put the host first (the leading disc is
+	// the only fully visible one). Without it the preview cannot order the
+	// stack the way the header does.
+	IsHost bool `json:"isHost,omitempty"`
 }
 
 // SessionTag is a user-defined label attached to a session. Scope is "project"
