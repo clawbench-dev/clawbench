@@ -155,10 +155,32 @@ describe('release.yml — npm publishing uses OIDC trusted publishing', () => {
   it.each(PUBLISH_JOB_KEYS)('%s still points npm at the public registry', (key) => {
     // Dropping registry-url must not also drop the registry override: the
     // project .npmrc sets registry=npmmirror, which project config makes win
-    // over NPM_CONFIG_USERCONFIG, and the mirror cannot accept a publish.
+    // over everything else, and the mirror cannot accept a publish.
     const job = JOBS.find((j) => j.key === key)!
-    expect(job.text).toMatch(/rm -f \.npmrc/)
     expect(job.text).toMatch(/registry=https:\/\/registry\.npmjs\.org\//)
+  })
+
+  it.each(PUBLISH_JOB_KEYS)('%s writes the registry into the project .npmrc', (key) => {
+    // This is the exact bug the first version of this workflow shipped: the
+    // redirect was `>> "${NPM_CONFIG_USERCONFIG}"`, but that variable is only
+    // exported by setup-node when `registry-url` is set — and registry-url is
+    // (correctly) gone for OIDC. The redirect therefore expanded to `>> ""`
+    // and the step died with "No such file or directory" before publishing
+    // anything, in both publish jobs, on the v0.112.1 release.
+    //
+    // A project .npmrc is read from the working directory npm runs in and
+    // needs no env var, so it is the only safe target here.
+    const job = JOBS.find((j) => j.key === key)!
+    expect(
+      job.text,
+      `${key} must write the registry into the project .npmrc (a bare ` +
+        `\`> .npmrc\`), not append to $NPM_CONFIG_USERCONFIG — that variable ` +
+        `is unset once registry-url is removed`
+    ).toMatch(/>\s*\.npmrc\b/)
+    expect(
+      job.text,
+      `${key} must not reference $NPM_CONFIG_USERCONFIG`
+    ).not.toMatch(/NPM_CONFIG_USERCONFIG/)
   })
 })
 
