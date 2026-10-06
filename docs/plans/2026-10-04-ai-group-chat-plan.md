@@ -1449,7 +1449,7 @@ git commit -m "feat(group): add preemption on human interjection"
 - Test: `internal/handler/group_test.go`
 
 **端点**（字段名从 handler 代码抄，勿望文生义）：
-- `POST /api/group/create` — `{title, hostAgentId}` → `{ok, groupId, hostMemberId}`（标题可空，空则后端用主持人名占位，决策 #28；**须过会话上限门**，决策 #37）
+- `POST /api/group/create` — `{hostAgentId, memberAgentIds: []}` → `{ok, groupId, hostMemberId}`（**决策 #25 一步建群**：`memberAgentIds` 含全部成员**及主持人**，与群行**同一事务**创建；标题不接收，后端用主持人名占位，决策 #28；**须过会话上限门**，决策 #37）
 - `POST /api/group/members` — `{groupId, agentIds: []}` → `{ok, memberIds: []}`（**I-6 勘误**：批量，body 收数组；名称由 agent 名派生写成员行 `title`，决策 #36/I-7）
 - `DELETE /api/group/members` — `{groupId, memberId}` → `{ok}`
 - `GET /api/group/members?groupId=` → `{ok, members:[{id, agentId, name, backend, left, **isHost**}]}`（**I-5 勘误**：须含 `isHost`，J1/K1 靠它识别主持人）
@@ -1480,15 +1480,19 @@ git commit -m "feat(group): add group HTTP endpoints, AIChat delegation and Open
 
 ## 阶段 H：前端 `AgentSelectorDrawer` 多选
 
-### Task H1: 加 `multiple` 模式
+### Task H1: 加 `multiple` 模式 + 建群模式（行内指定主持人）
 
 **Files:**
 - Modify: `web/src/components/common/AgentSelectorDrawer.vue`
 - Test: `web/src/components/common/__tests__/AgentSelectorDrawer.test.ts`
 
-**Step 1: 写失败测试**：`multiple=true` 时渲染 checkbox、点击不关闭、`update:modelValue` 发出数组、可勾多个。
+**Step 1: 写失败测试**：
+- `multiple=true` 时渲染 checkbox、点击不关闭、`update:modelValue` 发出数组、可勾多个。
+- **建群模式**（`groupMode=true`）：勾选后行右侧出现「主持」圆点；未勾选行**不出现**圆点；点圆点 `emit('update:hostId', ...)` 且**不切换勾选**（`@click.stop`）；同一时刻只有一个主持人；取消勾选主持人 → `hostId` 清空。
+- 未指定主持人时确认按钮**禁用**；指定后启用，文案为「创建群聊」。
+- 「加成员」模式（`multiple=true, groupMode=false`）**不渲染**主持圆点。
 
-**Step 3: 实现**：加 `multiple?: boolean` prop；`modelValue` 类型放宽为 `string | string[]`；多选时行前渲染 checkbox，`handleSelect` 切换数组项且不关闭；单选路径行为完全不变（回归测试钉住）。
+**Step 3: 实现**：加 `multiple?: boolean`、`groupMode?: boolean`、`hostId?: string` props；`modelValue` 类型放宽为 `string | string[]`；多选时行前渲染 checkbox，`handleSelect` 切换数组项且不关闭；建群模式下已勾选行右侧渲染「主持」单选圆点（`@click.stop` 只改主持人）；`confirmDisabled` 计算属性在建群模式且无 `hostId` 时为 true；单选路径行为完全不变（回归测试钉住）。
 
 **Step 5: Commit**
 
@@ -1509,7 +1513,7 @@ git commit -m "feat(group): support multi-select in AgentSelectorDrawer"
 - Modify: `web/src/App.vue`（处理建群事件）
 - Test: 组件测试 + 后续 E2E
 
-**Step 3: 实现**：加 `data-action="create-group"` 按钮，emit `create-group`；宿主转发到 App，打开"选主持人"抽屉（复用 H1 的多选组件，此处单选）。
+**Step 3: 实现**：加 `data-action="create-group"` 按钮，emit `create-group`；宿主转发到 App，打开 **建群模式的 `AgentSelectorDrawer`**（`multiple + groupMode`）：成员与主持人**在同一列表一起选**，点「创建群聊」一次性建群。**不再有"先建群后加成员"两步**。
 
 **Commit:**
 
@@ -1518,19 +1522,19 @@ git add web/src/components/session/ web/src/App.vue
 git commit -m "feat(group): add create-group entry point"
 ```
 
-### Task I2: 建群调用与跳转
+### Task I2: 建群调用与跳转（一步到位）
 
 **Files:**
-- Modify: `web/src/composables/useChatSession.ts`（加 `createGroup(hostAgentId, title?)`）
+- Modify: `web/src/composables/useChatSession.ts`（加 `createGroup(hostAgentId, memberAgentIds)`）
 - Test: `web/src/composables/__tests__/useChatSession.group.test.ts`
 
-**Step 3: 实现**：`POST /api/group/create` → 成功后 `switchSession(groupId)`；标题留空时前端用主持人名拼接占位（`<hostName> 的群聊`）。
+**Step 3: 实现**：`POST /api/group/create {hostAgentId, memberAgentIds}` → 成功后 `switchSession(groupId)`。标题不传（后端用主持人名占位，决策 #28）。**成员已在建群时一并创建**，前端不再追加调用 `addGroupMembers`。
 
 **Commit:**
 
 ```bash
 git add web/src/composables/useChatSession.ts web/src/composables/__tests__/useChatSession.group.test.ts
-git commit -m "feat(group): create group and switch into it"
+git commit -m "feat(group): create group with members in one call and switch into it"
 ```
 
 ---
@@ -1702,6 +1706,6 @@ git commit -m "test(group): add group chat e2e spec"
 - OpenAPI 与 `internal/api/openapi.yaml` 同步，`TestOpenAPIDrift` 通过。
 - **评审项验收（一轮）**：C2（`agent_id` 可写可读）、C3（群在 list/search/browse/overview 均可见、成员均隐藏）、C4（`failTurn`/metadata 落群）、C5（成员 resume 用 external_session_id）、I4（停止按钮生效）均有对应测试通过。
 - **评审项验收（二轮）**：N1（ACP 成员 `SessionID` 保持池键，仅 CLI 换 extID）、N2（`CancelSession(groupID)` 能停住当前成员回合）、N3（`stream_start` 带发言人）、N4（同 agent 两成员互相可见）、N5（群分享保留归属）、N6（主持人样式按成员行 id）、N7/N8（脚手架与夹具）均有对应测试或明确实现。
-- **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、选主持人复用多选抽屉（#33）、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）、**群计入会话上限而成员不计、建群过上限门（#37）**、群设置在成员管理抽屉内（#38）均落地。
+- **决策验收（§10 已定）**：最大轮数默认 10 可配（#31）、结束时主持人汇总（#32）、标题占位用主持人名（#28）、**建群一步多选 + 行内指定主持人（#25/#33）**、成员管理 BottomSheet + 已离场灰显（#34）、前端路由卡片（#35）、成员名存 title（#36）、**群计入会话上限而成员不计、建群过上限门（#37）**、群设置在成员管理抽屉内（#38）均落地。
 - **评审项验收（三轮）**：C-1（发言人用独立 `SpeakerID`，`TurnSpec.AgentID` 保持真实 agent id）、C-2（汇总两路径各一次）、C-3（`AIChat` 对群会话委派编排器）、C-4（A3 独立测试文件）、C-5（执行顺序 **F0b→F1→F2→F0→F3**）、I-1（E1 断言含离场）、I-2（#37 为 4 处且不误改 source 查询）、I-3（stream_start 空值省略键）、I-4（F1 夹具用成员行 id）、I-5（`GET /api/group/members` 含 `isHost`）、I-6（成员端点批量）、I-7（`AddGroupMember` 带 displayName）、I-10（`GetGroupMaxRounds` reader）均落地。
 - **评审项验收（四/五轮）**：R-1（`SpeakerID` 在 C1 声明，先于 C2 使用）、R-2（G1 Files 含 `handler/chat.go`）、R-3（A3 含 `queue_store.go:217` 第二调用者）、R-4（设计 §3.1 `UpdateLastRead` 保持成员 id）、R-5（设计 §8 含 `GET /api/group/members`）、R-6（`GroupMember` 类型已声明）、R-7（E2 含 `session_resume.go`）、R-8（fork/continue INSERT 写归属）均落地。
