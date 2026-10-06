@@ -3,37 +3,57 @@
     {
       "name": "single_speaker",
       "text": "<clawbench-speaker>B</clawbench-speaker> 请回应 A 的质疑",
-      "want": {"found": true, "end": false, "speakers": ["B"], "instruction": "请回应 A 的质疑"}
+      "want": {"found": true, "end": false, "speakers": ["B"], "instruction": "请回应 A 的质疑", "before": ""}
     },
     {
       "name": "multiple_speakers_trimmed",
       "text": "<clawbench-speaker>A, B ,C</clawbench-speaker> 各自表态",
-      "want": {"found": true, "end": false, "speakers": ["A", "B", "C"], "instruction": "各自表态"}
+      "want": {"found": true, "end": false, "speakers": ["A", "B", "C"], "instruction": "各自表态", "before": ""}
     },
     {
       "name": "end_signal_only",
       "text": "讨论已充分。<clawbench-group-end/>",
-      "want": {"found": false, "end": true, "speakers": [], "instruction": ""}
+      "want": {"found": false, "end": true, "speakers": [], "instruction": "", "before": ""}
     },
     {
       "name": "both_tags_end_wins_strip_from_instruction",
       "text": "<clawbench-speaker>B</clawbench-speaker> 请回应<clawbench-group-end/>",
-      "want": {"found": true, "end": true, "speakers": ["B"], "instruction": "请回应"}
+      "want": {"found": true, "end": true, "speakers": ["B"], "instruction": "请回应", "before": ""}
     },
     {
       "name": "empty_payload_not_found",
       "text": "<clawbench-speaker></clawbench-speaker>",
-      "want": {"found": false, "end": false, "speakers": [], "instruction": ""}
+      "want": {"found": false, "end": false, "speakers": [], "instruction": "", "before": ""}
     },
     {
       "name": "no_tag",
       "text": "普通发言，没有标签",
-      "want": {"found": false, "end": false, "speakers": [], "instruction": ""}
+      "want": {"found": false, "end": false, "speakers": [], "instruction": "", "before": ""}
     },
     {
       "name": "end_tag_with_spaces",
       "text": "done <clawbench-group-end />",
-      "want": {"found": false, "end": true, "speakers": [], "instruction": ""}
+      "want": {"found": false, "end": true, "speakers": [], "instruction": "", "before": ""}
+    },
+    {
+      "name": "before_empty_when_tag_leads",
+      "text": "<clawbench-speaker>A</clawbench-speaker> 请谈谈",
+      "want": {"found": true, "end": false, "speakers": ["A"], "instruction": "请谈谈", "before": ""}
+    },
+    {
+      "name": "before_background_text",
+      "text": "A 的观点不错 <clawbench-speaker>B</clawbench-speaker> 请回应",
+      "want": {"found": true, "end": false, "speakers": ["B"], "instruction": "请回应", "before": "A 的观点不错"}
+    },
+    {
+      "name": "before_trimmed",
+      "text": "\n  背景上下文 \n <clawbench-speaker>A</clawbench-speaker> 请表态",
+      "want": {"found": true, "end": false, "speakers": ["A"], "instruction": "请表态", "before": "背景上下文"}
+    },
+    {
+      "name": "before_with_malformed_tag",
+      "text": "背景在此 <clawbench-speaker></clawbench-speaker>",
+      "want": {"found": false, "end": false, "speakers": [], "instruction": "", "before": "背景在此"}
     }
   ]
 }

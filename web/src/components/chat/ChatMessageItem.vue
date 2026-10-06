@@ -277,7 +277,7 @@ const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId =
 // sees "Host → A, B" chips. Unparseable tags are NOT stripped from the body
 // (parseGroupRouting never mutates text) — only the card is added.
 const hostRouting = computed(() => {
-  if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', end: false, raw: '' }
+  if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', before: '', end: false, raw: '' }
   const text = msgText.value || ''
   return parseGroupRouting(text)
 })

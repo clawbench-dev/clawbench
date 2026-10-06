@@ -34,6 +34,15 @@ type Result struct {
 	// the speaker tag, with any end tag removed (a message may carry both).
 	// Empty when absent.
 	Instruction string
+	// Before is the text preceding the speaker tag, trimmed. It is the host's
+	// background context and is consumed by the injection layer (design
+	// decision #68, approach A) to render a member's context without repeating
+	// the routing tag or the directive. It is a positional slice, not a parse
+	// result: it is populated whenever the tag is located, even when the tag
+	// itself is malformed (Found=false). Callers that require a valid routing
+	// decision must gate on Found; those that only need the background may read
+	// it regardless. Parse never strips — this package does not mutate input.
+	Before string
 	// End reports whether the host signalled the discussion is over.
 	End bool
 	// Raw is the matched tag text, retained for logging. Callers keep the
@@ -61,6 +70,9 @@ func Parse(text string) Result {
 	}
 	inner := text[loc[2]:loc[3]]
 	res.Raw = text[loc[0]:loc[1]]
+	// Before = the text ahead of the tag (positional slice, always available
+	// once the tag is located — even for a malformed payload).
+	res.Before = strings.TrimSpace(text[:loc[0]])
 
 	speakers := splitSpeakers(inner)
 	if len(speakers) == 0 {

@@ -20,6 +20,7 @@ type corpus struct {
 			End         bool     `json:"end"`
 			Speakers    []string `json:"speakers"`
 			Instruction string   `json:"instruction"`
+			Before      string   `json:"before"`
 		} `json:"want"`
 	} `json:"cases"`
 }
@@ -58,6 +59,9 @@ func TestParityCorpus(t *testing.T) {
 			}
 			if r.Instruction != tc.Want.Instruction {
 				t.Errorf("instruction=%q want %q", r.Instruction, tc.Want.Instruction)
+			}
+			if r.Before != tc.Want.Before {
+				t.Errorf("before=%q want %q", r.Before, tc.Want.Before)
 			}
 		})
 	}

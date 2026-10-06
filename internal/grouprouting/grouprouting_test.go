@@ -69,3 +69,48 @@ func TestParseNoTag(t *testing.T) {
 		t.Fatal("expected no tag")
 	}
 }
+
+// TestParseBeforeEmpty: nothing precedes the tag, so Before is empty.
+func TestParseBeforeEmpty(t *testing.T) {
+	r := Parse(`<clawbench-speaker>A</clawbench-speaker> 请谈谈`)
+	if !r.Found {
+		t.Fatal("expected Found=true")
+	}
+	if r.Before != "" {
+		t.Fatalf("before=%q want empty", r.Before)
+	}
+}
+
+// TestParseBeforeBackground: text before the tag is the host's background
+// context, returned trimmed.
+func TestParseBeforeBackground(t *testing.T) {
+	r := Parse(`A 的观点不错 <clawbench-speaker>B</clawbench-speaker> 请回应`)
+	if !r.Found {
+		t.Fatal("expected Found=true")
+	}
+	if r.Before != "A 的观点不错" {
+		t.Fatalf("before=%q want %q", r.Before, "A 的观点不错")
+	}
+}
+
+// TestParseBeforeTrimsSurroundingWhitespace: leading/trailing whitespace around
+// the background is trimmed, matching Instruction's treatment.
+func TestParseBeforeTrimsSurroundingWhitespace(t *testing.T) {
+	r := Parse("\n  A 的观点不错 \n <clawbench-speaker>B</clawbench-speaker> 请回应")
+	if r.Before != "A 的观点不错" {
+		t.Fatalf("before=%q want %q", r.Before, "A 的观点不错")
+	}
+}
+
+// TestParseBeforeMalformed: a malformed tag (empty payload) is not Found, but
+// Before still slices the text ahead of the tag (the contract is unchanged:
+// Parse never strips, so the caller keeps the original text).
+func TestParseBeforeMalformed(t *testing.T) {
+	r := Parse(`背景在此 <clawbench-speaker></clawbench-speaker>`)
+	if r.Found {
+		t.Fatal("empty payload must not be Found")
+	}
+	if r.Before != "背景在此" {
+		t.Fatalf("before=%q want %q", r.Before, "背景在此")
+	}
+}

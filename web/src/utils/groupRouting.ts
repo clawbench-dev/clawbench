@@ -14,6 +14,16 @@ export interface GroupRouting {
   found: boolean
   speakers: string[]
   instruction: string
+  /**
+   * Text preceding the speaker tag, trimmed. The host's background context,
+   * consumed by the injection layer (design decision #68, approach A) to render
+   * a member's context without repeating the routing tag or the directive. It
+   * is a positional slice, not a parse result: populated whenever the tag is
+   * located, even when the tag is malformed (`found === false`). Callers that
+   * need a valid routing decision must gate on `found`; those that only need
+   * the background may read it regardless. This function never strips.
+   */
+  before: string
   end: boolean
   raw: string
 }
@@ -33,7 +43,7 @@ function splitSpeakers(s: string): string[] {
 
 /** parseGroupRouting locates the host's routing decision in a message. */
 export function parseGroupRouting(text: string): GroupRouting {
-  const res: GroupRouting = { found: false, speakers: [], instruction: '', end: false, raw: '' }
+  const res: GroupRouting = { found: false, speakers: [], instruction: '', before: '', end: false, raw: '' }
 
   const endMatch = text.match(RE_END)
   if (endMatch) {
@@ -46,6 +56,9 @@ export function parseGroupRouting(text: string): GroupRouting {
     return res
   }
   res.raw = m[0]
+  // Before = the text ahead of the tag (positional slice, always available
+  // once the tag is located — even for a malformed payload).
+  res.before = text.slice(0, m.index).trim()
 
   const speakers = splitSpeakers(m[1])
   if (speakers.length === 0) {

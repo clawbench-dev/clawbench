@@ -20,7 +20,7 @@ interface Corpus {
   cases: Array<{
     name: string
     text: string
-    want: { found: boolean; end: boolean; speakers: string[]; instruction: string }
+    want: { found: boolean; end: boolean; speakers: string[]; instruction: string; before: string }
   }>
 }
 
@@ -38,6 +38,7 @@ describe('groupRouting parity with internal/grouprouting', () => {
       expect(r.end).toBe(tc.want.end)
       expect(r.speakers).toEqual(tc.want.speakers)
       expect(r.instruction).toBe(tc.want.instruction)
+      expect(r.before).toBe(tc.want.before)
     })
   }
 })
