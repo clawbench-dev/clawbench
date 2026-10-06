@@ -39,14 +39,17 @@
         </button>
       </template>
       <template v-else-if="isGroupSession">
-        <!-- Group empty state: the roster as an overlapping avatar stack (the
-             same visual as the header/list rows) plus a one-line hint on how a
-             group works. Deliberately minimal — the group name and the member
-             list are already in the header. -->
+        <!-- Group empty state. Same card language as the single-agent welcome
+             (surface + border + radius + 280px cap), with the roster stack
+             standing in for the agent icon and the hint as its text.
+             Deliberately minimal — the group name and the member list are
+             already in the header. -->
         <div class="group-welcome">
           <AvatarStack :members="groupStackMembers" size="lg" :max="4" />
+          <div class="group-welcome-info">
+            <span class="group-welcome-hint">{{ t('chat.messageList.groupStartHint') }}</span>
+          </div>
         </div>
-        <span class="group-welcome-hint">{{ t('chat.messageList.groupStartHint') }}</span>
       </template>
       <template v-else-if="currentAgent && !isGroupSession">
         <div class="agent-welcome">
@@ -1475,17 +1478,34 @@ defineExpose({
   text-align: left;
 }
 
-/* Group empty state: just the roster stack + a hint. Minimal by design — the
-   group name and roster are already in the header stack. */
+/* Group empty state. Mirrors .agent-welcome's card (surface, border, radius,
+   280px cap) so both empty states read as one family; the roster stack takes
+   the icon slot and the hint takes the text slot. */
 .group-welcome {
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: var(--space-6);
+  padding: 14px var(--space-7);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  max-width: 280px;
+  width: 100%;
+  text-align: left;
+}
+
+.group-welcome-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 
 .group-welcome-hint {
   font-size: var(--font-size-md);
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  line-height: var(--line-height-snug);
 }
 
 .agent-welcome-icon {
