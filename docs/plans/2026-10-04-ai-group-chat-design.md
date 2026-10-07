@@ -160,6 +160,18 @@
 | 79 | 群里的 `/btw` 与 `/cb-*` 命令 | **保留，且 `/cb-*` 在群内真正生效（由主持人执行）**。~~原判断"`/cb-*` 走各自 HTTP API 与群无关"是错的~~：`/cb-*` 实为**提示词注入**（`processClawbenchCommand` 把模板拼进发给 AI 的 prompt），而群分支只落库 `req.Message`、丢弃了 prompt ⇒ 群里发 `/cb-*` 曾是**静默 no-op**。**修（B6）**：渲染出的模板**只注入本回合第一个主持人 turn 的 prompt**（`RunGroupTurnDrain` 渲染 → `runRounds` round 0 拼接），主持人的发言文本进入时间线、成员据此讨论（工具调用对成员不可见是决策 #9）；**不进时间线 content**（气泡保持用户字面原话）、**不注入给成员**（API 契约对成员是噪声）。跨包经 `service.SetRenderGroupCommandFn` ← `main.go` 注入 `handler.RenderClawbenchCommand`（service 不能 import handler）。`/btw` 不受影响（存独立表、用全局摘要模型，见 §12.7(26) 更正） |
 | 80 | 通知点击跳转 / 跨设备已读 | **无需改动**（非缺口）。桌面通知 nav 携带 `sessionId`（`notification.ts:37-43` → `clawbench-open-session`），群传群行 id ⇒ 正常跳转；Android `NativeNotificationPolicy` 是**纯 status 判定**（`isNotifiableSessionStatus`），与 `session_type` 无关 ⇒ 群 `completed`/`cancelled` 天然覆盖（**前提是决策 #72 让群回合真的发 `completed`**）；`UpdateLastRead`（`chat.go:997`）按 sessionID 更新并广播 `read`，群行同构 |
 | 81 | 中途订阅的 live run 重放 | **无需改动**（非缺口）。`GetLiveRunState`（`chat.go:2725`）按 `session_id` 查最新 `streaming=1` 行并取该行 `agent_id` 作 speaker ⇒ 群会话（session_id=群行）的流式行带**成员行 agent_id**，speaker **正确解析**。这正是决策 #59「发言中高亮」的数据源 |
+| 82 | 密送（BCC）与公共指令 | **叠加**：公共指令（speaker 标签之后）+ 对个别成员额外密送，可同时存在 |
+| 83 | 密送持久化 | **持久化**：密送嵌在主持人消息里落库，刷新/切走切回后仍在 |
+| 84 | 密送多目标 | **支持**：一条密送可发多个成员（`targets="A,B"`，逗号分隔） |
+| 85 | 密送用户可见性 | **对用户可见，UI 默认折叠**，点击展开（用户可审计主持人的私下交代） |
+| 86 | 密送目标约束 | **必须是本轮被点名者**；给未点名者写密送 → 忽略（结构上满足：只在 targets 循环内按名注入） |
+| 87 | 密送语法 | **属性式** `<clawbench-bcc targets="A,B">内容</clawbench-bcc>` |
+| 88 | 密送卡片位置 | **气泡内底部**（非 speaker 行、非气泡外） |
+| 89 | 密送泄漏阻断 | **双契约**：**显示侧 fail-open**（`Bcc`/`stripGroupBccTags` 只认良构，畸形保留原文）；**注入侧 fail-closed**（`StripBccSpans` 剥一切 bcc 形态：畸形/嵌套/未闭合）。`Parse` 的 `Before`/`Instruction`/`End` 一律在 fail-closed 文本上计算；`hostSpeechForMembers` 兜底同样 fail-closed |
+| 90 | 密送畸形标签 | **显示**：不解析、不剥离（原文保留，同 askquestion"绝不丢内容"）。**注入**：一律剥离（保密优先于保内容——畸形标签的明文绝不外发） |
+| 91 | 密送注入边界（穷举） | 所有会把主持人文本送到非目标成员的路径都须剥（review 复查补全）：①`route.Instruction`（Parse 已剥）②`Before`（Parse 已剥）③`hostSpeechForMembers` 兜底（`StripBccSpans`）④**引用载荷**（`quotableMessageText`，引用作为附件注入成员）⑤**TTS**（`ttsExtractConclusion` 覆盖前端文本）⑥**自动朗读**（`onStreamEnd`）⑦**摘要落库 + IM/通知推送**（`ExtractLastAnswerFromBlocks` 内部剥，单点覆盖 summary 与 preview）⑧前端气泡正文（`renderTextBlock` 流式+非流式） |
+| 92 | 密送字符类 parity | Go/JS 空白类统一为 `[\s\p{Z}]`：Go 的 `\s` 仅 ASCII，JS 的含 Unicode 空白，否则 NBSP/全角空格会导致"前端认良构、后端不认"的安全侧分歧；语料加 NBSP/全角 case 钉住 |
+| 93 | 密送分享页 | share payload 增 `session.hostMemberId`，分享页传 `resolveSpeaker`/`resolveSpeakerByName`/`hostMemberId` 给 `ChatMessageItem`，使密送卡片在分享页也按决策 #85 渲染（默认折叠） |
 
 ## 3. 架构
 
@@ -321,6 +333,18 @@
 **前端卡片契约（评审三轮 #35）**：
 - **可解析**：把**标签 span**替换为卡片（"主持人 → A、B" chips）；**标签之后的指令文本保留显示一次**（卡片里可含指令，但正文不得重复渲染同一段——即卡片替换范围包含指令文本，或卡片不含指令而正文保留，二选一，实现时统一，**不得两处都显示**）。
 - **不可解析**：**不剥离**，原样显示（含标签），与后端契约一致——**绝不因解析失败丢内容**。
+
+**密送（BCC，决策 #82–#90）**：
+
+- 语法：`<clawbench-bcc targets="A,B">只有目标成员能看到的内容</clawbench-bcc>`，与 speaker 标签**叠加**（公共指令 + 个别密送可并存）。
+- **目标必须是本轮被点名者**：编排器只在 `for _, t := range targets` 循环内按 `names[t.ID]` 过滤注入，未点名者写的密送**结构上**无人可得。
+- **摘除顺序是安全核心**：`Parse` 在 **fail-closed** 文本（`StripBccSpans` 剥一切 bcc 形态）上算 `Before`/`Instruction`/`End` —— 否则密送会经 `Instruction`（公共指令段）或 `Before`（共享背景）泄漏给所有成员。
+- **双契约（决策 #89/#90）**：**显示侧 fail-open**（`Bcc`/`stripGroupBccTags` 只认良构，畸形保留原文供用户查看）；**注入侧 fail-closed**（`StripBccSpans` 剥畸形/嵌套/未闭合/任意属性形态）。保密优先于保内容。
+- **兜底路径**：主持人消息无 speaker 标签（`Found=false`）时 `hostSpeechForMembers` 走 `StripBccSpans(StripEndTag(text))`。
+- **注入边界穷举（决策 #91）**：前端正文（`renderTextBlock` 流式+非流式）、**引用载荷**（`quotableMessageText`）、**TTS**（`ttsExtractConclusion`）、**自动朗读**（`onStreamEnd`）、**摘要落库 + IM/通知推送**（`ExtractLastAnswerFromBlocks` 内部剥）全部剥离。仅靠 `Instruction`/`Before` 是不够的——review 复查发现引用链路无需畸形输入即可把密送注入全员。
+- **字符类 parity（决策 #92）**：Go/JS 统一 `[\s\p{Z}]`（Go 的 `\s` 仅 ASCII），语料含 NBSP/全角 case。
+- **UI**：气泡内底部折叠卡片，默认折叠，点击展开（`Lock` + `密送` + 目标名 + `ChevronDown`）；分享页同样渲染（决策 #93）。
+- 该包有 parity 契约：`Result`/`GroupRouting` 新增 `Bcc []BccEntry`，语料 `want.bcc` 双向固化。
 
 ### 5.4 主持人提示词与发言样式
 

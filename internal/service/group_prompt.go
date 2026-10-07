@@ -48,6 +48,7 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	if len(members) == 0 {
 		// Only the host is in the group: there is nobody to route to. Tell the
 		// host to just answer directly instead of naming a non-existent member.
+		// The bcc feature is omitted too — there is nobody to send a note to.
 		b.WriteString("（暂无其他成员）\n")
 		b.WriteString("当前群内没有其他成员，你无需路由，直接回答用户即可。\n")
 		return b.String()
@@ -58,6 +59,16 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	}
 	b.WriteString(strings.Join(rendered, "、"))
 	b.WriteString("。\n")
+
+	// Private notes (密送): a way to tell ONE member something the others must
+	// not see. Documented only here (not in the summary prompt, where tags are
+	// ignored) and only when there is someone to address.
+	b.WriteString("\n可选：密送（只给个别成员看，其他成员看不到）\n")
+	b.WriteString("若你想对个别成员单独交代、不希望其他成员看到，可在指令之后追加：\n")
+	b.WriteString("  <clawbench-bcc targets=\"成员名\">只有该成员能看到的内容</clawbench-bcc>\n")
+	b.WriteString("targets 可写多个成员，用逗号分隔，如 targets=\"A,B\"。\n")
+	b.WriteString("密送的目标必须是本轮 <clawbench-speaker> 点名的成员；给未被点名的人写密送会被忽略。\n")
+	b.WriteString("公共指令（所有被点名者都能看到）请照常写在 speaker 标签之后，密送可与它并存。\n")
 	return b.String()
 }
 

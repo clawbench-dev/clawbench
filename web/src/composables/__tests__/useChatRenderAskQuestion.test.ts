@@ -161,3 +161,32 @@ describe('renderTextBlock — ask-question', () => {
     expect(html).toContain('普通文本，没有标签')
   })
 })
+
+describe('renderTextBlock — bcc (private notes)', () => {
+  const BCC = '<clawbench-bcc targets="A">只有A能看到</clawbench-bcc>'
+
+  it('strips a well-formed private note from the rendered body (post-streaming)', () => {
+    const r = setup()
+    const html = r.renderTextBlock(`前言 ${BCC} 后记`, 'm1', 0)
+    expect(html).not.toContain('clawbench-bcc')
+    expect(html).not.toContain('只有A能看到')
+    expect(html).toContain('前言')
+    expect(html).toContain('后记')
+  })
+
+  it('strips a well-formed private note on the STREAMING path too', () => {
+    // The user explicitly does not accept the raw tag flashing during streaming.
+    const r = setup()
+    const html = r.renderTextBlock(`前言 ${BCC} 后记`, 'm1', 0, true)
+    expect(html).not.toContain('clawbench-bcc')
+    expect(html).not.toContain('只有A能看到')
+    expect(html).toContain('前言')
+  })
+
+  it('leaves a malformed private note verbatim (never lose content)', () => {
+    const r = setup()
+    const malformed = '<clawbench-bcc>没有 targets</clawbench-bcc>'
+    const html = r.renderTextBlock(`前言 ${malformed} 后记`, 'm1', 0)
+    expect(html).toContain('没有 targets')
+  })
+})

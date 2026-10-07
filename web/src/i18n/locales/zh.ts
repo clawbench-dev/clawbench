@@ -1128,6 +1128,10 @@ export default {
     autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
     alreadyMember: '已加入',
+    bcc: {
+      title: '密送',
+      to: '发给'
+    },
   },
   task: {
     title: '任务',

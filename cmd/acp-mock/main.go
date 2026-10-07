@@ -722,7 +722,15 @@ func groupRoutingReply(prompt string) string {
 	if name == "" {
 		return "讨论结束。<clawbench-group-end/> 结论：无人可点。"
 	}
-	return "<clawbench-speaker>" + name + "</clawbench-speaker> 请你发表看法。"
+	// The host always attaches a private note (密送) to the named member: it
+	// makes the group-chat BCC path exercised by EVERY group e2e (the card must
+	// render, the note must never reach the shared body). ACP_MOCK_NO_BCC=1
+	// turns it off for specs that want a note-free host.
+	reply := "<clawbench-speaker>" + name + "</clawbench-speaker> 请你发表看法。"
+	if os.Getenv("ACP_MOCK_NO_BCC") != "1" {
+		reply += " <clawbench-bcc targets=\"" + name + "\">SECRET_BCC_FOR_" + name + "</clawbench-bcc>"
+	}
+	return reply
 }
 
 func truncate(s string, maxLen int) string {

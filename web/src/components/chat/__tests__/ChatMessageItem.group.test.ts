@@ -38,7 +38,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host' }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', bcc: { title: 'Private note', to: 'To' } }, common: {} } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -235,5 +235,62 @@ describe('ChatMessageItem group gating', () => {
     const w = mountItem(finishedAssistant, { isGroupSession: true })
     const cb = w.findComponent({ name: 'ContentBlocks' })
     expect(cb.props('isGroupSession')).toBe(true)
+  })
+})
+
+describe('ChatMessageItem group bcc card', () => {
+  const hostWithBcc = (text: string) => ({
+    role: 'assistant',
+    id: 10,
+    content: '',
+    blocks: [{ type: 'text', text }],
+    agentId: 'host-1',
+  })
+
+  it('renders a collapsed private-note card inside the bubble', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A">只给A看</clawbench-bcc>'),
+      { resolveSpeaker, hostMemberId: 'host-1' },
+    )
+    // Card lives INSIDE .msg-card, not in the speaker row above the bubble.
+    expect(w.find('.msg-card .msg-bcc').exists()).toBe(true)
+    expect(w.find('.msg-speaker .msg-bcc').exists()).toBe(false)
+    // Collapsed by default: the body is hidden via v-show.
+    const body = w.find('.msg-bcc-body')
+    expect(body.exists()).toBe(true)
+    expect((body.element as HTMLElement).style.display).toBe('none')
+  })
+
+  it('expands on click to reveal the note content and targets', async () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A,B">机密内容</clawbench-bcc>'),
+      { resolveSpeaker, hostMemberId: 'host-1' },
+    )
+    await w.find('.msg-bcc-header').trigger('click')
+    const body = w.find('.msg-bcc-body')
+    expect((body.element as HTMLElement).style.display).not.toBe('none')
+    expect(body.text()).toContain('机密内容')
+    expect(body.text()).toContain('A、B')
+  })
+
+  it('renders no card when the host has no private note', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态'),
+      { resolveSpeaker, hostMemberId: 'host-1' },
+    )
+    expect(w.find('.msg-bcc').exists()).toBe(false)
+  })
+
+  it('does not strip the note from msgText used for parsing (card still resolves)', () => {
+    // The raw tag must survive in msgText, or hostRouting could not parse it.
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A">解析用</clawbench-bcc>'),
+      { resolveSpeaker, hostMemberId: 'host-1' },
+    )
+    expect(w.find('.msg-bcc').exists()).toBe(true)
   })
 })

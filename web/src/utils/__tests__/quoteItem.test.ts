@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, resolveQuoteType, buildMessageQuote, type QuoteItem } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, toFileEntry, materializeQuotes, quoteItemFromTarget, quoteLabel, quoteLineRange, canJumpToSource, isQuoteFileEntry, resolveQuoteType, buildMessageQuote, quotableMessageText, type QuoteItem } from '@/utils/quoteItem.ts'
 
 describe('fromStagedQuote', () => {
   it('maps a file quote and infers sourceKind=file', () => {
@@ -485,5 +485,32 @@ describe('buildMessageQuote', () => {
     expect(q.startLine).toBe(0)
     expect(q.endLine).toBe(0)
     expect(q.language).toBe('')
+  })
+})
+
+describe('quotableMessageText (bcc must not be quoted)', () => {
+  it('strips a well-formed private note from an assistant message', () => {
+    const blocks = [{ type: 'text', text: '前言 <clawbench-bcc targets="A">只有A看</clawbench-bcc> 后记' }]
+    const t = quotableMessageText('assistant', blocks, '', '')
+    expect(t).not.toContain('只有A看')
+    expect(t).not.toContain('clawbench-bcc')
+    expect(t).toContain('前言')
+    expect(t).toContain('后记')
+  })
+
+  it('strips a malformed private note too (fail-closed: quoting feeds injection)', () => {
+    const blocks = [{ type: 'text', text: "前言 <clawbench-bcc targets='A'>秘密</clawbench-bcc> 后记" }]
+    const t = quotableMessageText('assistant', blocks, '', '')
+    expect(t).not.toContain('秘密')
+  })
+
+  it('keeps a user message verbatim (no host notes in user rows)', () => {
+    const t = quotableMessageText('user', [{ type: 'text', text: '用户原话' }], '用户原话', '')
+    expect(t).toBe('用户原话')
+  })
+
+  it('falls back to the summary for an assistant message with no blocks', () => {
+    const t = quotableMessageText('assistant', [], '', '摘要内容')
+    expect(t).toBe('摘要内容')
   })
 })

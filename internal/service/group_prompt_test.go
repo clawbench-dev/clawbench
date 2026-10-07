@@ -83,3 +83,40 @@ func TestBuildHostSummaryPromptHasNoRoutingTag(t *testing.T) {
 		t.Fatal("summary prompt must ask for a conclusion")
 	}
 }
+
+// TestBuildHostSystemPrompt_DocumentsBcc: the host must be told how to send a
+// private note, that targets are comma-separated and must be named this round,
+// and that other members cannot see it.
+func TestBuildHostSystemPrompt_DocumentsBcc(t *testing.T) {
+	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}})
+	if !strings.Contains(p, "<clawbench-bcc targets=") {
+		t.Fatalf("prompt must document the bcc tag syntax: %q", p)
+	}
+	if !strings.Contains(p, "密送") {
+		t.Fatalf("prompt must name the feature (密送): %q", p)
+	}
+	if !strings.Contains(p, "逗号") {
+		t.Fatalf("prompt must explain comma-separated targets: %q", p)
+	}
+	if !strings.Contains(p, "看不到") {
+		t.Fatalf("prompt must state other members cannot see the note: %q", p)
+	}
+}
+
+// A host-only group has nobody to send a private note to, so the prompt must
+// not mention the feature (it would invite a tag that goes nowhere).
+func TestBuildHostSystemPrompt_NoMembersOmitsBcc(t *testing.T) {
+	p := BuildHostSystemPrompt(nil)
+	if strings.Contains(p, "clawbench-bcc") {
+		t.Fatalf("host-only prompt must not document bcc: %q", p)
+	}
+}
+
+// The summary prompt is a pure wrap-up: it must not invite any tag, bcc
+// included (the orchestrator ignores tags in that turn).
+func TestBuildHostSummaryPromptOmitsBcc(t *testing.T) {
+	p := BuildHostSummaryPrompt([]HostMemberInfo{{Name: "A"}})
+	if strings.Contains(p, "clawbench-bcc") {
+		t.Fatalf("summary prompt must not document bcc: %q", p)
+	}
+}

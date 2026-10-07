@@ -1126,6 +1126,10 @@ export default {
     autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',
     alreadyMember: 'Added',
+    bcc: {
+      title: 'Private note',
+      to: 'To'
+    },
   },
   task: {
     title: 'Tasks',

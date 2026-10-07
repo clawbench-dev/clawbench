@@ -268,7 +268,8 @@ import { useFileUpload } from '@/composables/useFileUpload.ts'
 import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
-import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote } from '@/utils/quoteItem.ts'
+import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
+import { stripGroupBccSpans } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
@@ -511,10 +512,10 @@ async function handleFileTagClick(fileEntry) {
  */
 function handleQuoteMessage(msg) {
     if (!msg) return
-    const isUser = msg.role === 'user'
-    const text = (isUser
-        ? (extractSpeakableText(msg.blocks || []) || msg.content || '')
-        : (extractSpeakableText(msg.blocks || []) || msg.summary || '')).trim()
+    // Shared with ChatMessageItem: strips the host's private notes (bcc) — a
+    // quote becomes an attachment that is rendered into every member's injected
+    // context, so a note must never ride along.
+    const text = quotableMessageText(msg.role, msg.blocks, msg.content, msg.summary)
     if (!text) return
 
     const id = msg.id !== undefined && msg.id !== null ? Number(msg.id) : NaN
@@ -767,7 +768,8 @@ async function onStreamEnd(reason) {
     if (autoSpeech.enabled.value) {
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'assistant') {
-        const fullText = extractSpeakableText(lastMsg.blocks || [])
+        // Strip the host's private notes: they are not for the user to hear.
+        const fullText = stripGroupBccSpans(extractSpeakableText(lastMsg.blocks || []))
         if (fullText && lastMsg.id) {
           autoSpeech.speakMessage(lastMsg.id, fullText)
         } else {

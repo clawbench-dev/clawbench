@@ -6,6 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -84,6 +85,11 @@ func ExtractTextFromBlocks(blocks []model.ContentBlock) string {
 // This captures the AI's final answer rather than intermediate reasoning or tool-call commentary.
 // If no text exists after the last tool_use, falls back to the longest text block.
 // Returns empty string if no suitable text is found.
+//
+// The host's private notes (bcc) are stripped: this text is the source for
+// reading summaries (persisted to the DB) and for push-notification previews
+// (sent to IM bots and OS notifications), so a note would otherwise leak both
+// to storage and off-device. Fail-closed — any bcc-like shape is removed.
 func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 	lastToolIdx := -1
 	for i, b := range blocks {
@@ -95,7 +101,7 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 	if lastToolIdx >= 0 {
 		for i := lastToolIdx + 1; i < len(blocks); i++ {
 			if blocks[i].Type == "text" && blocks[i].Text != "" {
-				return blocks[i].Text
+				return grouprouting.StripBccSpans(blocks[i].Text)
 			}
 		}
 	}
@@ -110,5 +116,5 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 			bestText = b.Text
 		}
 	}
-	return bestText
+	return grouprouting.StripBccSpans(bestText)
 }

@@ -36,15 +36,20 @@ type ParticipantInfo struct {
 //     pure noise).
 //   - instruction is the host's directive to this member, rendered as a
 //     high-priority final paragraph (empty = omitted).
+//   - bcc is the host's PRIVATE note to THIS member only, rendered after the
+//     public instruction as an even-higher-priority closing paragraph (empty =
+//     omitted). The caller filters the host's notes down to this member's name,
+//     so no other member ever receives another member's note.
 //   - hostID is the host member's ROW id. Its speech has the routing tag
 //     stripped (decision #67): the tag is internal protocol, and leaving it in
 //     would invite the member to imitate `<clawbench-speaker>`. Only the tag's
-//     background survives; an unparseable tag is kept verbatim.
+//     background survives; an unparseable tag is kept verbatim (but any
+//     well-formed private note is still removed — see hostSpeechForMembers).
 //
 // User messages are rendered as "用户: ..."; member speech as "<name>: ...";
 // membership changes (role='system') as "[系统] ..." so they are never mistaken
 // for user speech.
-func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, hostID string) string {
+func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, bcc, hostID string) string {
 	var b strings.Builder
 	if header := participantHeader(roster); header != "" {
 		b.WriteString(header)
@@ -61,44 +66,53 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		if text == "" {
 			continue
 		}
-		// A role='system' row is a membership change (decisions #40/#43): its
-		// agent_id is "" by design, so it must be checked BEFORE the user branch
-		// — otherwise the `AgentID == ""` fallback below captures it and tells
-		// the reader the USER said "Claude 加入了讨论". The host routes from this
-		// context, so mis-attributing a membership event as user speech corrupts
-		// its decisions. Rendered as a neutral, clearly-labeled line.
-		if m.Role == "system" {
-			b.WriteString("[系统] ")
-			b.WriteString(text)
-			b.WriteString("\n")
-			continue
+		if line := renderTimelineLine(m, text, names, leftIDs, hostID); line != "" {
+			b.WriteString(line)
 		}
-		if m.Role == "user" || m.AgentID == "" {
-			// A user message's attachments are rendered into the INJECTION only
-			// (decision #65): the bubble stays clean, but a member must know a
-			// file was attached or it cannot discuss it. Same formatter as
-			// single chat so the two cannot drift.
-			text = userTextWithAttachments(text, m.Files)
-			b.WriteString("用户: ")
-			b.WriteString(text)
-			b.WriteString("\n")
-			continue
-		}
-		if hostID != "" && m.AgentID == hostID {
-			text = hostSpeechForMembers(text)
-		}
-		name := names[m.AgentID]
-		if name == "" {
-			name = "成员"
-		}
-		b.WriteString(name)
-		if leftIDs[m.AgentID] {
-			b.WriteString("（已离场）")
-		}
-		b.WriteString(": ")
-		b.WriteString(text)
-		b.WriteString("\n")
 	}
+	if instruction != "" || bcc != "" {
+		appendHostDirectives(&b, instruction, bcc)
+	}
+	return b.String()
+}
+
+// renderTimelineLine renders one timeline row for a member's injected context.
+// A role='system' row is a membership change (decisions #40/#43): its agent_id
+// is "" by design, so it must be checked BEFORE the user branch — otherwise the
+// `AgentID == ""` fallback captures it and tells the reader the USER said
+// "Claude 加入了讨论". The host routes from this context, so mis-attributing a
+// membership event as user speech corrupts its decisions. Extracted from
+// buildInjectionText to keep that function's complexity down.
+func renderTimelineLine(m model.ChatMessage, text string, names map[string]string, leftIDs map[string]bool, hostID string) string {
+	if m.Role == "system" {
+		return "[系统] " + text + "\n"
+	}
+	if m.Role == roleUser || m.AgentID == "" {
+		// A user message's attachments are rendered into the INJECTION only
+		// (decision #65): the bubble stays clean, but a member must know a
+		// file was attached or it cannot discuss it. Same formatter as single
+		// chat so the two cannot drift.
+		return "用户: " + userTextWithAttachments(text, m.Files) + "\n"
+	}
+	if hostID != "" && m.AgentID == hostID {
+		text = hostSpeechForMembers(text)
+	}
+	name := names[m.AgentID]
+	if name == "" {
+		name = "成员"
+	}
+	if leftIDs[m.AgentID] {
+		name += "（已离场）"
+	}
+	return name + ": " + text + "\n"
+}
+
+// appendHostDirectives renders the host's closing instructions: the PUBLIC
+// directive (every addressed member receives it) first, then the PRIVATE note
+// (this member alone) after it — the "叠加" contract. Each is omitted when
+// empty. Extracted from buildInjectionText to keep that function's branching
+// under the complexity budget.
+func appendHostDirectives(b *strings.Builder, instruction, bcc string) {
 	if instruction != "" {
 		if b.Len() > 0 {
 			b.WriteString("\n")
@@ -107,7 +121,14 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		b.WriteString(instruction)
 		b.WriteString("\n")
 	}
-	return b.String()
+	if bcc != "" {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("主持人密送给你（其他成员看不到）：")
+		b.WriteString(bcc)
+		b.WriteString("\n")
+	}
 }
 
 // hostSpeechForMembers renders a host message for a member's context: the
@@ -121,6 +142,11 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 //     internal protocol too, and a message that carries only the end signal has
 //     Found=false — gating its removal on Found would leak it to members and
 //     invite them to imitate it (decision #67).
+//   - Well-formed BCC notes are ALWAYS stripped, for the same reason and by the
+//     same rule: a note is addressed to specific members, and the message that
+//     carries it reaches every member through this function. A message with no
+//     speaker tag (Found=false) still gets its notes removed — that fallback
+//     path is the one place a note could otherwise leak to everyone.
 //   - The directive is not repeated: it reaches the member once, in the
 //     high-priority "主持人要求你：…" paragraph the caller appends. Keeping it
 //     in the body too would tell the member the host emphasised it twice.
@@ -129,7 +155,10 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 func hostSpeechForMembers(text string) string {
 	res := grouprouting.Parse(text)
 	if !res.Found {
-		return grouprouting.StripEndTag(text)
+		// Fail-closed: a note of ANY shape must not reach a member through this
+		// fallback. StripBccTags (display-side) only removes well-formed notes,
+		// so it is NOT enough here — an LLM mis-formatting a quote would leak.
+		return grouprouting.StripBccSpans(grouprouting.StripEndTag(text))
 	}
 	return res.Before
 }
@@ -179,7 +208,7 @@ func participantHeader(roster []ParticipantInfo) string {
 // groupInjectionText loads a member's incremental context from the group
 // timeline. It is a thin DB wrapper over buildInjectionText used by the
 // orchestrator.
-func groupInjectionText(groupID, selfMemberRowID string, cursor int64, names map[string]string, instruction string) (string, error) {
+func groupInjectionText(groupID, selfMemberRowID string, cursor int64, names map[string]string, instruction, bcc string) (string, error) {
 	msgs, err := GetMessagesBySessionIDRaw(groupID)
 	if err != nil {
 		return "", fmt.Errorf("load group timeline: %w", err)
@@ -195,7 +224,7 @@ func groupInjectionText(groupID, selfMemberRowID string, cursor int64, names map
 	if hostID == selfMemberRowID {
 		hostID = ""
 	}
-	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, hostID), nil
+	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, bcc, hostID), nil
 }
 
 // participantMetadata derives the left-member set and the active-participant

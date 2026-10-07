@@ -9,6 +9,7 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog.ts'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
 import { isShareMode } from '@/share/shareMode'
+import { stripGroupBccTags } from '@/utils/groupRouting.ts'
 import {
   extractScheduledTaskIds,
   stripScheduledTaskTags,
@@ -251,6 +252,14 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
    *   The cache upgrade mechanism will later re-render with full enhancements.
    */
   function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {
+    // Strip the host's private notes (bcc) from the rendered body BEFORE either
+    // path. A note is addressed to specific members and must never be visible as
+    // prose — DOMPurify would otherwise unwrap the unknown tag and leave its
+    // content in plain sight for everyone. This runs on the STREAMING path too:
+    // the raw tag must not flash on screen before the turn settles. Malformed
+    // notes are left untouched (detect-then-parse / never-lose-content).
+    text = stripGroupBccTags(text)
+
     // ── Streaming: pure markdown only (no detections/verification) ──
     if (streaming) {
       return renderMarkdownHtml(text, { skipEnhancements: true, skipKatex: true })

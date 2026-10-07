@@ -1165,3 +1165,90 @@ func TestGroupOrchestrator_SuccessfulHostResetsFailureStreak(t *testing.T) {
 	}
 	_ = mA
 }
+
+// ── BCC (密送) ────────────────────────────────────────────────────────────
+//
+// The host may attach a private note to a named speaker. End to end: only that
+// speaker's prompt carries it; every other member's prompt is free of it, and a
+// note addressed to someone NOT named this round reaches nobody.
+
+func TestGroupOrchestrator_BccOnlyToTarget(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-bcc"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A,B</clawbench-speaker> 请分别表态<clawbench-bcc targets="A">SECRET_FOR_A</clawbench-bcc>`, `<clawbench-group-end/> 结束`},
+		mA:     {"A 发言"},
+		mB:     {"B 发言"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var aPrompt, bPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		switch turn.MemberRowID {
+		case mA:
+			aPrompt = turn.Prompt
+		case mB:
+			bPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if !strings.Contains(aPrompt, "SECRET_FOR_A") {
+		t.Fatalf("A (the target) must receive the note; got %q", aPrompt)
+	}
+	if !strings.Contains(aPrompt, "主持人密送给你") {
+		t.Fatalf("A's note must be labeled as a private note; got %q", aPrompt)
+	}
+	if strings.Contains(bPrompt, "SECRET_FOR_A") {
+		t.Fatalf("B must NOT receive A's note; got %q", bPrompt)
+	}
+}
+
+// A note addressed to a member the host did not name this round reaches nobody.
+func TestGroupOrchestrator_BccToUnnamedReachesNobody(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-bcc-unnamed"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	// Only A is named, but the note is addressed to B (and C, who is not a member).
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A</clawbench-speaker> 表态<clawbench-bcc targets="B,C">不该有人收到</clawbench-bcc>`, `<clawbench-group-end/> 结束`},
+		mA:     {"A 发言"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var aPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			aPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+	_ = mB
+
+	if strings.Contains(aPrompt, "不该有人收到") {
+		t.Fatalf("a note to an unnamed member must reach nobody; got %q", aPrompt)
+	}
+}

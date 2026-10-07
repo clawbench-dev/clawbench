@@ -84,6 +84,31 @@
 
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
+
+    <!-- Host's private notes (密送), at the BOTTOM of the bubble. Collapsed by
+         default: a note is addressed to specific members, so it is surfaced
+         (the user can audit what the host said privately) but never in the way.
+         Sits INSIDE .msg-card, unlike the @-mention routing chips which live in
+         the speaker row above the bubble. -->
+    <div v-if="isHostMessage && hostRouting.bcc.length > 0" class="msg-bcc">
+      <button
+        type="button"
+        class="msg-bcc-header"
+        :aria-expanded="bccExpanded"
+        @click="bccExpanded = !bccExpanded"
+      >
+        <Lock :size="12" class="msg-bcc-lock" />
+        <span class="msg-bcc-title">{{ t('group.bcc.title') }}</span>
+        <span class="msg-bcc-targets">{{ bccTargetNames }}</span>
+        <ChevronDown :size="14" class="msg-bcc-chevron" :class="{ 'is-collapsed': !bccExpanded }" />
+      </button>
+      <div v-show="bccExpanded" class="msg-bcc-body">
+        <div v-for="(e, i) in hostRouting.bcc" :key="i" class="msg-bcc-entry">
+          <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
+          <div class="msg-bcc-entry-content">{{ e.content }}</div>
+        </div>
+      </div>
+    </div>
     </div><!-- /.msg-card -->
 
     <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
@@ -124,7 +149,7 @@
           <MessageSquareQuote :size="14" />
         </button>
         <template v-if="msg.role === 'assistant'">
-          <button v-if="msgText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
+          <button v-if="speakableText && !readOnly" ref="speakBtnRef" class="chat-action-btn chat-speak-btn" :class="{ 'chat-action-btn--wide': autoSpeech.isActive(msg.id), active: autoSpeech.isActive(msg.id), loading: autoSpeech.isGeneratingText(msg.id) }" :title="speakBtnLabel" :aria-label="speakBtnLabel" @click.stop="handleSpeak">
             <!-- Generating states: summarizing / synthesizing -->
             <template v-if="autoSpeech.isGeneratingText(msg.id)">
               <Clock :size="14" class="speak-spinner" />
@@ -199,11 +224,12 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupBccTags } from '@/utils/groupRouting.ts'
+import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
 import { openFilePath } from '@/composables/useFilePathAnnotation.ts'
@@ -282,9 +308,20 @@ const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId =
 // sees "Host → A, B" chips. Unparseable tags are NOT stripped from the body
 // (parseGroupRouting never mutates text) — only the card is added.
 const hostRouting = computed(() => {
-  if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', before: '', end: false, raw: '' }
+  if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', before: '', bcc: [], end: false, raw: '' }
   const text = msgText.value || ''
   return parseGroupRouting(text)
+})
+
+// Private notes (密送) are collapsed by default — the user can audit them, but
+// they are not part of the host's visible address to the group.
+const bccExpanded = ref(false)
+
+// Distinct target names across every note, for the collapsed header summary.
+const bccTargetNames = computed(() => {
+  const seen = new Set()
+  for (const e of hostRouting.value.bcc) for (const n of e.targets) seen.add(n)
+  return [...seen].join('、')
 })
 
 // routingTargets maps the host's named routing targets to display info for the
@@ -363,6 +400,12 @@ const msgText = computed(() => {
   return ''
 })
 
+// The text the user READS/HEARS: the same as msgText, minus the host's private
+// notes (bcc). A note is visible only in the collapsed card; it must not be
+// read aloud, copied, quoted, or counted as message content. `msgText` itself
+// stays RAW because `hostRouting` parses the note out of it.
+const speakableText = computed(() => stripGroupBccTags(msgText.value))
+
 // Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
 // times), so the label and its separator stay hidden when there is nothing to show.
@@ -379,7 +422,7 @@ const copyableUserText = computed(() => {
 // user messages show it as soon as there is a timestamp or copyable text.
 const showMetaBar = computed(() => {
   if (props.msg?.role === 'assistant') {
-    return !props.msg.streaming && !!(msgText.value || props.msg.blocks?.length || props.msg.summary)
+    return !props.msg.streaming && !!(speakableText.value || props.msg.blocks?.length || props.msg.summary)
   }
   if (props.msg?.role !== 'user' || props.msg.streaming) return false
   return !!(relativeTime.value || copyableUserText.value)
@@ -392,7 +435,9 @@ const showMetaBar = computed(() => {
  *   - user: the message content.
  * Empty means there is nothing worth quoting, and the button is hidden.
  */
-const quotableText = computed(() => (props.msg?.role === 'user' ? copyableUserText.value : msgText.value))
+// Shared with ChatPanelContent's quote handler so both entries strip the host's
+// private notes identically (a quote feeds a member's injected context).
+const quotableText = computed(() => quotableMessageText(props.msg?.role, props.msg?.blocks, props.msg?.content, props.msg?.summary))
 
 // Accessible name/tooltip for the read-aloud button. While audio is playing the
 // button acts as a stop control, so it must not advertise "read aloud".
@@ -453,8 +498,8 @@ watch(needsLazyOriginal, (needs) => {
 function handleSpeak() {
   if (autoSpeech.isActive(props.msg?.id)) {
     autoSpeech.stopAudio()
-  } else if (msgText.value && props.msg?.id) {
-    autoSpeech.speakText(props.msg.id, msgText.value)
+  } else if (speakableText.value && props.msg?.id) {
+    autoSpeech.speakText(props.msg.id, speakableText.value)
   }
 }
 
@@ -686,6 +731,71 @@ const copyPayload = quotableText
   .chat-meta-bar-user:hover {
     color: var(--text-secondary);
   }
+}
+
+/* ── Host private notes (密送), inside the bubble at its bottom ── */
+.msg-bcc {
+  margin-top: var(--space-3);
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 60%, transparent);
+  padding-top: var(--space-2);
+}
+/* <button> defaults to text-align:center — force left so the row reads as a
+   disclosure header, not a centered label. */
+.msg-bcc-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+.msg-bcc-lock {
+  flex-shrink: 0;
+}
+.msg-bcc-title {
+  font-weight: var(--font-weight-medium, 500);
+}
+.msg-bcc-targets {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.msg-bcc-chevron {
+  flex-shrink: 0;
+  transition: transform var(--duration-base) ease;
+}
+.msg-bcc-chevron.is-collapsed {
+  transform: rotate(-90deg);
+}
+.msg-bcc-body {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.msg-bcc-entry {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+}
+.msg-bcc-entry-targets {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+.msg-bcc-entry-content {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 </style>
 

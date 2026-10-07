@@ -1062,3 +1062,32 @@ func TestTTSGenerate_WithMessageID_UsesConclusionNotFullText(t *testing.T) {
 	assert.True(t, mockSum.called)
 	assert.Equal(t, conclusionText, mockSum.lastText)
 }
+
+// ttsExtractConclusion must not read the host's private notes (bcc): the
+// frontend strips them, but when messageId is present the handler OVERRIDES the
+// frontend text with the DB content — so the stripping must happen here too.
+func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	sessionID, err := service.CreateSession(env.ProjectDir, "codebuddy", "TTS", "codebuddy", "", "default", "chat")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	content := `{"blocks":[{"type":"text","text":"公开表态 <clawbench-bcc targets=\"A\">只有A能听到的秘密</clawbench-bcc> 结束"}]}`
+	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "assistant", content, nil, false, "")
+	if err != nil {
+		t.Fatalf("AddChatMessage: %v", err)
+	}
+
+	got := ttsExtractConclusion(msgID)
+	if strings.Contains(got, "只有A能听到的秘密") {
+		t.Fatalf("the private note must not be spoken: %q", got)
+	}
+	if strings.Contains(got, "clawbench-bcc") {
+		t.Fatalf("the tag must not be spoken: %q", got)
+	}
+	if !strings.Contains(got, "公开表态") {
+		t.Fatalf("the public text must survive: %q", got)
+	}
+}

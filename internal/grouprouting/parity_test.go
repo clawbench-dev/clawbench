@@ -16,11 +16,12 @@ type corpus struct {
 		Name string `json:"name"`
 		Text string `json:"text"`
 		Want struct {
-			Found       bool     `json:"found"`
-			End         bool     `json:"end"`
-			Speakers    []string `json:"speakers"`
-			Instruction string   `json:"instruction"`
-			Before      string   `json:"before"`
+			Found       bool       `json:"found"`
+			End         bool       `json:"end"`
+			Speakers    []string   `json:"speakers"`
+			Instruction string     `json:"instruction"`
+			Before      string     `json:"before"`
+			Bcc         []BccEntry `json:"bcc"`
 		} `json:"want"`
 	} `json:"cases"`
 }
@@ -62,6 +63,17 @@ func TestParityCorpus(t *testing.T) {
 			}
 			if r.Before != tc.Want.Before {
 				t.Errorf("before=%q want %q", r.Before, tc.Want.Before)
+			}
+			gotBcc := r.Bcc
+			if gotBcc == nil {
+				gotBcc = []BccEntry{}
+			}
+			wantBcc := tc.Want.Bcc
+			if wantBcc == nil {
+				wantBcc = []BccEntry{}
+			}
+			if !reflect.DeepEqual(gotBcc, wantBcc) {
+				t.Errorf("bcc=%v want %v", gotBcc, wantBcc)
 			}
 		})
 	}

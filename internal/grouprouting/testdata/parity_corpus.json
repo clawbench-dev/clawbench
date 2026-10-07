@@ -3,57 +3,319 @@
     {
       "name": "single_speaker",
       "text": "<clawbench-speaker>B</clawbench-speaker> 请回应 A 的质疑",
-      "want": {"found": true, "end": false, "speakers": ["B"], "instruction": "请回应 A 的质疑", "before": ""}
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "B"
+        ],
+        "instruction": "请回应 A 的质疑",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "multiple_speakers_trimmed",
       "text": "<clawbench-speaker>A, B ,C</clawbench-speaker> 各自表态",
-      "want": {"found": true, "end": false, "speakers": ["A", "B", "C"], "instruction": "各自表态", "before": ""}
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B",
+          "C"
+        ],
+        "instruction": "各自表态",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "end_signal_only",
       "text": "讨论已充分。<clawbench-group-end/>",
-      "want": {"found": false, "end": true, "speakers": [], "instruction": "", "before": ""}
+      "want": {
+        "found": false,
+        "end": true,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "both_tags_end_wins_strip_from_instruction",
       "text": "<clawbench-speaker>B</clawbench-speaker> 请回应<clawbench-group-end/>",
-      "want": {"found": true, "end": true, "speakers": ["B"], "instruction": "请回应", "before": ""}
+      "want": {
+        "found": true,
+        "end": true,
+        "speakers": [
+          "B"
+        ],
+        "instruction": "请回应",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "empty_payload_not_found",
       "text": "<clawbench-speaker></clawbench-speaker>",
-      "want": {"found": false, "end": false, "speakers": [], "instruction": "", "before": ""}
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "no_tag",
       "text": "普通发言，没有标签",
-      "want": {"found": false, "end": false, "speakers": [], "instruction": "", "before": ""}
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "end_tag_with_spaces",
       "text": "done <clawbench-group-end />",
-      "want": {"found": false, "end": true, "speakers": [], "instruction": "", "before": ""}
+      "want": {
+        "found": false,
+        "end": true,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "before_empty_when_tag_leads",
       "text": "<clawbench-speaker>A</clawbench-speaker> 请谈谈",
-      "want": {"found": true, "end": false, "speakers": ["A"], "instruction": "请谈谈", "before": ""}
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "请谈谈",
+        "before": "",
+        "bcc": []
+      }
     },
     {
       "name": "before_background_text",
       "text": "A 的观点不错 <clawbench-speaker>B</clawbench-speaker> 请回应",
-      "want": {"found": true, "end": false, "speakers": ["B"], "instruction": "请回应", "before": "A 的观点不错"}
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "B"
+        ],
+        "instruction": "请回应",
+        "before": "A 的观点不错",
+        "bcc": []
+      }
     },
     {
       "name": "before_trimmed",
       "text": "\n  背景上下文 \n <clawbench-speaker>A</clawbench-speaker> 请表态",
-      "want": {"found": true, "end": false, "speakers": ["A"], "instruction": "请表态", "before": "背景上下文"}
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "请表态",
+        "before": "背景上下文",
+        "bcc": []
+      }
     },
     {
       "name": "before_with_malformed_tag",
       "text": "背景在此 <clawbench-speaker></clawbench-speaker>",
-      "want": {"found": false, "end": false, "speakers": [], "instruction": "", "before": "背景在此"}
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "背景在此",
+        "bcc": []
+      }
+    },
+    {
+      "name": "bcc_single_target_stripped_from_instruction",
+      "text": "<clawbench-speaker>A</clawbench-speaker> 请表态 <clawbench-bcc targets=\"A\">你重点看性能</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "请表态",
+        "before": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "你重点看性能"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bcc_multiple_targets_trimmed",
+      "text": "<clawbench-speaker>A,B</clawbench-speaker> 表态 <clawbench-bcc targets=\"A, B ,C\">都注意</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B"
+        ],
+        "instruction": "表态",
+        "before": "",
+        "bcc": [
+          {
+            "targets": [
+              "A",
+              "B",
+              "C"
+            ],
+            "content": "都注意"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bcc_before_tag_not_in_before",
+      "text": "<clawbench-bcc targets=\"A\">私下话</clawbench-bcc>背景在此 <clawbench-speaker>A</clawbench-speaker> 请回应",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "请回应",
+        "before": "背景在此",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "私下话"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bcc_multiple_entries_order_preserved",
+      "text": "<clawbench-speaker>A,B</clawbench-speaker> 表态<clawbench-bcc targets=\"A\">给A一</clawbench-bcc><clawbench-bcc targets=\"B\">给B二</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A",
+          "B"
+        ],
+        "instruction": "表态",
+        "before": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "给A一"
+          },
+          {
+            "targets": [
+              "B"
+            ],
+            "content": "给B二"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bcc_malformed_no_targets_kept",
+      "text": "<clawbench-speaker>A</clawbench-speaker> 请谈 <clawbench-bcc>无 targets</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "请谈",
+        "before": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "bcc_end_inside_not_end",
+      "text": "<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets=\"A\">如果没意见就 <clawbench-group-end/> 收尾</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "表态",
+        "before": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "如果没意见就 <clawbench-group-end/> 收尾"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bcc_nbsp_separator_fail_closed",
+      "text": "<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets=\"A\">NBSP秘密</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "表态",
+        "before": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "NBSP秘密"
+          }
+        ]
+      }
+    },
+    {
+      "name": "bcc_ideographic_space_separator",
+      "text": "<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc　targets=\"A\">全角秘密</clawbench-bcc>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "表态",
+        "before": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "全角秘密"
+          }
+        ]
+      }
     }
   ]
 }

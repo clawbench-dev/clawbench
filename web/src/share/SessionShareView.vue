@@ -93,6 +93,9 @@
               :active="false"
               :is-last-assistant="isLastAssistantMessage(messages, msg)"
               :is-last-message="i === messages.length - 1"
+              :resolve-speaker="resolveSpeaker"
+              :resolve-speaker-by-name="resolveSpeakerByName"
+              :host-member-id="hostMemberId"
               :hide-session-actions="true"
               :read-only="true"
               @toggle-tool="onToggleTool"
@@ -281,6 +284,21 @@ const tocItems = computed<TocMessage[]>(() => messages.value as unknown as TocMe
 const sessionAgent = ref<SpeakerIdentity | null>(null)
 const speakers = ref<Record<string, SpeakerIdentity> | null>(null)
 const resolveSpeaker = computed(() => makeSpeakerResolver(sessionAgent.value, speakers.value))
+// The group host's member row id, frozen into the snapshot so the viewer can
+// mark the host's messages AND render their private notes (bcc) card — without
+// it every group message reads as a plain member and the card never appears.
+const hostMemberId = ref('')
+// The routing @-chips name their targets by DISPLAY NAME, not row id; resolve
+// against the same frozen roster.
+const resolveSpeakerByName = computed(() => (name: string) => {
+  const target = (name || '').trim()
+  if (!target || !speakers.value) return null
+  for (const id of Object.keys(speakers.value)) {
+    const s = speakers.value[id]
+    if (s && (s.name || '').trim() === target) return s
+  }
+  return null
+})
 /** Message id currently in view (scroll-spy); null until the observer fires. */
 const activeTocId = ref<number | string | null>(null)
 
@@ -606,6 +624,7 @@ async function loadSnapshot() {
     backendLabel.value = payload?.session?.backend || ''
     sessionAgent.value = payload?.sessionAgent || null
     speakers.value = payload?.speakers || null
+    hostMemberId.value = payload?.session?.hostMemberId || ''
     const rawMessages = Array.isArray(payload?.messages) ? payload.messages : []
     messageCount.value = rawMessages.length
 

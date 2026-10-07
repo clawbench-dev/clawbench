@@ -969,7 +969,7 @@ func TestSystemEvent_InjectedIntoMemberContext(t *testing.T) {
 		t.Fatalf("GetMessagesBySessionIDRaw: %v", err)
 	}
 	names := map[string]string{}
-	got := buildInjectionText(msgs, 0, memberID, names, nil, nil, "", "")
+	got := buildInjectionText(msgs, 0, memberID, names, nil, nil, "", "", "")
 	if !strings.Contains(got, "加入了讨论") {
 		t.Fatalf("system event must reach the member's injected context: %q", got)
 	}

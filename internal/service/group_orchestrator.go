@@ -304,7 +304,11 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 				return DrainResult{CancelReason: cancelReasonUser}
 			}
 			memberCursor := GetMemberCursor(t.ID)
-			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction)
+			// The host's private note for THIS member (empty when none). Computed
+			// inside the loop, so a note addressed to someone not named this round
+			// reaches nobody.
+			bcc := bccForMember(route.Bcc, names[t.ID])
+			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction, bcc)
 			preH := GroupTimelineHighWater(groupID)
 			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
 			if res.CancelReason != "" {
@@ -325,7 +329,7 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 // routing tags in this turn are ignored (never parsed).
 func (o *GroupOrchestrator) summarize(ctx context.Context, runner groupTurnRunner, hostMemberID string, names map[string]string, members []GroupMember) {
 	cursor := GetMemberCursor(hostMemberID)
-	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "") + BuildHostSummaryPrompt(activeMemberNamesExcept(members, hostMemberID))
+	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "", "") + BuildHostSummaryPrompt(activeMemberNamesExcept(members, hostMemberID))
 	preH := GroupTimelineHighWater(o.groupID)
 	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: prompt, IsHost: true})
 	advanceCursorOnSuccess(hostMemberID, preH, res)
@@ -367,7 +371,7 @@ func advanceCursorOnSuccess(memberID string, preH int64, res groupMemberResult) 
 // the host instruction (routing rules). The selectable list EXCLUDES the host
 // itself, so the model cannot name itself (which caused the self-route loop).
 func (o *GroupOrchestrator) hostPrompt(hostMemberID string, cursor int64, names map[string]string, members []GroupMember) string {
-	ctxText := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "")
+	ctxText := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "", "")
 	return ctxText + BuildHostSystemPrompt(activeMemberNamesExcept(members, hostMemberID))
 }
 
@@ -441,7 +445,7 @@ func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTur
 	o.fallbackIdx = (o.fallbackIdx + 1) % len(eligible)
 
 	cursor := GetMemberCursor(m.ID)
-	prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "")
+	prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "", "")
 	preH := GroupTimelineHighWater(o.groupID)
 	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
 	// Same cursor rule as the routed and host paths (decision #69 + design
@@ -559,13 +563,40 @@ func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []HostM
 	return out
 }
 
-func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[string]string, instruction string) string {
-	text, err := groupInjectionText(groupID, self, cursor, names, instruction)
+// groupInjectionTextOrEmpty is the injectable seam over groupInjectionText used
+// by the orchestrator. bcc is the host's private note for THIS member (already
+// filtered by name); pass "" when there is none.
+func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[string]string, instruction, bcc string) string {
+	text, err := groupInjectionText(groupID, self, cursor, names, instruction, bcc)
 	if err != nil {
 		slog.Warn("group: injection load failed", "group", groupID, "err", err)
 		return ""
 	}
 	return text
+}
+
+// bccForMember returns the private notes addressed to memberName, joined by a
+// blank line; "" when there are none. Matching is on the trimmed display name.
+//
+// This is the ONLY place a note is turned into injectable text, and it is
+// called inside the per-target loop — so a note addressed to someone the host
+// did not name this round is never delivered to anyone (the "target must be a
+// named speaker" rule is satisfied structurally, not by an extra check).
+func bccForMember(entries []grouprouting.BccEntry, memberName string) string {
+	target := strings.TrimSpace(memberName)
+	if target == "" {
+		return ""
+	}
+	parts := make([]string, 0, len(entries))
+	for _, e := range entries {
+		for _, tg := range e.Targets {
+			if strings.TrimSpace(tg) == target {
+				parts = append(parts, e.Content)
+				break
+			}
+		}
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // finalizeGroupOrphans closes any streaming=1 rows left on the group timeline

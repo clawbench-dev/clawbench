@@ -97,6 +97,11 @@ type SessionShareSession struct {
 	AgentID   string     `json:"agentId,omitempty"`
 	Model     string     `json:"model,omitempty"`
 	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	// HostMemberID is the group host's member row id (group sessions only;
+	// empty otherwise). The viewer needs it to mark the host's messages and to
+	// render their private notes (bcc) card — a group's timeline otherwise
+	// cannot tell which speaker is the chair.
+	HostMemberID string `json:"hostMemberId,omitempty"`
 }
 
 // SessionShareMessage mirrors model.ChatMessage's JSON shape so the viewer can
@@ -225,10 +230,11 @@ func BuildSessionSharePayload(sessionID string, messageIDs []int64, projectRoot,
 		Version:   sessionSharePayloadVersion,
 		CreatedAt: time.Now().UTC(),
 		Session: SessionShareSession{
-			Title:   info.Title,
-			Backend: info.Backend,
-			AgentID: info.AgentID,
-			Model:   info.Model,
+			Title:        info.Title,
+			Backend:      info.Backend,
+			AgentID:      info.AgentID,
+			Model:        info.Model,
+			HostMemberID: GetGroupHostMember(sessionID),
 		},
 		Messages:     make([]SessionShareMessage, 0, len(messages)),
 		SessionAgent: sessionAgent,
