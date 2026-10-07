@@ -484,7 +484,7 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 	//
 	// Attachments are supported (decision #65): persisted on the user row and
 	// rendered into each member's injected context, not into the content.
-	if service.GetSessionType(sessionID) == "group" {
+	if service.IsGroupSession(sessionID) {
 		if claimed {
 			// Idle: this request owns the run. Materialize the first message
 			// into the timeline, then drain the queue with the group runner.

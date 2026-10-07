@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -696,19 +697,22 @@ func TestPurgeArchivedData_CascadesGroupMemberRows(t *testing.T) {
 
 // --- session-type predicate ---
 
-// TestVisibleSessionTypes_MatchClause guards the two representations of the
-// visible-session set from drifting apart: VisibleSessionTypeInClause (SQL)
-// and VisibleSessionTypes (Go) must describe the same set, and
-// IsVisibleSessionType must agree with both.
+// TestVisibleSessionTypes_MatchClause guards the representations of the
+// visible-session set from drifting apart: the SQL clause, the Go slice, and
+// IsVisibleSessionType must all describe exactly {chat, group}.
 func TestVisibleSessionTypes_MatchClause(t *testing.T) {
-	// The clause is what every list/count/search query embeds; it must contain
-	// exactly the Go slice's values, quoted.
-	for _, typ := range VisibleSessionTypes {
-		assert.Contains(t, VisibleSessionTypeInClause, "'"+typ+"'",
-			"clause must quote every VisibleSessionTypes entry")
-	}
 	assert.Equal(t, "'chat', 'group'", VisibleSessionTypeInClause)
-	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, VisibleSessionTypes)
+	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, visibleSessionTypes)
+
+	// The clause must be the quoted form of the Go slice, in the same order.
+	quoted := "'" + strings.Join(visibleSessionTypes, "', '") + "'"
+	assert.Equal(t, quoted, VisibleSessionTypeInClause,
+		"the SQL clause must be derived from visibleSessionTypes, not hand-written")
+
+	// Every visible type must satisfy the predicate (the Go/SQL agreement).
+	for _, typ := range visibleSessionTypes {
+		assert.True(t, IsVisibleSessionType(typ), "%q must be visible", typ)
+	}
 }
 
 // TestIsVisibleSessionType pins the semantics: chat and group are visible, a
@@ -729,6 +733,27 @@ func TestIsVisibleSessionType(t *testing.T) {
 	for _, tc := range cases {
 		assert.Equal(t, tc.want, IsVisibleSessionType(tc.stored), "stored=%q", tc.stored)
 	}
+}
+
+// TestVisibleSessionTypes_EmbeddedInQueryBuilders pins that the two Go-side
+// query builders (which bind the types as `IN (?, ?)` parameters) actually draw
+// from the canonical slice. Deleting the slice or hard-coding different values
+// there would otherwise silently narrow the browse/search population.
+func TestVisibleSessionTypes_EmbeddedInQueryBuilders(t *testing.T) {
+	setupStoreTestDB(t)
+	insertSession(t, "/project", "c1", "Chat", SessionTypeChat, "2024-01-01 10:00:00", false)
+	insertSession(t, "/project", "g1", "Group", SessionTypeGroup, "2024-01-01 11:00:00", false)
+	insertSession(t, "/project", "s1", "Sched", SessionTypeScheduled, "2024-01-01 12:00:00", false)
+
+	// Browse mode ("all") must list exactly the visible types.
+	sessions, _, err := GetRecentSessions("/project", 0, SessionArchiveFilterAll, SessionTypeFilterAll, SessionSortNewest, "", "", "", "")
+	require.NoError(t, err)
+	ids := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		ids = append(ids, s.ID)
+	}
+	assert.ElementsMatch(t, []string{"c1", "g1"}, ids,
+		"browse must include chat+group and exclude scheduled")
 }
 
 // TestGetExpiredArchivedSessions_ExcludesGroupMember pins that the retention

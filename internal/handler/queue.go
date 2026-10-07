@@ -349,7 +349,7 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 	// is the shared group entry: it queues when a group turn is running and
 	// launches the group drain loop when the group is idle, so the queueing
 	// semantics match the chat endpoint.
-	if service.GetSessionType(sessionID) == "group" {
+	if service.IsGroupSession(sessionID) {
 		started, err := service.EnqueueGroupMessage(sessionID, req.Message, validatedFiles, req.QueueID)
 		if err != nil {
 			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")

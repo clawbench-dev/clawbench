@@ -202,7 +202,7 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	// It runs the launch in a goroutine because the IM callback is synchronous
 	// and a group turn is potentially multi-minute; blocking it would stall the
 	// bot stream. Attachments are supported (decision #65).
-	if GetSessionType(sessionID) == "group" {
+	if GetSessionType(sessionID) == groupSessionType {
 		_, err := EnqueueGroupMessage(sessionID, message, files, queueID)
 		return err
 	}

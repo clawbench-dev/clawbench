@@ -143,6 +143,13 @@ func TestGroupOrchestrator_DefaultRunnerWiring(t *testing.T) {
 	if !spec.DrainOnFinalize {
 		t.Error("DrainOnFinalize must be true for member turns")
 	}
+	// The executor must NOT summarize per member (N LLM calls per round); the
+	// orchestrator summarizes once at the end. This flag is the ONLY signal the
+	// executor has (it no longer queries session_type), so its absence here is
+	// the exact regression that would restore per-member summarization.
+	if !spec.SuppressSummarization {
+		t.Error("SuppressSummarization must be true for member turns (else every member reply is summarized)")
+	}
 }
 
 // TestGroupOrchestrator_DefaultRunnerEmitsPerMemberFinalize pins the per-member

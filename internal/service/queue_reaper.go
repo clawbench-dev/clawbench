@@ -281,7 +281,7 @@ func EnsureConsumer(sessionID string) bool {
 	// SpeakerID, no host routing, the other members never participate, and the
 	// reply lands on the group timeline unattributed. The group drain loop owns
 	// the terminal event and the push contract, exactly as on the normal path.
-	if GetSessionType(sessionID) == "group" {
+	if GetSessionType(sessionID) == groupSessionType {
 		go func() {
 			defer FinishSessionRun(sessionID)
 			runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, msgID, row.Content, row.Files)

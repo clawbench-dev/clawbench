@@ -48,12 +48,14 @@ const (
 // counts, or searches conversations must use this instead of inlining the
 // literals: a whitelist here is fail-closed (a new session_type is invisible
 // until added), whereas a `!= 'group_member'` blacklist silently starts
-// leaking it. Keep in sync with VisibleSessionTypes.
+// leaking it. Keep in sync with visibleSessionTypes.
 const VisibleSessionTypeInClause = "'" + SessionTypeChat + "', '" + SessionTypeGroup + "'"
 
-// VisibleSessionTypes is VisibleSessionTypeInClause as a slice, for Go-side
-// filtering (callers that cannot embed SQL). Keep in sync with the clause.
-var VisibleSessionTypes = []string{SessionTypeChat, SessionTypeGroup}
+// visibleSessionTypes is VisibleSessionTypeInClause as a slice, for the Go-side
+// query builders that bind the two types as parameters. Unexported: callers
+// outside this package embed the SQL clause, so the slice offers no API. Keep
+// in sync with the clause.
+var visibleSessionTypes = []string{SessionTypeChat, SessionTypeGroup}
 
 // IsVisibleSessionType reports whether a stored session_type is user-visible
 // (chat or group). An empty value is treated as 'chat' — the schema default.
@@ -166,7 +168,7 @@ func GetRecentSessions(projectPath string, limit int, archiveFilter, typeFilter,
 	// Browse mode never mixes session types: each selection lists exactly one
 	// type, and "all" means "all conversations" (not "conversations + tasks").
 	// "Conversations" now includes group chats, which are user-visible sessions.
-	sessionTypes := VisibleSessionTypes
+	sessionTypes := visibleSessionTypes
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
 		sessionTypes = []string{SessionTypeScheduled, SessionTypeScheduled}
 	}
@@ -283,7 +285,7 @@ func SearchSessionsByTitle(projectPath string, terms []string, limit int, archiv
 		return []RecentSession{}, nil
 	}
 
-	sessionTypes := VisibleSessionTypes
+	sessionTypes := visibleSessionTypes
 	if NormalizeSessionTypeFilter(typeFilter) == SessionTypeFilterTask {
 		sessionTypes = []string{SessionTypeScheduled, SessionTypeScheduled}
 	}

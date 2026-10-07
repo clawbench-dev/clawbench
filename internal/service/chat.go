@@ -1245,7 +1245,8 @@ const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.a
 // block at the top, and the rest follow the user's manual drag order (ties
 // newest-first). If backend is non-empty, filters by backend; otherwise
 // returns all backends.
-// Only returns sessions with session_type='chat' (excludes scheduled sessions).
+// Only returns interactive sessions (session_type in chat/group; excludes
+// scheduled and hidden group_member rows).
 //
 // The unread count is unreadCountSubquery — see its doc comment for why it is a
 // correlated subquery rather than a grouped join.
@@ -1813,12 +1814,14 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 // (caller should fall back to agent defaults).
 // Used by tasks to respect the user's global model preference.
 //
-// The session_type whitelist matters: without it a GROUP row can win the
-// lookup. A group row's agent_id is its HOST, and the HTTP handler persists the
-// request's modelId onto the group row BEFORE the group branch (handler/chat.go
-// UpdateSessionModel), so a group send with an explicit model would otherwise
-// masquerade as the host agent's latest user preference and silently change the
-// default model a task uses.
+// Only interactive chat rows count (session_type='chat'). A GROUP row must NOT
+// win this lookup: its agent_id is its HOST, and the HTTP handler persists the
+// request's modelId onto the group row BEFORE the group branch
+// (handler/chat.go UpdateSessionModel), so a group send with an explicit model
+// would otherwise masquerade as the host agent's latest user preference and
+// silently change the default model a task uses. group_member rows are hidden
+// and carry no model; scheduled rows never get a user-chosen model either, so
+// restricting to 'chat' loses no real preference.
 func GetLatestUserModel(agentID, projectPath string) string {
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
@@ -1826,8 +1829,8 @@ func GetLatestUserModel(agentID, projectPath string) string {
 	}
 	var modelID string
 	err := store.ReadDB().QueryRow(
-		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' AND session_type IN ("+store.VisibleSessionTypeInClause+") ORDER BY updated_at DESC LIMIT 1",
-		agentID, projectID,
+		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' AND session_type = ? ORDER BY updated_at DESC LIMIT 1",
+		agentID, projectID, store.SessionTypeChat,
 	).Scan(&modelID)
 	if err != nil {
 		return ""

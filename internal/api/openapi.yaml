@@ -1723,7 +1723,11 @@ paths:
     post:
       tags: [Sessions]
       summary: 回溯会话历史
-      description: 原址截断到锚点 assistant 消息，事务删除其后历史并清理 RAG 分块。
+      description: |
+        原址截断到锚点 assistant 消息，事务删除其后历史并清理 RAG 分块。
+        400 错误体（`msgKey`）可能是：`InvalidRewindPoint`（锚点消息不存在/非 assistant/仍在流式）、
+        `NothingToRewind`（锚点之后没有可截断内容）、`GroupNotRewindable`（群聊不支持回溯——
+        与 fork 对称，截断共享时间线会令成员 seen_cursor 越界）。
       operationId: sessionRewind
       requestBody:
         required: true
@@ -1739,6 +1743,10 @@ paths:
       responses:
         "200":
           description: 回溯结果
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
 
   # ── Queue ─────────────────────────────────────────────────────────────────
   /api/ai/queue:

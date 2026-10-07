@@ -71,7 +71,7 @@ func ServeSessionsOverview(w http.ResponseWriter, r *http.Request) {
 			groupByName[s.ProjectPath] = g
 			groups = append(groups, g)
 		}
-		if s.SessionType == "group" {
+		if service.IsGroupSessionType(s.SessionType) {
 			groupIDs = append(groupIDs, s.ID)
 		}
 		g.Sessions = append(g.Sessions, overviewSession{
@@ -485,7 +485,7 @@ func DestroySession(w http.ResponseWriter, r *http.Request) {
 // CloseConn may block on cmd.Wait() if the agent does not exit cleanly, and the
 // HTTP response must not wait on it.
 func closeGroupMemberConns(sessionID string) {
-	if service.GetSessionType(sessionID) != "group" {
+	if !service.IsGroupSession(sessionID) {
 		return
 	}
 	members, err := service.ListGroupMembers(sessionID)
@@ -670,7 +670,7 @@ func applySessionTags(sessionID string, tags []service.SessionTagRef) error {
 // switch dead (decision #61). SetGroupAutoApprove writes every member row plus
 // the group row; the live member connections are synced here.
 func applyAutoApprove(sessionID string, enabled bool) {
-	if service.GetSessionType(sessionID) == "group" {
+	if service.IsGroupSession(sessionID) {
 		//nolint:errcheck,gosec // best-effort persistence; failure is non-fatal for an idempotent update
 		service.SetGroupAutoApprove(sessionID, enabled)
 		members, err := service.ListGroupMembers(sessionID)
@@ -744,7 +744,7 @@ func attachGroupMembers(sessions []model.ChatSession) {
 	}
 	groupIDs := make([]string, 0, len(sessions))
 	for i := range sessions {
-		if sessions[i].SessionType == "group" {
+		if service.IsGroupSessionType(sessions[i].SessionType) {
 			groupIDs = append(groupIDs, sessions[i].ID)
 		}
 	}

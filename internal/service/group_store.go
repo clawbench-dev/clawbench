@@ -779,6 +779,21 @@ func GetSessionType(sessionID string) string {
 	return t
 }
 
+// IsGroupSession reports whether sessionID is a group chat timeline row. It is
+// the exported form of `GetSessionType(id) == groupSessionType`, so callers
+// outside this package (the HTTP handler) do not have to spell the literal
+// "group" and risk drifting from the canonical constant.
+func IsGroupSession(sessionID string) bool {
+	return GetSessionType(sessionID) == groupSessionType
+}
+
+// IsGroupSessionType reports whether a stored session_type value is a group
+// timeline row. For callers that already hold the stored string (e.g. a session
+// list row) and would otherwise compare it to a literal.
+func IsGroupSessionType(storedType string) bool {
+	return storedType == groupSessionType
+}
+
 // GetMemberCursor returns a member's seen_cursor: the group-timeline high-water
 // mark it has already been shown. 0 means "nothing seen yet".
 func GetMemberCursor(memberID string) int64 {

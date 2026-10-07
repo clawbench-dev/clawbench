@@ -4724,6 +4724,33 @@ func TestGetLatestUserModel_NotFound(t *testing.T) {
 	assert.Equal(t, "", modelID)
 }
 
+// TestGetLatestUserModel_ExcludesGroupRows is the regression for the bug where a
+// GROUP row could win the lookup. A group row's agent_id is its HOST, and the
+// HTTP handler persists an explicit modelId onto the group row before the group
+// branch — so if the group's row is newer, an unfiltered (or
+// IN ('chat','group')) query would return the group's model as the host
+// agent's "latest user preference" and silently change a task's default model.
+func TestGetLatestUserModel_ExcludesGroupRows(t *testing.T) {
+	db := setupDB(t)
+
+	// A normal chat session with the host agent, older.
+	chatID, err := service.CreateSession("/project", "claude", "Chat", "agent-host", "chat-model", "user", "chat")
+	assert.NoError(t, err)
+
+	// A group whose row carries a model and is NEWER than the chat session.
+	// CreateGroup sets agent_id = host, mirroring the real group row.
+	groupID, _, err := service.CreateGroup("/project", "G", "claude", "agent-host", "Host")
+	assert.NoError(t, err)
+	assert.NoError(t, service.UpdateSessionModel(groupID, "group-model"))
+	// Make the group row strictly newer so it would win an ORDER BY updated_at.
+	_, err = db.Exec("UPDATE chat_sessions SET updated_at = '2999-01-01 00:00:00' WHERE id = ?", groupID)
+	assert.NoError(t, err)
+
+	got := service.GetLatestUserModel("agent-host", "/project")
+	assert.Equal(t, "chat-model", got,
+		"a group row must never supply the user's model preference (chat %s must win over group %s)", chatID, groupID)
+}
+
 // ---------- GetChatHistoryPaged: all branches ----------
 
 func TestGetChatHistoryPaged_NoLimit(t *testing.T) {
