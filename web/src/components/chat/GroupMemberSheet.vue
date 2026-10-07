@@ -4,7 +4,7 @@
       <!-- Member roster -->
       <ul class="gm-list">
         <li
-          v-for="m in members"
+          v-for="m in orderedMembers"
           :key="m.id"
           class="gm-row"
           :class="{ 'is-left': m.left }"
@@ -93,6 +93,16 @@ watch(() => props.maxRounds, (v) => { maxRounds.value = v })
 const activeAgentIds = computed(() =>
   props.members.filter(m => !m.left).map(m => m.agentId),
 )
+
+// The host always leads the roster. The server orders members by created_at, so
+// a host that joined later (or was removed and re-added) would otherwise appear
+// mid-list, which reads as "not in charge". Everyone else keeps their incoming
+// order, and the removed members stay wherever they were.
+const orderedMembers = computed(() => {
+  const host = props.members.find(m => m.isHost)
+  if (!host) return props.members
+  return [host, ...props.members.filter(m => m !== host)]
+})
 
 function openSheet() { open.value = true }
 function close() { open.value = false }

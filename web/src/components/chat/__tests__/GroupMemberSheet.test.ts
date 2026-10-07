@@ -34,10 +34,13 @@ function mountSheet(members: any[]) {
   })
 }
 
+// The host is deliberately NOT first here: the server orders members by
+// created_at, so a host that joined later (or was re-added) lands mid-list. The
+// sheet must pin it to the top regardless of the incoming order.
 const MEMBERS = [
-  { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
   { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
   { id: 'm3', name: 'Gone', backend: 'claude', agentId: 'a3', isHost: false, left: true },
+  { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
 ]
 
 describe('GroupMemberSheet', () => {
@@ -47,11 +50,21 @@ describe('GroupMemberSheet', () => {
     mockUpdateSettings.mockClear()
   })
 
-  it('renders one row per member with an avatar and name', () => {
+  it('renders one row per member with an avatar and name, host pinned first', () => {
     const w = mountSheet(MEMBERS)
     expect(w.findAll('.gm-row')).toHaveLength(3)
     expect(w.findAll('.gm-avatar .agent-icon-stub')).toHaveLength(3)
+    // Host leads even though it arrived last in the roster.
     expect(w.findAll('.gm-name').map(n => n.text())).toEqual(['Host', 'Alice', 'Gone'])
+  })
+
+  it('keeps the non-host order stable when the host is already first', () => {
+    const w = mountSheet([
+      { id: 'm1', name: 'Host', backend: 'codebuddy', agentId: 'a1', isHost: true },
+      { id: 'm2', name: 'Alice', backend: 'claude', agentId: 'a2', isHost: false },
+      { id: 'm3', name: 'Bob', backend: 'claude', agentId: 'a3', isHost: false },
+    ])
+    expect(w.findAll('.gm-name').map(n => n.text())).toEqual(['Host', 'Alice', 'Bob'])
   })
 
   it('tags the host and a left member, and only offers remove on active non-hosts', () => {
