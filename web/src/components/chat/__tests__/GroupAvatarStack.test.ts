@@ -25,6 +25,7 @@ function mountStack(members: any[], props: Record<string, unknown> = {}) {
       members,
       hostMemberId: members.find(m => m.isHost)?.id || '',
       maxRounds: 10,
+      autoApprove: false,
       isGroup: true,
       ...props,
     },

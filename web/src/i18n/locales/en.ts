@@ -1123,6 +1123,7 @@ export default {
     members: 'Members',
     left: 'Left',
     maxRounds: 'Max rounds',
+    autoApproveHint: 'Auto-approve every member\u2019s permission requests.',
     confirm: 'Add',
     alreadyMember: 'Added',
   },

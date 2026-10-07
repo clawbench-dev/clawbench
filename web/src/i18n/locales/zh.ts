@@ -1125,6 +1125,7 @@ export default {
     members: '成员',
     left: '已离场',
     maxRounds: '最大轮数',
+    autoApproveHint: '自动批准所有成员的权限请求。',
     confirm: '添加',
     alreadyMember: '已加入',
   },

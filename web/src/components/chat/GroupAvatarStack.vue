@@ -16,6 +16,7 @@
       :members="members"
       :hostMemberId="hostMemberId"
       :maxRounds="maxRounds"
+      :autoApprove="autoApprove"
       @changed="$emit('changed')"
     />
   </div>
@@ -35,6 +36,8 @@ const props = defineProps<{
   isGroup: boolean
   /** The group's current maxRounds (from the roster endpoint), shown in the sheet. */
   maxRounds: number
+  /** The group's current auto-approve flag, shown in the sheet (decision #61). */
+  autoApprove: boolean
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

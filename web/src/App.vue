@@ -296,6 +296,7 @@
                       :members="groupMembers"
                       :hostMemberId="groupHostMemberId"
                       :maxRounds="groupMaxRounds"
+                      :autoApprove="groupAutoApprove"
                       :isGroup="isGroupSession"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
@@ -1283,6 +1284,10 @@ const {
   refresh: refreshGroupMembers,
 } = useGroupMembers(sessionIdentity.currentSessionId)
 const isGroupSession = computed(() => sessionIdentity.currentSessionType.value === 'group')
+// Auto-approve for the group's member sheet. The ref is the shared session
+// identity state (loaded from the group session's GET /api/ai/chat response,
+// which the backend keeps in sync with the member rows — decision #61).
+const groupAutoApprove = sessionIdentity.autoApprove
 
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())

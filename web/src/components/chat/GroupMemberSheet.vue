@@ -40,6 +40,29 @@
         />
       </div>
 
+      <!-- Settings: auto-approve. Group sessions have no per-agent model/mode
+           chrome (hidden in ChatInputBar), so the SessionDrawer's switch — the
+           only other entry point — is unreachable here. This row is the group's
+           entry. The backend fans the flag out to EVERY member row (decision
+           #61): each member owns its own ACP connection and reads its own row,
+           so a single switch covers the whole roster. -->
+      <div class="gm-setting">
+        <div class="gm-setting-text">
+          <label class="gm-setting-label" for="group-auto-approve">{{ t('chat.autoApprove.title') }}</label>
+          <span class="gm-setting-desc">{{ t('group.autoApproveHint') }}</span>
+        </div>
+        <label class="settings-item__switch">
+          <input
+            id="group-auto-approve"
+            class="settings-item__switch-input"
+            type="checkbox"
+            :checked="autoApprove"
+            @change="onToggleAutoApprove"
+          />
+          <span class="settings-item__switch-track" />
+        </label>
+      </div>
+
       <!-- Add members -->
       <button class="fbtn fbtn-primary gm-add" @click="openAdd">
         <Plus :size="14" />
@@ -71,12 +94,16 @@ import AgentIcon from '@/components/common/AgentIcon.vue'
 import AgentSelectorDrawer from '@/components/common/AgentSelectorDrawer.vue'
 import { getAgentAvatar } from '@/composables/useAgents'
 import { addGroupMembers, removeGroupMember, updateGroupSettings, type GroupMemberInfo } from '@/composables/useGroupChat'
+import { toggleAutoApprove } from '@/composables/useSessionIdentity'
 
 const props = defineProps<{
   groupId: string
   members: GroupMemberInfo[]
   /** The group's current maxRounds from the server (roster endpoint). */
   maxRounds: number
+  /** The group's current auto-approve flag (server-authoritative: the backend
+   *  mirrors it across every member row, decision #61). */
+  autoApprove: boolean
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
@@ -131,6 +158,14 @@ async function saveMaxRounds() {
   if (n > 0) {
     try { await updateGroupSettings(props.groupId, n) } catch { /* ignore */ }
   }
+}
+
+// Delegate to the shared toggle: it PATCHes the current session (the group) and
+// the backend fans the flag out to every member row. We deliberately do NOT
+// keep local state — the parent passes the server value back down, so the
+// checkbox reflects the persisted truth (and reverts if the request fails).
+function onToggleAutoApprove(e: Event) {
+  toggleAutoApprove((e.target as HTMLInputElement).checked)
 }
 
 defineExpose({ open: openSheet })
@@ -243,6 +278,24 @@ defineExpose({ open: openSheet })
 .gm-setting-label {
   font-size: var(--font-size-md);
   color: var(--text-primary);
+}
+/* Two-line variant: a title + a muted hint under it (the auto-approve row).
+   The switch (a shared .settings-item__switch) sits at the right edge. */
+.gm-setting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.gm-setting-desc {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted, #999);
+  line-height: 1.3;
+}
+/* Layout only — the switch's shape stays in the shared global rule. Without
+   this the switch would shrink when the hint text is long. */
+.gm-setting .settings-item__switch {
+  flex-shrink: 0;
 }
 .gm-setting-input {
   width: 72px;
