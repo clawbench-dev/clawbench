@@ -1,8 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 
 // Minimal mocks so ChatMessageItem mounts. Group speaker rendering only needs
 // the template path; ContentBlocks and the heavy composables are stubbed.
@@ -101,21 +99,22 @@ describe('ChatMessageItem group speaker', () => {
     expect(speakerRow.exists()).toBe(true)
     expect(speakerRow.find('.msg-routing-targets').exists()).toBe(true)
     expect(w.find('.msg-card .msg-routing-targets').exists()).toBe(false)
-    // @name chips, no speaker label or arrow.
-    const chips = w.findAll('.msg-routing-chip')
-    expect(chips.map(c => c.find('.msg-routing-at').text())).toEqual(['@A', '@B'])
+    // Two items, each: "@" + a pill (icon + name). No speaker label or arrow.
+    const items = w.findAll('.msg-routing-item')
+    expect(items.length).toBe(2)
+    expect(w.findAll('.msg-routing-chip .msg-routing-name').map(n => n.text())).toEqual(['A', 'B'])
     expect(w.find('.msg-routing-label').exists()).toBe(false)
     expect(w.find('.msg-routing-arrow').exists()).toBe(false)
-    // Each chip carries an avatar, wrapped in a fixed-size disc so every chip is
+    // Each pill carries an avatar, wrapped in a fixed-size disc so every pill is
     // the same height regardless of the avatar's render mode.
     expect(w.findAll('.msg-routing-chip .agent-icon-stub').length).toBe(2)
     expect(w.findAll('.msg-routing-chip .msg-routing-avatar').length).toBe(2)
   })
 
-  // The @-mention is an INDEPENDENT marker: it must NOT be nested inside the
-  // speaker's own label cluster (name / 主持人 tag) — it is a sibling, so it
-  // reads as its own element rather than as part of "Host 主持人".
-  it('keeps the @-mention as a sibling of the speaker label, not nested in it', () => {
+  // The "@" sigil must sit OUTSIDE the pill: the pill carries only the icon +
+  // agent name. This keeps the sigil from looking like part of the agent's
+  // name/label.
+  it('puts the @ sigil outside the pill, which holds only icon + name', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '<svg/>' })
     const w = mountItem(
@@ -128,18 +127,18 @@ describe('ChatMessageItem group speaker', () => {
       },
       { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
     )
-    const speakerRow = w.find('.msg-speaker')
-    const targets = speakerRow.find('.msg-routing-targets')
-    expect(targets.exists()).toBe(true)
-    // Direct child of the row, and NOT inside the host tag or the name span.
-    expect(targets.element.parentElement).toBe(speakerRow.element)
-    expect(speakerRow.find('.msg-speaker-host-tag .msg-routing-targets').exists()).toBe(false)
-    expect(speakerRow.find('.msg-speaker-name .msg-routing-targets').exists()).toBe(false)
-    // Visual detachment (right-pushed) is a CSS-only property jsdom cannot
-    // compute, so pin it at the source: the rule must carry margin-left: auto.
-    const src = readFileSync(resolve(__dirname, '../ChatMessageItem.vue'), 'utf8')
-    const block = src.match(/\.msg-routing-targets\s*\{([\s\S]*?)\}/)?.[1] ?? ''
-    expect(block).toMatch(/margin-left:\s*auto/)
+    const item = w.find('.msg-routing-item')
+    expect(item.exists()).toBe(true)
+    const at = item.find('.msg-routing-at')
+    const pill = item.find('.msg-routing-chip')
+    // "@" is a sibling of the pill, not nested inside it.
+    expect(at.element.parentElement).toBe(item.element)
+    expect(pill.element.parentElement).toBe(item.element)
+    expect(at.text()).toBe('@')
+    // The pill must NOT contain the "@" — its text is the name alone.
+    expect(pill.find('.msg-routing-at').exists()).toBe(false)
+    expect(pill.text()).toBe('A')
+    expect(pill.text()).not.toContain('@')
   })
 
   it('renders an unresolved routing target as a plain @name', () => {
@@ -155,7 +154,8 @@ describe('ChatMessageItem group speaker', () => {
       },
       { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
     )
-    expect(w.find('.msg-routing-at').text()).toBe('@Ghost')
+    expect(w.find('.msg-routing-at').text()).toBe('@')
+    expect(w.find('.msg-routing-chip .msg-routing-name').text()).toBe('Ghost')
     expect(w.find('.msg-routing-chip .agent-icon-stub').exists()).toBe(false)
   })
 })

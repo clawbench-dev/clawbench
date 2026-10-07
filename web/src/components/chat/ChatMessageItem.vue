@@ -8,21 +8,23 @@
          speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
          above the message box.
 
-         When the host routes the discussion it @-mentions its targets. Those
-         chips are an INDEPENDENT marker: they sit at the far right of the
-         avatar row, detached from the [icon] name 主持人 cluster (see
-         .msg-routing-targets' margin-left:auto), so they never read as part of
-         the speaker's own label. The bubble stays purely the host's prose. -->
+         When the host routes the discussion it @-mentions its targets. The
+         "@" sigil is NOT part of the pill: it sits OUTSIDE the chip, which
+         carries only the icon + agent name. The chips stay left-aligned, right
+         after the speaker label — the bubble stays purely the host's prose. -->
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
       <span v-if="isHostMessage && hostRouting.found" class="msg-routing-targets">
-        <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
-          <span class="msg-routing-avatar">
-            <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" size="md" />
+        <span v-for="s in routingTargets" :key="s.name" class="msg-routing-item">
+          <span class="msg-routing-at">@</span>
+          <span class="msg-routing-chip">
+            <span class="msg-routing-avatar">
+              <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" size="md" />
+            </span>
+            <span class="msg-routing-name">{{ s.name }}</span>
           </span>
-          <span class="msg-routing-at">@{{ s.name }}</span>
         </span>
       </span>
     </div>
@@ -1286,24 +1288,29 @@ const copyPayload = quotableText
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-2xs);
 }
-/* The host's @-mention targets: an INDEPENDENT marker, not part of the
-   speaker's own label. `margin-left: auto` pushes it to the far right of the
-   avatar row, so it is visually detached from the [icon] name 主持人 cluster
-   on the left. `min-width: 0` + wrapping keep a long target list from pushing
-   the row wider than the chat column (it wraps to its own line instead). */
+/* The host's @-mention targets, inline in the avatar row right after the
+   speaker label (original left-aligned position — NOT pushed right).
+   `min-width: 0` + wrapping keep a long target list from pushing the row wider
+   than the chat column (it wraps to its own line instead). */
 .msg-routing-targets {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
   min-width: 0;
-  margin-left: auto;
+}
+/* One routing target: the "@" sigil sits OUTSIDE the pill, immediately before
+   it. The pill itself carries only the icon + agent name. */
+.msg-routing-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {
   border-left: 2px solid var(--accent-color, #0066cc);
 }
-/* @-mention chip: avatar + @name, no speaker label or arrow.
+/* @-mention pill: avatar + name only (the "@" is the sibling .msg-routing-at).
    Fixed height + fixed avatar disc so every chip is exactly the same size
    regardless of the avatar's render mode (<img> vs <svg>) or name length. */
 .msg-routing-chip {
@@ -1350,7 +1357,14 @@ const copyPayload = quotableText
 .msg-routing-avatar .agent-icon-img {
   object-fit: cover;
 }
+/* The "@" sigil, outside the pill. Same accent as the pill text so the pair
+   reads as one mention, with no background of its own. */
 .msg-routing-at {
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  color: var(--accent-color, #0066cc);
+}
+.msg-routing-name {
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
