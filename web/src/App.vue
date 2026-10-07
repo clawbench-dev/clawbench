@@ -295,6 +295,7 @@
                       :sessionId="sessionIdentity.currentSessionId.value"
                       :members="groupMembers"
                       :hostMemberId="groupHostMemberId"
+                      :maxRounds="groupMaxRounds"
                       :isGroup="isGroupSession"
                       :activeSpeakerId="activeSpeakerId"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
@@ -1276,6 +1277,7 @@ const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 // fetched once, not twice.
 const {
   members: groupMembers,
+  maxRounds: groupMaxRounds,
   hostMemberId: groupHostMemberId,
   resolveSpeaker: resolveGroupSpeaker,
   resolveByName: resolveGroupSpeakerByName,

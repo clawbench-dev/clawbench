@@ -35,6 +35,7 @@ Unauthorized: 未授权
 InvalidPath: 无效路径
 PathTraversal: 检测到路径穿越攻击
 InternalError: 内部服务器错误
+CreateSessionFailed: 创建会话失败
 SessionNotFound: 会话未找到
 ProjectNotFound: 项目未找到
 ProjectDeleteForbidden: 该项目无法删除

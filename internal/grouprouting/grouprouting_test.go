@@ -114,3 +114,22 @@ func TestParseBeforeMalformed(t *testing.T) {
 		t.Fatalf("before=%q want %q", r.Before, "背景在此")
 	}
 }
+
+// StripEndTag removes the end-signal tag and leaves everything else; it is used
+// to keep the tag out of a member's injected context when the message has no
+// speaker tag (decision #67).
+func TestStripEndTag(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"no tag here", "no tag here"},
+		{"讨论充分。<clawbench-group-end/> 结论：可以发布", "讨论充分。 结论：可以发布"},
+		{"<clawbench-group-end/>", ""},
+		// Two tags collapse to the surrounding text (the gap between them is
+		// preserved as-is; only the outer edges are trimmed).
+		{"a <clawbench-group-end/> b <clawbench-group-end/> c", "a  b  c"},
+	}
+	for _, tc := range cases {
+		if got := StripEndTag(tc.in); got != tc.want {
+			t.Errorf("StripEndTag(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

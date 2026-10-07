@@ -9,6 +9,7 @@ import { getAgentAvatar, useAgents } from '@/composables/useAgents'
  */
 export function useGroupMembers(currentSessionId: Ref<string>) {
   const members = ref<GroupMemberInfo[]>([])
+  const maxRounds = ref(10)
   const { loadAgents } = useAgents()
 
   const hostMemberId = computed(() => members.value.find(m => m.isHost)?.id || '')
@@ -48,7 +49,9 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
     // make sure the roster is loaded before/alongside the members.
     void loadAgents()
     try {
-      members.value = await listGroupMembers(sessionId)
+      const res = await listGroupMembers(sessionId)
+      members.value = res.members
+      maxRounds.value = res.maxRounds
     } catch {
       members.value = []
     }
@@ -56,5 +59,5 @@ export function useGroupMembers(currentSessionId: Ref<string>) {
 
   watch(currentSessionId, (sid) => { void refresh(sid) }, { immediate: true })
 
-  return { members, hostMemberId, resolveSpeaker, resolveByName, refresh }
+  return { members, maxRounds, hostMemberId, resolveSpeaker, resolveByName, refresh }
 }

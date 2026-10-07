@@ -1119,3 +1119,93 @@ func TestCreateGroupWithMembers_DedupesAgents(t *testing.T) {
 		t.Fatalf("want 2 member rows (host + A), got %d", len(members))
 	}
 }
+
+// AddGroupMembers must be ALL-OR-NOTHING on the member cap (decision #78 / plan
+// O19): when the batch would exceed the cap it rejects the WHOLE batch without
+// writing any row. Looping AddGroupMember in the caller instead leaves the
+// earlier additions committed and returns an error — the request "fails" but
+// the roster silently changed.
+func TestAddGroupMembers_BatchCapIsAtomic(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/groupbatch"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	// Fill to 9 active (host + 8 members).
+	for i := 0; i < 8; i++ {
+		if _, err := AddGroupMember(project, groupID, "claude", "agent-"+string(rune('a'+i)), "M"); err != nil {
+			t.Fatalf("AddGroupMember %d: %v", i, err)
+		}
+	}
+	before, _ := ListGroupMembers(groupID)
+	if countActiveMembers(before) != 9 {
+		t.Fatalf("precondition: want 9 active, got %d", countActiveMembers(before))
+	}
+
+	// Batch of 2 new agents would make 11 → must reject the WHOLE batch.
+	_, err = AddGroupMembers(project, groupID, []GroupMemberSpec{
+		{AgentID: "agent-new-1", Backend: "claude", DisplayName: "N1"},
+		{AgentID: "agent-new-2", Backend: "claude", DisplayName: "N2"},
+	})
+	if err == nil {
+		t.Fatal("a batch exceeding the cap must be rejected")
+	}
+	after, _ := ListGroupMembers(groupID)
+	if countActiveMembers(after) != 9 {
+		t.Fatalf("a rejected batch must not add ANY member: active %d -> %d", countActiveMembers(before), countActiveMembers(after))
+	}
+
+	// A batch of exactly 1 is accepted (9 -> 10).
+	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
+		{AgentID: "agent-new-1", Backend: "claude", DisplayName: "N1"},
+	}); err != nil {
+		t.Fatalf("a batch within the cap must be accepted: %v", err)
+	}
+	final, _ := ListGroupMembers(groupID)
+	if countActiveMembers(final) != 10 {
+		t.Fatalf("want 10 active after the accepted batch, got %d", countActiveMembers(final))
+	}
+}
+
+// A batch whose members are ALL already active does not grow the roster and must
+// not be rejected even at the cap (net-new = 0). This is the "重复 agent 不算
+// 超限" rule from O19.
+func TestAddGroupMembers_DuplicatesDoNotCountTowardCap(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/groupbatch-dup"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	for i := 0; i < 9; i++ { // host + 9 = 10 active (at cap)
+		if _, err := AddGroupMember(project, groupID, "claude", "agent-"+string(rune('a'+i)), "M"); err != nil {
+			t.Fatalf("AddGroupMember %d: %v", i, err)
+		}
+	}
+	if members, _ := ListGroupMembers(groupID); countActiveMembers(members) != 10 {
+		t.Fatalf("precondition: want 10 active, got %d", countActiveMembers(members))
+	}
+
+	// Re-adding two existing agents is a no-op (net-new 0) → accepted.
+	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
+		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
+		{AgentID: "agent-b", Backend: "claude", DisplayName: "B"},
+	}); err != nil {
+		t.Fatalf("re-adding existing agents must not exceed the cap: %v", err)
+	}
+
+	// But one existing + one NEW at the cap → net-new 1 → rejected.
+	if _, err := AddGroupMembers(project, groupID, []GroupMemberSpec{
+		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
+		{AgentID: "agent-fresh", Backend: "claude", DisplayName: "F"},
+	}); err == nil {
+		t.Fatal("net-new 1 at the cap must be rejected")
+	}
+}

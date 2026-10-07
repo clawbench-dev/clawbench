@@ -113,10 +113,14 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 // hostSpeechForMembers renders a host message for a member's context: the
 // routing tag is replaced by the text that preceded it (decision #67/#68).
 //
-// Two contracts hold here:
-//   - Unparseable tags are NEVER stripped (same rule as askquestion): a message
-//     whose tag we do not understand is passed through verbatim rather than
-//     losing content.
+// Contracts:
+//   - The SPEAKER tag is stripped only when it parses (Found). An unparseable
+//     speaker tag is passed through verbatim (same "never lose content" rule as
+//     askquestion) rather than guessing where its payload ends.
+//   - The END tag is ALWAYS stripped, even when no speaker tag is present. It is
+//     internal protocol too, and a message that carries only the end signal has
+//     Found=false — gating its removal on Found would leak it to members and
+//     invite them to imitate it (decision #67).
 //   - The directive is not repeated: it reaches the member once, in the
 //     high-priority "主持人要求你：…" paragraph the caller appends. Keeping it
 //     in the body too would tell the member the host emphasised it twice.
@@ -125,7 +129,7 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 func hostSpeechForMembers(text string) string {
 	res := grouprouting.Parse(text)
 	if !res.Found {
-		return text
+		return grouprouting.StripEndTag(text)
 	}
 	return res.Before
 }

@@ -122,8 +122,9 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 		t.Fatalf("host turns=%d, want 2 (route + end-summary), order=%v", hostTurns, *order)
 	}
 
-	// B must have seen A's same-round speech: verify via B's injection by checking
-	// the group timeline ordering is A before B.
+	// B must have seen A's same-round speech: the sequential-round invariant.
+	// Assert it directly by capturing each member's injected prompt (the old
+	// comment claimed this but only checked timeline ordering).
 	msgs, _ := GetMessagesBySessionIDRaw(groupID)
 	var aIdx, bIdx = -1, -1
 	for i, m := range msgs {
@@ -136,6 +137,96 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 	}
 	if !(aIdx >= 0 && bIdx > aIdx) {
 		t.Fatalf("A must precede B in the timeline (aIdx=%d bIdx=%d)", aIdx, bIdx)
+	}
+}
+
+// A member's injected context must contain the PREVIOUS speakers' same-round
+// speech (design §5.1: "后者可见前者本轮发言"), which is what makes "B responds to
+// A" possible without the host re-ordering across rounds.
+func TestGroupOrchestrator_MemberSeesPriorSameRoundSpeech(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-sameround"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A,B</clawbench-speaker> 请分别表态`, `<clawbench-group-end/> 结束`},
+		mA:     {"A_UNIQUE_SPEECH"},
+		mB:     {"B 的观点"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mB {
+			bPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if !strings.Contains(bPrompt, "A_UNIQUE_SPEECH") {
+		t.Fatalf("B must see A's same-round speech in its injected context; got %q", bPrompt)
+	}
+}
+
+// Decision #9: members exchange SPEECH TEXT only — tool calls and thinking are
+// private. A member's injected context must never contain another member's
+// tool_use / thinking content.
+func TestGroupOrchestrator_ToolAndThinkingNotInjected(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-speechonly"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	// A's timeline row carries a text block, a tool_use block, and a thinking
+	// block. Only the text may reach B.
+	aContent := `{"blocks":[{"type":"text","text":"A 的发言文本"},{"type":"tool_use","name":"Bash","input":{"command":"SECRET_TOOL_CALL"}},{"type":"thinking","text":"SECRET_THINKING"}]}`
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant", aContent, nil, false, "", mA); err != nil {
+		t.Fatalf("seed A: %v", err)
+	}
+
+	// The host routes to B then ends (a scripted host avoids looping rounds,
+	// which would advance B's cursor past A's row).
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>B</clawbench-speaker> 请 B 表态`, `<clawbench-group-end/> 结束`},
+		mB:     {"B 的观点"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mB {
+			bPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if !strings.Contains(bPrompt, "A 的发言文本") {
+		t.Fatalf("B must see A's speech text; got %q", bPrompt)
+	}
+	if strings.Contains(bPrompt, "SECRET_TOOL_CALL") {
+		t.Fatalf("a member's tool call must NOT be injected to another member (decision #9): %q", bPrompt)
+	}
+	if strings.Contains(bPrompt, "SECRET_THINKING") {
+		t.Fatalf("a member's thinking must NOT be injected to another member (decision #9): %q", bPrompt)
 	}
 }
 
@@ -825,4 +916,252 @@ func TestGroupMemberTurn_FailureWarningIsAttributed(t *testing.T) {
 	if !found {
 		t.Fatalf("a failed member turn must leave a warning block attributed to the member; msgs=%v", msgs)
 	}
+}
+
+// A CANCELLED member turn must NOT advance the cursor (decision #69). The
+// production runTurn reports a user cancel in CancelReason with Err EMPTY, so
+// the old "Err == """ test treated a cancelled turn as processed and pushed the
+// cursor past context the member never consumed — the member then silently
+// answers off-topic with nothing on the timeline to show why.
+//
+// The runner here mirrors production: it sets CancelReason (not Err), which is
+// exactly why the previous Err-only test could not catch this.
+func TestGroupOrchestrator_CancelledMemberDoesNotAdvanceCursor(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-cancel-cursor"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+
+	// A timeline message the member must still see next time.
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "seed question", nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	SetMemberCursor(mA, 0)
+
+	// Host routes to A; A's turn is CANCELLED (CancelReason set, Err empty).
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			return groupMemberResult{CancelReason: cancelReasonUser}
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if got := GetMemberCursor(mA); got != 0 {
+		t.Fatalf("a cancelled member turn must not advance the cursor, got %d", got)
+	}
+}
+
+// The cursor must be set to the PRE-speech high-water (design §5.1), not the
+// post-speech one. A synchronous HTTP write can land a row WHILE the member is
+// speaking (adding/removing a member writes a role='system' event without going
+// through the queue); that row was never injected to the member, so advancing
+// past it would swallow it forever.
+//
+// This simulates that race: the runner writes a NEW system row (higher id) in
+// the middle of its turn, AFTER the pre-speech high-water was captured. The
+// cursor must stay at the pre-speech mark so the system row is still injected
+// next round.
+func TestGroupOrchestrator_CursorUsesPreSpeechHighWater(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-preh"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	// Seed so the pre-speech high-water is a known, non-zero id.
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "seed", nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	SetMemberCursor(mA, 0)
+
+	// The id of the row written DURING A's turn (a concurrent membership
+	// event). The cursor must stay strictly below it so it is still injected
+	// next round.
+	var concurrentRowID int64
+
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`, `<clawbench-group-end/> 结束`},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			// A concurrent HTTP write lands a system event DURING A's turn,
+			// AFTER the orchestrator captured the pre-speech high-water.
+			id, err := AddSystemMessage(project, groupID, "B 加入了讨论")
+			if err == nil {
+				concurrentRowID = id
+			}
+			return base(ctx, gid, turn)
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if concurrentRowID == 0 {
+		t.Fatal("precondition: the concurrent system row must have been written")
+	}
+	// Post-speech high-water would be A's own reply id (after the system row) —
+	// swallowing it. Pre-speech high-water stays below the system row.
+	if got := GetMemberCursor(mA); got >= concurrentRowID {
+		t.Fatalf("cursor %d must stay below the concurrent row %d (post-speech high-water swallowed it)", got, concurrentRowID)
+	}
+}
+
+// The round-robin FALLBACK path must also honour the cancel rule (decision
+// #69): unlike the host/routed member loops, speakNextMember has no early
+// return, so its cursor rule lives entirely in advanceCursorOnSuccess. A
+// cancelled fallback turn must not advance the cursor either.
+func TestGroupOrchestrator_CancelledFallbackDoesNotAdvanceCursor(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-cancel-fallback"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "seed", nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	SetMemberCursor(mA, 0)
+
+	// The host never emits a parseable route, so every round falls back to
+	// round-robin; the fallback member's turn is CANCELLED.
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"(no tag)"}]}`, nil, false, "", hostID)
+			return groupMemberResult{}
+		}
+		return groupMemberResult{CancelReason: cancelReasonUser}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if got := GetMemberCursor(mA); got != 0 {
+		t.Fatalf("a cancelled fallback turn must not advance the cursor, got %d", got)
+	}
+}
+
+// A host that keeps failing must terminate the turn, not burn the whole round
+// budget. Design §6: "主持人跑挂 → 可见错误 + 回退轮转继续；**再失败终止群回合**".
+// Without a host-failure counter the loop runs every round (a broken host
+// backend means maxRounds host turns + 10 members monologuing).
+func TestGroupOrchestrator_AbortsAfterRepeatedHostFailure(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-hostfail"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	// A large cap: without early termination the host would run ~this many times.
+	if err := SetGroupMaxRounds(groupID, 20); err != nil {
+		t.Fatalf("SetGroupMaxRounds: %v", err)
+	}
+
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			hostTurns++
+			return groupMemberResult{Err: "host backend down"}
+		}
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	// Design §6: fall back once, then terminate on the next failure. Allow a
+	// small margin (the fallback + one retry) but nowhere near maxRounds.
+	if hostTurns > 4 {
+		t.Fatalf("repeated host failure must terminate the turn, but the host ran %d turns", hostTurns)
+	}
+	_ = hostID
+}
+
+// A successful host turn must RESET the host-failure streak, so an occasional
+// transient failure does not accumulate across a long discussion and abort it.
+func TestGroupOrchestrator_SuccessfulHostResetsFailureStreak(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-hostreset"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+
+	// Alternating: host fails once (falls back), then succeeds and routes to A,
+	// then fails once again, then succeeds and ends. If the streak did NOT
+	// reset, the second failure would abort before the end signal.
+	hostTurns := 0
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			hostTurns++
+			switch hostTurns {
+			case 1:
+				return groupMemberResult{Err: "transient 1"}
+			case 3:
+				return groupMemberResult{Err: "transient 2"}
+			case 2:
+				_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+					`{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请 A 表态"}]}`, nil, false, "", hostID)
+				return groupMemberResult{}
+			default:
+				_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+					`{"blocks":[{"type":"text","text":"<clawbench-group-end/> 结束"}]}`, nil, false, "", hostID)
+				return groupMemberResult{}
+			}
+		}
+		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":"A 的观点"}]}`, nil, false, "", turn.MemberRowID)
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	res := runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if res.Err != "" {
+		t.Fatalf("the turn must reach the end signal (streak reset on success), got Err=%q", res.Err)
+	}
+	_ = mA
 }

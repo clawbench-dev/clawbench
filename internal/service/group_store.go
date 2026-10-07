@@ -228,6 +228,76 @@ func AddGroupMember(projectPath, groupID, backend, agentID, displayName string) 
 	return memberID, nil
 }
 
+// AddGroupMembers adds several agents to a group in one call, enforcing the
+// member cap (decision #78) on the WHOLE batch: if the batch would push the
+// ACTIVE member count past maxGroupMembers, it rejects the entire batch WITHOUT
+// writing any row.
+//
+// Why a service-level batch rather than looping AddGroupMember in the handler
+// (which is what O19's spec explicitly forbids): the per-call slot check cannot
+// see the rest of the batch, so a loop commits the earlier additions and then
+// returns an error on a later one — the request "fails" but the roster silently
+// changed. Net-new counts UNIQUE agents not already active, so re-adding
+// existing agents (or duplicates within the batch) does not consume a slot.
+//
+// Returns the member row id for each spec, in input order (existing rows for
+// agents already present, new/rejoined rows otherwise).
+//
+// Concurrency note: the active-count read and the writes are not under one
+// lock, so two concurrent callers could each read "9 active" and both add one
+// (a TOCTOU that could reach 11). This is a single-user, low-frequency
+// operation (the drawer's add-members action), so the window is not closed with
+// a write-lock-held read; if group membership ever becomes concurrent, move the
+// slot check inside the write transaction.
+func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]string, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return nil, err
+	}
+	active := countActiveMembers(members)
+	activeAgents := make(map[string]bool, len(members))
+	for _, m := range members {
+		if !m.Left {
+			activeAgents[m.AgentID] = true
+		}
+	}
+
+	// Count UNIQUE agents not already active, deduping within the batch too.
+	netNew := 0
+	seen := make(map[string]bool, len(specs))
+	for _, s := range specs {
+		if s.AgentID == "" || seen[s.AgentID] {
+			continue
+		}
+		seen[s.AgentID] = true
+		if !activeAgents[s.AgentID] {
+			netNew++
+		}
+	}
+	if active+netNew > maxGroupMembers {
+		return nil, ErrGroupMemberLimit
+	}
+
+	// The batch is known to fit, so the per-call AddGroupMember cannot trip the
+	// cap mid-way (its own slot check will pass for every call). Reuse it so the
+	// dedup / rejoin / system-event behavior stays single-sourced.
+	ids := make([]string, 0, len(specs))
+	for _, s := range specs {
+		if s.AgentID == "" {
+			continue
+		}
+		id, err := AddGroupMember(projectPath, groupID, s.Backend, s.AgentID, s.DisplayName)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 // writeMemberSystemEvent appends a membership-change row to the group timeline
 // (decisions #40/#41). The text carries the member's specialty so readers know
 // what the newcomer is for, and is written best-effort: a failure to record a

@@ -413,3 +413,73 @@ func TestAIChat_GroupBusyEnqueues(t *testing.T) {
 	require.Len(t, queued, 1)
 	assert.Equal(t, "第二条", queued[0].Text)
 }
+
+// POST /api/group/members must enforce the member cap on the WHOLE batch: an
+// over-limit batch is rejected without adding ANY member (decision #78 / O19).
+// The handler must delegate to the service batch entry, not loop per member.
+func TestServeGroupMembers_BatchOverLimitIsAtomic(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	// Register enough distinct agents for the handler's resolveAgentConfig to
+	// accept a 10+-member roster.
+	origAgents := model.Agents
+	agents := map[string]*model.Agent{}
+	for i := 0; i < 12; i++ {
+		id := "agent-" + string(rune('a'+i))
+		agents[id] = &model.Agent{ID: id, Name: id, Backend: "claude"}
+	}
+	agents["codebuddy"] = &model.Agent{ID: "codebuddy", Name: "Test", Backend: "codebuddy"}
+	model.Agents = agents
+	t.Cleanup(func() { model.Agents = origAgents })
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+
+	// Fill to 9 active members (host + 8) directly at the service layer.
+	for i := 0; i < 8; i++ {
+		agentID := "agent-" + string(rune('a'+i))
+		_, err := service.AddGroupMember(env.ProjectDir, groupID, "claude", agentID, agentID)
+		require.NoError(t, err)
+	}
+
+	// Two more agents would make 11 → 409 and NO change.
+	body := map[string]any{"groupId": groupID, "agentIds": []string{"agent-i", "agent-j"}}
+	req := newRequest(t, http.MethodPost, "/api/group/members", body)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+
+	members, err := service.ListGroupMembers(groupID)
+	require.NoError(t, err)
+	active := 0
+	for _, m := range members {
+		if !m.Left {
+			active++
+		}
+	}
+	require.Equal(t, 9, active, "a rejected batch must not add any member")
+}
+
+// GET /api/group/members must include the group's current maxRounds so the
+// member sheet can show the server value (the PATCH endpoint had no read-back,
+// so the UI showed a hardcoded 10 after the user changed it).
+func TestServeGroupMembers_ReturnsMaxRounds(t *testing.T) {
+	env, teardown := setupTestEnv(t)
+	defer teardown()
+
+	groupID, _, err := service.CreateGroup(env.ProjectDir, "g", "codebuddy", "codebuddy", "Host")
+	require.NoError(t, err)
+	require.NoError(t, service.SetGroupMaxRounds(groupID, 4))
+
+	req := newRequest(t, http.MethodGet, "/api/group/members?groupId="+groupID, nil)
+	req = withProjectCookie(req, env.ProjectDir)
+	w := callHandlerWithAuth(ServeGroupMembers, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	var resp struct {
+		MaxRounds int `json:"maxRounds"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 4, resp.MaxRounds)
+}

@@ -40,12 +40,14 @@ export async function createGroup(hostAgentId: string, memberAgentIds: string[])
   return { groupId: String(data.groupId ?? ''), hostMemberId: String(data.hostMemberId ?? '') }
 }
 
-/** listGroupMembers fetches the group roster (including left members). */
-export async function listGroupMembers(groupId: string): Promise<GroupMemberInfo[]> {
+/** listGroupMembers fetches the group roster (including left members) plus the
+ *  group's current maxRounds (so the settings UI shows the server value rather
+ *  than a hardcoded default). */
+export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; maxRounds: number }> {
   const resp = await fetch(`/api/group/members?groupId=${encodeURIComponent(groupId)}`)
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
   const data = await resp.json()
-  return data.members ?? []
+  return { members: data.members ?? [], maxRounds: Number(data.maxRounds) || 10 }
 }
 
 /** addGroupMembers adds one or more agents to the group. */

@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Trash2, Plus } from 'lucide-vue-next'
 import BottomSheet from '@/components/common/BottomSheet.vue'
@@ -75,14 +75,18 @@ import { addGroupMembers, removeGroupMember, updateGroupSettings, type GroupMemb
 const props = defineProps<{
   groupId: string
   members: GroupMemberInfo[]
-  hostMemberId: string
+  /** The group's current maxRounds from the server (roster endpoint). */
+  maxRounds: number
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
 const { t } = useI18n()
 const open = ref(false)
 const pickerOpen = ref(false)
-const maxRounds = ref(10)
+// Seed from the server value and keep it in sync: a hardcoded default made the
+// sheet show 10 after the user had changed it (there was no read-back).
+const maxRounds = ref(props.maxRounds)
+watch(() => props.maxRounds, (v) => { maxRounds.value = v })
 
 // Active members' agent ids: shown dimmed + unpickable in the add-members
 // picker (the backend rejoins/no-ops, so offering them would be misleading).

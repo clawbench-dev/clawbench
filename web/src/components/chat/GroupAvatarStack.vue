@@ -15,6 +15,7 @@
       :groupId="sessionId"
       :members="members"
       :hostMemberId="hostMemberId"
+      :maxRounds="maxRounds"
       @changed="$emit('changed')"
     />
   </div>
@@ -32,6 +33,8 @@ const props = defineProps<{
   members: GroupMemberInfo[]
   hostMemberId: string
   isGroup: boolean
+  /** The group's current maxRounds (from the roster endpoint), shown in the sheet. */
+  maxRounds: number
   /** Member row id currently producing a turn; that disc is highlighted. */
   activeSpeakerId?: string
 }>()

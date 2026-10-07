@@ -311,3 +311,40 @@ func TestBuildMemberInjection_UserMessageStillUser(t *testing.T) {
 		t.Fatalf("a user message must render as 用户: ...: %q", got)
 	}
 }
+
+// The END tag (<clawbench-group-end/>) is internal protocol and must NOT leak
+// into a member's injected context, even when the message carries NO speaker
+// tag. hostSpeechForMembers only strips when the SPEAKER tag parses (Found), so
+// a message that is just the end signal (e.g. "讨论充分。<clawbench-group-end/>
+// 结论：…") previously passed through verbatim — inviting members to imitate
+// the tag (decision #67's exact rationale).
+func TestBuildMemberInjection_StripsEndTagWithoutSpeakerTag(t *testing.T) {
+	hostContent := `{"blocks":[{"type":"text","text":"讨论充分。<clawbench-group-end/> 结论：可以发布"}]}`
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
+	}
+	names := map[string]string{"row-host": "主持人"}
+	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "row-host")
+
+	if strings.Contains(got, "<clawbench-group-end") {
+		t.Fatalf("the end tag must not leak into a member's context: %q", got)
+	}
+	if !strings.Contains(got, "结论：可以发布") {
+		t.Fatalf("the end tag's surrounding text must survive: %q", got)
+	}
+}
+
+// A host message with BOTH tags must strip both (the speaker tag path already
+// handles the end tag via Result.Instruction; this pins the combined case).
+func TestBuildMemberInjection_StripsBothTags(t *testing.T) {
+	hostContent := `{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请 A 表态 <clawbench-group-end/>"}]}`
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
+	}
+	names := map[string]string{"row-host": "主持人"}
+	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "row-host")
+
+	if strings.Contains(got, "<clawbench-speaker") || strings.Contains(got, "<clawbench-group-end") {
+		t.Fatalf("neither tag may leak into a member's context: %q", got)
+	}
+}

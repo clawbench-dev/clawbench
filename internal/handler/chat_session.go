@@ -397,6 +397,10 @@ func archiveEmptySessionHardDelete(w http.ResponseWriter, projectPath, sessionID
 		slog.Info("acp: closing connection for empty archived session", "session_id", sessionID, "agent_id", agentID)
 		go ai.GetACPConnManager().CloseConn(sessionID)
 	}
+	// A group's members are separate connections keyed by MEMBER row id; close
+	// them too so the hard-delete does not leak member agent processes
+	// (decision #57). No-op for non-group sessions.
+	closeGroupMemberConns(sessionID)
 
 	// Delete RAG chunks (best-effort, no-op if RAG not initialized)
 	if chunksDeleted, err := service.PurgeRAGChunksBySessionIDs([]string{sessionID}); err != nil {

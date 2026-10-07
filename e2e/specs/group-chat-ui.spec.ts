@@ -76,7 +76,13 @@ test.describe.serial('group chat UI', () => {
     // (4b) After completion + the frontend's authoritative loadHistory, the user
     // bubble count must STILL be exactly one — a late echo that survived to the
     // DB-backed rebuild would show up here as two.
-    await page.waitForTimeout(1500)
+    //
+    // Wait for the DB-backed rebuild deterministically: the bubble carries
+    // data-msg-key="db-<id>" only after loadHistory re-rendered it from the DB
+    // (an optimistic/transient bubble has no such key). A fixed sleep here would
+    // be a flaky-race source.
+    const lastUserBubble = page.locator('.chat-message.user').last()
+    await expect(lastUserBubble).toHaveAttribute('data-msg-key', /^db-/, { timeout: 10000 })
     await expect(page.locator('.chat-message.user')).toHaveCount(userBefore + 1, { timeout: 10000 })
   })
 })

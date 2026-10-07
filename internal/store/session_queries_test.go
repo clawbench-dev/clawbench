@@ -667,3 +667,29 @@ func TestPurgeArchivedData_NonExistentSessionID(t *testing.T) {
 	assert.Equal(t, int64(0), sessionsPurged)
 	assert.Equal(t, int64(0), messagesPurged)
 }
+
+// Purging an archived GROUP must also delete its member rows (session_type
+// 'group_member'), mirroring HardDeleteSession (decision #48). Without this the
+// member rows become permanent orphans: their parent group row is gone, and
+// GetExpiredArchivedSessions excludes member rows so they can never be reaped.
+func TestPurgeArchivedData_CascadesGroupMemberRows(t *testing.T) {
+	setupStoreTestDB(t)
+
+	insertSession(t, "/project", "grp", "Group", "group", "2024-01-01 10:00:00", true)
+	// Two member rows pointing at the group (group_id = grp).
+	for _, mid := range []string{"mem-1", "mem-2"} {
+		_, err := UnsafeDBForTest().Exec(
+			"INSERT INTO chat_sessions (id, project_id, backend, title, session_type, group_id, archived, created_at, updated_at) VALUES (?, ?, 'claude', ?, 'group_member', 'grp', 0, '2024-01-01 10:00:00', '2024-01-01 10:00:00')",
+			mid, ProjectIDForTest(t, "/project"), mid,
+		)
+		require.NoError(t, err)
+	}
+
+	sessionsPurged, _, err := PurgeArchivedData([]string{"grp"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), sessionsPurged)
+
+	var count int
+	require.NoError(t, UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE group_id = 'grp'").Scan(&count))
+	assert.Equal(t, 0, count, "purging a group must cascade its member rows (no orphans)")
+}

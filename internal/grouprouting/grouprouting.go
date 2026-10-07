@@ -55,6 +55,19 @@ var (
 	reEnd     = regexp.MustCompile(`<clawbench-group-end\s*/>`)
 )
 
+// StripEndTag removes the end-signal tag from text, returning the text
+// unchanged when there is none. It exists because the end tag is internal
+// protocol (like the speaker tag) and must not leak into a member's injected
+// context — including a message that carries ONLY the end tag, where Parse
+// reports Found=false (no speaker tag) and callers that gate on Found would
+// otherwise pass it through verbatim (decision #67).
+func StripEndTag(text string) string {
+	if !reEnd.MatchString(text) {
+		return text
+	}
+	return strings.TrimSpace(reEnd.ReplaceAllString(text, ""))
+}
+
 // Parse locates the host's routing decision in an assistant message.
 func Parse(text string) Result {
 	var res Result

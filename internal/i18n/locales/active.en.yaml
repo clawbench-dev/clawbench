@@ -35,6 +35,7 @@ Unauthorized: unauthorized
 InvalidPath: invalid path
 PathTraversal: path traversal detected
 InternalError: internal server error
+CreateSessionFailed: Failed to create the session
 SessionNotFound: session not found
 ProjectNotFound: project not found
 ProjectDeleteForbidden: this project cannot be deleted

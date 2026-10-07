@@ -5202,6 +5202,7 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
+        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5211,6 +5212,24 @@ paths:
       responses:
         "200":
           description: 成员列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: {type: boolean}
+                  members:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: {type: string}
+                        agentId: {type: string}
+                        name: {type: string}
+                        backend: {type: string}
+                        left: {type: boolean}
+                        isHost: {type: boolean}
+                  maxRounds: {type: integer}
     post:
       tags: [Group]
       summary: 批量添加群成员
@@ -5218,7 +5237,20 @@ paths:
         活跃成员数上限为 10（每个成员是一个独立的 ACP 子进程，连接池无上限）。
         重新添加**已存在的 agent**（含已离场者）复用原行：活跃成员不加，
         故不受上限约束；离场者重新加入会占一个名额。
+        上限在**整批**上判定：超限则整批拒绝、不落任何行。
       operationId: groupMembersAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, agentIds]
+              properties:
+                groupId: {type: string}
+                agentIds:
+                  type: array
+                  items: {type: string}
       responses:
         "200":
           description: 添加成功，返回 memberIds
@@ -5231,6 +5263,16 @@ paths:
         主持人**不可移除**（`409`）——它是群唯一的调度者，移除后群无法再起回合。
         （v1 不提供更换主持人的入口；如需换人请另建群。）
       operationId: groupMembersRemove
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, memberId]
+              properties:
+                groupId: {type: string}
+                memberId: {type: string}
       responses:
         "200":
           description: 移除成功
@@ -5242,6 +5284,16 @@ paths:
       tags: [Group]
       summary: 更新群设置（最大轮数）
       operationId: groupSettingsUpdate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groupId, maxRounds]
+              properties:
+                groupId: {type: string}
+                maxRounds: {type: integer, minimum: 1}
       responses:
         "200":
           description: 更新成功

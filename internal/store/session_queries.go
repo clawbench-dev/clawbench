@@ -572,6 +572,13 @@ func PurgeArchivedData(sessionIDs []string) (sessionsPurged int64, messagesPurge
 	// Delete /btw side questions for purged sessions (no FK to chat_sessions).
 	_, _ = tx.Exec("DELETE FROM btw_questions WHERE session_id IN ("+placeholders+")", args...)
 
+	// Cascade a group's member rows (session_type 'group_member', group_id =
+	// the group) BEFORE the group row itself, mirroring HardDeleteSession
+	// (decision #48). Without this the member rows become permanent orphans:
+	// the parent row is gone, and GetExpiredArchivedSessions deliberately
+	// excludes member rows, so they can never be reaped by a later pass.
+	_, _ = tx.Exec("DELETE FROM chat_sessions WHERE session_type = 'group_member' AND group_id IN ("+placeholders+")", args...)
+
 	// Delete the session records
 	result, err = tx.Exec("DELETE FROM chat_sessions WHERE id IN ("+placeholders+") AND archived = 1", args...)
 	if err != nil {

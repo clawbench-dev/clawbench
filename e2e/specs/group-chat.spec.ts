@@ -22,7 +22,11 @@ test.describe('AI group chat', () => {
       const created = await post('/api/group/create', { hostAgentId: 'acp-mock' })
       if (!created.ok) return { ok: false, step: 'create', created }
 
-      const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock'] })
+      // The member MUST use a different agent id than the host: a group cannot
+      // contain the same agent twice (AddGroupMember dedups by agent id and
+      // returns the HOST row), so adding 'acp-mock' here would leave the group
+      // single-member and the roster assertion below would fail.
+      const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock-b'] })
       if (!added.ok) return { ok: false, step: 'add', added }
 
       const listed = await (await fetch(`/api/group/members?groupId=${encodeURIComponent(created.groupId)}`)).json()

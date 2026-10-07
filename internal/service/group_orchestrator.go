@@ -27,8 +27,14 @@ type groupMemberTurn struct {
 }
 
 // groupMemberResult is the outcome of one member turn.
+//
+// CancelReason is separate from Err because a user cancel leaves Err empty
+// (run_turn.go sets TurnResult.CancelReason, not Err). Treating "Err empty" as
+// "processed successfully" would advance the cursor past context the turn never
+// consumed (decision #69).
 type groupMemberResult struct {
-	Err string
+	Err          string
+	CancelReason string
 }
 
 // groupTurnRunner runs one member's turn. Production wires it to runTurn with a
@@ -49,6 +55,12 @@ type GroupOrchestrator struct {
 	// parseFailures counts consecutive unparseable host routings. Reset by a
 	// usable decision; reaching maxConsecutiveParseFailures ends the turn.
 	parseFailures int
+	// hostFailures counts consecutive host turn FAILURES (backend error /
+	// timeout, distinct from an unparseable route). A single failure falls back
+	// to round-robin; reaching maxConsecutiveHostFailures ends the turn
+	// (design §6: "主持人跑挂 → 回退轮转继续；再失败终止群回合"). Reset by a
+	// successful host turn.
+	hostFailures int
 	// commandInjection is the rendered /cb-* prompt template for THIS turn (the
 	// drained message). It is prepended to the FIRST host turn only, so the host
 	// executes the built-in command once and its spoken result enters the
@@ -61,6 +73,11 @@ type GroupOrchestrator struct {
 // end the discussion early (decision #56). Two is enough to tell "the host
 // fumbled once" from "the host cannot route at all".
 const maxConsecutiveParseFailures = 2
+
+// maxConsecutiveHostFailures is how many host turn FAILURES in a row end the
+// discussion (design §6). Two: the first falls back to round-robin, the second
+// means the host is down — continuing would burn the whole round budget.
+const maxConsecutiveHostFailures = 2
 
 // NewGroupOrchestrator builds an orchestrator for a group session.
 func NewGroupOrchestrator(groupID string) *GroupOrchestrator {
@@ -225,20 +242,33 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 		if round == 0 && o.commandInjection != "" {
 			hostPrompt = o.commandInjection + "\n\n" + hostPrompt
 		}
+		hostPreH := GroupTimelineHighWater(groupID)
 		hostRes := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: hostPrompt, IsHost: true})
-		if hostRes.Err == "" {
-			// Advance only on success: the cursor means "has processed up to
-			// here". A failed turn processed nothing, so advancing would make
-			// the injected context permanently unreachable (decision #69).
-			SetMemberCursor(hostMemberID, GroupTimelineHighWater(groupID))
-		} else {
+		if hostRes.CancelReason != "" {
+			// The user stopped the turn while the host was speaking. Do NOT fall
+			// back to a member turn — that would keep running after a stop.
+			return DrainResult{CancelReason: hostRes.CancelReason}
+		}
+		if hostRes.Err != "" {
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
-			// Host failed: try round-robin once, then stop.
+			// Design §6: fall back to round-robin once; a SECOND consecutive
+			// host failure means the host is down, so terminate the turn rather
+			// than burn the whole round budget (maxRounds host turns).
+			o.hostFailures++
+			if o.hostFailures >= maxConsecutiveHostFailures {
+				slog.Warn("group: aborting after consecutive host failures",
+					"group", groupID, "failures", o.hostFailures)
+				o.summarize(groupCtx, runner, hostMemberID, names, members)
+				return DrainResult{Err: "host turn failed repeatedly"}
+			}
 			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
 				return DrainResult{Err: "host turn failed and no member could take over"}
 			}
 			continue
 		}
+		// A successful host turn clears the failure streak.
+		o.hostFailures = 0
+		advanceCursorOnSuccess(hostMemberID, hostPreH, hostRes)
 
 		route := grouprouting.Parse(o.lastHostOutput(groupID, hostMemberID))
 		if route.End {
@@ -275,16 +305,14 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 			}
 			memberCursor := GetMemberCursor(t.ID)
 			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction)
+			preH := GroupTimelineHighWater(groupID)
 			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
-			if res.Err == "" {
-				// Advance only on success (decision #69): a failed member
-				// processed nothing, so the messages it just received must be
-				// re-injected next time instead of being lost. The failed
-				// turn's residue stays on the timeline for the user.
-				SetMemberCursor(t.ID, GroupTimelineHighWater(groupID))
-			} else {
-				slog.Warn("group: member turn failed", "group", groupID, "member", t.ID, "err", res.Err)
+			if res.CancelReason != "" {
+				// The user stopped the turn mid-speech. Stop the whole turn so
+				// the remaining targets do not run after a stop.
+				return DrainResult{CancelReason: res.CancelReason}
 			}
+			advanceCursorOnSuccess(t.ID, preH, res)
 		}
 	}
 
@@ -298,16 +326,41 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 func (o *GroupOrchestrator) summarize(ctx context.Context, runner groupTurnRunner, hostMemberID string, names map[string]string, members []GroupMember) {
 	cursor := GetMemberCursor(hostMemberID)
 	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "") + BuildHostSummaryPrompt(activeMemberNamesExcept(members, hostMemberID))
+	preH := GroupTimelineHighWater(o.groupID)
 	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: prompt, IsHost: true})
-	// Advance only on success (decision #69) — same rule as the other three
-	// cursor sites. A failed summary turn processed nothing, so advancing would
-	// make the context it just received permanently unreachable for the host,
-	// which routes from what it has seen.
-	if res.Err == "" {
-		SetMemberCursor(hostMemberID, GroupTimelineHighWater(o.groupID))
-	} else {
-		slog.Warn("group: summary host turn failed", "group", o.groupID, "err", res.Err)
+	advanceCursorOnSuccess(hostMemberID, preH, res)
+}
+
+// advanceCursorOnSuccess records a member's seen_cursor after a turn, applying
+// BOTH rules of decision #69 / design §5.1:
+//
+//  1. Advance ONLY on a turn that actually processed its input — i.e. no error
+//     AND no user cancel. A cancelled turn was fed the context but produced
+//     nothing, so advancing past it would make `(oldCursor, preH]` permanently
+//     unreachable for that member (it silently answers off-topic next round).
+//     Cancel is NOT an error (run_turn.go puts it in CancelReason, leaving Err
+//     empty), so both must be checked.
+//  2. Advance to the PRE-speech high-water `preH`, not the current one. A
+//     synchronous HTTP write can land a row (e.g. a membership system event)
+//     WHILE this member is speaking; that row was never injected to it, so
+//     advancing past it would swallow it. Using preH means the next round still
+//     injects it. When nothing raced, preH is exactly the member's own reply id
+//     and the reply is filtered by the author==self rule — so the common case is
+//     unchanged.
+func advanceCursorOnSuccess(memberID string, preH int64, res groupMemberResult) {
+	if res.Err != "" {
+		slog.Warn("group: turn failed, cursor not advanced",
+			"member", memberID, "err", res.Err)
+		return
 	}
+	if res.CancelReason != "" {
+		// The user stopped this turn. It processed nothing, so the context it
+		// was handed must be re-injected next round (decision #69).
+		slog.Info("group: turn cancelled, cursor not advanced",
+			"member", memberID, "reason", res.CancelReason)
+		return
+	}
+	SetMemberCursor(memberID, preH)
 }
 
 // hostPrompt builds the host's turn prompt: the incremental group context plus
@@ -389,15 +442,11 @@ func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTur
 
 	cursor := GetMemberCursor(m.ID)
 	prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "")
+	preH := GroupTimelineHighWater(o.groupID)
 	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
-	// Advance only on success (decision #69) — same rule as the routed and
-	// host paths. The round-robin fallback is still "a turn", so a failed
-	// one must not swallow the context it was handed.
-	if res.Err == "" {
-		SetMemberCursor(m.ID, GroupTimelineHighWater(o.groupID))
-	} else {
-		slog.Warn("group: fallback member turn failed", "group", o.groupID, "member", m.ID, "err", res.Err)
-	}
+	// Same cursor rule as the routed and host paths (decision #69 + design
+	// §5.1): advance to the PRE-speech high-water, and only on a clean turn.
+	advanceCursorOnSuccess(m.ID, preH, res)
 	return true
 }
 
@@ -450,7 +499,11 @@ func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, t
 	//     (session_executor.go:1526) before Finalize persists it.
 	// The frontend then shows WHICH member failed, and the cursor fix (#69)
 	// makes sure the member is re-fed that context next round.
-	return groupMemberResult{Err: res.Err}
+	//
+	// CancelReason is carried through separately from Err: runTurn reports a
+	// user cancel there (leaving Err empty), and the orchestrator must NOT treat
+	// a cancelled turn as "processed successfully" (decision #69).
+	return groupMemberResult{Err: res.Err, CancelReason: res.CancelReason}
 }
 
 // emitGroupMemberFinalize tells the group's subscribers that one member turn

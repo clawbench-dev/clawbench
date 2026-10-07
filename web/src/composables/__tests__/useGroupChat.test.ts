@@ -30,10 +30,17 @@ describe('useGroupChat API', () => {
     expect(JSON.parse(opts.body)).toEqual({ hostAgentId: 'agent-a', memberAgentIds: ['agent-a', 'agent-b'] })
   })
 
-  it('listGroupMembers returns members', async () => {
-    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [{ id: 'm1', isHost: true }] }))
-    const members = await listGroupMembers('g1')
-    expect(members).toEqual([{ id: 'm1', isHost: true }])
+  it('listGroupMembers returns members and maxRounds', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [{ id: 'm1', isHost: true }], maxRounds: 4 }))
+    const res = await listGroupMembers('g1')
+    expect(res.members).toEqual([{ id: 'm1', isHost: true }])
+    expect(res.maxRounds).toBe(4)
+  })
+
+  it('listGroupMembers defaults maxRounds to 10 when absent', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, members: [] }))
+    const res = await listGroupMembers('g1')
+    expect(res.maxRounds).toBe(10)
   })
 
   it('addGroupMembers posts an array and returns memberIds', async () => {

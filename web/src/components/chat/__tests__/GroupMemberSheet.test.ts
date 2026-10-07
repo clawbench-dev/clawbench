@@ -30,7 +30,7 @@ vi.mock('@/components/common/BottomSheet.vue', () => ({
 
 function mountSheet(members: any[]) {
   return mount(GroupMemberSheet, {
-    props: { groupId: 'g1', members, hostMemberId: 'm1' },
+    props: { groupId: 'g1', members, maxRounds: 10 },
   })
 }
 

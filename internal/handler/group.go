@@ -127,7 +127,10 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 				"isHost":  m.ID == hostMemberID,
 			})
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "members": out})
+		// maxRounds is included so the member sheet can show the SERVER's
+		// current value instead of a hardcoded default (the PATCH endpoint had
+		// no read-back, so the UI lied after a change).
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "members": out, "maxRounds": service.GetGroupMaxRounds(groupID)})
 
 	case http.MethodPost:
 		var req struct {
@@ -144,22 +147,31 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 		if !requireSessionOwnership(w, r, req.GroupID, projectPath) {
 			return
 		}
-		memberIDs := make([]string, 0, len(req.AgentIDs))
+		// Resolve every agent first (skip unknown ids), then add them in ONE
+		// service call so the member cap is enforced on the WHOLE batch
+		// (decision #78). Looping AddGroupMember here would commit the earlier
+		// additions and then fail on a later one — the request errors but the
+		// roster silently changed.
+		specs := make([]service.GroupMemberSpec, 0, len(req.AgentIDs))
 		for _, agentID := range req.AgentIDs {
 			backend, _, _, _, ok := resolveAgentConfig(agentID)
 			if !ok {
 				continue
 			}
-			id, err := service.AddGroupMember(projectPath, req.GroupID, backend, agentID, service.GetAgentDisplayName(agentID))
-			if err != nil {
-				if errors.Is(err, service.ErrGroupMemberLimit) {
-					writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
-					return
-				}
-				writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			specs = append(specs, service.GroupMemberSpec{
+				AgentID:     agentID,
+				Backend:     backend,
+				DisplayName: service.GetAgentDisplayName(agentID),
+			})
+		}
+		memberIDs, err := service.AddGroupMembers(projectPath, req.GroupID, specs)
+		if err != nil {
+			if errors.Is(err, service.ErrGroupMemberLimit) {
+				writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
 				return
 			}
-			memberIDs = append(memberIDs, id)
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "InternalError")
+			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "memberIds": memberIDs})
 

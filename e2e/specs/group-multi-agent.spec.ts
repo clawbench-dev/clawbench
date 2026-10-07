@@ -27,8 +27,12 @@ test.describe.serial('AI group chat multi-agent loop', () => {
       const created = await post('/api/group/create', { hostAgentId: 'acp-mock' })
       if (!created.ok) return { ok: false, step: 'create', created }
 
-      // Add a second acp-mock member — the host must route to it.
-      const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock'] })
+      // The member MUST be a DIFFERENT agent id than the host. Adding 'acp-mock'
+      // here (same as the host) would just return the host row (AddGroupMember
+      // dedups by agent id), leaving a single-member group — and then the
+      // "a member spoke" assertion below would be satisfied by the HOST's own
+      // row, i.e. tautological and unable to catch the regression it names.
+      const added = await post('/api/group/members', { groupId: created.groupId, agentIds: ['acp-mock-b'] })
       if (!added.ok) return { ok: false, step: 'add', added }
 
       // Cap at 1 round so the turn terminates predictably.
@@ -64,9 +68,13 @@ test.describe.serial('AI group chat multi-agent loop', () => {
     expect(speakers.length).toBeGreaterThan(0)
 
     // The load-bearing assertion: at least one NON-host member produced a row.
-    // Before the fix every assistant row carried the host id.
+    // Before the fix every assistant row carried the host id. The member id is
+    // explicitly required to differ from the host id, so this cannot be
+    // satisfied by the host's own row (which was the tautology when the spec
+    // added 'acp-mock' as the "member").
     const memberIds = new Set(result.addedIds || [])
-    const memberSpoke = speakers.some((s: string) => memberIds.has(s))
+    expect(memberIds.has(result.hostId)).toBe(false)
+    const memberSpoke = speakers.some((s: string) => memberIds.has(s) && s !== result.hostId)
     expect(memberSpoke).toBe(true)
   })
 })
