@@ -417,7 +417,7 @@ func contentSessionMatches(ctx context.Context, ragStore *Store, embedder *Embed
 				st = "chat"
 			}
 			// "chat" now includes group chats (user-visible conversations).
-			match := st == dbType || (dbType == "chat" && st == "group")
+			match := st == dbType || (dbType == store.SessionTypeChat && st == store.SessionTypeGroup)
 			if match {
 				filtered = append(filtered, s)
 			}

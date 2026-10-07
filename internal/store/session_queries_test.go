@@ -693,3 +693,63 @@ func TestPurgeArchivedData_CascadesGroupMemberRows(t *testing.T) {
 	require.NoError(t, UnsafeDBForTest().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE group_id = 'grp'").Scan(&count))
 	assert.Equal(t, 0, count, "purging a group must cascade its member rows (no orphans)")
 }
+
+// --- session-type predicate ---
+
+// TestVisibleSessionTypes_MatchClause guards the two representations of the
+// visible-session set from drifting apart: VisibleSessionTypeInClause (SQL)
+// and VisibleSessionTypes (Go) must describe the same set, and
+// IsVisibleSessionType must agree with both.
+func TestVisibleSessionTypes_MatchClause(t *testing.T) {
+	// The clause is what every list/count/search query embeds; it must contain
+	// exactly the Go slice's values, quoted.
+	for _, typ := range VisibleSessionTypes {
+		assert.Contains(t, VisibleSessionTypeInClause, "'"+typ+"'",
+			"clause must quote every VisibleSessionTypes entry")
+	}
+	assert.Equal(t, "'chat', 'group'", VisibleSessionTypeInClause)
+	assert.Equal(t, []string{SessionTypeChat, SessionTypeGroup}, VisibleSessionTypes)
+}
+
+// TestIsVisibleSessionType pins the semantics: chat and group are visible, a
+// group_member (hidden) and a scheduled (task) row are not, and an empty stored
+// value is treated as the schema default 'chat'.
+func TestIsVisibleSessionType(t *testing.T) {
+	cases := []struct {
+		stored string
+		want   bool
+	}{
+		{SessionTypeChat, true},
+		{SessionTypeGroup, true},
+		{"", true}, // schema default
+		{SessionTypeGroupMember, false},
+		{SessionTypeScheduled, false},
+		{"unknown", false},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, IsVisibleSessionType(tc.stored), "stored=%q", tc.stored)
+	}
+}
+
+// TestGetExpiredArchivedSessions_ExcludesGroupMember pins that the retention
+// query uses the canonical constant rather than a drifting literal: a group
+// member row (archived by design when it left) must never be returned as
+// retention-expired, which would hard-delete it and orphan its speech
+// attribution (decision #48).
+func TestGetExpiredArchivedSessions_UsesCanonicalGroupMemberType(t *testing.T) {
+	setupStoreTestDB(t)
+
+	// An ordinary archived session, well past the cutoff, is reaped.
+	insertSession(t, "/project", "old-chat", "Old", SessionTypeChat, "2020-01-01 10:00:00", true)
+	// A group_member row, archived and old, must NOT be reaped.
+	_, err := UnsafeDBForTest().Exec(
+		"INSERT INTO chat_sessions (id, project_id, backend, title, session_type, group_id, archived, created_at, updated_at) VALUES (?, ?, 'claude', 'Mem', ?, 'grp', 1, '2020-01-01 10:00:00', '2020-01-01 10:00:00')",
+		"old-mem", ProjectIDForTest(t, "/project"), SessionTypeGroupMember,
+	)
+	require.NoError(t, err)
+
+	ids, err := GetExpiredArchivedSessions(time.Date(2021, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	assert.Contains(t, ids, "old-chat")
+	assert.NotContains(t, ids, "old-mem", "group_member rows must never be retention-expired")
+}

@@ -158,7 +158,7 @@ func ContinueFromExecution(execID int64, projectPath string) (sessionID string, 
 	if model.SessionMaxCount > 0 {
 		var count int
 		err = store.ReadDB().QueryRow(
-			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')",
+			"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ("+store.VisibleSessionTypeInClause+")",
 			sessProjectID,
 		).Scan(&count)
 		if err != nil {
@@ -437,7 +437,7 @@ func checkSessionLimit(projectPath string) error {
 	}
 	var count int
 	err := store.ReadDB().QueryRow(
-		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')",
+		"SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ("+store.VisibleSessionTypeInClause+")",
 		projectID,
 	).Scan(&count)
 	if err != nil {
@@ -709,6 +709,13 @@ var (
 	// ErrRewindAnchorNotAssistant reports that the anchor message is not an
 	// assistant message.
 	ErrRewindAnchorNotAssistant = errors.New("rewind anchor must be an assistant message")
+	// ErrGroupNotRewindable reports that the target session is a group chat.
+	// Rewinding a group would delete timeline rows while each member's
+	// seen_cursor still points past the deleted ids, so members would re-inject
+	// an off-by-gap context next round. Symmetric with ForkSession's group
+	// guard (decision #52/#74); the frontend hides the button but the API must
+	// enforce it too.
+	ErrGroupNotRewindable = errors.New("group sessions are not rewindable")
 )
 
 // ValidateRewindAnchor is a read-only check that the anchor message is a valid
@@ -720,6 +727,15 @@ var (
 // rewind request (stale UI, double-click race, client bug) fails fast with a
 // 400 instead of first cancelling the user's in-flight AI turn.
 func ValidateRewindAnchor(sessionID string, anchorID int64) error {
+	// A group chat cannot be rewound (decision #52/#74, symmetric with
+	// ForkSession). The group timeline is shared by every member, whose
+	// seen_cursor points past the rows this would delete — truncating it would
+	// leave each member re-injecting an off-by-gap context next round. Checked
+	// FIRST (before the anchor lookup) so a group rewind fails fast with a clear
+	// error instead of a confusing "anchor not found".
+	if GetSessionType(sessionID) == groupSessionType {
+		return fmt.Errorf("%w: session %s", ErrGroupNotRewindable, sessionID)
+	}
 	var role string
 	var streaming int
 	err := store.ReadDB().QueryRow(

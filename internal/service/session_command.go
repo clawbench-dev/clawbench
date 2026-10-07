@@ -43,7 +43,7 @@ func FindSessionsByPrefix(prefix string) ([]DingTalkSessionInfo, error) {
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type IN ('chat', 'group')
+		  WHERE LOWER(s.id) LIKE LOWER(?) AND s.archived = 0 AND s.session_type IN (`+store.VisibleSessionTypeInClause+`)
 		  ORDER BY s.updated_at DESC
 		  LIMIT 10`,
 		prefix+"%",
@@ -68,7 +68,7 @@ func ListRecentSessions(limit int) ([]DingTalkSessionInfo, error) {
 		`SELECT s.id, s.title, COALESCE(p.path, ''), s.backend, s.agent_id, s.model
 		   FROM chat_sessions s
 		   LEFT JOIN projects p ON p.id = s.project_id
-		  WHERE s.archived = 0 AND s.session_type IN ('chat', 'group')
+		  WHERE s.archived = 0 AND s.session_type IN (`+store.VisibleSessionTypeInClause+`)
 		  ORDER BY s.updated_at DESC
 		  LIMIT ?`,
 		limit,

@@ -59,6 +59,15 @@ type TurnSpec struct {
 	// resolution): never pass SpeakerID where AgentID is expected.
 	SpeakerID string
 
+	// SuppressSummarization skips the post-finalize summarization/recommendation
+	// for this turn. The group orchestrator sets it for member turns: they write
+	// to the GROUP timeline, so summarizing per member would run N LLM calls per
+	// round and emit a recommendation for every member's reply — the group turn
+	// summarizes once at the end instead (decision #55). Carrying it on the spec
+	// keeps the executor free of any group knowledge (it must not query
+	// session_type).
+	SuppressSummarization bool
+
 	// ChatReq is the already-built request. Callers build it via
 	// BuildChatRequest / BuildChatRequestForQueue so resume and fork handling
 	// stays in one place.
@@ -338,20 +347,21 @@ func runTurnStart(spec TurnSpec) *activeTurn {
 	})
 
 	execCfg := RunConfig{
-		Mode:               spec.Mode,
-		ProjectPath:        spec.ProjectPath,
-		BackendName:        spec.BackendName,
-		SessionID:          spec.SessionID,
-		TimelineSessionID:  spec.effectiveTimelineSessionID(),
-		SpeakerID:          spec.SpeakerID,
-		AgentID:            agentID,
-		ChatRequest:        spec.ChatReq,
-		FileDir:            spec.FileDir,
-		StreamingMessageID: streamingMsgID,
-		LocalizeError:      spec.LocalizeError,
-		TaskID:             spec.TaskID,
-		ExecutionID:        spec.ExecutionID,
-		TriggerType:        spec.TriggerType,
+		Mode:                  spec.Mode,
+		ProjectPath:           spec.ProjectPath,
+		BackendName:           spec.BackendName,
+		SessionID:             spec.SessionID,
+		TimelineSessionID:     spec.effectiveTimelineSessionID(),
+		SpeakerID:             spec.SpeakerID,
+		SuppressSummarization: spec.SuppressSummarization,
+		AgentID:               agentID,
+		ChatRequest:           spec.ChatReq,
+		FileDir:               spec.FileDir,
+		StreamingMessageID:    streamingMsgID,
+		LocalizeError:         spec.LocalizeError,
+		TaskID:                spec.TaskID,
+		ExecutionID:           spec.ExecutionID,
+		TriggerType:           spec.TriggerType,
 	}
 	at.executor = NewSessionExecutor(turnCtx, execCfg)
 	// The turn is under way but not yet run. Fired before the blocking event

@@ -1025,7 +1025,7 @@ func GetConversationProjects() ([]ConversationProject, error) {
 	rows, err := store.ReadDB().QueryContext(context.Background(), `
 		SELECT p.path, COUNT(*), MAX(agg.last_at) FROM (
 			SELECT project_id, created_at AS last_at FROM chat_sessions
-			 WHERE project_id != 0 AND session_type IN ('chat', 'group')
+			 WHERE project_id != 0 AND session_type IN (`+store.VisibleSessionTypeInClause+`)
 			UNION ALL
 			SELECT project_id, created_at AS last_at FROM chat_metadata WHERE project_id != 0
 		) agg
@@ -1221,7 +1221,7 @@ const unreadCountSubquery = `(SELECT COUNT(*) FROM chat_history h
 const sessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
-		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN ('chat', 'group')`
+		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
 // overviewSessionsQuery is GetOverviewSessions' full query. Package-level for
 // the same reason as sessionsQueryBase.
@@ -1229,7 +1229,7 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
 		LEFT JOIN projects p ON p.id = s.project_id
-		WHERE s.archived = 0 AND s.session_type IN ('chat', 'group')
+		WHERE s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)
 		ORDER BY s.updated_at DESC, s.id DESC`
 
 // pagedSessionsQueryBase is the prefix of GetSessionsPaged' query, up to (not
@@ -1238,7 +1238,7 @@ const overviewSessionsQuery = `SELECT s.id, s.title, s.backend, s.agent_id, s.ag
 const pagedSessionsQueryBase = `SELECT s.id, s.title, s.backend, s.agent_id, s.agent_source, s.model, s.session_type, s.source_session_id, s.pinned, s.sort_order, s.created_at, s.updated_at, s.last_read_at,
 		` + unreadCountSubquery + `
 		FROM chat_sessions s
-		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN ('chat', 'group')`
+		WHERE s.project_id = ? AND s.archived = 0 AND s.session_type IN (` + store.VisibleSessionTypeInClause + `)`
 
 // GetSessions retrieves chat sessions for a given project path, ordered by
 // pinned DESC, sort_order ASC, created_at DESC — pinned sessions are a fixed
@@ -1498,7 +1498,7 @@ func ListProjectTagsInUse(projectPath string) ([]SessionTag, error) {
 		JOIN session_tag_links l ON l.tag_id = t.id
 		JOIN chat_sessions s ON s.id = l.session_id
 		WHERE (t.scope = 'global' OR t.project_id = ?)
-		  AND s.project_id = ? AND s.archived = 0 AND s.session_type IN ('chat', 'group')
+		  AND s.project_id = ? AND s.archived = 0 AND s.session_type IN (`+store.VisibleSessionTypeInClause+`)
 		GROUP BY t.name COLLATE NOCASE
 		ORDER BY cnt DESC, name COLLATE NOCASE`, projectID, projectID)
 	if err != nil {
@@ -1661,7 +1661,7 @@ func GetLatestSessionID(projectPath string) (sessionID, backend string, err erro
 	}
 	err = store.ReadDB().QueryRow(
 		`SELECT id, backend FROM chat_sessions
-		 WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')
+		 WHERE project_id = ? AND archived = 0 AND session_type IN (`+store.VisibleSessionTypeInClause+`)
 		 ORDER BY updated_at DESC, id DESC LIMIT 1`,
 		projectID,
 	).Scan(&sessionID, &backend)
@@ -1812,6 +1812,13 @@ func SaveMetadata(messageID int64, meta *ai.Metadata) error {
 // for the given agent+project. Returns "" if no user preference exists
 // (caller should fall back to agent defaults).
 // Used by tasks to respect the user's global model preference.
+//
+// The session_type whitelist matters: without it a GROUP row can win the
+// lookup. A group row's agent_id is its HOST, and the HTTP handler persists the
+// request's modelId onto the group row BEFORE the group branch (handler/chat.go
+// UpdateSessionModel), so a group send with an explicit model would otherwise
+// masquerade as the host agent's latest user preference and silently change the
+// default model a task uses.
 func GetLatestUserModel(agentID, projectPath string) string {
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
@@ -1819,7 +1826,7 @@ func GetLatestUserModel(agentID, projectPath string) string {
 	}
 	var modelID string
 	err := store.ReadDB().QueryRow(
-		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' ORDER BY updated_at DESC LIMIT 1",
+		"SELECT model FROM chat_sessions WHERE agent_id = ? AND project_id = ? AND archived = 0 AND model != '' AND session_type IN ("+store.VisibleSessionTypeInClause+") ORDER BY updated_at DESC LIMIT 1",
 		agentID, projectID,
 	).Scan(&modelID)
 	if err != nil {
@@ -2027,14 +2034,14 @@ func ReorderSessions(projectPath string, ids []string) error {
 		rest AS (
 			SELECT s.id AS rid, ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.created_at DESC, s.id DESC) - 1 AS rn
 			FROM chat_sessions s
-			WHERE s.project_id = ? AND s.session_type IN ('chat', 'group') AND s.pinned = 0 AND s.archived = 0
+			WHERE s.project_id = ? AND s.session_type IN (` + store.VisibleSessionTypeInClause + `) AND s.pinned = 0 AND s.archived = 0
 			  AND s.id NOT IN (SELECT id FROM posted)
 		)
 		UPDATE chat_sessions SET sort_order = COALESCE(
 			(SELECT ord FROM posted WHERE posted.id = chat_sessions.id),
 			(SELECT ? + rn FROM rest WHERE rest.rid = chat_sessions.id)
 		)
-		WHERE project_id = ? AND session_type IN ('chat', 'group') AND pinned = 0 AND archived = 0`
+		WHERE project_id = ? AND session_type IN (` + store.VisibleSessionTypeInClause + `) AND pinned = 0 AND archived = 0`
 
 	_, err := store.WriteExec(query, args...)
 	return err
@@ -2066,7 +2073,7 @@ func GetSessionCount(projectPath string) (int, error) {
 		return 0, idErr
 	}
 	var count int
-	err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ('chat', 'group')", projectID).Scan(&count)
+	err := store.ReadDB().QueryRow("SELECT COUNT(*) FROM chat_sessions WHERE project_id = ? AND archived = 0 AND session_type IN ("+store.VisibleSessionTypeInClause+")", projectID).Scan(&count)
 	return count, err
 }
 

@@ -219,6 +219,13 @@ type RunConfig struct {
 	// SpeakerID mirrors TurnSpec.SpeakerID (member row id) for attribution.
 	SpeakerID string
 
+	// SuppressSummarization mirrors TurnSpec.SuppressSummarization: skip the
+	// post-finalize summarization/recommendation for this run. Set for group
+	// member turns, which write to the group timeline and are summarized once
+	// by the orchestrator instead (decision #55). Keeps the executor free of
+	// group knowledge.
+	SuppressSummarization bool
+
 	// --- ModeInteractive only ---
 	// LocalizeError formats error messages for display.
 	// If nil, err.Error() is used. The handler provides an i18n implementation;
@@ -1673,11 +1680,13 @@ func (e *SessionExecutor) Finalize(result RunResult, eventCh <-chan ai.StreamEve
 	// would never be reached via that path. Call it here instead, right after
 	// the message is finalized and streaming=0 is persisted.
 	doneSummarize := ft.phase("summarize")
-	if msgID > 0 && GetSessionType(e.timelineSID()) != groupSessionType {
+	if msgID > 0 && !e.cfg.SuppressSummarization {
 		// Group member turns write to the GROUP timeline, so summarizing here
 		// would run once per member per round (N LLM calls) and emit a
-		// recommendation for every member's reply. The group turn summarizes
-		// once at the end instead (decision #55).
+		// recommendation for every member's reply. The group orchestrator sets
+		// SuppressSummarization for member turns and summarizes once at the end
+		// instead (decision #55). The flag keeps this executor free of group
+		// knowledge — it must not query session_type.
 		triggerChatSummarization(e.ctx, e.timelineSID())
 	}
 	doneSummarize()

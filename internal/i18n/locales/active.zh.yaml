@@ -6,6 +6,7 @@ SessionIdRequired: session_id 为必填项
 CannotRemoveHost: 主持人是群的唯一调度者，不能移除
 GroupMemberLimitReached: 一个群最多 {{.MaxCount}} 个成员
 GroupNotForkable: 群聊不支持分叉
+GroupNotRewindable: 群聊不支持回溯
 ShareSessionNoContent: 该会话暂无可分享的消息
 ShareSessionInvalidSelection: 部分选中的消息无法分享（可能仍在生成中）
 QueueIdRequired: queueId 为必填项

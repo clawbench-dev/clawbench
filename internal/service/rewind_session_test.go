@@ -380,3 +380,31 @@ func TestRewindSession_RAGPurgeDoesNotDeadlock(t *testing.T) {
 		t.Fatal("TruncateSessionAfterMessage deadlocked: RAG purge ran while writeMu was still held")
 	}
 }
+
+// ---------- TruncateSessionAfterMessage: group guard ----------
+
+// TestRewindSession_RefusesGroup pins the backend guard: a group chat cannot be
+// rewound (symmetric with ForkSession). Rewinding would delete timeline rows
+// while each member's seen_cursor still points past the deleted ids, so members
+// would re-inject an off-by-gap context next round. The frontend hides the
+// button, but the API must enforce it too.
+func TestRewindSession_RefusesGroup(t *testing.T) {
+	setupDB(t)
+
+	groupID, hostMemberID, err := service.CreateGroup("/project", "讨论组", "codebuddy", "agent-host", "Host")
+	assert.NoError(t, err)
+
+	// Put an assistant message on the group timeline so the anchor WOULD be
+	// valid if the group guard did not fire first.
+	anchorID, err := service.AddChatMessage("/project", "codebuddy", groupID, "assistant", "A1", nil, false, "")
+	assert.NoError(t, err)
+	_ = hostMemberID
+
+	err = service.ValidateRewindAnchor(groupID, anchorID)
+	assert.ErrorIs(t, err, service.ErrGroupNotRewindable,
+		"ValidateRewindAnchor must reject a group before any anchor lookup")
+
+	_, err = service.TruncateSessionAfterMessage(groupID, anchorID)
+	assert.ErrorIs(t, err, service.ErrGroupNotRewindable,
+		"TruncateSessionAfterMessage must reject a group")
+}

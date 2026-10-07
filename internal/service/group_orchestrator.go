@@ -513,10 +513,14 @@ func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID str
 		SessionID:         turn.MemberRowID,
 		TimelineSessionID: groupID,
 		SpeakerID:         turn.MemberRowID,
-		AgentID:           agentID,
-		ChatReq:           req,
-		FileDir:           resolveFileDir(project),
-		DrainOnFinalize:   true,
+		// Member turns write to the GROUP timeline, so the executor must NOT
+		// summarize per member (N LLM calls per round). The orchestrator
+		// summarizes once at the end of the turn (runLoop → triggerChatSummarization).
+		SuppressSummarization: true,
+		AgentID:               agentID,
+		ChatReq:               req,
+		FileDir:               resolveFileDir(project),
+		DrainOnFinalize:       true,
 	}
 }
 

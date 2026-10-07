@@ -19,9 +19,9 @@ import (
 
 const (
 	// groupSessionType is the session_type of a group timeline row.
-	groupSessionType = "group"
+	groupSessionType = store.SessionTypeGroup
 	// groupMemberSessionType is the session_type of a hidden member row.
-	groupMemberSessionType = "group_member"
+	groupMemberSessionType = store.SessionTypeGroupMember
 	// defaultGroupMaxRounds is the round cap when the group has no override.
 	defaultGroupMaxRounds = 10
 	// groupUserTarget is the reserved display name of the HUMAN user as a group

@@ -6,6 +6,7 @@ SessionIdRequired: session_id required
 CannotRemoveHost: The host is the group's only scheduler and cannot be removed
 GroupMemberLimitReached: A group can have at most {{.MaxCount}} members
 GroupNotForkable: A group chat cannot be forked
+GroupNotRewindable: A group chat cannot be rewound
 ShareSessionNoContent: This conversation has no shareable messages yet
 ShareSessionInvalidSelection: Some selected messages cannot be shared (they may still be generating)
 QueueIdRequired: queueId required

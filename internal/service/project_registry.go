@@ -70,7 +70,7 @@ func ListAllProjects() ([]ProjectListItem, error) {
 		        SELECT project_id, COUNT(*) AS cnt, MAX(created_at) AS last_at
 		          FROM chat_sessions
 		         WHERE project_id != 0
-		           AND session_type IN ('chat', 'group')
+		           AND session_type IN (`+store.VisibleSessionTypeInClause+`)
 		         GROUP BY project_id
 		  ) s ON s.project_id = p.id
 		 WHERE p.path != ''
@@ -126,7 +126,7 @@ func GetProjectDetail(id int64) (*ProjectDetail, error) {
 		        SELECT project_id, COUNT(*) AS cnt, MAX(created_at) AS last_at
 		          FROM chat_sessions
 		         WHERE project_id != 0
-		           AND session_type IN ('chat', 'group')
+		           AND session_type IN (`+store.VisibleSessionTypeInClause+`)
 		         GROUP BY project_id
 		  ) s ON s.project_id = p.id
 		 WHERE p.id = ?`, id,
