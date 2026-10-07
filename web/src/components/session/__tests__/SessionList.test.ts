@@ -417,6 +417,25 @@ describe('SessionList', () => {
       wrapper.unmount()
     })
 
+    it('omits the model chip on a group row but keeps it on a plain row', async () => {
+      // A group's `model` is the host's model, not a property of the group as a
+      // whole — showing it next to the member stack reads as if the group ran on
+      // one model. The chip is suppressed for groups and kept for single-agent
+      // rows (whose model IS meaningful).
+      const groupWithModel = { ...groupSession, model: 'gpt-4' }
+      mockFetch.mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ sessions: [groupWithModel, sessionsFixture().s1], hasMore: false }),
+      })
+      const wrapper = await mountList()
+      await wrapper.vm.loadSessions()
+      await flushPromises()
+
+      expect(wrapper.find('[data-session-id="g1"] .session-item-model').exists()).toBe(false)
+      expect(wrapper.find('[data-session-id="s1"] .session-item-model').exists()).toBe(true)
+      wrapper.unmount()
+    })
+
     it('shows only the group glyph when no active members remain', async () => {
       // A group with zero active members (e.g. all removed) must still read as a
       // group — the Users glyph stays, the stack is simply empty.
@@ -651,6 +670,29 @@ describe('SessionList', () => {
     const runningRow = wrapper.find('.cross-session-row.running')
     expect(runningRow.find('.session-status').exists(), 'a running cross row has no slot').toBe(false)
     expect(runningRow.find('.session-running-band').exists(), 'but it keeps the comet').toBe(true)
+  })
+
+  it('omits the model chip on cross-project group rows too', async () => {
+    // The cross pane renders its own row markup (a separate template block), so
+    // the group rule has to be wired there as well.
+    mockFetch.mockResolvedValue({ ok: true, json: () => Promise.resolve({ sessions: [], hasMore: false }) })
+    mockCrossState.groups.value = [{
+      name: '/proj/other',
+      displayName: 'Other',
+      displayPath: '/proj/other',
+      sessions: [
+        { id: 'xg', title: 'Group', agentId: 'a', backend: 'acp', model: 'gpt-4', sessionType: 'group', groupMembers: [], updatedAt: '2025-01-01', running: false, pendingApproval: false, unreadCount: 0 },
+        { id: 'xp', title: 'Plain', agentId: 'a', backend: 'acp', model: 'gpt-4', updatedAt: '2025-01-01', running: false, pendingApproval: false, unreadCount: 0 },
+      ],
+    }]
+    const wrapper = await mountList({ activeTab: 'cross' })
+    await flushPromises()
+
+    // Cross rows carry no data-session-id; address them by their title text.
+    const groupRow = wrapper.findAll('.cross-session-row').find(r => r.text().includes('Group'))
+    const plainRow = wrapper.findAll('.cross-session-row').find(r => r.text().includes('Plain'))
+    expect(groupRow!.find('.session-item-model').exists()).toBe(false)
+    expect(plainRow!.find('.session-item-model').exists()).toBe(true)
   })
 
   it('emits archive after confirmation', async () => {

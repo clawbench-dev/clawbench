@@ -112,7 +112,10 @@
                       <GroupMemberStack :members="row.session.groupMembers || []" />
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(row.session.agentId)" :name="getAgentName(row.session.agentId)" :avatar="getAgentAvatar(row.session.agentId)" size="sm" /> {{ getAgentName(row.session.agentId) }}</span>
-                    <span v-if="row.session.model" class="session-item-model">{{ row.session.model }}</span>
+                    <!-- A group's `model` is the HOST's model, not a property of
+                         the group; showing it beside the member stack reads as
+                         "the group runs on one model". Suppressed for groups. -->
+                    <span v-if="row.session.model && row.session.sessionType !== 'group'" class="session-item-model">{{ row.session.model }}</span>
                   </div>
                   <!-- Fork-group toggle, inlined on the anchor row itself.
                        A separate header row made the group read as "a session,
@@ -212,7 +215,9 @@
                       <GroupMemberStack :members="session.groupMembers || []" />
                     </span>
                     <span v-else class="session-item-agent"><AgentIcon :backend="getAgentBackend(session.agentId)" :name="getAgentName(session.agentId)" :avatar="getAgentAvatar(session.agentId)" size="sm" /> {{ getAgentName(session.agentId) }}</span>
-                    <span v-if="session.model" class="session-item-model">{{ session.model }}</span>
+                    <!-- Same rule as the project pane: a group's model is the
+                         host's, not the group's, so it is not shown. -->
+                    <span v-if="session.model && session.sessionType !== 'group'" class="session-item-model">{{ session.model }}</span>
                   </div>
                 </div>
                 <span
