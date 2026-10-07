@@ -3,7 +3,7 @@ import { appLog, diagLog } from '@/utils/appLog'
 import { StreamFrameScheduler } from '@/utils/streamFrameScheduler'
 import { useGlobalEvents } from './useGlobalEvents'
 import { gt } from '@/composables/useLocale'
-import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState, activeSpeakerId } from './useSessionIdentity'
+import { updateModeState, updateCommandState, updateThinkingEffortState, currentAgentId, updateUsageState } from './useSessionIdentity'
 import { updateACPModelList, applyResolvedModelList } from './useAgents'
 import { updatePlanEntries } from './usePlanProgress'
 import { updateTeamState } from './useTeamState'
@@ -84,14 +84,6 @@ export function useChatStream(options: UseChatStreamOptions) {
   // open, cleared on session switch/unmount, re-established on WS reconnect.
   let isSubscribed = false
   let subscribedSessionId: string | null = null
-
-  // ── Group-chat active speaker (decision #59) ──
-  // activeSpeakerId is the module-level ref in useSessionIdentity (written here,
-  // read by App.vue's header avatar strip). The backend tags stream_start with
-  // the speaker's member row id and closes the turn with stream_finalize; the
-  // strip highlights that member while the ref is non-empty. It stays empty
-  // outside a group (the payload omits the key for single-agent turns) and is
-  // cleared at every turn/stream boundary.
 
   const TOOL_USE_TIMEOUT_MS = 30000 // 30 seconds without 'done' event = mark as done
 
@@ -389,12 +381,6 @@ export function useChatStream(options: UseChatStreamOptions) {
   function stopStreaming() {
     clearToolUseTimeouts()
     thinkingBlockCounter = 0
-    // Nobody is producing a turn any more. `stopStreaming` is the common exit
-    // for done/cancelled/error/replay_done/disconnect, so clearing here covers
-    // every path that never emits a per-member stream_finalize (a cancelled
-    // group turn, a lost finalize) — otherwise the speaking ring would stay lit
-    // on the last member forever.
-    activeSpeakerId.value = ''
     // Make the stall watchdog inert for the inter-turn gap: an idle session
     // legitimately produces nothing, so the silence that follows a finished
     // turn must not look like a stall. The interval itself keeps running
@@ -602,9 +588,6 @@ export function useChatStream(options: UseChatStreamOptions) {
         // member row id so the speaker header renders DURING streaming, not
         // only after the DB row loads.
         const speakerId = (payload.agent_id as string | undefined) || ''
-        // Group chats: highlight the speaking member in the avatar strip. Only
-        // the id is tracked; the strip resolves it against the loaded roster.
-        activeSpeakerId.value = speakerId
         if (messageId) {
           // A NEW producer turn: if a DIFFERENT message is still marked
           // streaming (a previous group member whose per-member finalize event
@@ -661,10 +644,6 @@ export function useChatStream(options: UseChatStreamOptions) {
         // previous member must not close the current one.
         if (sm && (finishId === undefined || finishId === 0 || sm.id === finishId)) {
           dispatch({ type: 'stream_finalize' })
-          // The turn this event refers to is over → nobody is speaking. Only
-          // clear on a MATCHED finalize: a stale finalize for a previous member
-          // must not blank the highlight of the member that is speaking now.
-          activeSpeakerId.value = ''
           onRenderNeeded()
         }
         break

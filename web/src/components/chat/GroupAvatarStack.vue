@@ -9,7 +9,7 @@
     @keydown.enter.prevent="openSheet"
     @keydown.space.prevent="openSheet"
   >
-    <AvatarStack :members="stackMembers" size="md" :max="4" :activeSpeakerId="activeSpeakerId" />
+    <AvatarStack :members="stackMembers" size="md" :max="4" />
     <GroupMemberSheet
       ref="sheetRef"
       :groupId="sessionId"
@@ -35,8 +35,6 @@ const props = defineProps<{
   isGroup: boolean
   /** The group's current maxRounds (from the roster endpoint), shown in the sheet. */
   maxRounds: number
-  /** Member row id currently producing a turn; that disc is highlighted. */
-  activeSpeakerId?: string
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

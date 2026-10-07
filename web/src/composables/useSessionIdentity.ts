@@ -35,14 +35,6 @@ const autoApprove = ref(false)
 const availableCommands = ref<Array<{ name: string; description: string; inputHint?: string }>>([])
 
 // ── Group-chat active speaker (decision #59) ──
-// Member row id of the turn currently being produced, or '' when idle. Written
-// by useChatStream (stream_start.agent_id / stream_finalize) and read by
-// App.vue's header avatar stack. Module-level so the two live in different
-// components (header in App.vue, stream consumer in ChatPanelContent) yet share
-// one ref — the same pattern as runningSessions. Exported so useChatStream can
-// import it directly (like currentAgentId).
-export const activeSpeakerId = ref('')
-
 // ── Unified SelectState instances for mode and thinking effort ──
 // These replace the individual refs (currentModeId, currentModeName,
 // availableModes, currentThinkingEffort, currentThinkingEffortName,
@@ -210,7 +202,6 @@ export function clearSessionIdentity(upcomingSessionId?: string): void {
   currentModelName.value = ''
   currentTransport.value = ''
   autoApprove.value = false
-  activeSpeakerId.value = ''
   modeState.clear()
   thinkingEffortState.clear()
   availableCommands.value = []
@@ -227,7 +218,6 @@ export function resetIdentity(): void {
   currentModelName.value = ''
   currentTransport.value = ''
   autoApprove.value = false
-  activeSpeakerId.value = ''
   modeState.clear()
   thinkingEffortState.clear()
   availableCommands.value = []
@@ -997,7 +987,6 @@ export function useSessionIdentity() {
     currentModeName,
     currentTransport,
     autoApprove,
-    activeSpeakerId,
     availableModes,
     availableCommands,
     availableThinkingEfforts,

@@ -10,6 +10,12 @@
 > **本节已完成**：阶段 N（N1–N5）与阶段 O（O1–O19）的 **24 个 Task 全部实现并合入 main**
 > （实施细节与提交见 `2026-10-04-ai-group-chat-plan.md`）。下面保留当初的「未实现证据」作为
 > 起点对照——每条证据点均已消除。**不要再把本节当成待办清单。**
+>
+> **一处后续回退（2026-10-07）**：**O9（#59 发言中高亮）已按用户要求移除**。头部头像栈上
+> 的「正在输出的成员」边框动效被认为观感奇怪，故删掉 `activeSpeakerId` 全链路
+> （`AvatarStack` 的 `.is-speaking` 环 + 脉冲、`GroupAvatarStack`/`App.vue` 的 prop 透传、
+> `useChatStream` 的写点、`useSessionIdentity` 的 ref）。`stream_start.agent_id` 后端信号
+> 保留（仍用于流式行归属），只是不再驱动任何高亮。O9 其余判定不受影响。
 
 ### 阶段 N（决策 #39–#44）：成员可见性与描述
 

@@ -297,7 +297,6 @@
                       :hostMemberId="groupHostMemberId"
                       :maxRounds="groupMaxRounds"
                       :isGroup="isGroupSession"
-                      :activeSpeakerId="activeSpeakerId"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
                     <span v-else-if="sessionIdentity.currentAgentId.value" class="bs-header-title"><AgentIcon :backend="getAgentBackend(sessionIdentity.currentAgentId.value)" :name="getAgentName(sessionIdentity.currentAgentId.value)" :avatar="getAgentAvatar(sessionIdentity.currentAgentId.value)" size="md" />{{ sessionIdentity.agentHeaderTitle.value }}</span>
@@ -1284,10 +1283,6 @@ const {
   refresh: refreshGroupMembers,
 } = useGroupMembers(sessionIdentity.currentSessionId)
 const isGroupSession = computed(() => sessionIdentity.currentSessionType.value === 'group')
-// Member row id of the turn currently being produced (decision #59). Written by
-// useChatStream, read here by the header avatar strip so the speaking member is
-// highlighted. Module-level singleton ref (useSessionIdentity), like runningSessions.
-const activeSpeakerId = sessionIdentity.activeSpeakerId
 
 const sessionSidebar = useSessionSidebar()
 sessionSidebar.registerOpenDrawer(() => sessionIdentity.sessionDrawer.open())

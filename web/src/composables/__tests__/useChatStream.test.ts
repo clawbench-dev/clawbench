@@ -31,10 +31,8 @@ globalThis.setInterval = ((fn: TimerHandler, ms?: number, ...args: any[]) => {
 // vi.mock is hoisted above this module's body, so the factory cannot close over
 // a plain `const` declared below it. vi.hoisted runs before the mock and gives
 // the factory something initialised to reference.
-const { mockAppLogW, mockActiveSpeakerId } = vi.hoisted(() => ({
+const { mockAppLogW } = vi.hoisted(() => ({
   mockAppLogW: vi.fn(),
-  // Shared with the useSessionIdentity mock below (decision #59).
-  mockActiveSpeakerId: { value: '' },
 }))
 vi.mock('@/utils/appLog', async (importOriginal) => ({
   // Spread the real module so a NEW export is not undefined here (a hand-listed
@@ -96,10 +94,6 @@ vi.mock('@/composables/useSessionIdentity', () => ({
   updateAvailableThinkingEfforts: vi.fn(),
   updateUsageState: vi.fn(),
   currentAgentId: { value: 'test-agent-1' },
-  // Group-chat active speaker (decision #59). useChatStream writes this ref; the
-  // mock must provide it or every write throws on undefined. Hoisted so tests
-  // can assert on it (a plain factory-local ref would be unreachable).
-  activeSpeakerId: mockActiveSpeakerId,
 }))
 
 vi.mock('@/composables/useAgents', () => ({
@@ -161,7 +155,6 @@ describe('useChatStream', () => {
     mockConnected = ref(true)
     mockIsReplayingEvents = ref(false)
     mockAppLogW.mockClear()
-    mockActiveSpeakerId.value = ''
     resetQueuesForTest()
   })
 
@@ -2655,66 +2648,6 @@ describe('useChatStream', () => {
       expect(assistantMsg).toBeUndefined()
     })
   })
-
-  // ── Group-chat active speaker (decision #59) ──
-  // The avatar strip highlights the member producing the current turn. The only
-  // signals are stream_start.agent_id (speaker's member row id) and
-  // stream_finalize; this composable writes the shared ref, App.vue reads it.
-  describe('group active speaker', () => {
-    it('sets the speaker on stream_start and clears it on the matching stream_finalize', () => {
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-      mockActiveSpeakerId.value = ''
-
-      simulateWsEvent('stream_start', { message_id: 42, agent_id: 'member-2' })
-      expect(mockActiveSpeakerId.value).toBe('member-2')
-
-      simulateWsEvent('stream_finalize', { message_id: 42 })
-      expect(mockActiveSpeakerId.value).toBe('')
-    })
-
-    it('a stale stream_finalize for another member does not blank the current speaker', () => {
-      const options = createOptions()
-      useChatStream(options)
-
-      simulateWsEvent('stream_start', { message_id: 42, agent_id: 'member-2' })
-      // A dropped/late finalize for member-1 must not clear member-2's highlight.
-      simulateWsEvent('stream_finalize', { message_id: 41 })
-      expect(mockActiveSpeakerId.value).toBe('member-2')
-    })
-
-    it('stays empty for a single-agent turn (no agent_id in the payload)', () => {
-      const options = createOptions()
-      const { connectStream } = useChatStream(options)
-      connectStream('test-session-1')
-
-      simulateWsEvent('stream_start', { message_id: 42 })
-      expect(mockActiveSpeakerId.value).toBe('')
-    })
-
-    it('clears the speaker when the whole run ends (done)', () => {
-      const options = createOptions()
-      useChatStream(options)
-
-      simulateWsEvent('stream_start', { message_id: 42, agent_id: 'member-2' })
-      expect(mockActiveSpeakerId.value).toBe('member-2')
-
-      simulateWsEvent('done', {})
-      expect(mockActiveSpeakerId.value).toBe('')
-    })
-
-    it('clears the speaker when the run is cancelled', () => {
-      const options = createOptions()
-      useChatStream(options)
-
-      simulateWsEvent('stream_start', { message_id: 42, agent_id: 'member-2' })
-      simulateWsEvent('cancelled', {})
-      expect(mockActiveSpeakerId.value).toBe('')
-    })
-  })
-
-
 
   // ── streamTimeout removed ──
   // The 30s no-event stream timeout was removed: an idle session with no WS
