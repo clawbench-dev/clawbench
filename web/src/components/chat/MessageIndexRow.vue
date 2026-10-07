@@ -34,16 +34,19 @@
       >
         <!-- Assistant rows show the ACTUAL speaker's agent icon when the host
              can resolve one; otherwise the generic Bot. User rows always keep
-             the generic User glyph (the human is not an agent). -->
+             the generic User glyph (the human is not an agent).
+             AgentIcon uses `md` (18px) because the chip's content box is exactly
+             18px (20px − 2×1px border): `sm` (14px) left a 2px gap on each side
+             that made the icon read as smaller than its chip. -->
         <AgentIcon
           v-if="msg.role === 'assistant' && speaker"
           :backend="speaker.backend"
           :name="speaker.name"
           :avatar="speaker.avatar"
-          size="sm"
+          size="md"
         />
-        <Bot v-else-if="msg.role === 'assistant'" :size="12" />
-        <User v-else :size="12" />
+        <Bot v-else-if="msg.role === 'assistant'" :size="16" />
+        <User v-else :size="16" />
       </span>
       <span class="msg-text" :class="{ 'msg-text--muted': isPlaceholder }" v-html="rowHighlight"></span>
       <!-- Marks a message that has a /btw side question anchored to it. An
@@ -291,7 +294,11 @@ const speaker = computed<SpeakerIdentity | null>(() => {
 }
 
 /* Role chip: an icon-only square, sized to match the timeline node so the two
-   columns of the row line up. The role name lives in title/aria-label. */
+   columns of the row line up. The role name lives in title/aria-label.
+   The content box is 18px (20px − 2×1px border) and the icon fills it exactly
+   (AgentIcon `md`=18px) so there is no gap around the glyph; overflow:hidden
+   clips the icon's square corners to the chip's radius (a transparent-corner
+   brand SVG would otherwise poke past the rounded border). */
 .msg-role-tag {
   display: inline-flex;
   align-items: center;
@@ -301,6 +308,7 @@ const speaker = computed<SpeakerIdentity | null>(() => {
   height: 20px;
   border-radius: var(--radius-sm);
   border: 1px solid transparent;
+  overflow: hidden;
 }
 
 .msg-role-tag.role-user {

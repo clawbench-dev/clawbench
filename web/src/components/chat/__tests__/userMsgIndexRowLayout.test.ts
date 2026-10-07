@@ -61,6 +61,12 @@ describe('UserMsgIndexDrawer: one-line rows', () => {
     expect(tag).toMatch(/height:\s*20px/)
     expect(tag, 'a text pill would set horizontal padding').not.toMatch(/padding:\s*1px\s+6px/)
   })
+
+  it('clips the chip so a full-bleed icon respects the rounded border', () => {
+    // The icon fills the 18px content box edge-to-edge (no gap). Square-cornered
+    // brand SVGs would poke past the 6px radius without clipping.
+    expect(decls('.msg-role-tag')).toMatch(/overflow:\s*hidden/)
+  })
 })
 
 describe('UserMsgIndexDrawer: icon-only role chips', () => {

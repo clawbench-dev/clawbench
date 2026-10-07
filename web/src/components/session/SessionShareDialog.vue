@@ -89,9 +89,9 @@
               :title="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
               :aria-label="m.role === 'user' ? t('sessionShare.roleUser') : t('sessionShare.roleAssistant')"
             >
-              <AgentIcon v-if="m.role === 'assistant' && speakerFor(m)" :backend="speakerFor(m).backend" :name="speakerFor(m).name" :avatar="speakerFor(m).avatar" size="sm" />
-              <Bot v-else-if="m.role === 'assistant'" :size="12" />
-              <User v-else :size="12" />
+              <AgentIcon v-if="m.role === 'assistant' && speakerFor(m)" :backend="speakerFor(m).backend" :name="speakerFor(m).name" :avatar="speakerFor(m).avatar" size="md" />
+              <Bot v-else-if="m.role === 'assistant'" :size="16" />
+              <User v-else :size="16" />
             </span>
             <span class="session-share-dialog-preview" :title="m.preview">{{ m.preview || '—' }}</span>
             <span v-if="!isSelectable(m)" class="session-share-dialog-flag">

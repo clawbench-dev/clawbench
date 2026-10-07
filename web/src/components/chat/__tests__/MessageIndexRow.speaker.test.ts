@@ -9,7 +9,7 @@ vi.mock('@/components/common/AgentIcon.vue', () => ({
   default: {
     name: 'AgentIcon',
     props: ['backend', 'name', 'avatar', 'size'],
-    template: '<span class="agent-icon-stub" :data-backend="backend" :data-name="name" :data-avatar="avatar" />',
+    template: '<span class="agent-icon-stub" :data-backend="backend" :data-name="name" :data-avatar="avatar" :data-size="size" />',
   },
 }))
 
@@ -53,6 +53,15 @@ describe('MessageIndexRow — speaker icon resolution', () => {
     expect(icon.exists()).toBe(true)
     expect(icon.attributes('data-backend')).toBe('claude')
     expect(icon.attributes('data-name')).toBe('Solo')
+  })
+
+  it('sizes the agent icon to fill the chip (no gap around the glyph)', () => {
+    // The chip is 20px with a 1px border → an 18px content box. `sm` (14px) left
+    // a 2px gap per side that made the icon read smaller than its chip; `md`
+    // (18px) fills it exactly.
+    const resolve = makeSpeakerResolver({ name: 'Solo', backend: 'claude' }, null)
+    const w = mountRow({ id: 1, role: 'assistant', content: 'hi', agentId: '' }, { resolveSpeaker: resolve })
+    expect(w.find('.agent-icon-stub').attributes('data-size')).toBe('md')
   })
 
   it('resolves a GROUP member id to that member, not the session agent', () => {
