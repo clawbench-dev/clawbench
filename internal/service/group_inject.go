@@ -131,36 +131,25 @@ func appendHostDirectives(b *strings.Builder, instruction, bcc string) {
 	}
 }
 
-// hostSpeechForMembers renders a host message for a member's context: the
-// routing tag is replaced by the text that preceded it (decision #67/#68).
+// hostSpeechForMembers renders a host message for a member's context.
 //
 // Contracts:
-//   - The SPEAKER tag is stripped only when it parses (Found). An unparseable
-//     speaker tag is passed through verbatim (same "never lose content" rule as
-//     askquestion) rather than guessing where its payload ends.
-//   - The END tag is ALWAYS stripped, even when no speaker tag is present. It is
-//     internal protocol too, and a message that carries only the end signal has
-//     Found=false — gating its removal on Found would leak it to members and
-//     invite them to imitate it (decision #67).
-//   - Well-formed BCC notes are ALWAYS stripped, for the same reason and by the
-//     same rule: a note is addressed to specific members, and the message that
-//     carries it reaches every member through this function. A message with no
-//     speaker tag (Found=false) still gets its notes removed — that fallback
-//     path is the one place a note could otherwise leak to everyone.
-//   - The directive is not repeated: it reaches the member once, in the
-//     high-priority "主持人要求你：…" paragraph the caller appends. Keeping it
-//     in the body too would tell the member the host emphasised it twice.
+//   - A member SEES the host's prose — the background AND the directive text
+//     (rules, announcements). Those live after the routing tag, and dropping
+//     them meant members never saw the game rules and behaved as if
+//     unaddressed. So the whole message is shown, with its protocol tags
+//     removed.
+//   - Every ClawBench protocol tag is stripped: speaker tags (open and close,
+//     including a nested one from a second routing in the same message), the
+//     end signal, and bcc spans (fail-closed). Leaving a routing tag in would
+//     invite the member to imitate it — the real incident where several members
+//     each declared themselves the chair.
+//   - A note's text never survives (StripBccSpans is fail-closed): a message
+//     carrying a note reaches EVERY member through this function.
 //
-// A message with no tag at all (the host just talking) is returned unchanged.
+// A message with no tag at all (the host just talking) keeps its full text.
 func hostSpeechForMembers(text string) string {
-	res := grouprouting.Parse(text)
-	if !res.Found {
-		// Fail-closed: a note of ANY shape must not reach a member through this
-		// fallback. StripBccTags (display-side) only removes well-formed notes,
-		// so it is NOT enough here — an LLM mis-formatting a quote would leak.
-		return grouprouting.StripBccSpans(grouprouting.StripEndTag(text))
-	}
-	return res.Before
+	return grouprouting.StripProtocolTags(text)
 }
 
 // userTextWithAttachments prepends the attachment summary to a user message's

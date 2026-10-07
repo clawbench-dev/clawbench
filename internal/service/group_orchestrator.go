@@ -308,7 +308,8 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 			// inside the loop, so a note addressed to someone not named this round
 			// reaches nobody.
 			bcc := bccForMember(route.Bcc, names[t.ID])
-			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction, bcc)
+			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction, bcc) +
+				BuildMemberSystemPrompt(memberRoster(members), names[t.ID])
 			preH := GroupTimelineHighWater(groupID)
 			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
 			if res.CancelReason != "" {
@@ -554,6 +555,20 @@ func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []HostM
 		if m.ID == hostMemberID {
 			continue
 		}
+		out = append(out, HostMemberInfo{
+			Name:      m.Name,
+			Specialty: GetAgentSpecialty(m.AgentID),
+			Left:      m.Left,
+		})
+	}
+	return out
+}
+
+// memberRoster converts the group's members into the HostMemberInfo shape used
+// by the prompt builders (name + specialty + left marker).
+func memberRoster(members []GroupMember) []HostMemberInfo {
+	out := make([]HostMemberInfo, 0, len(members))
+	for _, m := range members {
 		out = append(out, HostMemberInfo{
 			Name:      m.Name,
 			Specialty: GetAgentSpecialty(m.AgentID),

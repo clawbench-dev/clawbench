@@ -1252,3 +1252,47 @@ func TestGroupOrchestrator_BccToUnnamedReachesNobody(t *testing.T) {
 		t.Fatalf("a note to an unnamed member must reach nobody; got %q", aPrompt)
 	}
 }
+
+// A member's turn prompt must carry the group-role instruction: it is a
+// participant, NOT the chair, and must not emit the host's protocol tags.
+// Without it members imitated the host's routing tag and fought over the
+// microphone (real incident: three members opened with "🎙️ 主持人").
+func TestGroupOrchestrator_MemberPromptCarriesGroupRole(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-memberrole"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`, `<clawbench-group-end/> 结束`},
+		mA:     {"A 发言"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var aPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mA {
+			aPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if !strings.Contains(aPrompt, "群聊成员") || !strings.Contains(aPrompt, "不是主持人") {
+		t.Fatalf("member prompt must state the participant role; got %q", aPrompt)
+	}
+	if !strings.Contains(aPrompt, "不要") || !strings.Contains(aPrompt, "clawbench-speaker") {
+		t.Fatalf("member prompt must forbid emitting routing tags; got %q", aPrompt)
+	}
+	// The host's routing list must NOT be handed to a member.
+	if strings.Contains(aPrompt, "可选的成员名：") {
+		t.Fatalf("member prompt must not carry the host's routing list; got %q", aPrompt)
+	}
+}

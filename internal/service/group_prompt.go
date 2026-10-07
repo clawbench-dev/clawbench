@@ -72,6 +72,39 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	return b.String()
 }
 
+// BuildMemberSystemPrompt returns the instruction appended to a group MEMBER's
+// system prompt so it knows its role. Without it a member inherits its default
+// single-chat identity: it sees the host's routing tag in its context and
+// imitates it, so several members each declared themselves the chair and fought
+// over the microphone (real incident: three members opened with "🎙️ 主持人").
+//
+// members is the full roster (host + members); selfName is excluded from the
+// "others" list so a member is not told it is talking to itself.
+func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
+	var b strings.Builder
+	b.WriteString("\n\n[群聊成员] 你是一个多智能体群聊中的**参与者**，**不是主持人**。\n")
+	b.WriteString("主持人负责控场、点名和汇总；你只负责在被点名时，就当前话题发表你自己的看法。\n")
+	b.WriteString("你**不要**替主持人安排别人发言，也**不要**输出以下协议标签（那是主持人专用的，你输出会打乱秩序）：\n")
+	b.WriteString("  <clawbench-speaker>…</clawbench-speaker>\n")
+	b.WriteString("  <clawbench-bcc …>…</clawbench-bcc>\n")
+	b.WriteString("  <clawbench-group-end/>\n")
+	b.WriteString("发言要求：紧扣话题、简洁、直接给出你的观点；不要复述或模仿主持人的指令格式。\n")
+
+	others := make([]string, 0, len(members))
+	for _, m := range members {
+		if strings.TrimSpace(m.Name) == "" || m.Name == selfName {
+			continue
+		}
+		others = append(others, renderHostMember(m))
+	}
+	if len(others) > 0 {
+		b.WriteString("本群其他成员：")
+		b.WriteString(strings.Join(others, "、"))
+		b.WriteString("。\n")
+	}
+	return b.String()
+}
+
 // BuildHostSummaryPrompt is the prompt variant for the max-rounds fallback: the
 // loop ran out of rounds before the host chose to end, so we run the host once
 // more purely to produce the final summary. It MUST NOT ask for a routing tag —

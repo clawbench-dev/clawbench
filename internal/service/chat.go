@@ -3049,6 +3049,15 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	}
 
 	// Enrich messages
+	//
+	// Group sessions skip the content stripping: the group render pipeline
+	// parses routing tags (`<clawbench-speaker>`) and private notes
+	// (`<clawbench-bcc>`) out of the BLOCKS, and stripping replaces blocks with
+	// [] — so a host's bcc card (and the routing chips) vanished as soon as a
+	// message gained a summary and the view was reloaded (switch session and
+	// back). Group messages are short; the bandwidth saving is not worth losing
+	// the structured view. A non-group session keeps the original behavior.
+	isGroup := len(messages) > 0 && GetSessionType(messages[0].SessionID) == groupSessionType
 	for i := range messages {
 		if messages[i].Role == "assistant" {
 			if summary, ok := summaryMap[messages[i].ID]; ok {
@@ -3057,7 +3066,7 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 			if cards, ok := cardMap[messages[i].ID]; ok {
 				messages[i].SummaryCards = cards
 			}
-			if messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
+			if !isGroup && messages[i].Summary != nil && *messages[i].Summary != "" && !messages[i].Streaming {
 				messages[i].Content = summarizeContentForView(messages[i].Content)
 			}
 		}

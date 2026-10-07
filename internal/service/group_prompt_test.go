@@ -120,3 +120,30 @@ func TestBuildHostSummaryPromptOmitsBcc(t *testing.T) {
 		t.Fatalf("summary prompt must not document bcc: %q", p)
 	}
 }
+
+// BuildMemberSystemPrompt: a group MEMBER must be told it is a participant, not
+// the chair — without this, members imitated the host's routing tag and fought
+// over the microphone (real incident: 3 members all opened with "🎙️ 主持人").
+func TestBuildMemberSystemPrompt(t *testing.T) {
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}, {Name: "C"}}, "B")
+	if !strings.Contains(p, "参与者") {
+		t.Fatalf("member prompt must state the participant role: %q", p)
+	}
+	if !strings.Contains(p, "不是主持人") {
+		t.Fatalf("member prompt must say it is NOT the chair: %q", p)
+	}
+	// It must forbid emitting the host's protocol tags.
+	if !strings.Contains(p, "<clawbench-speaker>") || !strings.Contains(p, "不要") {
+		t.Fatalf("member prompt must forbid emitting routing tags: %q", p)
+	}
+	if !strings.Contains(p, "clawbench-bcc") {
+		t.Fatalf("member prompt must forbid emitting private notes: %q", p)
+	}
+	// It must list who else is in the group (excluding self).
+	if !strings.Contains(p, "Host") || !strings.Contains(p, "C") {
+		t.Fatalf("member prompt must list other participants: %q", p)
+	}
+	if strings.Contains(p, "可选的成员名：") {
+		t.Fatalf("member prompt must NOT carry the host's routing list: %q", p)
+	}
+}

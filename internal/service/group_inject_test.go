@@ -217,14 +217,21 @@ func TestBuildMemberInjection_StripsHostRoutingTag(t *testing.T) {
 // An unparseable host message must be kept verbatim — never strip what we do
 // not understand (same contract as askquestion: never lose content).
 func TestBuildMemberInjection_KeepsUnparseableHostMessage(t *testing.T) {
-	// Malformed payload: empty speaker list.
+	// Malformed payload: empty speaker list. The TEXT survives (never lose
+	// content) but the protocol tag is stripped — a member must not see a
+	// routing tag, malformed or not, or it imitates it (the "everyone is the
+	// chair" incident). The old contract kept the tag verbatim; that leaked the
+	// protocol into every member's context.
 	hostContent := `{"blocks":[{"type":"text","text":"背景 <clawbench-speaker></clawbench-speaker> 尾巴"}]}`
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
 	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "", "row-host")
-	if !strings.Contains(got, "<clawbench-speaker></clawbench-speaker>") {
-		t.Fatalf("a malformed tag must NOT be stripped (never lose content): %q", got)
+	if strings.Contains(got, "<clawbench-speaker") {
+		t.Fatalf("a routing tag must NOT reach a member (they imitate it): %q", got)
+	}
+	if !strings.Contains(got, "背景") || !strings.Contains(got, "尾巴") {
+		t.Fatalf("the surrounding text must survive: %q", got)
 	}
 }
 
@@ -452,5 +459,36 @@ func TestBuildMemberInjection_StripsMalformedNoteOnFallbackPath(t *testing.T) {
 				t.Fatalf("background must survive: %q", got)
 			}
 		})
+	}
+}
+
+// A member must SEE the host's rules/announcement. Those live AFTER the routing
+// tag (Instruction), which hostSpeechForMembers used to discard — so members
+// never saw the game rules and behaved as if unaddressed. The protocol tags
+// inside that text must still be stripped, or a member imitates them and
+// declares itself the chair (the real "everyone is the host" incident).
+func TestHostSpeechForMembers_KeepsRulesStripsTags(t *testing.T) {
+	hostMsg := "<clawbench-speaker>A,B</clawbench-speaker> 本轮规则：每人一句话描述。\n" +
+		"<clawbench-speaker>A</clawbench-speaker> 请 A 先描述 <clawbench-bcc targets=\"A\">你的词是西瓜</clawbench-bcc>"
+	got := hostSpeechForMembers(hostMsg)
+	if !strings.Contains(got, "本轮规则") {
+		t.Fatalf("member must see the host's rules; got %q", got)
+	}
+	if !strings.Contains(got, "请 A 先描述") {
+		t.Fatalf("member must see the host's directive text; got %q", got)
+	}
+	if strings.Contains(got, "clawbench-speaker") {
+		t.Fatalf("routing tags must be stripped so members do not imitate them; got %q", got)
+	}
+	if strings.Contains(got, "clawbench-bcc") || strings.Contains(got, "西瓜") {
+		t.Fatalf("private note must never reach the shared body; got %q", got)
+	}
+}
+
+// A host message with no speaker tag keeps its full text (minus protocol tags).
+func TestHostSpeechForMembers_NoTagKeepsText(t *testing.T) {
+	got := hostSpeechForMembers("大家注意，本局是友谊赛。")
+	if got != "大家注意，本局是友谊赛。" {
+		t.Fatalf("plain host speech must pass through; got %q", got)
 	}
 }

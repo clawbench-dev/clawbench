@@ -74,6 +74,9 @@ type BccEntry struct {
 
 var (
 	reSpeaker = regexp.MustCompile(`(?s)<clawbench-speaker>(.*?)</clawbench-speaker>`)
+	// reSpeakerTag matches either half of a speaker tag (open or close), for
+	// StripProtocolTags — removing both halves keeps the text between/after them.
+	reSpeakerTag = regexp.MustCompile(`</?clawbench-speaker>`)
 	reEnd     = regexp.MustCompile(`<clawbench-group-end[\s\p{Z}]*/>`)
 	// reBcc matches a well-formed private note (the DISPLAY contract). The
 	// targets attribute must use double quotes; single-quoted / attribute-less
@@ -105,6 +108,23 @@ func StripEndTag(text string) string {
 		return text
 	}
 	return strings.TrimSpace(reEnd.ReplaceAllString(text, ""))
+}
+
+// StripProtocolTags removes every ClawBench protocol tag from text while keeping
+// the surrounding prose: speaker open/close tags, well-formed AND malformed bcc
+// spans, and the end signal. It is what a group MEMBER should see of the host's
+// speech — the host's rules and directives survive, but the tags do not, so a
+// member cannot imitate them (the "everyone declares itself the chair" incident).
+//
+// The text is NOT re-parsed: a host message may legitimately contain an inner
+// routing tag (the host routing twice in one message), and that inner tag must
+// be removed without consuming the text after it.
+func StripProtocolTags(text string) string {
+	// bcc first (fail-closed): its body is private and must not survive.
+	cleaned := StripBccSpans(text)
+	cleaned = reSpeakerTag.ReplaceAllString(cleaned, "")
+	cleaned = StripEndTag(cleaned)
+	return strings.TrimSpace(cleaned)
 }
 
 // Parse locates the host's routing decision in an assistant message.
