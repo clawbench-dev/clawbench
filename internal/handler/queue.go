@@ -341,6 +341,24 @@ func handleQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Group-chat delegation (decision #45/#76): a message to a group must be
+	// driven by the group orchestrator, not run as a host-only single-agent
+	// turn. Without this branch the host answers alone, its reply lands on the
+	// group timeline unattributed, and the other members never participate —
+	// the exact degradation decision #76 fixed for the IM path. EnqueueGroupMessage
+	// is the shared group entry: it queues when a group turn is running and
+	// launches the group drain loop when the group is idle, so the queueing
+	// semantics match the chat endpoint.
+	if service.GetSessionType(sessionID) == "group" {
+		started, err := service.EnqueueGroupMessage(sessionID, req.Message, validatedFiles, req.QueueID)
+		if err != nil {
+			writeLocalizedErrorf(w, r, http.StatusInternalServerError, "EnqueueFailed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "started": started})
+		return
+	}
+
 	// Persist the message + start execution or signal the running drain loop.
 	// EnqueueAndMaybeStart emits the announcement itself: user_message when the
 	// session was idle (the message is a real chat_history row now) or

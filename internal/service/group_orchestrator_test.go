@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
 
@@ -48,29 +49,26 @@ func jsonQuote(s string) string {
 	return string(b)
 }
 
-// silenceGroupUserEmit avoids touching the WS hub in tests.
-func silenceGroupUserEmit(t *testing.T) {
+// runGroupTurnForTest drives ONE group turn through the production entry point
+// (RunGroupTurnDrain) and then emits the terminal event the drain loop would
+// send, so tests exercise the same code path production does. The standalone
+// RunGroupTurn entry was deleted (review C1): it had no production callers and
+// its terminal responsibilities silently stopped running.
+//
+// It materializes the user message first, exactly as the drain loop does before
+// calling RunGroupTurnDrain, then returns the DrainResult.
+func runGroupTurnForTest(t *testing.T, o *GroupOrchestrator, project, userMessage string, files []model.FileEntry) DrainResult {
 	t.Helper()
-	orig := emitGroupUserMessage
-	emitGroupUserMessage = func(groupID string, msgID int64, text, queueID, senderClientID string) {}
-	t.Cleanup(func() { emitGroupUserMessage = orig })
-}
-
-// observeGroupTerminal replaces the terminal emitter with a counter so tests can
-// assert a group turn ALWAYS ends with a terminal event (otherwise the last
-// member's streaming bubble would hang and the session stay "running").
-func observeGroupTerminal(t *testing.T) *int {
-	t.Helper()
-	orig := emitGroupTerminal
-	n := 0
-	emitGroupTerminal = func(groupID string) { n++ }
-	t.Cleanup(func() { emitGroupTerminal = orig })
-	return &n
+	groupID := o.groupID
+	msgID, err := AddChatMessageWithAgent(project, groupBackend(groupID), groupID, "user", userMessage, files, false, "", "")
+	if err != nil {
+		t.Fatalf("seed group user message: %v", err)
+	}
+	return RunGroupTurnDrain(context.Background(), groupID, msgID, QueuedRow{Content: userMessage, Files: files}, o.runTurn)
 }
 
 func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -97,13 +95,10 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "大家讨论一下", nil); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
-	}
-	if *term != 1 {
-		t.Fatalf("terminal emitted %d times, want exactly 1 (end-signal path)", *term)
-	}
+	// NOTE: RunGroupTurnDrain never emits a terminal event by design — the drain
+	// loop owns it (and sends it exactly once). The terminal contract is pinned
+	// by the drain-loop tests, not here.
+	_ = runGroupTurnForTest(t, o, project, "大家讨论一下", nil)
 
 	// Round 1 must speak A then B in that order (sequential), after the host.
 	wantPrefix := []string{hostID, mA, mB}
@@ -144,60 +139,61 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 	}
 }
 
-// TestGroupOrchestrator_RunningStateAndCancel verifies the group is registered
-// as running (so a frontend stop can reach it) and that cancelling the group
-// context stops the loop mid-turn.
-func TestGroupOrchestrator_RunningStateAndCancel(t *testing.T) {
+// TestGroupOrchestrator_CancelReachesMemberTurns pins that a cancel on the
+// context passed to RunGroupTurnDrain stops the loop mid-turn — that context is
+// the handler's claim context, which is what CancelSession cancels. Without the
+// propagation a "stop" on the group session would not reach the member turns.
+//
+// (The complementary invariant — RunGroupTurnDrain must not itself touch the
+// running flag — is pinned by TestRunGroupTurnDrain_DoesNotTouchRunningFlag.)
+func TestGroupOrchestrator_CancelReachesMemberTurns(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch3"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
 
-	sawRunning := false
+	// The caller owns the running state (as the handler's claim does).
+	runCtx, claimed := TryClaimSessionRun(groupID)
+	if !claimed {
+		t.Fatal("precondition: the group must start idle")
+	}
+	defer FinishSessionRun(groupID)
+
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if !sawRunning {
-			sawRunning = IsSessionRunning(groupID)
+		if turn.IsHost {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请发言"}]}`, nil, false, "", turn.MemberRowID)
+			return groupMemberResult{}
 		}
-		// Simulate a long member turn that must observe cancellation.
-		if turn.MemberRowID == mA {
-			CancelSession(groupID)
-		}
+		// Simulate a long member turn that observes the cancel.
+		CancelSession(groupID)
+		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+			`{"blocks":[{"type":"text","text":"A 发言"}]}`, nil, false, "", turn.MemberRowID)
 		return groupMemberResult{}
 	}
 
 	o := NewGroupOrchestrator(groupID)
-	o.runTurn = func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
-		if turn.IsHost {
-			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-				`{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请发言"}]}`, nil, false, "", turn.MemberRowID)
-		} else {
-			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-				`{"blocks":[{"type":"text","text":"A 发言"}]}`, nil, false, "", turn.MemberRowID)
-		}
-		return runner(ctx, gid, turn)
+	o.runTurn = runner
+	msgID, err := AddChatMessageWithAgent(project, groupBackend(groupID), groupID, "user", "开始", nil, false, "", "")
+	if err != nil {
+		t.Fatalf("seed: %v", err)
 	}
-	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
+	res := RunGroupTurnDrain(runCtx, groupID, msgID, QueuedRow{Content: "开始"}, o.runTurn)
+
+	if res.CancelReason != cancelReasonUser {
+		t.Fatalf("a cancel on the claim context must reach the member turn; got %+v", res)
 	}
-	if !sawRunning {
-		t.Fatal("group must be registered as running during the turn")
-	}
-	if IsSessionRunning(groupID) {
-		t.Fatal("group running state must be cleared after the turn")
-	}
-	_ = hostID
+	_ = mA
 }
 
 func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch2"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -223,13 +219,7 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
-	}
-	if *term != 1 {
-		t.Fatalf("terminal emitted %d times, want exactly 1 (round-cap path)", *term)
-	}
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	// Host should speak exactly twice: the routing turn + the summary turn.
 	hostTurns := 0
@@ -255,7 +245,6 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 //     falls through to real members instead of looping on the host).
 func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-self"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -304,10 +293,7 @@ func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
-	}
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	// (1) The host must never be told it may address itself.
 	for _, p := range hostPrompts {
@@ -329,56 +315,51 @@ func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 	}
 }
 
-// The terminal emitter must finalize any streaming row left behind by a failed
+// A group turn must finalize any streaming row left behind by a failed
 // Finalize, or the frontend reloads into a phantom streaming bubble that never
-// ends (decision #71). This is a safety net, not a race guard: every caller of
-// emitGroupTerminal runs after the turn's runner returned.
-func TestEmitGroupTerminal_FinalizesOrphanStreamingRow(t *testing.T) {
+// ends (decision #71). This runs on the LIVE path (RunGroupTurnDrain → runLoop),
+// not on the deleted standalone terminal emitter (review C1).
+//
+// The orphan is written MID-TURN (by a member runner, simulating a Finalize
+// that failed), not before the turn. runRounds already finalizes orphans at the
+// START of a turn, so a pre-seeded row would be closed by that first call and
+// the test would pass even with the TERMINAL cleanup deleted (review B-2). Only
+// the terminal call can close a row that appears after the turn began.
+func TestGroupTurn_FinalizesOrphanStreamingRow(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-orphan"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
 
-	// A streaming assistant row left behind (as if Finalize failed).
-	msgID, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant", "half a thought", nil, true, "", "row-x")
-	if err != nil {
-		t.Fatalf("AddChatMessageWithAgent: %v", err)
+	var orphanID int64
+	// A trivial turn that ends immediately, but leaves a streaming row behind
+	// (as a member whose Finalize failed would).
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			id, e := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant", "half a thought", nil, true, "", hostID)
+			if e != nil {
+				return groupMemberResult{Err: e.Error()}
+			}
+			orphanID = id
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"`+"<clawbench-group-end/> 结束"+`"}]}`, nil, false, "", hostID)
+		}
+		return groupMemberResult{}
 	}
-	if !isStreaming(t, msgID) {
-		t.Fatal("precondition: the row must start out streaming")
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if orphanID == 0 {
+		t.Fatal("precondition: the turn must have left a streaming row behind")
 	}
-
-	// Call the REAL terminal emitter (the seam is not replaced here).
-	emitGroupTerminal(groupID)
-
-	if isStreaming(t, msgID) {
-		t.Fatal("emitGroupTerminal must finalize orphaned streaming rows")
-	}
-}
-
-// A clean turn (no orphan) must still emit the terminal contract exactly once.
-func TestEmitGroupTerminal_NoOrphanStillTerminal(t *testing.T) {
-	setupGroupDB(t)
-	project := "/tmp/gorch-clean"
-	if _, err := store.ProjectIDForPath(project); err != nil {
-		t.Fatalf("ProjectIDForPath: %v", err)
-	}
-	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
-	if err != nil {
-		t.Fatalf("CreateGroup: %v", err)
-	}
-	SetSessionRunning(groupID, true, true)
-
-	emitGroupTerminal(groupID)
-
-	if IsSessionRunning(groupID) {
-		t.Fatal("emitGroupTerminal must clear the running flag")
+	if isStreaming(t, orphanID) {
+		t.Fatal("a group turn must finalize orphaned streaming rows (decision #71) at its END, not only at its start")
 	}
 }
 
@@ -399,7 +380,6 @@ func isStreaming(t *testing.T, msgID int64) bool {
 // nothing on the timeline to show why (decision #69).
 func TestGroupOrchestrator_FailedMemberDoesNotAdvanceCursor(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-cursor-fail"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -435,7 +415,7 @@ func TestGroupOrchestrator_FailedMemberDoesNotAdvanceCursor(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	if got := GetMemberCursor(mA); got != before {
 		t.Fatalf("a failed member turn must not advance the cursor: before=%d after=%d", before, got)
@@ -446,7 +426,6 @@ func TestGroupOrchestrator_FailedMemberDoesNotAdvanceCursor(t *testing.T) {
 // from what it has seen, so skipping content would corrupt its next decision.
 func TestGroupOrchestrator_FailedHostDoesNotAdvanceCursor(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-host-cursor"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -466,10 +445,58 @@ func TestGroupOrchestrator_FailedHostDoesNotAdvanceCursor(t *testing.T) {
 	}
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	if got := GetMemberCursor(hostID); got != 0 {
 		t.Fatalf("a failed host turn must not advance the cursor, got %d", got)
+	}
+}
+
+// A failed SUMMARY turn must not advance the host's cursor either (decision
+// #69). The summary turn is the round-cap/abort wrap-up; the host routes from
+// what it has seen, so advancing past context it never processed makes that
+// stretch permanently unreachable and corrupts the next routing decision.
+//
+// This pins the fourth cursor site — the other three (host, routed member,
+// round-robin fallback) were covered, but summarize() was missed.
+func TestGroupOrchestrator_SummaryFailureDoesNotAdvanceCursor(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-summary-cursor"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	// Cap at 1 round so the host never ends on its own → the round cap triggers
+	// the summary turn.
+	if err := SetGroupMaxRounds(groupID, 1); err != nil {
+		t.Fatalf("SetGroupMaxRounds: %v", err)
+	}
+	if _, err := AddGroupMember(project, groupID, "claude", "agent-a", "A"); err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	SetMemberCursor(hostID, 0)
+
+	// Seed a timeline message so a high-water mark exists to (wrongly) advance to.
+	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "user", "seed question", nil, false, "", ""); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// EVERY host turn fails — the routing turn and the summary turn alike.
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			return groupMemberResult{Err: "host backend down"}
+		}
+		return groupMemberResult{}
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if got := GetMemberCursor(hostID); got != 0 {
+		t.Fatalf("a failed summary turn must not advance the host cursor, got %d", got)
 	}
 }
 
@@ -477,7 +504,6 @@ func TestGroupOrchestrator_FailedHostDoesNotAdvanceCursor(t *testing.T) {
 // break the normal path).
 func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-cursor-ok"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -502,7 +528,7 @@ func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
 	runner, _ := newScriptedRunner(t, groupID, project, script)
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	if got := GetMemberCursor(mA); got <= 0 {
 		t.Fatalf("a successful member turn must advance the cursor, got %d", got)
@@ -519,7 +545,6 @@ func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
 // feeds the session list and the "project has a running session" delete guard).
 func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-sweep"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -557,7 +582,7 @@ func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	if !seenRunning {
 		t.Fatal("a member row must read as running for the ACP sweep during its turn")
@@ -570,7 +595,6 @@ func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
 // After the turn ends, no member row may linger as "running for sweep".
 func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-sweep-clear"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -595,7 +619,7 @@ func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 	}
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	if IsSessionRunningForSweep(mA) {
 		t.Fatal("member sweep state must be cleared once the group turn ends")
@@ -611,7 +635,6 @@ func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 // monologue (decision #56).
 func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-rotate"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -642,7 +665,7 @@ func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
 	})
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	// Fallback picks are those that are NOT the member the host explicitly
 	// routed to (A) and not the host itself. Those must rotate across B and C.
@@ -673,7 +696,6 @@ func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
 // (decision #56).
 func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-abort"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -702,43 +724,45 @@ func TestGroupOrchestrator_AbortsAfterTwoParseFailures(t *testing.T) {
 			`{"blocks":[{"type":"text","text":"member speech"}]}`, nil, false, "", turn.MemberRowID)
 		return groupMemberResult{}
 	}
-	term := observeGroupTerminal(t)
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	_ = o.RunGroupTurn(context.Background(), "开始", nil)
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
 	// 2 failures, then abort. Allow a small margin for the final summary turn.
 	if hostTurns > 4 {
 		t.Fatalf("must abort after two consecutive parse failures, but the host ran %d turns", hostTurns)
 	}
-	if *term != 1 {
-		t.Fatalf("aborting must still emit exactly one terminal event, got %d", *term)
-	}
 }
 
-// The group turn's terminal path must summarize the discussion once — member
-// turns deliberately skip it (decision #55), so this is the only place it can
-// happen.
-func TestEmitGroupTerminal_SummarizesOnce(t *testing.T) {
+// A group turn must summarize the discussion — member turns deliberately skip
+// it (decision #55), so this is the only place it happens. It must run on the
+// LIVE path (RunGroupTurnDrain → runLoop); the standalone entry that used to
+// carry it was dead code (review C1), which is exactly the regression this pins.
+func TestGroupTurn_SummarizesOnce(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-summarize"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
 	}
-	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
 	if err != nil {
 		t.Fatalf("CreateGroup: %v", err)
 	}
-	// A finalized assistant row so there is something to summarize.
-	if _, err := AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-		`{"blocks":[{"type":"text","text":"结论：可以发布"}]}`, nil, false, "", ""); err != nil {
-		t.Fatalf("seed: %v", err)
+
+	// A turn that leaves a finalized assistant row on the timeline (the row is
+	// what gets summarized).
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.IsHost {
+			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
+				`{"blocks":[{"type":"text","text":"结论：可以发布。<clawbench-group-end/>"}]}`, nil, false, "", hostID)
+		}
+		return groupMemberResult{}
 	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 
-	emitGroupTerminal(groupID)
-
-	// A summary must now exist for that message (triggerChatSummarization ran).
+	// A summary must now exist for the host's reply (triggerChatSummarization ran).
 	msgs, _ := GetMessagesBySessionIDRaw(groupID)
 	found := false
 	for _, m := range msgs {
@@ -750,7 +774,7 @@ func TestEmitGroupTerminal_SummarizesOnce(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("the group terminal path must summarize the discussion once")
+		t.Fatal("a group turn must summarize the discussion (decision #55) on the live path")
 	}
 }
 
@@ -766,7 +790,6 @@ func TestEmitGroupTerminal_SummarizesOnce(t *testing.T) {
 // wiring cannot silently drop it.
 func TestGroupMemberTurn_FailureWarningIsAttributed(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-failturn"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)

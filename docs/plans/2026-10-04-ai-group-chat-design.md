@@ -149,7 +149,7 @@
 | 76 | IM 里对群会话发消息 | **委派群编排器**：`sendMessageToSessionFromPush`（`session_command.go:182`）开头判 `GetSessionType == "group"` → 走 `RunGroupTurn`（与 Web 的 `AIChat` 群分支同构）。否则"选中群→发消息"会用**主持人单个 agent 跑单聊回合**，其他成员不参与，且消息落进群时间线**污染讨论**。该函数已走 `EnqueueAndMaybeStart`（`:197`），**天然支持忙碌入队**（决策 #45） |
 | 77 | 群聊的 usage 统计 | **保持现状**（usage 写成员行、群行不写）。**非缺口**：群里的 usage 进度条与 popup **整体已被 `isGroupSession` 隐藏**（`ChatInputBar.vue:316` 容器，决策 #60），故无用户可见失效；全局统计按 `chat_metadata` 逐消息聚合（`usage_stats.go:283`），群消息 metadata 正常落库 ⇒ **统计不丢**；成员行各存一份 usage 只是无人读取（无害） |
 | 78 | 群成员数上限 | **10 个活跃成员**。理由：每成员是一条独立 ACP 子进程（各带 node/npx 运行时，数百 MB 级），连接池**无上限**（`acp_pool.go` 的 `conns` 是 map）⇒ 无护栏时"加 50 个成员"可瞬间打爆内存；且 10 人以上"辩论"对模型无意义。校验放 **service 层**（唯一写入口）：`CreateGroupWithMembers` 与 `AddGroupMember`；**批量加须先算"现有活跃 + 去重后的净新增"**（`AddGroupMember` 对同 agent 幂等复用，重复添加不得算超限） |
-| 79 | 群里的 `/btw` 与 `/cb-*` 命令 | **保留现状**（不禁用）。**非缺口**：`slashCandidates`（`ChatInputBar.vue:1014`）无 `isGroupSession` 门控 ⇒ 群输入框弹命令菜单。但 `/btw` 存独立的 `btw_questions` 表**不污染群时间线**，`/cb-*` 走各自 HTTP API 与群无关 ⇒ 属**语义模糊**（`/btw` 用群行 backend 即主持人回答）而非缺陷；用户明确选择保留 |
+| 79 | 群里的 `/btw` 与 `/cb-*` 命令 | **保留，且 `/cb-*` 在群内真正生效（由主持人执行）**。~~原判断"`/cb-*` 走各自 HTTP API 与群无关"是错的~~：`/cb-*` 实为**提示词注入**（`processClawbenchCommand` 把模板拼进发给 AI 的 prompt），而群分支只落库 `req.Message`、丢弃了 prompt ⇒ 群里发 `/cb-*` 曾是**静默 no-op**。**修（B6）**：渲染出的模板**只注入本回合第一个主持人 turn 的 prompt**（`RunGroupTurnDrain` 渲染 → `runRounds` round 0 拼接），主持人的发言文本进入时间线、成员据此讨论（工具调用对成员不可见是决策 #9）；**不进时间线 content**（气泡保持用户字面原话）、**不注入给成员**（API 契约对成员是噪声）。跨包经 `service.SetRenderGroupCommandFn` ← `main.go` 注入 `handler.RenderClawbenchCommand`（service 不能 import handler）。`/btw` 不受影响（存独立表、用全局摘要模型，见 §12.7(26) 更正） |
 | 80 | 通知点击跳转 / 跨设备已读 | **无需改动**（非缺口）。桌面通知 nav 携带 `sessionId`（`notification.ts:37-43` → `clawbench-open-session`），群传群行 id ⇒ 正常跳转；Android `NativeNotificationPolicy` 是**纯 status 判定**（`isNotifiableSessionStatus`），与 `session_type` 无关 ⇒ 群 `completed`/`cancelled` 天然覆盖（**前提是决策 #72 让群回合真的发 `completed`**）；`UpdateLastRead`（`chat.go:997`）按 sessionID 更新并广播 `read`，群行同构 |
 | 81 | 中途订阅的 live run 重放 | **无需改动**（非缺口）。`GetLiveRunState`（`chat.go:2725`）按 `session_id` 查最新 `streaming=1` 行并取该行 `agent_id` 作 speaker ⇒ 群会话（session_id=群行）的流式行带**成员行 agent_id**，speaker **正确解析**。这正是决策 #59「发言中高亮」的数据源 |
 
@@ -901,8 +901,10 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 `CreateGroupWithMembers`（`group_store.go:74`）只校验 `len(specs) == 0`；`handler/group.go:142-154` 的批量加成员也不限个数。而**连接池无上限**（`acp_pool.go` 的 `conns` 是 `map[string]*ACPConn`，`minAliveConns = 3` 是**下限**不是上限）⇒ 一个 20 成员群首次讨论会 spawn 最多 20 个 ACP 子进程（各带 node/npx 运行时）。sweep 会在 5 分钟空闲后回收，但**讨论期间**是真实资源峰值，且"加 50 个成员"可瞬间打爆内存。
 **修（决策 #78）**：上限 10 个活跃成员，校验在 service 层两个写入口。
 
-**（26）`/btw` 与 `/cb-*` 在群里可用（非缺口，决策 #79）。**
-`slashCandidates`（`ChatInputBar.vue:1014-1036`）**无 `isGroupSession` 门控** ⇒ 群输入框弹命令菜单。但两者都**不破坏群时间线**：`/btw` 的问答存独立表 `btw_questions`（`btw.go:35`），`/cb-*` 走各自 HTTP API。唯一影响是**语义模糊**——`/btw` 用群行的 backend（= 主持人）回答，用户可能以为全群参与。**用户明确选择保留**（零改动）。
+**（26）`/btw` 与 `/cb-*` 在群里可用（决策 #79）。**
+`slashCandidates`（`ChatInputBar.vue:1014-1036`）**无 `isGroupSession` 门控** ⇒ 群输入框弹命令菜单。
+- **`/btw`**：问答存独立表 `btw_questions`（`btw.go:35`），由**全局 AI 摘要模型**回答（`btw.go:141` `summarize.NewAISummarizer(model.ConfigInstance.AISummary)`）——**与会话/群 backend 无关**（此处更正原"用群行 backend"的说法）。不破坏群时间线，保留。
+- **`/cb-*`**：~~"走各自 HTTP API 与群无关"~~ 是**错的**——实为**提示词注入**。群分支曾只落库 `req.Message`、丢弃已渲染的 prompt ⇒ **静默 no-op**。已修（B6，见决策 #79）：模板**只注入第一个主持人 turn**，主持人的发言文本进时间线供成员讨论，不进 content、不注入成员。
 
 **（27）通知跳转与跨设备已读经核实是群安全的（非缺口，决策 #80）。**
 - **桌面通知点击**：nav 携带 `sessionId`（`desktop/src/main/notification.ts:37-43` `channelFor` → `clawbench-open-session`），群会话传**群行 id** ⇒ 正常切到该群。

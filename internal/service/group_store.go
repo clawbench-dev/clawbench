@@ -76,16 +76,32 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	if len(specs) == 0 {
 		return "", "", fmt.Errorf("create group: no members")
 	}
-	if len(specs) > maxGroupMembers {
-		return "", "", ErrGroupMemberLimit
-	}
-	// Validate before touching the DB so a bad spec cannot even open a
-	// transaction (and no id is generated for a doomed request).
+	// Validate + DEDUPE before touching the DB. Duplicates must collapse here
+	// (not just be rejected): a member's only identity is its agent, and
+	// resolveTargets maps names through a map, so two rows for one agent leave
+	// one unreachable — a mute member that still occupies a connection and a
+	// slot, and inflates the active count toward the cap. The Web drawer is a
+	// multi-select and never sends duplicates, but POST /api/group/create takes
+	// an arbitrary array (review B2).
+	//
+	// Dedupe first so the cap counts UNIQUE agents: 10 distinct agents plus a
+	// duplicate must not be rejected as 11.
+	seen := make(map[string]bool, len(specs))
+	deduped := make([]GroupMemberSpec, 0, len(specs))
 	for _, s := range specs {
 		if s.AgentID == "" {
 			return "", "", fmt.Errorf("create group: member with empty agent id")
 		}
+		if seen[s.AgentID] {
+			continue
+		}
+		seen[s.AgentID] = true
+		deduped = append(deduped, s)
 	}
+	if len(deduped) > maxGroupMembers {
+		return "", "", ErrGroupMemberLimit
+	}
+	specs = deduped
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return "", "", idErr
@@ -435,17 +451,28 @@ func RemoveGroupMember(groupID, memberID string) error {
 	if memberID != "" && memberID == GetGroupHostMember(groupID) {
 		return ErrCannotRemoveHost
 	}
-	_, err := store.WriteExec(
-		"UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ?",
+	res, err := store.WriteExec(
+		"UPDATE chat_sessions SET archived = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND group_id = ? AND archived = 0",
 		memberID, groupID,
 	)
 	if err != nil {
 		return err
 	}
-	// Record the departure on the timeline (decision #40). Best-effort: the
-	// member is already archived, so a write failure must not surface as a
-	// failed removal. Skip when the row did not change (already left) to keep
-	// the removal idempotent without spamming the timeline.
+	// Record the departure on the timeline (decision #40) ONLY when a row
+	// actually changed. Without this check a repeated removal (already archived)
+	// or a member id belonging to a DIFFERENT group would still append a
+	// "X 已离场" row — polluting the minutes with an event about someone who did
+	// not leave THIS group, and feeding it into every member's cursor/context.
+	// The UPDATE is already scoped by group_id, so RowsAffected == 0 covers both.
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nil
+	}
+	// Best-effort: the member is already archived, so a write failure must not
+	// surface as a failed removal.
 	if name := memberDisplayName(memberID); name != "" {
 		text := name + " 已离场"
 		if msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text); err != nil {

@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -742,4 +743,33 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b[i:])
+}
+
+// RenderClawbenchCommand is the exported wrapper main.go injects into the
+// service layer for GROUP host prompts. It must delegate to
+// processClawbenchCommand unchanged: a non-command returns the input verbatim
+// (the caller treats "unchanged" as "no injection"), and a /cb-task returns the
+// rendered template.
+func TestRenderClawbenchCommand_Wrapper(t *testing.T) {
+	// Non-command: returned unchanged.
+	got, err := RenderClawbenchCommand("hello world", "/project", "sess-1")
+	require.NoError(t, err)
+	require.Equal(t, "hello world", got)
+
+	// A built-in command: rendered (differs from the input).
+	got, err = RenderClawbenchCommand("/cb-task daily build", "/project", "sess-1")
+	require.NoError(t, err)
+	require.NotEqual(t, "/cb-task daily build", got)
+	require.Contains(t, got, "/api/")
+}
+
+// Source guard: main.go must wire the group /cb-* renderer. The service layer
+// holds the seam but cannot see the handler implementation, so if the wiring
+// line is ever dropped the group injection silently stops working — exactly the
+// class of "tests pass while the feature is gone" defect this batch fixes.
+func TestMainWiresGroupCommandRenderer(t *testing.T) {
+	src, err := os.ReadFile("../../cmd/server/main.go")
+	require.NoError(t, err)
+	require.Contains(t, string(src), "service.SetRenderGroupCommandFn(handler.RenderClawbenchCommand)",
+		"main.go must wire the group /cb-* renderer into the service layer")
 }

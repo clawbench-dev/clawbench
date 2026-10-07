@@ -41,7 +41,9 @@ type ParticipantInfo struct {
 //     would invite the member to imitate `<clawbench-speaker>`. Only the tag's
 //     background survives; an unparseable tag is kept verbatim.
 //
-// User messages are rendered as "用户: ..."; member speech as "<name>: ...".
+// User messages are rendered as "用户: ..."; member speech as "<name>: ...";
+// membership changes (role='system') as "[系统] ..." so they are never mistaken
+// for user speech.
 func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, hostID string) string {
 	var b strings.Builder
 	if header := participantHeader(roster); header != "" {
@@ -57,6 +59,18 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		}
 		text := strings.TrimSpace(ExtractPlainText(m.Content))
 		if text == "" {
+			continue
+		}
+		// A role='system' row is a membership change (decisions #40/#43): its
+		// agent_id is "" by design, so it must be checked BEFORE the user branch
+		// — otherwise the `AgentID == ""` fallback below captures it and tells
+		// the reader the USER said "Claude 加入了讨论". The host routes from this
+		// context, so mis-attributing a membership event as user speech corrupts
+		// its decisions. Rendered as a neutral, clearly-labeled line.
+		if m.Role == "system" {
+			b.WriteString("[系统] ")
+			b.WriteString(text)
+			b.WriteString("\n")
 			continue
 		}
 		if m.Role == "user" || m.AgentID == "" {

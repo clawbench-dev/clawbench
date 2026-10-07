@@ -203,7 +203,8 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	// and a group turn is potentially multi-minute; blocking it would stall the
 	// bot stream. Attachments are supported (decision #65).
 	if GetSessionType(sessionID) == "group" {
-		return enqueueGroupFromPush(sessionID, message, files, queueID)
+		_, err := EnqueueGroupMessage(sessionID, message, files, queueID)
+		return err
 	}
 
 	// Persist the message + start execution or signal the running drain loop.
@@ -222,10 +223,12 @@ func sendMessageToSessionFromPush(sessionID, message string, files []model.FileE
 	return err
 }
 
-// newPushQueueID mints a queue id for a message that arrives from an IM
-// backend, which (unlike the web client) has no queue id of its own.
+// newPushQueueID mints a queue id for a caller that has no client-supplied one:
+// an IM backend, or EnqueueGroupMessage (the shared group entry used by both the
+// IM path and POST /api/ai/queue). The web client always sends its own queueId,
+// so this is only the fallback.
 //
-// The format mirrors newQueueID so ids from both paths look alike; uniqueness
+// The format mirrors NewQueueID so ids from both paths look alike; uniqueness
 // comes from the timestamp plus a monotonic counter, not from randomness, so a
 // burst of messages cannot collide on a coarse clock.
 func newPushQueueID() string {
@@ -524,22 +527,27 @@ func EnqueueAndMaybeStart(cfg EnqueueStartConfig) (started bool, msgID int64, er
 	return false, 0, nil
 }
 
-// enqueueGroupFromPush is the group counterpart of EnqueueAndMaybeStart for the
-// IM path (decisions #45/#75/#76). It inserts the message into the queue and:
+// EnqueueGroupMessage is the group counterpart of EnqueueAndMaybeStart, shared
+// by the IM path (decisions #45/#75/#76) and the queue endpoint (POST
+// /api/ai/queue, decision #45). It inserts the message into the queue and:
 //
 //   - idle: claims the group, materializes the row, and launches the group
-//     drain loop in a goroutine (the IM callback is synchronous and a group turn
-//     is potentially multi-minute);
+//     drain loop in a goroutine (a group turn is potentially multi-minute);
 //   - busy: marks the running group's loop as having pending work and returns —
 //     that loop claims and materializes this message, exactly like single chat.
 //
 // Doing this through the queue (rather than calling the orchestrator directly)
 // is what makes a message sent while a group turn runs QUEUE instead of
-// starting a second concurrent orchestrator.
-func enqueueGroupFromPush(sessionID, message string, files []model.FileEntry, queueID string) error {
+// starting a second concurrent orchestrator. started reports which branch was
+// taken, matching EnqueueAndMaybeStart's contract.
+//
+// The name no longer says "FromPush": the queue endpoint is not a push path, and
+// naming it after one caller invited exactly the gap where /api/ai/queue ran a
+// host-only single-agent turn for a group (review B3).
+func EnqueueGroupMessage(sessionID, message string, files []model.FileEntry, queueID string) (started bool, err error) {
 	info := GetSessionFullInfo(sessionID)
 	if info == nil {
-		return fmt.Errorf("session %s not found", sessionID)
+		return false, fmt.Errorf("session %s not found", sessionID)
 	}
 	effectiveQueueID := queueID
 	if effectiveQueueID == "" {
@@ -547,7 +555,7 @@ func enqueueGroupFromPush(sessionID, message string, files []model.FileEntry, qu
 	}
 	queueRowID, err := AddQueuedMessage(info.ProjectPath, info.Backend, sessionID, message, files, effectiveQueueID, "")
 	if err != nil {
-		return err
+		return false, err
 	}
 	runCtx, created := TryClaimSessionRun(sessionID)
 	if !created {
@@ -561,23 +569,23 @@ func enqueueGroupFromPush(sessionID, message string, files []model.FileEntry, qu
 				Files:   files,
 			},
 		})
-		return nil
+		return false, nil
 	}
 	row, matMsgID, ok, cerr := ClaimByIDAndMaterialize(sessionID, queueRowID)
 	if cerr != nil || !ok {
 		// The row vanished (concurrent cancel/clear). Release the claim so the
 		// session is not stranded as running with nothing consuming it.
-		slog.Warn("push: group queued row vanished before materialize",
+		slog.Warn("group: queued row vanished before materialize",
 			slog.String("session", sessionID), slog.Int64("queue_row_id", queueRowID), slog.Any("error", cerr))
 		FinishSessionRun(sessionID)
-		return fmt.Errorf("group queued message could not be materialized")
+		return false, fmt.Errorf("group queued message could not be materialized")
 	}
 	emitUserMessage(sessionID, matMsgID, row)
 	go func() {
 		defer FinishSessionRun(sessionID)
 		runGroupDrainLoopFn(runCtx, sessionID, info.ProjectPath, matMsgID, row.Content, row.Files)
 	}()
-	return nil
+	return true, nil
 }
 
 // runGroupDrainLoopFn is the injectable indirection over RunGroupDrainLoop, so

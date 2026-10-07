@@ -933,6 +933,10 @@ paths:
         **群回合运行中再发消息会入队**（决策 #45），与单聊一致：响应带
         `queued:true, running:true`，由运行中的 drain loop 依次取用；
         **不会**并发起第二个编排器（两个群回合交错会打乱成员发言顺序）。
+
+        **群里的内置命令（`/cb-*`）**（决策 #79）：渲染出的提示词模板只注入
+        本回合**第一个主持人**的 prompt，由主持人执行并把结果作为其发言写入时间线
+        （成员据此讨论）；**不写进 `content`**、**不注入给成员**。
       operationId: chatSend
       parameters:
         - name: session_id
@@ -5225,7 +5229,7 @@ paths:
       summary: 移除群成员（软删除，保留其历史发言）
       description: |
         主持人**不可移除**（`409`）——它是群唯一的调度者，移除后群无法再起回合。
-        需先转移主持人（`PATCH /api/group/settings`）。
+        （v1 不提供更换主持人的入口；如需换人请另建群。）
       operationId: groupMembersRemove
       responses:
         "200":

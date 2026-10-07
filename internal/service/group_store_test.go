@@ -990,3 +990,132 @@ func systemMessages(t *testing.T, groupID string) []model.ChatMessage {
 	}
 	return out
 }
+
+// Removing the same member twice must write the departure event only ONCE. The
+// second call changes no row (already archived), so a second "已离场" row would
+// be pure timeline noise — and it counts toward every member's cursor, so it
+// gets injected into their context too.
+func TestRemoveGroupMember_RepeatedRemovalWritesOneEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "讨论组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	memberID, err := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	before := len(systemMessages(t, groupID))
+
+	if err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("first RemoveGroupMember: %v", err)
+	}
+	if err := RemoveGroupMember(groupID, memberID); err != nil {
+		t.Fatalf("second RemoveGroupMember: %v", err)
+	}
+
+	after := len(systemMessages(t, groupID))
+	if after != before+1 {
+		t.Fatalf("repeated removal must write exactly one departure event: before=%d after=%d", before, after)
+	}
+}
+
+// Removing a member id that belongs to a DIFFERENT group must not write an
+// event into this group's timeline. The UPDATE is scoped by group_id so it
+// changes no row here, and without a RowsAffected check the old code still
+// appended "X 已离场" — naming a member who was never in this group and
+// polluting its minutes.
+func TestRemoveGroupMember_CrossGroupRemovalWritesNoEvent(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/grouptest"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupA, _, err := CreateGroup(project, "A组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup A: %v", err)
+	}
+	groupB, _, err := CreateGroup(project, "B组", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup B: %v", err)
+	}
+	// A member of B, removed via A's id.
+	memberB, err := AddGroupMember(project, groupB, "claude", "agent-a", "A")
+	if err != nil {
+		t.Fatalf("AddGroupMember: %v", err)
+	}
+	before := len(systemMessages(t, groupA))
+
+	// Must not error and must not touch A's timeline.
+	_ = RemoveGroupMember(groupA, memberB)
+
+	after := len(systemMessages(t, groupA))
+	if after != before {
+		t.Fatalf("a cross-group removal must not write an event into group A: before=%d after=%d", before, after)
+	}
+	// And B's member must remain active (A's UPDATE is scoped by group_id).
+	members, err := ListGroupMembers(groupB)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	found := false
+	for _, m := range members {
+		if m.ID == memberB {
+			found = true
+			if m.Left {
+				t.Fatal("a cross-group removal must not archive the member in its real group")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the member row must still exist in group B")
+	}
+}
+
+// CreateGroupWithMembers must DEDUPE by agent id, exactly like AddGroupMember.
+// A member's only identity is its agent: the routing tag addresses members by
+// NAME and resolveTargets maps names through a map, so two rows for the same
+// agent leave one of them unreachable (a "mute" member that occupies a
+// connection and a slot but can never be spoken to). It also inflates the
+// active count toward the 10-member cap.
+//
+// The Web drawer is multi-select (a Set), so it never sends duplicates — but
+// POST /api/group/create accepts an arbitrary array, and that is the reachable
+// path.
+func TestCreateGroupWithMembers_DedupesAgents(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/groupdedup-create"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+
+	specs := []GroupMemberSpec{
+		{AgentID: "agent-host", Backend: "codebuddy", DisplayName: "Host"},
+		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
+		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
+		{AgentID: "agent-a", Backend: "claude", DisplayName: "A"},
+	}
+	groupID, hostMemberID, err := CreateGroupWithMembers(project, "讨论组", "agent-host", specs)
+	if err != nil {
+		t.Fatalf("CreateGroupWithMembers: %v", err)
+	}
+	if hostMemberID == "" {
+		t.Fatal("host member must be resolved")
+	}
+
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("ListGroupMembers: %v", err)
+	}
+	if got := countAgentRows(members, "agent-a"); got != 1 {
+		t.Fatalf("duplicate agent ids must collapse to one row, got %d", got)
+	}
+	// 1 host + 1 unique member = 2 rows total.
+	if len(members) != 2 {
+		t.Fatalf("want 2 member rows (host + A), got %d", len(members))
+	}
+}

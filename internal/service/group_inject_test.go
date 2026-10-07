@@ -175,7 +175,9 @@ func TestBuildMemberInjection_ExcludesWarningBlocks(t *testing.T) {
 
 // A message that mixes real content with a warning block must still be injected
 // (only PURE-warning messages are excluded) — otherwise a backend that appends
-// a warning to a real reply would lose that reply.
+// a warning to a real reply would lose that reply. The warning half must NOT be
+// injected (decision #70): asserting only the positive half would let a
+// regression that injects the warning pass unnoticed.
 func TestBuildMemberInjection_KeepsMixedContent(t *testing.T) {
 	mixed := `{"blocks":[{"type":"text","text":"my answer"},{"type":"warning","text":"truncated"}]}`
 	msgs := []model.ChatMessage{
@@ -184,6 +186,9 @@ func TestBuildMemberInjection_KeepsMixedContent(t *testing.T) {
 	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
 	if !strings.Contains(got, "my answer") {
 		t.Fatalf("a mixed message's real content must be injected: %q", got)
+	}
+	if strings.Contains(got, "truncated") {
+		t.Fatalf("a mixed message's warning half must NOT be injected (decision #70): %q", got)
 	}
 }
 
@@ -271,5 +276,38 @@ func TestBuildMemberInjection_NoAttachmentNoPrefix(t *testing.T) {
 	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
 	if strings.Contains(got, "User uploaded") {
 		t.Fatalf("a message without attachments must not gain an attachment header: %q", got)
+	}
+}
+
+// A role='system' timeline row (a membership change, decision #40/#43) must be
+// rendered as a neutral event line, NOT as user speech. Its agent_id is "" by
+// design (decision #43), so the old "Role==user || AgentID==""" branch captured
+// it and rendered "用户: Claude 加入了讨论" — telling the host a member-change was
+// something the USER said, which is exactly the input it routes from.
+func TestBuildMemberInjection_SystemEventIsNotUserSpeech(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "system", AgentID: "", Content: `{"blocks":[{"type":"text","text":"Claude 加入了讨论"}]}`},
+	}
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
+	if strings.Contains(got, "用户:") {
+		t.Fatalf("a system event must not be rendered as user speech: %q", got)
+	}
+	if !strings.Contains(got, "Claude 加入了讨论") {
+		t.Fatalf("the system event text must survive: %q", got)
+	}
+	if !strings.Contains(got, "系统") {
+		t.Fatalf("a system event must be labeled as such: %q", got)
+	}
+}
+
+// A real user message must still render as user speech (the system fix must not
+// break the normal path).
+func TestBuildMemberInjection_UserMessageStillUser(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "user", AgentID: "", Content: `{"blocks":[{"type":"text","text":"请讨论"}]}`},
+	}
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
+	if !strings.Contains(got, "用户: 请讨论") {
+		t.Fatalf("a user message must render as 用户: ...: %q", got)
 	}
 }

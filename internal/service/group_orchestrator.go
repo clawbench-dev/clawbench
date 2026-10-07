@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime/debug"
 	"strings"
 	"sync"
 
@@ -39,11 +40,6 @@ type groupTurnRunner func(ctx context.Context, groupID string, turn groupMemberT
 type GroupOrchestrator struct {
 	groupID string
 	project string
-	// queueID / senderClientID identify the sending device's optimistic bubble
-	// so the user_message echo lets it adopt the DB id instead of rendering a
-	// duplicate. Empty for turns not initiated by a client send.
-	queueID        string
-	senderClientID string
 	// runTurn is injectable for tests; nil means the production runTurn path.
 	runTurn groupTurnRunner
 	// fallbackIdx is the round-robin cursor for the parse-failure fallback, so
@@ -53,6 +49,12 @@ type GroupOrchestrator struct {
 	// parseFailures counts consecutive unparseable host routings. Reset by a
 	// usable decision; reaching maxConsecutiveParseFailures ends the turn.
 	parseFailures int
+	// commandInjection is the rendered /cb-* prompt template for THIS turn (the
+	// drained message). It is prepended to the FIRST host turn only, so the host
+	// executes the built-in command once and its spoken result enters the
+	// timeline for the members to discuss. Empty = the message was not a
+	// built-in command (or no renderer is wired).
+	commandInjection string
 }
 
 // maxConsecutiveParseFailures is how many unparseable host routings in a row
@@ -75,58 +77,37 @@ func GetSessionProjectPathAnyPath(sessionID string) string {
 	return p
 }
 
-// RunGroupTurn executes one full group turn for userMessage.
-//
-// It is intentionally sequential (v1): members speak one at a time so each sees
-// the previous speakers' same-round output and only one streaming row is written
-// to the group timeline at any moment.
-func (o *GroupOrchestrator) RunGroupTurn(ctx context.Context, userMessage string, files []model.FileEntry) error {
-	groupID := o.groupID
-
-	// Register the group as running with a cancelable context so a frontend
-	// "stop" on the group session (CancelSession(groupID)) propagates into the
-	// member turns, whose TurnSpec.Ctx is derived from groupCtx. Without this a
-	// stop would only cancel a group placeholder runner that does not exist.
-	groupCtx, groupCancel := context.WithCancel(ctx)
-	defer groupCancel()
-	RegisterExternalExecution(groupCtx, groupCancel, groupID)
-	SetSessionRunning(groupID, true, true)
-	defer SetSessionRunning(groupID, false, true)
-
-	// 1. Persist the user message to the group timeline and broadcast it.
-	// Attachments are stored on the row (decision #65): the bubble renders them
-	// via `files`, and the injection layer renders them as prompt prefixes.
-	msgID, err := AddChatMessageWithAgent(o.project, groupBackend(groupID), groupID, "user", userMessage, files, false, "", "")
-	if err != nil {
-		return fmt.Errorf("persist group user message: %w", err)
-	}
-	emitGroupUserMessage(groupID, msgID, userMessage, o.queueID, o.senderClientID)
-
-	// 2. Run the loop, then emit the terminal event ourselves: this is the
-	// STANDALONE entry point (a client send that claimed the session), so nobody
-	// else will send "done". The drain entry point (RunGroupTurnDrain) skips
-	// this and lets RunDrainLoop own the terminal.
-	o.runLoop(groupCtx, groupID)
-	emitGroupTerminal(groupID)
-	return nil
-}
-
 // RunGroupTurnDrain runs one group turn for a message the drain loop already
-// materialized. It differs from RunGroupTurn in exactly two ways, both required
-// for the drain loop to own the turn lifecycle (decision #45/#58):
+// materialized, and returns a DrainResult the loop uses to decide whether to
+// continue.
 //
-//   - It does NOT persist or announce the user message: ClaimNextAndMaterialize
-//     already wrote the chat_history row and emitted user_message, so doing it
-//     again would duplicate both.
-//   - It does NOT emit a terminal event: RunDrainLoop decides when the whole
-//     queue is drained and sends "done" exactly once, then.
+// It is the SINGLE production entry point for a group turn (decision #45/#58):
+// the HTTP handler and the IM path both drive it through RunGroupDrainLoop. It
+// deliberately does NOT persist/announce the user message (ClaimNextAndMaterialize
+// already wrote the chat_history row and emitted user_message) and does NOT emit
+// a terminal event — RunDrainLoop decides when the whole queue is drained and
+// sends "done" exactly once, then.
 //
-// It returns a DrainResult the loop uses to decide whether to continue.
+// There is no standalone counterpart: an earlier RunGroupTurn entry owned its
+// own running state and terminal event, but once both the handler and the IM
+// path moved onto this drain entry it became unreachable — and with it the
+// terminal responsibilities it carried (see runLoop). It was deleted rather
+// than left as a second, silently-dead path (review C1 / N3).
 func RunGroupTurnDrain(ctx context.Context, groupID string, msgID int64, row QueuedRow, runner groupTurnRunner) DrainResult {
 	o := NewGroupOrchestrator(groupID)
 	if runner != nil {
 		o.runTurn = runner
+	} else if groupDrainRunnerOverride != nil {
+		// Test-only: lets a test exercise the REAL production chain with only
+		// the backend stubbed (see groupDrainRunnerOverride).
+		o.runTurn = groupDrainRunnerOverride
 	}
+	// A built-in /cb-* command rides in the HOST's first prompt only: the host
+	// (which owns routing and speaks to the group) runs the command and reports
+	// the result as its speech, and the members discuss that. It is NOT injected
+	// into the timeline content (the bubble keeps the user's literal text) and
+	// NOT injected to members (the API contract is noise to them, decision #9).
+	o.commandInjection = renderGroupCommandForHost(row.Content, o.project, groupID)
 	// NOTE: no running-state management here. The caller (the HTTP handler via
 	// TryClaimSessionRun, or the drain loop) already owns the runner and the
 	// running flag for the whole queued run. Registering a second, per-message
@@ -138,11 +119,65 @@ func RunGroupTurnDrain(ctx context.Context, groupID string, msgID int64, row Que
 	return o.runLoop(ctx, groupID)
 }
 
-// runLoop executes the host/member rounds and returns the outcome WITHOUT
-// emitting any terminal event or touching the session's running state — both
-// belong to the caller (standalone vs drain). groupCtx cancellation is reported
-// as a user cancel.
+// renderGroupCommandForHost returns the rendered /cb-* template for a message,
+// or "" when the message is not a built-in command (the renderer returns the
+// input unchanged) or no renderer is wired. A render error is logged and
+// treated as "no injection" — the turn must still run, with the user's literal
+// text visible in the injected context.
+func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
+	if rawMsg == "" || renderGroupCommandFn == nil {
+		return ""
+	}
+	injected, err := renderGroupCommandFn(rawMsg, projectPath, groupID)
+	if err != nil {
+		slog.Warn("group: /cb-* render failed, running the turn without injection",
+			"group", groupID, "err", err)
+		return ""
+	}
+	if injected == rawMsg {
+		return "" // not a built-in command
+	}
+	return injected
+}
+
+// runLoop executes one group turn and performs its per-turn finalization,
+// returning the outcome. It emits NO terminal event and does NOT touch the
+// session's running state — the drain loop (RunGroupDrainLoop) owns both, so a
+// run spanning several queued messages sends "done" exactly once.
+//
+// The finalization runs on EVERY exit path (cancel, abort, end, round cap,
+// error), which is why it lives here rather than in each branch:
+//
+//   - finalizeGroupOrphans closes a streaming row left open by a Finalize that
+//     itself failed. Without it a reload after the turn renders a phantom
+//     streaming bubble that never ends (decision #71).
+//   - triggerChatSummarization summarizes the discussion ONCE. Member turns
+//     deliberately skip summarization (their Finalize writes to the GROUP
+//     timeline, so running it per member would summarize every member's reply —
+//     decision #55), which makes this the only place it happens. It is also the
+//     only caller of triggerChatRecommendation, so skipping it here means a
+//     group never produces a recommendation chip.
+//
+// Summarizing on the CANCEL path too is deliberate and matches single chat: its
+// Finalize still finalizes the partial reply (FinalizeCancelledStreamingMessage
+// returns a non-zero id), so `if msgID > 0` still calls triggerChatSummarization.
+// (Verified against TestSessionExecutor_Finalize_UserCancelLeavesCompletedAtNull.)
+//
+// The summarizer is synchronous and DB-only — its sole LLM call (the
+// recommendation) is already detached into a goroutine — so it runs after the
+// rounds return but before the caller can send "done", matching single chat
+// where Finalize summarizes before the terminal event.
 func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) DrainResult {
+	res := o.runRounds(groupCtx, groupID)
+	finalizeGroupOrphans(groupID)
+	triggerChatSummarization(context.Background(), groupID)
+	return res
+}
+
+// runRounds is the host/member decision loop, without the per-turn
+// finalization (see runLoop). groupCtx cancellation is reported as a user
+// cancel.
+func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) DrainResult {
 	// Resolve the host and member roster.
 	hostMemberID := GetGroupHostMember(groupID)
 	if hostMemberID == "" {
@@ -183,6 +218,13 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 		// Host speaks and routes.
 		hostCursor := GetMemberCursor(hostMemberID)
 		hostPrompt := o.hostPrompt(hostMemberID, hostCursor, names, members)
+		// Prepend the rendered /cb-* template to the FIRST host turn only
+		// (decision #79 revision): the host executes the built-in command once
+		// and its spoken result enters the timeline for the members to discuss.
+		// Injecting on every round would re-run the command each round.
+		if round == 0 && o.commandInjection != "" {
+			hostPrompt = o.commandInjection + "\n\n" + hostPrompt
+		}
 		hostRes := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: hostPrompt, IsHost: true})
 		if hostRes.Err == "" {
 			// Advance only on success: the cursor means "has processed up to
@@ -251,41 +293,21 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	return DrainResult{}
 }
 
-// emitGroupTerminal finalizes a group turn for the frontend. runTurn
-// deliberately emits no terminal WS event (the caller owns it), so without this
-// the last member's streaming bubble would stay "streaming" forever and the
-// session would never leave the running state. Mirrors the single-agent
-// handler: clear running first (so a loadHistory triggered by "done" sees the
-// terminal state), then emit "done" and the terminal "completed" update.
-//
-// It is a var seam so tests can observe the terminal contract without a WS hub.
-//
-// Before announcing the terminal state it finalizes any streaming row still
-// open on the group timeline. That is a safety net for a Finalize that itself
-// failed (a DB write error): without it the row stays streaming=1 forever and
-// the next reload renders a phantom bubble that never ends. It is NOT a race
-// guard — every caller runs after the turn's runner returned, so no member turn
-// is still in flight (design §12.7(19)).
-var emitGroupTerminal = func(groupID string) {
-	finalizeOrphanedStreamingMessages(groupID, "interrupt")
-	// Summarize the whole discussion ONCE here (decision #55). Member turns
-	// deliberately skip summarization, so without this a group turn would
-	// produce no reading summaries at all.
-	triggerChatSummarization(context.Background(), groupID)
-	SetSessionRunning(groupID, false, true)
-	ws.EmitToSession(groupID, ai.StreamEvent{Type: eventTypeDone})
-	// Broadcast the terminal status so every client clears the running flag,
-	// even those that missed the stream-level "done".
-	EmitSessionEventWSOnly(groupID, "completed", false)
-}
-
 // summarize runs the host once more with the summary-only prompt. The host's
 // routing tags in this turn are ignored (never parsed).
 func (o *GroupOrchestrator) summarize(ctx context.Context, runner groupTurnRunner, hostMemberID string, names map[string]string, members []GroupMember) {
 	cursor := GetMemberCursor(hostMemberID)
 	prompt := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "") + BuildHostSummaryPrompt(activeMemberNamesExcept(members, hostMemberID))
-	runner(ctx, o.groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: prompt, IsHost: true})
-	SetMemberCursor(hostMemberID, GroupTimelineHighWater(o.groupID))
+	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: prompt, IsHost: true})
+	// Advance only on success (decision #69) — same rule as the other three
+	// cursor sites. A failed summary turn processed nothing, so advancing would
+	// make the context it just received permanently unreachable for the host,
+	// which routes from what it has seen.
+	if res.Err == "" {
+		SetMemberCursor(hostMemberID, GroupTimelineHighWater(o.groupID))
+	} else {
+		slog.Warn("group: summary host turn failed", "group", o.groupID, "err", res.Err)
+	}
 }
 
 // hostPrompt builds the host's turn prompt: the incremental group context plus
@@ -415,8 +437,8 @@ func (o *GroupOrchestrator) buildMemberTurnSpec(ctx context.Context, groupID str
 // placeholder stays streaming, so the next member's stream_start finds an
 // existing streaming message and never opens a new bubble — the reported
 // "other agents don't stream at all until you switch sessions". The whole-group
-// "done" (emitted once by emitGroupTerminal) is a different event: it also
-// clears loading and ends the run, so it cannot be used per member.
+// "done" (emitted once by the drain loop's markDoneAndSendFinal) is a different
+// event: it also clears loading and ends the run, so it cannot be used per member.
 func (o *GroupOrchestrator) defaultRunner(ctx context.Context, groupID string, turn groupMemberTurn) groupMemberResult {
 	res := runTurn(o.buildMemberTurnSpec(ctx, groupID, turn))
 	emitGroupMemberFinalize(groupID, res.MsgID)
@@ -440,19 +462,6 @@ var emitGroupMemberFinalize = func(groupID string, msgID int64) {
 		Type:         "stream_finalize",
 		StreamFinish: &ai.StreamFinishData{MessageID: msgID},
 	})
-}
-
-// RunGroupTurnForSession runs one group turn for the given group session. It is
-// the entry point used by the HTTP handler's group delegation. queueID and
-// senderClientID are the sending device's optimistic-bubble identifiers (may be
-// empty); they travel on the user_message echo so the sender adopts the DB id.
-// files are the message's attachments (decision #65) — persisted on the user
-// message and rendered into each member's injected context.
-func RunGroupTurnForSession(ctx context.Context, groupID, userMessage string, files []model.FileEntry, queueID, senderClientID string) error {
-	o := NewGroupOrchestrator(groupID)
-	o.queueID = queueID
-	o.senderClientID = senderClientID
-	return o.RunGroupTurn(ctx, userMessage, files)
 }
 
 // --- small helpers ---
@@ -507,27 +516,12 @@ func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[str
 }
 
 // finalizeGroupOrphans closes any streaming=1 rows left on the group timeline
-// by a previous crashed/aborted group turn, so they do not surface as phantom
-// streaming bubbles on reload (review C1 residual). Uses the group session as
-// the orphan-finalize target.
+// by a group turn whose Finalize failed, so they do not surface as phantom
+// streaming bubbles on reload (decision #71). Uses the group session as the
+// orphan-finalize target. Called at the end of every group turn (runLoop) —
+// both after the previous crashed turn (a stale row) and after this one.
 func finalizeGroupOrphans(groupID string) {
 	finalizeOrphanedStreamingMessages(groupID, "interrupt")
-}
-
-// emitGroupUserMessage broadcasts a persisted group user message to the group's
-// subscribers. It is a seam (var) so tests can observe without the WS hub.
-// queueID/senderClientID let the sending device adopt the DB id instead of
-// rendering a duplicate bubble (same contract as the single-agent path).
-var emitGroupUserMessage = func(groupID string, msgID int64, text, queueID, senderClientID string) {
-	ws.EmitToSession(groupID, ai.StreamEvent{
-		Type: eventTypeUserMessage,
-		UserMessage: &ai.UserMessageData{
-			MessageID:      msgID,
-			Content:        text,
-			QueueID:        queueID,
-			SenderClientID: senderClientID,
-		},
-	})
 }
 
 // --- ACP idle-sweep protection for group members (decision #73) ---
@@ -597,8 +591,8 @@ func IsSessionRunningForSweep(sessionID string) bool {
 
 // emitGroupSystemMessage broadcasts a persisted role='system' timeline row to
 // the group's subscribers so a membership change appears immediately (decisions
-// #40/#43). Like emitGroupUserMessage it is a seam (var) so tests can observe
-// without the WS hub. msgID is the chat_history row id; the frontend dedups on
+// #40/#43). It is a seam (var) so tests can observe without the WS hub. msgID
+// is the chat_history row id; the frontend dedups on
 // it, so a duplicate delivery cannot render the row twice.
 var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 	ws.EmitToSession(groupID, ai.StreamEvent{
@@ -617,14 +611,24 @@ var emitGroupSystemMessage = func(groupID string, msgID int64, text string) {
 //
 // The drain loop — not the orchestrator — owns the terminal event: the group
 // turn returns a DrainResult and RunDrainLoop sends "done" exactly once when
-// the whole queue is empty. That is why the orchestrator's own standalone entry
-// (RunGroupTurn) emits the terminal itself while this one does not.
+// the whole queue is empty. RunGroupTurnDrain deliberately emits nothing
+// terminal, so this is the only place a group run ends.
 //
 // runCtx is the claim's context (from TryClaimSessionRun or the enqueue path),
 // so CancelSession reaches every member turn. The caller is responsible for
 // FinishSessionRun; this function does not touch the running flag, because the
 // drain loop's MarkDoneAndSendFinal owns that transition.
+//
+// A panic barrier wraps the whole run: a group turn runs N members × maxRounds
+// turns through runTurn, and a panic anywhere in that chain (a nil deref, a
+// backend SDK panic its own recover does not cover) would otherwise unwind the
+// caller's goroutine and — because it is an uncaught panic in a goroutine —
+// terminate the whole process, dropping every session, task and WS connection.
+// Single chat has the same protection (handler/chat.go's AI goroutine,
+// handleSessionPanic). This is a net, not a substitute for fixing panics.
 func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firstMsgID int64, firstText string, firstFiles []model.FileEntry) {
+	defer recoverGroupDrainPanic(groupID, projectPath)
+
 	markDoneAndSendFinal := func(event ai.StreamEvent) {
 		// Clear running BEFORE the terminal event so a loadHistory triggered by
 		// "done" cannot see running=true and reconnect in a loop.
@@ -638,7 +642,7 @@ func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firs
 		}
 	}
 
-	first := RunGroupTurnDrain(runCtx, groupID, firstMsgID,
+	first := runGroupTurnDrainFn(runCtx, groupID, firstMsgID,
 		QueuedRow{SessionID: groupID, Content: firstText, Files: firstFiles}, nil)
 
 	RunDrainLoop(DrainConfig{
@@ -646,7 +650,7 @@ func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firs
 		ProjectPath: projectPath,
 		BackendName: GetSessionBackend(groupID),
 		ExecuteRunWithMessage: func(msgID int64, row QueuedRow) DrainResult {
-			return RunGroupTurnDrain(runCtx, groupID, msgID, row, nil)
+			return runGroupTurnDrainFn(runCtx, groupID, msgID, row, nil)
 		},
 		// Each intermediate answer in a multi-message group drain is its own
 		// completed turn: notify now, not once at the very end (decision #72).
@@ -655,4 +659,88 @@ func RunGroupDrainLoop(runCtx context.Context, groupID, projectPath string, firs
 		},
 		MarkDoneAndSendFinal: markDoneAndSendFinal,
 	}, first)
+}
+
+// runGroupTurnDrainFn is the injectable indirection over RunGroupTurnDrain so
+// tests can drive RunGroupDrainLoop (and its push contract, decision #72)
+// without running a real orchestrator/backend.
+//
+// NOTE: replacing this wholesale bypasses the production orchestration path, so
+// the tests that use it do NOT cover "the real RunGroupTurnDrain runs". That is
+// covered separately via groupDrainRunnerOverride below.
+var runGroupTurnDrainFn = RunGroupTurnDrain
+
+// SetRunGroupTurnDrainForTest swaps the group-turn-runner seam and returns the
+// previous one. Pass nil to restore the default.
+func SetRunGroupTurnDrainForTest(fn func(context.Context, string, int64, QueuedRow, groupTurnRunner) DrainResult) func(context.Context, string, int64, QueuedRow, groupTurnRunner) DrainResult {
+	prev := runGroupTurnDrainFn
+	if fn == nil {
+		runGroupTurnDrainFn = RunGroupTurnDrain
+	} else {
+		runGroupTurnDrainFn = fn
+	}
+	return prev
+}
+
+// groupDrainRunnerOverride, when non-nil, replaces the per-member runner that
+// RunGroupTurnDrain uses. It exists so a test can drive the REAL production
+// chain (RunGroupDrainLoop → RunGroupTurnDrain → runLoop → member turns) with
+// only the backend stubbed, instead of replacing the whole orchestrator via
+// runGroupTurnDrainFn. Nil in production (member turns go through defaultRunner).
+var groupDrainRunnerOverride groupTurnRunner
+
+// SetGroupDrainRunnerForTest swaps the per-member runner override and returns
+// the previous one. Pass nil to restore the default (real runTurn).
+func SetGroupDrainRunnerForTest(fn groupTurnRunner) groupTurnRunner {
+	prev := groupDrainRunnerOverride
+	groupDrainRunnerOverride = fn
+	return prev
+}
+
+// renderGroupCommandFn renders a ClawBench built-in command's (/cb-*) prompt
+// template for a group's HOST turn. It is injected by main.go from the handler
+// package, which owns the OpenAPI-rendered templates, because the orchestrator
+// (service) cannot import handler (that would be a cycle). Same pattern as
+// SetPersistBingStateFn / SetSessionRunningChecker.
+//
+// Contract: for a non-command input it returns the input unchanged, and the
+// caller treats "unchanged" as "no injection". Nil disables injection entirely.
+var renderGroupCommandFn func(rawMsg, projectPath, sessionID string) (string, error)
+
+// SetRenderGroupCommandFn wires the /cb-* renderer for group host prompts and
+// returns the previous one. Pass nil to disable. Called once from main.go;
+// tests use the return value to restore.
+func SetRenderGroupCommandFn(fn func(rawMsg, projectPath, sessionID string) (string, error)) func(rawMsg, projectPath, sessionID string) (string, error) {
+	prev := renderGroupCommandFn
+	renderGroupCommandFn = fn
+	return prev
+}
+
+// recoverGroupDrainPanic is the panic barrier for a group drain run (see
+// RunGroupDrainLoop). It is a named function so tests can drive it directly by
+// panicking inside a deferred call. Mirrors handleSessionPanic's terminal
+// cleanup: clear the runner, surface an error, notify, and close any streaming
+// row left open so the group does not reload into a phantom bubble.
+func recoverGroupDrainPanic(groupID, projectPath string) {
+	if r := recover(); r != nil {
+		slog.Error("group drain loop panicked",
+			slog.String("session", groupID),
+			slog.Any("panic", r),
+			slog.String("stack", string(debug.Stack())))
+		FinishSessionRun(groupID)
+		emitDrainEvent(groupID, ai.StreamEvent{
+			Type:   eventTypeError,
+			Error:  "AI internal error, please retry",
+			Reason: ai.ReasonPanic,
+		})
+		EmitSessionPushNotification(groupID, statusCancelled)
+		// Close the orphan streaming row WITHOUT a backend scope. A member's
+		// streaming row is written with the MEMBER's backend
+		// (session_executor.go's CreateStreamingMessageWithAgent uses
+		// cfg.BackendName), while FinalizeStreamingMessage filters on backend —
+		// so passing the group row's backend (the host's) silently matches
+		// nothing in a heterogeneous group. finalizeGroupOrphans uses
+		// finalizeOrphanedStreamingMessages, which has no backend predicate.
+		finalizeGroupOrphans(groupID)
+	}
 }

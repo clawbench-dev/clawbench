@@ -22,7 +22,6 @@ import (
 // bug violated — the host routed to itself and no member ever ran.
 func TestGroupOrchestrator_MultiRoundClosedLoop(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-loop"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -51,13 +50,7 @@ func TestGroupOrchestrator_MultiRoundClosedLoop(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始讨论", nil); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
-	}
-	if *term != 1 {
-		t.Fatalf("terminal emitted %d times, want 1", *term)
-	}
+	_ = runGroupTurnForTest(t, o, project, "开始讨论", nil)
 
 	// Exactly one host turn per round (3 rounds), and the host must never be
 	// counted as a "member" turn. Members A and B must each run once.
@@ -89,7 +82,6 @@ func TestGroupOrchestrator_MultiRoundClosedLoop(t *testing.T) {
 // itself), and the turn must terminate cleanly with exactly one terminal event.
 func TestGroupOrchestrator_HostOnlyGroupDoesNotLoop(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-solo"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -107,13 +99,7 @@ func TestGroupOrchestrator_HostOnlyGroupDoesNotLoop(t *testing.T) {
 
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
-	term := observeGroupTerminal(t)
-	if err := o.RunGroupTurn(context.Background(), "开始", nil); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
-	}
-	if *term != 1 {
-		t.Fatalf("terminal emitted %d times, want 1", *term)
-	}
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
 	// Every turn must be the host — the host can never become a "member" target.
 	for _, id := range *order {
 		if id != hostID {
@@ -169,7 +155,6 @@ func TestGroupOrchestrator_DefaultRunnerWiring(t *testing.T) {
 // fast without a live agent; the finalize emit still fires (msgID may be 0).
 func TestGroupOrchestrator_DefaultRunnerEmitsPerMemberFinalize(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-finalize"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -199,7 +184,6 @@ func TestGroupOrchestrator_DefaultRunnerEmitsPerMemberFinalize(t *testing.T) {
 // #65) so the injection layer can render them; the content itself stays clean.
 func TestGroupTurn_PersistsUserAttachments(t *testing.T) {
 	setupGroupDB(t)
-	silenceGroupUserEmit(t)
 	project := "/tmp/gorch-attach"
 	if _, err := store.ProjectIDForPath(project); err != nil {
 		t.Fatalf("ProjectIDForPath: %v", err)
@@ -219,9 +203,7 @@ func TestGroupTurn_PersistsUserAttachments(t *testing.T) {
 	o := NewGroupOrchestrator(groupID)
 	o.runTurn = runner
 	files := []model.FileEntry{{Path: "/tmp/report.pdf"}}
-	if err := o.RunGroupTurn(context.Background(), "看看这个", files); err != nil {
-		t.Fatalf("RunGroupTurn: %v", err)
-	}
+	_ = runGroupTurnForTest(t, o, project, "看看这个", files)
 
 	msgs, _ := GetMessagesBySessionIDRaw(groupID)
 	found := false
