@@ -508,7 +508,13 @@ func AIChat(w http.ResponseWriter, r *http.Request) {
 				defer service.FinishSessionRun(sessionID)
 				service.RunGroupDrainLoop(runCtx, sessionID, projectPath, msgID, req.Message, allFiles)
 			}()
-			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID, "group": true})
+			// Return msgId like the single-agent idle path does. The frontend
+			// adopts it for its optimistic user bubble so the bubble sorts by DB
+			// id in place; without it the bubble stays transient (after every
+			// DB-backed message) while the self-echo renders the row in place —
+			// the reported "message appears twice, one stuck at the bottom until
+			// a session switch rebuilds the array".
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true, "sessionId": sessionID, "group": true, "msgId": msgID})
 			return
 		}
 		// Busy: fall through to the shared enqueue block below (identical to

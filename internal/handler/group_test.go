@@ -169,6 +169,18 @@ func TestAIChatDelegatesGroupSend(t *testing.T) {
 	var resp map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Equal(t, true, resp["group"], "group send must be delegated to the orchestrator")
+
+	// The idle group send MUST return msgId, exactly like the single-agent path.
+	// Without it the frontend cannot adopt the DB id for its optimistic bubble,
+	// so the bubble stays in the transient sort domain (after every DB-backed
+	// message) while the self-echo renders the real row in place — the reported
+	// "my new message appears twice, one stuck at the bottom" defect. Relying on
+	// the self-echo alone is a single point of failure: it only adopts when the
+	// echo's senderClientId matches, and a group drain-materialized echo carries
+	// none.
+	msgID, ok := resp["msgId"].(float64)
+	require.True(t, ok, "idle group send must return msgId so the optimistic bubble can adopt its DB id")
+	assert.Greater(t, int64(msgID), int64(0))
 }
 
 // TestServeSessions_GroupRowCarriesMemberPreview pins the session-list contract
