@@ -6,27 +6,29 @@
     <!-- Group-chat speaker attribution: a member (not the user) produced this
          assistant message. agentId is the member row id, resolved via the
          speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
-         above the message box. -->
+         above the message box.
+
+         When the host routes the discussion it @-mentions its targets; those
+         chips live HERE, in the avatar row, right after the host's name — so the
+         row reads "Host 主持人 @A @B" and the bubble stays purely the host's
+         prose (no routing card taking up the first line of the message). -->
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
+      <span v-if="isHostMessage && hostRouting.found" class="msg-routing-targets">
+        <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
+          <span class="msg-routing-avatar">
+            <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" size="md" />
+          </span>
+          <span class="msg-routing-at">@{{ s.name }}</span>
+        </span>
+      </span>
     </div>
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
          element so it sits on the panel background for both roles. -->
     <div class="msg-card" :class="{ 'msg-card-host': isHostMessage }">
-    <!-- Host routing card: the host's routing tag rendered as @-mention chips
-         (avatar + @name), no speaker label or arrow. The host's plain text
-         (including the end tag and summary) still renders below. -->
-    <div v-if="isHostMessage && hostRouting.found" class="msg-routing-card">
-      <span v-for="s in routingTargets" :key="s.name" class="msg-routing-chip">
-        <span class="msg-routing-avatar">
-          <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" size="md" />
-        </span>
-        <span class="msg-routing-at">@{{ s.name }}</span>
-      </span>
-    </div>
     <!-- Collapsible content wrapper -->
     <div ref="wrapperRef" class="msg-content-wrapper">
       <FileAttachmentList v-if="msg.role === 'user' && msg.files && msg.files.length > 0 && !hasImagesInContent(msg.content)" :files="msg.files" @file-tag-click="$emit('file-tag-click', $event)" />
@@ -1282,16 +1284,19 @@ const copyPayload = quotableText
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-2xs);
 }
-/* The host's bubble is centered with an accent border to read as "chair". */
-.msg-card-host {
-  border-left: 2px solid var(--accent-color, #0066cc);
-}
-.msg-routing-card {
-  display: flex;
+/* The host's @-mention targets, inline in the avatar row (after the name and
+   the 主持人 tag). `min-width: 0` + wrapping keeps a long target list from
+   pushing the row wider than the chat column. */
+.msg-routing-targets {
+  display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
-  margin: 0 0 var(--space-2);
+  min-width: 0;
+}
+/* The host's bubble is centered with an accent border to read as "chair". */
+.msg-card-host {
+  border-left: 2px solid var(--accent-color, #0066cc);
 }
 /* @-mention chip: avatar + @name, no speaker label or arrow.
    Fixed height + fixed avatar disc so every chip is exactly the same size

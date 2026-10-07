@@ -81,7 +81,7 @@ describe('ChatMessageItem group speaker', () => {
     expect(w.find('.msg-speaker').exists()).toBe(false)
   })
 
-  it('renders routing targets as @-mention chips with avatars', () => {
+  it('renders routing targets as @-mention chips in the speaker (avatar) row', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '<svg/>' })
     const w = mountItem(
@@ -94,7 +94,11 @@ describe('ChatMessageItem group speaker', () => {
       },
       { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
     )
-    expect(w.find('.msg-routing-card').exists()).toBe(true)
+    // The chips live in the avatar row, NOT inside the bubble.
+    const speakerRow = w.find('.msg-speaker')
+    expect(speakerRow.exists()).toBe(true)
+    expect(speakerRow.find('.msg-routing-targets').exists()).toBe(true)
+    expect(w.find('.msg-card .msg-routing-targets').exists()).toBe(false)
     // @name chips, no speaker label or arrow.
     const chips = w.findAll('.msg-routing-chip')
     expect(chips.map(c => c.find('.msg-routing-at').text())).toEqual(['@A', '@B'])
