@@ -8,10 +8,11 @@
          speaker resolver prop. Sits OUTSIDE the bubble, at the row's top-left,
          above the message box.
 
-         When the host routes the discussion it @-mentions its targets; those
-         chips live HERE, in the avatar row, right after the host's name — so the
-         row reads "Host 主持人 @A @B" and the bubble stays purely the host's
-         prose (no routing card taking up the first line of the message). -->
+         When the host routes the discussion it @-mentions its targets. Those
+         chips are an INDEPENDENT marker: they sit at the far right of the
+         avatar row, detached from the [icon] name 主持人 cluster (see
+         .msg-routing-targets' margin-left:auto), so they never read as part of
+         the speaker's own label. The bubble stays purely the host's prose. -->
     <div v-if="msg.role === 'assistant' && speaker" class="msg-speaker" :class="{ 'msg-speaker-host': isHostMessage }">
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
@@ -1268,6 +1269,7 @@ const copyPayload = quotableText
 .msg-speaker {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-2);
   margin: 0 0 var(--space-2) var(--space-2);
   font-size: var(--font-size-lg);
@@ -1284,15 +1286,18 @@ const copyPayload = quotableText
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-2xs);
 }
-/* The host's @-mention targets, inline in the avatar row (after the name and
-   the 主持人 tag). `min-width: 0` + wrapping keeps a long target list from
-   pushing the row wider than the chat column. */
+/* The host's @-mention targets: an INDEPENDENT marker, not part of the
+   speaker's own label. `margin-left: auto` pushes it to the far right of the
+   avatar row, so it is visually detached from the [icon] name 主持人 cluster
+   on the left. `min-width: 0` + wrapping keep a long target list from pushing
+   the row wider than the chat column (it wraps to its own line instead). */
 .msg-routing-targets {
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-2);
   min-width: 0;
+  margin-left: auto;
 }
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {

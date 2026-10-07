@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 
 // Minimal mocks so ChatMessageItem mounts. Group speaker rendering only needs
 // the template path; ContentBlocks and the heavy composables are stubbed.
@@ -108,6 +110,36 @@ describe('ChatMessageItem group speaker', () => {
     // the same height regardless of the avatar's render mode.
     expect(w.findAll('.msg-routing-chip .agent-icon-stub').length).toBe(2)
     expect(w.findAll('.msg-routing-chip .msg-routing-avatar').length).toBe(2)
+  })
+
+  // The @-mention is an INDEPENDENT marker: it must NOT be nested inside the
+  // speaker's own label cluster (name / 主持人 tag) — it is a sibling, so it
+  // reads as its own element rather than as part of "Host 主持人".
+  it('keeps the @-mention as a sibling of the speaker label, not nested in it', () => {
+    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
+    const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '<svg/>' })
+    const w = mountItem(
+      {
+        role: 'assistant',
+        id: 6,
+        content: '',
+        blocks: [{ type: 'text', text: '<clawbench-speaker>A</clawbench-speaker> 请表态' }],
+        agentId: 'host-1',
+      },
+      { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
+    )
+    const speakerRow = w.find('.msg-speaker')
+    const targets = speakerRow.find('.msg-routing-targets')
+    expect(targets.exists()).toBe(true)
+    // Direct child of the row, and NOT inside the host tag or the name span.
+    expect(targets.element.parentElement).toBe(speakerRow.element)
+    expect(speakerRow.find('.msg-speaker-host-tag .msg-routing-targets').exists()).toBe(false)
+    expect(speakerRow.find('.msg-speaker-name .msg-routing-targets').exists()).toBe(false)
+    // Visual detachment (right-pushed) is a CSS-only property jsdom cannot
+    // compute, so pin it at the source: the rule must carry margin-left: auto.
+    const src = readFileSync(resolve(__dirname, '../ChatMessageItem.vue'), 'utf8')
+    const block = src.match(/\.msg-routing-targets\s*\{([\s\S]*?)\}/)?.[1] ?? ''
+    expect(block).toMatch(/margin-left:\s*auto/)
   })
 
   it('renders an unresolved routing target as a plain @name', () => {
