@@ -1318,6 +1318,20 @@ describe('useAgents', () => {
       expect(mockApiPost).toHaveBeenCalledWith('/api/agents', { source_id: 'claude', name: 'Claude Copy' })
       // loadAgents(true) is called after, which triggers a fresh apiGet
     })
+
+    it('returns the created agent id from the response', async () => {
+      mockApiPost.mockResolvedValue({ id: 'claude-deadbeef' })
+      const id = await duplicateAgent('claude', 'Claude Copy')
+      expect(id).toBe('claude-deadbeef')
+    })
+
+    it('returns an empty string when the response carries no id', async () => {
+      // An older backend answers without the created agent; the caller must not
+      // navigate to a bogus `agents:` route.
+      mockApiPost.mockResolvedValue({})
+      const id = await duplicateAgent('claude', 'Claude Copy')
+      expect(id).toBe('')
+    })
   })
 
   // --- deleteAgent ---

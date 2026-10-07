@@ -135,6 +135,24 @@ export function useSettingsNavigation() {
     currentCategory.value = stack[stack.length - 1] ?? null
   }
 
+  /**
+   * Replace the current top stack entry in place (no depth change).
+   *
+   * Used when a detail page hands off to a sibling detail page of the same
+   * kind — e.g. duplicating an agent navigates from agents:<source> to
+   * agents:<new>. Pushing would grow the breadcrumb into
+   * 设置 › 源智能体 › 副本, so the entry is swapped instead.
+   */
+  function replaceTopNav(categoryId: string) {
+    const stack = navStack.value
+    if (stack.length === 0) {
+      stack.push(categoryId)
+    } else {
+      stack[stack.length - 1] = categoryId
+    }
+    currentCategory.value = categoryId
+  }
+
   function resetState() {
     if (!checkAllGuards()) return  // at least one guard says don't reset
     navStack.value = []
@@ -217,6 +235,7 @@ export function useSettingsNavigation() {
     popNav,
     truncateNav,
     returnToCategory,
+    replaceTopNav,
     resetState,
     restartDialogVisible,
     changedColdFields,

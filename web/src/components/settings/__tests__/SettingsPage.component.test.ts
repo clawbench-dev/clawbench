@@ -10,7 +10,7 @@ vi.mock('vue-i18n', () => ({
   }),
 }))
 
-const { pushNav, popNav, truncateNav, returnToCategory, handleRestartNeeded, handleRestart, checkAllGuards, mockNavStack, mockCurrentCategory, mockRestartDialogVisible, mockChangedColdFields, mockNeedsRestart, mockRestarting, mockServerConfig } = vi.hoisted(() => {
+const { pushNav, popNav, truncateNav, returnToCategory, replaceTopNav, handleRestartNeeded, handleRestart, checkAllGuards, mockNavStack, mockCurrentCategory, mockRestartDialogVisible, mockChangedColdFields, mockNeedsRestart, mockRestarting, mockServerConfig } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const { ref } = require('vue')
   const ns = ref<string[]>([])
@@ -31,6 +31,13 @@ const { pushNav, popNav, truncateNav, returnToCategory, handleRestartNeeded, han
       if (top && top.startsWith(categoryId + ':')) ns.value.pop()
       if (ns.value[ns.value.length - 1] !== categoryId) ns.value.push(categoryId)
       cc.value = ns.value[ns.value.length - 1] ?? null
+    }),
+    // Mirrors the real implementation: swap the top entry in place (used by the
+    // agent copy hand-off). Kept in sync so breadcrumb assertions are meaningful.
+    replaceTopNav: vi.fn((categoryId: string) => {
+      if (ns.value.length === 0) ns.value.push(categoryId)
+      else ns.value[ns.value.length - 1] = categoryId
+      cc.value = categoryId
     }),
     handleRestartNeeded: vi.fn(),
     handleRestart: vi.fn(),
@@ -63,6 +70,7 @@ vi.mock('@/composables/useSettingsNavigation', async (importOriginal) => {
       popNav,
       truncateNav,
       returnToCategory,
+      replaceTopNav,
       restartDialogVisible: mockRestartDialogVisible,
       changedColdFields: mockChangedColdFields,
       needsRestart: mockNeedsRestart,
@@ -269,6 +277,41 @@ describe('SettingsPage — header', () => {
     // The list is on top — not ['project','project:42','project'].
     expect(mockNavStack.value).toEqual(['project'])
     // Deletion bypasses the unsaved-changes guard (the entity is gone).
+    expect(checkAllGuards).not.toHaveBeenCalled()
+  })
+
+  it('replaces the top entry when an agent copy navigates to the new agent', async () => {
+    // Regression: duplicating an agent must show the copy's config page, not
+    // leave the user on the source. The hand-off is a REPLACE so the breadcrumb
+    // reads 设置 › 副本, not 设置 › 源 › 副本.
+    const replaceStub = defineComponent({
+      name: 'SettingsCategory',
+      props: { categoryId: { default: '' } },
+      emits: ['navigate', 'back', 'deleted', 'navigate-replace', 'restart-needed', 'restart-requested'],
+      setup() { return {} },
+      template: `<div class="replace-stub" @click="$emit('navigate-replace', 'agents:copy')" />`,
+    })
+    mockNavStack.value = ['agents', 'agents:source']
+    mockCurrentCategory.value = 'agents:source'
+    const wrapper = mount(SettingsPage, {
+      props: { active: true },
+      global: {
+        plugins: [i18n],
+        stubs: {
+          SettingsIndex: SettingsIndexStub,
+          SettingsCategory: replaceStub,
+          SettingsRestartDialog: SettingsRestartDialogStub,
+        },
+      },
+    })
+    await wrapper.vm.$nextTick()
+
+    await wrapper.find('.replace-stub').trigger('click')
+    await flushPromises()
+
+    expect(replaceTopNav).toHaveBeenCalledWith('agents:copy')
+    expect(mockNavStack.value).toEqual(['agents', 'agents:copy'])
+    // No guard: the source page's unsaved edits are irrelevant to a new agent.
     expect(checkAllGuards).not.toHaveBeenCalled()
   })
 })

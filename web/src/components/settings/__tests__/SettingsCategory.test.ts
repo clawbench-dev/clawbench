@@ -1089,6 +1089,24 @@ describe('SettingsCategory', () => {
         expect(wrapper.emitted('deleted')![0]).toEqual(['agents'])
       }
     })
+
+    it('forwards navigate-replace from SettingsAgentDetail (copy → new agent)', async () => {
+      const wrapper = mount(SettingsCategory, {
+        props: { categoryId: 'agents:test-agent' },
+        global: {
+          plugins: [i18n],
+          stubs: {
+            SettingsAgentsIndex: true,
+            SettingsAgentDetail: { template: '<div data-test="agent-detail" @click="$emit(\'navigateReplace\', \'agents:copy\')"></div>' },
+          },
+        },
+      })
+      await wrapper.vm.$nextTick()
+      await wrapper.find('[data-test="agent-detail"]').trigger('click')
+
+      expect(wrapper.emitted('navigateReplace')).toBeTruthy()
+      expect(wrapper.emitted('navigateReplace')![0]).toEqual(['agents:copy'])
+    })
   })
 
   // ─── handleRestartServer ──────────────────

@@ -585,10 +585,17 @@ export async function populateACPStateFromCache(agentId: string): Promise<void> 
     // or the explicit reset in createSession().
 }
 
-/** Duplicate an agent by cloning its configuration with a new name. */
-async function duplicateAgent(sourceId: string, newName: string): Promise<void> {
-    await apiPost('/api/agents', { source_id: sourceId, name: newName })
+/**
+ * Duplicate an agent by cloning its configuration with a new name.
+ *
+ * Returns the new agent's id (from the created agent the backend answers with)
+ * so the caller can navigate to it — the settings panel switches to the copy's
+ * config page right after duplicating.
+ */
+async function duplicateAgent(sourceId: string, newName: string): Promise<string> {
+    const created = await apiPost<{ id?: string }>('/api/agents', { source_id: sourceId, name: newName })
     await loadAgents(true)
+    return created?.id ?? ''
 }
 
 /** Delete an agent by ID. */

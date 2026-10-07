@@ -523,5 +523,48 @@ describe('SettingsAgentDetail', () => {
       expect(mockDuplicateAgent).toHaveBeenCalledWith('test-agent', 'Test Agent (Copy)')
       expect(wrapper.findComponent({ name: 'CopyAgentDialog' }).props('open')).toBe(false)
     })
+
+    it('navigates to the new agent after a successful copy', async () => {
+      // Copying should switch the panel to the copy's config page, not leave
+      // the user staring at the source agent.
+      mockDuplicateAgent.mockResolvedValueOnce('claude-deadbeef')
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('navigateReplace')).toEqual([['agents:claude-deadbeef']])
+    })
+
+    it('does not navigate when the backend returns no new id', async () => {
+      // An older backend answers without the created agent; navigating would
+      // produce a bogus `agents:` (empty-id) route.
+      mockDuplicateAgent.mockResolvedValueOnce('')
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('navigateReplace')).toBeUndefined()
+    })
+
+    it('does not navigate when the copy fails', async () => {
+      mockDuplicateAgent.mockRejectedValueOnce(new Error('fail'))
+      const wrapper = mountDetail()
+      const vm = wrapper.vm as any
+      vm.$.setupState.startCopy()
+      await wrapper.vm.$nextTick()
+
+      await vm.$.setupState.handleCopyConfirmed('Test Agent (Copy)')
+      await wrapper.vm.$nextTick()
+
+      expect(wrapper.emitted('navigateReplace')).toBeUndefined()
+    })
   })
 })

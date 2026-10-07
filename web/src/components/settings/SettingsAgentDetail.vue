@@ -96,6 +96,13 @@ const emit = defineEmits<{
   deleted: []
   /** Leave the detail page without deleting anything (stale-reference fallback). */
   back: []
+  /**
+   * Switch to another agent's detail page in place — fired after a successful
+   * copy so the panel shows the new agent's config rather than staying on the
+   * source. Carries the full category id (`agents:<id>`); the parent REPLACES
+   * the current stack entry (a push would grow the breadcrumb).
+   */
+  navigateReplace: [categoryId: string]
 }>()
 
 const { t } = useI18n()
@@ -426,9 +433,13 @@ async function handleCopyConfirmed(newName: string) {
   // re-triggers the dialog's error watcher (an unchanged prop would not).
   copyError.value = ''
   try {
-    await duplicateAgent(props.agentId, newName)
+    const newId = await duplicateAgent(props.agentId, newName)
     copying.value = false
     toast.show(t('settings.items.agentCopied'), { icon: '✅', type: 'success', duration: 3000 })
+    // Switch the panel to the freshly created agent's config page. Guard on a
+    // non-empty id: an older backend that does not return the created agent
+    // would otherwise navigate to `agents:` (a bogus, empty-id route).
+    if (newId) emit('navigateReplace', `agents:${newId}`)
   } catch (err) {
     // A name collision is recoverable: keep the dialog open and show the
     // reason inline so the user can correct it, instead of a bare toast.
