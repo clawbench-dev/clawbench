@@ -85,30 +85,47 @@
     <!-- Cancelled marker: shown after file changes banner, hidden when last block is thinking (shown inline in thinking-header instead) -->
     <div v-if="msg.cancelled && !isLastBlockThinking" class="chat-cancelled-mark">{{ t('chat.contentBlocks.cancelled') }}</div>
 
-    <!-- Host's private notes (密送), at the BOTTOM of the bubble. Collapsed by
-         default: a note is addressed to specific members, so it is surfaced
-         (the user can audit what the host said privately) but never in the way.
+    <!-- Host's private notes (密送), at the BOTTOM of the bubble.
+         Two forms, deliberately different:
+           - a note addressed to the USER is expanded by default, labelled
+             "to you" and visually distinct — it carries something meant for the
+             reader (e.g. their secret word), so hiding it would be wrong.
+           - notes addressed to AI members stay collapsed: the reader can audit
+             them, but they are not addressed to the reader.
+         The collapsed header does NOT list the target names — knowing WHO got a
+         note is itself a hint (in a deduction game, "B got a private note" is
+         information). The targets stay visible per entry once expanded.
          Sits INSIDE .msg-card, unlike the @-mention routing chips which live in
          the speaker row above the bubble. -->
-    <div v-if="isHostMessage && hostRouting.bcc.length > 0" class="msg-bcc">
-      <button
-        type="button"
-        class="msg-bcc-header"
-        :aria-expanded="bccExpanded"
-        @click="bccExpanded = !bccExpanded"
-      >
-        <Lock :size="12" class="msg-bcc-lock" />
-        <span class="msg-bcc-title">{{ t('group.bcc.title') }}</span>
-        <span class="msg-bcc-targets">{{ bccTargetNames }}</span>
-        <ChevronDown :size="14" class="msg-bcc-chevron" :class="{ 'is-collapsed': !bccExpanded }" />
-      </button>
-      <div v-show="bccExpanded" class="msg-bcc-body">
-        <div v-for="(e, i) in hostRouting.bcc" :key="i" class="msg-bcc-entry">
-          <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
+    <template v-if="isHostMessage && hostRouting.bcc.length > 0">
+      <div v-for="(e, i) in bccToUser" :key="'u' + i" class="msg-bcc msg-bcc-user">
+        <div class="msg-bcc-header is-static">
+          <User :size="12" class="msg-bcc-user-icon" />
+          <span class="msg-bcc-title">{{ t('group.bcc.toYou') }}</span>
+        </div>
+        <div class="msg-bcc-body">
           <div class="msg-bcc-entry-content">{{ e.content }}</div>
         </div>
       </div>
-    </div>
+      <div v-if="bccToMembers.length > 0" class="msg-bcc">
+        <button
+          type="button"
+          class="msg-bcc-header"
+          :aria-expanded="bccExpanded"
+          @click="bccExpanded = !bccExpanded"
+        >
+          <Lock :size="12" class="msg-bcc-lock" />
+          <span class="msg-bcc-title">{{ t('group.bcc.title') }}</span>
+          <ChevronDown :size="14" class="msg-bcc-chevron" :class="{ 'is-collapsed': !bccExpanded }" />
+        </button>
+        <div v-show="bccExpanded" class="msg-bcc-body">
+          <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
+            <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
+            <div class="msg-bcc-entry-content">{{ e.content }}</div>
+          </div>
+        </div>
+      </div>
+    </template>
     </div><!-- /.msg-card -->
 
     <!-- ── Meta bar (OUTSIDE the bubble, both roles) ──
@@ -224,7 +241,7 @@
 <script setup>
 import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock } from 'lucide-vue-next'
+import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
@@ -313,16 +330,20 @@ const hostRouting = computed(() => {
   return parseGroupRouting(text)
 })
 
-// Private notes (密送) are collapsed by default — the user can audit them, but
-// they are not part of the host's visible address to the group.
+// Private notes (密送) addressed to AI members are collapsed by default — the
+// user can audit them, but they are not addressed to the reader.
 const bccExpanded = ref(false)
 
-// Distinct target names across every note, for the collapsed header summary.
-const bccTargetNames = computed(() => {
-  const seen = new Set()
-  for (const e of hostRouting.value.bcc) for (const n of e.targets) seen.add(n)
-  return [...seen].join('、')
-})
+// The reserved participant name of the human user (mirrors the backend
+// groupUserTarget constant). A note addressed to it is meant for the reader.
+const GROUP_USER_TARGET = 'User'
+
+// bccToUser / bccToMembers split the notes by audience. The user's own notes
+// render expanded and labelled "to you"; the rest stay behind a collapsed
+// header whose title deliberately omits the target names (who got a note is
+// itself a hint).
+const bccToUser = computed(() => hostRouting.value.bcc.filter((e) => e.targets.includes(GROUP_USER_TARGET)))
+const bccToMembers = computed(() => hostRouting.value.bcc.filter((e) => !e.targets.includes(GROUP_USER_TARGET)))
 
 // routingTargets maps the host's named routing targets to display info for the
 // @-mention chips. Names that no longer resolve (removed members) still render
@@ -760,20 +781,33 @@ const copyPayload = quotableText
 .msg-bcc-title {
   font-weight: var(--font-weight-medium, 500);
 }
-.msg-bcc-targets {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-}
 .msg-bcc-chevron {
   flex-shrink: 0;
   transition: transform var(--duration-base) ease;
 }
 .msg-bcc-chevron.is-collapsed {
   transform: rotate(-90deg);
+}
+/* A note addressed to the READER (the user): expanded, accented, and visually
+   distinct from the collapsed member notes, so "this one is for me" reads at a
+   glance. */
+.msg-bcc-user {
+  margin-top: var(--space-3);
+  border-top: none;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--accent-color);
+  background: color-mix(in srgb, var(--accent-color) 10%, transparent);
+}
+.msg-bcc-user .msg-bcc-header.is-static {
+  cursor: default;
+  color: var(--accent-color);
+}
+.msg-bcc-user .msg-bcc-title {
+  font-weight: var(--font-weight-semibold, 600);
+}
+.msg-bcc-user-icon {
+  flex-shrink: 0;
 }
 .msg-bcc-body {
   margin-top: var(--space-2);

@@ -38,7 +38,7 @@ import ChatMessageItem from '@/components/chat/ChatMessageItem.vue'
 const i18n = createI18n({
   legacy: false,
   locale: 'en',
-  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', bcc: { title: 'Private note', to: 'To' } }, common: {} } },
+  messages: { en: { chat: { message: {}, contentBlocks: { cancelled: 'cancelled' }, fileChanges: { title: 'Files' }, pending: {}, speech: {}, busy: {} }, group: { host: 'Host', bcc: { title: 'Private note', to: 'To', toYou: 'Private note to you' } }, common: {} } },
 })
 
 function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> = {}) {
@@ -292,5 +292,53 @@ describe('ChatMessageItem group bcc card', () => {
       { resolveSpeaker, hostMemberId: 'host-1' },
     )
     expect(w.find('.msg-bcc').exists()).toBe(true)
+  })
+})
+
+describe('ChatMessageItem bcc card: target names hidden, user note expanded', () => {
+  const hostWithBcc = (text: string) => ({
+    role: 'assistant',
+    id: 10,
+    content: '',
+    blocks: [{ type: 'text', text }],
+    agentId: 'host-1',
+  })
+  const opts = { resolveSpeaker: () => ({ name: 'Host', backend: 'codebuddy' }), hostMemberId: 'host-1' }
+
+  it('does NOT list target names in the collapsed header (who got a note is a hint)', () => {
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A,B">机密</clawbench-bcc>'),
+      opts,
+    )
+    const header = w.find('.msg-bcc-header')
+    expect(header.text()).toContain('Private note')
+    expect(header.text()).not.toContain('A')
+    expect(header.text()).not.toContain('B')
+  })
+
+  it('renders a note addressed to User expanded, labelled "to you", never collapsed', () => {
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="User">你的词是西瓜</clawbench-bcc>'),
+      opts,
+    )
+    const card = w.find('.msg-bcc-user')
+    expect(card.exists()).toBe(true)
+    expect(card.text()).toContain('Private note to you')
+    expect(card.text()).toContain('你的词是西瓜')
+    // No toggle: the body is always visible.
+    const body = card.find('.msg-bcc-body')
+    expect(body.exists()).toBe(true)
+    expect((body.element as HTMLElement).style.display).not.toBe('none')
+  })
+
+  it('splits a mixed message: user note expanded, member note still collapsed', () => {
+    const w = mountItem(
+      hostWithBcc('<clawbench-speaker>A,User</clawbench-speaker> 表态 <clawbench-bcc targets="A">给A</clawbench-bcc> <clawbench-bcc targets="User">给你</clawbench-bcc>'),
+      opts,
+    )
+    expect(w.find('.msg-bcc-user').text()).toContain('给你')
+    const memberCard = w.find('.msg-bcc:not(.msg-bcc-user)')
+    expect(memberCard.exists()).toBe(true)
+    expect((memberCard.find('.msg-bcc-body').element as HTMLElement).style.display).toBe('none')
   })
 })

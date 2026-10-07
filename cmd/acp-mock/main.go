@@ -726,6 +726,10 @@ func groupRoutingReply(prompt string) string {
 	// makes the group-chat BCC path exercised by EVERY group e2e (the card must
 	// render, the note must never reach the shared body). ACP_MOCK_NO_BCC=1
 	// turns it off for specs that want a note-free host.
+	//
+	// When the group has no AI members the only name in the list is the user
+	// ("User"), so this routes to the user and notes them — which is exactly
+	// what the user-participation e2e relies on (no extra env needed).
 	reply := "<clawbench-speaker>" + name + "</clawbench-speaker> 请你发表看法。"
 	if os.Getenv("ACP_MOCK_NO_BCC") != "1" {
 		reply += " <clawbench-bcc targets=\"" + name + "\">SECRET_BCC_FOR_" + name + "</clawbench-bcc>"

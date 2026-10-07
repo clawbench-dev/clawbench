@@ -172,6 +172,11 @@
 | 91 | 密送注入边界（穷举） | 所有会把主持人文本送到非目标成员的路径都须剥（review 复查补全）：①`route.Instruction`（Parse 已剥）②`Before`（Parse 已剥）③`hostSpeechForMembers` 兜底（`StripBccSpans`）④**引用载荷**（`quotableMessageText`，引用作为附件注入成员）⑤**TTS**（`ttsExtractConclusion` 覆盖前端文本）⑥**自动朗读**（`onStreamEnd`）⑦**摘要落库 + IM/通知推送**（`ExtractLastAnswerFromBlocks` 内部剥，单点覆盖 summary 与 preview）⑧前端气泡正文（`renderTextBlock` 流式+非流式） |
 | 92 | 密送字符类 parity | Go/JS 空白类统一为 `[\s\p{Z}]`：Go 的 `\s` 仅 ASCII，JS 的含 Unicode 空白，否则 NBSP/全角空格会导致"前端认良构、后端不认"的安全侧分歧；语料加 NBSP/全角 case 钉住 |
 | 93 | 密送分享页 | share payload 增 `session.hostMemberId`，分享页传 `resolveSpeaker`/`resolveSpeakerByName`/`hostMemberId` 给 `ChatMessageItem`，使密送卡片在分享页也按决策 #85 渲染（默认折叠） |
+| 94 | 密送折叠头不显示目标名 | 折叠头只写「密送」——**谁知道收到了密送本身就是线索**（推理游戏里"B 收到私密信息"是信息）。展开后每条仍显示「发给 XX」（保留可审计性，决策 #85） |
+| 95 | 用户是可点名参与者 | 用户在群里的**保留名是英文 `User`**（`groupUserTarget`，语言中性；注入前缀 `User: ...` 与之同名）。`activeMemberNamesExcept` 追加 `User` → 主持人可在「可选的成员名」里看到并点名。哨兵 id `__user__`（无成员行、无 AI turn、无后端连接） |
+| 96 | 点名 User 结束本轮 | targets 循环遇到 `groupUserTargetID` → 写一条 `role='system'` 行（i18n `GroupYourTurn`）并 `return DrainResult{}`（`running=false`）；**其后的 targets 不跑**。用户随时发言即开新回合。前端**不做**"轮到你"提示 |
+| 97 | 密送延迟送达 | 密送目标本轮未被点名 → 存 `group_pending_bcc`，随该目标**下次被点名**的 turn 送达（AI 成员与 User 一视同仁）。这是「给所有人发词、只点一人先说」的必要条件。交付成功即 DELETE；失败/取消保留（#69 语义） |
+| 98 | 密送给 User 的卡片 | 与成员密送**同一张卡片**但形态不同：默认**展开**、文案 `group.bcc.toYou`（密送给你）、`User` 图标 + accent 强调色；成员密送仍折叠。两段式渲染（按 `targets.includes('User')` 分流），而非单一 toggle 改默认值——后者会让 User 密送把成员密送一并展开 |
 
 ## 3. 架构
 

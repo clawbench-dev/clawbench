@@ -46,7 +46,7 @@ type ParticipantInfo struct {
 //     background survives; an unparseable tag is kept verbatim (but any
 //     well-formed private note is still removed — see hostSpeechForMembers).
 //
-// User messages are rendered as "用户: ..."; member speech as "<name>: ...";
+// User messages are rendered as "User: ..."; member speech as "<name>: ...";
 // membership changes (role='system') as "[系统] ..." so they are never mistaken
 // for user speech.
 func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, bcc, hostID string) string {
@@ -92,7 +92,11 @@ func renderTimelineLine(m model.ChatMessage, text string, names map[string]strin
 		// (decision #65): the bubble stays clean, but a member must know a
 		// file was attached or it cannot discuss it. Same formatter as single
 		// chat so the two cannot drift.
-		return "用户: " + userTextWithAttachments(text, m.Files) + "\n"
+		// The prefix is the user's reserved participant name (English, language
+		// neutral) — it is the SAME name the host addresses in a routing tag,
+		// so a member sees the user as an addressable participant, not as an
+		// anonymous "user:" line.
+		return groupUserTarget + ": " + userTextWithAttachments(text, m.Files) + "\n"
 	}
 	if hostID != "" && m.AgentID == hostID {
 		text = hostSpeechForMembers(text)

@@ -1130,7 +1130,8 @@ export default {
     alreadyMember: '已加入',
     bcc: {
       title: '密送',
-      to: '发给'
+      to: '发给',
+      toYou: '密送给你'
     },
   },
   task: {

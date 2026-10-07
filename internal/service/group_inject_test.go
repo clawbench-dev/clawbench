@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"clawbench/internal/grouprouting"
 	"clawbench/internal/model"
 )
 
@@ -291,14 +290,14 @@ func TestBuildMemberInjection_NoAttachmentNoPrefix(t *testing.T) {
 // A role='system' timeline row (a membership change, decision #40/#43) must be
 // rendered as a neutral event line, NOT as user speech. Its agent_id is "" by
 // design (decision #43), so the old "Role==user || AgentID==""" branch captured
-// it and rendered "用户: Claude 加入了讨论" — telling the host a member-change was
+// it and rendered "User: Claude 加入了讨论" — telling the host a member-change was
 // something the USER said, which is exactly the input it routes from.
 func TestBuildMemberInjection_SystemEventIsNotUserSpeech(t *testing.T) {
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "system", AgentID: "", Content: `{"blocks":[{"type":"text","text":"Claude 加入了讨论"}]}`},
 	}
 	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "", "")
-	if strings.Contains(got, "用户:") {
+	if strings.Contains(got, "User:") {
 		t.Fatalf("a system event must not be rendered as user speech: %q", got)
 	}
 	if !strings.Contains(got, "Claude 加入了讨论") {
@@ -316,8 +315,10 @@ func TestBuildMemberInjection_UserMessageStillUser(t *testing.T) {
 		{ID: 2, Role: "user", AgentID: "", Content: `{"blocks":[{"type":"text","text":"请讨论"}]}`},
 	}
 	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "", "")
-	if !strings.Contains(got, "用户: 请讨论") {
-		t.Fatalf("a user message must render as 用户: ...: %q", got)
+	// The prefix is the user's reserved participant name (English), the SAME
+	// name the host addresses in a routing tag.
+	if !strings.Contains(got, "User: 请讨论") {
+		t.Fatalf("a user message must render as User: ...: %q", got)
 	}
 }
 
@@ -415,24 +416,16 @@ func TestBuildMemberInjection_NoteNotInInstruction(t *testing.T) {
 	}
 }
 
-// bccForMember delivers only the notes addressed to the named member, joined.
-func TestBccForMember(t *testing.T) {
-	entries := []grouprouting.BccEntry{
-		{Targets: []string{"A"}, Content: "给A一"},
-		{Targets: []string{"B", "C"}, Content: "给BC"},
-		{Targets: []string{"A"}, Content: "给A二"},
+// joinPendingBcc renders the notes accumulated for one target, joined. The
+// per-target filtering now happens in the store (pendingBccForTarget), so this
+// only formats what it is given.
+func TestJoinPendingBcc(t *testing.T) {
+	if got := joinPendingBcc(nil); got != "" {
+		t.Fatalf("no notes must render empty: %q", got)
 	}
-	if got := bccForMember(entries, "A"); got != "给A一\n\n给A二" {
-		t.Fatalf("A: %q", got)
-	}
-	if got := bccForMember(entries, "C"); got != "给BC" {
-		t.Fatalf("C: %q", got)
-	}
-	if got := bccForMember(entries, "D"); got != "" {
-		t.Fatalf("D (not named) must get nothing: %q", got)
-	}
-	if got := bccForMember(entries, ""); got != "" {
-		t.Fatalf("empty name must get nothing: %q", got)
+	pending := []pendingBcc{{ID: 1, Content: "给A一"}, {ID: 2, Content: "给A二"}}
+	if got := joinPendingBcc(pending); got != "给A一\n\n给A二" {
+		t.Fatalf("joined: %q", got)
 	}
 }
 

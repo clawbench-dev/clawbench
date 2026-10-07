@@ -340,6 +340,21 @@ func InitDB(runFromServer ...bool) error { //nolint:gocognit,gocyclo // multi-ta
 			UNIQUE(backend, id)
 		);
 		CREATE INDEX IF NOT EXISTS idx_sessions_group ON chat_sessions(group_id, session_type);
+		-- Private notes (密送) whose target was NOT named in the round that
+		-- carried them. A note is delivered with its target's next turn, so a
+		-- host can "hand everyone a word, then call on one player first"
+		-- (the Who-Is-The-Spy setup). Rows are DELETED on successful delivery;
+		-- a failed/cancelled turn leaves them for the next attempt (decision
+		-- #69 semantics). target_name is the trimmed display name; the human
+		-- user is addressed by the reserved name 'User'.
+		CREATE TABLE IF NOT EXISTS group_pending_bcc (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			group_id      TEXT NOT NULL,
+			target_name   TEXT NOT NULL,
+			content       TEXT NOT NULL,
+			created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+		);
+		CREATE INDEX IF NOT EXISTS idx_group_pending_bcc ON group_pending_bcc(group_id, target_name, id);
 		CREATE TABLE IF NOT EXISTS recent_projects (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			project_id INTEGER NOT NULL,

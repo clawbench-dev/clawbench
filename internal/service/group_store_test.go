@@ -1209,3 +1209,54 @@ func TestAddGroupMembers_DuplicatesDoNotCountTowardCap(t *testing.T) {
 		t.Fatal("net-new 1 at the cap must be rejected")
 	}
 }
+
+// Pending private notes: stored per target, delivered by id, cleared by target.
+func TestPendingBccStore(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-pendingstore"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, _, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	otherGroup, _, _ := CreateGroup(project, "G2", "codebuddy", "agent-host2", "Host2")
+
+	addPendingBcc(groupID, "B", "给B一")
+	addPendingBcc(groupID, "B", "给B二")
+	addPendingBcc(groupID, "C", "给C")
+	addPendingBcc(otherGroup, "B", "别的群")
+	// Empty target/content are ignored.
+	addPendingBcc(groupID, "", "x")
+	addPendingBcc(groupID, "B", "  ")
+
+	got := pendingBccForTarget(groupID, "B")
+	if len(got) != 2 || got[0].Content != "给B一" || got[1].Content != "给B二" {
+		t.Fatalf("B pending: %+v", got)
+	}
+	// Delete by id clears only what was delivered.
+	deletePendingBcc([]int64{got[0].ID})
+	if left := pendingBccForTarget(groupID, "B"); len(left) != 1 || left[0].Content != "给B二" {
+		t.Fatalf("after delete-by-id: %+v", left)
+	}
+	// Clear by target removes the rest for that target only.
+	deletePendingBccForTarget(groupID, "B")
+	if left := pendingBccForTarget(groupID, "B"); len(left) != 0 {
+		t.Fatalf("after clear-by-target: %+v", left)
+	}
+	if c := pendingBccForTarget(groupID, "C"); len(c) != 1 {
+		t.Fatalf("C must be untouched: %+v", c)
+	}
+	if o := pendingBccForTarget(otherGroup, "B"); len(o) != 1 {
+		t.Fatalf("another group must be untouched: %+v", o)
+	}
+	// Clear by group.
+	deletePendingBccForGroup(groupID)
+	if c := pendingBccForTarget(groupID, "C"); len(c) != 0 {
+		t.Fatalf("after clear-by-group: %+v", c)
+	}
+	if o := pendingBccForTarget(otherGroup, "B"); len(o) != 1 {
+		t.Fatalf("another group must still be untouched: %+v", o)
+	}
+}

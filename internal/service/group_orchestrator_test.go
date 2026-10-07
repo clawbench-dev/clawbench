@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/store"
 )
@@ -1295,4 +1296,113 @@ func TestGroupOrchestrator_MemberPromptCarriesGroupRole(t *testing.T) {
 	if strings.Contains(aPrompt, "可选的成员名：") {
 		t.Fatalf("member prompt must not carry the host's routing list; got %q", aPrompt)
 	}
+}
+
+// Naming the USER ends the round: targets before User run, targets after do
+// NOT, and a system line announces it. The user has no AI turn, so the runner
+// must never be invoked with the user sentinel.
+func TestGroupOrchestrator_UserTargetStopsRound(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-userstop"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	script := map[string][]string{
+		hostID: {`<clawbench-speaker>A,User,B</clawbench-speaker> 依次发言`},
+		mA:     {"A 发言"},
+		mB:     {"B 发言（不应发生）"},
+	}
+	base, order := newScriptedRunner(t, groupID, project, script)
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = base
+
+	res := runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if res.Err != "" || res.CancelReason != "" {
+		t.Fatalf("a user turn must end cleanly: %+v", res)
+	}
+	// A ran; B did NOT (the round stopped at User).
+	for _, id := range *order {
+		if id == mB {
+			t.Fatalf("B must not run after the user is named; order=%v", *order)
+		}
+		if id == groupUserTargetID {
+			t.Fatalf("the user sentinel must never be handed to the runner; order=%v", *order)
+		}
+	}
+	// A system line announces it is the user's turn.
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		t.Fatalf("load timeline: %v", err)
+	}
+	// Locale-independent: match the i18n'd text for the active locale.
+	want := i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn")
+	found := false
+	for _, m := range msgs {
+		if m.Role == "system" && strings.Contains(m.Content, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a system line announcing the user's turn must be written (want %q)", want)
+	}
+	_ = mA
+}
+
+// A private note addressed to a participant NOT named this round is stored and
+// delivered with that participant's next turn (the "hand everyone a word, then
+// call on one player first" setup).
+func TestGroupOrchestrator_PendingBccDeliveredNextRound(t *testing.T) {
+	setupGroupDB(t)
+	project := "/tmp/gorch-pendingbcc"
+	if _, err := store.ProjectIDForPath(project); err != nil {
+		t.Fatalf("ProjectIDForPath: %v", err)
+	}
+	groupID, hostID, err := CreateGroup(project, "G", "codebuddy", "agent-host", "Host")
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
+	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
+
+	script := map[string][]string{
+		hostID: {
+			// Round 1: note B, but only name A.
+			`<clawbench-speaker>A</clawbench-speaker> A 先说 <clawbench-bcc targets="B">B 的词是西瓜</clawbench-bcc>`,
+			// Round 2: now name B (no end tag: an end tag short-circuits the
+			// round BEFORE targets run, so B would never speak).
+			`<clawbench-speaker>B</clawbench-speaker> B 请发言`,
+			// Round 3: end.
+			`讨论充分。<clawbench-group-end/> 结论。`,
+		},
+		mA: {"A 发言"},
+		mB: {"B 发言"},
+	}
+	base, _ := newScriptedRunner(t, groupID, project, script)
+	var bPrompt string
+	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
+		if turn.MemberRowID == mB {
+			bPrompt = turn.Prompt
+		}
+		return base(ctx, gid, turn)
+	}
+	o := NewGroupOrchestrator(groupID)
+	o.runTurn = runner
+	_ = runGroupTurnForTest(t, o, project, "开始", nil)
+
+	if !strings.Contains(bPrompt, "B 的词是西瓜") {
+		t.Fatalf("B must receive the note deferred from round 1; got %q", bPrompt)
+	}
+	// Delivered → cleared (not re-sent next time).
+	if left := pendingBccForTarget(groupID, "B"); len(left) != 0 {
+		t.Fatalf("a delivered note must be cleared, %d left", len(left))
+	}
+	_ = mA
 }

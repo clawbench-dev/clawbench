@@ -1128,7 +1128,8 @@ export default {
     alreadyMember: 'Added',
     bcc: {
       title: 'Private note',
-      to: 'To'
+      to: 'To',
+      toYou: 'Private note to you'
     },
   },
   task: {

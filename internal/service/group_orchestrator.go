@@ -10,6 +10,7 @@ import (
 
 	"clawbench/internal/ai"
 	"clawbench/internal/grouprouting"
+	"clawbench/internal/i18n"
 	"clawbench/internal/model"
 	"clawbench/internal/ws"
 )
@@ -298,26 +299,58 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 		// A usable routing decision resets the failure streak.
 		o.parseFailures = 0
 
+		// Persist this round's private notes BEFORE dispatching anyone. A note
+		// addressed to a participant who is not named this round stays in the
+		// table and is delivered with that participant's next turn, so the host
+		// can "hand everyone a word, then call on one player first" (the
+		// Who-Is-The-Spy setup). Delivery deletes the row; a failed/cancelled
+		// turn keeps it for the next attempt (decision #69 semantics).
+		for _, e := range route.Bcc {
+			for _, name := range e.Targets {
+				addPendingBcc(groupID, name, e.Content)
+			}
+		}
+
 		// Members speak in order; each sees the previous speakers' output.
 		for _, t := range targets {
 			if groupCtx.Err() != nil {
 				return DrainResult{CancelReason: cancelReasonUser}
 			}
+			// The user is a participant with no AI turn: naming them hands the
+			// floor back. End the round (do NOT run the remaining targets) and
+			// leave a system line so the timeline shows why it stopped.
+			if t.ID == groupUserTargetID {
+				// The user reads notes in the UI card, not through an injected
+				// prompt — clear the bookkeeping so they are not re-sent.
+				deletePendingBccForTarget(groupID, groupUserTarget)
+				writeGroupSystemMessage(o.project, groupID,
+					i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
+				return DrainResult{}
+			}
 			memberCursor := GetMemberCursor(t.ID)
-			// The host's private note for THIS member (empty when none). Computed
-			// inside the loop, so a note addressed to someone not named this round
-			// reaches nobody.
-			bcc := bccForMember(route.Bcc, names[t.ID])
+			// The notes accumulated for THIS member (possibly from an earlier
+			// round that did not name it).
+			pending := pendingBccForTarget(groupID, names[t.ID])
+			bcc := joinPendingBcc(pending)
 			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction, bcc) +
 				BuildMemberSystemPrompt(memberRoster(members), names[t.ID])
 			preH := GroupTimelineHighWater(groupID)
 			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
 			if res.CancelReason != "" {
 				// The user stopped the turn mid-speech. Stop the whole turn so
-				// the remaining targets do not run after a stop.
+				// the remaining targets do not run after a stop. Delivered notes
+				// are NOT cleared (the turn consumed nothing) — they re-send.
 				return DrainResult{CancelReason: res.CancelReason}
 			}
 			advanceCursorOnSuccess(t.ID, preH, res)
+			// Deliver-on-success only: an errored turn keeps its notes.
+			if res.Err == "" {
+				ids := make([]int64, 0, len(pending))
+				for _, p := range pending {
+					ids = append(ids, p.ID)
+				}
+				deletePendingBcc(ids)
+			}
 		}
 	}
 
@@ -407,6 +440,10 @@ func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []
 		}
 		byName[strings.TrimSpace(m.Name)] = m
 	}
+	// The human user is routable under the reserved name. It has no member row
+	// (no backend, no AI turn); the sentinel id marks it for the loop below,
+	// which stops and waits instead of running a turn.
+	byName[groupUserTarget] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget}
 	out := make([]GroupMember, 0, len(route.Speakers))
 	seen := map[string]bool{}
 	for _, name := range route.Speakers {
@@ -549,8 +586,12 @@ func memberNameMap(members []GroupMember) map[string]string {
 // someone who is gone (which would silently fall back to round-robin).
 //
 // The host must never be offered as a routing target (see resolveTargets).
+//
+// The human user is appended as a routable participant (the reserved name
+// "User"): naming the user ends the round and waits for their reply, so the
+// host needs to see them in the list to be able to call on them at all.
 func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []HostMemberInfo {
-	out := make([]HostMemberInfo, 0, len(members))
+	out := make([]HostMemberInfo, 0, len(members)+1)
 	for _, m := range members {
 		if m.ID == hostMemberID {
 			continue
@@ -561,6 +602,7 @@ func activeMemberNamesExcept(members []GroupMember, hostMemberID string) []HostM
 			Left:      m.Left,
 		})
 	}
+	out = append(out, HostMemberInfo{Name: groupUserTarget})
 	return out
 }
 
@@ -590,26 +632,18 @@ func groupInjectionTextOrEmpty(groupID, self string, cursor int64, names map[str
 	return text
 }
 
-// bccForMember returns the private notes addressed to memberName, joined by a
-// blank line; "" when there are none. Matching is on the trimmed display name.
-//
-// This is the ONLY place a note is turned into injectable text, and it is
-// called inside the per-target loop — so a note addressed to someone the host
-// did not name this round is never delivered to anyone (the "target must be a
-// named speaker" rule is satisfied structurally, not by an extra check).
-func bccForMember(entries []grouprouting.BccEntry, memberName string) string {
-	target := strings.TrimSpace(memberName)
-	if target == "" {
+// joinPendingBcc renders the accumulated private notes for one target into the
+// single block injected as that member's private directive, or "" when there
+// are none. Notes reach here through group_pending_bcc (see addPendingBcc), so
+// a note from an earlier round — or one addressed to a member this round did
+// not name — is delivered with the member's next turn.
+func joinPendingBcc(pending []pendingBcc) string {
+	if len(pending) == 0 {
 		return ""
 	}
-	parts := make([]string, 0, len(entries))
-	for _, e := range entries {
-		for _, tg := range e.Targets {
-			if strings.TrimSpace(tg) == target {
-				parts = append(parts, e.Content)
-				break
-			}
-		}
+	parts := make([]string, 0, len(pending))
+	for _, p := range pending {
+		parts = append(parts, p.Content)
 	}
 	return strings.Join(parts, "\n\n")
 }

@@ -147,3 +147,30 @@ func TestBuildMemberSystemPrompt(t *testing.T) {
 		t.Fatalf("member prompt must NOT carry the host's routing list: %q", p)
 	}
 }
+
+// The host must see the user as a routable participant, and know that naming
+// the user ends the round.
+func TestBuildHostSystemPrompt_IncludesUser(t *testing.T) {
+	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: groupUserTarget}})
+	if !strings.Contains(p, "可选的成员名：") || !strings.Contains(p, groupUserTarget) {
+		t.Fatalf("the user must be in the routable list: %q", p)
+	}
+	if !strings.Contains(p, "点到 User 后本轮结束") {
+		t.Fatalf("the host must be told naming the user ends the round: %q", p)
+	}
+	// A note may target someone not named this round (deferred delivery).
+	if strings.Contains(p, "必须是本轮") {
+		t.Fatalf("the old 'target must be named this round' rule must be gone: %q", p)
+	}
+	if !strings.Contains(p, "下次被点名时送达") {
+		t.Fatalf("the deferred-delivery rule must be documented: %q", p)
+	}
+}
+
+// A member should know a human is in the room.
+func TestBuildMemberSystemPrompt_ListsUser(t *testing.T) {
+	p := BuildMemberSystemPrompt([]HostMemberInfo{{Name: "Host"}, {Name: "B"}}, "B")
+	if !strings.Contains(p, groupUserTarget) {
+		t.Fatalf("a member must be told the user is present: %q", p)
+	}
+}

@@ -24,6 +24,15 @@ const (
 	groupMemberSessionType = "group_member"
 	// defaultGroupMaxRounds is the round cap when the group has no override.
 	defaultGroupMaxRounds = 10
+	// groupUserTarget is the reserved display name of the HUMAN user as a group
+	// participant. The host addresses the user with this exact name
+	// (<clawbench-speaker>User</clawbench-speaker>, targets="User"), so it must
+	// stay language-neutral and must not collide with a real member name.
+	groupUserTarget = "User"
+	// groupUserTargetID is a sentinel member row id for the user. It is not a
+	// chat_sessions row: the user has no backend connection and no AI turn.
+	// "__user__" cannot collide with a UUID member row id.
+	groupUserTargetID = "__user__"
 )
 
 // GroupMember is one member of a group (a hidden chat_sessions row).
@@ -303,15 +312,120 @@ func AddGroupMembers(projectPath, groupID string, specs []GroupMemberSpec) ([]st
 // what the newcomer is for, and is written best-effort: a failure to record a
 // system event must never fail the membership change itself.
 func writeMemberSystemEvent(projectPath, groupID, agentID, displayName, suffix string) {
-	text := displayName + memberSpecialtySuffix(agentID) + suffix
+	writeGroupSystemMessage(projectPath, groupID, displayName+memberSpecialtySuffix(agentID)+suffix)
+}
+
+// writeGroupSystemMessage appends an arbitrary role='system' row to the group
+// timeline and broadcasts it. Best-effort: a failure to record a system event
+// must never fail the operation that produced it.
+func writeGroupSystemMessage(projectPath, groupID, text string) {
 	msgID, err := AddSystemMessage(projectPath, groupID, text)
 	if err != nil {
-		slog.Warn("group: writing member system event failed", "group", groupID, "err", err)
+		slog.Warn("group: writing system message failed", "group", groupID, "err", err)
 		return
 	}
 	// Broadcast only after the row is committed, so subscribers can render it
 	// immediately (decisions #40/#43). Best-effort like the write itself.
 	emitGroupSystemMessage(groupID, msgID, text)
+}
+
+// addPendingBcc stores a private note whose target was not named in this round,
+// so it is delivered with that target's next turn (see the group_pending_bcc
+// DDL). A no-op when the target name or content is empty.
+func addPendingBcc(groupID, targetName, content string) {
+	target := strings.TrimSpace(targetName)
+	if groupID == "" || target == "" || strings.TrimSpace(content) == "" {
+		return
+	}
+	if _, err := store.WriteExec(
+		`INSERT INTO group_pending_bcc (group_id, target_name, content) VALUES (?, ?, ?)`,
+		groupID, target, content,
+	); err != nil {
+		slog.Warn("group: storing pending bcc failed", "group", groupID, "target", target, "err", err)
+	}
+}
+
+// pendingBccForTarget returns the stored notes for one target, oldest first,
+// with their row ids so the caller can delete exactly what it delivered.
+func pendingBccForTarget(groupID, targetName string) []pendingBcc {
+	target := strings.TrimSpace(targetName)
+	if groupID == "" || target == "" {
+		return nil
+	}
+	rows, err := store.ReadDB().Query(
+		`SELECT id, content FROM group_pending_bcc WHERE group_id = ? AND target_name = ? ORDER BY id ASC`,
+		groupID, target,
+	)
+	if err != nil {
+		slog.Warn("group: reading pending bcc failed", "group", groupID, "target", target, "err", err)
+		return nil
+	}
+	defer func() { _ = rows.Close() }()
+	out := []pendingBcc{}
+	for rows.Next() {
+		var p pendingBcc
+		if err := rows.Scan(&p.ID, &p.Content); err != nil {
+			slog.Warn("group: scanning pending bcc failed", "err", err)
+			continue
+		}
+		out = append(out, p)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("group: iterating pending bcc failed", "group", groupID, "target", target, "err", err)
+	}
+	return out
+}
+
+// deletePendingBcc removes delivered notes by row id. Called only after a turn
+// that actually consumed them: a failed/cancelled turn keeps its rows so the
+// note is re-delivered next time (decision #69 semantics).
+func deletePendingBcc(ids []int64) {
+	if len(ids) == 0 {
+		return
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	if _, err := store.WriteExec(
+		`DELETE FROM group_pending_bcc WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...,
+	); err != nil {
+		slog.Warn("group: deleting delivered pending bcc failed", "err", err)
+	}
+}
+
+// deletePendingBccForTarget drops every stored note for one target in a group.
+// Used when the target is the USER (its notes are shown in the UI card rather
+// than delivered to an AI turn) and when a member leaves.
+func deletePendingBccForTarget(groupID, targetName string) {
+	target := strings.TrimSpace(targetName)
+	if groupID == "" || target == "" {
+		return
+	}
+	if _, err := store.WriteExec(
+		`DELETE FROM group_pending_bcc WHERE group_id = ? AND target_name = ?`, groupID, target,
+	); err != nil {
+		slog.Warn("group: clearing pending bcc for target failed", "group", groupID, "target", target, "err", err)
+	}
+}
+
+// deletePendingBccForGroup drops every stored note for a group. Used when the
+// group is archived/deleted so the table cannot grow without bound.
+func deletePendingBccForGroup(groupID string) {
+	if groupID == "" {
+		return
+	}
+	if _, err := store.WriteExec(`DELETE FROM group_pending_bcc WHERE group_id = ?`, groupID); err != nil {
+		slog.Warn("group: clearing pending bcc for group failed", "group", groupID, "err", err)
+	}
+}
+
+// pendingBcc is one stored private note awaiting delivery.
+type pendingBcc struct {
+	ID      int64
+	Content string
 }
 
 // memberSpecialtySuffix renders "（specialty）" or "" — omitted entirely when the
