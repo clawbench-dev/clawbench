@@ -103,7 +103,7 @@
           <span class="msg-bcc-title">{{ t('group.bcc.toYou') }}</span>
         </div>
         <div class="msg-bcc-body">
-          <div class="msg-bcc-entry-content">{{ e.content }}</div>
+          <div class="msg-bcc-entry-content" v-html="e.html"></div>
         </div>
       </div>
       <div v-if="bccToMembers.length > 0" class="msg-bcc">
@@ -120,7 +120,7 @@
         <div v-show="bccExpanded" class="msg-bcc-body">
           <div v-for="(e, i) in bccToMembers" :key="i" class="msg-bcc-entry">
             <div class="msg-bcc-entry-targets">{{ t('group.bcc.to') }}: {{ e.targets.join('、') }}</div>
-            <div class="msg-bcc-entry-content">{{ e.content }}</div>
+            <div class="msg-bcc-entry-content" v-html="e.html"></div>
           </div>
         </div>
       </div>
@@ -242,6 +242,7 @@ import { ref, inject, computed, nextTick, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuote, ChevronDown, Lock, User, Crown } from 'lucide-vue-next'
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
+import { escapeHtml } from '@/utils/html.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
 import { parseGroupRouting, stripGroupProtocolTags, GROUP_USER_TARGET_NAME } from '@/utils/groupRouting.ts'
@@ -342,12 +343,9 @@ const bccExpanded = ref(false)
 // it is meant for the reader.
 const GROUP_USER_TARGET = GROUP_USER_TARGET_NAME
 
-// bccToUser / bccToMembers split the notes by audience. The user's own notes
-// render expanded and labelled "to you"; the rest stay behind a collapsed
-// header whose title deliberately omits the target names (who got a note is
-// itself a hint).
-const bccToUser = computed(() => groupRouting.value.bcc.filter((e) => e.targets.includes(GROUP_USER_TARGET)))
-const bccToMembers = computed(() => groupRouting.value.bcc.filter((e) => !e.targets.includes(GROUP_USER_TARGET)))
+// bccToUser / bccToMembers split the notes by audience and are declared BELOW
+// the chatRender destructuring, because each note's body is rendered through the
+// same markdown pipeline the bubble uses (see renderBccNote).
 
 // mentionTargets maps the parsed mention targets to display info for the
 // summary row. Names that no longer resolve (removed members) still render as a
@@ -543,6 +541,43 @@ const chatSession = inject('chatSession', {})
 const { renderTextBlock, toolCallSummary, formatToolInput, truncate, hasImagesInContent } = chatRender
 const { getAgentBackend, getAgentName, getAgentAvatar } = chatSession
 const sessionId = computed(() => chatSession.sessionId?.() || '')
+
+// Private-note (密送) card bodies render through the SAME markdown pipeline as
+// the bubble body, so an agent that formats its note (bold, lists, inline code,
+// a table, a path) gets it rendered instead of shown as literal markers. The
+// rendered HTML is baked into each entry (e.html) so the template stays a plain
+// v-html. `renderTextBlock` is injected; when absent (a bare host that provides
+// no chatRender) fall back to an HTML-escaped plain-text body so the note is
+// never dropped and never injected raw.
+//
+// `noteIdx` is passed as the block index but NEGATED: renderTextBlock uses it to
+// key the shared blockAskQuestions / scheduled-task side tables (`${msgId}-${i}`),
+// and real block indices are 0..n-1. A non-negative index would let a note's
+// stray <clawbench-ask-question> tag overwrite the message's own block-0 card;
+// a negative index can never collide with a real block.
+function renderBccNote(content, noteIdx) {
+  if (typeof renderTextBlock !== 'function') return escapeHtml(content)
+  // The streaming flag is forwarded so a note revealed mid-turn skips the
+  // enhancements (path verification) exactly like the bubble body does, then
+  // takes the full pipeline once the turn settles.
+  return renderTextBlock(content || '', String(props.msg?.id ?? ''), -(noteIdx + 1), !!props.msg?.streaming)
+}
+
+// Split the notes by audience. The user's own notes render expanded and
+// labelled "to you"; the rest stay behind a collapsed header whose title
+// deliberately omits the target names (who got a note is itself a hint). Each
+// entry keeps its raw `content` (for the target label and tests) and gains
+// `html` (the rendered body). The split preserves the ORIGINAL bcc index so
+// renderBccNote's key stays unique across both lists.
+const bccEntries = computed(() =>
+  groupRouting.value.bcc.map((e, i) => ({
+    ...e,
+    toUser: e.targets.includes(GROUP_USER_TARGET),
+    html: renderBccNote(e.content, i),
+  })),
+)
+const bccToUser = computed(() => bccEntries.value.filter((e) => e.toUser))
+const bccToMembers = computed(() => bccEntries.value.filter((e) => !e.toUser))
 
 // File changes extraction (Write → created, Edit → modified).
 // Uses summaryCards as fallback when blocks are empty (summary-only view).
@@ -841,7 +876,6 @@ const copyPayload = quotableText
 .msg-bcc-entry-content {
   font-size: var(--font-size-sm);
   color: var(--text-primary);
-  white-space: pre-wrap;
   word-break: break-word;
 }
 </style>

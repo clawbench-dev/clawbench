@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createI18n } from 'vue-i18n'
+import { renderMarkdownHtml } from '@/composables/useMarkdownRenderer'
 
 // Minimal mocks so ChatMessageItem mounts. Group speaker rendering only needs
 // the template path; ContentBlocks and the heavy composables are stubbed.
 vi.mock('@/composables/useDoubleClickCopy', () => ({ useDoubleClickCopy: () => ({ handleDblClick: vi.fn() }) }))
-vi.mock('@/composables/useFilePathAnnotation', () => ({ useFilePathAnnotation: () => ({ openFilePath: vi.fn(), readLineTargetFromEl: vi.fn() }), openFilePath: vi.fn() }))
+// Spread the real module: the private-note card now imports the real markdown
+// renderer, whose dependency chain pulls `registerWorktreeCacheClearter` out of
+// this module. A hand-written partial mock would leave it undefined and crash
+// the import (the classic whitelist-mock trap).
+vi.mock('@/composables/useFilePathAnnotation', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/useFilePathAnnotation')>()
+  return {
+    ...actual,
+    useFilePathAnnotation: () => ({ openFilePath: vi.fn(), readLineTargetFromEl: vi.fn() }),
+    openFilePath: vi.fn(),
+  }
+})
 vi.mock('@/composables/useLocalhostAnnotation', () => ({ useLocalhostUrlClickHandler: () => ({ handleLocalhostUrlClick: vi.fn() }) }))
 vi.mock('@/composables/useAutoSpeech', () => ({
   extractSpeakableText: (blocks: Array<{ type: string; text?: string }>) =>
@@ -48,7 +60,11 @@ function mountItem(msg: Record<string, unknown>, props: Record<string, unknown> 
       plugins: [i18n],
       provide: {
         autoSpeech: { isActive: () => false, isGeneratingText: () => false, isPlayingAudio: () => false, playAudio: vi.fn(), stopAudio: vi.fn(), speakText: vi.fn(), getSummary: () => null, getPhaseLabel: () => '' },
-        chatRender: { renderTextBlock: vi.fn(), toolCallSummary: vi.fn(), formatToolInput: vi.fn(), humanizeCron: vi.fn(), repeatLabel: vi.fn(), truncate: vi.fn(), hasImagesInContent: () => false },
+        // renderTextBlock is used by the private-note (密送) card to render the
+        // note body through the same markdown pipeline as the bubble. Wire the
+        // REAL renderer so the card assertions test actual markdown output
+        // rather than a stub's return value (which would make them tautological).
+        chatRender: { renderTextBlock: (text: string) => renderMarkdownHtml(text || '', { skipEnhancements: true }), toolCallSummary: vi.fn(), formatToolInput: vi.fn(), humanizeCron: vi.fn(), repeatLabel: vi.fn(), truncate: vi.fn(), hasImagesInContent: () => false },
         chatSession: { getAgentBackend: () => '', getAgentName: () => '', getAgentAvatar: () => '' },
       },
     },
@@ -337,5 +353,59 @@ describe('ChatMessageItem bcc card: target names hidden, user note expanded', ()
     const memberCard = w.find('.msg-bcc:not(.msg-bcc-user)')
     expect(memberCard.exists()).toBe(true)
     expect((memberCard.find('.msg-bcc-body').element as HTMLElement).style.display).toBe('none')
+  })
+})
+
+describe('ChatMessageItem bcc card: note body renders Markdown', () => {
+  const hostWithBcc = (text: string) => ({
+    role: 'assistant',
+    id: 10,
+    content: '',
+    blocks: [{ type: 'text', text }],
+    agentId: 'host-1',
+  })
+  const opts = { resolveSpeaker: () => ({ name: 'Host', backend: 'codebuddy' }), hostMemberId: 'host-1' }
+
+  // A private note's body is prose written by an agent, so it must go through
+  // the SAME markdown pipeline as the bubble body — otherwise `**bold**` shows
+  // as literal asterisks. Both audiences (a note to the user, and a note to an
+  // AI member behind the collapsed header) must render.
+  it('renders Markdown in a note addressed to the user', () => {
+    const w = mountItem(
+      hostWithBcc('<clawbench-mention targets="A">表态</clawbench-mention><clawbench-mention targets="User" private>**你的词**是 `西瓜`</clawbench-mention>'),
+      opts,
+    )
+    const body = w.find('.msg-bcc-user .msg-bcc-entry-content')
+    expect(body.exists()).toBe(true)
+    // Rendered, not literal: the markers are consumed into real elements.
+    expect(body.find('strong').exists()).toBe(true)
+    expect(body.find('code').exists()).toBe(true)
+    expect(body.text()).toContain('西瓜')
+    expect(body.text()).not.toContain('**')
+    expect(body.text()).not.toContain('`')
+  })
+
+  it('renders Markdown in a note addressed to AI members (behind the collapsed header)', async () => {
+    const w = mountItem(
+      hostWithBcc('<clawbench-mention targets="A">表态</clawbench-mention><clawbench-mention targets="A" private>- 第一点\n- 第二点</clawbench-mention>'),
+      opts,
+    )
+    await w.find('.msg-bcc-header').trigger('click')
+    const body = w.find('.msg-bcc-entry-content')
+    expect(body.exists()).toBe(true)
+    // A list is a block element: proof the body was parsed, not shown verbatim.
+    expect(body.find('ul').exists()).toBe(true)
+    expect(body.findAll('li')).toHaveLength(2)
+  })
+
+  it('does not render raw HTML from the note (sanitized by the pipeline)', () => {
+    const w = mountItem(
+      hostWithBcc('<clawbench-mention targets="A">表态</clawbench-mention><clawbench-mention targets="A" private><img src=x onerror="alert(1)">正文</clawbench-mention>'),
+      opts,
+    )
+    const body = w.find('.msg-bcc-entry-content')
+    // DOMPurify drops the event handler; the payload cannot execute.
+    expect(body.find('img[onerror]').exists()).toBe(false)
+    expect(body.text()).toContain('正文')
   })
 })
