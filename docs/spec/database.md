@@ -19,7 +19,8 @@ RAG：同一数据库文件，独立连接池
 | agent_source | TEXT | | `'default'` | Agent 来源 |
 | model | TEXT | | `''` | LLM 模型 |
 | external_session_id | TEXT | | `''` | 外部 CLI 会话 ID |
-| session_type | TEXT | NOT NULL | `'chat'` | chat / task |
+| session_type | TEXT | NOT NULL | `'chat'` | chat / task / **group**（群会话）/ **group_member**（群成员连接绑定行，用户不可见） |
+| group_id | TEXT | | `''` | 所属群会话 id（仅 `group_member` 行非空）；索引 `idx_sessions_group(group_id, session_type)` |
 | deleted | INTEGER | NOT NULL | `0` | 软删除标记 |
 | last_read_at | DATETIME | | — | 最后阅读时间 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
@@ -36,11 +37,12 @@ UNIQUE：`(backend, id)`
 |---|---|---|---|---|
 | id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | 消息 ID |
 | project_id | INTEGER | NOT NULL | — | 项目 id（逻辑关联 `projects.id`） |
-| role | TEXT | NOT NULL, CHECK(role IN ('user','assistant')) | — | 消息角色 |
+| role | TEXT | NOT NULL, CHECK(role IN ('user','assistant','system')) | — | 消息角色（`system` 用于群成员增删的系统事件） |
 | content | TEXT | NOT NULL | — | 消息内容 |
 | files | TEXT | | — | 附件 JSON |
 | session_id | TEXT | | — | FK → chat_sessions.id (CASCADE) |
 | backend | TEXT | NOT NULL | `'claude'` | AI 后端名称 |
+| agent_id | TEXT | | `''` | **群聊发言人成员行 id**（非 agent id；普通会话留空）。前端据此解析发言人头像/名字并判定主持人发言 |
 | streaming | INTEGER | NOT NULL | `0` | 1=正在流式输出 |
 | indexed | INTEGER | NOT NULL | `0` | RAG 已索引标记 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
@@ -303,6 +305,20 @@ UNIQUE：`(type, key_id)`
 | source | TEXT | NOT NULL | `'stream'` | 订阅来源 |
 | created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
 
+### group_pending_bcc（群密送待投递）
+
+群聊密送（BCC）的待投递队列：主持人在发言里发出的 `private` 提及，按目标名字暂存于此，在**该目标下一次发言时**注入一次。行在成功投递后 **DELETE**；失败/取消的回合保留待下次重试（与成员注入游标"失败不推进"同语义）。人类用户用保留名 `User` 寻址。
+
+| 列名 | 类型 | 约束 | 默认值 | 说明 |
+|---|---|---|---|---|
+| id | INTEGER | PRIMARY KEY AUTOINCREMENT | — | |
+| group_id | TEXT | NOT NULL | — | 群会话 id |
+| target_name | TEXT | NOT NULL | — | 目标成员显示名（去空白）；人类用 `User` |
+| content | TEXT | NOT NULL | — | 密送内容 |
+| created_at | DATETIME | | CURRENT_TIMESTAMP | 创建时间 |
+
+索引：`idx_group_pending_bcc(group_id, target_name, id)`
+
 ### rag_chunks（RAG 分块）
 
 | 列名 | 类型 | 约束 | 默认值 | 说明 |
@@ -340,6 +356,8 @@ UNIQUE：`(type, key_id)`
 | rag_chunks.session_id | chat_sessions.id | — | 应用层（独立连接池） |
 | rag_chunks.message_id | chat_history.id | — | 应用层（独立连接池） |
 | recent_projects.project_id | projects.id | — | 逻辑关联（无外键） |
+| chat_sessions.group_id（成员行） | chat_sessions.id（群行） | 删除群时应用层级联硬删成员行 | 自引用逻辑关联（无外键） |
+| group_pending_bcc.group_id | chat_sessions.id | — | 逻辑关联（无外键） |
 | 各项目作用域表.project_id | projects.id | — | 逻辑关联（无外键；`project_id=0` 哨兵需可表示，故不声明 FK） |
 
 ## ER 关系图
@@ -356,6 +374,7 @@ erDiagram
         TEXT model
         TEXT external_session_id
         TEXT session_type
+        TEXT group_id
         INTEGER deleted
         DATETIME last_read_at
         DATETIME created_at
@@ -373,6 +392,7 @@ erDiagram
         TEXT files
         TEXT session_id FK
         TEXT backend
+        TEXT agent_id
         INTEGER streaming
         INTEGER indexed
         DATETIME created_at
@@ -586,7 +606,17 @@ erDiagram
         DATETIME created_at
     }
 
+    group_pending_bcc {
+        INTEGER id PK
+        TEXT group_id
+        TEXT target_name
+        TEXT content
+        DATETIME created_at
+    }
+
     chat_sessions ||--o{ chat_history : "session_id CASCADE"
+    chat_sessions ||--o{ chat_sessions : "group_id 群→成员行 logical"
+    chat_sessions ||--o{ group_pending_bcc : "group_id logical"
     chat_history ||--o| chat_metadata : "message_id 1:1 无外键（独立台账）"
     chat_history ||--o{ chat_tool_calls : "message_id CASCADE 1:N"
     chat_sessions ||--o{ chat_tool_calls : "session_id CASCADE"
