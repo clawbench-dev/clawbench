@@ -30,6 +30,36 @@ func renderHostMember(m HostMemberInfo) string {
 	return m.Name
 }
 
+// renderMemberList renders a member list as "A（desc）、B、C" (no trailing
+// punctuation). Shared by every prompt that lists the roster.
+func renderMemberList(members []HostMemberInfo) string {
+	rendered := make([]string, 0, len(members))
+	for _, m := range members {
+		rendered = append(rendered, renderHostMember(m))
+	}
+	return strings.Join(rendered, "、")
+}
+
+// othersLine renders the "本群其他成员：…。" line for a member-facing prompt,
+// excluding selfName (a member is not told about itself) and appending the
+// human user as a participant. Returns "" when there is nobody else.
+func othersLine(members []HostMemberInfo, selfName string) string {
+	others := make([]string, 0, len(members)+1)
+	for _, m := range members {
+		if strings.TrimSpace(m.Name) == "" || m.Name == selfName {
+			continue
+		}
+		others = append(others, renderHostMember(m))
+	}
+	if selfName != groupUserTarget {
+		others = append(others, groupUserTarget)
+	}
+	if len(others) == 0 {
+		return ""
+	}
+	return "本群其他成员：" + strings.Join(others, "、") + "。\n"
+}
+
 // BuildHostSystemPrompt returns the instruction appended to the host agent's
 // system prompt so it emits a parseable routing decision. members are the
 // display names the host may address, with their specialties.
@@ -54,11 +84,7 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 		b.WriteString("当前群内没有其他成员，你无需路由，直接回答用户即可。\n")
 		return b.String()
 	}
-	rendered := make([]string, 0, len(members))
-	for _, m := range members {
-		rendered = append(rendered, renderHostMember(m))
-	}
-	b.WriteString(strings.Join(rendered, "、"))
+	b.WriteString(renderMemberList(members))
 	b.WriteString("。\n")
 
 	// Addressing the human user: the user participates as a named participant
@@ -96,23 +122,9 @@ func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("发言要求：紧扣话题、简洁、直接给出你的观点；不要复述或模仿主持人的指令格式。\n")
 
-	others := make([]string, 0, len(members)+1)
-	for _, m := range members {
-		if strings.TrimSpace(m.Name) == "" || m.Name == selfName {
-			continue
-		}
-		others = append(others, renderHostMember(m))
-	}
 	// The human user is a participant too; a member should know a person is in
 	// the room (and may be addressed as "User").
-	if selfName != groupUserTarget {
-		others = append(others, groupUserTarget)
-	}
-	if len(others) > 0 {
-		b.WriteString("本群其他成员：")
-		b.WriteString(strings.Join(others, "、"))
-		b.WriteString("。\n")
-	}
+	b.WriteString(othersLine(members, selfName))
 	return b.String()
 }
 
@@ -126,11 +138,7 @@ func BuildHostSummaryPrompt(members []HostMemberInfo) string {
 	b.WriteString("请直接写一段简短的讨论结论（最终汇总），总结各成员观点与你的判断，供用户阅读。\n")
 	b.WriteString("不要再输出任何路由标签或结束标签。\n")
 	b.WriteString("参与成员：")
-	rendered := make([]string, 0, len(members))
-	for _, m := range members {
-		rendered = append(rendered, renderHostMember(m))
-	}
-	b.WriteString(strings.Join(rendered, "、"))
+	b.WriteString(renderMemberList(members))
 	b.WriteString("。\n")
 	return b.String()
 }
@@ -164,20 +172,6 @@ func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) stri
 	b.WriteString("可选：密送（只给个别成员看，其他成员看不到）——给标签加 private 属性：\n")
 	b.WriteString("  <clawbench-mention targets=\"成员名\" private>只有该成员能看到的内容</clawbench-mention>\n")
 
-	others := make([]string, 0, len(members)+1)
-	for _, m := range members {
-		if strings.TrimSpace(m.Name) == "" || m.Name == selfName {
-			continue
-		}
-		others = append(others, renderHostMember(m))
-	}
-	if selfName != groupUserTarget {
-		others = append(others, groupUserTarget)
-	}
-	if len(others) > 0 {
-		b.WriteString("本群其他成员：")
-		b.WriteString(strings.Join(others, "、"))
-		b.WriteString("。\n")
-	}
+	b.WriteString(othersLine(members, selfName))
 	return b.String()
 }

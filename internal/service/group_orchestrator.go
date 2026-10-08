@@ -171,8 +171,9 @@ func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 // run spanning several queued messages sends "done" exactly once.
 //
 // It dispatches on the group's mode (design §13.1): host mode runs the
-// host-routes-members loop, free mode runs the mention-relay loop. The
-// finalization is identical for both.
+// host-routes-members loop, free mode runs the mention-relay loop. Both are
+// thin wrappers over drainSpeakers (the shared queue kernel); the finalization
+// is identical for both.
 //
 // The finalization runs on EVERY exit path (cancel, abort, end, round cap,
 // error), which is why it lives here rather than in each branch:
@@ -208,63 +209,195 @@ func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) Dr
 	return res
 }
 
-// runRounds is the host/member decision loop, without the per-turn
-// finalization (see runLoop). groupCtx cancellation is reported as a user
-// cancel.
-func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) DrainResult {
-	// Resolve the host and member roster.
-	hostMemberID := GetGroupHostMember(groupID)
-	if hostMemberID == "" {
-		return DrainResult{Err: fmt.Sprintf("group %s has no host member", groupID)}
-	}
+// groupTurnSetup is the shared per-turn scaffolding both modes need: the
+// roster, the name/lookup maps, the (possibly test-injected) runner, and the
+// member rows registered active so the ACP idle sweep leaves them alone.
+type groupTurnSetup struct {
+	members   []GroupMember
+	names     map[string]string
+	byName    map[string]GroupMember
+	runner    groupTurnRunner
+	activeIDs []string
+}
+
+// prepareTurn loads the roster and wires the per-turn scaffolding shared by
+// host and free mode. The caller MUST `defer clearGroupMembersActive(s.activeIDs)`
+// so the ACP idle-sweep protection is released on every exit path (including
+// panics, decision #73). Orphaned streaming rows from a previous crashed turn
+// are cleaned before new ones are written (decision #71).
+func (o *GroupOrchestrator) prepareTurn(groupID string) (groupTurnSetup, error) {
 	members, err := ListGroupMembers(groupID)
 	if err != nil {
-		return DrainResult{Err: fmt.Sprintf("list group members: %v", err)}
+		return groupTurnSetup{}, fmt.Errorf("list group members: %w", err)
 	}
-	names := memberNameMap(members)
-	maxRounds := GetGroupMaxRounds(groupID)
-
-	// Protect every member's ACP connection for the duration of the turn: the
-	// idle sweep keys off the member row id, which is otherwise never "running"
-	// (decision #73). Registered here (after the roster is known) and cleared on
-	// return, so it covers every exit path including panics.
-	activeMemberIDs := make([]string, 0, len(members))
+	activeIDs := make([]string, 0, len(members))
 	for _, m := range members {
-		activeMemberIDs = append(activeMemberIDs, m.ID)
+		activeIDs = append(activeIDs, m.ID)
 	}
-	markGroupMembersActive(activeMemberIDs)
-	defer clearGroupMembersActive(activeMemberIDs)
-
+	markGroupMembersActive(activeIDs)
 	runner := o.runTurn
 	if runner == nil {
 		runner = o.defaultRunner
 	}
-
-	// Clean up any orphaned streaming rows from a previous crashed group turn
-	// before we start writing new ones (C1 residual).
 	finalizeGroupOrphans(groupID)
+	_, byName := memberLookups(members)
+	return groupTurnSetup{
+		members:   members,
+		names:     memberNameMap(members),
+		byName:    byName,
+		runner:    runner,
+		activeIDs: activeIDs,
+	}, nil
+}
 
-	// 3. Loop.
-	for round := 0; round < maxRounds; round++ {
-		if groupCtx.Err() != nil {
+// runSpeakerTurn executes one member's turn end-to-end: it injects the pending
+// private notes addressed to this member, builds the prompt (prepend + context
+// + system prompt), runs the turn, advances the member's cursor on success, and
+// clears the delivered notes on a clean turn. BOTH modes route their member
+// turns through here, so the cursor rule (decision #69) and the
+// deliver-on-success note rule cannot drift between them.
+//
+// instruction is the host's public directive (host mode) or "" (free mode);
+// prepend is a one-shot block ahead of everything (the /cb-* command injection);
+// sysPrompt is the mode's member system prompt.
+func (o *GroupOrchestrator) runSpeakerTurn(ctx context.Context, s groupTurnSetup, t GroupMember, instruction, prepend, sysPrompt string) groupMemberResult {
+	pending := pendingBccForTarget(o.groupID, s.names[t.ID])
+	bcc := joinPendingBcc(pending)
+	cursor := GetMemberCursor(t.ID)
+	prompt := groupInjectionTextOrEmpty(o.groupID, t.ID, cursor, s.names, instruction, bcc) + sysPrompt
+	if prepend != "" {
+		prompt = prepend + "\n\n" + prompt
+	}
+	preH := GroupTimelineHighWater(o.groupID)
+	res := s.runner(ctx, o.groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
+	if res.CancelReason != "" {
+		// The user stopped the turn mid-speech. Delivered notes are NOT cleared
+		// (the turn consumed nothing) — they re-send (decision #69).
+		return res
+	}
+	advanceCursorOnSuccess(t.ID, preH, res)
+	// Deliver-on-success only: an errored turn keeps its notes.
+	if res.Err == "" {
+		ids := make([]int64, 0, len(pending))
+		for _, p := range pending {
+			ids = append(ids, p.ID)
+		}
+		deletePendingBcc(ids)
+	}
+	return res
+}
+
+// handUserBack ends the current turn because the floor was handed to the human
+// user: it clears the user's pending-note bookkeeping (the user reads notes in
+// the UI card, never through an injected prompt), leaves a system line so the
+// timeline shows why the turn stopped, and returns the (empty) result. Shared
+// by both modes (host: the host named User; free: a speaker @-ed User).
+func (o *GroupOrchestrator) handUserBack(groupID string) DrainResult {
+	deletePendingBccForTarget(groupID, groupUserTarget)
+	writeGroupSystemMessage(o.project, groupID,
+		i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
+	return DrainResult{}
+}
+
+// speakerTurn is one queued speaker plus the mode-specific prompt fragments
+// that ride with it. Host mode attaches the host's public directive and the
+// "member" system prompt; free mode attaches only the free-mode system prompt.
+type speakerTurn struct {
+	member      GroupMember
+	instruction string
+	prepend     string
+	sysPrompt   string
+}
+
+// drainSpeakers is the ONE turn kernel both modes share. It runs queued speakers
+// FIFO; when the queue empties it calls refill to obtain more — host mode runs
+// the host turn there and returns its routed targets, free mode returns "done".
+// A clean turn's output is offered to onSpoke so the mode can extend the queue
+// (free mode appends the speaker's @-mentions; host mode passes nil, since its
+// members cannot route).
+//
+// The kernel owns the three rules that must NOT drift between modes:
+//   - groupCtx cancellation ⇒ a user-cancel result (checked before every
+//     speaker AND before every refill, so a stop during the host turn is seen);
+//   - naming the human user ⇒ hand the floor back and end the turn;
+//   - a cancelled speaker turn ⇒ stop the WHOLE turn (the rest of the queue is
+//     dropped; nothing runs after a stop).
+func (o *GroupOrchestrator) drainSpeakers(
+	ctx context.Context,
+	s groupTurnSetup,
+	queue []speakerTurn,
+	refill func(ctx context.Context) ([]speakerTurn, bool, DrainResult),
+	onSpoke func(ctx context.Context, sp speakerTurn, queue []speakerTurn) []speakerTurn,
+) DrainResult {
+	for {
+		if ctx.Err() != nil {
 			return DrainResult{CancelReason: cancelReasonUser}
 		}
+		if len(queue) == 0 {
+			more, ok, res := refill(ctx)
+			// ok=false ends the turn; an ok=true-but-empty refill would spin, so
+			// treat it as "nothing more" and return the (zero) result.
+			if !ok || len(more) == 0 {
+				return res
+			}
+			queue = more
+			continue
+		}
+		sp := queue[0]
+		queue = queue[1:]
+		if sp.member.ID == groupUserTargetID {
+			return o.handUserBack(o.groupID)
+		}
+		r := o.runSpeakerTurn(ctx, s, sp.member, sp.instruction, sp.prepend, sp.sysPrompt)
+		if r.CancelReason != "" {
+			return DrainResult{CancelReason: r.CancelReason}
+		}
+		if r.Err == "" && onSpoke != nil {
+			queue = onSpoke(ctx, sp, queue)
+		}
+	}
+}
+
+// runRounds is the host/member decision loop, driven by drainSpeakers: the
+// refill closure runs one host turn and returns its routed members (or a
+// round-robin fallback pick), and terminates the turn on the end signal, the
+// round cap, or repeated host/parse failures.
+func (o *GroupOrchestrator) runRounds(ctx context.Context, groupID string) DrainResult {
+	hostMemberID := GetGroupHostMember(groupID)
+	if hostMemberID == "" {
+		return DrainResult{Err: fmt.Sprintf("group %s has no host member", groupID)}
+	}
+	s, err := o.prepareTurn(groupID)
+	if err != nil {
+		return DrainResult{Err: err.Error()}
+	}
+	defer clearGroupMembersActive(s.activeIDs)
+	maxRounds := GetGroupMaxRounds(groupID)
+
+	round := 0
+	refill := func(ctx context.Context) ([]speakerTurn, bool, DrainResult) {
+		if round >= maxRounds {
+			// Round cap reached: run the host once more purely for the summary.
+			o.summarize(ctx, s.runner, hostMemberID, s.names, s.members)
+			return nil, false, DrainResult{}
+		}
+		round++
 		// Host speaks and routes.
 		hostCursor := GetMemberCursor(hostMemberID)
-		hostPrompt := o.hostPrompt(hostMemberID, hostCursor, names, members)
+		hostPrompt := o.hostPrompt(hostMemberID, hostCursor, s.names, s.members)
 		// Prepend the rendered /cb-* template to the FIRST host turn only
 		// (decision #79 revision): the host executes the built-in command once
 		// and its spoken result enters the timeline for the members to discuss.
 		// Injecting on every round would re-run the command each round.
-		if round == 0 && o.commandInjection != "" {
+		if round == 1 && o.commandInjection != "" {
 			hostPrompt = o.commandInjection + "\n\n" + hostPrompt
 		}
 		hostPreH := GroupTimelineHighWater(groupID)
-		hostRes := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: hostPrompt, IsHost: true})
+		hostRes := s.runner(ctx, groupID, groupMemberTurn{MemberRowID: hostMemberID, Prompt: hostPrompt, IsHost: true})
 		if hostRes.CancelReason != "" {
 			// The user stopped the turn while the host was speaking. Do NOT fall
 			// back to a member turn — that would keep running after a stop.
-			return DrainResult{CancelReason: hostRes.CancelReason}
+			return nil, false, DrainResult{CancelReason: hostRes.CancelReason}
 		}
 		if hostRes.Err != "" {
 			slog.Warn("group: host turn failed", "group", groupID, "err", hostRes.Err)
@@ -275,25 +408,26 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 			if o.hostFailures >= maxConsecutiveHostFailures {
 				slog.Warn("group: aborting after consecutive host failures",
 					"group", groupID, "failures", o.hostFailures)
-				o.summarize(groupCtx, runner, hostMemberID, names, members)
-				return DrainResult{Err: "host turn failed repeatedly"}
+				o.summarize(ctx, s.runner, hostMemberID, s.names, s.members)
+				return nil, false, DrainResult{Err: "host turn failed repeatedly"}
 			}
-			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
-				return DrainResult{Err: "host turn failed and no member could take over"}
+			fb, ok := o.pickFallbackMember(hostMemberID, s.members)
+			if !ok {
+				return nil, false, DrainResult{Err: "host turn failed and no member could take over"}
 			}
-			continue
+			return []speakerTurn{{member: fb}}, true, DrainResult{}
 		}
 		// A successful host turn clears the failure streak.
 		o.hostFailures = 0
 		advanceCursorOnSuccess(hostMemberID, hostPreH, hostRes)
 
-		route := grouprouting.Parse(o.lastHostOutput(groupID, hostMemberID))
+		route := grouprouting.Parse(o.lastMemberOutput(groupID, hostMemberID))
 		if route.End {
 			// The end-signal turn already contains the summary (B2 prompt).
-			return DrainResult{}
+			return nil, false, DrainResult{}
 		}
 
-		targets := o.resolveTargets(route, members, hostMemberID)
+		targets := resolveSpeakerTargets(route, s.members, hostMemberID)
 		if len(targets) == 0 {
 			// Parse failed or no valid speakers: fall back to round-robin.
 			//
@@ -304,13 +438,14 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 			if o.parseFailures >= maxConsecutiveParseFailures {
 				slog.Warn("group: aborting after consecutive parse failures",
 					"group", groupID, "failures", o.parseFailures)
-				o.summarize(groupCtx, runner, hostMemberID, names, members)
-				return DrainResult{}
+				o.summarize(ctx, s.runner, hostMemberID, s.names, s.members)
+				return nil, false, DrainResult{}
 			}
-			if !o.speakNextMember(groupCtx, runner, members, names, hostMemberID) {
-				return DrainResult{}
+			fb, ok := o.pickFallbackMember(hostMemberID, s.members)
+			if !ok {
+				return nil, false, DrainResult{}
 			}
-			continue
+			return []speakerTurn{{member: fb}}, true, DrainResult{}
 		}
 		// A usable routing decision resets the failure streak.
 		o.parseFailures = 0
@@ -321,198 +456,128 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 		// can "hand everyone a word, then call on one player first" (the
 		// Who-Is-The-Spy setup). Delivery deletes the row; a failed/cancelled
 		// turn keeps it for the next attempt (decision #69 semantics).
-		for _, e := range route.Bcc {
-			for _, name := range e.Targets {
-				addPendingBcc(groupID, name, e.Content)
-			}
-		}
+		storeRouteNotes(groupID, route, hostMemberID, s.byName)
 
 		// Members speak in order; each sees the previous speakers' output.
+		out := make([]speakerTurn, 0, len(targets))
 		for _, t := range targets {
-			if groupCtx.Err() != nil {
-				return DrainResult{CancelReason: cancelReasonUser}
-			}
-			// The user is a participant with no AI turn: naming them hands the
-			// floor back. End the round (do NOT run the remaining targets) and
-			// leave a system line so the timeline shows why it stopped.
-			if t.ID == groupUserTargetID {
-				// The user reads notes in the UI card, not through an injected
-				// prompt — clear the bookkeeping so they are not re-sent.
-				deletePendingBccForTarget(groupID, groupUserTarget)
-				writeGroupSystemMessage(o.project, groupID,
-					i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
-				return DrainResult{}
-			}
-			memberCursor := GetMemberCursor(t.ID)
-			// The notes accumulated for THIS member (possibly from an earlier
-			// round that did not name it).
-			pending := pendingBccForTarget(groupID, names[t.ID])
-			bcc := joinPendingBcc(pending)
-			prompt := groupInjectionTextOrEmpty(groupID, t.ID, memberCursor, names, route.Instruction, bcc) +
-				BuildMemberSystemPrompt(memberRoster(members), names[t.ID])
-			preH := GroupTimelineHighWater(groupID)
-			res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
-			if res.CancelReason != "" {
-				// The user stopped the turn mid-speech. Stop the whole turn so
-				// the remaining targets do not run after a stop. Delivered notes
-				// are NOT cleared (the turn consumed nothing) — they re-send.
-				return DrainResult{CancelReason: res.CancelReason}
-			}
-			advanceCursorOnSuccess(t.ID, preH, res)
-			// Deliver-on-success only: an errored turn keeps its notes.
-			if res.Err == "" {
-				ids := make([]int64, 0, len(pending))
-				for _, p := range pending {
-					ids = append(ids, p.ID)
-				}
-				deletePendingBcc(ids)
-			}
+			out = append(out, speakerTurn{
+				member:      t,
+				instruction: route.Instruction,
+				sysPrompt:   BuildMemberSystemPrompt(memberRoster(s.members), s.names[t.ID]),
+			})
 		}
+		return out, true, DrainResult{}
 	}
 
-	// 4. Round cap reached: run the host once more to produce a summary.
-	o.summarize(groupCtx, runner, hostMemberID, names, members)
-	return DrainResult{}
+	return o.drainSpeakers(ctx, s, nil, refill, nil)
 }
 
 // runFreeLoop is the free-chat mode's main loop (design §13.3). There is no
 // host: the user's message seeds a FIFO queue of speakers (the @-mentioned
 // members, or — when the message mentions nobody — every active member in
-// roster order), and each speaker's own @-mentions append to the queue's tail.
-// The relay runs until the queue drains (nobody is @-ed any more), a member
-// hands the floor back to the human ("User"), or the user stops the turn.
+// roster order), and each speaker's own @-mentions append to the queue's tail
+// (via drainSpeakers' onSpoke). The relay runs until the queue drains (nobody
+// is @-ed any more), a member hands the floor back to the human ("User"), or
+// the user stops the turn.
 //
 // There is deliberately NO round cap and NO loop detection (decision #F13): the
 // user asked for unlimited relay, stopped by hand. A@B,B@A therefore burns
 // tokens until the user presses stop — a known, accepted risk.
-func (o *GroupOrchestrator) runFreeLoop(groupCtx context.Context, groupID string) DrainResult {
-	members, err := ListGroupMembers(groupID)
+func (o *GroupOrchestrator) runFreeLoop(ctx context.Context, groupID string) DrainResult {
+	s, err := o.prepareTurn(groupID)
 	if err != nil {
-		return DrainResult{Err: fmt.Sprintf("list group members: %v", err)}
+		return DrainResult{Err: err.Error()}
 	}
-	names := memberNameMap(members)
-
-	// Protect every member's ACP connection for the turn (decision #73).
-	activeMemberIDs := make([]string, 0, len(members))
-	for _, m := range members {
-		activeMemberIDs = append(activeMemberIDs, m.ID)
-	}
-	markGroupMembersActive(activeMemberIDs)
-	defer clearGroupMembersActive(activeMemberIDs)
-
-	runner := o.runTurn
-	if runner == nil {
-		runner = o.defaultRunner
-	}
-
-	// Clean up any orphaned streaming rows from a previous crashed turn.
-	finalizeGroupOrphans(groupID)
+	defer clearGroupMembersActive(s.activeIDs)
 
 	// Seed the queue from the user's message: the @-mentioned members, in the
 	// order mentioned; or every active member in roster order when nobody is
 	// mentioned.
-	queue := o.freeInitialTargets(members)
-	if len(queue) == 0 {
+	targets := o.freeInitialTargets(s.members)
+	if len(targets) == 0 {
 		return DrainResult{}
 	}
-	// commandInjection runs on the FIRST speaker only (design §13.3 #F16).
-	firstTurn := true
-
-	for len(queue) > 0 {
-		if groupCtx.Err() != nil {
-			return DrainResult{CancelReason: cancelReasonUser}
+	queue := make([]speakerTurn, 0, len(targets))
+	for i, t := range targets {
+		st := speakerTurn{
+			member:    t,
+			sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(s.members), s.names[t.ID]),
 		}
-		t := queue[0]
-		queue = queue[1:]
-
-		// The human is a participant with no AI turn: @-ing them hands the floor
-		// back, ending the relay (design §13.3 #F6).
-		if t.ID == groupUserTargetID {
-			// A note addressed to the user is read in the UI card, not through
-			// an injected prompt — clear the bookkeeping so it is not re-sent.
-			deletePendingBccForTarget(groupID, groupUserTarget)
-			writeGroupSystemMessage(o.project, groupID,
-				i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
-			return DrainResult{}
+		// commandInjection runs on the FIRST speaker only (design §13.3 #F16).
+		if i == 0 {
+			st.prepend = o.commandInjection
 		}
-
-		// Notes accumulated for THIS member by earlier speakers (a note reaches
-		// its target on that target's next turn, exactly like host mode).
-		pending := pendingBccForTarget(groupID, names[t.ID])
-		bcc := joinPendingBcc(pending)
-		cursor := GetMemberCursor(t.ID)
-		prompt := groupInjectionTextOrEmpty(groupID, t.ID, cursor, names, "", bcc) +
-			BuildFreeMemberSystemPrompt(memberRoster(members), names[t.ID])
-		if firstTurn && o.commandInjection != "" {
-			prompt = o.commandInjection + "\n\n" + prompt
-		}
-		firstTurn = false
-		preH := GroupTimelineHighWater(groupID)
-		res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
-		if res.CancelReason != "" {
-			// The user stopped the relay mid-speech. Stop the whole turn.
-			return DrainResult{CancelReason: res.CancelReason}
-		}
-		advanceCursorOnSuccess(t.ID, preH, res)
-
-		// Only a clean turn's output is honored (matching the cursor rule): its
-		// delivered notes are cleared, its own @-mentions append to the queue,
-		// and its private notes are stored for their targets' next turn.
-		if res.Err == "" {
-			ids := make([]int64, 0, len(pending))
-			for _, p := range pending {
-				ids = append(ids, p.ID)
-			}
-			deletePendingBcc(ids)
-			o.storeFreeSpeakerNotes(groupID, t.ID)
-			queue = o.appendFreeTargets(queue, groupID, t.ID, members, names)
-		}
+		queue = append(queue, st)
 	}
-	return DrainResult{}
+
+	// The queue is self-extending: free mode has no router, so an empty queue
+	// means the relay is over.
+	refill := func(context.Context) ([]speakerTurn, bool, DrainResult) {
+		return nil, false, DrainResult{}
+	}
+	onSpoke := func(_ context.Context, sp speakerTurn, q []speakerTurn) []speakerTurn {
+		o.storeFreeSpeakerNotes(groupID, sp.member.ID, s.byName)
+		return o.appendFreeTargets(q, groupID, sp.member.ID, s.members, s.names)
+	}
+	return o.drainSpeakers(ctx, s, queue, refill, onSpoke)
+}
+
+// pickFallbackMember picks the next round-robin fallback speaker, skipping the
+// host and left members, and advances o.fallbackIdx. Returns false when no
+// eligible member exists.
+//
+// The pick ROTATES via o.fallbackIdx (decision #56): when the host's routing is
+// repeatedly unparseable, always choosing the first member would turn the
+// discussion into that member's monologue. The index advances past whatever was
+// picked and wraps.
+func (o *GroupOrchestrator) pickFallbackMember(hostMemberID string, members []GroupMember) (GroupMember, bool) {
+	eligible := make([]GroupMember, 0, len(members))
+	for _, m := range members {
+		if m.Left || m.ID == hostMemberID {
+			continue
+		}
+		eligible = append(eligible, m)
+	}
+	if len(eligible) == 0 {
+		return GroupMember{}, false
+	}
+	if o.fallbackIdx >= len(eligible) {
+		o.fallbackIdx = 0
+	}
+	m := eligible[o.fallbackIdx]
+	o.fallbackIdx = (o.fallbackIdx + 1) % len(eligible)
+	return m, true
 }
 
 // storeFreeSpeakerNotes persists the private notes a free-mode speaker emitted,
 // so each note is delivered on its target's next turn (the group_pending_bcc
-// contract host mode uses). The target is matched by display name (what an
-// agent writes); the reserved "User" name is accepted so a member can note the
-// human. A no-op when the speaker emitted no private mention.
-// storeFreeSpeakerNotes persists the private notes a free-mode speaker emitted,
-// so each note is delivered on its target's next turn (the group_pending_bcc
-// contract host mode uses). The target is matched by display name (what an
-// agent writes); the reserved "User" name is accepted so a member can note the
-// human.
-//
-// Targets are validated against the roster: an unknown or left target is
-// dropped (storing it would create a row that can never be delivered and is
-// never cleaned — silent loss plus unbounded growth), and a self-directed note
-// is dropped (it would be delivered on the speaker's own next turn, which is
-// just talking to itself). A no-op when the speaker emitted no private mention.
-func (o *GroupOrchestrator) storeFreeSpeakerNotes(groupID, speakerID string) {
-	output := o.lastSpeakerOutput(groupID, speakerID)
+// contract host mode uses). It re-parses the speaker's own output (free mode
+// has no pre-parsed route) and delegates the validation/storage to
+// storeRouteNotes.
+func (o *GroupOrchestrator) storeFreeSpeakerNotes(groupID, speakerID string, byName map[string]GroupMember) {
+	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
 		return
 	}
-	route := grouprouting.Parse(output)
-	if len(route.Bcc) == 0 {
-		return
-	}
-	members, err := ListGroupMembers(groupID)
-	if err != nil {
-		slog.Warn("group: loading members for note validation failed", "group", groupID, "err", err)
-		return
-	}
-	_, byName := memberLookups(members)
+	storeRouteNotes(groupID, grouprouting.Parse(output), speakerID, byName)
+}
+
+// storeRouteNotes persists a parsed route's private notes, validating each
+// target against the roster: an unknown or left target is dropped (it could
+// never be delivered — storing it would be silent loss plus unbounded growth of
+// group_pending_bcc), and a self-directed note is dropped (it would be
+// delivered on the speaker's own next turn). Both modes store notes through
+// here. The note is keyed by the RESOLVED member name, which is exactly what
+// the delivery lookup (pendingBccForTarget(names[t.ID])) uses.
+func storeRouteNotes(groupID string, route grouprouting.Result, speakerID string, byName map[string]GroupMember) {
 	for _, e := range route.Bcc {
 		for _, target := range e.Targets {
 			m, ok := byName[strings.TrimSpace(target)]
-			if !ok {
-				// Unknown/left target: drop (cannot ever be delivered).
+			if !ok || m.ID == speakerID {
 				continue
 			}
-			if m.ID == speakerID {
-				continue // self-directed note: talking to itself
-			}
-			addPendingBcc(groupID, target, e.Content)
+			addPendingBcc(groupID, m.Name, e.Content)
 		}
 	}
 }
@@ -527,7 +592,7 @@ func (o *GroupOrchestrator) storeFreeSpeakerNotes(groupID, speakerID string) {
 // (the "unknown name" system notice is only for AGENT-emitted mentions — see
 // appendFreeTargets — because a user's typo is not a discussion event).
 func (o *GroupOrchestrator) freeInitialTargets(members []GroupMember) []GroupMember {
-	mentioned := o.resolveMentionNames(o.userMessage, members, "")
+	mentioned := resolveSpeakerTargets(grouprouting.Parse(o.userMessage), members, "")
 	if len(mentioned) == 0 {
 		out := make([]GroupMember, 0, len(members))
 		for _, m := range members {
@@ -552,8 +617,8 @@ func (o *GroupOrchestrator) freeInitialTargets(members []GroupMember) []GroupMem
 // dropped silently (model slips not worth surfacing); an unknown NAME emits a
 // visible system notice (it usually means a member was removed/renamed, or the
 // model hallucinated — the user should know).
-func (o *GroupOrchestrator) appendFreeTargets(queue []GroupMember, groupID, speakerID string, members []GroupMember, names map[string]string) []GroupMember {
-	output := o.lastSpeakerOutput(groupID, speakerID)
+func (o *GroupOrchestrator) appendFreeTargets(queue []speakerTurn, groupID, speakerID string, members []GroupMember, names map[string]string) []speakerTurn {
+	output := o.lastMemberOutput(groupID, speakerID)
 	if output == "" {
 		return queue
 	}
@@ -564,12 +629,12 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []GroupMember, groupID, spea
 
 	byID, byName := memberLookups(members)
 	waiting := map[string]bool{}
-	for _, m := range queue {
-		waiting[m.ID] = true
+	for _, st := range queue {
+		waiting[st.member.ID] = true
 	}
 
 	var unknown []string
-	for _, tgt := range publicMentionTargets(route) {
+	for _, tgt := range route.Speakers {
 		m, ok := byID[strings.TrimSpace(tgt)]
 		if !ok {
 			m, ok = byName[strings.TrimSpace(tgt)]
@@ -588,7 +653,10 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []GroupMember, groupID, spea
 			continue // already queued: do not duplicate
 		}
 		waiting[m.ID] = true
-		queue = append(queue, m)
+		queue = append(queue, speakerTurn{
+			member:    m,
+			sysPrompt: BuildFreeMemberSystemPrompt(memberRoster(members), names[m.ID]),
+		})
 	}
 	if len(unknown) > 0 {
 		// Surface once, aggregated, so a hallucinated name is visible without
@@ -603,28 +671,28 @@ func (o *GroupOrchestrator) appendFreeTargets(queue []GroupMember, groupID, spea
 	return queue
 }
 
-// resolveMentionNames resolves the mentions in `text` to member rows, matching
-// by row id first then by display name, dropping self/left/duplicates. Used for
-// the user message's initial targets (self is the empty string: the user is not
-// a member).
-func (o *GroupOrchestrator) resolveMentionNames(text string, members []GroupMember, selfID string) []GroupMember {
-	route := grouprouting.Parse(text)
+// resolveSpeakerTargets maps a parsed route's public targets to member rows, in
+// the order named, de-duplicated. A target is matched by member ROW id first
+// (a user's @-mention carries the row id) then by display name (an agent writes
+// the name). Unknown/left targets are dropped, and so is excludeID — the host
+// must not route to itself (which would turn every "member turn" into another
+// host turn, the reported "only the host ever speaks" defect), and a free-mode
+// speaker must not @-queue itself. The human user is resolvable under its
+// reserved name (and, for the frontend, its sentinel id).
+func resolveSpeakerTargets(route grouprouting.Result, members []GroupMember, excludeID string) []GroupMember {
 	if !route.Found {
 		return nil
 	}
 	byID, byName := memberLookups(members)
-
-	var out []GroupMember
+	out := make([]GroupMember, 0, len(route.Speakers))
 	seen := map[string]bool{}
-	for _, tgt := range publicMentionTargets(route) {
-		m, ok := byID[strings.TrimSpace(tgt)]
+	for _, tgt := range route.Speakers {
+		t := strings.TrimSpace(tgt)
+		m, ok := byID[t]
 		if !ok {
-			m, ok = byName[strings.TrimSpace(tgt)]
+			m, ok = byName[t]
 		}
-		if !ok || seen[m.ID] {
-			continue
-		}
-		if m.ID == selfID {
+		if !ok || seen[m.ID] || m.ID == excludeID {
 			continue
 		}
 		if m.Left && m.ID != groupUserTargetID {
@@ -636,9 +704,11 @@ func (o *GroupOrchestrator) resolveMentionNames(text string, members []GroupMemb
 	return out
 }
 
-// lastSpeakerOutput returns a specific member's most recent assistant speech on
-// the group timeline (used to parse that member's @-mentions).
-func (o *GroupOrchestrator) lastSpeakerOutput(groupID, memberID string) string {
+// lastMemberOutput returns a specific member's (or the host's) most recent
+// assistant speech on the group timeline, used to parse that speaker's routing
+// decision / @-mentions. There is no separate host variant: the host is just a
+// member row.
+func (o *GroupOrchestrator) lastMemberOutput(groupID, memberID string) string {
 	msgs, err := GetMessagesBySessionIDRaw(groupID)
 	if err != nil {
 		return ""
@@ -699,89 +769,6 @@ func advanceCursorOnSuccess(memberID string, preH int64, res groupMemberResult) 
 func (o *GroupOrchestrator) hostPrompt(hostMemberID string, cursor int64, names map[string]string, members []GroupMember) string {
 	ctxText := groupInjectionTextOrEmpty(o.groupID, hostMemberID, cursor, names, "", "")
 	return ctxText + BuildHostSystemPrompt(activeMemberNamesExcept(members, hostMemberID))
-}
-
-// lastHostOutput returns the host's most recent speech text on the group
-// timeline (used to parse its routing decision).
-func (o *GroupOrchestrator) lastHostOutput(groupID, hostMemberID string) string {
-	msgs, err := GetMessagesBySessionIDRaw(groupID)
-	if err != nil {
-		return ""
-	}
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].AgentID == hostMemberID && msgs[i].Role == roleAssistant {
-			return ExtractPlainText(msgs[i].Content)
-		}
-	}
-	return ""
-}
-
-// resolveTargets maps the host's named speakers to active member rows, in the
-// order named. Unknown/left names are dropped, and so is the host itself — the
-// host must not be able to route to itself, which would turn every "member
-// turn" into another host turn and starve the real members (the reported "only
-// the host ever speaks" defect).
-func (o *GroupOrchestrator) resolveTargets(route grouprouting.Result, members []GroupMember, hostMemberID string) []GroupMember {
-	if !route.Found {
-		return nil
-	}
-	byName := map[string]GroupMember{}
-	for _, m := range members {
-		if m.Left || m.ID == hostMemberID {
-			continue
-		}
-		byName[strings.TrimSpace(m.Name)] = m
-	}
-	// The human user is routable under the reserved name. It has no member row
-	// (no backend, no AI turn); the sentinel id marks it for the loop below,
-	// which stops and waits instead of running a turn.
-	byName[groupUserTarget] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget}
-	out := make([]GroupMember, 0, len(route.Speakers))
-	seen := map[string]bool{}
-	for _, name := range route.Speakers {
-		m, ok := byName[strings.TrimSpace(name)]
-		if !ok || seen[m.ID] {
-			continue
-		}
-		seen[m.ID] = true
-		out = append(out, m)
-	}
-	return out
-}
-
-// speakNextMember runs one round-robin member turn (fallback path), skipping
-// the host so a fallback can never re-run the host. Returns false when no
-// active non-host member exists.
-//
-// The pick ROTATES via o.fallbackIdx (decision #56): when the host's routing is
-// repeatedly unparseable, always choosing the first member would turn the
-// discussion into that member's monologue. The index advances past whatever was
-// picked and wraps, skipping left members and the host.
-func (o *GroupOrchestrator) speakNextMember(ctx context.Context, runner groupTurnRunner, members []GroupMember, names map[string]string, hostMemberID string) bool {
-	eligible := make([]GroupMember, 0, len(members))
-	for _, m := range members {
-		if m.Left || m.ID == hostMemberID {
-			continue
-		}
-		eligible = append(eligible, m)
-	}
-	if len(eligible) == 0 {
-		return false
-	}
-	if o.fallbackIdx >= len(eligible) {
-		o.fallbackIdx = 0
-	}
-	m := eligible[o.fallbackIdx]
-	o.fallbackIdx = (o.fallbackIdx + 1) % len(eligible)
-
-	cursor := GetMemberCursor(m.ID)
-	prompt := groupInjectionTextOrEmpty(o.groupID, m.ID, cursor, names, "", "")
-	preH := GroupTimelineHighWater(o.groupID)
-	res := runner(ctx, o.groupID, groupMemberTurn{MemberRowID: m.ID, Prompt: prompt})
-	// Same cursor rule as the routed and host paths (decision #69 + design
-	// §5.1): advance to the PRE-speech high-water, and only on a clean turn.
-	advanceCursorOnSuccess(m.ID, preH, res)
-	return true
 }
 
 // buildMemberTurnSpec assembles the TurnSpec for one member (or host) turn.
@@ -889,26 +876,6 @@ func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) 
 	return byID, byName
 }
 
-// publicMentionTargets flattens the PUBLIC mention targets of a parsed result,
-// in order, de-duplicated (a member named by two mentions is listed once).
-// Private mentions are skipped — a note is not a floor hand-off.
-func publicMentionTargets(route grouprouting.Result) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, e := range route.Mentions {
-		if e.Private {
-			continue
-		}
-		for _, tgt := range e.Targets {
-			if !seen[tgt] {
-				seen[tgt] = true
-				out = append(out, tgt)
-			}
-		}
-	}
-	return out
-}
-
 // activeMemberNamesExcept returns the members the host may route to, with the
 // metadata that makes routing sensible (decision #39/#41): every member EXCEPT
 // the host itself, each carrying its specialty and whether it has left.
@@ -918,7 +885,7 @@ func publicMentionTargets(route grouprouting.Result) []string {
 // it cannot address. Marking them is what stops the host from routing to
 // someone who is gone (which would silently fall back to round-robin).
 //
-// The host must never be offered as a routing target (see resolveTargets).
+// The host must never be offered as a routing target (see resolveSpeakerTargets).
 //
 // The human user is appended as a routable participant (the reserved name
 // "User"): naming the user ends the round and waits for their reply, so the

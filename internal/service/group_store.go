@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -68,6 +69,45 @@ func CreateGroup(projectPath, title, backend, hostAgentID, hostName string) (gro
 	})
 }
 
+// dedupeGroupSpecs validates the specs and collapses duplicate agents, so the
+// cap counts UNIQUE agents and every member is addressable (see
+// CreateGroupWithMembers). Extracted to keep that function's complexity in
+// budget.
+func dedupeGroupSpecs(specs []GroupMemberSpec) ([]GroupMemberSpec, error) {
+	seen := make(map[string]bool, len(specs))
+	deduped := make([]GroupMemberSpec, 0, len(specs))
+	for _, s := range specs {
+		if s.AgentID == "" {
+			return nil, fmt.Errorf("create group: member with empty agent id")
+		}
+		if seen[s.AgentID] {
+			continue
+		}
+		seen[s.AgentID] = true
+		deduped = append(deduped, s)
+	}
+	if len(deduped) > maxGroupMembers {
+		return nil, ErrGroupMemberLimit
+	}
+	return deduped, nil
+}
+
+// groupIdentityFields picks the group row's (backend, agent_id) identity: the
+// host's in host mode, the first member's in free mode (a group row has NOT NULL
+// backend and its agent_id drives the list icon). Extracted from
+// CreateGroupWithMembers to keep that function's cognitive complexity in budget.
+func groupIdentityFields(mode string, specs []GroupMemberSpec, hostAgentID string) (backend, agentID string) {
+	if mode != GroupModeHost {
+		return specs[0].Backend, specs[0].AgentID
+	}
+	for _, s := range specs {
+		if s.AgentID == hostAgentID {
+			return s.Backend, s.AgentID
+		}
+	}
+	return "", ""
+}
+
 // GroupMemberSpec is one member to create at group-creation time. DisplayName
 // is only used on first creation (the row's stored title is authoritative
 // afterwards).
@@ -98,7 +138,7 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	}
 	// Validate + DEDUPE before touching the DB. Duplicates must collapse here
 	// (not just be rejected): a member's only identity is its agent, and
-	// resolveMentionNames maps names through a map, so two rows for one agent
+	// resolveSpeakerTargets maps names through a map, so two rows for one agent
 	// leave one unreachable — a mute member that still occupies a connection
 	// and a slot, and inflates the active count toward the cap. The Web drawer
 	// is a multi-select and never sends duplicates, but POST /api/group/create
@@ -106,22 +146,10 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	//
 	// Dedupe first so the cap counts UNIQUE agents: 10 distinct agents plus a
 	// duplicate must not be rejected as 11.
-	seen := make(map[string]bool, len(specs))
-	deduped := make([]GroupMemberSpec, 0, len(specs))
-	for _, s := range specs {
-		if s.AgentID == "" {
-			return "", "", fmt.Errorf("create group: member with empty agent id")
-		}
-		if seen[s.AgentID] {
-			continue
-		}
-		seen[s.AgentID] = true
-		deduped = append(deduped, s)
+	specs, err = dedupeGroupSpecs(specs)
+	if err != nil {
+		return "", "", err
 	}
-	if len(deduped) > maxGroupMembers {
-		return "", "", ErrGroupMemberLimit
-	}
-	specs = deduped
 
 	// Mode: a named host that is among the members ⇒ host mode; no host ⇒ free.
 	mode := GroupModeFree
@@ -167,50 +195,71 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	// runs a turn). Host mode uses the host; free mode has no host, so the
 	// FIRST member fills backend (NOT NULL) and agent_id (list icon), and the
 	// title is a generic placeholder.
-	groupBackend := ""
-	groupAgentID := ""
-	if mode == GroupModeHost {
-		for _, s := range specs {
-			if s.AgentID == hostAgentID {
-				groupBackend = s.Backend
-				groupAgentID = s.AgentID
-				break
-			}
-		}
-	} else {
-		groupBackend = specs[0].Backend
-		groupAgentID = specs[0].AgentID
+	groupBackend, groupAgentID := groupIdentityFields(mode, specs, hostAgentID)
+	if rowErr := insertGroupRow(tx, groupID, projectID, groupBackend, groupAgentID, title); rowErr != nil {
+		return "", "", rowErr
 	}
 
+	hostMemberID, err = insertGroupMemberRows(tx, groupID, projectID, hostAgentID, mode, specs, memberIDs)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Mode marker (and, in host mode, the host pointer) inline on the group
+	// row's context_state. One statement: a second tx.Exec here would only add
+	// a call the noctx linter flags (the existing calls predate this change).
+	if err := writeGroupModeInline(tx, groupID, mode, hostMemberID); err != nil {
+		return "", "", err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return "", "", err
+	}
+	return groupID, hostMemberID, nil
+}
+
+// insertGroupRow writes the group timeline row and marks its title a
+// placeholder (inline, not markSessionTitlePlaceholder which takes the write
+// lock). Extracted from CreateGroupWithMembers.
+func insertGroupRow(tx *sql.Tx, groupID string, projectID int64, backend, agentID, title string) error {
 	if _, err := tx.Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		groupID, projectID, groupBackend, title, groupAgentID, "default", "", groupSessionType, "",
+		groupID, projectID, backend, title, agentID, "default", "", groupSessionType, "",
 	); err != nil {
-		return "", "", fmt.Errorf("create group session: %w", err)
+		return fmt.Errorf("create group session: %w", err)
 	}
 	// Inline (not markSessionTitlePlaceholder: that takes the write lock).
 	if _, err := tx.Exec("UPDATE chat_sessions SET title_source = ? WHERE id = ?", TitleSourcePlaceholder, groupID); err != nil {
-		return "", "", fmt.Errorf("mark group title placeholder: %w", err)
+		return fmt.Errorf("mark group title placeholder: %w", err)
 	}
+	return nil
+}
 
+// insertGroupMemberRows writes every member row and returns the host's member
+// id (host mode only). Extracted from CreateGroupWithMembers to keep that
+// function's complexity in budget.
+func insertGroupMemberRows(tx *sql.Tx, groupID string, projectID int64, hostAgentID, mode string, specs []GroupMemberSpec, memberIDs []string) (hostMemberID string, err error) {
 	for i, s := range specs {
 		if _, err := tx.Exec(
 			"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, group_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
 			memberIDs[i], projectID, s.Backend, s.DisplayName, s.AgentID, "default", "", groupMemberSessionType, groupID,
 		); err != nil {
-			return "", "", fmt.Errorf("create member session: %w", err)
+			return "", fmt.Errorf("create member session: %w", err)
 		}
 		if mode == GroupModeHost && s.AgentID == hostAgentID && hostMemberID == "" {
 			hostMemberID = memberIDs[i]
 		}
 	}
 	if mode == GroupModeHost && hostMemberID == "" {
-		return "", "", fmt.Errorf("create group: host agent %q not among members", hostAgentID)
+		return "", fmt.Errorf("create group: host agent %q not among members", hostAgentID)
 	}
+	return hostMemberID, nil
+}
 
-	// Mode marker (and, in host mode, the host pointer) inline on the group
-	// row's context_state. One statement: a second tx.Exec here would only add
-	// a call the noctx linter flags (the existing calls predate this change).
+// writeGroupModeInline writes the group's mode marker (and, in host mode, the
+// host pointer) into the row's context_state in the SAME statement. Extracted
+// from CreateGroupWithMembers.
+func writeGroupModeInline(tx *sql.Tx, groupID, mode, hostMemberID string) error {
 	modeJSON, _ := json.Marshal(mode)
 	setArgs := "'$.group_mode', json(?)"
 	args := []any{string(modeJSON)}
@@ -222,20 +271,16 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	updateSQL := "UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END, " + setArgs + ") WHERE id = ?"
 	args = append(args, groupID)
 	if _, err := tx.ExecContext(context.Background(), updateSQL, args...); err != nil {
-		return "", "", fmt.Errorf("set group mode/host: %w", err)
+		return fmt.Errorf("set group mode/host: %w", err)
 	}
-
-	if err := tx.Commit(); err != nil {
-		return "", "", err
-	}
-	return groupID, hostMemberID, nil
+	return nil
 }
 
 // AddGroupMember adds an agent to the group, or REJOINS it if a member row for
 // the same (group, agent) already exists.
 //
 // Why dedup: a member's only identity is its agent — the routing tag addresses
-// members by NAME, and resolveTargets maps names through a map, so two rows for
+// members by NAME, and resolveSpeakerTargets maps names through a map, so two rows for
 // the same agent would make one of them unreachable (a "mute" member that can
 // be selected but never spoken to). Re-adding an agent that LEFT the group
 // therefore reuses its original row and clears the archived flag (the A
