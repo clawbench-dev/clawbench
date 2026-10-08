@@ -35,7 +35,7 @@
 | O2 | #48 级联删成员行 / 离群刷 `updated_at` | `HardDeleteSession` 只删群行；`RemoveGroupMember` 无 `updated_at` |
 | O3 | #51 成员失败复用 `failTurn` | `group_orchestrator.go:158` 仅 `slog.Warn` |
 | O4 | #55 群聊跳过摘要推荐 | `session_executor.go:1672` 无群判断 |
-| O5 | #56 回退轮转 + 连续失败收尾 | `speakNextMember:250` 恒选第一个；无失败计数 |
+| O5 | #56 回退轮转 + 连续失败收尾 | 回退轮转曾恒选第一个；无失败计数。**已修**：`pickFallbackMember`（轮转）+ `hostFailures`/`parseFailures` 计数 |
 | O6 | #50 智能体重名收敛 | `agent_store.go` 无 `AgentNameTaken` |
 | O7 | #57 归档/销毁群关成员连接 | `chat_session.go` 只 `CloseConn(群行 id)` |
 | O8 | #52/#74 隐藏回溯入口 + 拒绝 fork 群 | 前端未隐藏 rewind；`ServeForkSession` 无群守卫（`ForkSession` 硬编码 `'chat'`） |
@@ -99,7 +99,7 @@
 | 18 | 异常可见性 | 异常终止时插**可见系统消息**，保留已有发言 |
 | 19 | 花名册 UI | **顶部横向头像条**，发言中高亮 |
 | 20 | 测试 | **两层**：单测用注入式假 run_turn，E2E 用 `acp-mock` |
-| 21 | 多发言者 | 主持人**可一次点名多个成员**（`<clawbench-speaker>A,B,C</...>`）；v1 按顺序依次发言 |
+| 21 | 多发言者 | 主持人**可一次点名多个成员**（`<clawbench-mention targets="A,B,C">…</clawbench-mention>`，标签名见 §13.2）；v1 按顺序依次发言 |
 | 22 | 同轮执行（v1） | **顺序执行**——被点名者按标签顺序**依次**发言，后者能看到前者本轮的发言。**放弃同轮并行**（见 §12 评审勘误 C1：并行需按消息 id 重写流式行定位，风险高） |
 | 23 | 注入游标语义 | 游标 = 该成员**上次发言时**的群时间线高水位；注入 = `id > 游标` **且作者 ≠ 自己**。顺序模式下无并发竞态，游标即"发言前的最大 id"（见 §5.2） |
 | 24 | 建群入口 | 会话列表头**独立"建群"按钮**（非 `+` 二选一、非长按） |
@@ -145,7 +145,7 @@
 | 64 | 项目会话计数 | **排除成员行**：`ListAllProjects`（`project_registry.go:70`）与 `GetConversationProjects`（`chat.go:1013`）的 COUNT 都加 `session_type IN ('chat','group')`（与决策 #37 同规则；现状两处无类型条件 ⇒ 5 人成员的群使项目数虚增 6） |
 | 65 | 群消息的附件 | **支持**（放开后端的 400 拒绝）；**注入时渲染，不写 `content`**——`buildInjectionText` 渲染用户消息时调 `ApplyAttachmentPrefixes`，气泡只靠 `files` 字段渲染（**与单聊逐字一致**）。`GetMessagesBySessionIDRaw` 已取 `files`（`chat.go:361,379`），**无需改取数** |
 | 66 | 前端附件入口 | 群输入框**保留**附件按钮 / `@` 文件补全 / 引用入口（决策 #65 让它们真正可用；现状是入口在、发送被 400 拒且无提示） |
-| 67 | 主持人标签对成员的可见性 | **注入时剥离**：`buildInjectionText` 渲染主持人发言时去掉 `<clawbench-speaker>…</clawbench-speaker>`（只在 `Found==true` 时剥，解析失败**绝不剥**——同 askquestion 契约），成员只看到指令文本。理由：标签是后端↔主持人内部协议，留着会诱导成员模仿输出、污染时间线 |
+| 67 | 主持人标签对成员的可见性 | **注入时剥离**：`buildInjectionText` 渲染主持人发言时去掉 `<clawbench-mention>…</clawbench-mention>`（只在 `Found==true` 时剥，解析失败**绝不剥**——同 askquestion 契约），成员只看到指令文本。理由：标签是后端↔主持人内部协议，留着会诱导成员模仿输出、污染时间线。实现见 `renderMentionsReadable`（`group_inject.go`；标签统一改名见 §13.2） |
 | 68 | 指令重复 | **去掉重复**：`grouprouting.Result` **新增"标签前背景"字段**（做法 A），注入时只渲染背景、指令仍由末尾 `主持人要求你：…` 给一次。**同步改前端镜像 `groupRouting.ts` + parity 语料**（该包本有 parity 契约，加字段是设计内演进） |
 | 69 | 失败时游标是否推进 | **不推进**：只在回合**成功**时 `SetMemberCursor`。失败 = 没处理过，游标推过去会让那段上下文**永久丢失**（成员后续答非所问且时间线看不出）。失败残留（半截输出 / warning block）**保留在时间线**供用户查看 |
 | 70 | warning block 的注入 | **不注入给成员**：成员失败的 warning block（`role='assistant'` + 该成员 `agent_id`）排除在 `buildInjectionText` 之外——它是给用户看的运维信息，不是讨论内容（现状会被当"某成员发言"注入，原始错误如 `create backend: …` 广播给其他成员，而当事人自己反被作者过滤跳过） |
@@ -165,11 +165,11 @@
 | 84 | 密送多目标 | **支持**：一条密送可发多个成员（`targets="A,B"`，逗号分隔） |
 | 85 | 密送用户可见性 | **对用户可见，UI 默认折叠**，点击展开（用户可审计主持人的私下交代） |
 | 86 | 密送目标约束 | **必须是本轮被点名者**；给未点名者写密送 → 忽略（结构上满足：只在 targets 循环内按名注入） |
-| 87 | 密送语法 | **属性式** `<clawbench-bcc targets="A,B">内容</clawbench-bcc>` |
+| 87 | 密送语法 | **属性式** `<clawbench-mention targets="A,B" private>内容</clawbench-mention>`（标签统一后，密送是同一标签加 `private` 属性，见 §13.2） |
 | 88 | 密送卡片位置 | **气泡内底部**（非 speaker 行、非气泡外） |
-| 89 | 密送泄漏阻断 | **双契约**：**显示侧 fail-open**（`Bcc`/`stripGroupBccTags` 只认良构，畸形保留原文）；**注入侧 fail-closed**（`StripBccSpans` 剥一切 bcc 形态：畸形/嵌套/未闭合）。`Parse` 的 `Before`/`Instruction`/`End` 一律在 fail-closed 文本上计算；`hostSpeechForMembers` 兜底同样 fail-closed |
+| 89 | 密送泄漏阻断 | **双契约**：**显示侧 fail-open**（`Bcc`/`renderMentionChips` 只认良构，畸形保留原文）；**注入侧 fail-closed**（`StripProtocolTags` 剥一切 mention 形态：畸形/嵌套/未闭合）。`Parse` 的 `Before`/`Instruction`/`End` 一律在 fail-closed 文本上计算；成员注入（`renderMentionsReadable`）同样 fail-closed。（函数名见 §13.2 标签统一） |
 | 90 | 密送畸形标签 | **显示**：不解析、不剥离（原文保留，同 askquestion"绝不丢内容"）。**注入**：一律剥离（保密优先于保内容——畸形标签的明文绝不外发） |
-| 91 | 密送注入边界（穷举） | 所有会把主持人文本送到非目标成员的路径都须剥（review 复查补全）：①`route.Instruction`（Parse 已剥）②`Before`（Parse 已剥）③`hostSpeechForMembers` 兜底（`StripBccSpans`）④**引用载荷**（`quotableMessageText`，引用作为附件注入成员）⑤**TTS**（`ttsExtractConclusion` 覆盖前端文本）⑥**自动朗读**（`onStreamEnd`）⑦**摘要落库 + IM/通知推送**（`ExtractLastAnswerFromBlocks` 内部剥，单点覆盖 summary 与 preview）⑧前端气泡正文（`renderTextBlock` 流式+非流式） |
+| 91 | 密送注入边界（穷举） | 所有会把主持人文本送到非目标成员的路径都须剥（review 复查补全）：①`route.Instruction`（Parse 已剥）②`Before`（Parse 已剥）③成员注入（`renderMentionsReadable`，fail-closed）④**引用载荷**（`quotableMessageText`）⑤**TTS**（`ttsExtractConclusion` 覆盖前端文本）⑥**自动朗读**（`onStreamEnd`）⑦**摘要落库 + IM/通知推送**（`ExtractLastAnswerFromBlocks` 内部剥，单点覆盖 summary 与 preview）⑧前端气泡正文（`renderTextBlock` 流式+非流式）。统一剥离原语：Go `grouprouting.StripProtocolTags` / TS `stripGroupProtocolTags` |
 | 92 | 密送字符类 parity | Go/JS 空白类统一为 `[\s\p{Z}]`：Go 的 `\s` 仅 ASCII，JS 的含 Unicode 空白，否则 NBSP/全角空格会导致"前端认良构、后端不认"的安全侧分歧；语料加 NBSP/全角 case 钉住 |
 | 93 | 密送分享页 | share payload 增 `session.hostMemberId`，分享页传 `resolveSpeaker`/`resolveSpeakerByName`/`hostMemberId` 给 `ChatMessageItem`，使密送卡片在分享页也按决策 #85 渲染（默认折叠） |
 | 94 | 密送折叠头不显示目标名 | 折叠头只写「密送」——**谁知道收到了密送本身就是线索**（推理游戏里"B 收到私密信息"是信息）。展开后每条仍显示「发给 XX」（保留可审计性，决策 #85） |
@@ -283,7 +283,7 @@
      - 输出写入群时间线（特殊样式），更新主持人.seen_cursor
      - 解析路由标签
   2. 路由
-     - <clawbench-speaker>A,B,C</...> + 指令 → 本轮发言者 = [A,B,C]（有序）
+     - <clawbench-mention targets="A,B,C">…</clawbench-mention> + 指令 → 本轮发言者 = [A,B,C]（有序）
      - 结束信号 → break（**该轮主持人的输出已含最终汇总**，见 §5.3/决策 #32）
      - 解析失败 → 回退规则轮转（下一个未发言成员）；连续失败 2 次 → 收尾
   3. 被点名成员**按顺序依次发言**（v1）
@@ -317,7 +317,7 @@
 - 游标存在成员行 `context_state` JSON（决策 #10 落地）。
 - **顺序模式下无并发竞态**：同一时刻只有一个成员在发言，游标取"发言前最大 id"即可。若未来恢复并行（v2），游标须改为"本轮开始高水位 + 作者过滤"（见 §12 C1 与决策 #23 原并行语义）。
 
-**离场成员的标注（决策 #39）**：注入文本里，已离场成员的名字后加 **"（已离场）"**，如 `Claude（已离场）: 我认为...`。理由：主持人与其他成员都能看到离场者的历史发言（游标不因离场而重置），但不标注会让主持人**继续点名一个已经不在的人**——`resolveTargets` 查不到就静默回退轮转，表现为"主持人反复点名某人然后莫名换人"。标注后模型能自行避免。同理，**主持人提示词的可点名名单**也须区分在场/已离场（见 §5.4）。
+**离场成员的标注（决策 #39）**：注入文本里，已离场成员的名字后加 **"（已离场）"**，如 `Claude（已离场）: 我认为...`。理由：主持人与其他成员都能看到离场者的历史发言（游标不因离场而重置），但不标注会让主持人**继续点名一个已经不在的人**——`resolveSpeakerTargets` 查不到就静默回退轮转，表现为"主持人反复点名某人然后莫名换人"。标注后模型能自行避免。同理，**主持人提示词的可点名名单**也须区分在场/已离场（见 §5.4）。
 
 **成员描述的注入（决策 #41，三处）**：成员的专业描述来自 `model.GetAgent(agentID).Specialty`（如"全栈开发助手"），注入到：
 1. **主持人提示词**——路由名单渲染成 `名字（描述）`，让"AI 决定发言者"有依据（否则只能看名字猜专业）。**默认模型不注入**（模型不是路由信号，只添噪音）；**完整运行时提示词不注入**（含内置共享前缀，每成员数千字，token 成本爆炸且泄漏内部提示词）。
@@ -330,7 +330,7 @@
 
 仿 `internal/askquestion/` 建独立叶子包（`internal/grouprouting/`）：
 
-- 主持人系统提示注入格式说明，要求输出 `<clawbench-speaker>A,B,C</clawbench-speaker>` + 指令文本（逗号分隔多个成员）。
+- 主持人系统提示注入格式说明，要求输出 `<clawbench-mention targets="A,B,C">给他们的指令</clawbench-mention>`（逗号分隔多个成员；标签统一见 §13.2）。
 - 结束信号：`<clawbench-group-end/>`；**结束标签之后的文本即最终汇总**（决策 #32，评审三轮 C-2）。
 - **契约**：检测即解析；不可解析时**不剥离**标签（与 askquestion 的"绝不丢内容"一致，保留原文给用户看），并回退轮转。
 - **后端保留标签**（不剥离），**前端解析成路由卡片**（决策 #35）——故 Go 实现与前端**镜像** + parity corpus（与 askquestion 同款双向固化）。
@@ -341,11 +341,11 @@
 
 **密送（BCC，决策 #82–#90）**：
 
-- 语法：`<clawbench-bcc targets="A,B">只有目标成员能看到的内容</clawbench-bcc>`，与 speaker 标签**叠加**（公共指令 + 个别密送可并存）。
-- **目标必须是本轮被点名者**：编排器只在 `for _, t := range targets` 循环内按 `names[t.ID]` 过滤注入，未点名者写的密送**结构上**无人可得。
-- **摘除顺序是安全核心**：`Parse` 在 **fail-closed** 文本（`StripBccSpans` 剥一切 bcc 形态）上算 `Before`/`Instruction`/`End` —— 否则密送会经 `Instruction`（公共指令段）或 `Before`（共享背景）泄漏给所有成员。
-- **双契约（决策 #89/#90）**：**显示侧 fail-open**（`Bcc`/`stripGroupBccTags` 只认良构，畸形保留原文供用户查看）；**注入侧 fail-closed**（`StripBccSpans` 剥畸形/嵌套/未闭合/任意属性形态）。保密优先于保内容。
-- **兜底路径**：主持人消息无 speaker 标签（`Found=false`）时 `hostSpeechForMembers` 走 `StripBccSpans(StripEndTag(text))`。
+- 语法：`<clawbench-mention targets="A,B" private>只有目标成员能看到的内容</clawbench-mention>`，与公开指令**叠加**（公共指令 + 个别密送可并存；标签统一见 §13.2）。
+- **目标必须是本轮被点名者**：编排器只在成员派发循环内按 `names[t.ID]` 过滤注入，未点名者写的密送**结构上**无人可得。
+- **摘除顺序是安全核心**：`Parse` 在 **fail-closed** 文本（`StripProtocolTags` 剥一切 mention 形态）上算 `Before`/`Instruction`/`End` —— 否则密送会经 `Instruction`（公共指令段）或 `Before`（共享背景）泄漏给所有成员。
+- **双契约（决策 #89/#90）**：**显示侧 fail-open**（`Bcc`/`renderMentionChips` 只认良构，畸形保留原文供用户查看）；**注入侧 fail-closed**（`StripProtocolTags` 剥畸形/嵌套/未闭合/任意属性形态）。保密优先于保内容。
+- **兜底路径**：主持人消息无 mention 标签（`Found=false`）时成员注入走 `renderMentionsReadable`（fail-closed）。
 - **注入边界穷举（决策 #91）**：前端正文（`renderTextBlock` 流式+非流式）、**引用载荷**（`quotableMessageText`）、**TTS**（`ttsExtractConclusion`）、**自动朗读**（`onStreamEnd`）、**摘要落库 + IM/通知推送**（`ExtractLastAnswerFromBlocks` 内部剥）全部剥离。仅靠 `Instruction`/`Before` 是不够的——review 复查发现引用链路无需畸形输入即可把密送注入全员。
 - **字符类 parity（决策 #92）**：Go/JS 统一 `[\s\p{Z}]`（Go 的 `\s` 仅 ASCII），语料含 NBSP/全角 case。
 - **UI**：气泡内底部折叠卡片，默认折叠，点击展开（`Lock` + `密送` + 目标名 + `ChevronDown`）；分享页同样渲染（决策 #93）。
@@ -365,7 +365,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 ```
 
 - **描述**来自 `GetAgentSpecialty(agentID)`（决策 #41）——这是"AI 决定发言者"的唯一依据；不注入描述时主持人只能看名字猜专业。
-- **在场/离场**（决策 #39）：已离场成员名后加"（已离场）"，主持人据此避免点名一个不在的人（点名后 `resolveTargets` 查不到会静默回退，用户看到"莫名换人"）。
+- **在场/离场**（决策 #39）：已离场成员名后加"（已离场）"，主持人据此避免点名一个不在的人（点名后 `resolveSpeakerTargets` 查不到会静默回退，用户看到"莫名换人"）。
 - 因此 `BuildHostSystemPrompt` 的入参从 `[]string` 改为**带元数据的结构体切片**（名字 + 描述 + 是否离场），测试与调用点同步改。
 
 ### 5.7 成员增删的系统事件（决策 #40/#43/#44）
@@ -505,7 +505,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 - `agent_id`（成员行 id）→ 气泡头像/名字渲染；映射缺失时降级通用样式。
 - 主持人特殊样式（`agentId == 主持人成员行 id`）。
 - **系统事件渲染（决策 #43）**：`role='system'` 渲染为居中细条、无头像、非气泡。
-- **路由卡片解析**（决策 #35）：前端解析 `<clawbench-speaker>` 成"主持人 → A、B"卡片；与 Go 镜像由 parity corpus 固化。
+- **@ 汇总行解析**（决策 #35，原"路由卡片"）：前端解析 `<clawbench-mention targets="A,B">` 成气泡顶部一行"本条 @ 了 A、B"汇总行（§13.4 统一了两模式的渲染）；与 Go 镜像由 parity corpus 固化。
 - 顶部头像条状态（空闲/发言中/离线）；v1 顺序轮次同一时刻至多一个发言中。
 - 群设置：改最大轮数 → PATCH 调用。
 - **（v2）N 个并发流式气泡**——v1 不适用。
@@ -584,7 +584,7 @@ Claude（代码编写与推理）、CodeBuddy（全栈开发助手）、Grok（x
 
 **C7 — E2E（M1）按现状必失败。**
 `e2e/helpers/server.ts:148` 只写 1 个 agent（`acp-mock`），`cmd/acp-mock/main.go` 不含任何路由标签（grep=0）。
-**修**：M1 需 (a) ≥2 个 agent YAML，(b) mock 支持产出 `<clawbench-speaker>`/`<clawbench-group-end/>`，(c) 接好人类抢占路径（见 I4）。
+**修**：M1 需 (a) ≥2 个 agent YAML，(b) mock 支持产出 `<clawbench-mention targets="A,B">…</clawbench-mention>`（旧标签 `<clawbench-speaker>`）/`<clawbench-group-end/>`，(c) 接好人类抢占路径（见 I4）。
 
 ### Important
 
@@ -825,7 +825,7 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 **修（决策 #41）**：描述（`Agent.Specialty`）注入三处（主持人提示词 / 系统事件 / 成员注入上下文），`BuildHostSystemPrompt` 入参由 `[]string` 改为带元数据的结构体切片。
 
 **（2）增删成员不写时间线，且离场者仍被点名。**
-`handler/group.go:148,172` 直接调 `AddGroupMember`/`RemoveGroupMember`，**不往 `chat_history` 插行**；主持人获取上下文只靠时间线注入（`group_inject.go:26`）⇒ 主持人眼里"什么都没发生"。且 `buildInjectionText`（`group_inject.go:28-53`）**没有 Left 过滤**，离场者的旧发言照注入却不标注，主持人会继续输出 `<clawbench-speaker>离场者</...>` → `resolveTargets`（`:237`）查不到 → 静默回退轮转（表现为"反复点名某人然后莫名换人"）。
+`handler/group.go:148,172` 直接调 `AddGroupMember`/`RemoveGroupMember`，**不往 `chat_history` 插行**；主持人获取上下文只靠时间线注入（`group_inject.go:26`）⇒ 主持人眼里"什么都没发生"。且 `buildInjectionText`（`group_inject.go:28-53`）**没有 Left 过滤**，离场者的旧发言照注入却不标注，主持人会继续输出 `<clawbench-mention targets="离场者">…</clawbench-mention>`（旧标签 `<clawbench-speaker>`）→ `resolveSpeakerTargets`（旧名 `resolveTargets`）查不到 → 静默回退轮转（表现为"反复点名某人然后莫名换人"）。
 **修（决策 #39/#40）**：注入时离场者名后加"（已离场）"；主持人提示词区分在场/离场；增删写系统事件。
 
 **（3）主持人被移除后仍继续控场。**
@@ -859,7 +859,7 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 `session_executor.go:1672` 每次 Finalize 调 `triggerChatSummarization(e.ctx, e.timelineSID())`；群会话的 `timelineSID()` 是**群行** ⇒ 每个成员回合都（a）摘要全群未摘要的 assistant 消息（DB 扫描 + 写锁）、（b）发起推荐 LLM 调用（`session_runtime.go:969`，最长 60s）。3 成员 × 10 轮 ≈ 30 次。
 
 **（6）回退永远选第一个且永不收尾（决策 #56）。**
-`speakNextMember`（`group_orchestrator.go:250`）`for ... { ...; return true }` 恒选名单第一个非主持人成员；`len(targets)==0` 分支（`:139`）只 `continue`，**无失败计数** ⇒ 主持人持续畸形会以同一成员空转到 `maxRounds`。
+`speakNextMember`（`group_orchestrator.go:250`；重构后改名 `pickFallbackMember`，见 §13.6）`for ... { ...; return true }` 恒选名单第一个非主持人成员；`len(targets)==0` 分支（`:139`）只 `continue`，**无失败计数** ⇒ 主持人持续畸形会以同一成员空转到 `maxRounds`。
 
 **（7）主持人不可换且无转移入口（决策 #53）。**
 `SetGroupHostMember`（`group_store.go:361`）存在但**无 handler、无前端**（`GroupMemberSheet` 无换人入口）⇒ "拒绝移除主持人"会把用户锁死（唯一出路是解散重建）。用户决定：**干脆不可换**，规则最简。
@@ -893,7 +893,7 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 **修（决策 #65/#66）**：放开后端拒绝；在 `buildInjectionText` 渲染用户消息时调 `ApplyAttachmentPrefixes`（**不写 content**，气泡与单聊一致）；前端入口保留。**`GetMessagesBySessionIDRaw` 已经取了 `files` 并解析进 `msg.Files`（`chat.go:361,379-381`），无需改取数。**
 
 **（17）主持人路由标签泄漏进成员上下文，且指令重复两遍（决策 #67/#68）。**
-`buildInjectionText`（`group_inject.go:45-52`）渲染每条消息用 `ExtractPlainText(m.Content)`，**不做任何标签剥离** ⇒ 被点名成员看到 `主持人: <clawbench-speaker>A</clawbench-speaker> 请谈谈你的看法`。两个后果：① 成员可能**模仿该格式**在自己的发言里也输出 `<clawbench-speaker>`（前端会误渲染成路由卡片）；② 用户引用成员原话时带出标签。
+`buildInjectionText`（`group_inject.go:45-52`）渲染每条消息用 `ExtractPlainText(m.Content)`，**不做任何标签剥离** ⇒ 被点名成员看到 `主持人: <clawbench-mention targets="A">请谈谈你的看法</clawbench-mention>`（旧标签 `<clawbench-speaker>`）。两个后果：① 成员可能**模仿该格式**在自己的发言里也输出该标签（前端会误渲染成路由卡片）；② 用户引用成员原话时带出标签。（现由 `renderMentionsReadable` 剥离，见决策 #67）
 叠加**重复**：`group_inject.go:54-61` 把 `route.Instruction` **单独再拼一段**「主持人要求你：…」，而主持人那条发言文本里**已含同一句** ⇒ 成员看到两遍。
 `grouprouting.Parse` 按契约**只解析不剥离**（`Result.Raw` 保留原文，注释明说 "never mutates input"）⇒ 剥离需在新地方做，且必须遵守「解析失败绝不剥离」。
 **修（决策 #67/#68）**：`Result` 新增**标签前背景**字段；注入时渲染背景 + 剥离标签；指令只由末尾那一段给一次。**前端镜像 `groupRouting.ts` 与 parity 语料同步改。**
@@ -1037,7 +1037,7 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 待发言队列 = 初始目标集（FIFO）
   ↓
 while 队列非空:
-  取队首成员 → runTurn(连接=成员行, 时间线=群)
+  取队首成员 → runSpeakerTurn(连接=成员行, 时间线=群)
     - 注入 = 群时间线 id>cursor 且作者≠自己 的发言（mention 渲染成人话 @名字）+ 自由模式成员提示词
     - 解析该成员输出里的 <clawbench-mention>
     - 若 @ 了 User（保留名）→ 停下，本轮结束，等人类回复（#F6）
@@ -1051,10 +1051,10 @@ while 队列非空:
 - **无 @ 顶层消息**：全体按花名册顺序各说一次（#F8），其间的 @ 追加到队尾。
 - **无效 @ 目标**：`@自己` 与 `@已离场成员` 静默丢弃；`@不存在的名字` 额外插一条可见系统提示（#F7）。若一轮内有效目标为空则停止。
 - **无轮数上限、无循环检测**（#F13）：纯靠用户手动停。**已知风险：A@B、B@A 会无限烧 token**。
-- **顺序执行**（#F9）：与主持人模式同一执行内核（`buildMemberTurnSpec` + 顺序 `runTurn`）。设计 §12 C1 的"单一流式行"约束同样适用，故**不并行**。
+- **顺序执行**（#F9）：与主持人模式同一执行内核（`runSpeakerTurn` → `buildMemberTurnSpec` + 顺序 `runTurn`）。设计 §12 C1 的"单一流式行"约束同样适用，故**不并行**。
 - **不产出汇总发言**（#F15）：接力停即停；群会话仍复用 `triggerChatSummarization`（标题/摘要/推荐），只是没有"主持人结论"气泡。
 - **`/cb-*` 命令**（#F16）：由**第一个发言者**执行一次，结果进时间线供讨论（对齐主持人模式的决策 #79）。
-- **密送（private）**：成员与用户都能发（#F24）。复用主持人模式的 `group_pending_bcc` 通道——发言者发出的 private mention 按其 targets 名存入表，在该目标**下次被点名发言时**注入（与主持人模式的"下次点名时送达"语义一致）；`@User` 的密送在 UI 卡片里读，注入前清账。
+- **密送（private）**：成员与用户都能发（#F24）。复用主持人模式的 `group_pending_bcc` 通道——发言者发出的 private mention 经 `storeRouteNotes`（带目标校验：未知/离场/自我丢弃）按解析后名字存入表，在该目标**下次被点名发言时**注入（与主持人模式的"下次点名时送达"语义一致）；`@User` 的密送在 UI 卡片里读，注入前清账。
 - **人类插话**（#F17）：排队，等当前回合跑完再处理（复用现有 drain 队列）。
 - **运行中加成员**（#F18）：下一条顶层消息起生效，当前回合参与者冻结。
 - **自由群 UI**（#F19）：无主持人皇冠/标识，正常成员头像堆叠。
@@ -1077,3 +1077,35 @@ while 队列非空:
 | 存储 | `internal/service/group_store.go`（`group_mode` 读写、free 建群） |
 | HTTP | `internal/handler/group.go`（建群 host 可选）、`internal/handler/chat.go`（群分支按 mode 分派） |
 | 前端 | `web/src/components/chat/ChatInputBar.vue`（@ 补全）、`ChatMessageItem.vue`（渲染）、建群抽屉、`useGroupChat.ts`/`useGroupMembers.ts` |
+
+### 13.6 两模式循环内核统一（2026-10-08，重构，行为不变）
+
+> 自由模式落地后，主持人与自由两套循环存在大量逐字重复（回合脚手架、成员发言+游标+密送投递、@User 交回、目标解析、密送落库）。此节记录统一后的抽象，供代码与文档对齐。**纯重构，无行为变化**。
+
+**共享抽象（`internal/service/group_orchestrator.go`）：**
+
+| 抽象 | 职责 |
+|---|---|
+| `prepareTurn(groupID)` | 名册加载 + ACP 空闲回收保护（`markGroupMembersActive`）+ runner 解析 + 孤儿流式行清理；调用方 `defer clearGroupMembersActive` |
+| `runSpeakerTurn(...)` | 单次成员发言全流程：注入待送达密送 → 构造提示词 → 执行 → **成功推进游标** → 干净回合清账。游标规则（#69）与密送投递不再各写一份 |
+| `handUserBack(groupID)` | @User 交回人类、清 User 密送账、写系统行、结束本轮 |
+| `drainSpeakers(...)` | **唯一循环内核**：FIFO 队列驱动 + 三条不变量（取消即停整轮 / @User 交回 / 队列空即结束）。主持人模式用有界 `refill`（主持人回合 + 轮数上限 + 失败计数 + 结束信号 + 末尾汇总），自由模式用自扩展 `onSpoke` |
+| `resolveSpeakerTargets(route, members, excludeID)` | 合并原 `resolveTargets` + `resolveMentionNames`：先按行 id 再按名字、排除指定 id 与已离场、保序去重（主持人模式由此也能解析用户按行 id 写的 @） |
+| `pickFallbackMember(...)` | 从原 `speakNextMember` 拆出的纯选取逻辑（保留轮转语义，#56） |
+| `storeRouteNotes(...)` | 密送落库唯一路径（目标校验 + 按解析后名字键控）；主持人 `route.Bcc` 与自由 `storeFreeSpeakerNotes` 共用 |
+
+**旧名 → 新名对照（文档他处若仍见旧名，以此为准）：**
+
+| 旧名 | 现状 |
+|---|---|
+| `resolveTargets`（主持人目标解析） | 合并入 `resolveSpeakerTargets` |
+| `resolveMentionNames`（自由目标解析） | 合并入 `resolveSpeakerTargets` |
+| `speakNextMember`（轮转回退，含执行） | 拆为 `pickFallbackMember`（选取）+ `drainSpeakers` 派发 |
+| `lastHostOutput` / `lastSpeakerOutput` | 合并为 `lastMemberOutput`（主持人只是成员行，无需两个变体） |
+| `publicMentionTargets` | 删除（`route.Speakers` 已是等价的有序去重公开目标列表） |
+| `runRounds` / `runFreeLoop` | **保留**，但退化为 `drainSpeakers` 的薄封装（各自只提供一个 `refill`/`onSpoke` 闭包） |
+| `hostSpeechForMembers` | 删除，统一为 `renderMentionsReadable` |
+| `StripBccSpans`（Go）/ `stripGroupBccTags`（TS） | 统一为 `StripProtocolTags` / `stripGroupProtocolTags`（§13.2 标签统一） |
+| 标签 `<clawbench-speaker>` / `<clawbench-bcc>` | 统一为 `<clawbench-mention>`（+ `private` 属性），见 §13.2 |
+
+**顺带修复**：`CreateGroupWithMembers` 的 `gocyclo`/`gocognit` 超阈值（自由模式提交引入，`only-new-issues` 漏报），抽出 `dedupeGroupSpecs` / `groupIdentityFields` / `insertGroupRow` / `insertGroupMemberRows` / `writeGroupModeInline` 降回预算内。
