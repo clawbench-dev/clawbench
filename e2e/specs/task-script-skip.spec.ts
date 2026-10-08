@@ -192,7 +192,13 @@ test.describe.serial('Task pre-AI script (smoke)', () => {
     // ignores clicks within 400ms of opening (a touch-event guard), so wait it
     // out — there is no event to await for a time-based guard.
     await page.locator('.agent-display').click()
-    const agentOption = page.locator('.agent-option').filter({ hasText: 'ACP Mock Agent' })
+    // Match the NAME element exactly: `hasText` is a substring match, and the
+    // suite also ships "ACP Mock Agent B" (a distinct agent id the group specs
+    // need), which would make the locator resolve to two rows and trip strict
+    // mode. `.agent-option-name` holds exactly the display name.
+    const agentOption = page.locator('.agent-option').filter({
+      has: page.locator('.agent-option-name', { hasText: /^ACP Mock Agent$/ }),
+    })
     await expect(agentOption).toBeVisible({ timeout: 10000 })
     await page.waitForTimeout(500)
     await agentOption.click()
