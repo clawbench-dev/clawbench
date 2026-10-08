@@ -5,7 +5,7 @@ import { ChatPage } from '../pages/chat.page'
  * E2E for the group host's private notes (密送 / BCC).
  *
  * The host may address a note to a named member only:
- *   <clawbench-bcc targets="A">只有 A 看得到的内容</clawbench-bcc>
+ *   <clawbench-mention targets="A">只有 A 看得到的内容</clawbench-mention>
  *
  * Two contracts are verified end to end:
  *   1. DISPLAY — the note renders as a collapsed card INSIDE the host's bubble
@@ -67,7 +67,7 @@ test.describe.serial('group chat private notes (bcc)', () => {
     //     message body (DOMPurify would otherwise unwrap the tag).
     const contentText = await hostBubble.locator('.msg-content-wrapper').innerText()
     expect(contentText).not.toContain('SECRET_BCC_FOR_')
-    expect(contentText).not.toContain('clawbench-bcc')
+    expect(contentText).not.toContain('clawbench-mention')
 
     // (4) Expanding reveals the note (the user can audit it).
     await hostBubble.locator('.msg-bcc-header').click()

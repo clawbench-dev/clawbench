@@ -997,3 +997,83 @@ G1 body 要求改 `AIChat`（`handler/chat.go:30`），但 Files/commit 无此�
 | 会话创建端点 | `internal/handler/chat_session.go:171` |
 | agent 图标 | `web/src/components/common/AgentIcon.vue` |
 | 成员颜色 | `web/src/utils/teamMemberColor.ts` |
+
+## 13. 自由聊天模式（Free Chat Mode，2026-10-08）
+
+> 与主持人模式**并列**的第二种群聊形态。主持人模式原样保留（只跟随 §13.2 的标签统一改名）。
+> 本节记录 2026-10-08 grilling 的全部决策。**开发阶段，不兼容旧群**（见 #F14）。
+
+### 13.1 模式判定
+
+- **建群时是否指定主持人决定模式**：指定了 → 主持人模式（`mode="host"`）；未指定 → 自由聊天模式（`mode="free"`）。
+- **不可中途切换**（#F1）。
+- **显式存储**（#F2）：群行 `context_state` 增 `group_mode` 字段（`"host"` | `"free"`）。建群时一次性写入，之后只读。
+  - **键名必须是 `group_mode` 而非 `mode`**：`ContextState`（`chat.go:2233`）已用 `$.mode` 存持久化的智能体模式（`ModeStatePersist`），共用键名会让 `GetContextState` 对群行反序列化失败（`cannot unmarshal string into ... ModeStatePersist`）——free 模式 E2E 实测抓到这个冲突。
+  - 判定读 `group_mode`；`host_member_id` 仅在 `group_mode="host"` 时要求非空。
+  - 数据损坏（`group_mode` 缺失）时回退为 host 模式（开发阶段不兼容旧群，故无迁移）。
+- **群行身份字段**（#F3）：自由模式群用**第一个成员**填充 `backend`（NOT NULL）与 `agent_id`（列表图标）；标题占位 `"群聊"`（首条消息后 auto-title 接管）。不碰 schema。
+- **最少成员**（#F10）：自由模式至少 **2** 个成员（1 个无意义，与单聊重复）。主持人模式仍按现状。
+
+### 13.2 标签统一（破坏性，不兼容旧名）
+
+- `<clawbench-speaker>` **改名** `<clawbench-mention>`，并把**目标 + 内容 + 密送融合进一个标签**（#F4）：
+  - 公开指派/提及：`<clawbench-mention targets="A,B">给他们的内容</clawbench-mention>`
+  - 密送：`<clawbench-mention targets="C" private>只有 C 能看到的内容</clawbench-mention>`
+  - 结束信号：`<clawbench-group-end/>` 不变。
+- **targets 取值**（#F5）：智能体写**成员显示名**（LLM 不知道行 id）；用户侧写**成员行 id**。解析器两个都试（先按 id 精确匹配成员行，再按名字匹配）。
+- **内容从"标签之后"移入"标签体内"**。旧 `Before` 语义（标签前的背景文本）保留为"标签外的其余文本"。
+- **不兼容旧名**（#F14）：老群的 `<clawbench-speaker>` / `<clawbench-bcc>` 历史消息会退化成裸文本显示。开发阶段可接受。
+- **前后端镜像**：`internal/grouprouting` 与 `web/src/utils/groupRouting.ts` 同步改，parity corpus 更新。
+- **剥离契约**：host 模式成员看到的文本仍剥标签（防模仿）；**free 模式不剥**（成员的 @ 必须对其他成员可见，否则接力链上的人不知道被点名）。
+
+### 13.3 自由模式主循环
+
+```
+用户消息 → 写入群时间线(agent_id='') → 广播
+  ↓
+初始目标集 = 用户消息里 @ 的成员（按 @ 出现先后，轮内去重）
+            若无 @ → 全体活跃成员，按花名册（加入）顺序
+  ↓
+待发言队列 = 初始目标集（FIFO）
+  ↓
+while 队列非空:
+  取队首成员 → runTurn(连接=成员行, 时间线=群)
+    - 注入 = 群时间线 id>cursor 且作者≠自己 的发言（mention 渲染成人话 @名字）+ 自由模式成员提示词
+    - 解析该成员输出里的 <clawbench-mention>
+    - 若 @ 了 User（保留名）→ 停下，本轮结束，等人类回复（#F6）
+    - 否则把有效新目标**排到队尾**（队内去重：已在队列中的人不重复加；已说完的人可再次被加）（#F9/#F11）
+    - 无有效目标 → 队列自然耗尽 → 结束
+用户点停止 → 结束整条接力，已说完内容保留（#F12）
+```
+
+- **发言顺序**：FIFO 队列，"谁被 @ 谁排到队尾"（#F11，排尾而非插队首）。
+- **去重**：只跟**当前待发言队列**去重；已说完的人被再次 @ 就再说 → A@B、B@A 可无限循环（#F9）。这是"无限接力"的实现基础。
+- **无 @ 顶层消息**：全体按花名册顺序各说一次（#F8），其间的 @ 追加到队尾。
+- **无效 @ 目标**：`@自己` 与 `@已离场成员` 静默丢弃；`@不存在的名字` 额外插一条可见系统提示（#F7）。若一轮内有效目标为空则停止。
+- **无轮数上限、无循环检测**（#F13）：纯靠用户手动停。**已知风险：A@B、B@A 会无限烧 token**。
+- **顺序执行**（#F9）：与主持人模式同一执行内核（`buildMemberTurnSpec` + 顺序 `runTurn`）。设计 §12 C1 的"单一流式行"约束同样适用，故**不并行**。
+- **不产出汇总发言**（#F15）：接力停即停；群会话仍复用 `triggerChatSummarization`（标题/摘要/推荐），只是没有"主持人结论"气泡。
+- **`/cb-*` 命令**（#F16）：由**第一个发言者**执行一次，结果进时间线供讨论（对齐主持人模式的决策 #79）。
+- **密送（private）**：成员与用户都能发（#F24）。复用主持人模式的 `group_pending_bcc` 通道——发言者发出的 private mention 按其 targets 名存入表，在该目标**下次被点名发言时**注入（与主持人模式的"下次点名时送达"语义一致）；`@User` 的密送在 UI 卡片里读，注入前清账。
+- **人类插话**（#F17）：排队，等当前回合跑完再处理（复用现有 drain 队列）。
+- **运行中加成员**（#F18）：下一条顶层消息起生效，当前回合参与者冻结。
+- **自由群 UI**（#F19）：无主持人皇冠/标识，正常成员头像堆叠。
+
+### 13.4 前端
+
+- **@ 补全**（#F5/#F20）：输入框 `@` 浮层同时列**成员**与**文件**两组候选；选中成员插入 `<clawbench-mention targets="成员行id"></clawbench-mention>`（空体）。用户只是"点名让谁发言"，问题本身是消息其余文本。
+- **渲染**（#F21）：mention 标签渲染成**正文内联 `@名字` chip** + 气泡顶部一行"本条 @ 了 B、C"**汇总行**。两种模式统一（主持人模式也改成这套，取代原"主持人 → A、B"卡片）。
+- **建群 UI**（#F22）：主持人**纯可选**——移除"首个勾选自动成为主持人"、"取消清空"、"必须选主持人"逻辑；成员列表下方一行小字"未指定主持人将进入自由聊天模式"。
+- **host 模式忽略人类 @**（#F23）：只有自由模式认人类的 @；主持人模式里 @ 谁都没用，仍由主持人决定。
+- **主持人模式不产出/不变**：主持人模式除标签改名 + 渲染统一外，行为完全不变。
+
+### 13.5 受影响文件（初判）
+
+| 层 | 文件 |
+|---|---|
+| 标签解析（叶子） | `internal/grouprouting/grouprouting.go` + `testdata/parity_corpus.json` |
+| 前端镜像 | `web/src/utils/groupRouting.ts` |
+| 编排器 | `internal/service/group_orchestrator.go`（新增 free 循环）、`group_prompt.go`（新增 free 提示词）、`group_inject.go`（mention 渲染） |
+| 存储 | `internal/service/group_store.go`（`group_mode` 读写、free 建群） |
+| HTTP | `internal/handler/group.go`（建群 host 可选）、`internal/handler/chat.go`（群分支按 mode 分派） |
+| 前端 | `web/src/components/chat/ChatInputBar.vue`（@ 补全）、`ChatMessageItem.vue`（渲染）、建群抽屉、`useGroupChat.ts`/`useGroupMembers.ts` |

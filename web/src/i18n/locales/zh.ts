@@ -1121,6 +1121,7 @@ export default {
     selectMembersAndHost: '选择成员与主持人',
     hostLabel: '点击设为主持人',
     createGroup: '创建群聊',
+    freeModeHint: '未指定主持人将进入自由聊天模式（成员之间可互相 {\'@\'} 接力发言）',
     addMembers: '添加成员',
     members: '成员',
     left: '已离场',

@@ -226,7 +226,7 @@ describe('AgentSelectorDrawer', () => {
       expect(wrapper.findAll('.agent-host-btn').length).toBe(0)
     })
 
-    it('auto-assigns the host to the first agent selected', async () => {
+    it('does NOT auto-assign a host when the first member is selected (host is optional)', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: [] })
       await flushPromises()
       vi.advanceTimersByTime(500)
@@ -234,11 +234,12 @@ describe('AgentSelectorDrawer', () => {
       await wrapper.findAll('.agent-option')[0].trigger('click')
       await flushPromises()
 
-      expect(wrapper.emitted('update:hostId')).toBeTruthy()
-      expect(wrapper.emitted('update:hostId')![0]).toEqual(['agent-1'])
+      // Selecting a member must not silently make it the host: leaving the host
+      // empty is a valid choice (it means a free group).
+      expect(wrapper.emitted('update:hostId')).toBeFalsy()
     })
 
-    it('does not override an existing host when more members are selected', async () => {
+    it('does not touch the host when more members are selected', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: [], hostId: 'agent-1' })
       await flushPromises()
       vi.advanceTimersByTime(500)
@@ -285,15 +286,30 @@ describe('AgentSelectorDrawer', () => {
       expect(rows[0].find('.agent-host-btn').classes()).not.toContain('active')
     })
 
-    it('disables confirm until a host is chosen', async () => {
+    it('enables confirm once a valid group is formed (host mode: host chosen)', async () => {
       const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
       await flushPromises()
       vi.advanceTimersByTime(500)
 
-      const confirm = wrapper.find('.agent-multi-confirm')
-      expect(confirm.attributes('disabled')).toBeDefined()
+      // One member, no host -> free mode needs 2 members, so still disabled.
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeDefined()
 
       await wrapper.setProps({ hostId: 'agent-1' })
+      await flushPromises()
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeUndefined()
+    })
+
+    it('enables confirm for a free group with two members and no host', async () => {
+      const wrapper = mountDrawer({ multiple: true, groupMode: true, modelValue: ['agent-1'], hostId: '' })
+      await flushPromises()
+      vi.advanceTimersByTime(500)
+
+      // One member and no host: not yet a valid free group.
+      expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeDefined()
+
+      // Select a second member by clicking its row (the live selection buffer is
+      // what confirm reads).
+      await wrapper.findAll('.agent-option')[1].trigger('click')
       await flushPromises()
       expect(wrapper.find('.agent-multi-confirm').attributes('disabled')).toBeUndefined()
     })

@@ -119,6 +119,7 @@
       :busyKind="busy"
       :active="props.active"
       :isGroupSession="isGroupSession"
+      :groupMembers="props.groupMembers"
       @send="sendMessage"
       @btw="handleBtw"
       @cancel="stream.cancelStream"
@@ -269,7 +270,7 @@ import { useChatContext } from '@/composables/useChatContext.ts'
 import { relativizeProjectPath } from '@/utils/quoteQuestionUtils.ts'
 import { resetQuotePin } from '@/composables/useQuoteQuestion.ts'
 import { fromStagedQuote, fromFileEntry, materializeQuotes, buildMessageQuote, quotableMessageText } from '@/utils/quoteItem.ts'
-import { stripGroupBccSpans } from '@/utils/groupRouting.ts'
+import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
 import { useQuoteDetail } from '@/composables/useQuoteDetail.ts'
 import { pendingMessageNavigation, consumePendingMessageNavigation, setPendingMessageNavigation } from '@/composables/useMessageNavigation.ts'
 import { openExternalUrl } from '@/utils/externalLink.ts'
@@ -676,7 +677,34 @@ async function jumpToQuoteSource(q) {
 
 const { planEntries, planCollapsed, planHasUpdate, togglePlanCollapse } = usePlanProgress()
 
-const render = useChatRender({ messages, theme, currentSessionId: identity.currentSessionId })
+// resolveMentionTarget maps a mention target to a display name for the inline
+// chip. A target is either a member ROW id (a user's @ carries the id) or a
+// display name (an agent writes the name): try the speaker resolver first, then
+// the by-name resolver, and fall back to the raw target.
+//
+// mentionScope changes when the roster changes: the chip HTML is baked into the
+// rendered-block cache, whose key does NOT include the roster, so a chip
+// rendered before the roster loaded would otherwise keep showing "@<uuid>".
+const mentionScope = computed(() =>
+  (props.groupMembers || []).map(m => `${m.id}:${m.name}`).join(','),
+)
+const render = useChatRender({
+  messages,
+  theme,
+  currentSessionId: identity.currentSessionId,
+  mentionScope,
+  resolveMentionTarget: (target) => {
+    if (typeof props.resolveGroupSpeaker === 'function') {
+      const hit = props.resolveGroupSpeaker(target)
+      if (hit?.name) return hit.name
+    }
+    if (typeof props.resolveGroupSpeakerByName === 'function') {
+      const hit = props.resolveGroupSpeakerByName(target)
+      if (hit?.name) return hit.name
+    }
+    return target
+  },
+})
 
 /** Look up the tool_use block from the live messages array by msgId + blockIdx */
 function findToolBlock({ msgId, blockIdx }) {
@@ -769,7 +797,7 @@ async function onStreamEnd(reason) {
       const lastMsg = messages.value[messages.value.length - 1]
       if (lastMsg?.role === 'assistant') {
         // Strip the host's private notes: they are not for the user to hear.
-        const fullText = stripGroupBccSpans(extractSpeakableText(lastMsg.blocks || []))
+        const fullText = stripGroupProtocolTags(extractSpeakableText(lastMsg.blocks || []))
         if (fullText && lastMsg.id) {
           autoSpeech.speakMessage(lastMsg.id, fullText)
         } else {

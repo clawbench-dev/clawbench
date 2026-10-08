@@ -1074,7 +1074,7 @@ func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSession: %v", err)
 	}
-	content := `{"blocks":[{"type":"text","text":"公开表态 <clawbench-bcc targets=\"A\">只有A能听到的秘密</clawbench-bcc> 结束"}]}`
+	content := `{"blocks":[{"type":"text","text":"公开表态 <clawbench-mention targets=\"A\" private>只有A能听到的秘密</clawbench-mention> 结束"}]}`
 	msgID, err := service.AddChatMessage(env.ProjectDir, "codebuddy", sessionID, "assistant", content, nil, false, "")
 	if err != nil {
 		t.Fatalf("AddChatMessage: %v", err)
@@ -1084,7 +1084,7 @@ func TestTTSExtractConclusion_StripsBcc(t *testing.T) {
 	if strings.Contains(got, "只有A能听到的秘密") {
 		t.Fatalf("the private note must not be spoken: %q", got)
 	}
-	if strings.Contains(got, "clawbench-bcc") {
+	if strings.Contains(got, "clawbench-mention") {
 		t.Fatalf("the tag must not be spoken: %q", got)
 	}
 	if !strings.Contains(got, "公开表态") {

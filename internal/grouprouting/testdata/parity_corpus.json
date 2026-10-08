@@ -1,8 +1,8 @@
 {
   "cases": [
     {
-      "name": "single_speaker",
-      "text": "<clawbench-speaker>B</clawbench-speaker> 请回应 A 的质疑",
+      "name": "single_mention",
+      "text": "<clawbench-mention targets=\"B\">请回应 A 的质疑</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
@@ -11,12 +11,13 @@
         ],
         "instruction": "请回应 A 的质疑",
         "before": "",
+        "after": "",
         "bcc": []
       }
     },
     {
-      "name": "multiple_speakers_trimmed",
-      "text": "<clawbench-speaker>A, B ,C</clawbench-speaker> 各自表态",
+      "name": "multiple_targets_trimmed",
+      "text": "<clawbench-mention targets=\"A, B ,C\">各自表态</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
@@ -27,6 +28,7 @@
         ],
         "instruction": "各自表态",
         "before": "",
+        "after": "",
         "bcc": []
       }
     },
@@ -39,12 +41,13 @@
         "speakers": [],
         "instruction": "",
         "before": "",
+        "after": "",
         "bcc": []
       }
     },
     {
-      "name": "both_tags_end_wins_strip_from_instruction",
-      "text": "<clawbench-speaker>B</clawbench-speaker> 请回应<clawbench-group-end/>",
+      "name": "mention_and_end",
+      "text": "<clawbench-mention targets=\"B\">请回应</clawbench-mention><clawbench-group-end/>",
       "want": {
         "found": true,
         "end": true,
@@ -53,18 +56,33 @@
         ],
         "instruction": "请回应",
         "before": "",
+        "after": "",
         "bcc": []
       }
     },
     {
-      "name": "empty_payload_not_found",
-      "text": "<clawbench-speaker></clawbench-speaker>",
+      "name": "empty_targets_not_found",
+      "text": "<clawbench-mention targets=\"\">空名单</clawbench-mention>",
       "want": {
         "found": false,
         "end": false,
         "speakers": [],
         "instruction": "",
         "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "no_targets_attr_not_found",
+      "text": "<clawbench-mention>没有 targets</clawbench-mention>",
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
         "bcc": []
       }
     },
@@ -77,38 +95,26 @@
         "speakers": [],
         "instruction": "",
         "before": "",
+        "after": "",
         "bcc": []
       }
     },
     {
       "name": "end_tag_with_spaces",
-      "text": "done <clawbench-group-end />",
+      "text": "收尾 <clawbench-group-end   />",
       "want": {
         "found": false,
         "end": true,
         "speakers": [],
         "instruction": "",
         "before": "",
-        "bcc": []
-      }
-    },
-    {
-      "name": "before_empty_when_tag_leads",
-      "text": "<clawbench-speaker>A</clawbench-speaker> 请谈谈",
-      "want": {
-        "found": true,
-        "end": false,
-        "speakers": [
-          "A"
-        ],
-        "instruction": "请谈谈",
-        "before": "",
+        "after": "",
         "bcc": []
       }
     },
     {
       "name": "before_background_text",
-      "text": "A 的观点不错 <clawbench-speaker>B</clawbench-speaker> 请回应",
+      "text": "A 的观点不错 <clawbench-mention targets=\"B\">请回应</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
@@ -117,46 +123,65 @@
         ],
         "instruction": "请回应",
         "before": "A 的观点不错",
+        "after": "",
         "bcc": []
       }
     },
     {
       "name": "before_trimmed",
-      "text": "\n  背景上下文 \n <clawbench-speaker>A</clawbench-speaker> 请表态",
+      "text": "\n  A 的观点不错 \n <clawbench-mention targets=\"B\">请回应</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
         "speakers": [
-          "A"
+          "B"
         ],
-        "instruction": "请表态",
-        "before": "背景上下文",
+        "instruction": "请回应",
+        "before": "A 的观点不错",
+        "after": "",
         "bcc": []
       }
     },
     {
-      "name": "before_with_malformed_tag",
-      "text": "背景在此 <clawbench-speaker></clawbench-speaker>",
+      "name": "after_text",
+      "text": "<clawbench-mention targets=\"B\">请回应</clawbench-mention> 大家补充",
       "want": {
-        "found": false,
+        "found": true,
+        "end": false,
+        "speakers": [
+          "B"
+        ],
+        "instruction": "请回应",
+        "before": "",
+        "after": "大家补充",
+        "bcc": []
+      }
+    },
+    {
+      "name": "before_and_after",
+      "text": "背景 <clawbench-mention targets=\"B\">请回应</clawbench-mention> 收尾语",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "B"
+        ],
+        "instruction": "请回应",
+        "before": "背景",
+        "after": "收尾语",
+        "bcc": []
+      }
+    },
+    {
+      "name": "private_single_target",
+      "text": "<clawbench-mention targets=\"A\" private>你重点看性能</clawbench-mention>",
+      "want": {
+        "found": true,
         "end": false,
         "speakers": [],
         "instruction": "",
-        "before": "背景在此",
-        "bcc": []
-      }
-    },
-    {
-      "name": "bcc_single_target_stripped_from_instruction",
-      "text": "<clawbench-speaker>A</clawbench-speaker> 请表态 <clawbench-bcc targets=\"A\">你重点看性能</clawbench-bcc>",
-      "want": {
-        "found": true,
-        "end": false,
-        "speakers": [
-          "A"
-        ],
-        "instruction": "请表态",
         "before": "",
+        "after": "",
         "bcc": [
           {
             "targets": [
@@ -168,8 +193,8 @@
       }
     },
     {
-      "name": "bcc_multiple_targets_trimmed",
-      "text": "<clawbench-speaker>A,B</clawbench-speaker> 表态 <clawbench-bcc targets=\"A, B ,C\">都注意</clawbench-bcc>",
+      "name": "public_and_private",
+      "text": "<clawbench-mention targets=\"A,B\">请表态</clawbench-mention><clawbench-mention targets=\"C\" private>你留意边界</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
@@ -177,44 +202,22 @@
           "A",
           "B"
         ],
-        "instruction": "表态",
+        "instruction": "请表态",
         "before": "",
+        "after": "",
         "bcc": [
           {
             "targets": [
-              "A",
-              "B",
               "C"
             ],
-            "content": "都注意"
+            "content": "你留意边界"
           }
         ]
       }
     },
     {
-      "name": "bcc_before_tag_not_in_before",
-      "text": "<clawbench-bcc targets=\"A\">私下话</clawbench-bcc>背景在此 <clawbench-speaker>A</clawbench-speaker> 请回应",
-      "want": {
-        "found": true,
-        "end": false,
-        "speakers": [
-          "A"
-        ],
-        "instruction": "请回应",
-        "before": "背景在此",
-        "bcc": [
-          {
-            "targets": [
-              "A"
-            ],
-            "content": "私下话"
-          }
-        ]
-      }
-    },
-    {
-      "name": "bcc_multiple_entries_order_preserved",
-      "text": "<clawbench-speaker>A,B</clawbench-speaker> 表态<clawbench-bcc targets=\"A\">给A一</clawbench-bcc><clawbench-bcc targets=\"B\">给B二</clawbench-bcc>",
+      "name": "private_multiple_entries_order",
+      "text": "<clawbench-mention targets=\"A,B\">表态</clawbench-mention><clawbench-mention targets=\"A\" private>给A一</clawbench-mention><clawbench-mention targets=\"B\" private>给B二</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
@@ -224,6 +227,7 @@
         ],
         "instruction": "表态",
         "before": "",
+        "after": "",
         "bcc": [
           {
             "targets": [
@@ -241,22 +245,99 @@
       }
     },
     {
-      "name": "bcc_malformed_no_targets_kept",
-      "text": "<clawbench-speaker>A</clawbench-speaker> 请谈 <clawbench-bcc>无 targets</clawbench-bcc>",
+      "name": "private_before_tag_not_in_before",
+      "text": "<clawbench-mention targets=\"A\" private>私下话</clawbench-mention>背景在此 <clawbench-mention targets=\"A\">请回应</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
         "speakers": [
           "A"
         ],
-        "instruction": "请谈",
+        "instruction": "请回应",
+        "before": "背景在此",
+        "after": "",
+        "bcc": [
+          {
+            "targets": [
+              "A"
+            ],
+            "content": "私下话"
+          }
+        ]
+      }
+    },
+    {
+      "name": "malformed_single_quotes_not_parsed",
+      "text": "<clawbench-mention targets='A'>单引号</clawbench-mention>",
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
         "before": "",
+        "after": "",
         "bcc": []
       }
     },
     {
-      "name": "bcc_end_inside_not_end",
-      "text": "<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets=\"A\">如果没意见就 <clawbench-group-end/> 收尾</clawbench-bcc>",
+      "name": "malformed_blank_targets",
+      "text": "<clawbench-mention targets=\"   \">空白</clawbench-mention>",
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "unclosed_not_found",
+      "text": "<clawbench-mention targets=\"A\">未闭合",
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "nbsp_between_name_and_targets",
+      "text": "<clawbench-mention targets=\"A\">NBSP</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "NBSP",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "ideographic_space_separator",
+      "text": "<clawbench-mention　targets=\"A\">全角空格</clawbench-mention>",
+      "want": {
+        "found": true,
+        "end": false,
+        "speakers": [
+          "A"
+        ],
+        "instruction": "全角空格",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "end_inside_private_not_end",
+      "text": "<clawbench-mention targets=\"A\">表态</clawbench-mention><clawbench-mention targets=\"A\" private>如果没意见就 <clawbench-group-end/> 收尾</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
@@ -265,6 +346,7 @@
         ],
         "instruction": "表态",
         "before": "",
+        "after": "",
         "bcc": [
           {
             "targets": [
@@ -276,46 +358,105 @@
       }
     },
     {
-      "name": "bcc_nbsp_separator_fail_closed",
-      "text": "<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets=\"A\">NBSP秘密</clawbench-bcc>",
+      "name": "dedup_targets_across_public_mentions",
+      "text": "<clawbench-mention targets=\"A\">先说</clawbench-mention><clawbench-mention targets=\"A,B\">再说</clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
         "speakers": [
-          "A"
+          "A",
+          "B"
         ],
-        "instruction": "表态",
+        "instruction": "先说\n\n再说",
         "before": "",
-        "bcc": [
-          {
-            "targets": [
-              "A"
-            ],
-            "content": "NBSP秘密"
-          }
-        ]
+        "after": "",
+        "bcc": []
       }
     },
     {
-      "name": "bcc_ideographic_space_separator",
-      "text": "<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc　targets=\"A\">全角秘密</clawbench-bcc>",
+      "name": "private_uppercase_attr_not_parsed",
+      "text": "<clawbench-mention Targets=\"A\">大写属性</clawbench-mention>",
+      "want": {
+        "found": false,
+        "end": false,
+        "speakers": [],
+        "instruction": "",
+        "before": "",
+        "after": "",
+        "bcc": []
+      }
+    },
+    {
+      "name": "stray_close_tag_stripped_from_after",
+      "text": "<clawbench-mention targets=\"A\">x</clawbench-mention> y </clawbench-mention>",
       "want": {
         "found": true,
         "end": false,
         "speakers": [
           "A"
         ],
-        "instruction": "表态",
+        "instruction": "x",
         "before": "",
-        "bcc": [
-          {
-            "targets": [
-              "A"
-            ],
-            "content": "全角秘密"
-          }
-        ]
+        "after": "y",
+        "bcc": []
       }
+    }
+  ],
+  "stripCases": [
+    {
+      "name": "strip_public_unwrapped",
+      "text": "<clawbench-mention targets=\"A\">公开</clawbench-mention>",
+      "want": "公开"
+    },
+    {
+      "name": "strip_private_dropped",
+      "text": "<clawbench-mention targets=\"A\" private>秘密</clawbench-mention>",
+      "want": ""
+    },
+    {
+      "name": "strip_public_keeps_surroundings",
+      "text": "前 <clawbench-mention targets=\"A\">中</clawbench-mention> 后",
+      "want": "前 中 后"
+    },
+    {
+      "name": "strip_unclosed_private_drops_tail",
+      "text": "前 <clawbench-mention targets=\"A\" private>SECRET",
+      "want": "前"
+    },
+    {
+      "name": "strip_unclosed_after_public",
+      "text": "a PUB b <clawbench-mention targets=\"A\" private>SECRET",
+      "want": "a PUB b"
+    },
+    {
+      "name": "strip_single_quotes_private",
+      "text": "前 <clawbench-mention targets='A' private>秘密</clawbench-mention> 后",
+      "want": "前  后"
+    },
+    {
+      "name": "strip_blank_targets_private",
+      "text": "前 <clawbench-mention targets=\"   \" private>秘密</clawbench-mention> 后",
+      "want": "前  后"
+    },
+    {
+      "name": "strip_uppercase_attr_private",
+      "text": "前 <clawbench-mention Targets=\"A\" private>秘密</clawbench-mention> 后",
+      "want": "前  后"
+    },
+    {
+      "name": "strip_no_attr_private",
+      "text": "前 <clawbench-mention private>秘密</clawbench-mention> 后",
+      "want": "前  后"
+    },
+    {
+      "name": "strip_end_signal",
+      "text": "收尾 <clawbench-group-end/>",
+      "want": "收尾"
+    },
+    {
+      "name": "strip_no_tag",
+      "text": "普通发言",
+      "want": "普通发言"
     }
   ]
 }

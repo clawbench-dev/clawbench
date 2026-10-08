@@ -16,17 +16,16 @@
       <AgentIcon :backend="speaker.backend" :name="speaker.name" :avatar="speaker.avatar" size="lg" />
       <span class="msg-speaker-name">{{ speaker.name }}</span>
       <span v-if="isHostMessage" class="msg-speaker-host-tag">{{ t('group.host') }}</span>
-      <span v-if="isHostMessage && hostRouting.found" class="msg-routing-targets">
-        <span v-for="s in routingTargets" :key="s.name" class="msg-routing-item">
-          <span class="msg-routing-at">@</span>
-          <span class="msg-routing-chip">
-            <span class="msg-routing-avatar">
-              <AgentIcon v-if="s.avatar || s.backend" :backend="s.backend" :name="s.name" :avatar="s.avatar" size="md" />
-            </span>
-            <span class="msg-routing-name">{{ s.name }}</span>
-          </span>
-        </span>
-      </span>
+    </div>
+
+    <!-- Mention summary row: a one-line "本条 @ 了 B、C" above the bubble, for
+         BOTH host and free modes. The mentions also render INLINE in the body
+         (as @name chips, see renderMentionChips); this row is the scannable
+         summary. It shows the raw parsed targets (a routing intent that may
+         name a member who has since left must stay visible). -->
+    <div v-if="mentionTargets.length > 0" class="msg-mention-summary">
+      <span class="msg-mention-summary-at">@</span>
+      <span class="msg-mention-summary-names">{{ mentionTargets.map((s) => s.name).join('、') }}</span>
     </div>
 
     <!-- Message card (bubble). The meta bar deliberately lives OUTSIDE this
@@ -97,7 +96,7 @@
          information). The targets stay visible per entry once expanded.
          Sits INSIDE .msg-card, unlike the @-mention routing chips which live in
          the speaker row above the bubble. -->
-    <template v-if="isHostMessage && hostRouting.bcc.length > 0">
+    <template v-if="groupRouting.bcc.length > 0">
       <div v-for="(e, i) in bccToUser" :key="'u' + i" class="msg-bcc msg-bcc-user">
         <div class="msg-bcc-header is-static">
           <User :size="12" class="msg-bcc-user-icon" />
@@ -245,7 +244,7 @@ import { Clock, Pause, Volume2, Info, FileDiff, Split, Rewind, MessageSquareQuot
 import { formatDuration, formatRelativeTime } from '@/utils/format.ts'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
 import { extractFileChanges } from '@/utils/chatStreamUtils.ts'
-import { parseGroupRouting, stripGroupBccTags } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags } from '@/utils/groupRouting.ts'
 import { quotableMessageText } from '@/utils/quoteItem.ts'
 import { isShowingSummary, normalizeDisplayMode } from '@/utils/chatSessionUtils.ts'
 import { localConfig } from '@/composables/useSettingsConfig'
@@ -321,13 +320,17 @@ const speaker = computed(() => {
 })
 const isHostMessage = computed(() => !!props.msg?.agentId && props.msg.agentId === props.hostMemberId)
 
-// Host routing card: parse the host's routing tag from its text so the reader
-// sees "Host → A, B" chips. Unparseable tags are NOT stripped from the body
-// (parseGroupRouting never mutates text) — only the card is added.
-const hostRouting = computed(() => {
-  if (!isHostMessage.value) return { found: false, speakers: [], instruction: '', before: '', bcc: [], end: false, raw: '' }
-  const text = msgText.value || ''
-  return parseGroupRouting(text)
+// Group-chat mention parsing. In BOTH modes an agent's speech may carry
+// <clawbench-mention> tags: host mode's routing, free mode's @-relay. The tags
+// are rendered inline as @name chips by renderMentionChips; this parse feeds
+// the summary row and the private-note card. Unparseable tags are NOT stripped
+// from the body (parseGroupRouting never mutates text).
+const groupRouting = computed(() => {
+  const empty = { found: false, speakers: [], instruction: '', before: '', after: '', bcc: [], mentions: [], end: false, raw: '' }
+  // Only group-chat agent speech carries the tags (a plain single-agent chat
+  // never does), so gate on the speaker being a group member.
+  if (!speaker.value) return empty
+  return parseGroupRouting(msgText.value || '')
 })
 
 // Private notes (密送) addressed to AI members are collapsed by default — the
@@ -342,15 +345,15 @@ const GROUP_USER_TARGET = 'User'
 // render expanded and labelled "to you"; the rest stay behind a collapsed
 // header whose title deliberately omits the target names (who got a note is
 // itself a hint).
-const bccToUser = computed(() => hostRouting.value.bcc.filter((e) => e.targets.includes(GROUP_USER_TARGET)))
-const bccToMembers = computed(() => hostRouting.value.bcc.filter((e) => !e.targets.includes(GROUP_USER_TARGET)))
+const bccToUser = computed(() => groupRouting.value.bcc.filter((e) => e.targets.includes(GROUP_USER_TARGET)))
+const bccToMembers = computed(() => groupRouting.value.bcc.filter((e) => !e.targets.includes(GROUP_USER_TARGET)))
 
-// routingTargets maps the host's named routing targets to display info for the
-// @-mention chips. Names that no longer resolve (removed members) still render
-// as a plain @name so the routing intent stays visible.
-const routingTargets = computed(() => {
+// mentionTargets maps the parsed mention targets to display info for the
+// summary row. Names that no longer resolve (removed members) still render as a
+// plain @name so the routing intent stays visible.
+const mentionTargets = computed(() => {
   const resolve = props.resolveSpeakerByName
-  return hostRouting.value.speakers.map((name) => {
+  return groupRouting.value.speakers.map((name) => {
     const hit = typeof resolve === 'function' ? resolve(name) : null
     return hit || { name, backend: '', avatar: '' }
   })
@@ -421,11 +424,12 @@ const msgText = computed(() => {
   return ''
 })
 
-// The text the user READS/HEARS: the same as msgText, minus the host's private
-// notes (bcc). A note is visible only in the collapsed card; it must not be
-// read aloud, copied, quoted, or counted as message content. `msgText` itself
-// stays RAW because `hostRouting` parses the note out of it.
-const speakableText = computed(() => stripGroupBccTags(msgText.value))
+// The text the user READS/HEARS: the same as msgText, minus any private notes
+// (and with public mentions unwrapped to plain prose). A private note is visible
+// only in the collapsed card; it must not be read aloud, copied, quoted, or
+// counted as message content. `msgText` itself stays RAW because `groupRouting`
+// parses the note out of it.
+const speakableText = computed(() => stripGroupProtocolTags(msgText.value))
 
 // Friendly relative timestamp shown in the meta bar for BOTH roles.
 // formatRelativeTime returns '' for missing/invalid dates (including Go zero-value
@@ -1432,85 +1436,43 @@ const copyPayload = quotableText
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-2xs);
 }
-/* The host's @-mention targets, inline in the avatar row right after the
-   speaker label (original left-aligned position — NOT pushed right).
-   `min-width: 0` + wrapping keep a long target list from pushing the row wider
-   than the chat column (it wraps to its own line instead). */
-.msg-routing-targets {
-  display: inline-flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-  min-width: 0;
-}
-/* One routing target: the "@" sigil sits OUTSIDE the pill, immediately before
-   it. The pill itself carries only the icon + agent name. */
-.msg-routing-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-}
 /* The host's bubble is centered with an accent border to read as "chair". */
 .msg-card-host {
   border-left: 2px solid var(--accent-color, #0066cc);
 }
-/* @-mention pill: avatar + name only (the "@" is the sibling .msg-routing-at).
-   Fixed height + fixed avatar disc so every chip is exactly the same size
-   regardless of the avatar's render mode (<img> vs <svg>) or name length. */
-.msg-routing-chip {
+/* Mention summary row: a one-line "本条 @ 了 B、C" above the bubble, for BOTH
+   host and free modes. The mentions also render inline in the body (as
+   .msg-mention-chip); this row is the scannable summary. */
+.msg-mention-summary {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: 26px;
-  padding: 0 var(--space-3) 0 var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--accent-color, #0066cc);
+}
+.msg-mention-summary-at {
+  font-weight: var(--font-weight-medium);
+}
+.msg-mention-summary-names {
+  font-weight: var(--font-weight-medium);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* Inline @name chip, injected into the rendered markdown body by
+   renderMentionChips (a plain <span>, so DOMPurify keeps it by default). */
+.msg-mention-chip {
+  display: inline-block;
+  padding: 0 var(--space-2);
   border-radius: var(--radius-full, 999px);
   background: color-mix(in srgb, var(--accent-color, #0066cc) 12%, transparent);
   color: var(--accent-color, #0066cc);
   font-size: var(--font-size-sm);
-  line-height: 1;
-  box-sizing: border-box;
-}
-.msg-routing-avatar {
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  border-radius: var(--radius-full);
-  overflow: hidden;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  /* Circular background so a transparent-background built-in icon (e.g. the
-     Claude starburst) still reads as a circle, not a floating glyph. Matches
-     the member bar's disc. */
-  background: var(--bg-tertiary);
-}
-/* Force the avatar (custom <img> OR built-in <svg>) to fill the disc and crop
-   to a circle, overriding AgentIcon's own 20% rounded-square radius. Without
-   width/height:100% the 18px icon sits inside the 20px disc as a visible
-   rounded square.
-   NOTE: this is the NON-scoped block, so `:deep()` is NOT transformed by Vue
-   (it only works in <style scoped>) — use plain descendant selectors anchored
-   on the parent class. */
-.msg-routing-avatar .agent-icon-img,
-.msg-routing-avatar .agent-icon-svg,
-.msg-routing-avatar .agent-icon-initial {
-  width: 100%;
-  height: 100%;
-  border-radius: var(--radius-full);
-}
-.msg-routing-avatar .agent-icon-img {
-  object-fit: cover;
-}
-/* The "@" sigil, outside the pill. Same accent as the pill text so the pair
-   reads as one mention, with no background of its own. */
-.msg-routing-at {
   font-weight: var(--font-weight-medium);
-  white-space: nowrap;
-  color: var(--accent-color, #0066cc);
-}
-.msg-routing-name {
-  font-weight: var(--font-weight-medium);
-  white-space: nowrap;
+  line-height: 1.5;
 }
 
 /* ── Group-chat system event row (member joined / left) ──

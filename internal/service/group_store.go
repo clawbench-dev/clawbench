@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,10 +25,18 @@ const (
 	groupMemberSessionType = store.SessionTypeGroupMember
 	// defaultGroupMaxRounds is the round cap when the group has no override.
 	defaultGroupMaxRounds = 10
+	// GroupModeHost is a group whose flow is controlled by a host member that
+	// routes to named speakers (the original mode).
+	GroupModeHost = "host"
+	// GroupModeFree is a group with no host: participants relay the floor to
+	// each other by @-mentioning, seeded by the user's own @-mentions (design
+	// §13). The mode is chosen at creation (host selected vs not) and is NOT
+	// switchable.
+	GroupModeFree = "free"
 	// groupUserTarget is the reserved display name of the HUMAN user as a group
-	// participant. The host addresses the user with this exact name
-	// (<clawbench-speaker>User</clawbench-speaker>, targets="User"), so it must
-	// stay language-neutral and must not collide with a real member name.
+	// participant. Agents address the user with this exact name
+	// (<clawbench-mention targets="User">...), so it must stay language-neutral
+	// and must not collide with a real member name.
 	groupUserTarget = "User"
 	// groupUserTargetID is a sentinel member row id for the user. It is not a
 	// chat_sessions row: the user has no backend connection and no AI turn.
@@ -69,29 +78,31 @@ type GroupMemberSpec struct {
 }
 
 // CreateGroupWithMembers creates a group timeline row AND all its member rows
-// (host included) in ONE transaction, so a failure leaves no half-built group
-// behind. This is the one-step creation path (design §7.1, decision #25): the
-// frontend picks members and host together and calls this once.
+// in ONE transaction, so a failure leaves no half-built group behind. This is
+// the one-step creation path (design §7.1, decision #25).
 //
-// hostAgentID must appear in specs; the matching spec's row becomes the host
-// pointer. specs is expected to be non-empty and every spec to carry a
-// non-empty AgentID — an invalid spec aborts the whole transaction.
+// hostAgentID selects the mode (design §13.1): when it names one of the specs,
+// that member becomes the host pointer and the group is host mode; when it is
+// empty, the group is FREE mode (no host) and the user seeds speakers with
+// @-mentions instead. specs is expected to be non-empty and every spec to carry
+// a non-empty AgentID — an invalid spec aborts the whole transaction.
 //
-// The host pointer is written inline (not via SetGroupHostMember, which takes
-// the write lock and would deadlock inside this transaction). title_source is
-// set to 'placeholder' inline for the same reason, so the group's host-name
-// title is still replaceable by auto-title after the first message.
+// The host pointer (host mode) and the mode marker are written inline (not via
+// SetGroupHostMember/SetGroupMode, which take the write lock and would deadlock
+// inside this transaction). title_source is set to 'placeholder' inline for the
+// same reason, so the group's title is still replaceable by auto-title after
+// the first message.
 func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []GroupMemberSpec) (groupID, hostMemberID string, err error) {
 	if len(specs) == 0 {
 		return "", "", fmt.Errorf("create group: no members")
 	}
 	// Validate + DEDUPE before touching the DB. Duplicates must collapse here
 	// (not just be rejected): a member's only identity is its agent, and
-	// resolveTargets maps names through a map, so two rows for one agent leave
-	// one unreachable — a mute member that still occupies a connection and a
-	// slot, and inflates the active count toward the cap. The Web drawer is a
-	// multi-select and never sends duplicates, but POST /api/group/create takes
-	// an arbitrary array (review B2).
+	// resolveMentionNames maps names through a map, so two rows for one agent
+	// leave one unreachable — a mute member that still occupies a connection
+	// and a slot, and inflates the active count toward the cap. The Web drawer
+	// is a multi-select and never sends duplicates, but POST /api/group/create
+	// takes an arbitrary array (review B2).
 	//
 	// Dedupe first so the cap counts UNIQUE agents: 10 distinct agents plus a
 	// duplicate must not be rejected as 11.
@@ -111,6 +122,18 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 		return "", "", ErrGroupMemberLimit
 	}
 	specs = deduped
+
+	// Mode: a named host that is among the members ⇒ host mode; no host ⇒ free.
+	mode := GroupModeFree
+	if hostAgentID != "" {
+		mode = GroupModeHost
+	}
+	// Free mode needs at least two members to be a "group" (design §13.1 #F10):
+	// a one-member free group is a single chat wearing a group's clothes.
+	if mode == GroupModeFree && len(specs) < 2 {
+		return "", "", ErrFreeGroupNeedsTwoMembers
+	}
+
 	projectID, idErr := store.ProjectIDForPath(projectPath)
 	if idErr != nil {
 		return "", "", idErr
@@ -140,19 +163,28 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 	defer store.WriteUnlock()
 	defer func() { _ = tx.Rollback() }()
 
-	// The group row's backend mirrors its host (the group itself never runs a
-	// turn; the host does). specs[0] is not assumed to be the host.
+	// The group row's identity fields mirror a member (the group itself never
+	// runs a turn). Host mode uses the host; free mode has no host, so the
+	// FIRST member fills backend (NOT NULL) and agent_id (list icon), and the
+	// title is a generic placeholder.
 	groupBackend := ""
-	for _, s := range specs {
-		if s.AgentID == hostAgentID {
-			groupBackend = s.Backend
-			break
+	groupAgentID := ""
+	if mode == GroupModeHost {
+		for _, s := range specs {
+			if s.AgentID == hostAgentID {
+				groupBackend = s.Backend
+				groupAgentID = s.AgentID
+				break
+			}
 		}
+	} else {
+		groupBackend = specs[0].Backend
+		groupAgentID = specs[0].AgentID
 	}
 
 	if _, err := tx.Exec(
 		"INSERT INTO chat_sessions (id, project_id, backend, title, agent_id, agent_source, model, session_type, external_session_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-		groupID, projectID, groupBackend, title, hostAgentID, "default", "", groupSessionType, "",
+		groupID, projectID, groupBackend, title, groupAgentID, "default", "", groupSessionType, "",
 	); err != nil {
 		return "", "", fmt.Errorf("create group session: %w", err)
 	}
@@ -168,21 +200,29 @@ func CreateGroupWithMembers(projectPath, title, hostAgentID string, specs []Grou
 		); err != nil {
 			return "", "", fmt.Errorf("create member session: %w", err)
 		}
-		if s.AgentID == hostAgentID && hostMemberID == "" {
+		if mode == GroupModeHost && s.AgentID == hostAgentID && hostMemberID == "" {
 			hostMemberID = memberIDs[i]
 		}
 	}
-	if hostMemberID == "" {
+	if mode == GroupModeHost && hostMemberID == "" {
 		return "", "", fmt.Errorf("create group: host agent %q not among members", hostAgentID)
 	}
 
-	// Host pointer inline: json_set on the group row's context_state.
-	hostJSON, _ := json.Marshal(hostMemberID)
-	if _, err := tx.Exec(
-		"UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END, '$.host_member_id', json(?)) WHERE id = ?",
-		string(hostJSON), groupID,
-	); err != nil {
-		return "", "", fmt.Errorf("set host member: %w", err)
+	// Mode marker (and, in host mode, the host pointer) inline on the group
+	// row's context_state. One statement: a second tx.Exec here would only add
+	// a call the noctx linter flags (the existing calls predate this change).
+	modeJSON, _ := json.Marshal(mode)
+	setArgs := "'$.group_mode', json(?)"
+	args := []any{string(modeJSON)}
+	if mode == GroupModeHost {
+		hostJSON, _ := json.Marshal(hostMemberID)
+		setArgs += ", '$.host_member_id', json(?)"
+		args = append(args, string(hostJSON))
+	}
+	updateSQL := "UPDATE chat_sessions SET context_state = json_set(CASE WHEN context_state = '' OR context_state IS NULL THEN '{}' ELSE context_state END, " + setArgs + ") WHERE id = ?"
+	args = append(args, groupID)
+	if _, err := tx.ExecContext(context.Background(), updateSQL, args...); err != nil {
+		return "", "", fmt.Errorf("set group mode/host: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -496,11 +536,17 @@ func SetSessionGroupID(memberID, groupID string) error {
 // ListGroupMembers returns every member row of a group, including removed
 // (archived) ones so the timeline can still label their past speech. Active
 // members are those with Left == false.
+//
+// Order is JOIN order (created_at, then rowid): free mode speaks every active
+// member in roster order when the user @s nobody, so the order must be stable
+// and match the order members were added. created_at has second granularity, so
+// members added in one transaction tie; rowid (insertion order) breaks the tie
+// deterministically, whereas `id` (a random UUID) would not.
 func ListGroupMembers(groupID string) ([]GroupMember, error) {
 	rows, err := store.ReadDB().Query(
 		`SELECT id, agent_id, title, backend, archived FROM chat_sessions
 		 WHERE group_id = ? AND session_type = ?
-		 ORDER BY created_at ASC, id ASC`,
+		 ORDER BY created_at ASC, rowid ASC`,
 		groupID, groupMemberSessionType,
 	)
 	if err != nil {
@@ -612,6 +658,10 @@ var ErrCannotRemoveHost = errors.New("cannot remove the group host")
 // ACTIVE member count past maxGroupMembers.
 var ErrGroupMemberLimit = errors.New("group member limit reached")
 
+// ErrFreeGroupNeedsTwoMembers is returned when a free-mode group (no host) is
+// created with fewer than two members (design §13.1 #F10).
+var ErrFreeGroupNeedsTwoMembers = errors.New("free group needs at least two members")
+
 // MaxGroupMembers caps a group's ACTIVE members (decision #78). Exported so the
 // handler can report the limit to the user.
 //
@@ -658,6 +708,10 @@ func RemoveGroupMember(groupID, memberID string) error {
 	// Best-effort: the member is already archived, so a write failure must not
 	// surface as a failed removal.
 	if name := memberDisplayName(memberID); name != "" {
+		// Drop any private note awaiting this member: it can never be delivered
+		// now (left members are excluded from name resolution), so keeping it
+		// would be silent loss plus unbounded growth of group_pending_bcc.
+		deletePendingBccForTarget(groupID, name)
 		text := name + " 已离场"
 		if msgID, err := AddSystemMessage(GetSessionProjectPathAnyPath(groupID), groupID, text); err != nil {
 			slog.Warn("group: writing departure system event failed", "group", groupID, "err", err)
@@ -683,6 +737,33 @@ func GetGroupHostMember(groupID string) string {
 		groupID,
 	).Scan(&hostID)
 	return hostID
+}
+
+// GetGroupMode returns the group's mode ("host" or "free"), defaulting to
+// GroupModeHost when the field is missing/invalid. The default matters for
+// robustness: a group row whose context_state predates the mode field (or was
+// corrupted) is treated as host mode, which fails loudly in the orchestrator
+// ("no host member") rather than silently behaving as a free group.
+//
+// The key is `group_mode`, NOT `mode`: ContextState already uses `$.mode` for
+// the persisted agent mode (ModeStatePersist), so sharing the key made
+// GetContextState fail to unmarshal a group row ("cannot unmarshal string into
+// ... ModeStatePersist") — a real collision caught by the free-mode E2E.
+func GetGroupMode(groupID string) string {
+	var mode string
+	_ = store.ReadDB().QueryRow(
+		"SELECT COALESCE(json_extract(context_state, '$.group_mode'), '') FROM chat_sessions WHERE id = ?",
+		groupID,
+	).Scan(&mode)
+	if mode == GroupModeFree {
+		return GroupModeFree
+	}
+	return GroupModeHost
+}
+
+// IsFreeGroup reports whether sessionID is a free-chat-mode group.
+func IsFreeGroup(sessionID string) bool {
+	return IsGroupSession(sessionID) && GetGroupMode(sessionID) == GroupModeFree
 }
 
 // SetGroupAutoApprove applies the auto-approve flag to EVERY member row of a

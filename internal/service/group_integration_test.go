@@ -37,9 +37,9 @@ func TestGroupOrchestrator_MultiRoundClosedLoop(t *testing.T) {
 	script := map[string][]string{
 		hostID: {
 			// R1: name SELF first (must be dropped) then route to A.
-			`<clawbench-speaker>Codebuddy,A</clawbench-speaker> A 你先说`,
+			`<clawbench-mention targets="Codebuddy,A">A 你先说</clawbench-mention>`,
 			// R2: route to B.
-			`<clawbench-speaker>B</clawbench-speaker> B 补充`,
+			`<clawbench-mention targets="B">B 补充</clawbench-mention>`,
 			// R3: end.
 			`充分了。<clawbench-group-end/> 结论：A、B 各抒己见。`,
 		},
@@ -93,7 +93,7 @@ func TestGroupOrchestrator_HostOnlyGroupDoesNotLoop(t *testing.T) {
 	script := map[string][]string{
 		// Host names itself — must be dropped, leaving no target → round-robin
 		// finds no non-host member → loop ends.
-		hostID: {`<clawbench-speaker>Codebuddy</clawbench-speaker> 我先说`, `结束。<clawbench-group-end/> 结论：无人可点。`},
+		hostID: {`<clawbench-mention targets="Codebuddy"> 我先说`, `结束。</clawbench-mention><clawbench-group-end/> 结论：无人可点。`},
 	}
 	runner, order := newScriptedRunner(t, groupID, project, script)
 

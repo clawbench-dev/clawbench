@@ -63,11 +63,15 @@ type GroupOrchestrator struct {
 	// successful host turn.
 	hostFailures int
 	// commandInjection is the rendered /cb-* prompt template for THIS turn (the
-	// drained message). It is prepended to the FIRST host turn only, so the host
-	// executes the built-in command once and its spoken result enters the
-	// timeline for the members to discuss. Empty = the message was not a
-	// built-in command (or no renderer is wired).
+	// drained message). It is prepended to the FIRST speaker's turn only, so
+	// that speaker executes the built-in command once and its spoken result
+	// enters the timeline for the others to discuss. Empty = the message was
+	// not a built-in command (or no renderer is wired).
 	commandInjection string
+	// userMessage is the drained user message's literal text. In free mode it
+	// carries the initial @-mentions that seed the relay queue; host mode
+	// ignores it (humans never route in host mode, decision #47).
+	userMessage string
 }
 
 // maxConsecutiveParseFailures is how many unparseable host routings in a row
@@ -120,12 +124,15 @@ func RunGroupTurnDrain(ctx context.Context, groupID string, msgID int64, row Que
 		// the backend stubbed (see groupDrainRunnerOverride).
 		o.runTurn = groupDrainRunnerOverride
 	}
-	// A built-in /cb-* command rides in the HOST's first prompt only: the host
-	// (which owns routing and speaks to the group) runs the command and reports
-	// the result as its speech, and the members discuss that. It is NOT injected
-	// into the timeline content (the bubble keeps the user's literal text) and
-	// NOT injected to members (the API contract is noise to them, decision #9).
+	// A built-in /cb-* command rides in the FIRST speaker's prompt only: that
+	// speaker runs the command and reports the result as its speech, and the
+	// others discuss it. It is NOT injected into the timeline content (the
+	// bubble keeps the user's literal text) and NOT injected to members (the
+	// API contract is noise to them, decision #9).
 	o.commandInjection = renderGroupCommandForHost(row.Content, o.project, groupID)
+	// The user's message carries the free-mode initial targets (@-mentions).
+	// Host mode ignores them (decision #47: humans never route in host mode).
+	o.userMessage = row.Content
 	// NOTE: no running-state management here. The caller (the HTTP handler via
 	// TryClaimSessionRun, or the drain loop) already owns the runner and the
 	// running flag for the whole queued run. Registering a second, per-message
@@ -163,6 +170,10 @@ func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 // session's running state — the drain loop (RunGroupDrainLoop) owns both, so a
 // run spanning several queued messages sends "done" exactly once.
 //
+// It dispatches on the group's mode (design §13.1): host mode runs the
+// host-routes-members loop, free mode runs the mention-relay loop. The
+// finalization is identical for both.
+//
 // The finalization runs on EVERY exit path (cancel, abort, end, round cap,
 // error), which is why it lives here rather than in each branch:
 //
@@ -186,7 +197,12 @@ func renderGroupCommandForHost(rawMsg, projectPath, groupID string) string {
 // rounds return but before the caller can send "done", matching single chat
 // where Finalize summarizes before the terminal event.
 func (o *GroupOrchestrator) runLoop(groupCtx context.Context, groupID string) DrainResult {
-	res := o.runRounds(groupCtx, groupID)
+	var res DrainResult
+	if GetGroupMode(groupID) == GroupModeFree {
+		res = o.runFreeLoop(groupCtx, groupID)
+	} else {
+		res = o.runRounds(groupCtx, groupID)
+	}
 	finalizeGroupOrphans(groupID)
 	triggerChatSummarization(context.Background(), groupID)
 	return res
@@ -359,6 +375,282 @@ func (o *GroupOrchestrator) runRounds(groupCtx context.Context, groupID string) 
 	return DrainResult{}
 }
 
+// runFreeLoop is the free-chat mode's main loop (design §13.3). There is no
+// host: the user's message seeds a FIFO queue of speakers (the @-mentioned
+// members, or — when the message mentions nobody — every active member in
+// roster order), and each speaker's own @-mentions append to the queue's tail.
+// The relay runs until the queue drains (nobody is @-ed any more), a member
+// hands the floor back to the human ("User"), or the user stops the turn.
+//
+// There is deliberately NO round cap and NO loop detection (decision #F13): the
+// user asked for unlimited relay, stopped by hand. A@B,B@A therefore burns
+// tokens until the user presses stop — a known, accepted risk.
+func (o *GroupOrchestrator) runFreeLoop(groupCtx context.Context, groupID string) DrainResult {
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		return DrainResult{Err: fmt.Sprintf("list group members: %v", err)}
+	}
+	names := memberNameMap(members)
+
+	// Protect every member's ACP connection for the turn (decision #73).
+	activeMemberIDs := make([]string, 0, len(members))
+	for _, m := range members {
+		activeMemberIDs = append(activeMemberIDs, m.ID)
+	}
+	markGroupMembersActive(activeMemberIDs)
+	defer clearGroupMembersActive(activeMemberIDs)
+
+	runner := o.runTurn
+	if runner == nil {
+		runner = o.defaultRunner
+	}
+
+	// Clean up any orphaned streaming rows from a previous crashed turn.
+	finalizeGroupOrphans(groupID)
+
+	// Seed the queue from the user's message: the @-mentioned members, in the
+	// order mentioned; or every active member in roster order when nobody is
+	// mentioned.
+	queue := o.freeInitialTargets(members)
+	if len(queue) == 0 {
+		return DrainResult{}
+	}
+	// commandInjection runs on the FIRST speaker only (design §13.3 #F16).
+	firstTurn := true
+
+	for len(queue) > 0 {
+		if groupCtx.Err() != nil {
+			return DrainResult{CancelReason: cancelReasonUser}
+		}
+		t := queue[0]
+		queue = queue[1:]
+
+		// The human is a participant with no AI turn: @-ing them hands the floor
+		// back, ending the relay (design §13.3 #F6).
+		if t.ID == groupUserTargetID {
+			// A note addressed to the user is read in the UI card, not through
+			// an injected prompt — clear the bookkeeping so it is not re-sent.
+			deletePendingBccForTarget(groupID, groupUserTarget)
+			writeGroupSystemMessage(o.project, groupID,
+				i18n.T(i18n.LocalizerForLocale(model.Language), "GroupYourTurn"))
+			return DrainResult{}
+		}
+
+		// Notes accumulated for THIS member by earlier speakers (a note reaches
+		// its target on that target's next turn, exactly like host mode).
+		pending := pendingBccForTarget(groupID, names[t.ID])
+		bcc := joinPendingBcc(pending)
+		cursor := GetMemberCursor(t.ID)
+		prompt := groupInjectionTextOrEmpty(groupID, t.ID, cursor, names, "", bcc) +
+			BuildFreeMemberSystemPrompt(memberRoster(members), names[t.ID])
+		if firstTurn && o.commandInjection != "" {
+			prompt = o.commandInjection + "\n\n" + prompt
+		}
+		firstTurn = false
+		preH := GroupTimelineHighWater(groupID)
+		res := runner(groupCtx, groupID, groupMemberTurn{MemberRowID: t.ID, Prompt: prompt})
+		if res.CancelReason != "" {
+			// The user stopped the relay mid-speech. Stop the whole turn.
+			return DrainResult{CancelReason: res.CancelReason}
+		}
+		advanceCursorOnSuccess(t.ID, preH, res)
+
+		// Only a clean turn's output is honored (matching the cursor rule): its
+		// delivered notes are cleared, its own @-mentions append to the queue,
+		// and its private notes are stored for their targets' next turn.
+		if res.Err == "" {
+			ids := make([]int64, 0, len(pending))
+			for _, p := range pending {
+				ids = append(ids, p.ID)
+			}
+			deletePendingBcc(ids)
+			o.storeFreeSpeakerNotes(groupID, t.ID)
+			queue = o.appendFreeTargets(queue, groupID, t.ID, members, names)
+		}
+	}
+	return DrainResult{}
+}
+
+// storeFreeSpeakerNotes persists the private notes a free-mode speaker emitted,
+// so each note is delivered on its target's next turn (the group_pending_bcc
+// contract host mode uses). The target is matched by display name (what an
+// agent writes); the reserved "User" name is accepted so a member can note the
+// human. A no-op when the speaker emitted no private mention.
+// storeFreeSpeakerNotes persists the private notes a free-mode speaker emitted,
+// so each note is delivered on its target's next turn (the group_pending_bcc
+// contract host mode uses). The target is matched by display name (what an
+// agent writes); the reserved "User" name is accepted so a member can note the
+// human.
+//
+// Targets are validated against the roster: an unknown or left target is
+// dropped (storing it would create a row that can never be delivered and is
+// never cleaned — silent loss plus unbounded growth), and a self-directed note
+// is dropped (it would be delivered on the speaker's own next turn, which is
+// just talking to itself). A no-op when the speaker emitted no private mention.
+func (o *GroupOrchestrator) storeFreeSpeakerNotes(groupID, speakerID string) {
+	output := o.lastSpeakerOutput(groupID, speakerID)
+	if output == "" {
+		return
+	}
+	route := grouprouting.Parse(output)
+	if len(route.Bcc) == 0 {
+		return
+	}
+	members, err := ListGroupMembers(groupID)
+	if err != nil {
+		slog.Warn("group: loading members for note validation failed", "group", groupID, "err", err)
+		return
+	}
+	_, byName := memberLookups(members)
+	for _, e := range route.Bcc {
+		for _, target := range e.Targets {
+			m, ok := byName[strings.TrimSpace(target)]
+			if !ok {
+				// Unknown/left target: drop (cannot ever be delivered).
+				continue
+			}
+			if m.ID == speakerID {
+				continue // self-directed note: talking to itself
+			}
+			addPendingBcc(groupID, target, e.Content)
+		}
+	}
+}
+
+// freeInitialTargets resolves the free-mode queue seed from the user message:
+// the @-mentioned members in the order mentioned (de-duplicated), or every
+// active member in roster order when the message mentions nobody. A mention
+// target is matched by member ROW ID first (the frontend sends ids), then by
+// display name (a user who typed the tag by hand).
+//
+// Left members are excluded. An unknown name is dropped silently at this stage
+// (the "unknown name" system notice is only for AGENT-emitted mentions — see
+// appendFreeTargets — because a user's typo is not a discussion event).
+func (o *GroupOrchestrator) freeInitialTargets(members []GroupMember) []GroupMember {
+	mentioned := o.resolveMentionNames(o.userMessage, members, "")
+	if len(mentioned) == 0 {
+		out := make([]GroupMember, 0, len(members))
+		for _, m := range members {
+			if !m.Left {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	return mentioned
+}
+
+// appendFreeTargets parses the just-finished speaker's output for @-mentions and
+// appends the valid, not-already-queued targets to the queue's tail. Returns the
+// (possibly extended) queue.
+//
+// Dedup rule (decision #F9): only targets already WAITING in the queue are
+// skipped. A member that has already spoken may be @-ed again and will speak
+// again — this is what makes unlimited relay possible (A@B, B@A loops).
+//
+// Invalid targets (decision #F7): a self-mention and a left-member mention are
+// dropped silently (model slips not worth surfacing); an unknown NAME emits a
+// visible system notice (it usually means a member was removed/renamed, or the
+// model hallucinated — the user should know).
+func (o *GroupOrchestrator) appendFreeTargets(queue []GroupMember, groupID, speakerID string, members []GroupMember, names map[string]string) []GroupMember {
+	output := o.lastSpeakerOutput(groupID, speakerID)
+	if output == "" {
+		return queue
+	}
+	route := grouprouting.Parse(output)
+	if !route.Found {
+		return queue
+	}
+
+	byID, byName := memberLookups(members)
+	waiting := map[string]bool{}
+	for _, m := range queue {
+		waiting[m.ID] = true
+	}
+
+	var unknown []string
+	for _, tgt := range publicMentionTargets(route) {
+		m, ok := byID[strings.TrimSpace(tgt)]
+		if !ok {
+			m, ok = byName[strings.TrimSpace(tgt)]
+		}
+		if !ok {
+			unknown = append(unknown, tgt)
+			continue
+		}
+		if m.ID == speakerID {
+			continue // self-mention: drop silently
+		}
+		if m.Left && m.ID != groupUserTargetID {
+			continue // left member: drop silently
+		}
+		if waiting[m.ID] {
+			continue // already queued: do not duplicate
+		}
+		waiting[m.ID] = true
+		queue = append(queue, m)
+	}
+	if len(unknown) > 0 {
+		// Surface once, aggregated, so a hallucinated name is visible without
+		// flooding the timeline.
+		speakerName := names[speakerID]
+		if speakerName == "" {
+			speakerName = "成员"
+		}
+		writeGroupSystemMessage(o.project, groupID,
+			fmt.Sprintf("%s @ 了一个不存在的成员：%s（已忽略）", speakerName, strings.Join(unknown, "、")))
+	}
+	return queue
+}
+
+// resolveMentionNames resolves the mentions in `text` to member rows, matching
+// by row id first then by display name, dropping self/left/duplicates. Used for
+// the user message's initial targets (self is the empty string: the user is not
+// a member).
+func (o *GroupOrchestrator) resolveMentionNames(text string, members []GroupMember, selfID string) []GroupMember {
+	route := grouprouting.Parse(text)
+	if !route.Found {
+		return nil
+	}
+	byID, byName := memberLookups(members)
+
+	var out []GroupMember
+	seen := map[string]bool{}
+	for _, tgt := range publicMentionTargets(route) {
+		m, ok := byID[strings.TrimSpace(tgt)]
+		if !ok {
+			m, ok = byName[strings.TrimSpace(tgt)]
+		}
+		if !ok || seen[m.ID] {
+			continue
+		}
+		if m.ID == selfID {
+			continue
+		}
+		if m.Left && m.ID != groupUserTargetID {
+			continue
+		}
+		seen[m.ID] = true
+		out = append(out, m)
+	}
+	return out
+}
+
+// lastSpeakerOutput returns a specific member's most recent assistant speech on
+// the group timeline (used to parse that member's @-mentions).
+func (o *GroupOrchestrator) lastSpeakerOutput(groupID, memberID string) string {
+	msgs, err := GetMessagesBySessionIDRaw(groupID)
+	if err != nil {
+		return ""
+	}
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].AgentID == memberID && msgs[i].Role == roleAssistant {
+			return ExtractPlainText(msgs[i].Content)
+		}
+	}
+	return ""
+}
+
 // summarize runs the host once more with the summary-only prompt. The host's
 // routing tags in this turn are ignored (never parsed).
 func (o *GroupOrchestrator) summarize(ctx context.Context, runner groupTurnRunner, hostMemberID string, names map[string]string, members []GroupMember) {
@@ -417,7 +709,7 @@ func (o *GroupOrchestrator) lastHostOutput(groupID, hostMemberID string) string 
 		return ""
 	}
 	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].AgentID == hostMemberID && msgs[i].Role == "assistant" {
+		if msgs[i].AgentID == hostMemberID && msgs[i].Role == roleAssistant {
 			return ExtractPlainText(msgs[i].Content)
 		}
 	}
@@ -578,6 +870,43 @@ func memberNameMap(members []GroupMember) map[string]string {
 		names[m.ID] = m.Name
 	}
 	return names
+}
+
+// memberLookups builds the two maps a mention target is resolved through: by
+// member ROW id (the frontend's user mentions carry ids) and by display name
+// (an agent writes names). Left members are excluded from the name map (they
+// cannot speak), and the human user is added under its reserved name.
+func memberLookups(members []GroupMember) (byID, byName map[string]GroupMember) {
+	byID = make(map[string]GroupMember, len(members))
+	byName = make(map[string]GroupMember, len(members)+1)
+	for _, m := range members {
+		byID[m.ID] = m
+		if !m.Left {
+			byName[strings.TrimSpace(m.Name)] = m
+		}
+	}
+	byName[groupUserTarget] = GroupMember{ID: groupUserTargetID, Name: groupUserTarget}
+	return byID, byName
+}
+
+// publicMentionTargets flattens the PUBLIC mention targets of a parsed result,
+// in order, de-duplicated (a member named by two mentions is listed once).
+// Private mentions are skipped — a note is not a floor hand-off.
+func publicMentionTargets(route grouprouting.Result) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, e := range route.Mentions {
+		if e.Private {
+			continue
+		}
+		for _, tgt := range e.Targets {
+			if !seen[tgt] {
+				seen[tgt] = true
+				out = append(out, tgt)
+			}
+		}
+	}
+	return out
 }
 
 // activeMemberNamesExcept returns the members the host may route to, with the

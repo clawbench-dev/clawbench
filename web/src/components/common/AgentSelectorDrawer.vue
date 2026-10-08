@@ -56,6 +56,9 @@
       </div>
     </div>
     <template v-if="multiple" #footer>
+      <!-- Group mode: explain that leaving the host unset means free mode
+           (design §13.1). Kept to one line so the footer stays compact. -->
+      <p v-if="groupMode" class="agent-multi-hint">{{ t('group.freeModeHint') }}</p>
       <button class="agent-multi-confirm" :disabled="confirmDisabled" @click="handleConfirmMulti">{{ confirmLabel }}</button>
     </template>
   </BottomSheet>
@@ -160,14 +163,12 @@ function handleSelect(agentId: string) {
     const i = selectedIds.value.indexOf(agentId)
     if (i >= 0) {
       selectedIds.value.splice(i, 1)
-      // Deselecting the host clears it: the host must be a member. The next
-      // select re-seeds a host (see below), so the group stays creatable.
+      // Deselecting the host clears it (the host must be a member). No
+      // re-seeding: leaving no host is a valid choice — it means a FREE group
+      // (design §13.1), created from the confirm button.
       if (props.groupMode && props.hostId === agentId) emit('update:hostId', '')
     } else {
       selectedIds.value.push(agentId)
-      // First pick becomes the host automatically (user can change it): with
-      // nothing selected there is no host, and an empty host blocks creation.
-      if (props.groupMode && !props.hostId) emit('update:hostId', agentId)
     }
     return
   }
@@ -183,8 +184,14 @@ function handleSetHost(agentId: string) {
   emit('update:hostId', agentId)
 }
 
-// Confirm is blocked until a host is chosen (groupMode has no default host).
-const confirmDisabled = computed(() => props.groupMode && !props.hostId)
+// Confirm is blocked until there is a valid group. Host mode (a host chosen)
+// needs the host among the members; free mode (no host) needs at least two
+// members (design §13.1). Non-group multi-select has no such constraint.
+const confirmDisabled = computed(() => {
+  if (!props.groupMode) return false
+  if (props.hostId) return !selectedIds.value.includes(props.hostId)
+  return selectedIds.value.length < 2
+})
 
 function handleConfirmMulti() {
   const ids = [...selectedIds.value]
@@ -504,6 +511,14 @@ watch(() => props.open, async (val) => {
 .agent-multi-confirm:disabled {
   opacity: var(--opacity-disabled, 0.4);
   cursor: not-allowed;
+}
+
+.agent-multi-hint {
+  margin: 0 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-snug);
+  text-align: center;
 }
 
 .agent-multi-confirm {

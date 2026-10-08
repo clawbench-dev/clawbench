@@ -36,10 +36,10 @@ func renderHostMember(m HostMemberInfo) string {
 func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	var b strings.Builder
 	b.WriteString("\n\n[群聊主持人] 你是本次多智能体讨论的主持人。你的职责是控场，而不是代替成员回答问题。\n")
-	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言：\n")
-	b.WriteString("  <clawbench-speaker>成员名</clawbench-speaker> 给该成员的指令\n")
+	b.WriteString("每次发言必须包含一个路由标签，指定接下来该谁发言，并把你对他们说的话写在标签里：\n")
+	b.WriteString("  <clawbench-mention targets=\"成员名\">给该成员的指令</clawbench-mention>\n")
 	b.WriteString("可一次点名多个成员（逗号分隔），他们将按顺序依次发言：\n")
-	b.WriteString("  <clawbench-speaker>A,B</clawbench-speaker> 请分别表态\n")
+	b.WriteString("  <clawbench-mention targets=\"A,B\">请分别表态</clawbench-mention>\n")
 	b.WriteString("当讨论已充分、可以收敛时，输出结束标签：\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("在结束标签之后，必须再写一段简短的讨论结论（最终汇总），供用户阅读。\n")
@@ -67,14 +67,15 @@ func BuildHostSystemPrompt(members []HostMemberInfo) string {
 	b.WriteString("可点名 User（即用户本人）让其发言；点到 User 后本轮结束，等待用户发言，用户发言后你会在下一轮看到并继续主持。\n")
 
 	// Private notes (密送): a way to tell ONE participant something the others
-	// must not see. Documented only here (not in the summary prompt, where tags
-	// are ignored) and only when there is someone to address.
+	// must not see. It is the SAME tag with the `private` attribute. Documented
+	// only here (not in the summary prompt, where tags are ignored) and only
+	// when there is someone to address.
 	b.WriteString("\n可选：密送（只给个别成员看，其他成员看不到）\n")
-	b.WriteString("若你想对个别成员或用户单独交代、不希望其他人看到，可在指令之后追加：\n")
-	b.WriteString("  <clawbench-bcc targets=\"成员名\">只有该成员能看到的内容</clawbench-bcc>\n")
+	b.WriteString("若你想对个别成员或用户单独交代、不希望其他人看到，改用 private 属性：\n")
+	b.WriteString("  <clawbench-mention targets=\"成员名\" private>只有该成员能看到的内容</clawbench-mention>\n")
 	b.WriteString("targets 可写多个，用逗号分隔，如 targets=\"A,B\"；targets=\"User\" 即密送给用户。\n")
 	b.WriteString("密送可以发给本轮未被点名的成员：会在该成员下次被点名时送达。\n")
-	b.WriteString("公共指令（所有被点名者都能看到）请照常写在 speaker 标签之后，密送可与它并存。\n")
+	b.WriteString("公共指令（所有被点名者都能看到）照常写在不带 private 的标签里，密送可与它并存。\n")
 	return b.String()
 }
 
@@ -91,8 +92,7 @@ func BuildMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
 	b.WriteString("\n\n[群聊成员] 你是一个多智能体群聊中的**参与者**，**不是主持人**。\n")
 	b.WriteString("主持人负责控场、点名和汇总；你只负责在被点名时，就当前话题发表你自己的看法。\n")
 	b.WriteString("你**不要**替主持人安排别人发言，也**不要**输出以下协议标签（那是主持人专用的，你输出会打乱秩序）：\n")
-	b.WriteString("  <clawbench-speaker>…</clawbench-speaker>\n")
-	b.WriteString("  <clawbench-bcc …>…</clawbench-bcc>\n")
+	b.WriteString("  <clawbench-mention …>…</clawbench-mention>\n")
 	b.WriteString("  <clawbench-group-end/>\n")
 	b.WriteString("发言要求：紧扣话题、简洁、直接给出你的观点；不要复述或模仿主持人的指令格式。\n")
 
@@ -132,5 +132,52 @@ func BuildHostSummaryPrompt(members []HostMemberInfo) string {
 	}
 	b.WriteString(strings.Join(rendered, "、"))
 	b.WriteString("。\n")
+	return b.String()
+}
+
+// BuildFreeMemberSystemPrompt returns the instruction appended to a FREE-mode
+// member's system prompt. Unlike host mode (where only the host routes and
+// members are forbidden from emitting tags), every free-mode participant may
+// hand the floor to someone else by @-ing them with the SAME unified tag.
+//
+// It teaches three things a free-mode member cannot infer:
+//   - how to @ someone (the tag shape, with its body carrying what it says to
+//     them);
+//   - that NOT @-ing anyone is a valid way to end the relay (otherwise a model
+//     tends to always @ someone and the discussion never stops);
+//   - that it may @ the human user ("User") to hand the floor back.
+//
+// members is the full roster; selfName is excluded from the "others" list.
+func BuildFreeMemberSystemPrompt(members []HostMemberInfo, selfName string) string {
+	var b strings.Builder
+	b.WriteString("\n\n[自由群聊] 你是一个多智能体自由群聊中的参与者，没有主持人，大家平等对话。\n")
+	b.WriteString("轮到你时，直接就当前话题发表你的看法即可（简洁、直接）。\n")
+	b.WriteString("如果你希望某位成员接着发言（补充、反驳、回应你），就把话筒递给他——在你的发言里写：\n")
+	b.WriteString("  <clawbench-mention targets=\"成员名\">你想对他说的话</clawbench-mention>\n")
+	b.WriteString("可一次 @ 多个成员（逗号分隔），他们会依次发言：\n")
+	b.WriteString("  <clawbench-mention targets=\"A,B\">请你们分别表态</clawbench-mention>\n")
+	b.WriteString("**如果没有人需要继续说，就不要输出任何 mention 标签**——讨论到此自然结束。\n")
+	b.WriteString("你也可以 @ User（即用户本人）把话筒交回给用户，用户回复后讨论继续。\n")
+	// Private notes: same tag with the `private` attribute. Delivered on the
+	// target's next turn (the group_pending_bcc contract), so a note to someone
+	// not yet speaking still lands.
+	b.WriteString("可选：密送（只给个别成员看，其他成员看不到）——给标签加 private 属性：\n")
+	b.WriteString("  <clawbench-mention targets=\"成员名\" private>只有该成员能看到的内容</clawbench-mention>\n")
+
+	others := make([]string, 0, len(members)+1)
+	for _, m := range members {
+		if strings.TrimSpace(m.Name) == "" || m.Name == selfName {
+			continue
+		}
+		others = append(others, renderHostMember(m))
+	}
+	if selfName != groupUserTarget {
+		others = append(others, groupUserTarget)
+	}
+	if len(others) > 0 {
+		b.WriteString("本群其他成员：")
+		b.WriteString(strings.Join(others, "、"))
+		b.WriteString("。\n")
+	}
 	return b.String()
 }

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { parseGroupRouting } from '@/utils/groupRouting.ts'
+import { parseGroupRouting, stripGroupProtocolTags } from '@/utils/groupRouting.ts'
 
 /**
  * Go ↔ TS parity guard for group routing. Both implementations are pinned to
@@ -26,8 +26,14 @@ interface Corpus {
       speakers: string[]
       instruction: string
       before: string
+      after: string
       bcc: Array<{ targets: string[]; content: string }>
     }
+  }>
+  stripCases: Array<{
+    name: string
+    text: string
+    want: string
   }>
 }
 
@@ -46,7 +52,22 @@ describe('groupRouting parity with internal/grouprouting', () => {
       expect(r.speakers).toEqual(tc.want.speakers)
       expect(r.instruction).toBe(tc.want.instruction)
       expect(r.before).toBe(tc.want.before)
+      expect(r.after).toBe(tc.want.after ?? '')
       expect(r.bcc).toEqual(tc.want.bcc ?? [])
+    })
+  }
+
+  // StripProtocolTags is the fail-closed injection / quote / TTS boundary. It is
+  // security-critical, so it gets its own corpus set — an earlier divergence on
+  // an unclosed private note leaked the note into the quoted text (which is then
+  // inlined into EVERY member's prompt).
+  it('has stripCases', () => {
+    expect(corpus.stripCases.length).toBeGreaterThan(0)
+  })
+
+  for (const tc of corpus.stripCases) {
+    it(`strip: ${tc.name}`, () => {
+      expect(stripGroupProtocolTags(tc.text)).toBe(tc.want)
     })
   }
 })

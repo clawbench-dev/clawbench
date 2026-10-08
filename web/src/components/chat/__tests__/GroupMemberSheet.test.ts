@@ -124,4 +124,14 @@ describe('GroupMemberSheet', () => {
     await on.find('.settings-item__switch-input').setValue(false)
     expect(mockToggleAutoApprove).toHaveBeenCalledWith(false)
   })
+
+  it('shows the maxRounds control in host mode', () => {
+    const w = mountSheet(MEMBERS, { mode: 'host' })
+    expect(w.find('#group-max-rounds').exists()).toBe(true)
+  })
+
+  it('hides the maxRounds control in free mode (no round cap)', () => {
+    const w = mountSheet(MEMBERS, { mode: 'free' })
+    expect(w.find('#group-max-rounds').exists()).toBe(false)
+  })
 })

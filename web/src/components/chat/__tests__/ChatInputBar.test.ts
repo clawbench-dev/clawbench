@@ -2141,6 +2141,46 @@ describe('ChatInputBar', () => {
     store.state.currentDir = ''
   })
 
+  it('in a group session the @ menu lists members first and inserts a mention tag', async () => {
+    const { store } = await import('@/stores/app.ts')
+    store.state.currentDir = ''
+    store.state.dirEntries = [] as any
+    const wrapper = mountBar({
+      isGroupSession: true,
+      groupMembers: [
+        { id: 'm-a', name: 'Alice', left: false },
+        { id: 'm-b', name: 'Bob', left: false },
+        { id: 'm-gone', name: 'Gone', left: true },
+      ],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(true)
+    const labels = wrapper.findAll('.completion-item .completion-label').map(i => i.text())
+    // Active members are listed; the left member is not.
+    expect(labels).toEqual(['Alice', 'Bob'])
+
+    await wrapper.findAll('.completion-item')[1].trigger('mousedown')
+    await wrapper.vm.$nextTick()
+    // The member row id is written into the tag (not the name), with an empty body.
+    expect(wrapper.vm.inputText).toBe('<clawbench-mention targets="m-b"></clawbench-mention> ')
+    // Selecting a member is not an attachment.
+    expect(wrapper.emitted('add-attached')).toBeFalsy()
+    // A member pick is a one-shot insertion: the menu must CLOSE (a file pick
+    // keeps it open to browse). Without this the sticky re-arm would re-open the
+    // roster on the next refresh.
+    expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
+  it('does not list members in the @ menu outside a group session', async () => {
+    const wrapper = mountBar({
+      groupMembers: [{ id: 'm-a', name: 'Alice', left: false }],
+    })
+    wrapper.vm.inputText = '@'
+    await wrapper.vm.$nextTick()
+    expect(wrapper.vm.showFileMenu).toBe(false)
+  })
+
   it('Esc dismisses the @ menu and it stays closed while the query continues', async () => {
     const { store } = await import('@/stores/app.ts')
     store.state.dirEntries = [{ name: 'main.ts', type: 'file' }] as any

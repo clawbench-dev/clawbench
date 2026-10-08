@@ -81,7 +81,7 @@ describe('ChatMessageItem group speaker', () => {
     expect(w.find('.msg-speaker').exists()).toBe(false)
   })
 
-  it('renders routing targets as @-mention chips in the speaker (avatar) row', () => {
+  it('renders the mention summary row above the bubble', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '<svg/>' })
     const w = mountItem(
@@ -89,74 +89,50 @@ describe('ChatMessageItem group speaker', () => {
         role: 'assistant',
         id: 4,
         content: '',
-        blocks: [{ type: 'text', text: '<clawbench-speaker>A, B</clawbench-speaker> 请表态' }],
+        blocks: [{ type: 'text', text: '<clawbench-mention targets="A,B">请表态</clawbench-mention>' }],
         agentId: 'host-1',
       },
       { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
     )
-    // The chips live in the avatar row, NOT inside the bubble.
-    const speakerRow = w.find('.msg-speaker')
-    expect(speakerRow.exists()).toBe(true)
-    expect(speakerRow.find('.msg-routing-targets').exists()).toBe(true)
-    expect(w.find('.msg-card .msg-routing-targets').exists()).toBe(false)
-    // Two items, each: "@" + a pill (icon + name). No speaker label or arrow.
-    const items = w.findAll('.msg-routing-item')
-    expect(items.length).toBe(2)
-    expect(w.findAll('.msg-routing-chip .msg-routing-name').map(n => n.text())).toEqual(['A', 'B'])
-    expect(w.find('.msg-routing-label').exists()).toBe(false)
-    expect(w.find('.msg-routing-arrow').exists()).toBe(false)
-    // Each pill carries an avatar, wrapped in a fixed-size disc so every pill is
-    // the same height regardless of the avatar's render mode.
-    expect(w.findAll('.msg-routing-chip .agent-icon-stub').length).toBe(2)
-    expect(w.findAll('.msg-routing-chip .msg-routing-avatar').length).toBe(2)
+    // The summary row lives OUTSIDE the bubble, above it.
+    const summary = w.find('.msg-mention-summary')
+    expect(summary.exists()).toBe(true)
+    expect(summary.text()).toContain('@')
+    expect(summary.text()).toContain('A')
+    expect(summary.text()).toContain('B')
+    expect(w.find('.msg-card .msg-mention-summary').exists()).toBe(false)
   })
 
-  // The "@" sigil must sit OUTSIDE the pill: the pill carries only the icon +
-  // agent name. This keeps the sigil from looking like part of the agent's
-  // name/label.
-  it('puts the @ sigil outside the pill, which holds only icon + name', () => {
-    const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
-    const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '<svg/>' })
+  it('shows the summary row for a free-mode member too (no host)', () => {
+    const resolveSpeaker = (id: string) => (id === 'member-1' ? { name: 'Alice', backend: 'claude' } : null)
+    const resolveSpeakerByName = (n: string) => ({ name: n, backend: 'claude', avatar: '' })
     const w = mountItem(
       {
         role: 'assistant',
-        id: 6,
+        id: 7,
         content: '',
-        blocks: [{ type: 'text', text: '<clawbench-speaker>A</clawbench-speaker> 请表态' }],
-        agentId: 'host-1',
+        blocks: [{ type: 'text', text: '<clawbench-mention targets="Bob">你来补充</clawbench-mention>' }],
+        agentId: 'member-1',
       },
-      { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
+      { resolveSpeaker, resolveSpeakerByName },
     )
-    const item = w.find('.msg-routing-item')
-    expect(item.exists()).toBe(true)
-    const at = item.find('.msg-routing-at')
-    const pill = item.find('.msg-routing-chip')
-    // "@" is a sibling of the pill, not nested inside it.
-    expect(at.element.parentElement).toBe(item.element)
-    expect(pill.element.parentElement).toBe(item.element)
-    expect(at.text()).toBe('@')
-    // The pill must NOT contain the "@" — its text is the name alone.
-    expect(pill.find('.msg-routing-at').exists()).toBe(false)
-    expect(pill.text()).toBe('A')
-    expect(pill.text()).not.toContain('@')
+    expect(w.find('.msg-mention-summary').exists()).toBe(true)
+    expect(w.find('.msg-mention-summary').text()).toContain('Bob')
   })
 
-  it('renders an unresolved routing target as a plain @name', () => {
+  it('renders no summary row when the message mentions nobody', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
-    const resolveSpeakerByName = () => null
     const w = mountItem(
       {
         role: 'assistant',
         id: 5,
         content: '',
-        blocks: [{ type: 'text', text: '<clawbench-speaker>Ghost</clawbench-speaker> 请表态' }],
+        blocks: [{ type: 'text', text: '只是普通发言' }],
         agentId: 'host-1',
       },
-      { resolveSpeaker, resolveSpeakerByName, hostMemberId: 'host-1' },
+      { resolveSpeaker, hostMemberId: 'host-1' },
     )
-    expect(w.find('.msg-routing-at').text()).toBe('@')
-    expect(w.find('.msg-routing-chip .msg-routing-name').text()).toBe('Ghost')
-    expect(w.find('.msg-routing-chip .agent-icon-stub').exists()).toBe(false)
+    expect(w.find('.msg-mention-summary').exists()).toBe(false)
   })
 })
 
@@ -250,7 +226,7 @@ describe('ChatMessageItem group bcc card', () => {
   it('renders a collapsed private-note card inside the bubble', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A">只给A看</clawbench-bcc>'),
+      hostWithBcc('<clawbench-mention targets="A"> 表态 </clawbench-mention><clawbench-mention targets="A" private>只给A看</clawbench-mention>'),
       { resolveSpeaker, hostMemberId: 'host-1' },
     )
     // Card lives INSIDE .msg-card, not in the speaker row above the bubble.
@@ -265,7 +241,7 @@ describe('ChatMessageItem group bcc card', () => {
   it('expands on click to reveal the note content and targets', async () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A,B">机密内容</clawbench-bcc>'),
+      hostWithBcc('<clawbench-mention targets="A"> 表态 </clawbench-mention><clawbench-mention targets="A,B" private>机密内容</clawbench-mention>'),
       { resolveSpeaker, hostMemberId: 'host-1' },
     )
     await w.find('.msg-bcc-header').trigger('click')
@@ -278,17 +254,17 @@ describe('ChatMessageItem group bcc card', () => {
   it('renders no card when the host has no private note', () => {
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态'),
+      hostWithBcc('<clawbench-mention targets="A">表态</clawbench-mention>'),
       { resolveSpeaker, hostMemberId: 'host-1' },
     )
     expect(w.find('.msg-bcc').exists()).toBe(false)
   })
 
   it('does not strip the note from msgText used for parsing (card still resolves)', () => {
-    // The raw tag must survive in msgText, or hostRouting could not parse it.
+    // The raw tag must survive in msgText, or groupRouting could not parse it.
     const resolveSpeaker = () => ({ name: 'Host', backend: 'codebuddy' })
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A">解析用</clawbench-bcc>'),
+      hostWithBcc('<clawbench-mention targets="A"> 表态 </clawbench-mention><clawbench-mention targets="A" private>解析用</clawbench-mention>'),
       { resolveSpeaker, hostMemberId: 'host-1' },
     )
     expect(w.find('.msg-bcc').exists()).toBe(true)
@@ -307,7 +283,7 @@ describe('ChatMessageItem bcc card: target names hidden, user note expanded', ()
 
   it('does NOT list target names in the collapsed header (who got a note is a hint)', () => {
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="A,B">机密</clawbench-bcc>'),
+      hostWithBcc('<clawbench-mention targets="A"> 表态 </clawbench-mention><clawbench-mention targets="A,B" private>机密</clawbench-mention>'),
       opts,
     )
     const header = w.find('.msg-bcc-header')
@@ -318,7 +294,7 @@ describe('ChatMessageItem bcc card: target names hidden, user note expanded', ()
 
   it('renders a note addressed to User expanded, labelled "to you", never collapsed', () => {
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A</clawbench-speaker> 表态 <clawbench-bcc targets="User">你的词是西瓜</clawbench-bcc>'),
+      hostWithBcc('<clawbench-mention targets="A"> 表态 </clawbench-mention><clawbench-mention targets="User" private>你的词是西瓜</clawbench-mention>'),
       opts,
     )
     const card = w.find('.msg-bcc-user')
@@ -333,7 +309,7 @@ describe('ChatMessageItem bcc card: target names hidden, user note expanded', ()
 
   it('splits a mixed message: user note expanded, member note still collapsed', () => {
     const w = mountItem(
-      hostWithBcc('<clawbench-speaker>A,User</clawbench-speaker> 表态 <clawbench-bcc targets="A">给A</clawbench-bcc> <clawbench-bcc targets="User">给你</clawbench-bcc>'),
+      hostWithBcc('<clawbench-mention targets="A,User"> 表态 </clawbench-mention><clawbench-mention targets="A" private>给A</clawbench-mention> <clawbench-mention targets="User" private>给你</clawbench-mention>'),
       opts,
     )
     expect(w.find('.msg-bcc-user').text()).toContain('给你')

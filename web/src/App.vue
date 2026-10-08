@@ -297,6 +297,7 @@
                       :hostMemberId="groupHostMemberId"
                       :maxRounds="groupMaxRounds"
                       :autoApprove="groupAutoApprove"
+                      :mode="groupMode"
                       :isGroup="isGroupSession"
                       @changed="refreshGroupMembers(sessionIdentity.currentSessionId.value)"
                     />
@@ -1278,6 +1279,7 @@ const { getAgentBackend, getAgentName, getAgentAvatar } = useAgents()
 const {
   members: groupMembers,
   maxRounds: groupMaxRounds,
+  mode: groupMode,
   hostMemberId: groupHostMemberId,
   resolveSpeaker: resolveGroupSpeaker,
   resolveByName: resolveGroupSpeakerByName,
@@ -1942,11 +1944,17 @@ function handleSidebarGroupCreate() {
 // handleGroupCreate creates a group with the chosen host and members in one
 // call (design #25) and switches into it. The group then appears in the
 // session list like any other session.
+//
+// The host is OPTIONAL (design §13.1): when none is picked the group is created
+// in FREE mode (no host; participants relay via @-mentions). A free group needs
+// at least two members.
 async function handleGroupCreate(payload: { hostId: string; memberIds: string[] }) {
   const { createGroup } = await import('@/composables/useGroupChat')
   const hostAgentId = payload?.hostId ?? ''
   const memberAgentIds = payload?.memberIds ?? []
-  if (!hostAgentId || memberAgentIds.length === 0) return
+  if (memberAgentIds.length === 0) return
+  if (hostAgentId && !memberAgentIds.includes(hostAgentId)) return
+  if (!hostAgentId && memberAgentIds.length < 2) return
   try {
     const { groupId } = await createGroup(hostAgentId, memberAgentIds)
     if (!groupId) return
@@ -1955,7 +1963,7 @@ async function handleGroupCreate(payload: { hostId: string; memberIds: string[] 
       id: groupId,
       title: '',
       backend: '',
-      agentId: hostAgentId,
+      agentId: hostAgentId || memberAgentIds[0],
       model: '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

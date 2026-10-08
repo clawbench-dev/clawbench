@@ -189,10 +189,12 @@ function handleAgentPicked(agentId) {
     creatingGroup.value = false
     groupHostId.value = ''
     agentSelectorDrawer.close()
-    // The host is required (the confirm button is disabled without it), so a
-    // missing host here means an unexpected call — bail rather than create a
-    // group with no host.
-    if (!hostId || !memberIds.includes(hostId)) return
+    // The host is OPTIONAL (design §13.1): with no host the group is created in
+    // FREE mode, which needs at least two members. With a host, it must be one
+    // of the members.
+    if (memberIds.length === 0) return
+    if (hostId && !memberIds.includes(hostId)) return
+    if (!hostId && memberIds.length < 2) return
     emit('create-group', { hostId, memberIds })
     bottomSheetRef.value?.close()
     return

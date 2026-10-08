@@ -263,7 +263,7 @@ func TestRunGroupDrainLoop_RunsRealOrchestration(t *testing.T) {
 	// orchestrator's real routing loop decided on.
 	script := map[string][]string{
 		hostID: {
-			`<clawbench-speaker>A</clawbench-speaker> 请 A 表态`,
+			`<clawbench-mention targets="A"> 请 A 表态</clawbench-mention>`,
 			`充分了。<clawbench-group-end/> 结论：同意。`,
 		},
 		mA: {"A 的观点"},
@@ -332,7 +332,7 @@ func TestGroupTurn_ClawbenchCommandInjectsFirstHostPromptOnly(t *testing.T) {
 	var prompts []seen
 	script := map[string][]string{
 		hostID: {
-			`<clawbench-speaker>A</clawbench-speaker> 请表态`,
+			`<clawbench-mention targets="A"> 请表态</clawbench-mention>`,
 			`<clawbench-group-end/> 结束`,
 		},
 		mA: {"A 的观点"},

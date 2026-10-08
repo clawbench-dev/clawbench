@@ -5177,12 +5177,16 @@ paths:
       summary: 创建群聊（一步创建群与全部成员）
       description: |
         创建一个群聊及其全部成员。群是一条 `chat_sessions` 行
-        （`session_type='group'`），每个成员（含主持人）是一条隐藏的
+        （`session_type='group'`），每个成员是一条隐藏的
         `session_type='group_member'` 行。群行与成员行在**同一事务**内创建，
-        任一成员非法则整批回滚，不留只有主持人的半成品群。
-        `hostAgentId` 必须在 `memberAgentIds` 中；`memberAgentIds` 省略时
-        退化为「只有主持人的群」。标题不接受入参，后端用「{主持人名} 的群聊」
-        占位（首条消息后由 auto-title 接管）。
+        任一成员非法则整批回滚，不留半成品群。
+
+        **模式由是否指定主持人决定，创建后不可切换**：
+        - 传了 `hostAgentId` → 主持人模式（`mode="host"`），主持人须在
+          `memberAgentIds` 中；标题占位为「{主持人名} 的群聊」。
+        - 未传 `hostAgentId` → 自由聊天模式（`mode="free"`），无主持人，
+          参与者靠 @ 接力；至少需要 2 名成员；标题占位为「群聊」。
+        标题均不接受入参（首条消息后由 auto-title 接管）。
         群计入会话上限（成员不计）。
       operationId: groupCreate
       requestBody:
@@ -5198,9 +5202,9 @@ paths:
                   items: {type: string}
       responses:
         "200":
-          description: 创建成功，返回 groupId 与 hostMemberId
+          description: 创建成功，返回 groupId、hostMemberId（自由模式为空）与 mode
         "400":
-          description: 请求非法（hostAgentId 不在 memberAgentIds 中，或含未知 agent）
+          description: 请求非法（hostAgentId 不在 memberAgentIds 中、含未知 agent、或自由模式成员不足 2）
         "409":
           description: 已达会话数量上限，或成员数超过上限（`msgKey=GroupMemberLimitReached`）
 
@@ -5210,7 +5214,8 @@ paths:
       summary: 列出群成员
       description: |
         返回群的全部成员，含已离场（`left=true`）的成员。`isHost` 标识主持人。
-        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）。
+        同时返回群的当前 `maxRounds`（供成员管理抽屉回显服务端值）与 `mode`
+        （`"host"` 主持人模式 / `"free"` 自由聊天模式）。
       operationId: groupMembersList
       parameters:
         - name: groupId
@@ -5238,6 +5243,7 @@ paths:
                         left: {type: boolean}
                         isHost: {type: boolean}
                   maxRounds: {type: integer}
+                  mode: {type: string, enum: [host, free]}
     post:
       tags: [Group]
       summary: 批量添加群成员
@@ -5268,8 +5274,9 @@ paths:
       tags: [Group]
       summary: 移除群成员（软删除，保留其历史发言）
       description: |
-        主持人**不可移除**（`409`）——它是群唯一的调度者，移除后群无法再起回合。
-        （v1 不提供更换主持人的入口；如需换人请另建群。）
+        主持人模式（`mode="host"`）下主持人**不可移除**（`409`）——它是群唯一的
+        调度者，移除后群无法再起回合。（v1 不提供更换主持人的入口；如需换人请另建群。）
+        自由模式（`mode="free"`）无主持人，任何成员都可移除。
       operationId: groupMembersRemove
       requestBody:
         required: true

@@ -542,6 +542,9 @@ func (a *mockACPAgent) simulateTurn(ctx context.Context, sid string, params acp.
 	if tag := groupRoutingReply(userText); tag != "" {
 		response = tag
 	}
+	if tag := freeMemberReply(sid, userText); tag != "" {
+		response = tag
+	}
 	words := strings.Fields(response)
 	for i, word := range words {
 		select {
@@ -730,12 +733,78 @@ func groupRoutingReply(prompt string) string {
 	// When the group has no AI members the only name in the list is the user
 	// ("User"), so this routes to the user and notes them — which is exactly
 	// what the user-participation e2e relies on (no extra env needed).
-	reply := "<clawbench-speaker>" + name + "</clawbench-speaker> 请你发表看法。"
+	reply := "<clawbench-mention targets=\"" + name + "\">请你发表看法。</clawbench-mention>"
 	if os.Getenv("ACP_MOCK_NO_BCC") != "1" {
-		reply += " <clawbench-bcc targets=\"" + name + "\">SECRET_BCC_FOR_" + name + "</clawbench-bcc>"
+		reply += " <clawbench-mention targets=\"" + name + "\" private>SECRET_BCC_FOR_" + name + "</clawbench-mention>"
 	}
 	return reply
 }
+
+// freeMemberReply returns a free-chat mode member's @-mention reply when the
+// prompt carries ClawBench's free-mode instruction ("[自由群聊]"), else "".
+//
+// It names the first OTHER member listed in the prompt so the orchestrator
+// relays the floor. To keep the E2E terminating (free mode has no round cap),
+// it only mentions for the first ACP_MOCK_FREE_RELAY_TURNS turns of a SESSION
+// (default 2); after that it replies WITHOUT a mention, which ends the relay.
+// The counter is per-session so concurrent/sequential specs do not share it.
+func freeMemberReply(sid, prompt string) string {
+	const marker = "[自由群聊]"
+	if !strings.Contains(prompt, marker) {
+		return ""
+	}
+	relayTurnsMu.Lock()
+	relayTurns[sid]++
+	turn := relayTurns[sid]
+	relayTurnsMu.Unlock()
+	limit := 2
+	if v := os.Getenv("ACP_MOCK_FREE_RELAY_TURNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			limit = n
+		}
+	}
+	if turn > limit {
+		return "我没有别的要补充了。"
+	}
+	name := firstOtherMember(prompt)
+	if name == "" {
+		return "我没有别的要补充了。"
+	}
+	return "<clawbench-mention targets=\"" + name + "\">请你也说说看。</clawbench-mention>"
+}
+
+// firstOtherMember extracts the first display name after "本群其他成员：" in a
+// free-mode member prompt, excluding the reserved "User" name. Returns "" when
+// the list is absent/empty.
+func firstOtherMember(prompt string) string {
+	const marker = "本群其他成员："
+	idx := strings.Index(prompt, marker)
+	if idx < 0 {
+		return ""
+	}
+	rest := prompt[idx+len(marker):]
+	if nl := strings.IndexAny(rest, "\n"); nl >= 0 {
+		rest = rest[:nl]
+	}
+	rest = strings.TrimSuffix(strings.TrimSpace(rest), "。")
+	// Names are 、-separated; each may carry a "（specialty）" suffix.
+	for _, part := range strings.Split(rest, "、") {
+		name := strings.TrimSpace(part)
+		if i := strings.Index(name, "（"); i >= 0 {
+			name = strings.TrimSpace(name[:i])
+		}
+		if name == "" || name == "User" {
+			continue
+		}
+		return name
+	}
+	return ""
+}
+
+var (
+	relayTurnsMu sync.Mutex
+	relayTurns   = map[string]int{}
+)
 
 func truncate(s string, maxLen int) string {
 	if len(s) <= maxLen {

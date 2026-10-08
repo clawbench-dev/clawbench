@@ -162,30 +162,39 @@ describe('renderTextBlock — ask-question', () => {
   })
 })
 
-describe('renderTextBlock — bcc (private notes)', () => {
-  const BCC = '<clawbench-bcc targets="A">只有A能看到</clawbench-bcc>'
+describe('renderTextBlock — mentions (public chip / private drop)', () => {
+  const PRIVATE = '<clawbench-mention targets="A" private>只有A能看到</clawbench-mention>'
 
-  it('strips a well-formed private note from the rendered body (post-streaming)', () => {
+  it('drops a private mention from the rendered body (post-streaming)', () => {
     const r = setup()
-    const html = r.renderTextBlock(`前言 ${BCC} 后记`, 'm1', 0)
-    expect(html).not.toContain('clawbench-bcc')
+    const html = r.renderTextBlock(`前言 ${PRIVATE} 后记`, 'm1', 0)
+    expect(html).not.toContain('clawbench-mention')
     expect(html).not.toContain('只有A能看到')
     expect(html).toContain('前言')
     expect(html).toContain('后记')
   })
 
-  it('strips a well-formed private note on the STREAMING path too', () => {
+  it('drops a private mention on the STREAMING path too', () => {
     // The user explicitly does not accept the raw tag flashing during streaming.
     const r = setup()
-    const html = r.renderTextBlock(`前言 ${BCC} 后记`, 'm1', 0, true)
-    expect(html).not.toContain('clawbench-bcc')
+    const html = r.renderTextBlock(`前言 ${PRIVATE} 后记`, 'm1', 0, true)
+    expect(html).not.toContain('clawbench-mention')
     expect(html).not.toContain('只有A能看到')
     expect(html).toContain('前言')
   })
 
-  it('leaves a malformed private note verbatim (never lose content)', () => {
+  it('renders a public mention as an inline @name chip', () => {
     const r = setup()
-    const malformed = '<clawbench-bcc>没有 targets</clawbench-bcc>'
+    const html = r.renderTextBlock('<clawbench-mention targets="B">请回应</clawbench-mention>', 'm1', 0)
+    expect(html).not.toContain('clawbench-mention')
+    expect(html).toContain('msg-mention-chip')
+    expect(html).toContain('@B')
+    expect(html).toContain('请回应')
+  })
+
+  it('leaves a malformed mention verbatim (never lose content)', () => {
+    const r = setup()
+    const malformed = '<clawbench-mention targets="">没有 targets</clawbench-mention>'
     const html = r.renderTextBlock(`前言 ${malformed} 后记`, 'm1', 0)
     expect(html).toContain('没有 targets')
   })

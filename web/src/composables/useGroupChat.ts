@@ -17,6 +17,8 @@ export interface GroupMemberInfo {
 export interface CreateGroupResult {
   groupId: string
   hostMemberId: string
+  /** "host" (a host routes) or "free" (no host, @-relay). */
+  mode: 'host' | 'free'
 }
 
 async function postJSON(path: string, body: unknown): Promise<Record<string, unknown>> {
@@ -33,21 +35,31 @@ async function postJSON(path: string, body: unknown): Promise<Record<string, unk
 }
 
 /** createGroup creates a group together with ALL its members in one call
- *  (design §7.1, decision #25). hostAgentId must be present in memberAgentIds;
- *  the backend creates the group and every member atomically. */
+ *  (design §7.1, decision #25). When hostAgentId is empty the group is created
+ *  in FREE mode (no host; participants relay via @-mentions) — see design §13.
+ *  When present, hostAgentId must be in memberAgentIds and the group is HOST
+ *  mode. The backend creates the group and every member atomically. */
 export async function createGroup(hostAgentId: string, memberAgentIds: string[]): Promise<CreateGroupResult> {
   const data = await postJSON('/api/group/create', { hostAgentId, memberAgentIds })
-  return { groupId: String(data.groupId ?? ''), hostMemberId: String(data.hostMemberId ?? '') }
+  return {
+    groupId: String(data.groupId ?? ''),
+    hostMemberId: String(data.hostMemberId ?? ''),
+    mode: data.mode === 'free' ? 'free' : 'host',
+  }
 }
 
 /** listGroupMembers fetches the group roster (including left members) plus the
  *  group's current maxRounds (so the settings UI shows the server value rather
- *  than a hardcoded default). */
-export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; maxRounds: number }> {
+ *  than a hardcoded default) and its mode ("host" | "free"). */
+export async function listGroupMembers(groupId: string): Promise<{ members: GroupMemberInfo[]; maxRounds: number; mode: 'host' | 'free' }> {
   const resp = await fetch(`/api/group/members?groupId=${encodeURIComponent(groupId)}`)
   if (!resp.ok) throw new Error(`request failed: ${resp.status}`)
   const data = await resp.json()
-  return { members: data.members ?? [], maxRounds: Number(data.maxRounds) || 10 }
+  return {
+    members: data.members ?? [],
+    maxRounds: Number(data.maxRounds) || 10,
+    mode: data.mode === 'free' ? 'free' : 'host',
+  }
 }
 
 /** addGroupMembers adds one or more agents to the group. */

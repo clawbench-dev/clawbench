@@ -1119,6 +1119,7 @@ export default {
     selectMembersAndHost: 'Select members and a host',
     hostLabel: 'Set as host',
     createGroup: 'Create group',
+    freeModeHint: 'No host means free-chat mode (members relay the floor by {\'@\'}-mentioning each other)',
     addMembers: 'Add members',
     members: 'Members',
     left: 'Left',

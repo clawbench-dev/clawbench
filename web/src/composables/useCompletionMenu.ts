@@ -22,6 +22,14 @@ export interface UseCompletionMenuOptions {
   /** Close the menu after a selection (slash) vs keep it open (files). */
   closeOnSelect: boolean
   /**
+   * Per-item override of `closeOnSelect`: return true to close after THIS item,
+   * false to keep open. Used by the @ menu where a member pick is a one-shot
+   * insertion (close) but a file pick browses (keep open). Without it, a member
+   * pick would fall into the non-closing branch and re-arm sticky, so the very
+   * next refresh would pop the roster back open.
+   */
+  closeOnSelectFor?: (item: CompletionItem) => boolean
+  /**
    * After a non-closing select, keep the menu open even though the trigger was
    * removed from the text (the @ file menu browses all candidates afterwards).
    * Cleared by Esc, close(), or a fresh trigger.
@@ -147,7 +155,8 @@ export function useCompletionMenu(options: UseCompletionMenuOptions): UseComplet
       options.applyText(before + replacement + after, before.length + replacement.length)
     }
 
-    if (options.closeOnSelect) {
+    if (options.closeOnSelectFor ? options.closeOnSelectFor(item) : options.closeOnSelect) {
+      clearSticky()
       show.value = false
       activeIndex.value = -1
     } else {

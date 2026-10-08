@@ -101,7 +101,7 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 	if lastToolIdx >= 0 {
 		for i := lastToolIdx + 1; i < len(blocks); i++ {
 			if blocks[i].Type == "text" && blocks[i].Text != "" {
-				return grouprouting.StripBccSpans(blocks[i].Text)
+				return grouprouting.StripProtocolTags(blocks[i].Text)
 			}
 		}
 	}
@@ -116,5 +116,5 @@ func ExtractLastAnswerFromBlocks(blocks []model.ContentBlock) string {
 			bestText = b.Text
 		}
 	}
-	return grouprouting.StripBccSpans(bestText)
+	return grouprouting.StripProtocolTags(bestText)
 }

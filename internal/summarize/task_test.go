@@ -208,11 +208,11 @@ func TestExtractLastAnswerFromBlocks_LongAnswerBeforeTerminalToolUse(t *testing.
 // storage and off-device.
 func TestExtractLastAnswerFromBlocks_StripsBcc(t *testing.T) {
 	blocks := []model.ContentBlock{
-		{Type: "text", Text: "公开表态 <clawbench-bcc targets=\"A\">只有A能看到的秘密</clawbench-bcc> 结束"},
+		{Type: "text", Text: "公开表态 <clawbench-mention targets=\"A\" private>只有A能看到的秘密</clawbench-mention> 结束"},
 	}
 	got := ExtractLastAnswerFromBlocks(blocks)
 	assert.NotContains(t, got, "只有A能看到的秘密")
-	assert.NotContains(t, got, "clawbench-bcc")
+	assert.NotContains(t, got, "clawbench-mention")
 	assert.Contains(t, got, "公开表态")
 	assert.Contains(t, got, "结束")
 }

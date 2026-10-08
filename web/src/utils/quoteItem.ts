@@ -13,7 +13,7 @@
 import type { FileEntry } from '@/utils/fileAttachmentUtils'
 import { isQuoteEntry } from '@/utils/fileAttachmentUtils'
 import { extractSpeakableText } from '@/composables/useAutoSpeech.ts'
-import { stripGroupBccSpans } from '@/utils/groupRouting.ts'
+import { stripGroupProtocolTags } from '@/utils/groupRouting.ts'
 
 /**
  * The text a "quote this message" action should capture — the SAME text the
@@ -35,9 +35,9 @@ export function quotableMessageText(
   summary: string | undefined,
 ): string {
   if (role === 'user') {
-    return stripGroupBccSpans(extractSpeakableText(blocks || []) || content || '').trim()
+    return stripGroupProtocolTags(extractSpeakableText(blocks || []) || content || '').trim()
   }
-  return stripGroupBccSpans(extractSpeakableText(blocks || []) || summary || '').trim()
+  return stripGroupProtocolTags(extractSpeakableText(blocks || []) || summary || '').trim()
 }
 
 /**

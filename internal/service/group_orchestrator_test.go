@@ -85,7 +85,7 @@ func TestGroupOrchestrator_SequentialRouting(t *testing.T) {
 	script := map[string][]string{
 		hostID: {
 			// Round 1: route to A then B (sequential).
-			`<clawbench-speaker>A,B</clawbench-speaker> 请分别表态`,
+			`<clawbench-mention targets="A,B">请分别表态</clawbench-mention>`,
 			// Round 2: end with a summary after the end tag.
 			`讨论充分。<clawbench-group-end/> 结论：A 与 B 一致。`,
 		},
@@ -158,7 +158,7 @@ func TestGroupOrchestrator_MemberSeesPriorSameRoundSpeech(t *testing.T) {
 	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
 
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A,B</clawbench-speaker> 请分别表态`, `<clawbench-group-end/> 结束`},
+		hostID: {`<clawbench-mention targets="A,B">请分别表态</clawbench-mention>`, `<clawbench-group-end/> 结束`},
 		mA:     {"A_UNIQUE_SPEECH"},
 		mB:     {"B 的观点"},
 	}
@@ -205,7 +205,7 @@ func TestGroupOrchestrator_ToolAndThinkingNotInjected(t *testing.T) {
 	// The host routes to B then ends (a scripted host avoids looping rounds,
 	// which would advance B's cursor past A's row).
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>B</clawbench-speaker> 请 B 表态`, `<clawbench-group-end/> 结束`},
+		hostID: {`<clawbench-mention targets="B">请 B 表态</clawbench-mention>`, `<clawbench-group-end/> 结束`},
 		mB:     {"B 的观点"},
 	}
 	base, _ := newScriptedRunner(t, groupID, project, script)
@@ -260,7 +260,7 @@ func TestGroupOrchestrator_CancelReachesMemberTurns(t *testing.T) {
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
 		if turn.IsHost {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-				`{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请发言"}]}`, nil, false, "", turn.MemberRowID)
+				assistantText("<clawbench-mention targets=\"A\">请发言</clawbench-mention>"), nil, false, "", turn.MemberRowID)
 			return groupMemberResult{}
 		}
 		// Simulate a long member turn that observes the cancel.
@@ -302,7 +302,7 @@ func TestGroupOrchestrator_MaxRoundsSummary(t *testing.T) {
 
 	script := map[string][]string{
 		hostID: {
-			`<clawbench-speaker>A</clawbench-speaker> 请发言`, // round 1 route (no end)
+			`<clawbench-mention targets="A"> 请发言`, // round 1 route (no end)</clawbench-mention>
 			`结论：到此为止。`,                                     // summary turn (round cap reached)
 		},
 		mA: {"A 发言"},
@@ -355,8 +355,8 @@ func TestGroupOrchestrator_HostNeverRoutesToItself(t *testing.T) {
 		hostID: {
 			// The host names ITSELF first — must be dropped, then the round
 			// continues to a real member in the next host turn.
-			`<clawbench-speaker>Codebuddy</clawbench-speaker> 我先补充一句`,
-			`<clawbench-speaker>A</clawbench-speaker> 请你表态`,
+			`<clawbench-mention targets="Codebuddy">我先补充一句</clawbench-mention>`,
+			`<clawbench-mention targets="A">请你表态</clawbench-mention>`,
 			`讨论充分。<clawbench-group-end/> 结论：到此为止。`,
 		},
 		mA: {"A 的观点"},
@@ -494,7 +494,7 @@ func TestGroupOrchestrator_FailedMemberDoesNotAdvanceCursor(t *testing.T) {
 
 	// Host routes to A; A's turn FAILS (no message written, Err set).
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`},
+		hostID: {`<clawbench-mention targets="A">请表态</clawbench-mention>`},
 	}
 	runner, _ := newScriptedRunner(t, groupID, project, script)
 	baseRunner := runner
@@ -612,7 +612,7 @@ func TestGroupOrchestrator_SuccessfulMemberAdvancesCursor(t *testing.T) {
 
 	script := map[string][]string{
 		hostID: {
-			`<clawbench-speaker>A</clawbench-speaker> 请表态`,
+			`<clawbench-mention targets="A">请表态</clawbench-mention>`,
 			`<clawbench-group-end/> 讨论结束`,
 		},
 		mA: {"我的观点"},
@@ -664,7 +664,7 @@ func TestGroupTurn_MarksMembersRunningForSweep(t *testing.T) {
 		}
 		if turn.IsHost {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-				`{"blocks":[{"type":"text","text":"`+"<clawbench-speaker>A</clawbench-speaker> 请表态"+`"}]}`, nil, false, "", hostID)
+				assistantText("<clawbench-mention targets=\"A\">请表态</clawbench-mention>"), nil, false, "", hostID)
 			return groupMemberResult{}
 		}
 		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
@@ -702,7 +702,7 @@ func TestGroupTurn_ClearsMemberSweepStateAfterTurn(t *testing.T) {
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
 		if turn.IsHost {
 			_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-				`{"blocks":[{"type":"text","text":"`+"<clawbench-speaker>A</clawbench-speaker> 请表态"+`"}]}`, nil, false, "", hostID)
+				assistantText("<clawbench-mention targets=\"A\">请表态</clawbench-mention>"), nil, false, "", hostID)
 			return groupMemberResult{}
 		}
 		_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
@@ -745,11 +745,11 @@ func TestGroupOrchestrator_FallbackRotates(t *testing.T) {
 	runner, order := newScriptedRunner(t, groupID, project, map[string][]string{
 		hostID: {
 			"(no routing tag at all)",
-			"<clawbench-speaker>A</clawbench-speaker> 请 A 表态",
+			"<clawbench-mention targets=\"A\">请 A 表态</clawbench-mention>",
 			"(no routing tag at all)",
-			"<clawbench-speaker>A</clawbench-speaker> 请 A 表态",
+			"<clawbench-mention targets=\"A\">请 A 表态</clawbench-mention>",
 			"(no routing tag at all)",
-			"<clawbench-speaker>A</clawbench-speaker> 请 A 表态",
+			"<clawbench-mention targets=\"A\">请 A 表态</clawbench-mention>",
 			"(no routing tag at all)",
 			"<clawbench-group-end/> 讨论结束",
 		},
@@ -950,7 +950,7 @@ func TestGroupOrchestrator_CancelledMemberDoesNotAdvanceCursor(t *testing.T) {
 
 	// Host routes to A; A's turn is CANCELLED (CancelReason set, Err empty).
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`},
+		hostID: {`<clawbench-mention targets="A">请表态</clawbench-mention>`},
 	}
 	base, _ := newScriptedRunner(t, groupID, project, script)
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
@@ -1004,7 +1004,7 @@ func TestGroupOrchestrator_CursorUsesPreSpeechHighWater(t *testing.T) {
 	var concurrentRowID int64
 
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`, `<clawbench-group-end/> 结束`},
+		hostID: {`<clawbench-mention targets="A">请表态</clawbench-mention>`, `<clawbench-group-end/> 结束`},
 	}
 	base, _ := newScriptedRunner(t, groupID, project, script)
 	runner := func(ctx context.Context, gid string, turn groupMemberTurn) groupMemberResult {
@@ -1145,7 +1145,7 @@ func TestGroupOrchestrator_SuccessfulHostResetsFailureStreak(t *testing.T) {
 				return groupMemberResult{Err: "transient 2"}
 			case 2:
 				_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
-					`{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请 A 表态"}]}`, nil, false, "", hostID)
+					assistantText("<clawbench-mention targets=\"A\">请 A 表态</clawbench-mention>"), nil, false, "", hostID)
 				return groupMemberResult{}
 			default:
 				_, _ = AddChatMessageWithAgent(project, "codebuddy", groupID, "assistant",
@@ -1187,7 +1187,7 @@ func TestGroupOrchestrator_BccOnlyToTarget(t *testing.T) {
 	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
 
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A,B</clawbench-speaker> 请分别表态<clawbench-bcc targets="A">SECRET_FOR_A</clawbench-bcc>`, `<clawbench-group-end/> 结束`},
+		hostID: {`<clawbench-mention targets="A,B"> 请分别表态</clawbench-mention><clawbench-mention targets="A" private>SECRET_FOR_A</clawbench-mention>`, `<clawbench-group-end/> 结束`},
 		mA:     {"A 发言"},
 		mB:     {"B 发言"},
 	}
@@ -1233,7 +1233,7 @@ func TestGroupOrchestrator_BccToUnnamedReachesNobody(t *testing.T) {
 
 	// Only A is named, but the note is addressed to B (and C, who is not a member).
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A</clawbench-speaker> 表态<clawbench-bcc targets="B,C">不该有人收到</clawbench-bcc>`, `<clawbench-group-end/> 结束`},
+		hostID: {`<clawbench-mention targets="A"> 表态</clawbench-mention><clawbench-mention targets="B,C" private>不该有人收到</clawbench-mention>`, `<clawbench-group-end/> 结束`},
 		mA:     {"A 发言"},
 	}
 	base, _ := newScriptedRunner(t, groupID, project, script)
@@ -1271,7 +1271,7 @@ func TestGroupOrchestrator_MemberPromptCarriesGroupRole(t *testing.T) {
 	mA, _ := AddGroupMember(project, groupID, "claude", "agent-a", "A")
 
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A</clawbench-speaker> 请表态`, `<clawbench-group-end/> 结束`},
+		hostID: {`<clawbench-mention targets="A">请表态</clawbench-mention>`, `<clawbench-group-end/> 结束`},
 		mA:     {"A 发言"},
 	}
 	base, _ := newScriptedRunner(t, groupID, project, script)
@@ -1289,7 +1289,7 @@ func TestGroupOrchestrator_MemberPromptCarriesGroupRole(t *testing.T) {
 	if !strings.Contains(aPrompt, "群聊成员") || !strings.Contains(aPrompt, "不是主持人") {
 		t.Fatalf("member prompt must state the participant role; got %q", aPrompt)
 	}
-	if !strings.Contains(aPrompt, "不要") || !strings.Contains(aPrompt, "clawbench-speaker") {
+	if !strings.Contains(aPrompt, "不要") || !strings.Contains(aPrompt, "clawbench-mention") {
 		t.Fatalf("member prompt must forbid emitting routing tags; got %q", aPrompt)
 	}
 	// The host's routing list must NOT be handed to a member.
@@ -1315,7 +1315,7 @@ func TestGroupOrchestrator_UserTargetStopsRound(t *testing.T) {
 	mB, _ := AddGroupMember(project, groupID, "claude", "agent-b", "B")
 
 	script := map[string][]string{
-		hostID: {`<clawbench-speaker>A,User,B</clawbench-speaker> 依次发言`},
+		hostID: {`<clawbench-mention targets="A,User,B">依次发言</clawbench-mention>`},
 		mA:     {"A 发言"},
 		mB:     {"B 发言（不应发生）"},
 	}
@@ -1375,10 +1375,10 @@ func TestGroupOrchestrator_PendingBccDeliveredNextRound(t *testing.T) {
 	script := map[string][]string{
 		hostID: {
 			// Round 1: note B, but only name A.
-			`<clawbench-speaker>A</clawbench-speaker> A 先说 <clawbench-bcc targets="B">B 的词是西瓜</clawbench-bcc>`,
+			`<clawbench-mention targets="A"> A 先说 </clawbench-mention><clawbench-mention targets="B" private>B 的词是西瓜</clawbench-mention>`,
 			// Round 2: now name B (no end tag: an end tag short-circuits the
 			// round BEFORE targets run, so B would never speak).
-			`<clawbench-speaker>B</clawbench-speaker> B 请发言`,
+			`<clawbench-mention targets="B">B 请发言</clawbench-mention>`,
 			// Round 3: end.
 			`讨论充分。<clawbench-group-end/> 结论。`,
 		},

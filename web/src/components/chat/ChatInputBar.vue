@@ -341,6 +341,7 @@ import { List, Plus, Search, Archive, Volume2, Paperclip, Inbox, Send, Square, Z
 import { computeRecentReferencedFiles, isImeCompositionEvent } from '@/utils/chatInputUtils.ts'
 import { measureCaretVisualRows } from '@/utils/textareaVisualRows.ts'
 import { fuzzyMatch, parseAtQuery, parseSlashQuery, buildFileCandidates } from '@/utils/completionMatch.ts'
+import { buildMemberCandidates, buildMentionTag } from '@/utils/groupRouting.ts'
 import { normalizeFileEntry } from '@/utils/fileAttachmentUtils.ts'
 import { joinPath } from '@/utils/path.ts'
 import ProviderIcon from '@/components/common/ProviderIcon.vue'
@@ -612,6 +613,9 @@ const props = defineProps({
    *  ACP sync button are also the entry points to SessionDrawer (all per-agent),
    *  so hiding them closes that drawer's only doors. */
   isGroupSession: { type: Boolean, default: false },
+  /** Group member roster ({ id, name, left }). Feeds the @ completion menu so a
+   *  user can name a speaker in a group chat (design §13.4). */
+  groupMembers: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits([
@@ -1102,6 +1106,21 @@ const caretVersion = ref(0)
 const fileMenuItems = computed(() => {
   // Establish the reactive dependency on the caret position.
   void caretVersion.value
+  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
+
+  // Group members come FIRST: in a group chat an @ is usually about naming a
+  // speaker, and the roster is short. Only active members are listed.
+  const memberItems = props.isGroupSession
+    ? buildMemberCandidates(props.groupMembers || [], query).map(item => ({
+        key: item.key,
+        label: item.label,
+        description: item.description,
+        source: 'agent',
+        isMember: true,
+        mentionMemberId: item.mentionMemberId,
+      }))
+    : []
+
   const sources = {
     recentOpen: recentFiles.entries.value.map(e => ({ path: e.path })),
     // Every entry type the listing can return — files, images AND directories.
@@ -1116,12 +1135,12 @@ const fileMenuItems = computed(() => {
     recentUpload: recentUploads.value.map(u => ({ path: u.path })),
     recentShare: recentShares.value.map(s => ({ path: s.path })),
   }
-  const query = parseAtQuery(inputText.value, currentCaret())?.query ?? ''
   const attached = props.attachedFiles.map(f => f.path)
   // Every file row shows its type icon (the shared menu renders it when present).
   // The project root lets absolute attachment paths match relative candidates.
-  return buildFileCandidates(sources, query, attached, store.state.projectRoot)
+  const fileItems = buildFileCandidates(sources, query, attached, store.state.projectRoot)
     .map(item => ({ ...item, icon: FileIcon }))
+  return [...memberItems, ...fileItems]
 })
 
 const fileMenu = useCompletionMenu({
@@ -1130,9 +1149,17 @@ const fileMenu = useCompletionMenu({
   getText: () => inputText.value,
   closeOnSelect: false,
   stickyAfterSelect: true,
+  // A member pick is a one-shot insertion (close); a file pick browses the list
+  // (keep open). Without this, the member pick would re-arm sticky and the next
+  // refresh would re-open the roster.
+  closeOnSelectFor: (item) => item.isMember === true,
   onSelect: (item) => {
+    if (item.isMember) return // the mention tag is written by buildReplacement
     emit('add-attached', item.key, item.isDir === true)
   },
+  // A member selection inserts the mention tag in place of the typed "@query";
+  // a file selection just removes the trigger (the attach handler owns it).
+  buildReplacement: (item) => (item.isMember ? buildMentionTag(item.mentionMemberId) : ''),
   applyText: (value, caret) => {
     inputText.value = value
     nextTick(() => {

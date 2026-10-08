@@ -27,8 +27,10 @@
         </li>
       </ul>
 
-      <!-- Settings: max rounds -->
-      <div class="gm-setting">
+      <!-- Settings: max rounds. Host mode only: a free group has no round cap
+           (its relay runs until nobody is @-ed or the user stops it), so the
+           control would be a dead setting there. -->
+      <div v-if="mode !== 'free'" class="gm-setting">
         <label class="gm-setting-label" for="group-max-rounds">{{ t('group.maxRounds') }}</label>
         <input
           id="group-max-rounds"
@@ -104,6 +106,8 @@ const props = defineProps<{
   /** The group's current auto-approve flag (server-authoritative: the backend
    *  mirrors it across every member row, decision #61). */
   autoApprove: boolean
+  /** The group's mode. "free" hides the maxRounds control (no round cap). */
+  mode?: 'host' | 'free'
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 

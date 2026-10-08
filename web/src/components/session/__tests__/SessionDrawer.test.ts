@@ -264,26 +264,44 @@ describe('SessionDrawer', () => {
       expect(selector.attributes('data-group-mode')).toBe('true')
     })
 
-    it('emits create-group with {hostId, memberIds} and requires a host', async () => {
+    it('emits create-group with {hostId, memberIds} (host mode)', async () => {
       const wrapper = mountDrawer()
       await nextTick()
       wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
       await nextTick()
       const selector = wrapper.findComponent(AgentSelectorDrawerStub)
 
-      // A member list without a host must not create anything.
-      selector.vm.$emit('select', ['agent-1', 'agent-2'])
-      await nextTick()
-      expect(wrapper.emitted('create-group')).toBeUndefined()
-
       // Choose the host inline, then confirm.
-      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
-      await nextTick()
       selector.vm.$emit('update:hostId', 'agent-1')
       await nextTick()
       selector.vm.$emit('select', ['agent-1', 'agent-2'])
       await nextTick()
       expect(wrapper.emitted('create-group')![0]).toEqual([{ hostId: 'agent-1', memberIds: ['agent-1', 'agent-2'] }])
+    })
+
+    it('emits create-group with no host for a free group (>= 2 members)', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+
+      // No host chosen: a free group. Two members make it valid.
+      selector.vm.$emit('select', ['agent-1', 'agent-2'])
+      await nextTick()
+      expect(wrapper.emitted('create-group')![0]).toEqual([{ hostId: '', memberIds: ['agent-1', 'agent-2'] }])
+    })
+
+    it('does not create a free group with a single member', async () => {
+      const wrapper = mountDrawer()
+      await nextTick()
+      wrapper.findComponent(SessionListHeaderStub).vm.$emit('create-group')
+      await nextTick()
+      const selector = wrapper.findComponent(AgentSelectorDrawerStub)
+
+      selector.vm.$emit('select', ['agent-1'])
+      await nextTick()
+      expect(wrapper.emitted('create-group')).toBeUndefined()
     })
   })
 

@@ -40,16 +40,17 @@ type ParticipantInfo struct {
 //     public instruction as an even-higher-priority closing paragraph (empty =
 //     omitted). The caller filters the host's notes down to this member's name,
 //     so no other member ever receives another member's note.
-//   - hostID is the host member's ROW id. Its speech has the routing tag
-//     stripped (decision #67): the tag is internal protocol, and leaving it in
-//     would invite the member to imitate `<clawbench-speaker>`. Only the tag's
-//     background survives; an unparseable tag is kept verbatim (but any
-//     well-formed private note is still removed — see hostSpeechForMembers).
+//
+// Every agent's speech has its mention tags rendered as readable "@name" prose
+// (see renderMentionsReadable): a public mention's body survives, a private one
+// is dropped (fail-closed), and the end signal is removed. This is mode-agnostic
+// — in free mode a member's @ must be visible to the relay chain, and in host
+// mode it keeps members from imitating the raw routing format.
 //
 // User messages are rendered as "User: ..."; member speech as "<name>: ...";
 // membership changes (role='system') as "[系统] ..." so they are never mistaken
 // for user speech.
-func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, bcc, hostID string) string {
+func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, names map[string]string, leftIDs map[string]bool, roster []ParticipantInfo, instruction, bcc string) string {
 	var b strings.Builder
 	if header := participantHeader(roster); header != "" {
 		b.WriteString(header)
@@ -66,7 +67,7 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 		if text == "" {
 			continue
 		}
-		if line := renderTimelineLine(m, text, names, leftIDs, hostID); line != "" {
+		if line := renderTimelineLine(m, text, names, leftIDs); line != "" {
 			b.WriteString(line)
 		}
 	}
@@ -80,10 +81,13 @@ func buildInjectionText(msgs []model.ChatMessage, cursor int64, self string, nam
 // A role='system' row is a membership change (decisions #40/#43): its agent_id
 // is "" by design, so it must be checked BEFORE the user branch — otherwise the
 // `AgentID == ""` fallback captures it and tells the reader the USER said
-// "Claude 加入了讨论". The host routes from this context, so mis-attributing a
-// membership event as user speech corrupts its decisions. Extracted from
-// buildInjectionText to keep that function's complexity down.
-func renderTimelineLine(m model.ChatMessage, text string, names map[string]string, leftIDs map[string]bool, hostID string) string {
+// "Claude 加入了讨论". Mis-attributing a membership event as user speech
+// corrupts the reader's decisions. Extracted from buildInjectionText to keep
+// that function's complexity down.
+//
+// Agent speech has its mention tags rendered readable (public bodies survive,
+// private notes dropped, end signal removed) — see renderMentionsReadable.
+func renderTimelineLine(m model.ChatMessage, text string, names map[string]string, leftIDs map[string]bool) string {
 	if m.Role == "system" {
 		return "[系统] " + text + "\n"
 	}
@@ -96,10 +100,12 @@ func renderTimelineLine(m model.ChatMessage, text string, names map[string]strin
 		// neutral) — it is the SAME name the host addresses in a routing tag,
 		// so a member sees the user as an addressable participant, not as an
 		// anonymous "user:" line.
-		return groupUserTarget + ": " + userTextWithAttachments(text, m.Files) + "\n"
-	}
-	if hostID != "" && m.AgentID == hostID {
-		text = hostSpeechForMembers(text)
+		//
+		// A user's @-mention carries a member ROW ID (the frontend writes ids),
+		// so it is rendered readable AND resolved to the display name — a
+		// member must see "@Alice", not the raw protocol tag with a UUID.
+		userText := renderMentionsReadable(userTextWithAttachments(text, m.Files), names)
+		return groupUserTarget + ": " + userText + "\n"
 	}
 	name := names[m.AgentID]
 	if name == "" {
@@ -108,7 +114,7 @@ func renderTimelineLine(m model.ChatMessage, text string, names map[string]strin
 	if leftIDs[m.AgentID] {
 		name += "（已离场）"
 	}
-	return name + ": " + text + "\n"
+	return name + ": " + renderMentionsReadable(text, names) + "\n"
 }
 
 // appendHostDirectives renders the host's closing instructions: the PUBLIC
@@ -135,25 +141,41 @@ func appendHostDirectives(b *strings.Builder, instruction, bcc string) {
 	}
 }
 
-// hostSpeechForMembers renders a host message for a member's context.
+// renderMentionsReadable rewrites each public mention as "@targets 内容" and
+// drops private ones (fail-closed), then strips the end signal. It is how
+// speech is presented to OTHER participants so they can read who was addressed
+// and learn the @ syntax from examples — used in BOTH modes:
 //
-// Contracts:
-//   - A member SEES the host's prose — the background AND the directive text
-//     (rules, announcements). Those live after the routing tag, and dropping
-//     them meant members never saw the game rules and behaved as if
-//     unaddressed. So the whole message is shown, with its protocol tags
-//     removed.
-//   - Every ClawBench protocol tag is stripped: speaker tags (open and close,
-//     including a nested one from a second routing in the same message), the
-//     end signal, and bcc spans (fail-closed). Leaving a routing tag in would
-//     invite the member to imitate it — the real incident where several members
-//     each declared themselves the chair.
-//   - A note's text never survives (StripBccSpans is fail-closed): a message
-//     carrying a note reaches EVERY member through this function.
+//   - host mode: the host's routing tags are internal protocol; a member that
+//     saw them would imitate the format (the real "everyone declares itself the
+//     chair" incident), so only the public body survives;
+//   - free mode: a member's @ IS the relay signal, so it must be visible to the
+//     chain — rendered readable rather than raw so no one copies the tag shape.
 //
-// A message with no tag at all (the host just talking) keeps its full text.
-func hostSpeechForMembers(text string) string {
-	return grouprouting.StripProtocolTags(text)
+// names maps a member ROW id to its display name: a USER's @-mention carries the
+// row id (the frontend writes ids), so without this the reader would see
+// "@<uuid>". An unknown target falls back to the raw target so the routing
+// intent stays visible.
+func renderMentionsReadable(text string, names map[string]string) string {
+	cleaned := grouprouting.ReplaceMentions(text, func(e *grouprouting.MentionEntry) string {
+		if e == nil || e.Private {
+			return "" // malformed or private: drop the whole span
+		}
+		labels := make([]string, 0, len(e.Targets))
+		for _, t := range e.Targets {
+			if n := names[t]; n != "" {
+				labels = append(labels, n)
+			} else {
+				labels = append(labels, t)
+			}
+		}
+		at := "@" + strings.Join(labels, " @")
+		if e.Content == "" {
+			return at
+		}
+		return at + " " + e.Content
+	})
+	return strings.TrimSpace(grouprouting.StripEndTag(cleaned))
 }
 
 // userTextWithAttachments prepends the attachment summary to a user message's
@@ -211,13 +233,7 @@ func groupInjectionText(groupID, selfMemberRowID string, cursor int64, names map
 		return "", fmt.Errorf("load group members: %w", err)
 	}
 	leftIDs, roster := participantMetadata(members, selfMemberRowID)
-	// The host's own speech keeps its tags (the host reads them back as its own
-	// prior routing decisions); only OTHER members get the stripped form.
-	hostID := GetGroupHostMember(groupID)
-	if hostID == selfMemberRowID {
-		hostID = ""
-	}
-	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, bcc, hostID), nil
+	return buildInjectionText(msgs, cursor, selfMemberRowID, names, leftIDs, roster, instruction, bcc), nil
 }
 
 // participantMetadata derives the left-member set and the active-participant

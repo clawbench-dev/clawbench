@@ -1,14 +1,32 @@
 /**
  * TypeScript mirror of `internal/grouprouting` (Go).
  *
- * Parses the host agent's routing decision from its assistant text in a group
- * chat. Kept in sync with the Go implementation by
+ * Both group-chat modes express themselves through ONE unified tag:
+ *
+ *   <clawbench-mention targets="A,B">给 A、B 的内容</clawbench-mention>
+ *   <clawbench-mention targets="C" private>只有 C 能看到的密送</clawbench-mention>
+ *   <clawbench-group-end/>
+ *
+ *   - HOST mode: the host names the next speakers (targets) and hands them a
+ *     directive (the tag body).
+ *   - FREE mode: any member @s the member(s) it wants to hand the floor to.
+ *
+ * Kept in sync with the Go implementation by
  * `internal/grouprouting/testdata/parity_corpus.json` (the same convention
  * `web/src/utils/askQuestion.ts` uses with `internal/askquestion`).
  *
  * Contract (mirrors the Go side): detect-then-parse; an unparseable tag is
  * NEVER stripped — the caller keeps the original text visible.
  */
+
+export interface MentionEntry {
+  /** Named members the tag addresses, in order, trimmed, empties dropped. */
+  targets: string[]
+  /** The tag body, trimmed. */
+  content: string
+  /** Whether the tag carried the `private` attribute. */
+  private: boolean
+}
 
 export interface BccEntry {
   /** Named members the note is addressed to, in order, trimmed, empties dropped. */
@@ -22,46 +40,49 @@ export interface GroupRouting {
   speakers: string[]
   instruction: string
   /**
-   * Text preceding the speaker tag, trimmed. The host's background context,
-   * consumed by the injection layer (design decision #68, approach A) to render
-   * a member's context without repeating the routing tag or the directive. It
-   * is a positional slice, not a parse result: populated whenever the tag is
-   * located, even when the tag is malformed (`found === false`). Callers that
-   * need a valid routing decision must gate on `found`; those that only need
-   * the background may read it regardless. This function never strips.
-   * Well-formed BCC spans are removed first, so a private note placed ahead of
-   * the tag never leaks into the shared background.
+   * Text OUTSIDE the mention tags that precedes the first public mention,
+   * trimmed. A positional slice, populated whenever a mention is located, even
+   * when the tag itself is malformed (`found === false`). Every mention span is
+   * removed from the slice, so a private note ahead of a public mention never
+   * leaks into it. This function never strips the input.
    */
   before: string
   /**
-   * The host's private notes to individual members, in the order they appeared.
-   * A note is recognised only when it is well-formed (a `targets` attribute
-   * with at least one non-empty name); a malformed one is NOT parsed and NOT
-   * stripped (detect-then-parse / never-lose-content). Independent of `found`:
-   * a message may carry only a note and no speaker tag.
+   * Text OUTSIDE the mention tags that follows the last public mention,
+   * trimmed.
+   */
+  after: string
+  /**
+   * Every well-formed private note, in the order it appeared. A note is
+   * recognised only when it is well-formed (a `targets` attribute with at
+   * least one non-empty name); a malformed one is NOT parsed and NOT stripped
+   * (detect-then-parse / never-lose-content). Independent of `found`.
    */
   bcc: BccEntry[]
+  /** Every well-formed mention tag, in order. */
+  mentions: MentionEntry[]
   end: boolean
   raw: string
 }
 
-const RE_SPEAKER = /<clawbench-speaker>([\s\S]*?)<\/clawbench-speaker>/
+// A mention tag: a targets attribute plus an optional private attribute, then a
+// body. The attribute soup is captured raw and parsed by parseMentionAttrs.
+const RE_MENTION = /<clawbench-mention\b([^>]*)>([\s\S]*?)<\/clawbench-mention>/g
+// Fail-closed: ANY mention-like span (see stripGroupProtocolTags).
+const RE_MENTION_SPAN_ANY = /<clawbench-mention\b[^>]*>[\s\S]*?<\/clawbench-mention>/g
+const RE_MENTION_CLOSE_ANY = /<\/clawbench-mention>/g
+// The double-quoted targets attribute (case-sensitive, the DISPLAY contract).
+// `\p{Z}` needs the /u flag.
+const RE_TARGETS = /\btargets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"/u
+// The boolean `private` attribute (case-sensitive).
+const RE_PRIVATE = /\bprivate\b/
 const RE_END = /<clawbench-group-end[\s\p{Z}]*\/>/gu
-// Well-formed private note (the DISPLAY contract). Double-quoted targets only;
-// single-quoted / attribute-less forms are malformed and left untouched (never
-// stripped). `[\s\p{Z}]` mirrors Go's class: JS `\s` alone already includes
-// Unicode spaces, but writing `\p{Z}` explicitly keeps the two sides visibly
-// aligned (Go needs it because its `\s` is ASCII-only).
-const RE_BCC = /<clawbench-bcc[\s\p{Z}]+targets[\s\p{Z}]*=[\s\p{Z}]*"([^"]*)"[\s\p{Z}]*>([\s\S]*?)<\/clawbench-bcc>/gu
-// Fail-closed: ANY bcc-like span (see stripGroupBccSpans).
-const RE_BCC_SPAN_ANY = /<clawbench-bcc\b[^>]*>[\s\S]*?<\/clawbench-bcc>/g
-const RE_BCC_CLOSE_ANY = /<\/clawbench-bcc>/g
 // Non-global mirror of RE_END for a one-shot test(). RE_END carries /g, whose
 // lastIndex would otherwise make .test() alternate true/false across calls.
 const RE_END_TEST = /<clawbench-group-end[\s\p{Z}]*\/>/u
 
-/** splitSpeakers splits a comma-separated list, trimming and dropping empties. */
-function splitSpeakers(s: string): string[] {
+/** splitNames splits a comma-separated list, trimming and dropping empties. */
+function splitNames(s: string): string[] {
   const out: string[] = []
   for (const p of s.split(',')) {
     const name = p.trim()
@@ -71,114 +92,256 @@ function splitSpeakers(s: string): string[] {
 }
 
 /**
- * extractBcc scans text for well-formed private notes, returning the text with
- * those spans removed and the parsed entries in order. The removal is a plain
- * deletion (like stripEndTag): surrounding whitespace is preserved as-is.
- *
- * A malformed note (no targets attribute, empty target list) is neither parsed
- * nor removed — an unrecognised tag is never stripped, so its content stays
- * visible rather than being silently dropped.
+ * parseMentionAttrs extracts (targets, private) from a tag's raw attribute
+ * string. Returns null when there is no well-formed double-quoted targets
+ * attribute or it is empty — such a tag is malformed and NOT parsed (the
+ * fail-open display contract: its text stays visible).
  */
-function extractBcc(text: string): { cleaned: string; entries: BccEntry[] } {
-  const entries: BccEntry[] = []
-  let cleaned = ''
-  let last = 0
-  RE_BCC.lastIndex = 0
-  let m: RegExpExecArray | null
-  while ((m = RE_BCC.exec(text)) !== null) {
-    const targets = splitSpeakers(m[1])
-    if (targets.length === 0) continue // malformed: leave the span in place
-    cleaned += text.slice(last, m.index)
-    last = m.index + m[0].length
-    entries.push({ targets, content: m[2].trim() })
-  }
-  if (entries.length === 0) return { cleaned: text, entries }
-  cleaned += text.slice(last)
-  return { cleaned, entries }
-}
-
-/** parseGroupRouting locates the host's routing decision in a message. */
-export function parseGroupRouting(text: string): GroupRouting {
-  const res: GroupRouting = { found: false, speakers: [], instruction: '', before: '', bcc: [], end: false, raw: '' }
-
-  // 1. Well-formed notes are extracted for DISPLAY (fail-open: a malformed note
-  //    is kept verbatim so nothing is lost).
-  res.bcc = extractBcc(text).entries
-
-  // 2. Everything else runs on the FAIL-CLOSED text: every bcc-like span is
-  //    removed regardless of shape, so a note can never leak into instruction
-  //    (the public directive) or before (the shared background). This mirrors
-  //    the Go Parse.
-  const cleaned = stripGroupBccSpans(text)
-
-  const endMatch = cleaned.match(RE_END)
-  if (endMatch) {
-    res.end = true
-    res.raw = endMatch[0]
-  }
-
-  const m = cleaned.match(RE_SPEAKER)
-  if (!m || m.index === undefined) {
-    return res
-  }
-  res.raw = m[0]
-  // Before = the text ahead of the tag (positional slice, always available
-  // once the tag is located — even for a malformed payload).
-  res.before = cleaned.slice(0, m.index).trim()
-
-  const speakers = splitSpeakers(m[1])
-  if (speakers.length === 0) {
-    // Malformed (empty payload): do not claim found; keep raw for logs.
-    // A fresh non-global regex avoids RE_END's /g lastIndex state.
-    res.end = RE_END_TEST.test(cleaned)
-    return res
-  }
-  res.found = true
-  res.speakers = speakers
-
-  // Instruction = text after the closing speaker tag, with any end tag removed.
-  const after = cleaned.slice(m.index + m[0].length)
-  res.instruction = after.replace(RE_END, '').trim()
-  return res
+function parseMentionAttrs(attrs: string): { targets: string[]; private: boolean } | null {
+  const m = attrs.match(RE_TARGETS)
+  if (!m) return null
+  const targets = splitNames(m[1])
+  if (targets.length === 0) return null
+  return { targets, private: RE_PRIVATE.test(attrs) }
 }
 
 /**
- * stripGroupBccTags removes well-formed private notes from text, returning the
- * text unchanged when there is none. Mirrors the Go StripBccTags: it keeps a
- * note out of a member's injected context (and the rendered body) even when no
- * speaker tag was found. Malformed notes are left untouched.
+ * replaceMentionSpans rewrites every CLOSED mention-like span in text using fn:
+ * fn receives the parsed entry (null when malformed) plus the raw span text and
+ * returns the replacement. An UNCLOSED opening tag is left alone here — the
+ * fail-closed callers drop it separately (see dropUnclosedMentionTail), while a
+ * DISPLAY caller must keep a malformed span verbatim (never lose content).
  */
-export function stripGroupBccTags(text: string): string {
-  const { cleaned, entries } = extractBcc(text)
-  if (entries.length === 0) return text
-  return cleaned.trim()
-}
-
-/**
- * stripGroupBccSpans removes EVERY bcc-like span from text — well-formed,
- * malformed (single quotes, extra/absent attributes), nested, or unclosed —
- * and returns the remainder trimmed. This is the fail-closed primitive for the
- * INJECTION boundary: a private note must never reach a non-target member, and
- * the host is an LLM whose tag formatting cannot be trusted. Mirrors Go's
- * StripBccSpans.
- *
- * Two passes: closed spans are peeled in a loop (a nested
- * <bcc>…<bcc>inner</bcc>…</bcc> needs another pass), then any unclosed opening
- * tag — and everything after it, since a truncated note's tail is just as
- * private — is dropped, and any stray close tag is removed.
- */
-export function stripGroupBccSpans(text: string): string {
-  if (!text.includes('<clawbench-bcc')) return text.trim()
+function replaceMentionSpans(text: string, fn: (entry: MentionEntry | null, raw: string) => string): string {
+  if (!text.includes('<clawbench-mention')) return text
   let cleaned = text
   for (;;) {
-    RE_BCC_SPAN_ANY.lastIndex = 0
-    const next = cleaned.replace(RE_BCC_SPAN_ANY, '')
+    RE_MENTION_SPAN_ANY.lastIndex = 0
+    const next = cleaned.replace(RE_MENTION_SPAN_ANY, (span) => {
+      RE_MENTION.lastIndex = 0
+      const m = RE_MENTION.exec(span)
+      if (m) {
+        const attrs = parseMentionAttrs(m[1])
+        if (attrs) return fn({ targets: attrs.targets, content: m[2].trim(), private: attrs.private }, span)
+      }
+      return fn(null, span)
+    })
     if (next === cleaned) break
     cleaned = next
   }
-  const idx = cleaned.indexOf('<clawbench-bcc')
+  return cleaned
+}
+
+/**
+ * dropUnclosedMentionTail removes any UNCLOSED opening tag and everything after
+ * it (a truncated/streaming span's tail is just as private), plus a stray close
+ * tag. Call this ONLY on text whose CLOSED mention spans have already been
+ * replaced by replaceMentionSpans — then any remaining opening tag is genuinely
+ * unclosed. This is the fail-closed step (injection / quote / TTS / push
+ * boundaries); a display caller must NOT use it (it keeps malformed spans
+ * verbatim).
+ */
+function dropUnclosedMentionTail(text: string): string {
+  let cleaned = text
+  const idx = cleaned.indexOf('<clawbench-mention')
   if (idx >= 0) cleaned = cleaned.slice(0, idx)
-  RE_BCC_CLOSE_ANY.lastIndex = 0
-  cleaned = cleaned.replace(RE_BCC_CLOSE_ANY, '')
-  return cleaned.trim()
+  RE_MENTION_CLOSE_ANY.lastIndex = 0
+  cleaned = cleaned.replace(RE_MENTION_CLOSE_ANY, '')
+  return cleaned
+}
+
+/** stripAllMentionSpans removes every mention-like span entirely (fail-closed:
+ *  unclosed spans and their tails included). */
+function stripAllMentionSpans(text: string): string {
+  return dropUnclosedMentionTail(replaceMentionSpans(text, () => ''))
+}
+
+/** parseGroupRouting locates every mention tag in an agent message. */
+export function parseGroupRouting(text: string): GroupRouting {
+  const res: GroupRouting = {
+    found: false, speakers: [], instruction: '', before: '', after: '',
+    bcc: [], mentions: [], end: false, raw: '',
+  }
+
+  // Locate every well-formed mention for display, in order.
+  RE_MENTION.lastIndex = 0
+  let firstPublicStart = -1
+  let lastPublicEnd = -1
+  let m: RegExpExecArray | null
+  while ((m = RE_MENTION.exec(text)) !== null) {
+    const attrs = parseMentionAttrs(m[1])
+    if (!attrs) continue // malformed: not a mention, leave the span in place
+    res.mentions.push({ targets: attrs.targets, content: m[2].trim(), private: attrs.private })
+    res.raw = m[0]
+    if (!attrs.private) {
+      if (firstPublicStart < 0) firstPublicStart = m.index
+      lastPublicEnd = m.index + m[0].length
+    }
+    if (m.index === RE_MENTION.lastIndex) RE_MENTION.lastIndex++ // zero-width guard
+  }
+
+  // Before / After are the prose surrounding the mentions. Before slices around
+  // the first PUBLIC mention, falling back to the first mention-like span when
+  // there is no public one. Every mention span is stripped from the slice.
+  if (firstPublicStart < 0) {
+    RE_MENTION_SPAN_ANY.lastIndex = 0
+    const span = RE_MENTION_SPAN_ANY.exec(text)
+    if (span) firstPublicStart = span.index
+  }
+  if (firstPublicStart >= 0) {
+    res.before = stripEndTag(stripAllMentionSpans(text.slice(0, firstPublicStart))).trim()
+  }
+  if (lastPublicEnd >= 0) {
+    res.after = stripEndTag(stripAllMentionSpans(text.slice(lastPublicEnd))).trim()
+  }
+
+  // End is computed OUTSIDE every mention span (an end tag inside a private
+  // note must not end the discussion).
+  const outside = stripAllMentionSpans(text)
+  if (RE_END_TEST.test(outside)) {
+    res.end = true
+    const em = outside.match(RE_END)
+    if (em) res.raw = em[0]
+  }
+  if (res.mentions.length === 0) return res
+
+  res.found = true
+  // Derive the flat host view: public targets (ordered, de-duplicated) and the
+  // joined public directive.
+  const seen = new Set<string>()
+  for (const e of res.mentions) {
+    if (e.private) {
+      res.bcc.push({ targets: e.targets, content: e.content })
+      continue
+    }
+    for (const t of e.targets) {
+      if (!seen.has(t)) { seen.add(t); res.speakers.push(t) }
+    }
+    if (e.content !== '') {
+      if (res.instruction !== '') res.instruction += '\n\n'
+      res.instruction += e.content
+    }
+  }
+  return res
+}
+
+/** stripEndTag removes the end-signal tag from text. */
+export function stripEndTag(text: string): string {
+  if (!RE_END_TEST.test(text)) return text
+  RE_END.lastIndex = 0
+  return text.replace(RE_END, '').trim()
+}
+
+/**
+ * stripGroupProtocolTags removes every ClawBench protocol tag while keeping the
+ * PUBLIC prose: public mentions are unwrapped (their body survives), private
+ * mentions are removed entirely (fail-closed), and the end signal is dropped.
+ *
+ * It is what a member should see of the HOST's speech in host mode, and it is
+ * ALSO the fail-closed primitive for the reading-summary / TTS / push / quote
+ * boundaries (texts that leave the device or are spoken aloud).
+ */
+export function stripGroupProtocolTags(text: string): string {
+  const replaced = replaceMentionSpans(text, (entry) => (entry && !entry.private ? entry.content : ''))
+  // Fail-closed: an unclosed mention (and its tail) must not survive — the Go
+  // side does this inline, and the two must agree (pinned by stripCases).
+  return stripEndTag(dropUnclosedMentionTail(replaced)).trim()
+}
+
+/**
+ * stripGroupBccSpans removes EVERY mention-like span from text — well-formed,
+ * malformed (single quotes, extra/absent attributes), nested, or unclosed — and
+ * returns the remainder trimmed. This is the fail-closed primitive for the
+ * INJECTION boundary: a private note must never reach a non-target member, and
+ * an agent's tag formatting cannot be trusted.
+ */
+export function stripGroupBccSpans(text: string): string {
+  return stripAllMentionSpans(text).trim()
+}
+
+/** The inline chip class the message renderer styles (and DOMPurify must keep). */
+export const MENTION_CHIP_CLASS = 'msg-mention-chip'
+
+/**
+ * renderMentionChips rewrites a message body for DISPLAY: each well-formed
+ * public mention becomes an inline `@target` chip followed by its body text,
+ * and each private mention is dropped entirely (fail-closed — a private note is
+ * not addressed to the reader and must not be shown as prose). The end signal is
+ * removed.
+ *
+ * resolveTarget (optional) maps a raw target to a display label: a target may be
+ * a member ROW id (what the frontend writes for a user's @-mention) while an
+ * agent writes a display name, so the caller resolves ids to names. It returns
+ * the input unchanged when it cannot resolve.
+ *
+ * Malformed mention-like spans are left untouched so their text stays visible
+ * (detect-then-parse / never-lose-content); the markdown sanitizer then unwraps
+ * the unknown tag but keeps its inner text.
+ *
+ * The chip is a plain `<span>` (a default-allowed DOMPurify tag), so it survives
+ * sanitization without an allow-list entry; only its class matters for styling.
+ */
+export function renderMentionChips(text: string, resolveTarget?: (target: string) => string): string {
+  const label = (t: string) => (resolveTarget ? resolveTarget(t) : t)
+  const cleaned = replaceMentionSpans(text, (entry, raw) => {
+    if (entry === null) return raw // malformed span: keep it verbatim (never lose content)
+    if (entry.private) return ''
+    const at = entry.targets.map((t) => `<span class="${MENTION_CHIP_CLASS}">@${escapeChipText(label(t))}</span>`).join(' ')
+    return entry.content === '' ? at + ' ' : at + ' ' + entry.content + ' '
+  })
+  return stripEndTag(cleaned).trim()
+}
+
+/** escapeChipText HTML-escapes a target name so a crafted member name cannot
+ *  inject markup through the chip. */
+function escapeChipText(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
+/** The minimum shape buildMemberCandidates needs from a group member. */
+export interface MentionableMember {
+  id: string
+  name: string
+  left?: boolean
+}
+
+/** A member candidate for the `@` completion menu. */
+export interface MemberCandidate {
+  /** Stable identity, namespaced so it cannot collide with a file path key. */
+  key: string
+  label: string
+  description: string
+  /** The member ROW id written into the mention tag on select. */
+  mentionMemberId: string
+}
+
+/**
+ * buildMemberCandidates returns the group members matching `query`, for the `@`
+ * completion menu. The query matches the display name (case-insensitive
+ * substring). Left members are excluded (they cannot speak). Order follows the
+ * roster. An empty query returns every active member, so typing a bare "@"
+ * lists the whole roster.
+ */
+export function buildMemberCandidates(members: MentionableMember[], query: string): MemberCandidate[] {
+  const q = query.trim().toLowerCase()
+  const out: MemberCandidate[] = []
+  for (const m of members) {
+    if (m.left) continue
+    if (!m.id || !m.name) continue
+    if (q && !m.name.toLowerCase().includes(q)) continue
+    out.push({ key: `member:${m.id}`, label: m.name, description: '', mentionMemberId: m.id })
+  }
+  return out
+}
+
+/** buildMentionTag renders the tag a user's @-mention of a member inserts. The
+ *  body is empty: the user is just naming who should speak; their question is
+ *  the rest of the message. The target is the member ROW id (never the name),
+ *  so a rename or a duplicate display name cannot misroute it. */
+export function buildMentionTag(memberRowId: string): string {
+  return `<clawbench-mention targets="${memberRowId}"></clawbench-mention> `
 }

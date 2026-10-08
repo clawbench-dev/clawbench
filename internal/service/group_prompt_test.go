@@ -8,8 +8,8 @@ import (
 func TestBuildHostSystemPrompt(t *testing.T) {
 	members := []HostMemberInfo{{Name: "A"}, {Name: "B"}, {Name: "C"}}
 	p := BuildHostSystemPrompt(members)
-	if !strings.Contains(p, "<clawbench-speaker>") {
-		t.Fatal("must document speaker tag")
+	if !strings.Contains(p, "<clawbench-mention targets=") {
+		t.Fatal("must document the mention tag")
 	}
 	if !strings.Contains(p, "<clawbench-group-end/>") {
 		t.Fatal("must document end signal")
@@ -76,7 +76,7 @@ func TestBuildHostSystemPrompt_NoOtherMembers(t *testing.T) {
 
 func TestBuildHostSummaryPromptHasNoRoutingTag(t *testing.T) {
 	p := BuildHostSummaryPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}})
-	if strings.Contains(p, "<clawbench-speaker>") || strings.Contains(p, "<clawbench-group-end/>") {
+	if strings.Contains(p, "clawbench-mention") || strings.Contains(p, "<clawbench-group-end/>") {
 		t.Fatal("summary prompt must not ask for routing/end tags (would re-enter loop)")
 	}
 	if !strings.Contains(p, "结论") {
@@ -89,7 +89,7 @@ func TestBuildHostSummaryPromptHasNoRoutingTag(t *testing.T) {
 // and that other members cannot see it.
 func TestBuildHostSystemPrompt_DocumentsBcc(t *testing.T) {
 	p := BuildHostSystemPrompt([]HostMemberInfo{{Name: "A"}, {Name: "B"}})
-	if !strings.Contains(p, "<clawbench-bcc targets=") {
+	if !strings.Contains(p, "<clawbench-mention targets=") {
 		t.Fatalf("prompt must document the bcc tag syntax: %q", p)
 	}
 	if !strings.Contains(p, "密送") {
@@ -104,11 +104,13 @@ func TestBuildHostSystemPrompt_DocumentsBcc(t *testing.T) {
 }
 
 // A host-only group has nobody to send a private note to, so the prompt must
-// not mention the feature (it would invite a tag that goes nowhere).
+// not document the private (密送) form (it would invite a note that goes
+// nowhere). The plain mention form is still documented — it is how the host
+// answers — so the check is for the `private` attribute, not the tag name.
 func TestBuildHostSystemPrompt_NoMembersOmitsBcc(t *testing.T) {
 	p := BuildHostSystemPrompt(nil)
-	if strings.Contains(p, "clawbench-bcc") {
-		t.Fatalf("host-only prompt must not document bcc: %q", p)
+	if strings.Contains(p, "private") {
+		t.Fatalf("host-only prompt must not document the private form: %q", p)
 	}
 }
 
@@ -116,7 +118,7 @@ func TestBuildHostSystemPrompt_NoMembersOmitsBcc(t *testing.T) {
 // included (the orchestrator ignores tags in that turn).
 func TestBuildHostSummaryPromptOmitsBcc(t *testing.T) {
 	p := BuildHostSummaryPrompt([]HostMemberInfo{{Name: "A"}})
-	if strings.Contains(p, "clawbench-bcc") {
+	if strings.Contains(p, "clawbench-mention") {
 		t.Fatalf("summary prompt must not document bcc: %q", p)
 	}
 }
@@ -133,11 +135,8 @@ func TestBuildMemberSystemPrompt(t *testing.T) {
 		t.Fatalf("member prompt must say it is NOT the chair: %q", p)
 	}
 	// It must forbid emitting the host's protocol tags.
-	if !strings.Contains(p, "<clawbench-speaker>") || !strings.Contains(p, "不要") {
+	if !strings.Contains(p, "clawbench-mention") || !strings.Contains(p, "不要") {
 		t.Fatalf("member prompt must forbid emitting routing tags: %q", p)
-	}
-	if !strings.Contains(p, "clawbench-bcc") {
-		t.Fatalf("member prompt must forbid emitting private notes: %q", p)
 	}
 	// It must list who else is in the group (excluding self).
 	if !strings.Contains(p, "Host") || !strings.Contains(p, "C") {

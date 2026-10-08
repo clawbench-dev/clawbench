@@ -2891,6 +2891,9 @@ func HardDeleteSession(sessionID string) error {
 	// #48). Cascade them in the SAME transaction as the group row, before it is
 	// deleted (the group_id link points at the row being removed).
 	_, _ = tx.Exec("DELETE FROM chat_sessions WHERE group_id = ? AND session_type = ?", sessionID, groupMemberSessionType)
+	// A group's undelivered private notes belong to the group; without this
+	// they would linger forever (the table has no FK to chat_sessions).
+	_, _ = tx.Exec("DELETE FROM group_pending_bcc WHERE group_id = ?", sessionID)
 	_, err = tx.Exec("DELETE FROM chat_sessions WHERE id = ?", sessionID)
 	if err != nil {
 		return err
@@ -3061,12 +3064,13 @@ func enrichMessagesWithSummaries(messages []model.ChatMessage) {
 	// Enrich messages
 	//
 	// Group sessions skip the content stripping: the group render pipeline
-	// parses routing tags (`<clawbench-speaker>`) and private notes
-	// (`<clawbench-bcc>`) out of the BLOCKS, and stripping replaces blocks with
-	// [] — so a host's bcc card (and the routing chips) vanished as soon as a
-	// message gained a summary and the view was reloaded (switch session and
-	// back). Group messages are short; the bandwidth saving is not worth losing
-	// the structured view. A non-group session keeps the original behavior.
+	// parses mention tags (`<clawbench-mention>`) and private notes (the same
+	// tag with the `private` attribute) out of the BLOCKS, and stripping
+	// replaces blocks with [] — so a speaker's private-note card (and the
+	// routing chips) vanished as soon as a message gained a summary and the
+	// view was reloaded (switch session and back). Group messages are short;
+	// the bandwidth saving is not worth losing the structured view. A
+	// non-group session keeps the original behavior.
 	isGroup := len(messages) > 0 && GetSessionType(messages[0].SessionID) == groupSessionType
 	for i := range messages {
 		if messages[i].Role == "assistant" {

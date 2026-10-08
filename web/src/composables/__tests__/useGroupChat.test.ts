@@ -22,12 +22,18 @@ describe('useGroupChat API', () => {
   })
 
   it('createGroup posts hostAgentId + memberAgentIds and returns ids', async () => {
-    vi.stubGlobal('fetch', mockFetch(200, { ok: true, groupId: 'g1', hostMemberId: 'm1' }))
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, groupId: 'g1', hostMemberId: 'm1', mode: 'host' }))
     const r = await createGroup('agent-a', ['agent-a', 'agent-b'])
-    expect(r).toEqual({ groupId: 'g1', hostMemberId: 'm1' })
+    expect(r).toEqual({ groupId: 'g1', hostMemberId: 'm1', mode: 'host' })
     const [url, opts] = (fetch as any).mock.calls[0]
     expect(url).toBe('/api/group/create')
     expect(JSON.parse(opts.body)).toEqual({ hostAgentId: 'agent-a', memberAgentIds: ['agent-a', 'agent-b'] })
+  })
+
+  it('createGroup returns free mode when the backend reports it', async () => {
+    vi.stubGlobal('fetch', mockFetch(200, { ok: true, groupId: 'g2', hostMemberId: '', mode: 'free' }))
+    const r = await createGroup('', ['agent-a', 'agent-b'])
+    expect(r).toEqual({ groupId: 'g2', hostMemberId: '', mode: 'free' })
   })
 
   it('listGroupMembers returns members and maxRounds', async () => {

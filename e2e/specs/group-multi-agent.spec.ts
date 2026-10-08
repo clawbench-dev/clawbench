@@ -8,7 +8,7 @@ import { test, expect } from '../fixtures'
  * end to end, so it is the only place that proves a MEMBER (not just the host)
  * actually produces output through the real machinery.
  *
- * acp-mock is extended to emit a `<clawbench-speaker>` routing tag when it sees
+ * acp-mock is extended to emit a `<clawbench-mention>` routing tag when it sees
  * the host instruction, naming the first addressable member — so the host turn
  * routes to a real member turn instead of monologuing.
  *

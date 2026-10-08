@@ -9,7 +9,7 @@ import { apiGet } from '@/utils/api'
 import { appLog } from '@/utils/appLog.ts'
 import { createTaskBlockStore } from '@/utils/taskBlockStore.ts'
 import { isShareMode } from '@/share/shareMode'
-import { stripGroupBccTags } from '@/utils/groupRouting.ts'
+import { renderMentionChips } from '@/utils/groupRouting.ts'
 import {
   extractScheduledTaskIds,
   stripScheduledTaskTags,
@@ -26,7 +26,27 @@ import {
   truncate,
 } from '@/utils/chatBlocks.ts'
 
-export function useChatRender(options: { messages: { value: Array<Record<string, unknown>> }; theme: { value: unknown }; currentSessionId: { value: unknown } }) {
+export function useChatRender(options: {
+  messages: { value: Array<Record<string, unknown>> }
+  theme: { value: unknown }
+  currentSessionId: { value: unknown }
+  /**
+   * resolveMentionTarget maps a group-chat mention target to a display name.
+   * A target is a member ROW id (what the frontend writes for a user's @) or a
+   * display name (what an agent writes); the caller resolves both. Returns the
+   * input unchanged when it cannot be resolved. Absent outside a group.
+   */
+  resolveMentionTarget?: (target: string) => string
+  /**
+   * mentionScope is a string that changes whenever the mention resolver's
+   * output could change (i.e. the group roster changed). The rendered chip is
+   * baked into the cached HTML, and the cache key does NOT include the roster,
+   * so without this a chip rendered BEFORE the roster loaded would keep showing
+   * "@<uuid>" after the roster arrived. When it changes the rendered-block cache
+   * is cleared and re-rendered.
+   */
+  mentionScope?: { value: string }
+}) {
   const { messages, theme, currentSessionId } = options
   const { verifyFilePaths } = useFilePathAnnotation()
   const { verifyCommitHashes } = useCommitHashAnnotation()
@@ -136,6 +156,18 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
   watch(() => store.state.projectRoot, () => {
     staticBlockCache.clear()
   })
+
+  // The group roster changing changes how mention targets render (a row id
+  // resolves to a name only once the roster is loaded). The rendered-block
+  // cache bakes the chip HTML, and its key does not include the roster, so a
+  // block rendered before the roster arrived would keep showing "@<uuid>".
+  // Clear + re-render when the roster identity changes.
+  if (options.mentionScope) {
+    watch(options.mentionScope, () => {
+      staticBlockCache.clear()
+      updateRenderedContents(true)
+    })
+  }
 
   type BlockTaskEntry = { taskId?: number; deleted?: boolean; loading?: boolean; task?: unknown; [key: string]: unknown }
 
@@ -252,13 +284,17 @@ export function useChatRender(options: { messages: { value: Array<Record<string,
    *   The cache upgrade mechanism will later re-render with full enhancements.
    */
   function renderTextBlock(text: string, msgId: string, blockIdx: number, streaming = false, deferEnhancements = false) {
-    // Strip the host's private notes (bcc) from the rendered body BEFORE either
-    // path. A note is addressed to specific members and must never be visible as
-    // prose — DOMPurify would otherwise unwrap the unknown tag and leave its
-    // content in plain sight for everyone. This runs on the STREAMING path too:
-    // the raw tag must not flash on screen before the turn settles. Malformed
-    // notes are left untouched (detect-then-parse / never-lose-content).
-    text = stripGroupBccTags(text)
+    // Rewrite group-chat mention tags BEFORE either path. A well-formed public
+    // mention becomes an inline "@name" chip (its body survives); a private note
+    // is dropped (fail-closed — it is not addressed to the reader, and DOMPurify
+    // would otherwise unwrap the unknown tag and leave its content in plain
+    // sight). This runs on the STREAMING path too: the raw tag must not flash on
+    // screen before the turn settles. Malformed tags are left untouched
+    // (detect-then-parse / never-lose-content).
+    //
+    // A target may be a member row id (a user's @ carries the id) — resolve it
+    // to the display name so the chip reads "@Alice", not "@<uuid>".
+    text = renderMentionChips(text, options.resolveMentionTarget)
 
     // ── Streaming: pure markdown only (no detections/verification) ──
     if (streaming) {

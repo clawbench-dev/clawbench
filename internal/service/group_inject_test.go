@@ -15,7 +15,7 @@ func TestBuildMemberInjection(t *testing.T) {
 		{ID: 3, Role: "assistant", AgentID: "row-b", Content: `{"blocks":[{"type":"text","text":"B1"}]}`},
 	}
 	names := map[string]string{"row-a": "A", "row-b": "B"}
-	got := buildInjectionText(msgs, 1, "row-b" /*self*/, names, nil, nil, "请回应 A", "", "")
+	got := buildInjectionText(msgs, 1, "row-b" /*self*/, names, nil, nil, "请回应 A", "")
 	if !strings.Contains(got, "A: A1") {
 		t.Fatalf("missing A's speech: %q", got)
 	}
@@ -34,7 +34,7 @@ func TestBuildMemberInjection_LeftMemberMarked(t *testing.T) {
 		{ID: 2, Role: "assistant", AgentID: "row-gone", Content: `{"blocks":[{"type":"text","text":"legacy"}]}`},
 	}
 	names := map[string]string{"row-gone": "Gone"}
-	got := buildInjectionText(msgs, 0, "row-self", names, map[string]bool{"row-gone": true}, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-self", names, map[string]bool{"row-gone": true}, nil, "", "")
 	if !strings.Contains(got, "Gone（已离场）: legacy") {
 		t.Fatalf("left member's speech must be marked 已离场: %q", got)
 	}
@@ -51,7 +51,7 @@ func TestBuildMemberInjection_ParticipantRoster(t *testing.T) {
 		{Name: "Claude", Specialty: "代码编写与推理"},
 		{Name: "Plain"},
 	}
-	got := buildInjectionText(msgs, 0, "row-self", map[string]string{}, nil, roster, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-self", map[string]string{}, nil, roster, "", "")
 	if !strings.Contains(got, "参与者：") {
 		t.Fatalf("must render a participant roster header: %q", got)
 	}
@@ -73,7 +73,7 @@ func TestBuildMemberInjection_RosterOmittedWhenNoSpecialty(t *testing.T) {
 		{ID: 1, Role: "user", Content: `{"blocks":[{"type":"text","text":"Q"}]}`},
 	}
 	roster := []ParticipantInfo{{Name: "A"}, {Name: "B"}}
-	got := buildInjectionText(msgs, 0, "row-self", map[string]string{}, nil, roster, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-self", map[string]string{}, nil, roster, "", "")
 	if strings.Contains(got, "参与者：") {
 		t.Fatalf("roster with no specialties must be omitted entirely: %q", got)
 	}
@@ -87,7 +87,7 @@ func TestBuildMemberInjection_SameAgentTwoMembers(t *testing.T) {
 		{ID: 11, Role: "assistant", AgentID: "row-2", Content: `{"blocks":[{"type":"text","text":"from two"}]}`},
 	}
 	names := map[string]string{"row-1": "One", "row-2": "Two"}
-	got := buildInjectionText(msgs, 0, "row-1", names, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-1", names, nil, nil, "", "")
 	if !strings.Contains(got, "Two: from two") {
 		t.Fatalf("member row-1 must see row-2's speech: %q", got)
 	}
@@ -101,7 +101,7 @@ func TestBuildMemberInjection_CursorExcludesOlder(t *testing.T) {
 		{ID: 5, Role: "user", Content: `{"blocks":[{"type":"text","text":"old"}]}`},
 		{ID: 6, Role: "user", Content: `{"blocks":[{"type":"text","text":"new"}]}`},
 	}
-	got := buildInjectionText(msgs, 5, "self", nil, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 5, "self", nil, nil, nil, "", "")
 	if strings.Contains(got, "old") {
 		t.Fatalf("cursor must exclude id<=cursor: %q", got)
 	}
@@ -158,7 +158,7 @@ func TestBuildMemberInjection_ExcludesWarningBlocks(t *testing.T) {
 	names := map[string]string{"row-a": "A"}
 
 	// A different member must not see A's failure.
-	other := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "", "")
+	other := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "")
 	if strings.Contains(other, "create backend") {
 		t.Fatalf("warning text must not be injected to another member: %q", other)
 	}
@@ -168,7 +168,7 @@ func TestBuildMemberInjection_ExcludesWarningBlocks(t *testing.T) {
 
 	// A's own warning is filtered by the author rule anyway, but assert the
 	// warning text is absent regardless.
-	self := buildInjectionText(msgs, 0, "row-a", names, nil, nil, "", "", "")
+	self := buildInjectionText(msgs, 0, "row-a", names, nil, nil, "", "")
 	if strings.Contains(self, "create backend") {
 		t.Fatalf("warning text must not be injected to the member itself: %q", self)
 	}
@@ -184,7 +184,7 @@ func TestBuildMemberInjection_KeepsMixedContent(t *testing.T) {
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-a", Content: mixed},
 	}
-	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
 	if !strings.Contains(got, "my answer") {
 		t.Fatalf("a mixed message's real content must be injected: %q", got)
 	}
@@ -193,57 +193,66 @@ func TestBuildMemberInjection_KeepsMixedContent(t *testing.T) {
 	}
 }
 
-// The host's routing tag is an internal protocol between the backend and the
-// host agent. A member must not see it: leaving it in the injected context
-// invites the member to imitate `<clawbench-speaker>` in its own output (which
-// the frontend would then misrender as a routing card). Only the tag's
-// background text belongs in the member's context (decision #67).
-func TestBuildMemberInjection_StripsHostRoutingTag(t *testing.T) {
-	hostContent := `{"blocks":[{"type":"text","text":"A 的观点不错 <clawbench-speaker>B</clawbench-speaker> 请 B 回应"}]}`
+// assistantText builds a chat_history content JSON for an assistant message
+// whose single text block is `text`, so tests can embed quotes/tags safely.
+func assistantText(text string) string {
+	b, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"type": "text", "text": text}}})
+	return string(b)
+}
+
+// An agent's mention tag is an internal protocol between the backend and the
+// speaker. A member must not see the RAW tag (leaving it in invites imitation,
+// which the frontend would then misrender as a routing card) — but a PUBLIC
+// mention is rendered as readable "@name body" prose, because in free mode a
+// member's @ is what drives the relay chain (decision #67 / free-mode §13.3).
+func TestBuildMemberInjection_RendersMentionReadable(t *testing.T) {
+	hostContent := assistantText(`A 的观点不错 <clawbench-mention targets="B">请 B 回应</clawbench-mention>`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
 	names := map[string]string{"row-host": "主持人"}
-	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "", "row-host")
-	if strings.Contains(got, "<clawbench-speaker>") {
-		t.Fatalf("the routing tag must not leak into a member's context: %q", got)
+	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "")
+	if strings.Contains(got, "<clawbench-mention") {
+		t.Fatalf("the raw mention tag must not leak into a member's context: %q", got)
 	}
 	if !strings.Contains(got, "A 的观点不错") {
-		t.Fatalf("the tag's background text must survive: %q", got)
+		t.Fatalf("the surrounding text must survive: %q", got)
+	}
+	if !strings.Contains(got, "@B 请 B 回应") {
+		t.Fatalf("a public mention must render as readable @name prose: %q", got)
 	}
 }
 
-// An unparseable host message must be kept verbatim — never strip what we do
-// not understand (same contract as askquestion: never lose content).
-func TestBuildMemberInjection_KeepsUnparseableHostMessage(t *testing.T) {
-	// Malformed payload: empty speaker list. The TEXT survives (never lose
-	// content) but the protocol tag is stripped — a member must not see a
-	// routing tag, malformed or not, or it imitates it (the "everyone is the
-	// chair" incident). The old contract kept the tag verbatim; that leaked the
-	// protocol into every member's context.
-	hostContent := `{"blocks":[{"type":"text","text":"背景 <clawbench-speaker></clawbench-speaker> 尾巴"}]}`
+// A malformed mention must still have its tag stripped (a member must never see
+// the raw protocol, malformed or not), while the surrounding text survives.
+func TestBuildMemberInjection_StripsMalformedMentionTag(t *testing.T) {
+	hostContent := assistantText(`背景 <clawbench-mention targets=""></clawbench-mention> 尾巴`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
-	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "", "row-host")
-	if strings.Contains(got, "<clawbench-speaker") {
-		t.Fatalf("a routing tag must NOT reach a member (they imitate it): %q", got)
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "")
+	if strings.Contains(got, "<clawbench-mention") {
+		t.Fatalf("a mention tag must NOT reach a member (they imitate it): %q", got)
 	}
 	if !strings.Contains(got, "背景") || !strings.Contains(got, "尾巴") {
 		t.Fatalf("the surrounding text must survive: %q", got)
 	}
 }
 
-// A non-host member's speech must be untouched even if it happens to contain
-// tag-like text (only the host emits routing tags).
-func TestBuildMemberInjection_LeavesMemberSpeechAlone(t *testing.T) {
-	memberContent := `{"blocks":[{"type":"text","text":"我说 <clawbench-speaker>X</clawbench-speaker> 这些字"}]}`
+// EVERY agent's speech is rendered readable, not just the host's: in free mode
+// a member's @ must be visible to the relay chain, so a member's mention is
+// rendered as @name prose (the tag itself still never survives).
+func TestBuildMemberInjection_RendersMemberMentionToo(t *testing.T) {
+	memberContent := assistantText(`我说 <clawbench-mention targets="X">你来补充</clawbench-mention> 这些字`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-a", Content: memberContent},
 	}
-	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "", "")
-	if !strings.Contains(got, "<clawbench-speaker>") {
-		t.Fatalf("a member's own text must not be rewritten: %q", got)
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-a": "A"}, nil, nil, "", "")
+	if strings.Contains(got, "<clawbench-mention") {
+		t.Fatalf("a member's raw mention tag must not survive either: %q", got)
+	}
+	if !strings.Contains(got, "@X 你来补充") {
+		t.Fatalf("a member's mention must render readable: %q", got)
 	}
 }
 
@@ -263,7 +272,7 @@ func TestBuildMemberInjection_RendersUserAttachments(t *testing.T) {
 			},
 		},
 	}
-	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
 	if !strings.Contains(got, "User uploaded") {
 		t.Fatalf("user attachments must be summarized for members: %q", got)
 	}
@@ -281,7 +290,7 @@ func TestBuildMemberInjection_NoAttachmentNoPrefix(t *testing.T) {
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "user", Content: `{"blocks":[{"type":"text","text":"普通消息"}]}`},
 	}
-	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
 	if strings.Contains(got, "User uploaded") {
 		t.Fatalf("a message without attachments must not gain an attachment header: %q", got)
 	}
@@ -296,7 +305,7 @@ func TestBuildMemberInjection_SystemEventIsNotUserSpeech(t *testing.T) {
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "system", AgentID: "", Content: `{"blocks":[{"type":"text","text":"Claude 加入了讨论"}]}`},
 	}
-	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
 	if strings.Contains(got, "User:") {
 		t.Fatalf("a system event must not be rendered as user speech: %q", got)
 	}
@@ -314,7 +323,7 @@ func TestBuildMemberInjection_UserMessageStillUser(t *testing.T) {
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "user", AgentID: "", Content: `{"blocks":[{"type":"text","text":"请讨论"}]}`},
 	}
-	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "", "")
+	got := buildInjectionText(msgs, 0, "row-a", nil, nil, nil, "", "")
 	// The prefix is the user's reserved participant name (English), the SAME
 	// name the host addresses in a routing tag.
 	if !strings.Contains(got, "User: 请讨论") {
@@ -322,19 +331,38 @@ func TestBuildMemberInjection_UserMessageStillUser(t *testing.T) {
 	}
 }
 
+// A user's @-mention carries the member ROW id (the frontend writes ids). It
+// must be rendered readable AND resolved to the display name: a member must see
+// "User: @Alice 请你说说", not the raw protocol tag with a UUID — the raw tag
+// would both leak the protocol (members imitate it) and be unreadable.
+func TestBuildMemberInjection_ResolvesUserMentionIDToName(t *testing.T) {
+	msgs := []model.ChatMessage{
+		{ID: 2, Role: "user", AgentID: "", Content: assistantText(`<clawbench-mention targets="row-a"></clawbench-mention> 请你说说`)},
+	}
+	names := map[string]string{"row-a": "Alice", "row-b": "Bob"}
+	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "")
+	if strings.Contains(got, "<clawbench-mention") {
+		t.Fatalf("the raw mention tag must not leak into a member's context: %q", got)
+	}
+	if strings.Contains(got, "row-a") {
+		t.Fatalf("the member ROW id must be resolved to a name: %q", got)
+	}
+	if !strings.Contains(got, "User: @Alice 请你说说") {
+		t.Fatalf("the user's mention must render as @<name>: %q", got)
+	}
+}
+
 // The END tag (<clawbench-group-end/>) is internal protocol and must NOT leak
-// into a member's injected context, even when the message carries NO speaker
-// tag. hostSpeechForMembers only strips when the SPEAKER tag parses (Found), so
-// a message that is just the end signal (e.g. "讨论充分。<clawbench-group-end/>
-// 结论：…") previously passed through verbatim — inviting members to imitate
-// the tag (decision #67's exact rationale).
-func TestBuildMemberInjection_StripsEndTagWithoutSpeakerTag(t *testing.T) {
-	hostContent := `{"blocks":[{"type":"text","text":"讨论充分。<clawbench-group-end/> 结论：可以发布"}]}`
+// into a member's injected context, even when the message carries NO mention
+// tag — a message that is just the end signal (e.g. "讨论充分。<clawbench-group-end/>
+// 结论：…") must not pass through verbatim (decision #67's rationale).
+func TestBuildMemberInjection_StripsEndTagWithoutMentionTag(t *testing.T) {
+	hostContent := assistantText(`讨论充分。<clawbench-group-end/> 结论：可以发布`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
 	names := map[string]string{"row-host": "主持人"}
-	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "", "row-host")
+	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "")
 
 	if strings.Contains(got, "<clawbench-group-end") {
 		t.Fatalf("the end tag must not leak into a member's context: %q", got)
@@ -344,17 +372,16 @@ func TestBuildMemberInjection_StripsEndTagWithoutSpeakerTag(t *testing.T) {
 	}
 }
 
-// A host message with BOTH tags must strip both (the speaker tag path already
-// handles the end tag via Result.Instruction; this pins the combined case).
+// A host message with BOTH a mention and the end tag must strip both.
 func TestBuildMemberInjection_StripsBothTags(t *testing.T) {
-	hostContent := `{"blocks":[{"type":"text","text":"<clawbench-speaker>A</clawbench-speaker> 请 A 表态 <clawbench-group-end/>"}]}`
+	hostContent := assistantText(`<clawbench-mention targets="A">请 A 表态</clawbench-mention> <clawbench-group-end/>`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
 	names := map[string]string{"row-host": "主持人"}
-	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "", "row-host")
+	got := buildInjectionText(msgs, 0, "row-b", names, nil, nil, "", "")
 
-	if strings.Contains(got, "<clawbench-speaker") || strings.Contains(got, "<clawbench-group-end") {
+	if strings.Contains(got, "<clawbench-mention") || strings.Contains(got, "<clawbench-group-end") {
 		t.Fatalf("neither tag may leak into a member's context: %q", got)
 	}
 }
@@ -366,7 +393,7 @@ func TestBuildMemberInjection_StripsBothTags(t *testing.T) {
 // free of it — and of the raw tag.
 
 func TestBuildMemberInjection_PrivateNoteOnlyToTarget(t *testing.T) {
-	got := buildInjectionText(nil, 0, "row-a", map[string]string{}, nil, nil, "公共指令", "只给A的话", "")
+	got := buildInjectionText(nil, 0, "row-a", map[string]string{}, nil, nil, "公共指令", "只给A的话")
 	if !strings.Contains(got, "主持人密送给你") {
 		t.Fatalf("the target must receive its private note: %q", got)
 	}
@@ -379,21 +406,21 @@ func TestBuildMemberInjection_PrivateNoteOnlyToTarget(t *testing.T) {
 	}
 
 	// A different member (no bcc passed) must not carry the note.
-	other := buildInjectionText(nil, 0, "row-b", map[string]string{}, nil, nil, "公共指令", "", "")
+	other := buildInjectionText(nil, 0, "row-b", map[string]string{}, nil, nil, "公共指令", "")
 	if strings.Contains(other, "只给A的话") || strings.Contains(other, "主持人密送") {
 		t.Fatalf("a non-target member must not receive the note: %q", other)
 	}
 }
 
-// A host message whose private note is well-formed but whose speaker tag is
-// missing (Found=false) must STILL have the note removed from the shared body —
-// that fallback path is the one place a note could leak to everyone.
+// A host message whose private note is well-formed but whose public mention is
+// missing must STILL have the note removed from the shared body — that fallback
+// path is the one place a note could leak to everyone.
 func TestBuildMemberInjection_StripsNoteOnFallbackPath(t *testing.T) {
-	hostContent := `{"blocks":[{"type":"text","text":"背景在此 <clawbench-bcc targets=\"A\">只给A</clawbench-bcc>"}]}`
+	hostContent := assistantText(`背景在此 <clawbench-mention targets="A" private>只给A</clawbench-mention>`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
-	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "", "row-host")
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "")
 	if strings.Contains(got, "只给A") {
 		t.Fatalf("a note must not leak to a non-target member via the fallback path: %q", got)
 	}
@@ -402,17 +429,19 @@ func TestBuildMemberInjection_StripsNoteOnFallbackPath(t *testing.T) {
 	}
 }
 
-// A note placed AFTER the speaker tag must not leak into the public directive
-// (Instruction) that every addressed member receives.
+// A private note alongside a public mention must not leak into the shared body.
 func TestBuildMemberInjection_NoteNotInInstruction(t *testing.T) {
-	hostContent := `{"blocks":[{"type":"text","text":"<clawbench-speaker>A,B</clawbench-speaker> 请表态 <clawbench-bcc targets=\"A\">私密</clawbench-bcc>"}]}`
+	hostContent := assistantText(`<clawbench-mention targets="A,B">请表态</clawbench-mention><clawbench-mention targets="A" private>私密</clawbench-mention>`)
 	msgs := []model.ChatMessage{
 		{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 	}
-	// Member B: no bcc, and the public directive must not carry the note.
-	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "", "row-host")
+	// Member B: no private note, and the shared body must not carry A's note.
+	got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "")
 	if strings.Contains(got, "私密") {
 		t.Fatalf("note leaked into the shared body: %q", got)
+	}
+	if !strings.Contains(got, "请表态") {
+		t.Fatalf("the public body must survive: %q", got)
 	}
 }
 
@@ -430,21 +459,20 @@ func TestJoinPendingBcc(t *testing.T) {
 }
 
 // A malformed private note must not reach a non-target member through the
-// fallback path (Found=false) either — the injection boundary is fail-closed.
+// fallback path either — the injection boundary is fail-closed.
 func TestBuildMemberInjection_StripsMalformedNoteOnFallbackPath(t *testing.T) {
 	cases := []struct{ name, hostText string }{
-		{"single_quotes", `背景 <clawbench-bcc targets='A'>秘密</clawbench-bcc>`},
-		{"unclosed", `背景 <clawbench-bcc targets="A">秘密`},
-		{"no_attr", `背景 <clawbench-bcc>秘密</clawbench-bcc>`},
+		{"single_quotes", `背景 <clawbench-mention targets='A' private>秘密</clawbench-mention>`},
+		{"unclosed", `背景 <clawbench-mention targets="A" private>秘密`},
+		{"no_attr", `背景 <clawbench-mention private>秘密</clawbench-mention>`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			block, _ := json.Marshal(map[string]any{"blocks": []any{map[string]any{"type": "text", "text": tc.hostText}}})
-			hostContent := string(block)
+			hostContent := assistantText(tc.hostText)
 			msgs := []model.ChatMessage{
 				{ID: 2, Role: "assistant", AgentID: "row-host", Content: hostContent},
 			}
-			got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "", "row-host")
+			got := buildInjectionText(msgs, 0, "row-b", map[string]string{"row-host": "主持人"}, nil, nil, "", "")
 			if strings.Contains(got, "秘密") {
 				t.Fatalf("a malformed note must not leak to a non-target member: %q", got)
 			}
@@ -460,28 +488,31 @@ func TestBuildMemberInjection_StripsMalformedNoteOnFallbackPath(t *testing.T) {
 // never saw the game rules and behaved as if unaddressed. The protocol tags
 // inside that text must still be stripped, or a member imitates them and
 // declares itself the chair (the real "everyone is the host" incident).
-func TestHostSpeechForMembers_KeepsRulesStripsTags(t *testing.T) {
-	hostMsg := "<clawbench-speaker>A,B</clawbench-speaker> 本轮规则：每人一句话描述。\n" +
-		"<clawbench-speaker>A</clawbench-speaker> 请 A 先描述 <clawbench-bcc targets=\"A\">你的词是西瓜</clawbench-bcc>"
-	got := hostSpeechForMembers(hostMsg)
+func TestRenderMentionsReadable_KeepsRulesDropsTagsAndPrivate(t *testing.T) {
+	hostMsg := "<clawbench-mention targets=\"A,B\">本轮规则：每人一句话描述。</clawbench-mention>\n" +
+		"<clawbench-mention targets=\"A\">请 A 先描述</clawbench-mention><clawbench-mention targets=\"A\" private>你的词是西瓜</clawbench-mention>"
+	got := renderMentionsReadable(hostMsg, nil)
 	if !strings.Contains(got, "本轮规则") {
 		t.Fatalf("member must see the host's rules; got %q", got)
 	}
 	if !strings.Contains(got, "请 A 先描述") {
-		t.Fatalf("member must see the host's directive text; got %q", got)
+		t.Fatalf("member must see the host's public directive; got %q", got)
 	}
-	if strings.Contains(got, "clawbench-speaker") {
-		t.Fatalf("routing tags must be stripped so members do not imitate them; got %q", got)
+	if strings.Contains(got, "clawbench-mention") {
+		t.Fatalf("mention tags must be stripped so members do not imitate them; got %q", got)
 	}
-	if strings.Contains(got, "clawbench-bcc") || strings.Contains(got, "西瓜") {
+	if !strings.Contains(got, "@A @B") {
+		t.Fatalf("public mention targets must render as @name; got %q", got)
+	}
+	if strings.Contains(got, "西瓜") {
 		t.Fatalf("private note must never reach the shared body; got %q", got)
 	}
 }
 
-// A host message with no speaker tag keeps its full text (minus protocol tags).
-func TestHostSpeechForMembers_NoTagKeepsText(t *testing.T) {
-	got := hostSpeechForMembers("大家注意，本局是友谊赛。")
+// A message with no mention tag keeps its full text (minus the end signal).
+func TestRenderMentionsReadable_NoTagKeepsText(t *testing.T) {
+	got := renderMentionsReadable("大家注意，本局是友谊赛。", nil)
 	if got != "大家注意，本局是友谊赛。" {
-		t.Fatalf("plain host speech must pass through; got %q", got)
+		t.Fatalf("plain speech must pass through; got %q", got)
 	}
 }

@@ -367,7 +367,7 @@ func ttsExtractConclusion(messageID int64) string { //nolint:gocyclo,gocognit //
 	// strips them, but this path OVERRIDES the frontend text with the DB content
 	// when a messageId is present, so the stripping must happen here too —
 	// otherwise a note addressed to one member would be read aloud to the user.
-	conclusion := grouprouting.StripBccSpans(summarize.ExtractLastAnswerFromBlocks(blocks))
+	conclusion := grouprouting.StripProtocolTags(summarize.ExtractLastAnswerFromBlocks(blocks))
 
 	// Append AskUserQuestion text (questions + options) so TTS reads them
 	var aqParts []string

@@ -17,6 +17,7 @@
       :hostMemberId="hostMemberId"
       :maxRounds="maxRounds"
       :autoApprove="autoApprove"
+      :mode="mode"
       @changed="$emit('changed')"
     />
   </div>
@@ -38,6 +39,8 @@ const props = defineProps<{
   maxRounds: number
   /** The group's current auto-approve flag, shown in the sheet (decision #61). */
   autoApprove: boolean
+  /** The group's mode; "free" hides the maxRounds control in the sheet. */
+  mode?: 'host' | 'free'
 }>()
 defineEmits<{ (e: 'changed'): void }>()
 

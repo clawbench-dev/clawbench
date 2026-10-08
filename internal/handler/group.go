@@ -11,11 +11,19 @@ import (
 // group.go holds the AI group-chat HTTP endpoints (design §8). All routes are
 // project-scoped and authenticated via middleware.Auth, like the rest of /api/.
 
+// respKeyMode is the JSON response field carrying the group's mode
+// ("host" | "free") on both the create and members endpoints.
+const respKeyMode = "mode"
+
 // ServeGroupCreate creates a group plus ALL its members in one call (design
-// §7.1, decision #25). The frontend picks members and host together, so the
-// host and members arrive in a single request and are created atomically.
+// §7.1, decision #25). The frontend picks members and (optionally) a host
+// together, so they arrive in a single request and are created atomically.
 //
-//	POST /api/group/create  {hostAgentId, memberAgentIds:[]} -> {ok, groupId, hostMemberId}
+// The host is OPTIONAL (design §13.1): when hostAgentId is omitted/empty the
+// group is created in FREE mode (no host, participants relay via @-mentions).
+// When present, the group is HOST mode and the host must be one of the members.
+//
+//	POST /api/group/create  {hostAgentId?, memberAgentIds:[]} -> {ok, groupId, hostMemberId, mode}
 func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeLocalizedErrorf(w, r, http.StatusMethodNotAllowed, "MethodNotAllowed")
@@ -41,16 +49,20 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hostAgentID := req.HostAgentID
-	if hostAgentID == "" {
-		hostAgentID = model.GetDefaultAgentID()
-	}
-	// The host must be a member: if the caller omitted the member list (older
-	// client), fall back to a host-only group. Otherwise require the host to be
-	// present in the list — otherwise no member row would match it.
 	agentIDs := req.MemberAgentIDs
+	if hostAgentID != "" {
+		// Host mode: the host must be a member. If the caller omitted the
+		// member list (older client), fall back to a host-only group; otherwise
+		// require the host to be present in the list — otherwise no member row
+		// would match it.
+		if len(agentIDs) == 0 {
+			agentIDs = []string{hostAgentID}
+		} else if !containsString(agentIDs, hostAgentID) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
+			return
+		}
+	}
 	if len(agentIDs) == 0 {
-		agentIDs = []string{hostAgentID}
-	} else if !containsString(agentIDs, hostAgentID) {
 		writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 		return
 	}
@@ -72,12 +84,20 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	hostName := service.GetAgentDisplayName(hostAgentID)
-	title := hostName + " 的群聊"
+	// Placeholder title: host mode uses the host's name; free mode has none, so
+	// a generic placeholder (auto-title replaces it after the first message).
+	title := "群聊"
+	if hostAgentID != "" {
+		title = service.GetAgentDisplayName(hostAgentID) + " 的群聊"
+	}
 	groupID, hostMemberID, err := service.CreateGroupWithMembers(projectPath, title, hostAgentID, specs)
 	if err != nil {
 		if errors.Is(err, service.ErrGroupMemberLimit) {
 			writeLocalizedErrorf(w, r, http.StatusConflict, "GroupMemberLimitReached", map[string]any{"MaxCount": service.MaxGroupMembers})
+			return
+		}
+		if errors.Is(err, service.ErrFreeGroupNeedsTwoMembers) {
+			writeLocalizedErrorf(w, r, http.StatusBadRequest, "InvalidRequest")
 			return
 		}
 		writeLocalizedErrorf(w, r, http.StatusInternalServerError, "CreateSessionFailed")
@@ -87,6 +107,7 @@ func ServeGroupCreate(w http.ResponseWriter, r *http.Request) {
 		"ok":           true,
 		"groupId":      groupID,
 		"hostMemberId": hostMemberID,
+		respKeyMode:    service.GetGroupMode(groupID),
 	})
 }
 
@@ -129,8 +150,14 @@ func ServeGroupMembers(w http.ResponseWriter, r *http.Request) {
 		}
 		// maxRounds is included so the member sheet can show the SERVER's
 		// current value instead of a hardcoded default (the PATCH endpoint had
-		// no read-back, so the UI lied after a change).
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "members": out, "maxRounds": service.GetGroupMaxRounds(groupID)})
+		// no read-back, so the UI lied after a change). mode tells the frontend
+		// whether a host exists (host mode) or the group is free (design §13).
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":        true,
+			"members":   out,
+			"maxRounds": service.GetGroupMaxRounds(groupID),
+			respKeyMode: service.GetGroupMode(groupID),
+		})
 
 	case http.MethodPost:
 		var req struct {
